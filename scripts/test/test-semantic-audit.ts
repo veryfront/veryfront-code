@@ -1740,7 +1740,7 @@ function callableRuntimeBindingMarkers(
       candidate.kind === "effect"
         ? [candidate.effect]
         : candidate.kind === "filesystem-open"
-        ? [filesystemOpenEffect(undefined)]
+        ? [filesystemOpenEffect(filesystemOpenOptions(candidate, []))]
         : []
     ),
   );
@@ -4773,11 +4773,12 @@ function mutationCallResultRuntimeBinding(
     const canonicalName =
       `${invocation.binding.receiver}.${invocation.binding.method}`;
     if (invocation.binding.receiver === "Object") {
+      const assignedEntries = localMutationResultAssignedEntries(
+        canonicalName,
+        invocation.args,
+      );
       for (
-        const entry of localMutationResultAssignedEntries(
-          canonicalName,
-          invocation.args,
-        )
+        const entry of assignedEntries
       ) {
         result = appendRuntimeMutationResultProperty(
           result,
@@ -4786,21 +4787,6 @@ function mutationCallResultRuntimeBinding(
           false,
           true,
         );
-      }
-      if (canonicalName === "Object.setPrototypeOf") {
-        const prototypeBinding = runtimeBindingForExpression(
-          runtimeUnknownPropertyExpression(invocation.args[1]),
-          imports,
-          scopes,
-        );
-        if (prototypeBinding) {
-          result = appendRuntimePropertyOperation(result, {
-            kind: "define-unknown",
-            binding: prototypeBinding,
-            defaultMayRun: true,
-            crossesFunctionBoundary: false,
-          });
-        }
       }
     } else {
       const assigned = arrayMutationInsertedExpressions(

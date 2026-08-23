@@ -9,6 +9,8 @@ const CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER =
   "No actionable comments were generated in the recent review.";
 const CODERABBIT_REVIEW_RANGE_PATTERN =
   /Reviewing files between\s+([0-9a-f]{40})\s+and\s+([0-9a-f]{40})(?:\.|\s|$)/i;
+const CODERABBIT_CURRENT_HEAD_PATTERN =
+  /(?:Requested commit:|Review skipped for current commit)\s*([0-9a-f]{40})/i;
 const CODEX_LOGIN = "chatgpt-codex-connector[bot]";
 const CODEX_BOT_ID = 199175422;
 const CODEX_NO_FINDING_PREFIX = "Codex Review: Didn't find any major issues.";
@@ -117,9 +119,16 @@ export async function findAutomatedReview(
       const reviewedTip = recentReview?.match(
         CODERABBIT_REVIEW_RANGE_PATTERN,
       )?.[2];
+      const outcomeTip = reviewedTip ??
+        body.match(CODERABBIT_CURRENT_HEAD_PATTERN)?.[1];
+      if (
+        typeof outcomeTip !== "string" ||
+        outcomeTip.toLowerCase() !== headSha.toLowerCase()
+      ) {
+        continue;
+      }
       return recentReview?.includes(CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER) &&
-          typeof reviewedTip === "string" &&
-          reviewedTip.toLowerCase() === headSha.toLowerCase()
+          reviewedTip?.toLowerCase() === headSha.toLowerCase()
         ? {
           reviewer: login,
           source: "summary",

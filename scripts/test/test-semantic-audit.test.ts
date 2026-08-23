@@ -2379,6 +2379,16 @@ conditionalSetter.path = "conditional.txt";
 declare const unknownDescriptor: PropertyDescriptor;
 const unknownSetter = Object.defineProperty({}, "path", unknownDescriptor);
 unknownSetter.path = "unknown.txt";
+
+const openSetter = Object.defineProperty({}, "path", {
+  set: Deno.open.bind(Deno, "setter.txt", { write: true, create: true }),
+});
+openSetter.path = "ignored";
+
+const openComparatorValues = [2, 1];
+openComparatorValues.sort(
+  Deno.open.bind(Deno, "sort.txt", { write: true, create: true }),
+);
 `,
         "src/runtime-multi-effect-callables.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
@@ -2396,6 +2406,8 @@ unknownSetter.path = "unknown.txt";
         ["process", "unknownSetter.path setter"],
         ["server", "unknownSetter.path setter"],
         ["shared-cwd", "unknownSetter.path setter"],
+        ["filesystem-write", "openSetter.path setter"],
+        ["filesystem-write", "openComparatorValues.sort(comparator)"],
       ],
     );
   });
@@ -2408,6 +2420,10 @@ Object.freeze({ run: Deno.remove }).run("freeze.txt");
 Object.seal({ run: Deno.remove }).run("seal.txt");
 Object.preventExtensions({ run: Deno.remove }).run("prevent-extensions.txt");
 Object.setPrototypeOf({}, { run: Deno.remove }).run("prototype.txt");
+Object.setPrototypeOf(
+  { safe: () => undefined },
+  { run: Deno.remove },
+).safe();
 `,
         "src/runtime-object-receiver-returns.test.ts",
       ).map((marker) => marker.effect),
