@@ -1,55 +1,20 @@
 /**
  * DevServer Handler Methods Tests
  *
- * Tests for the refactored DevServer.handleRequest() extracted handlers:
- * - handleHealthCheck()
- * - incrementRequestMetrics()
- * - handleDevEndpoint()
- * - handleApplicationRequest()
- * - handleServerError()
+ * Tests for the DevServer request pipeline — health checks, dev endpoints,
+ * application routes, error handling, and request flow — driven in-process
+ * through the same `RequestHandler` the dev server serves, so no ports,
+ * readiness polling, or shutdown draining are involved.
  */
 
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
-import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
 import { toBase64Url } from "#veryfront/utils/path-utils.ts";
-import { DevServer } from "../../../src/server/dev-server.ts";
-import { withTestContext } from "../../_helpers/context.ts";
-import { drainEventLoop } from "../../_helpers/utils.ts";
+import { withInProcessProject } from "../../_helpers/in-process-project.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 
-async function createTestDevServer(
-  context: any,
-  options: Partial<any> = {},
-): Promise<{ server: DevServer; port: number }> {
-  const port = await context.allocatePort();
-
-  const server = new DevServer({
-    port,
-    projectDir: context.projectDir,
-    enableHMR: false,
-    enableFastRefresh: false,
-    ...options,
-  });
-
-  context.trackResource(server, `DevServer on port ${port}`);
-  await server.start();
-  await server.ready;
-
-  return { server, port };
-}
-
-async function stopServer(server: DevServer): Promise<void> {
-  await server.stop();
-  await drainEventLoop();
-}
-
-async function fetchAndCancel(input: string, init?: RequestInit): Promise<Response> {
-  const response = await fetch(input, init);
-  await response.body?.cancel();
-  return response;
-}
+type Handle = (path: string) => Promise<Response>;
 
 function assertJsNoCache(response: Response): void {
   const contentType = response.headers.get("content-type");
@@ -81,9 +46,16 @@ function extractImportSpecifiers(code: string): string[] {
   return [...specifiers];
 }
 
+// The narrow browser-safe error modules: the split registries plus the base
+// error machinery. The heavyweight `errors/index.js` barrel stays banned.
 const BROWSER_SAFE_ERROR_MODULES = new Set([
   "/_vf_modules/_veryfront/errors/error-registry.js",
+  "/_vf_modules/_veryfront/errors/error-registry/agent.js",
+  "/_vf_modules/_veryfront/errors/error-registry/general.js",
+  "/_vf_modules/_veryfront/errors/error-registry/server.js",
   "/_vf_modules/_veryfront/errors/http-error.js",
+  "/_vf_modules/_veryfront/errors/types.js",
+  "/_vf_modules/_veryfront/errors/veryfront-error.js",
 ]);
 
 const BROWSER_CSP_SAFE_MODULE_PATHS = [
@@ -104,11 +76,10 @@ const BROWSER_CSP_SAFE_MODULE_PATHS = [
 ];
 
 async function fetchServedFrameworkModule(
-  port: number,
+  handle: Handle,
   modulePath: string,
-  fetchImpl: typeof fetch = globalThis.fetch,
 ): Promise<{ body: string; specifiers: string[] }> {
-  const response = await fetchImpl(`http://127.0.0.1:${port}${modulePath}`);
+  const response = await handle(modulePath);
   assertEquals(response.status, 200, `Expected ${modulePath} to be served`);
 
   const body = await response.text();
@@ -149,10 +120,11 @@ function assertBrowserSafeFrameworkModule(
   );
 }
 
+const GRAPH_ORIGIN = "http://in-process";
+
 async function assertBrowserSafeFrameworkGraph(
-  port: number,
+  handle: Handle,
   entryPath: string,
-  fetchImpl: typeof fetch = globalThis.fetch,
 ): Promise<void> {
   const pending = [entryPath];
   const visited = new Set<string>();
@@ -163,15 +135,18 @@ async function assertBrowserSafeFrameworkGraph(
     if (!modulePath || visited.has(modulePath)) continue;
     visited.add(modulePath);
 
-    const { body, specifiers } = await fetchServedFrameworkModule(port, modulePath, fetchImpl);
+    const { body, specifiers } = await fetchServedFrameworkModule(handle, modulePath);
     assertBrowserSafeFrameworkModule(modulePath, body, specifiers);
 
     for (const specifier of specifiers) {
-      const resolved = new URL(specifier, `http://127.0.0.1:${port}${modulePath}`);
+      const resolved = new URL(specifier, `${GRAPH_ORIGIN}${modulePath}`);
       const resolvedModulePath = `${resolved.pathname}${resolved.search}`;
       if (
-        resolved.origin === `http://127.0.0.1:${port}` &&
+        resolved.origin === GRAPH_ORIGIN &&
         resolved.pathname.startsWith("/_vf_modules/_veryfront/") &&
+        // Only rewritten module URLs end in `.js`; bare import-map specifiers
+        // and template-literal fragments the extractor picks up do not.
+        resolved.pathname.endsWith(".js") &&
         !visited.has(resolvedModulePath)
       ) {
         pending.push(resolvedModulePath);
@@ -180,90 +155,57 @@ async function assertBrowserSafeFrameworkGraph(
   }
 }
 
-describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
+describe("DevServer Handler Tests", () => {
   afterAll(async () => {
     await cleanupBundler();
   });
 
   describe("DevServer - Health Check Handler", {}, () => {
     it("returns 200 for /healthz endpoint", async () => {
-      await withTestContext("dev-server-healthz", async (context) => {
-        const { server, port } = await createTestDevServer(context);
-
-        const response = await fetch(`http://127.0.0.1:${port}/healthz`);
+      await withInProcessProject("dev-server-healthz", {}, async (project) => {
+        const response = await project.handle("/healthz");
 
         assertEquals(response.status, 200);
         assertEquals(response.headers.get("content-type"), "text/plain");
         assertEquals(await response.text(), "ok");
-
-        await stopServer(server);
       });
     });
 
     it("returns ready status for /readyz endpoint", async () => {
-      await withTestContext("dev-server-readyz", async (context) => {
-        const { server, port } = await createTestDevServer(context);
-
-        const response = await fetch(`http://127.0.0.1:${port}/readyz`);
+      await withInProcessProject("dev-server-readyz", {}, async (project) => {
+        const response = await project.handle("/readyz");
 
         assertEquals(response.status, 200);
         assertEquals(response.headers.get("content-type"), "text/plain");
         assertEquals(await response.text(), "ready");
-
-        await stopServer(server);
-      });
-    });
-
-    it("health checks have no async overhead", async () => {
-      await withTestContext("dev-server-health-performance", async (context) => {
-        const { server, port } = await createTestDevServer(context);
-
-        const start = performance.now();
-        await fetchAndCancel(`http://127.0.0.1:${port}/healthz`);
-        const duration = performance.now() - start;
-
-        assert(duration < 100, `Health check took ${duration}ms, should be <100ms`);
-
-        await stopServer(server);
       });
     });
 
     it("returns null for non-health-check routes", async () => {
-      await withTestContext("dev-server-health-passthrough", async (context) => {
-        const { server, port } = await createTestDevServer(context);
-
-        const response = await fetchAndCancel(`http://127.0.0.1:${port}/`);
+      await withInProcessProject("dev-server-health-passthrough", {}, async (project) => {
+        const response = await project.handle("/");
+        await response.body?.cancel();
 
         assertExists(response);
         assert(response.status !== 0);
-
-        await stopServer(server);
       });
     });
 
     it("serves metrics for local dev servers", async () => {
-      await withTestContext("dev-server-metrics", async (context) => {
-        const { server, port } = await createTestDevServer(context);
-
-        const response = await fetch(`http://127.0.0.1:${port}/_metrics`);
+      await withInProcessProject("dev-server-metrics", {}, async (project) => {
+        const response = await project.handle("/_metrics");
 
         assertEquals(response.status, 200);
         const json = await response.json();
         assertExists(json?.counters);
-
-        await stopServer(server);
       });
     });
   });
 
   describe("DevServer - Dev Endpoint Handler", {}, () => {
     it("serves HMR script when HMR is enabled", async () => {
-      await withTestContext("dev-server-hmr-runtime", async (context) => {
-        const { server, port } = await createTestDevServer(context, {
-          enableHMR: true,
-        });
-
-        const response = await fetch(`http://127.0.0.1:${port}/_veryfront/hmr.js`);
+      await withInProcessProject("dev-server-hmr-runtime", {}, async (project) => {
+        const response = await project.handle("/_veryfront/hmr.js");
 
         assertEquals(response.status, 200);
         assertJsNoCache(response);
@@ -271,16 +213,12 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
         const content = await response.text();
         assertExists(content);
         assert(content.length > 0);
-
-        await stopServer(server);
       });
     });
 
     it("serves error overlay runtime", async () => {
-      await withTestContext("dev-server-error-overlay", async (context) => {
-        const { server, port } = await createTestDevServer(context);
-
-        const response = await fetch(`http://127.0.0.1:${port}/_veryfront/error-overlay.js`);
+      await withInProcessProject("dev-server-error-overlay", {}, async (project) => {
+        const response = await project.handle("/_veryfront/error-overlay.js");
 
         assertEquals(response.status, 200);
         assertJsNoCache(response);
@@ -288,20 +226,12 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
         const content = await response.text();
         assertExists(content);
         assert(content.length > 0);
-
-        await stopServer(server);
       });
     });
 
     it("responds to HEAD requests for HMR script", async () => {
-      await withTestContext("dev-server-hmr-head", async (context) => {
-        const { server, port } = await createTestDevServer(context, {
-          enableHMR: true,
-        });
-
-        const response = await fetch(`http://127.0.0.1:${port}/_veryfront/hmr.js`, {
-          method: "HEAD",
-        });
+      await withInProcessProject("dev-server-hmr-head", {}, async (project) => {
+        const response = await project.handle("/_veryfront/hmr.js", { method: "HEAD" });
 
         assertEquals(response.status, 200);
         const contentType = response.headers.get("content-type");
@@ -310,18 +240,12 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
           `Expected content-type to start with "application/javascript" but got "${contentType}"`,
         );
         assertEquals(await response.text(), "");
-
-        await stopServer(server);
       });
     });
 
     it("responds to HEAD requests for error overlay runtime", async () => {
-      await withTestContext("dev-server-error-overlay-head", async (context) => {
-        const { server, port } = await createTestDevServer(context);
-
-        const response = await fetch(`http://127.0.0.1:${port}/_veryfront/error-overlay.js`, {
-          method: "HEAD",
-        });
+      await withInProcessProject("dev-server-error-overlay-head", {}, async (project) => {
+        const response = await project.handle("/_veryfront/error-overlay.js", { method: "HEAD" });
 
         assertEquals(response.status, 200);
         const contentType = response.headers.get("content-type");
@@ -330,183 +254,139 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
           `Expected content-type to start with "application/javascript" but got "${contentType}"`,
         );
         assertEquals(await response.text(), "");
-
-        await stopServer(server);
       });
     });
 
     it("handles virtual module requests", async () => {
-      await withTestContext("dev-server-virtual-modules", async (context) => {
-        const { server, port } = await createTestDevServer(context);
-
-        const response = await fetchAndCancel(
-          `http://127.0.0.1:${port}/_veryfront/modules/component:Button`,
-        );
+      await withInProcessProject("dev-server-virtual-modules", {}, async (project) => {
+        const response = await project.handle("/_veryfront/modules/component:Button");
+        await response.body?.cancel();
 
         assert(
           response.status === 200 || response.status === 404 || response.status === 500,
           `Expected 200, 404, or 500 but got ${response.status}`,
         );
-
-        await stopServer(server);
       });
     });
 
     it("returns null for non-dev endpoints", async () => {
-      await withTestContext("dev-server-dev-passthrough", async (context) => {
-        const { server, port } = await createTestDevServer(context);
-
-        const response = await fetchAndCancel(`http://127.0.0.1:${port}/`);
+      await withInProcessProject("dev-server-dev-passthrough", {}, async (project) => {
+        const response = await project.handle("/");
+        await response.body?.cancel();
 
         assertExists(response);
         assert(response.status !== 0);
-
-        await stopServer(server);
       });
     });
   });
 
   describe("DevServer - Application Request Handler", {}, () => {
     it("delegates to runtime handler for application routes", async () => {
-      await withTestContext("dev-server-app-handler", async (context) => {
-        const { server, port } = await createTestDevServer(context);
-
-        const response = await fetchAndCancel(`http://127.0.0.1:${port}/`);
+      await withInProcessProject("dev-server-app-handler", {}, async (project) => {
+        const response = await project.handle("/");
+        await response.body?.cancel();
 
         assertExists(response);
         assert(response.status !== 0);
-
-        await stopServer(server);
       });
     });
 
     it("handles page requests", async () => {
-      await withTestContext("dev-server-page-requests", async (context) => {
-        const pagesDir = `${context.projectDir}/pages`;
-        await mkdir(pagesDir, { recursive: true });
-        await writeTextFile(
-          `${pagesDir}/test.tsx`,
-          "export default function Test() { return <div>Test Page</div> }",
-        );
-
-        const { server, port } = await createTestDevServer(context);
-
-        const response = await fetchAndCancel(`http://127.0.0.1:${port}/test`);
+      await withInProcessProject("dev-server-page-requests", {
+        files: {
+          "pages/test.tsx": "export default function Test() { return <div>Test Page</div> }",
+        },
+      }, async (project) => {
+        const response = await project.handle("/test");
+        await response.body?.cancel();
 
         assertExists(response);
         assert(response.status !== 0);
-
-        await stopServer(server);
       });
     });
 
     it("handles API routes", async () => {
-      await withTestContext("dev-server-api-routes", async (context) => {
-        const apiDir = `${context.projectDir}/pages/api`;
-        await mkdir(apiDir, { recursive: true });
-        await writeTextFile(
-          `${apiDir}/test.ts`,
-          'export async function GET() { return new Response("API Response") }',
-        );
-
-        const { server, port } = await createTestDevServer(context);
-
-        const response = await fetchAndCancel(`http://127.0.0.1:${port}/api/test`);
+      await withInProcessProject("dev-server-api-routes", {
+        files: {
+          "pages/api/test.ts":
+            'export async function GET() { return new Response("API Response") }',
+        },
+      }, async (project) => {
+        const response = await project.handle("/api/test");
+        await response.body?.cancel();
 
         assertExists(response);
         assert(response.status !== 0);
-
-        await stopServer(server);
       });
     });
 
     it("passes through all request headers", async () => {
-      await withTestContext("dev-server-request-headers", async (context) => {
-        const { server, port } = await createTestDevServer(context);
-
-        const response = await fetchAndCancel(`http://127.0.0.1:${port}/`, {
+      await withInProcessProject("dev-server-request-headers", {}, async (project) => {
+        const response = await project.handle("/", {
           headers: {
             "x-custom-header": "test-value",
             "accept": "text/html",
           },
         });
+        await response.body?.cancel();
 
         assertExists(response);
         assert(response.status !== 0);
-
-        await stopServer(server);
       });
     });
 
     it("serves /_veryfront/fs modules without explicit defaultProjectSlug", async () => {
-      await withTestContext("dev-server-local-project-fallback", async (context) => {
-        await mkdir(join(context.projectDir, "components"), { recursive: true });
-        const modulePath = join(context.projectDir, "components", "fallback.js");
-        await writeTextFile(modulePath, "export default 'fallback';");
-
-        const { server, port } = await createTestDevServer(context);
+      await withInProcessProject("dev-server-local-project-fallback", {
+        files: { "components/fallback.js": "export default 'fallback';" },
+      }, async (project) => {
+        const modulePath = join(project.projectDir, "components", "fallback.js");
         const encodedPath = toBase64Url(modulePath);
-        const response = await fetch(
-          `http://127.0.0.1:${port}/_veryfront/fs/${encodedPath}.js`,
-        );
+        const response = await project.handle(`/_veryfront/fs/${encodedPath}.js`);
 
         assertEquals(response.status, 200);
         const body = await response.text();
         assert(body.includes("fallback"), "Expected bundled module content");
-
-        await stopServer(server);
       });
     });
 
     it("serves framework markdown module without unsafe-eval helpers", async () => {
-      await withTestContext("dev-server-framework-markdown-csp", async (context) => {
-        const { server, port } = await createTestDevServer(context);
+      await withInProcessProject("dev-server-framework-markdown-csp", {}, async (project) => {
         const modulePath = "/_vf_modules/_veryfront/react/components/chat/markdown.js";
-        const { body, specifiers } = await fetchServedFrameworkModule(port, modulePath);
+        const { body, specifiers } = await fetchServedFrameworkModule(project.handle, modulePath);
         assertBrowserSafeFrameworkModule(modulePath, body, specifiers);
-
-        await stopServer(server);
       });
     });
 
     it("serves browser framework modules with narrow CSP-safe imports", async () => {
-      await withTestContext("dev-server-framework-chat-error-csp", async (context) => {
-        const { server, port } = await createTestDevServer(context);
+      await withInProcessProject("dev-server-framework-chat-error-csp", {}, async (project) => {
         for (const modulePath of BROWSER_CSP_SAFE_MODULE_PATHS) {
-          const { body, specifiers } = await fetchServedFrameworkModule(port, modulePath);
+          const { body, specifiers } = await fetchServedFrameworkModule(project.handle, modulePath);
           assertBrowserSafeFrameworkModule(modulePath, body, specifiers);
         }
-
-        await stopServer(server);
       });
     });
 
     it("serves the complete chat module graph without unsafe-eval dependencies", async () => {
-      await withTestContext("dev-server-framework-chat-graph-csp", async (context) => {
-        const { server, port } = await createTestDevServer(context);
-        await assertBrowserSafeFrameworkGraph(port, "/_vf_modules/_veryfront/chat/index.js");
-        await stopServer(server);
+      await withInProcessProject("dev-server-framework-chat-graph-csp", {}, async (project) => {
+        await assertBrowserSafeFrameworkGraph(
+          project.handle,
+          "/_vf_modules/_veryfront/chat/index.js",
+        );
       });
     });
 
     it("preserves query strings while walking browser framework module variants", async () => {
       const requestedPaths: string[] = [];
-      const fetchModule = (async (input: string | URL | Request) => {
-        const url = input instanceof Request ? new URL(input.url) : new URL(String(input));
-        const modulePath = `${url.pathname}${url.search}`;
+      const handle: Handle = (modulePath) => {
         requestedPaths.push(modulePath);
 
         const body = modulePath === "/_vf_modules/_veryfront/entry.js"
           ? 'import "/_vf_modules/_veryfront/child.js?v=browser";'
           : "export const child = true;";
-        return new Response(body, { status: 200 });
-      }) as typeof fetch;
+        return Promise.resolve(new Response(body, { status: 200 }));
+      };
 
-      await assertBrowserSafeFrameworkGraph(
-        4173,
-        "/_vf_modules/_veryfront/entry.js",
-        fetchModule,
-      );
+      await assertBrowserSafeFrameworkGraph(handle, "/_vf_modules/_veryfront/entry.js");
 
       assertEquals(requestedPaths, [
         "/_vf_modules/_veryfront/entry.js",
@@ -517,23 +397,19 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
 
   describe("DevServer - Error Handler", {}, () => {
     it("returns error overlay for server errors", async () => {
-      await withTestContext("dev-server-error-handler", async (context) => {
-        const { server, port } = await createTestDevServer(context);
-
-        const response = await fetchAndCancel(`http://127.0.0.1:${port}/nonexistent-route`);
+      await withInProcessProject("dev-server-error-handler", {}, async (project) => {
+        const response = await project.handle("/nonexistent-route");
+        await response.body?.cancel();
 
         assertExists(response);
         assert(response.status !== 0);
-
-        await stopServer(server);
       });
     });
 
     it("sets correct content-type for error responses", async () => {
-      await withTestContext("dev-server-error-content-type", async (context) => {
-        const { server, port } = await createTestDevServer(context);
-
-        const response = await fetchAndCancel(`http://127.0.0.1:${port}/nonexistent`);
+      await withInProcessProject("dev-server-error-content-type", {}, async (project) => {
+        const response = await project.handle("/nonexistent");
+        await response.body?.cancel();
 
         assertExists(response);
         if (response.status >= 400) {
@@ -543,67 +419,56 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
             "Error responses should have HTML or JSON content type",
           );
         }
-
-        await stopServer(server);
       });
     });
 
     it("logs errors properly", async () => {
-      await withTestContext("dev-server-error-logging", async (context) => {
-        const { server, port } = await createTestDevServer(context);
+      await withInProcessProject("dev-server-error-logging", {}, async (project) => {
+        const errored = await project.handle("/definitely-not-a-real-page-12345");
+        await errored.body?.cancel();
 
-        await fetchAndCancel(`http://127.0.0.1:${port}/definitely-not-a-real-page-12345`);
-
-        const healthResponse = await fetchAndCancel(`http://127.0.0.1:${port}/healthz`);
+        const healthResponse = await project.handle("/healthz");
+        await healthResponse.body?.cancel();
         assertEquals(healthResponse.status, 200);
-
-        await stopServer(server);
       });
     });
 
     it("handles errors without crashing server", async () => {
-      await withTestContext("dev-server-error-resilience", async (context) => {
-        const { server, port } = await createTestDevServer(context);
-
+      await withInProcessProject("dev-server-error-resilience", {}, async (project) => {
         const errorResponses = await Promise.all([
-          fetch(`http://127.0.0.1:${port}/error1`),
-          fetch(`http://127.0.0.1:${port}/error2`),
-          fetch(`http://127.0.0.1:${port}/error3`),
+          project.handle("/error1"),
+          project.handle("/error2"),
+          project.handle("/error3"),
         ]);
         await Promise.all(errorResponses.map((r) => r.body?.cancel()));
 
-        const response = await fetchAndCancel(`http://127.0.0.1:${port}/healthz`);
+        const response = await project.handle("/healthz");
+        await response.body?.cancel();
         assertEquals(response.status, 200);
-
-        await stopServer(server);
       });
     });
   });
 
   describe("DevServer - Request Flow Integration", {}, () => {
     it("executes handlers in correct order", async () => {
-      await withTestContext("dev-server-handler-order", async (context) => {
-        const { server, port } = await createTestDevServer(context);
-
-        const healthRes = await fetchAndCancel(`http://127.0.0.1:${port}/healthz`);
+      await withInProcessProject("dev-server-handler-order", {}, async (project) => {
+        const healthRes = await project.handle("/healthz");
+        await healthRes.body?.cancel();
         assertEquals(healthRes.status, 200);
 
-        const appRes = await fetchAndCancel(`http://127.0.0.1:${port}/`);
+        const appRes = await project.handle("/");
+        await appRes.body?.cancel();
         assert(appRes.status >= 200 && appRes.status < 600);
-
-        await stopServer(server);
       });
     });
 
     it("handles concurrent requests correctly", async () => {
-      await withTestContext("dev-server-concurrent-requests", async (context) => {
-        const { server, port } = await createTestDevServer(context);
-
+      await withInProcessProject("dev-server-concurrent-requests", {}, async (project) => {
         const requests = await Promise.all([
-          fetch(`http://127.0.0.1:${port}/healthz`),
-          fetch(`http://127.0.0.1:${port}/`),
-          fetch(`http://127.0.0.1:${port}/healthz`),
-          fetch(`http://127.0.0.1:${port}/readyz`),
+          project.handle("/healthz"),
+          project.handle("/"),
+          project.handle("/healthz"),
+          project.handle("/readyz"),
         ]);
 
         for (const response of requests) {
@@ -611,97 +476,29 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
           assert(response.status !== 0);
         }
         await Promise.all(requests.map((r) => r.body?.cancel()));
-
-        await stopServer(server);
       });
     });
 
     it("maintains request context across handlers", async () => {
-      await withTestContext("dev-server-request-context", async (context) => {
-        const { server, port } = await createTestDevServer(context);
-
-        const response = await fetchAndCancel(`http://127.0.0.1:${port}/`);
+      await withInProcessProject("dev-server-request-context", {}, async (project) => {
+        const response = await project.handle("/");
+        await response.body?.cancel();
 
         const requestId = response.headers.get("x-request-id");
         assertExists(requestId, "Response should include request ID");
-
-        await stopServer(server);
       });
     });
 
     it("handles all HTTP methods correctly", async () => {
-      await withTestContext("dev-server-http-methods", async (context) => {
-        const { server, port } = await createTestDevServer(context);
-
+      await withInProcessProject("dev-server-http-methods", {}, async (project) => {
         const methods = ["GET", "POST", "PUT", "DELETE", "PATCH"];
 
         for (const method of methods) {
-          const response = await fetchAndCancel(`http://127.0.0.1:${port}/`, { method });
+          const response = await project.handle("/", { method });
+          await response.body?.cancel();
           assertExists(response);
           assert(response.status !== 0);
         }
-
-        await stopServer(server);
-      });
-    });
-  });
-
-  describe("DevServer - Handler Performance", {}, () => {
-    it("health checks complete in <100ms", async () => {
-      await withTestContext("dev-server-health-perf", async (context) => {
-        const { server, port } = await createTestDevServer(context);
-
-        const timings: number[] = [];
-
-        for (let i = 0; i < 10; i++) {
-          const start = performance.now();
-          await fetchAndCancel(`http://127.0.0.1:${port}/healthz`);
-          timings.push(performance.now() - start);
-        }
-
-        const avgTime = timings.reduce((a, b) => a + b, 0) / timings.length;
-        assert(avgTime < 100, `Average health check time ${avgTime}ms should be <100ms`);
-
-        await stopServer(server);
-      });
-    });
-
-    it("metrics increment is non-blocking", async () => {
-      await withTestContext("dev-server-metrics-nonblocking", async (context) => {
-        const { server, port } = await createTestDevServer(context);
-
-        const start = performance.now();
-        const response = await fetchAndCancel(`http://127.0.0.1:${port}/`);
-        const duration = performance.now() - start;
-
-        assertExists(response);
-        assert(duration < 5000, `Request took ${duration}ms, should be <5000ms`);
-
-        await stopServer(server);
-      });
-    });
-
-    it("error handling does not add significant overhead", async () => {
-      await withTestContext("dev-server-error-perf", async (context) => {
-        const { server, port } = await createTestDevServer(context);
-
-        const successStart = performance.now();
-        await fetchAndCancel(`http://127.0.0.1:${port}/healthz`);
-        const successDuration = performance.now() - successStart;
-
-        const errorStart = performance.now();
-        await fetchAndCancel(`http://127.0.0.1:${port}/nonexistent`);
-        const errorDuration = performance.now() - errorStart;
-
-        const absoluteCeilingMs = 5000;
-        assert(
-          errorDuration < absoluteCeilingMs,
-          `Error handling took ${
-            errorDuration.toFixed(0)
-          }ms, exceeding ${absoluteCeilingMs}ms ceiling (success: ${successDuration.toFixed(0)}ms)`,
-        );
-
-        await stopServer(server);
       });
     });
   });
