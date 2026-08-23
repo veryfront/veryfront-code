@@ -617,6 +617,7 @@ type NamespacePropertyOperation =
     readonly defaultMayRun: boolean;
     readonly crossesFunctionBoundary?: boolean;
     readonly minimumArrayIndex?: number;
+    readonly fallbackOnly?: boolean;
   };
 
 const MAX_MATERIALIZED_ARRAY_SPREAD_ENTRIES = 256;
@@ -1745,7 +1746,7 @@ function callableRuntimeBindingMarkers(
       candidate.kind === "effect"
         ? [candidate.effect]
         : candidate.kind === "filesystem-open"
-        ? [filesystemOpenEffect(undefined)]
+        ? [filesystemOpenEffect(filesystemOpenOptions(candidate, []))]
         : []
     ),
   );
@@ -4767,6 +4768,8 @@ function mutationCallResultRuntimeBinding(
             scopes,
           ),
           false,
+          false,
+          true,
         );
       } else {
         for (
@@ -4944,6 +4947,7 @@ function appendRuntimeMutationResultProperty(
   binding: RuntimeBinding | undefined,
   preservesPrevious: boolean,
   allowClearing = false,
+  fallbackOnly = false,
 ): RuntimeBinding {
   if (!binding && (property === undefined || !allowClearing)) return existing;
   return appendRuntimePropertyOperation(
@@ -4954,6 +4958,7 @@ function appendRuntimeMutationResultProperty(
         binding,
         defaultMayRun: true,
         crossesFunctionBoundary: false,
+        fallbackOnly,
       }
       : {
         kind: "define",
@@ -5176,6 +5181,8 @@ function bindRuntimePrototypeMutation(
     propertyExpression,
     imports,
     scopes,
+    undefined,
+    true,
   );
 }
 
@@ -5552,6 +5559,7 @@ function bindRuntimeUnknownPropertyMutationBinding(
   imports: ImportBindings,
   scopes: readonly Scope[],
   minimumArrayIndex?: number,
+  fallbackOnly = false,
 ): void {
   const receiver = unwrapExpression(target);
   if (!receiver) return;
@@ -5564,6 +5572,7 @@ function bindRuntimeUnknownPropertyMutationBinding(
     scopes,
     false,
     minimumArrayIndex,
+    fallbackOnly,
   );
 }
 
@@ -5575,6 +5584,7 @@ function bindRuntimeMemberAssignment(
   scopes: readonly Scope[],
   allowClearing: boolean,
   minimumArrayIndex?: number,
+  fallbackOnly = false,
 ): boolean {
   if (
     member.type !== "MemberExpression" &&
@@ -5677,6 +5687,7 @@ function bindRuntimeMemberAssignment(
       mutation.hasUnknownComputedProperty,
       allowClearing,
       minimumArrayIndex,
+      fallbackOnly,
     );
   }
   return true;
@@ -5693,6 +5704,7 @@ function bindRuntimeMemberAssignmentTarget(
   hasUnknownComputedProperty: boolean,
   allowClearing: boolean,
   minimumArrayIndex?: number,
+  fallbackOnly = false,
 ): void {
   const { scope, root } = target;
   const existing = scope.runtimeBindings.get(root);
@@ -5728,6 +5740,7 @@ function bindRuntimeMemberAssignmentTarget(
       crossesFunctionBoundary,
       aliasTargets,
       minimumArrayIndex,
+      fallbackOnly,
     )
     : assignRuntimeProperty(
       existing,
@@ -6139,6 +6152,7 @@ function assignUnknownRuntimeProperty(
   crossesFunctionBoundary: boolean,
   aliasTargets: readonly RuntimeAliasTarget[] = [],
   minimumArrayIndex?: number,
+  fallbackOnly = false,
 ): RuntimeBinding {
   const [property, ...rest] = objectPath;
   if (property) {
@@ -6150,6 +6164,7 @@ function assignUnknownRuntimeProperty(
       crossesFunctionBoundary,
       aliasTargets,
       minimumArrayIndex,
+      fallbackOnly,
     );
     return assignRuntimeProperty(existing, [property], nested, false, false);
   }
@@ -6160,6 +6175,7 @@ function assignUnknownRuntimeProperty(
     defaultMayRun,
     crossesFunctionBoundary,
     minimumArrayIndex,
+    fallbackOnly,
   });
 }
 
@@ -6172,7 +6188,8 @@ function appendRuntimePropertyOperation(
     if (
       previous?.kind === "define-unknown" &&
       operation.kind === "define-unknown" &&
-      previous.minimumArrayIndex === operation.minimumArrayIndex
+      previous.minimumArrayIndex === operation.minimumArrayIndex &&
+      previous.fallbackOnly === operation.fallbackOnly
     ) {
       return {
         kind: "namespace-object",
@@ -6197,6 +6214,7 @@ function appendRuntimePropertyOperation(
               previous.crossesFunctionBoundary === true ||
               operation.crossesFunctionBoundary === true,
             minimumArrayIndex: operation.minimumArrayIndex,
+            fallbackOnly: operation.fallbackOnly,
           },
         ],
       };
@@ -7839,6 +7857,9 @@ function runtimePropertyResolution(
             (propertyIndex === undefined ||
               propertyIndex < operation.minimumArrayIndex)
           ) {
+            continue;
+          }
+          if (operation.fallbackOnly === true && !resolution.defaultMayRun) {
             continue;
           }
           resolution = {

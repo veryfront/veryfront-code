@@ -2396,6 +2396,43 @@ localValues.sort(() => 0);
     );
   });
 
+  it("keeps statically named Object.assign overwrites precise", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const target = { safe: () => undefined };
+Object.assign(target, { write: Deno.remove });
+target.safe();
+
+const overwrittenTarget = { run: Deno.remove };
+Object.assign(overwrittenTarget, { run: () => undefined });
+overwrittenTarget.run();
+
+const result = Object.assign(
+  {},
+  { run: Deno.remove },
+  { run: () => undefined },
+);
+result.run();
+`,
+        "src/runtime-object-assign-overwrites.test.ts",
+      ),
+      [],
+    );
+
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const target = { safe: () => undefined };
+Object.assign(target, { write: Deno.remove });
+target.write("target.txt");
+`,
+        "src/runtime-object-assign-named-write.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "target.write"]],
+    );
+  });
+
   it("preserves every callable comparator and setter effect", () => {
     assertEquals(
       collectSemanticMarkers(
@@ -2413,6 +2450,16 @@ conditionalSetter.path = "conditional.txt";
 declare const unknownDescriptor: PropertyDescriptor;
 const unknownSetter = Object.defineProperty({}, "path", unknownDescriptor);
 unknownSetter.path = "unknown.txt";
+
+const openSetter = Object.defineProperty({}, "path", {
+  set: Deno.open.bind(Deno, "setter.txt", { write: true, create: true }),
+});
+openSetter.path = "ignored";
+
+const openComparatorValues = [2, 1];
+openComparatorValues.sort(
+  Deno.open.bind(Deno, "sort.txt", { write: true, create: true }),
+);
 `,
         "src/runtime-multi-effect-callables.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
@@ -2430,6 +2477,8 @@ unknownSetter.path = "unknown.txt";
         ["process", "unknownSetter.path setter"],
         ["server", "unknownSetter.path setter"],
         ["shared-cwd", "unknownSetter.path setter"],
+        ["filesystem-write", "openSetter.path setter"],
+        ["filesystem-write", "openComparatorValues.sort(comparator)"],
       ],
     );
   });
@@ -2442,10 +2491,19 @@ Object.freeze({ run: Deno.remove }).run("freeze.txt");
 Object.seal({ run: Deno.remove }).run("seal.txt");
 Object.preventExtensions({ run: Deno.remove }).run("prevent-extensions.txt");
 Object.setPrototypeOf({}, { run: Deno.remove }).run("prototype.txt");
+Object.setPrototypeOf(
+  { safe: () => undefined },
+  { run: Deno.remove },
+).safe();
+
+const target = { safe: () => undefined };
+Object.setPrototypeOf(target, { run: Deno.remove });
+target.safe();
+target.run("target-prototype.txt");
 `,
         "src/runtime-object-receiver-returns.test.ts",
       ).map((marker) => marker.effect),
-      Array.from({ length: 4 }, () => "filesystem-write"),
+      Array.from({ length: 5 }, () => "filesystem-write"),
     );
   });
 
