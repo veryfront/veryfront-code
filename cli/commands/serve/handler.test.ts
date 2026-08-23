@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { parseCliArgs } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
+import { DEFAULT_DEV_SERVER_PORT } from "#cli/utils";
 import { createInMemoryHostRuntime } from "#veryfront/platform/compat/process.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -107,6 +108,41 @@ describe("commands/serve/handler", () => {
         assertEquals(parsed.success, true);
         assertExists(parsed.data);
         assertEquals(parsed.data.port, 8081);
+      });
+
+      it("rejects malformed and out-of-range environment ports", () => {
+        for (const value of ["3001abc", "-1", "0", "65536", "", "1e3"]) {
+          const parsed = parseServeArgs({ _: ["serve"] }, serveHost({ PORT: value }));
+
+          assertEquals(parsed.success, true, `PORT=${JSON.stringify(value)} parses`);
+          assertExists(parsed.data);
+          assertEquals(
+            parsed.data.port,
+            DEFAULT_DEV_SERVER_PORT,
+            `PORT=${JSON.stringify(value)} falls back`,
+          );
+        }
+      });
+
+      it("accepts trimmed environment ports at the valid boundaries", () => {
+        for (const [value, expected] of [["1", 1], ["65535", 65535], [" 3001 ", 3001]] as const) {
+          const parsed = parseServeArgs({ _: ["serve"] }, serveHost({ PORT: value }));
+
+          assertEquals(parsed.success, true, `PORT=${JSON.stringify(value)} parses`);
+          assertExists(parsed.data);
+          assertEquals(parsed.data.port, expected, `PORT=${JSON.stringify(value)} is accepted`);
+        }
+      });
+
+      it("falls through an invalid PORT to a valid VERYFRONT_PORT", () => {
+        const parsed = parseServeArgs(
+          { _: ["serve"] },
+          serveHost({ PORT: "invalid", VERYFRONT_PORT: "4322" }),
+        );
+
+        assertEquals(parsed.success, true, "parsing succeeds");
+        assertExists(parsed.data);
+        assertEquals(parsed.data.port, 4322, "the valid lower-precedence port is used");
       });
     });
 

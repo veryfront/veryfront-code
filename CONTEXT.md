@@ -119,9 +119,9 @@ The single owner of how framework code sees the process it runs in:
 `src/platform/compat/process/host-runtime.ts` (`HostRuntime`). It covers
 environment variables, the working directory, command-line arguments, process
 exit, and termination signals, nothing else. CLI command handlers and shared
-CLI helpers consult it through an optional `host` parameter that defaults to
-the live adapter (`options.host ?? liveHostRuntime()`), the same shape as
-`projectDir ?? cwd()`. There are exactly two adapters: `liveHostRuntime()`
+CLI helpers receive it as a positional `host` parameter that defaults to the
+live adapter (`parseServeArgs(args, host: HostRuntime = liveHostRuntime())`).
+There are exactly two adapters: `liveHostRuntime()`
 delegates to the cross-runtime compat functions and is the production path;
 `createInMemoryHostRuntime()` holds an isolated env map, a fixed cwd and argv,
 recorded exits, and signal subscribers a test fires itself. Code that takes a

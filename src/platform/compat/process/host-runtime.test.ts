@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getEnv } from "./env.ts";
 import {
@@ -132,7 +137,10 @@ describe("platform/compat/process/host-runtime", () => {
 
   describe("liveHostRuntime", () => {
     it("is a single shared instance", () => {
-      assert(liveHostRuntime() === liveHostRuntime(), "the live host is a singleton");
+      const first = liveHostRuntime();
+      const second = liveHostRuntime();
+
+      assertStrictEquals(first, second, "the live host is a singleton");
     });
 
     it("reads and writes the same environment as getEnv", () => {

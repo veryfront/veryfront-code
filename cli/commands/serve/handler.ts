@@ -4,19 +4,8 @@ import { DEFAULT_DEV_SERVER_PORT } from "#cli/utils";
 import { ServerModeSchema } from "#cli/shared/types";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
+import { resolveEnvironmentPort } from "#cli/shared/port-env";
 import type { ParsedArgs } from "#cli/shared/types";
-
-function readPortEnv(host: HostRuntime, name: string, fallback: number): number {
-  const value = host.env.get(name);
-  if (value === undefined) return fallback;
-  const port = Number.parseInt(value, 10);
-  return Number.isNaN(port) ? fallback : port;
-}
-
-function getDefaultServePort(host: HostRuntime): number {
-  const veryfrontPort = readPortEnv(host, "VERYFRONT_PORT", DEFAULT_DEV_SERVER_PORT);
-  return readPortEnv(host, "PORT", veryfrontPort);
-}
 
 function getDefaultBindAddress(host: HostRuntime): string {
   return host.env.get("BIND_ADDRESS")?.trim() || "0.0.0.0";
@@ -63,7 +52,7 @@ export function parseServeArgs(
     data: {
       ...result.data,
       port: args.port === undefined && args.p === undefined
-        ? getDefaultServePort(host)
+        ? resolveEnvironmentPort(host, DEFAULT_DEV_SERVER_PORT)
         : result.data.port,
       hostname: args.hostname === undefined && args.host === undefined
         ? getDefaultBindAddress(host)

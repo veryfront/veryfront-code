@@ -119,7 +119,7 @@ describe("commands/dev/handler", () => {
       if (result.success) assertEquals(result.data.port, 3000, "garbage falls back");
     });
 
-    it("rejects PORT with trailing garbage (PORT=3001abc) — full string must be digits", () => {
+    it("rejects PORT with trailing garbage because the full string must be digits", () => {
       const result = parseDevWithEnv(["dev"], { PORT: "3001abc" });
       assertEquals(result.success, true, "parsing succeeds");
       if (result.success) assertEquals(result.data.port, 3000, "no prefix parsing");
