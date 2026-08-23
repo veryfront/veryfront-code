@@ -3299,6 +3299,10 @@ const own = { run: Deno.remove };
 Object.defineProperty(own, "run", { enumerable: true });
 own.run("own.txt");
 
+const hiddenOwn = Object.setPrototypeOf({}, prototype);
+Object.defineProperty(hiddenOwn, "run", { value: Deno.remove });
+Object.assign({}, hiddenOwn).run("hidden-own.txt");
+
 const blockedObject = Object.setPrototypeOf(
   Object.preventExtensions({}),
   prototype,

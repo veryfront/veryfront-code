@@ -5698,17 +5698,19 @@ function runtimeDescriptorMutationAttributes(
   const fields = runtimeDescriptorDefinedFields(descriptor);
   if (!fields) return {};
   const existing = runtimePropertyResolution(target, property, true);
-  const definitelyAbsent = existing.defaultMayRun &&
-    runtimeOwnPropertyDefinitelyAbsent(target, property);
+  const definitelyAbsent = runtimeOwnPropertyDefinitelyAbsent(
+    target,
+    property,
+  );
   const attribute = (
     field: "configurable" | "enumerable",
   ): boolean | undefined =>
     fields.has(field)
       ? runtimeDescriptorBooleanField(descriptor, field)
-      : !existing.defaultMayRun
-      ? existing[field]
       : definitelyAbsent
       ? false
+      : !existing.defaultMayRun
+      ? existing[field]
       : undefined;
   return {
     configurable: attribute("configurable"),
