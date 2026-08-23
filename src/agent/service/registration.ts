@@ -236,12 +236,14 @@ function getErrorMessage(error: unknown): string {
 const HEARTBEAT_MAX_ATTEMPTS = 3;
 /** Backoff before the first retry when the heartbeat interval leaves room for it. */
 const HEARTBEAT_RETRY_BASE_DELAY_MS = 250;
+/** Minimum time allowed for a control-plane heartbeat attempt. */
+const HEARTBEAT_MIN_ATTEMPT_TIMEOUT_MS = 5_000;
 /**
  * Share of one heartbeat interval the retry backoff may occupy.
  *
  * This bounds only the waits between attempts. Each request has its own
- * interval-sized deadline, so a complete retry sequence can still outlive one
- * interval. The in-flight guard below prevents overlap in that case.
+ * interval-derived deadline, so a complete retry sequence can still outlive
+ * one interval. The in-flight guard below prevents overlap in that case.
  */
 const HEARTBEAT_RETRY_BUDGET_RATIO = 0.25;
 
@@ -496,13 +498,11 @@ async function heartbeatAgentPushRuntimeService(
   return await retryWithBackoff((signal) => sendHeartbeatRequest(input, fetchImpl, signal), {
     maxAttempts: schedule.maxAttempts,
     abortSignal: options.abortSignal,
-    // One interval is the deadline for a single attempt. A heartbeat that has
-    // not answered by the time the next one is due is not slow, it is gone, and
-    // without a deadline a hung request never fails, so the failure counter
-    // never advances and the service looks alive to itself while doing nothing.
-    // Deriving the deadline from the configured interval keeps the two in step:
-    // raise the interval for a slow link and the deadline moves with it.
-    timeoutMs: input.heartbeatIntervalMs,
+    // Derive the deadline from the configured interval, but keep enough room
+    // for a known-valid slow control-plane response. Raising the interval for a
+    // slower link still raises the deadline, while the floor prevents a short
+    // interval from falsely escalating a healthy service.
+    timeoutMs: Math.max(input.heartbeatIntervalMs, HEARTBEAT_MIN_ATTEMPT_TIMEOUT_MS),
     computeDelay: (attempt) => schedule.delaysMs[attempt] ?? 0,
     shouldRetry: isRetryableHeartbeatFailure,
     onRetry: ({ error, attempt, delay }) => {

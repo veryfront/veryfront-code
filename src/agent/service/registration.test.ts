@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { waitFor } from "#veryfront/testing";
+import { FakeTime } from "#std/testing/time";
 import { NETWORK_ERROR } from "#veryfront/errors";
 import {
   type AgentServiceRegistrationLogger,
@@ -461,10 +462,12 @@ describe("agent/agent-service-registration heartbeat retry", () => {
   });
 
   it("times out a permanently hung heartbeat and escalates in bounded time", async () => {
+    using time = new FakeTime();
     const intervalMs = 20;
     let heartbeatRequests = 0;
     let inFlight = 0;
     let maxConcurrent = 0;
+    let lastHeartbeatSignal: AbortSignal | null | undefined;
     const log = recordingLogger();
 
     const fetch: typeof globalThis.fetch = (input, init) => {
@@ -475,6 +478,7 @@ describe("agent/agent-service-registration heartbeat retry", () => {
       inFlight++;
       maxConcurrent = Math.max(maxConcurrent, inFlight);
       const signal = init?.signal;
+      lastHeartbeatSignal = signal;
       return new Promise<Response>((_resolve, reject) => {
         const abort = () => {
           inFlight--;
@@ -489,16 +493,16 @@ describe("agent/agent-service-registration heartbeat retry", () => {
       lifecycleOptions(fetch, { heartbeatIntervalMs: intervalMs, logger: log.logger }),
     );
 
-    const escalationBudgetMs = 1_500;
-    const startedAt = Date.now();
+    const escalationBudgetMs = 100_000;
+    const startedAt = time.now;
     try {
-      await waitFor(() => log.errors.length > 0, {
-        timeout: escalationBudgetMs,
-        interval: 10,
-        message: "hung heartbeat attempts never reached persistent-failure escalation",
-      });
+      for (let step = 0; step < 30 && log.errors.length === 0; step++) {
+        await time.tickAsync(5_001);
+        await time.runMicrotasks();
+      }
+      assert(log.errors.length > 0, "hung heartbeat attempts never escalated");
       assert(
-        Date.now() - startedAt < escalationBudgetMs,
+        time.now - startedAt < escalationBudgetMs,
         "hung heartbeat escalation exceeded its bounded test budget",
       );
       assertEquals(
@@ -511,26 +515,26 @@ describe("agent/agent-service-registration heartbeat retry", () => {
         "three failed ticks must each exhaust the three-attempt retry policy",
       );
       assertEquals(maxConcurrent, 1, "timeouts must preserve the in-flight guard");
+      await time.tickAsync(intervalMs);
+      await time.runMicrotasks();
     } finally {
+      assertEquals(lastHeartbeatSignal?.aborted, false, "teardown needs an active hung request");
       lifecycle.stop();
-      await waitFor(() => inFlight === 0, {
-        timeout: 1_000,
-        interval: 10,
-        message: "stop() did not abort the hung heartbeat request",
-      });
+      for (let turn = 0; turn < 5 && inFlight > 0; turn++) {
+        await time.runMicrotasks();
+      }
+      assertEquals(lastHeartbeatSignal?.aborted, true, "stop() did not abort the hung request");
     }
   });
 
-  it("leaves healthy and intermittently slow heartbeats alone", async () => {
-    // The deadline is one interval, so a heartbeat that answers inside its own
-    // interval must never be cut off. This is the false-positive guard: an
-    // eager timeout would escalate a merely slow control plane.
-    // The slow answer sits at 40% of the deadline, far enough inside it that a
-    // loaded runner cannot push it over, and far enough outside a quarter of
-    // the interval that an over-eager deadline would still be caught.
-    const intervalMs = 500;
-    const slowLatencyMs = 200;
+  it("lets a known-valid slow heartbeat finish with a short configured interval", async () => {
+    // The control plane has been seen answering in about 2.7s while degraded.
+    // A short heartbeat interval must not turn that known-valid latency into a
+    // persistent-failure escalation.
+    const intervalMs = 100;
+    const slowLatencyMs = 3_000;
     let heartbeatRequests = 0;
+    let completedHeartbeats = 0;
     let inFlight = 0;
     const log = recordingLogger();
 
@@ -539,8 +543,6 @@ describe("agent/agent-service-registration heartbeat retry", () => {
         return Promise.resolve(jsonResponse(serviceResponse));
       }
       heartbeatRequests++;
-      // Alternate a fast answer with one that eats most of the interval.
-      const latencyMs = heartbeatRequests % 2 === 0 ? slowLatencyMs : 5;
       const signal = init?.signal;
       inFlight++;
       return new Promise<Response>((resolve, reject) => {
@@ -548,9 +550,10 @@ describe("agent/agent-service-registration heartbeat retry", () => {
         // early actually shows up here instead of being answered late anyway.
         const timer = setTimeout(() => {
           signal?.removeEventListener("abort", onAbort);
+          completedHeartbeats++;
           inFlight--;
           resolve(jsonResponse(serviceResponse));
-        }, latencyMs);
+        }, slowLatencyMs);
         function onAbort() {
           clearTimeout(timer);
           inFlight--;
@@ -565,29 +568,23 @@ describe("agent/agent-service-registration heartbeat retry", () => {
       lifecycleOptions(fetch, { heartbeatIntervalMs: intervalMs, logger: log.logger }),
     );
 
-    await waitFor(() => heartbeatRequests >= 4, {
-      timeout: 10_000,
-      interval: 10,
-      message: "the heartbeat never issued enough requests to observe the deadline",
-    });
-    lifecycle.stop();
-    await waitFor(() => inFlight === 0, {
-      timeout: 10_000,
-      interval: 10,
-      message: "in-flight heartbeat requests never settled after stop()",
-    });
-
-    assertEquals(
-      log.errors.length,
-      0,
-      "a heartbeat answering inside its interval must never escalate",
-    );
-    assertEquals(
-      log.warnings.length,
-      0,
-      `a heartbeat answering inside its interval must not retry or skip, saw ` +
-        `${log.warnings.map((entry) => entry.message).join(", ")}`,
-    );
+    try {
+      await waitFor(() => completedHeartbeats > 0 || log.errors.length > 0, {
+        timeout: 10_000,
+        interval: 10,
+        message: "the slow heartbeat neither completed nor escalated",
+      });
+      assertEquals(completedHeartbeats, 1, "a known-valid slow heartbeat must complete");
+      assertEquals(heartbeatRequests, 1, "a slow success must not be retried");
+      assertEquals(log.errors.length, 0, "a slow success must not escalate");
+    } finally {
+      lifecycle.stop();
+      await waitFor(() => inFlight === 0, {
+        timeout: 1_000,
+        interval: 10,
+        message: "stop() did not abort the slow heartbeat request",
+      });
+    }
   });
 
   it("lets a slow-but-successful heartbeat finish at the production interval", async () => {
@@ -632,7 +629,8 @@ describe("agent/agent-service-registration heartbeat retry", () => {
     // Driven directly rather than through the interval: this is about the
     // deadline on one attempt, not about scheduling. Nothing here asserts on
     // escalation, because escalation is counted in the interval tick and a 30s
-    // interval never fires inside this test. The 500ms test above covers that.
+    // interval never fires inside this test. The short-interval test above
+    // covers that.
     await lifecycle.heartbeat();
     lifecycle.stop();
 
