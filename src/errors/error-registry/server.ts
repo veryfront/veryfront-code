@@ -152,6 +152,15 @@ export const RAG_STORE_UNAVAILABLE = defineError({
   suggestion: "Check storage availability, permissions, and concurrent operations, then retry",
 });
 
+export const SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE = defineError({
+  slug: "source-snapshot-freshness-unavailable",
+  category: "SERVER",
+  status: 503,
+  title: "Source snapshot freshness cannot be established",
+  suggestion:
+    "Implement ensureSourceSnapshotFresh() or refreshSourceSnapshot() on the filesystem adapter that serves this mutable source",
+});
+
 /** Registry fragment for SERVER errors (slug → definition). */
 export const SERVER_REGISTRY = {
   "port-in-use": PORT_IN_USE,
@@ -172,4 +181,5 @@ export const SERVER_REGISTRY = {
   "fallback-exhausted": FALLBACK_EXHAUSTED,
   "rag-store-corrupt": RAG_STORE_CORRUPT,
   "rag-store-unavailable": RAG_STORE_UNAVAILABLE,
+  "source-snapshot-freshness-unavailable": SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE,
 } as const;

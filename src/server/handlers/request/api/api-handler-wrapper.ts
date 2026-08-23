@@ -5,11 +5,8 @@ import type {
   HandlerPriority,
   HandlerResult,
 } from "../../types.ts";
-import {
-  ensurePreviewSourceSnapshotFresh,
-  getApiHandler,
-  withApiHandler,
-} from "./pages-api-handler.ts";
+import { getApiHandler, withApiHandler } from "./pages-api-handler.ts";
+import { ensurePreviewSourceSnapshotFresh } from "../source-snapshot-freshness.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ensureProjectDiscovery } from "./project-discovery.ts";
