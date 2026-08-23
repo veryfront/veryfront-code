@@ -16,6 +16,7 @@ import {
   buildDenoSuiteCommandArgs,
   parseDenoSuiteArgs,
 } from "./run-deno-suite.ts";
+import { LEAF_TEST_SUITES } from "./suites.ts";
 import {
   formatSuitePlan,
   planSuiteFiles,
@@ -301,12 +302,15 @@ describe("migration command surface", () => {
   });
 });
 
-// These roots must match UNIT_ROOTS in run-suite.ts. They previously listed only
-// src/cli/templates, which pinned the planner to the legacy commands' own blind
-// spot: extensions/ and react/ are owned by the unit suite but no runner
-// selected them. Parity with a legacy command is only worth asserting where the
-// legacy command was right.
-const LEGACY_UNIT_ROOTS = ["src", "cli", "templates", "extensions", "react"];
+// Read from the suite registry rather than restated here. A second hand-kept
+// copy of the roots is what let ownership and execution drift in the first
+// place: it would keep passing while a newly owned root went unplanned.
+// scripts/ is excluded for the reason documented on UNPLANNABLE_UNIT_ROOTS in
+// run-suite.ts -- deno.json's root `exclude` hides it from the main config.
+const LEGACY_UNIT_ROOTS = (LEAF_TEST_SUITES
+  .find((suite) => suite.id === "unit")?.pathSelectors ?? [])
+  .filter((root) => root !== "scripts/")
+  .map((root) => root.replace(/\/$/, ""));
 
 async function legacyUnitParallelFiles(): Promise<string[]> {
   const files = await collectLegacyTestFiles(LEGACY_UNIT_ROOTS);
