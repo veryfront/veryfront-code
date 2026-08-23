@@ -4849,6 +4849,18 @@ function mutationCallResultRuntimeBinding(
     const canonicalName =
       `${invocation.binding.receiver}.${invocation.binding.method}`;
     if (invocation.binding.receiver === "Object") {
+      for (
+        const accessor of localMutationAccessorDescriptors(
+          canonicalName,
+          invocation.args,
+        )
+      ) {
+        result = clearRuntimeDescriptorResultProperty(
+          result,
+          accessor.property,
+          accessor.descriptor,
+        );
+      }
       if (canonicalName === "Object.setPrototypeOf") {
         result = appendRuntimeMutationResultProperty(
           result,
@@ -4885,12 +4897,15 @@ function mutationCallResultRuntimeBinding(
               [invocation.args[0], source],
             )
           ) {
+            const preservesSetter = entry.property !== undefined &&
+              runtimePropertySetterBinding(result, entry.property) !==
+                undefined;
             result = appendRuntimeMutationResultProperty(
               result,
               entry.property,
               localMutationAssignedEntryBinding(entry, imports, scopes),
-              false,
-              entry.definiteOverwrite === true,
+              preservesSetter,
+              entry.definiteOverwrite === true && !preservesSetter,
             );
           }
         }
@@ -5180,22 +5195,19 @@ function localMutationAssignedEntries(
     return [{
       property: literalPropertyName(args[1]),
       expression: runtimeDescriptorValueExpression(args[2]),
-      definiteOverwrite: true,
+      definiteOverwrite: runtimeDescriptorDefinesField(args[2], "value"),
     }];
   }
   if (canonicalName === "Reflect.set") {
     return [{
       property: literalPropertyName(args[1]),
       expression: args[2],
-      definiteOverwrite: true,
     }];
   }
   if (canonicalName === "Reflect.deleteProperty") {
     return [{
       property: literalPropertyName(args[1]),
       expression: undefined,
-      definiteOverwrite: true,
-      clearsAccessors: true,
     }];
   }
   return [];
@@ -5273,7 +5285,10 @@ function localMutationResultAssignedEntries(
         entries.push({
           property: propertyName,
           expression: runtimeDescriptorValueExpression(property.value),
-          definiteOverwrite: true,
+          definiteOverwrite: runtimeDescriptorDefinesField(
+            property.value,
+            "value",
+          ),
         });
       }
       if (entries.length === properties.length) return entries;
@@ -5550,16 +5565,72 @@ function clearRuntimeDescriptorProperty(
   scopes: readonly Scope[],
 ): void {
   if (property === undefined) return;
+  const targetBinding = runtimeBindingForExpression(target, imports, scopes);
+  if (!targetBinding) return;
+  const retained = retainedRuntimeDescriptorBinding(
+    targetBinding,
+    property,
+    descriptor,
+  );
+  if (!retained.changed) return;
   bindRuntimeNamedPropertyMutationBinding(
     target,
     property,
-    undefined,
+    retained.binding,
     descriptor,
     imports,
     scopes,
     true,
     true,
   );
+}
+
+function clearRuntimeDescriptorResultProperty(
+  target: RuntimeBinding,
+  property: string | undefined,
+  descriptor: unknown,
+): RuntimeBinding {
+  if (property === undefined) return target;
+  const retained = retainedRuntimeDescriptorBinding(
+    target,
+    property,
+    descriptor,
+  );
+  return retained.changed
+    ? appendRuntimeMutationResultProperty(
+      target,
+      property,
+      retained.binding,
+      false,
+      true,
+    )
+    : target;
+}
+
+function retainedRuntimeDescriptorBinding(
+  target: RuntimeBinding,
+  property: string,
+  descriptor: unknown,
+): { readonly changed: boolean; readonly binding?: RuntimeBinding } {
+  const fields = runtimeDescriptorDefinedFields(descriptor);
+  if (!fields || !["value", "get", "set"].some((field) => fields.has(field))) {
+    return { changed: false };
+  }
+  const existing = runtimePropertyResolution(target, property, true).binding;
+  if (fields.has("value")) return { changed: true };
+  return {
+    changed: true,
+    binding: unionRuntimeBindings(
+      flattenRuntimeBindings(existing).filter((candidate) =>
+        candidate.kind === "property-setter"
+          ? !fields.has("set")
+          : candidate.kind === "property-getter-effect" ||
+              candidate.kind === "property-getter-value"
+          ? !fields.has("get")
+          : false
+      ),
+    ),
+  };
 }
 
 function runtimeDescriptorAccessorExpressions(descriptor: unknown): {
@@ -5679,6 +5750,31 @@ function runtimeDescriptorValueExpression(descriptor: unknown): unknown {
       : undefined;
   }
   return valueExpression;
+}
+
+function runtimeDescriptorDefinesField(
+  descriptor: unknown,
+  field: string,
+): boolean {
+  return runtimeDescriptorDefinedFields(descriptor)?.has(field) === true;
+}
+
+function runtimeDescriptorDefinedFields(
+  descriptor: unknown,
+): ReadonlySet<string> | undefined {
+  const value = unwrapExpression(descriptor);
+  if (!value || value.type !== "ObjectExpression") return undefined;
+  const fields = new Set<string>();
+  for (
+    const property of Array.isArray(value.properties) ? value.properties : []
+  ) {
+    if (!isNode(property) || property.type === "SpreadElement") {
+      return undefined;
+    }
+    const name = staticObjectPropertyName(property);
+    if (name !== undefined) fields.add(name);
+  }
+  return fields;
 }
 
 function runtimeFunctionReturnExpressions(value: Node): {
