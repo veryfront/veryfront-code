@@ -1,13 +1,7 @@
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import {
-  compareBaseline,
-  countsByRuleAndFile,
-  findAntiSlop,
-  parseBaseline,
-  ParseFailure,
-  toRepoRelative,
-} from "./audit-anti-slop.ts";
+import { findAntiSlop, findAntiSlopFindings } from "./audit-anti-slop.ts";
+import { ParseFailure } from "./ratchet.ts";
 
 const rulesOf = (source: string, file = "a.ts") =>
   findAntiSlop(source, file).map((finding) => finding.rule);
@@ -130,7 +124,10 @@ describe("no-object-parameters", () => {
 describe("findAntiSlop parsing", () => {
   it("parses JSX in .tsx sources", () => {
     assertEquals(
-      rulesOf(`export const El = () => <div>{x as unknown as string}</div>;`, "a.tsx"),
+      rulesOf(
+        `export const El = () => <div>{x as unknown as string}</div>;`,
+        "a.tsx",
+      ),
       ["no-chained-type-assertions"],
     );
   });
@@ -144,58 +141,27 @@ describe("findAntiSlop parsing", () => {
   });
 });
 
-describe("baseline mechanics", () => {
-  it("counts findings per rule per file, sorted", () => {
-    const counts = countsByRuleAndFile([
-      { rule: "no-object-parameters", file: "b.ts", line: 1, detail: "v" },
-      { rule: "no-chained-type-assertions", file: "b.ts", line: 2, detail: "2" },
-      { rule: "no-chained-type-assertions", file: "a.ts", line: 3, detail: "2" },
-      { rule: "no-chained-type-assertions", file: "a.ts", line: 9, detail: "2" },
-    ]);
-
-    assertEquals(counts, {
-      "no-chained-type-assertions": { "a.ts": 2, "b.ts": 1 },
-      "no-object-parameters": { "b.ts": 1 },
-    });
-  });
-
-  it("flags per-file growth as a regression even for a known file", () => {
-    const { regressions, improvements } = compareBaseline(
-      { "no-chained-type-assertions": { "a.ts": 3 } },
-      { "no-chained-type-assertions": { "a.ts": 2 } },
+describe("findAntiSlopFindings", () => {
+  it("groups each finding under its rule for the per-rule baseline", () => {
+    assertEquals(
+      findAntiSlopFindings(
+        `type Payload = unknown;\nfunction f(value: object) {}`,
+        "a.ts",
+      ),
+      [
+        {
+          file: "a.ts",
+          line: 1,
+          message: "no-unknown-type-aliases (Payload)",
+          group: "no-unknown-type-aliases",
+        },
+        {
+          file: "a.ts",
+          line: 2,
+          message: "no-object-parameters (value)",
+          group: "no-object-parameters",
+        },
+      ],
     );
-
-    assertEquals(regressions, ["no-chained-type-assertions a.ts: 2 -> 3"]);
-    assertEquals(improvements, []);
-  });
-
-  it("flags shrinkage and disappearance as improvements", () => {
-    const { regressions, improvements } = compareBaseline(
-      {},
-      { "no-object-parameters": { "a.ts": 1 } },
-    );
-
-    assertEquals(regressions, []);
-    assertEquals(improvements, ["no-object-parameters a.ts: 1 -> 0"]);
-  });
-
-  it("flags a new rule entry for an unlisted file as a regression", () => {
-    const { regressions } = compareBaseline(
-      { "no-unknown-type-aliases": { "new.ts": 1 } },
-      {},
-    );
-
-    assertEquals(regressions, ["no-unknown-type-aliases new.ts: 0 -> 1"]);
-  });
-
-  it("rejects malformed baselines", () => {
-    assertThrows(() => parseBaseline([], "p"));
-    assertThrows(() => parseBaseline({ rule: 1 }, "p"));
-    assertThrows(() => parseBaseline({ rule: { "a.ts": 0 } }, "p"));
-    assertThrows(() => parseBaseline({ rule: { "a.ts": 1.5 } }, "p"));
-  });
-
-  it("normalises baseline keys to posix repo-relative paths", () => {
-    assertEquals(toRepoRelative("/repo/src\\x.ts", "/repo/"), "src/x.ts");
   });
 });

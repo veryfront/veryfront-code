@@ -1,12 +1,10 @@
 import { assertEquals } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
-import {
-  countSkippedTests,
-  isTestFile,
-  isWithinBaseline,
-} from "./check-skipped-tests-baseline.ts";
+import { findSkippedTests } from "./check-skipped-tests-baseline.ts";
 
-describe("countSkippedTests", () => {
+const count = (source: string) => findSkippedTests(source, "a.test.ts").length;
+
+describe("findSkippedTests", () => {
   it("counts method-form skips and ignores", () => {
     const source = [
       'it.skip("a", () => {});',
@@ -15,7 +13,7 @@ describe("countSkippedTests", () => {
       'Deno.test.ignore("d", () => {});',
       'it.ignore("e", () => {});',
     ].join("\n");
-    assertEquals(countSkippedTests(source), 5);
+    assertEquals(count(source), 5);
   });
 
   it("counts option-form skip/ignore: true", () => {
@@ -23,7 +21,18 @@ describe("countSkippedTests", () => {
       'it({ name: "a", skip: true }, () => {});',
       'describe({ name: "b", ignore: true }, () => {});',
     ].join("\n");
-    assertEquals(countSkippedTests(source), 2);
+    assertEquals(count(source), 2);
+  });
+
+  it("reports the line of each skip", () => {
+    const source = [
+      "/**",
+      " * header comment",
+      " */",
+      'it("a", () => {});',
+      'it.skip("b", () => {});',
+    ].join("\n");
+    assertEquals(findSkippedTests(source, "a.test.ts").map((f) => f.line), [5]);
   });
 
   it("does not count active tests or look-alikes", () => {
@@ -34,7 +43,7 @@ describe("countSkippedTests", () => {
       "const skipList = [];",
       "obj.skip();", // not a test runner method chain on it/describe/test
     ].join("\n");
-    assertEquals(countSkippedTests(source), 0);
+    assertEquals(count(source), 0);
   });
 
   it("ignores skips inside comments and string literals", () => {
@@ -43,22 +52,6 @@ describe("countSkippedTests", () => {
       'const s = "it.skip( reference";',
       "const t = `describe.ignore( in template`;",
     ].join("\n");
-    assertEquals(countSkippedTests(source), 0);
-  });
-});
-
-describe("isWithinBaseline", () => {
-  it("allows counts at or below the baseline and rejects growth", () => {
-    assertEquals(isWithinBaseline(22, 22), true);
-    assertEquals(isWithinBaseline(21, 22), true);
-    assertEquals(isWithinBaseline(23, 22), false);
-  });
-});
-
-describe("isTestFile", () => {
-  it("matches .test.ts and .test.tsx only", () => {
-    assertEquals(isTestFile("src/foo.test.ts"), true);
-    assertEquals(isTestFile("src/foo.test.tsx"), true);
-    assertEquals(isTestFile("src/foo.ts"), false);
+    assertEquals(count(source), 0);
   });
 });

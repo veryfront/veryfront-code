@@ -9,22 +9,22 @@
  * skip is either fixed and re-enabled, or deleted with its reason recorded in
  * the commit/issue.
  *
- * This check counts skipped tests across the suite and fails if the total grows
- * beyond the baseline below. It does NOT forbid skips outright (some are
- * legitimately blocked on upstream fixes) — it just stops the pile from growing
- * silently. When you re-enable or remove skips, the task prints the new total
- * so you can lower the baseline and lock in the win.
+ * This check counts skipped tests across every test file under the `deno.json`
+ * test roots and fails if the total grows beyond the baseline below. It does
+ * NOT forbid skips outright (some are legitimately blocked on upstream fixes) —
+ * it just stops the pile from growing silently. When you re-enable or remove
+ * skips, the task prints the new total so you can lower the baseline and lock
+ * in the win (`deno task lint:skipped-tests:update` writes it for you).
  */
 
-const SCAN_ROOTS = [
-  "src",
-  "cli",
-  "templates",
-  "tests",
-  "react",
-  "extensions",
-  "scripts",
-] as const;
+import {
+  type Finding,
+  findLineMatches,
+  isTestFile,
+  type RatchetSpec,
+  runRatchet,
+  stripCommentsAndStrings,
+} from "./ratchet.ts";
 
 // Lower this when you re-enable or delete skipped tests. Raising it means new
 // dead coverage is being added — prefer fixing or deleting the test instead.
@@ -35,81 +35,32 @@ const METHOD_FORM = /\b(?:it|describe|test|Deno\.test)\.(?:skip|ignore)\s*\(/g;
 // Option form: bare `skip: true` / `ignore: true` in a test options object.
 const OPTION_FORM = /\b(?:skip|ignore)\s*:\s*true\b/g;
 
-/** Strip comments and string/template literals so they can't trigger false matches. */
-function stripCommentsAndStrings(text: string): string {
-  let out = text.replace(/\/\*[\s\S]*?\*\//g, ""); // block comments
-  out = out.replace(/(^|[^:])\/\/[^\n]*/g, "$1"); // line comments (keep http:// etc.)
-  out = out.replace(/`(?:\\.|[^`])*`/gs, "``"); // template literals
-  out = out.replace(/'(?:\\.|[^'\n])*'/g, "''"); // single-quoted
-  out = out.replace(/"(?:\\.|[^"\n])*"/g, '""'); // double-quoted
-  return out;
-}
-
-/** Count skipped/ignored tests (method and option forms) in `source`. */
-export function countSkippedTests(source: string): number {
+/** Every skipped/ignored test (method and option forms) in `source`. */
+export function findSkippedTests(source: string, file: string): Finding[] {
   const stripped = stripCommentsAndStrings(source);
-  const method = stripped.match(METHOD_FORM)?.length ?? 0;
-  const option = stripped.match(OPTION_FORM)?.length ?? 0;
-  return method + option;
+  return [
+    ...findLineMatches(stripped, file, METHOD_FORM, (match) => match[0].trim()),
+    ...findLineMatches(stripped, file, OPTION_FORM, (match) => match[0]),
+  ];
 }
 
-export function isTestFile(path: string): boolean {
-  return path.endsWith(".test.ts") || path.endsWith(".test.tsx");
-}
-
-export function isWithinBaseline(count: number, baseline: number): boolean {
-  return count <= baseline;
-}
-
-async function walk(
-  dir: string,
-  onFile: (path: string) => Promise<void>,
-): Promise<void> {
-  let entries: AsyncIterable<Deno.DirEntry>;
-  try {
-    entries = Deno.readDir(dir);
-  } catch (_) {
-    return; // expected: a scan root may not exist in every checkout
-  }
-  for await (const ent of entries) {
-    if (ent.name === "node_modules") continue;
-    const full = `${dir}/${ent.name}`;
-    if (ent.isDirectory) {
-      await walk(full, onFile);
-    } else if (ent.isFile && isTestFile(full)) {
-      await onFile(full);
-    }
-  }
-}
-
-async function main(): Promise<void> {
-  let total = 0;
-  for (const root of SCAN_ROOTS) {
-    await walk(root, async (path) => {
-      total += countSkippedTests(await Deno.readTextFile(path));
-    });
-  }
-
-  if (!isWithinBaseline(total, SKIPPED_TEST_BASELINE)) {
-    console.error(
-      `Skipped/ignored tests ${total} exceed baseline ${SKIPPED_TEST_BASELINE}. ` +
-        `Don't add new it.skip/it.ignore (or skip/ignore: true) — fix and ` +
-        `re-enable the test, or delete it and record why in the commit/issue.`,
-    );
-    Deno.exit(1);
-  }
-
-  if (total < SKIPPED_TEST_BASELINE) {
-    console.log(
-      `Skipped tests reduced to ${total} (baseline ${SKIPPED_TEST_BASELINE}). ` +
-        `Lower SKIPPED_TEST_BASELINE to ${total} in check-skipped-tests-baseline.ts to lock it in.`,
-    );
-    return;
-  }
-
-  console.log(`Skipped-test baseline ok: ${total}/${SKIPPED_TEST_BASELINE}.`);
-}
+export const spec: RatchetSpec = {
+  label: "Skipped tests",
+  task: "lint:skipped-tests",
+  scope: "test",
+  select: isTestFile,
+  scan: findSkippedTests,
+  baseline: {
+    kind: "total",
+    value: SKIPPED_TEST_BASELINE,
+    constant: "SKIPPED_TEST_BASELINE",
+    module: import.meta.url,
+  },
+  advice:
+    "Don't add new it.skip/it.ignore (or skip/ignore: true) — fix and re-enable " +
+    "the test, or delete it and record why in the commit/issue.",
+};
 
 if (import.meta.main) {
-  await main();
+  Deno.exit(await runRatchet(spec));
 }
