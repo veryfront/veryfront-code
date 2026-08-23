@@ -1748,6 +1748,20 @@ const boundPush = Array.prototype.push.bind(bound);
 boundPush(Deno.writeTextFile);
 const [, boundRun] = [...bound, () => undefined];
 boundRun("bound.txt", "x");
+
+const variableApplied = [() => undefined];
+const applyArgs = [Deno.writeTextFile];
+push.apply(variableApplied, applyArgs);
+const [, variableAppliedRun] = [...variableApplied, () => undefined];
+variableAppliedRun("variable-applied.txt", "x");
+
+const reflectVariableApplied = [() => undefined];
+Reflect.apply(Array.prototype.push, reflectVariableApplied, applyArgs);
+const [, reflectVariableAppliedRun] = [
+  ...reflectVariableApplied,
+  () => undefined,
+];
+reflectVariableAppliedRun("reflect-variable-applied.txt", "x");
 `,
         "src/runtime-array-mutators.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
@@ -1761,6 +1775,8 @@ boundRun("bound.txt", "x");
         ["filesystem-write", "appliedRun"],
         ["filesystem-write", "reflectAppliedRun"],
         ["filesystem-write", "boundRun"],
+        ["filesystem-write", "variableAppliedRun"],
+        ["filesystem-write", "reflectVariableAppliedRun"],
       ],
     );
     assertEquals(
@@ -1772,6 +1788,12 @@ function shadow(Array: { prototype: { push: { call(...args: unknown[]): void } }
   const [, run] = [...values, () => undefined];
   run("shadowed.txt", "x");
 }
+
+const overridden = [() => undefined];
+overridden.push = () => undefined;
+overridden.push(Deno.writeTextFile);
+const [, overriddenRun] = [...overridden, () => undefined];
+overriddenRun("overridden.txt", "x");
 `,
         "src/shadowed-array-mutator.test.ts",
       ),

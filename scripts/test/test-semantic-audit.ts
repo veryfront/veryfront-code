@@ -4055,7 +4055,13 @@ function arrayMutationInvocations(
   if (
     (callee.type === "MemberExpression" ||
       callee.type === "OptionalMemberExpression") &&
-    ARRAY_SHAPE_MUTATORS.has(memberProperty(callee) ?? "")
+    ARRAY_SHAPE_MUTATORS.has(memberProperty(callee) ?? "") &&
+    mayInvokeNativeArrayMutator(
+      callee.object,
+      memberProperty(callee) ?? "",
+      imports,
+      scopes,
+    )
   ) {
     invocations.push({ target: callee.object, values: args });
   }
@@ -4082,7 +4088,7 @@ function arrayMutationInvocations(
         target: mutation.boundTarget ?? invocation.arguments[1],
         values: [
           ...mutation.boundValues ?? [],
-          ...arrayExpressionArguments(invocation.arguments[2]),
+          ...arrayMutationApplyValues(invocation.arguments[2]),
         ],
       });
     }
@@ -4109,12 +4115,33 @@ function arrayMutationInvocations(
       values: [
         ...mutation.boundValues ?? [],
         ...(wrapper === "apply"
-          ? arrayExpressionArguments(args[1])
+          ? arrayMutationApplyValues(args[1])
           : args.slice(1)),
       ],
     });
   }
   return invocations;
+}
+
+function mayInvokeNativeArrayMutator(
+  receiver: unknown,
+  method: string,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): boolean {
+  return flattenRuntimeBindings(
+    runtimeBindingForExpression(receiver, imports, scopes),
+  ).some((candidate) =>
+    candidate.kind === "namespace-object" && candidate.shape === "array" &&
+    runtimePropertyResolution(candidate, method).defaultMayRun
+  );
+}
+
+function arrayMutationApplyValues(expression: unknown): readonly unknown[] {
+  const value = unwrapExpression(expression);
+  return value?.type === "ArrayExpression" && Array.isArray(value.elements)
+    ? value.elements
+    : [expression];
 }
 
 function arrayMutationMethodBindings(
@@ -5772,7 +5799,7 @@ function boundCallableRuntimeBinding(
   const binding = runtimeBindingForExpression(callee.object, imports, scopes);
   const args = Array.isArray(value.arguments) ? value.arguments : [];
   return unionRuntimeBindings(
-    flattenRuntimeBindings(binding).flatMap((candidate) => {
+    flattenRuntimeBindings(binding).flatMap((candidate): RuntimeBinding[] => {
       if (candidate.kind === "array-mutation-method") {
         return [{
           ...candidate,
