@@ -642,7 +642,14 @@ type RuntimeBinding =
   | { readonly kind: "shared-object"; readonly intrinsic?: string }
   | {
     readonly kind: "mutation-method";
-    readonly receiver: "Array" | "Object" | "Reflect";
+    readonly receiver: "Array";
+    readonly method: string;
+    readonly boundTarget?: unknown;
+    readonly boundValues?: readonly unknown[];
+  }
+  | {
+    readonly kind: "mutation-method";
+    readonly receiver: "Object" | "Reflect";
     readonly method: string;
   }
   | {
@@ -2024,7 +2031,10 @@ function conservativeRuntimeEffects(
   binding: RuntimeBinding | undefined,
 ): readonly SemanticEffect[] {
   const effects: SemanticEffect[] = [];
+  const visited = new Set<RuntimeBinding>();
   const visit = (candidate: RuntimeBinding): void => {
+    if (visited.has(candidate)) return;
+    visited.add(candidate);
     if (
       candidate.kind === "effect" || candidate.kind === "effect-object" ||
       candidate.kind === "constructor-effect"
@@ -2342,10 +2352,15 @@ function mutationMethodInvocations(
     return directBindings.map((binding) => ({
       binding,
       calleeName,
-      args,
+      args: binding.receiver === "Array"
+        ? [...binding.boundValues ?? [], ...args]
+        : args,
       target: binding.receiver === "Array" &&
-          (callee.type === "MemberExpression" ||
-            callee.type === "OptionalMemberExpression")
+          binding.boundTarget !== undefined
+        ? binding.boundTarget
+        : binding.receiver === "Array" &&
+            (callee.type === "MemberExpression" ||
+              callee.type === "OptionalMemberExpression")
         ? callee.object
         : args[0],
     }));
@@ -2362,12 +2377,17 @@ function mutationMethodInvocations(
     const target = unwrapExpression(invocation.arguments[0]);
     if (!target) return [];
     const invocationArgs = arrayExpressionArguments(invocation.arguments[2]);
+    const arrayInvocationArgs = mutationApplyArguments(
+      invocation.arguments[2],
+    );
     return mutationMethodBindings(target, imports, scopes).map((binding) => ({
       binding,
       calleeName: `${invocation.symbolPrefix}(${invocationSymbol(target)})`,
-      args: invocationArgs,
+      args: binding.receiver === "Array"
+        ? [...binding.boundValues ?? [], ...arrayInvocationArgs]
+        : invocationArgs,
       target: binding.receiver === "Array"
-        ? invocation.arguments[1]
+        ? binding.boundTarget ?? invocation.arguments[1]
         : invocationArgs[0],
     }));
   });
@@ -2384,14 +2404,28 @@ function mutationMethodInvocations(
   const invocationArgs = method === "apply"
     ? arrayExpressionArguments(args[1])
     : args.slice(1);
+  const arrayInvocationArgs = method === "apply"
+    ? mutationApplyArguments(args[1])
+    : invocationArgs;
   return mutationMethodBindings(callee.object, imports, scopes).map(
     (binding) => ({
       binding,
       calleeName: invocationSymbol(callee),
-      args: invocationArgs,
-      target: binding.receiver === "Array" ? args[0] : invocationArgs[0],
+      args: binding.receiver === "Array"
+        ? [...binding.boundValues ?? [], ...arrayInvocationArgs]
+        : invocationArgs,
+      target: binding.receiver === "Array"
+        ? binding.boundTarget ?? args[0]
+        : invocationArgs[0],
     }),
   );
+}
+
+function mutationApplyArguments(expression: unknown): readonly unknown[] {
+  const value = unwrapExpression(expression);
+  return value?.type === "ArrayExpression" && Array.isArray(value.elements)
+    ? value.elements
+    : [runtimeUnknownPropertyExpression(expression)];
 }
 
 function mutationMethodBindings(
@@ -3966,11 +4000,13 @@ function bindRuntimeAssignment(
   allowClearing: boolean,
 ): void {
   if (
-    node.type !== "AssignmentExpression" || node.operator !== "=" ||
+    node.type !== "AssignmentExpression" ||
+    !["=", "&&=", "||=", "??="].includes(String(node.operator)) ||
     !isNode(node.left)
   ) {
     return;
   }
+  const canClearPrevious = node.operator === "=" && allowClearing;
   const binding = runtimeBindingForExpression(node.right, imports, scopes);
   const assignedMayBeUndefined = expressionMayBeUndefined(
     node.right,
@@ -3983,7 +4019,7 @@ function bindRuntimeAssignment(
     node.right,
     imports,
     scopes,
-    allowClearing,
+    canClearPrevious,
     (name) => declaringScopeForName(name, scopes),
   );
   bindDefinitelyNonUndefinedPattern(
@@ -3992,7 +4028,7 @@ function bindRuntimeAssignment(
     assignedMayBeUndefined,
     imports,
     scopes,
-    allowClearing,
+    canClearPrevious,
     (name) => declaringScopeForName(name, scopes),
   );
   if (
@@ -4002,7 +4038,7 @@ function bindRuntimeAssignment(
       node.right,
       imports,
       scopes,
-      allowClearing,
+      canClearPrevious,
     )
   ) {
     return;
@@ -4013,11 +4049,11 @@ function bindRuntimeAssignment(
       binding,
       imports,
       scopes,
-      !allowClearing,
-      allowClearing,
+      !canClearPrevious,
+      canClearPrevious,
     );
   } else {
-    if (allowClearing) {
+    if (canClearPrevious) {
       clearCurrentScopeRuntimeAssignmentPattern(node.left, scopes);
     }
     bindRuntimePatternDefaults(
@@ -4030,8 +4066,8 @@ function bindRuntimeAssignment(
           defaultBinding,
           imports,
           scopes,
-          !allowClearing,
-          allowClearing,
+          !canClearPrevious,
+          canClearPrevious,
         ),
     );
   }
@@ -4991,6 +5027,7 @@ function appendRuntimePropertyOperation(
       return {
         kind: "namespace-object",
         shape: existing.shape,
+        exactArrayLength: updatedRuntimeArrayLength(existing, operation),
         properties: existing.properties,
         propertyOperations: [
           ...existing.propertyOperations.slice(0, -1),
@@ -5017,6 +5054,7 @@ function appendRuntimePropertyOperation(
     return {
       kind: "namespace-object",
       shape: existing.shape,
+      exactArrayLength: updatedRuntimeArrayLength(existing, operation),
       properties: existing.properties,
       propertyOperations: [...existing.propertyOperations, operation],
     };
@@ -5024,11 +5062,32 @@ function appendRuntimePropertyOperation(
   return {
     kind: "namespace-object",
     shape: existing?.kind === "namespace-object" ? existing.shape : undefined,
+    exactArrayLength: existing?.kind === "namespace-object"
+      ? updatedRuntimeArrayLength(existing, operation)
+      : undefined,
     properties: new Map(),
     propertyOperations: existing
       ? [{ kind: "spread", binding: existing }, operation]
       : [operation],
   };
+}
+
+function updatedRuntimeArrayLength(
+  existing: Extract<RuntimeBinding, { readonly kind: "namespace-object" }>,
+  operation: NamespacePropertyOperation,
+): number | undefined {
+  if (
+    existing.shape !== "array" || existing.exactArrayLength === undefined ||
+    operation.kind !== "define" || operation.name === "length"
+  ) {
+    return undefined;
+  }
+  const index = runtimeArrayIndex(operation.name);
+  if (index === undefined) return existing.exactArrayLength;
+  if (operation.preservesPrevious && index >= existing.exactArrayLength) {
+    return undefined;
+  }
+  return Math.max(existing.exactArrayLength, index + 1);
 }
 
 function bindRuntimeAssignmentPattern(
@@ -5977,17 +6036,29 @@ function boundCallableRuntimeBinding(
   const binding = runtimeBindingForExpression(callee.object, imports, scopes);
   const args = Array.isArray(value.arguments) ? value.arguments : [];
   return unionRuntimeBindings(
-    flattenRuntimeBindings(binding)
-      .filter(isCallableRuntimeBinding)
-      .map((candidate) =>
+    flattenRuntimeBindings(binding).flatMap((candidate): RuntimeBinding[] => {
+      if (candidate.kind === "mutation-method") {
+        if (candidate.receiver !== "Array") return [];
+        return [{
+          ...candidate,
+          boundTarget: candidate.boundTarget ?? args[0],
+          boundValues: [
+            ...candidate.boundValues ?? [],
+            ...args.slice(1),
+          ],
+        }];
+      }
+      if (!isCallableRuntimeBinding(candidate)) return [];
+      return [
         candidate.kind === "effect" ? candidate : {
           ...candidate,
           boundArguments: [
             ...candidate.boundArguments ?? [],
             ...args.slice(1),
           ],
-        }
-      ),
+        },
+      ];
+    }),
   );
 }
 
@@ -6249,7 +6320,13 @@ function staticRuntimeArrayRestBinding(
   }> = [];
   for (const property of namespacePropertyNames(binding)) {
     const index = runtimeArrayIndex(property);
-    if (index === undefined) return undefined;
+    if (
+      index === undefined ||
+      binding.exactArrayLength !== undefined &&
+        index >= binding.exactArrayLength
+    ) {
+      continue;
+    }
     indexedProperties.push({ property, index });
   }
   const properties = new Map<string, RuntimeBinding>();
@@ -6284,7 +6361,8 @@ function staticRuntimeArrayRestBinding(
 
 function runtimeArrayIndex(property: string): number | undefined {
   const index = Number(property);
-  return Number.isSafeInteger(index) && index >= 0 && String(index) === property
+  return Number.isInteger(index) && index >= 0 && index < 2 ** 32 - 1 &&
+      String(index) === property
     ? index
     : undefined;
 }
@@ -6577,7 +6655,12 @@ function runtimeBindingKey(binding: RuntimeBinding): string {
     return `effect-object:${binding.effect}`;
   }
   if (binding.kind === "mutation-method") {
-    return `mutation-method:${binding.receiver}.${binding.method}`;
+    const bound = binding.receiver === "Array"
+      ? `:${JSON.stringify(binding.boundTarget ?? null)}:${
+        JSON.stringify(binding.boundValues ?? [])
+      }`
+      : "";
+    return `mutation-method:${binding.receiver}.${binding.method}${bound}`;
   }
   if (binding.kind === "reflect-method") {
     return `reflect-method:${binding.method}:${

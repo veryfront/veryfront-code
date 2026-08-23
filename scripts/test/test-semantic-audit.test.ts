@@ -1359,6 +1359,28 @@ function local(fs: { writeFileSync(): void }, method: string) {
     );
   });
 
+  it("bounds conservative lookup across cyclic runtime aliases", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const holder = { run: Deno.writeTextFile };
+holder.self = holder;
+holder[key]("self-cycle.txt", "x");
+
+const left = { run: Deno.writeTextFile };
+const right = { peer: left };
+left.peer = right;
+right[key]("mutual-cycle.txt", "x");
+`,
+        "src/cyclic-runtime-aliases.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "holder.*"],
+        ["filesystem-write", "right.*"],
+      ],
+    );
+  });
+
   it("retains runtime provenance stored through unknown computed properties", () => {
     assertEquals(
       collectSemanticMarkers(
@@ -1738,6 +1760,11 @@ reordered.reverse();
 const [reorderedWrite] = [...reordered, () => undefined];
 reorderedWrite("reordered.txt", "x");
 
+const filled = [() => undefined];
+filled.fill(Deno.writeTextFile, 0, 1);
+const [filledWrite] = [...filled];
+filledWrite("filled.txt", "x");
+
 const definedMany = [() => undefined];
 Object.defineProperties(definedMany, {
   1: { value: Deno.writeTextFile },
@@ -1827,6 +1854,26 @@ const [, assignedDynamicGetterWrite] = [
   () => undefined,
 ];
 assignedDynamicGetterWrite("assigned-dynamic-getter.txt", "x");
+
+const boundTarget = [() => undefined];
+const boundPush = Array.prototype.push.bind(boundTarget);
+boundPush(Deno.writeTextFile);
+const [, boundWrite] = [...boundTarget, () => undefined];
+boundWrite("bound.txt", "x");
+
+const applyValues = [Deno.writeTextFile];
+const variableApply = [() => undefined];
+Array.prototype.push.apply(variableApply, applyValues);
+const [, variableApplyWrite] = [...variableApply, () => undefined];
+variableApplyWrite("variable-apply.txt", "x");
+
+const reflectVariableApply = [() => undefined];
+Reflect.apply(Array.prototype.push, reflectVariableApply, applyValues);
+const [, reflectVariableApplyWrite] = [
+  ...reflectVariableApply,
+  () => undefined,
+];
+reflectVariableApplyWrite("reflect-variable-apply.txt", "x");
 `,
         "src/runtime-call-mutated-array-spreads.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
@@ -1838,6 +1885,7 @@ assignedDynamicGetterWrite("assigned-dynamic-getter.txt", "x");
         ["filesystem-write", "aliasedWrite"],
         ["filesystem-write", "nestedWrite"],
         ["filesystem-write", "reorderedWrite"],
+        ["filesystem-write", "filledWrite"],
         ["filesystem-write", "definedManyWrite"],
         ["filesystem-write", "reflectDefinedWrite"],
         ["filesystem-write", "prototypeCallWrite"],
@@ -1851,6 +1899,9 @@ assignedDynamicGetterWrite("assigned-dynamic-getter.txt", "x");
         ["filesystem-write", "prototypeReflectWrite"],
         ["filesystem-write", "assignedGetterWrite"],
         ["filesystem-write", "assignedDynamicGetterWrite"],
+        ["filesystem-write", "boundWrite"],
+        ["filesystem-write", "variableApplyWrite"],
+        ["filesystem-write", "reflectVariableApplyWrite"],
       ],
     );
     assertEquals(
@@ -1868,6 +1919,34 @@ const emptyPrototype = [() => undefined];
 Object.setPrototypeOf(emptyPrototype, {});
 const [, emptyPrototypeLocal] = [...emptyPrototype, () => undefined];
 emptyPrototypeLocal();
+
+const nullPrototype = [() => undefined];
+Object.setPrototypeOf(nullPrototype, null);
+const [, nullPrototypeLocal] = [...nullPrototype, () => undefined];
+nullPrototypeLocal();
+
+function shadow(Array: { prototype: { push: { call(...args: unknown[]): void } } }) {
+  const values = [() => undefined];
+  Array.prototype.push.call(values, Deno.writeTextFile);
+  const [, run] = [...values, () => undefined];
+  run("shadowed.txt", "x");
+}
+
+const overridden = [() => undefined];
+overridden.push = () => undefined;
+overridden.push(Deno.writeTextFile);
+const [, overriddenRun] = [...overridden, () => undefined];
+overriddenRun("overridden.txt", "x");
+
+const reversed = [() => undefined];
+reversed.reverse(Deno.writeTextFile);
+const [reversedRun] = [...reversed];
+reversedRun();
+
+const copied = [() => undefined];
+copied.copyWithin(Deno.writeTextFile, 0);
+const [copiedRun] = [...copied];
+copiedRun();
 `,
         "src/local-non-mutating-array-calls.test.ts",
       ),
@@ -1922,6 +2001,53 @@ unknownPrototypeCall();
         "server",
         "shared-cwd",
       ],
+    );
+  });
+
+  it("preserves both branches of logical property assignments", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const nullish = [() => undefined];
+nullish[1] ??= Deno.writeTextFile;
+const [, nullishRun] = [...nullish, () => undefined];
+nullishRun("nullish.txt", "x");
+
+const disjoined = [() => undefined];
+disjoined[1] ||= Deno.writeTextFile;
+const [, disjoinedRun] = [...disjoined, () => undefined];
+disjoinedRun("disjoined.txt", "x");
+
+const conjoined = [() => undefined, () => undefined];
+conjoined[1] &&= Deno.writeTextFile;
+const [, conjoinedRun] = [...conjoined, () => undefined];
+conjoinedRun("conjoined.txt", "x");
+`,
+        "src/logical-property-assignments.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "nullishRun"],
+        ["filesystem-write", "disjoinedRun"],
+        ["filesystem-write", "conjoinedRun"],
+      ],
+    );
+  });
+
+  it("uses JavaScript array-index bounds for sparse writes", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const values = [() => undefined];
+values[4294967295] = Deno.writeTextFile;
+const copy = [...values];
+copy[0]();
+
+const [, ...rest] = values;
+rest[0]();
+`,
+        "src/non-array-index-property.test.ts",
+      ),
+      [],
     );
   });
 
