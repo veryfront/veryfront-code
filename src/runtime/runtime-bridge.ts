@@ -1329,11 +1329,13 @@ export function embed(options: EmbedOptions) {
 }
 
 export function embedMany(options: EmbedManyOptions) {
+  const values = [...options.values];
+  const expectedCount = values.length;
   return options.model.doEmbed({
-    values: options.values,
+    values,
     abortSignal: options.abortSignal,
   }).then((result) => {
-    assertValidEmbeddingVectors(result.embeddings, options.values.length);
+    assertValidEmbeddingVectors(result.embeddings, expectedCount);
     return {
       embeddings: result.embeddings,
       usage: result.usage,
@@ -1373,21 +1375,27 @@ export function cosineSimilarity(a: number[], b: number[]): number {
     return 0;
   }
 
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
+  let scaleA = 0;
+  let scaleB = 0;
 
   for (let i = 0; i < a.length; i++) {
     const av = a[i] ?? 0;
     const bv = b[i] ?? 0;
     if (!Number.isFinite(av) || !Number.isFinite(bv)) return 0;
+    scaleA = Math.max(scaleA, Math.abs(av));
+    scaleB = Math.max(scaleB, Math.abs(bv));
+  }
+  if (scaleA === 0 || scaleB === 0) return 0;
+
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    const av = (a[i] ?? 0) / scaleA;
+    const bv = (b[i] ?? 0) / scaleB;
     dot += av * bv;
     normA += av * av;
     normB += bv * bv;
-  }
-
-  if (normA === 0 || normB === 0) {
-    return 0;
   }
 
   const similarity = dot / (Math.sqrt(normA) * Math.sqrt(normB));

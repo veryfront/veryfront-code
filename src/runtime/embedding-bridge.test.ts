@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { EmbeddingRuntime } from "#veryfront/provider/types.ts";
 import { cosineSimilarity, embed, embedMany } from "./runtime-bridge.ts";
@@ -72,6 +72,26 @@ describe("runtime embedding bridge", () => {
     }
   });
 
+  it("validates against the request cardinality captured before provider dispatch", async () => {
+    const gate = Promise.withResolvers<void>();
+    const values = ["first", "second"];
+    const model: EmbeddingRuntime = {
+      provider: "test",
+      modelId: "test/delayed-embedding",
+      specificationVersion: "v2",
+      async doEmbed({ values: submitted }) {
+        await gate.promise;
+        return { embeddings: submitted.map(() => [1, 2]) };
+      },
+    };
+
+    const resultPromise = embedMany({ model, values });
+    values.pop();
+    gate.resolve();
+
+    assertEquals((await resultPromise).embeddings, [[1, 2], [1, 2]]);
+  });
+
   it("keeps cosine similarity finite for invalid numeric vectors", () => {
     assertEquals(cosineSimilarity([1, 0], [1, 0]), 1);
     assertEquals(cosineSimilarity([1, 0], [0, 1]), 0);
@@ -80,5 +100,8 @@ describe("runtime embedding bridge", () => {
     assertEquals(cosineSimilarity([1], [1, 2]), 0);
     assertEquals(cosineSimilarity([Number.NaN], [1]), 0);
     assertEquals(cosineSimilarity([Number.POSITIVE_INFINITY], [1]), 0);
+    assert(
+      Math.abs(cosineSimilarity([1e308, 1e308], [1e308, 1e308]) - 1) < 1e-12,
+    );
   });
 });
