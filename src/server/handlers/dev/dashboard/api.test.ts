@@ -214,7 +214,7 @@ describe("Dashboard API - GET endpoints", () => {
     assertEquals("errors" in body, true);
     assertEquals("categories" in body, true);
     assertEquals("count" in body, true);
-    assertEquals(body.count, 66);
+    assertEquals(body.count, 67);
     assertEquals(body.categories, {
       config: 7,
       build: 9,
@@ -225,7 +225,7 @@ describe("Dashboard API - GET endpoints", () => {
       dev: 5,
       rsc: 6,
       deployment: 4,
-      general: 6,
+      general: 7,
     });
 
     const errorsByCode = new Map<string, { code: string; category: string }>(

@@ -12,6 +12,7 @@ describe("errors/catalog/general-errors", () => {
         "file-not-found",
         "resource-not-found",
         "invalid-argument",
+        "already-exists",
         "timeout-error",
       ];
 
@@ -35,8 +36,8 @@ describe("errors/catalog/general-errors", () => {
       }
     });
 
-    it("should have 6 entries", () => {
-      assertEquals(Object.keys(GENERAL_ERROR_CATALOG).length, 6);
+    it("should have 7 entries", () => {
+      assertEquals(Object.keys(GENERAL_ERROR_CATALOG).length, 7);
     });
 
     it("unknown-error should suggest running veryfront doctor", () => {

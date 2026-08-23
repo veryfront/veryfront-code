@@ -2,6 +2,7 @@
  * Generate command handler
  */
 
+import { INVALID_ARGUMENT } from "veryfront/errors";
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import { generateCommand } from "./index.ts";
 import { showHeader } from "#cli/utils";
@@ -30,11 +31,11 @@ export async function handleGenerateCommand(args: ParsedArgs): Promise<void> {
   showHeader();
   const result = parseGenerateArgs(args);
   if (!result.success) {
-    throw new Error(
-      `Invalid arguments. Usage: veryfront generate <type> <name>\n\nValid types: ${
+    throw INVALID_ARGUMENT.create({
+      detail: `Invalid arguments. Usage: veryfront generate <type> <name>\n\nValid types: ${
         VALID_TYPES.join(", ")
       }`,
-    );
+    });
   }
   const { type, name } = result.data;
 
@@ -45,11 +46,11 @@ export async function handleGenerateCommand(args: ParsedArgs): Promise<void> {
   }
 
   if (!type || !name) {
-    throw new Error(
-      `Invalid arguments. Usage: veryfront generate <type> <name>\n\nValid types: ${
+    throw INVALID_ARGUMENT.create({
+      detail: `Invalid arguments. Usage: veryfront generate <type> <name>\n\nValid types: ${
         VALID_TYPES.join(", ")
       }`,
-    );
+    });
   }
 
   await generateCommand(cwd(), type, name);

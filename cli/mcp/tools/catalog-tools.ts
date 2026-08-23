@@ -13,7 +13,7 @@ import { INTEGRATION_CATEGORIES } from "../../commands/init/catalog.ts";
 import { createProject as createSharedProject } from "../../shared/project-creation.ts";
 import { validateProjectName } from "../../shared/project-name.ts";
 import type { MCPTool } from "../tools.ts";
-import { directoryExists, formatError, toSlug } from "./helpers.ts";
+import { formatError, toSlug } from "./helpers.ts";
 import type { InitTemplate } from "../../commands/init/types.ts";
 import type { IntegrationName } from "../../../templates/types.ts";
 
@@ -391,16 +391,16 @@ export const vfCreateProject: MCPTool<CreateProjectInput, CreateProjectResult> =
       "cli.mcp.tool.vf_create_project",
       async () => {
         try {
-          const { name, parentDir, projectDir } = resolveCreateProjectPaths(input);
+          const { name, parentDir } = resolveCreateProjectPaths(input);
           const nameError = validateProjectName(name);
           if (nameError) {
             return { success: false, message: `Failed to create project: ${nameError}` };
           }
 
-          if (await directoryExists(projectDir)) {
-            return { success: false, message: `Directory already exists: ${projectDir}` };
-          }
-
+          // Whether the target can be written to is `createProject`'s call,
+          // so this tool refuses exactly what `veryfront init` refuses: a file
+          // the scaffold would overwrite, named in the message - not a
+          // directory that merely exists.
           const creation = await createSharedProject({
             name,
             parentDir,

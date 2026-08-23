@@ -6,6 +6,7 @@
  * @module cli/shared/args
  */
 
+import { INVALID_ARGUMENT } from "veryfront/errors";
 import type { Schema } from "veryfront/extensions/schema";
 import { COMMANDS } from "../help/command-definitions.ts";
 import { suggestCommand } from "./suggest.ts";
@@ -203,9 +204,10 @@ export function parseArgsOrThrow<T>(
 ): T {
   const result = parser(args);
   if (!result.success) {
-    throw new Error(
-      `Invalid ${commandName} arguments: ${result.error.message}`,
-    );
+    throw INVALID_ARGUMENT.create({
+      detail: `Invalid ${commandName} arguments: ${result.error.message}`,
+      context: { command: commandName, issues: result.error.issues },
+    });
   }
   return result.data;
 }

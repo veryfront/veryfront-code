@@ -29,9 +29,9 @@ describe("error-registry", () => {
       assertEquals(slugs.length, uniqueSlugs.size, "Duplicate slugs detected");
     });
 
-    it("should have 121 registered errors", () => {
+    it("should have 122 registered errors", () => {
       const slugs = getAllSlugs();
-      assertEquals(slugs.length, 121);
+      assertEquals(slugs.length, 122);
     });
 
     it("registers every local integration boundary error", () => {
@@ -347,7 +347,7 @@ describe("error-registry", () => {
       DEV: 5,
       DEPLOY: 16,
       AGENT: 9,
-      GENERAL: 13,
+      GENERAL: 14,
     };
 
     for (
@@ -476,5 +476,21 @@ describe("error-registry", () => {
       assertEquals(error.status, 500);
       assertEquals(error.cause, primary);
     });
+  });
+});
+
+describe("CLI usage errors", () => {
+  it("maps a bad argument to invalid-argument with the usage exit code", () => {
+    const error = getErrorBySlug("invalid-argument");
+    assertEquals(error.title, "Invalid argument");
+    assertEquals(error.exitCode, 2);
+  });
+
+  it("registers already-exists for targets that would be overwritten", () => {
+    const error = getErrorBySlug("already-exists");
+    assertEquals(error.category, "GENERAL");
+    assertEquals(error.status, 409);
+    assertEquals(error.exitCode, 1);
+    assertEquals(error.suggestion?.includes("different name"), true);
   });
 });

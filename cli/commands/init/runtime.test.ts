@@ -3,6 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
+import { VeryfrontError } from "veryfront/errors";
 import { parseRuntime } from "./runtime.ts";
 
 describe("parseRuntime", () => {
@@ -44,5 +45,15 @@ describe("parseRuntime", () => {
         true,
       );
     }
+  });
+});
+
+describe("parseRuntime error classification", () => {
+  it("throws a registered usage error, not an unclassified one", () => {
+    const error = assertThrows(() => parseRuntime("rust"));
+
+    assertEquals(error instanceof VeryfrontError, true);
+    assertEquals((error as VeryfrontError).slug, "invalid-argument");
+    assertEquals((error as VeryfrontError).exitCode, 2);
   });
 });
