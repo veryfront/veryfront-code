@@ -2846,6 +2846,25 @@ Object.assign(target, source).run("retained.txt");
     );
   });
 
+  it("preserves descriptor attributes omitted by redefinition", () => {
+    const effects = collectSemanticMarkers(
+      `
+const source = {};
+Object.defineProperty(source, "run", {
+  configurable: true,
+  enumerable: true,
+  value: () => undefined,
+});
+Object.defineProperty(source, "run", { value: Deno.remove });
+Object.assign({}, source).run("copied.txt");
+Reflect.defineProperty(source, "run", { value: () => undefined });
+source.run("cleared.txt");
+`,
+      "src/runtime-descriptor-redefinition-attributes.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects, ["filesystem-write"]);
+  });
+
   it("clears accessors replaced by descriptor definitions", () => {
     assertEquals(
       collectSemanticMarkers(
@@ -3091,21 +3110,23 @@ Object.defineProperty(revealed, "run", {
 Object.assign({}, revealed).run("revealed-assign.txt");
 ({ ...revealed }).run("revealed-spread.txt");
 
-const concealed = {};
-Object.defineProperty(concealed, "run", {
+const preservedEnumerable = {};
+Object.defineProperty(preservedEnumerable, "run", {
   value: Deno.remove,
   enumerable: true,
   configurable: true,
 });
-Object.defineProperty(concealed, "run", {
+Object.defineProperty(preservedEnumerable, "run", {
   value: Deno.remove,
 });
-Object.assign({}, concealed).run("concealed-assign.txt");
-({ ...concealed }).run("concealed-spread.txt");
+Object.assign({}, preservedEnumerable).run("preserved-assign.txt");
+({ ...preservedEnumerable }).run("preserved-spread.txt");
 `,
         "src/runtime-visible-descriptor-enumerability.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
       [
+        ["filesystem-write", "run"],
+        ["filesystem-write", "run"],
         ["filesystem-write", "run"],
         ["filesystem-write", "run"],
         ["filesystem-write", "run"],
