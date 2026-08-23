@@ -2407,6 +2407,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     ),
     entry("src/build/asset-pipeline/tailwind-processor/detector.test.ts", [
       "filesystem-read",
+      "filesystem-watch",
       "filesystem-write",
     ], {
       "disposition": "integration-relocation",
@@ -2419,6 +2420,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     }),
     entry("src/build/asset-pipeline/tailwind-processor/processor.test.ts", [
       "filesystem-read",
+      "filesystem-watch",
       "filesystem-write",
     ], {
       "disposition": "integration-relocation",

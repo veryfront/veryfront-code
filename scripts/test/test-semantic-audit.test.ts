@@ -441,6 +441,30 @@ await aliasedFs.readFile("deno.json");
     );
   });
 
+  it("unwraps exported runtime-binding declarations", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+export const fs = await import("node:fs");
+await fs.writeFile("tmp.txt", "x");
+export const childProcess = require("node:child_process");
+childProcess.spawn("deno", ["--version"]);
+export const NativeArray = Array;
+Object.defineProperty(NativeArray.prototype, "constructor", {});
+`,
+        "src/exported-runtime-bindings.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "fs.writeFile"],
+        ["process", "childProcess.spawn"],
+        [
+          "process",
+          "Object.defineProperty(NativeArray.prototype.constructor)",
+        ],
+      ],
+    );
+  });
+
   it("classifies fs.promises namespaces and aliases", () => {
     assertEquals(
       collectSemanticMarkers(
@@ -556,7 +580,9 @@ import fs, {
   createReadStream,
   read,
   readlink,
+  unwatchFile,
   watch,
+  watchFile,
 } from "node:fs";
 Deno.watchFs(".");
 Deno.readLink("link");
@@ -564,18 +590,22 @@ createReadStream("fixture.txt");
 read(1, new Uint8Array(1), 0, 1, 0, () => undefined);
 readlink("link", () => undefined);
 watch(".", () => undefined);
+watchFile("fixture.txt", () => undefined);
+unwatchFile("fixture.txt");
 fs.createReadStream("fixture.txt");
 await fs.promises.readlink("link");
 `,
         "src/filesystem-observation.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
       [
-        ["filesystem-read", "Deno.watchFs"],
+        ["filesystem-watch", "Deno.watchFs"],
         ["filesystem-read", "Deno.readLink"],
         ["filesystem-read", "createReadStream"],
         ["filesystem-read", "read"],
         ["filesystem-read", "readlink"],
-        ["filesystem-read", "watch"],
+        ["filesystem-watch", "watch"],
+        ["filesystem-watch", "watchFile"],
+        ["filesystem-watch", "unwatchFile"],
         ["filesystem-read", "fs.createReadStream"],
         ["filesystem-read", "fs.promises.readlink"],
       ],
@@ -1293,6 +1323,18 @@ describe("semantic disposition ratchet", () => {
       ),
       [
         "Semantic unit-boundary inventory grew relative to base-ref: src/effects.test.ts",
+      ],
+    );
+    assertEquals(
+      validateSemanticDispositionShape({
+        path: "src/watcher.test.ts",
+        effects: ["filesystem-watch"],
+        disposition: "hermetic-unit",
+        owner: "test-architecture",
+        rationale: "Watches a checked-in fixture.",
+      }),
+      [
+        "hermetic-unit disposition only permits filesystem-read: src/watcher.test.ts has filesystem-watch",
       ],
     );
     assertEquals(

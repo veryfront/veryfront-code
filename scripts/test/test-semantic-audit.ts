@@ -10,6 +10,7 @@ import {
 
 export type SemanticEffect =
   | "filesystem-read"
+  | "filesystem-watch"
   | "filesystem-write"
   | "process"
   | "server"
@@ -143,6 +144,9 @@ const READ_METHODS = new Set([
   "statfs",
   "statfsSync",
   "statSync",
+]);
+
+const WATCH_METHODS = new Set([
   "unwatchFile",
   "watch",
   "watchFile",
@@ -425,6 +429,7 @@ interface Node {
 
 interface ImportBindings {
   readonly filesystemRead: Set<string>;
+  readonly filesystemWatch: Set<string>;
   readonly filesystemWrite: Set<string>;
   readonly filesystemOpen: Map<string, string>;
   readonly filesystemNamespaces: Set<string>;
@@ -1015,6 +1020,9 @@ function markerForNode(
     if (bindings.filesystemRead.has(name) && !isShadowed(name, scopes)) {
       return { effect: "filesystem-read", line, symbol: name };
     }
+    if (bindings.filesystemWatch.has(name) && !isShadowed(name, scopes)) {
+      return { effect: "filesystem-watch", line, symbol: name };
+    }
     if (bindings.filesystemWrite.has(name) && !isShadowed(name, scopes)) {
       return { effect: "filesystem-write", line, symbol: name };
     }
@@ -1092,6 +1100,9 @@ function markerForNode(
     objectName === "Deno" &&
     !isGlobalShadowed("Deno", scopes, bindings.importedNames)
   ) {
+    if (WATCH_METHODS.has(method)) {
+      return { effect: "filesystem-watch", line, symbol: `Deno.${method}` };
+    }
     if (READ_METHODS.has(method)) {
       return { effect: "filesystem-read", line, symbol: `Deno.${method}` };
     }
@@ -1116,6 +1127,13 @@ function markerForNode(
     bindings.filesystemNamespaces.has(objectName) &&
     !isShadowed(objectName, scopes)
   ) {
+    if (WATCH_METHODS.has(method)) {
+      return {
+        effect: "filesystem-watch",
+        line,
+        symbol: `${objectName}.${method}`,
+      };
+    }
     if (READ_METHODS.has(method)) {
       return {
         effect: "filesystem-read",
@@ -1533,6 +1551,7 @@ function globalFetchMarker(
 function collectImportBindings(program: Node): ImportBindings {
   const bindings: ImportBindings = {
     filesystemRead: new Set(),
+    filesystemWatch: new Set(),
     filesystemWrite: new Set(),
     filesystemOpen: new Map(),
     filesystemNamespaces: new Set(),
@@ -1582,6 +1601,8 @@ function collectImportBindings(program: Node): ImportBindings {
       if (isFilesystemSpecifier(source)) {
         if (FILESYSTEM_OPEN_METHODS.has(importedName)) {
           bindings.filesystemOpen.set(local, source);
+        } else if (WATCH_METHODS.has(importedName)) {
+          bindings.filesystemWatch.add(local);
         } else if (READ_METHODS.has(importedName)) {
           bindings.filesystemRead.add(local);
         } else if (WRITE_METHODS.has(importedName)) {
@@ -1635,8 +1656,9 @@ function collectLocalDeclaredNames(
   playwrightFixtures: Set<string>,
 ): void {
   if (node.type === "Program" || node.type === "BlockStatement") {
-    for (const statement of Array.isArray(node.body) ? node.body : []) {
-      if (!isNode(statement)) continue;
+    for (const child of Array.isArray(node.body) ? node.body : []) {
+      if (!isNode(child)) continue;
+      const statement = unwrapExportDeclaration(child);
       if (
         (statement.type === "FunctionDeclaration" ||
           statement.type === "ClassDeclaration") && isNode(statement.id)
@@ -1708,18 +1730,31 @@ function collectLocalRuntimeBindings(
   if (!scope) return;
 
   for (const statement of Array.isArray(node.body) ? node.body : []) {
-    if (!isNode(statement) || statement.type !== "VariableDeclaration") {
+    if (!isNode(statement)) continue;
+    const declaration = unwrapExportDeclaration(statement);
+    if (declaration.type !== "VariableDeclaration") {
       continue;
     }
     for (
-      const declaration of Array.isArray(statement.declarations)
-        ? statement.declarations
+      const declarator of Array.isArray(declaration.declarations)
+        ? declaration.declarations
         : []
     ) {
-      if (!isNode(declaration)) continue;
-      bindRuntimeDeclaration(declaration, imports, scopes, scope);
+      if (!isNode(declarator)) continue;
+      bindRuntimeDeclaration(declarator, imports, scopes, scope);
     }
   }
+}
+
+function unwrapExportDeclaration(statement: Node): Node {
+  if (
+    (statement.type === "ExportNamedDeclaration" ||
+      statement.type === "ExportDefaultDeclaration") &&
+    isNode(statement.declaration)
+  ) {
+    return statement.declaration;
+  }
+  return statement;
 }
 
 function bindRuntimeDeclaration(
@@ -1800,6 +1835,9 @@ function identifierRuntimeBinding(
   }
   if (imports.filesystemRead.has(name)) {
     return { kind: "effect", effect: "filesystem-read" };
+  }
+  if (imports.filesystemWatch.has(name)) {
+    return { kind: "effect", effect: "filesystem-watch" };
   }
   if (imports.filesystemWrite.has(name)) {
     return { kind: "effect", effect: "filesystem-write" };
@@ -2258,6 +2296,7 @@ function effectForModuleMethod(
   method: string,
 ): SemanticEffect | undefined {
   if (isFilesystemSpecifier(source)) {
+    if (WATCH_METHODS.has(method)) return "filesystem-watch";
     if (READ_METHODS.has(method)) return "filesystem-read";
     if (WRITE_METHODS.has(method)) return "filesystem-write";
   }
@@ -2283,6 +2322,7 @@ function effectForGlobalRuntimeMethod(
 ): SemanticEffect | undefined {
   if (SHARED_CWD_METHODS.has(method)) return "shared-cwd";
   if (runtime === "Deno") {
+    if (WATCH_METHODS.has(method)) return "filesystem-watch";
     if (READ_METHODS.has(method)) return "filesystem-read";
     if (WRITE_METHODS.has(method)) return "filesystem-write";
     if (PROCESS_METHODS.has(method) || method === "env") return "process";
@@ -2306,6 +2346,7 @@ function isDisposition(value: unknown): value is SemanticDisposition {
 
 function isEffect(value: unknown): value is SemanticEffect {
   return value === "filesystem-read" ||
+    value === "filesystem-watch" ||
     value === "filesystem-write" ||
     value === "process" ||
     value === "server" ||

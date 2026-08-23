@@ -59,9 +59,10 @@ to `deno task test:layout`. Layout owns path classification; the semantic audit
 then parses every executable test currently owned by the colocated unit roots
 (`src/`, `cli/`, `extensions/`, `templates/`, `scripts/`, and `react/`) and
 flags executable filesystem, process, server, network, browser, or shared-cwd
-effects. Process effects include child-process execution and access to or
-mutation of process-global environment/runtime state. The suite planner remains
-path-only.
+effects. Filesystem watchers are tracked separately from fixture reads because
+they retain operating-system resources and are never hermetic-unit exemptions.
+Process effects include child-process execution and access to or mutation of
+process-global environment/runtime state. The suite planner remains path-only.
 
 Current semantic debt is listed in
 `scripts/test/test-semantic-audit-migration.ts`. That file is debt-only and
@@ -80,12 +81,12 @@ Disposition values:
   files without mutating process, network, or external runtime state.
 - `replaceable-fake`: the test can stay colocated after the side effect is
   replaced by an injected fake or pure fixture boundary.
-- `integration-relocation`: the test exercises filesystem mutation, process,
-  server, network, browser, or multi-component runtime behavior and should move
-  under `tests/integration/...`.
+- `integration-relocation`: the test exercises filesystem mutation or watching,
+  process, server, network, browser, or multi-component runtime behavior and
+  should move under `tests/integration/...`.
 
-Each disposition carries a domain owner and rationale. Replaceable fakes carry
-a removal lane; relocations also name their intended `tests/integration/...`
+Each disposition carries a domain owner and rationale. Replaceable fakes carry a
+removal lane; relocations also name their intended `tests/integration/...`
 destination. Hermetic repository-contract reads need no migration lane. The
 inventory is not a permanent all-test manifest; it exists only to make later
 migration slices finite and reviewable.
