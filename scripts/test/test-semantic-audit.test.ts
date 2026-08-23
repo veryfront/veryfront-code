@@ -3266,6 +3266,25 @@ Object.assign({}, inherited).run("inherited-assign.txt");
       ),
       [],
     );
+
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const prototype = {};
+Object.defineProperty(prototype, "run", {
+  value: () => undefined,
+  enumerable: true,
+});
+const target = {};
+Object.setPrototypeOf(target, prototype);
+Object.defineProperty(target, "run", { value: Deno.remove });
+Object.assign({}, target).run("new-own-assign.txt");
+({ ...target }).run("new-own-spread.txt");
+`,
+        "src/runtime-new-own-descriptor-defaults.test.ts",
+      ),
+      [],
+    );
   });
 
   it("distinguishes new own descriptors from inherited and blocked definitions", () => {
