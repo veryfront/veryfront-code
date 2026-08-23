@@ -286,6 +286,86 @@ describe("automated review gate", () => {
       ),
       undefined,
     );
+
+    const undatedSkip = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "Review limit reached. This review was skipped.",
+        `Requested commit: ${HEAD_SHA}.`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: undefined,
+      updated_at: undefined,
+    });
+    assertEquals(
+      await findAutomatedReview(
+        { reviews: [], comments: [codeRabbitSummary(), undatedSkip] },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+  });
+
+  it("lets a current-head skip override a stale retained review range", async () => {
+    const staleRangeWithCurrentSkip = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+        "<!-- recent_review_end -->",
+        `Review skipped for current commit ${HEAD_SHA}.`,
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:00Z",
+      updated_at: "2026-08-22T12:02:00Z",
+    });
+    const olderSuccess = codeRabbitSummary({
+      created_at: "2026-08-22T12:01:00Z",
+      updated_at: "2026-08-22T12:01:00Z",
+    });
+
+    assertEquals(
+      await findAutomatedReview(
+        { reviews: [], comments: [olderSuccess, staleRangeWithCurrentSkip] },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+  });
+
+  it("fails closed when exact-head event chronology is indeterminate", async () => {
+    const olderSuccess = codeRabbitSummary({
+      created_at: "2026-08-22T12:01:00Z",
+      updated_at: "2026-08-22T12:01:00Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [review({ state: "PENDING", submitted_at: undefined })],
+          comments: [olderSuccess],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [
+            review({ state: "PENDING", submitted_at: "2026-08-22T12:02:00Z" }),
+          ],
+          comments: [
+            olderSuccess,
+            {
+              user: { login: "human" },
+              body: "untimestamped noise",
+            },
+          ],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
   });
 
   it("makes the newest exact-head bot outcome authoritative across reviewers", async () => {
