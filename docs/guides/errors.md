@@ -522,6 +522,13 @@ RAG store file is unavailable.
 - **HTTP status:** 500
 - **What to do:** Check storage availability, permissions, and concurrent operations, then retry
 
+### source-snapshot-freshness-unavailable
+
+Source snapshot freshness cannot be established.
+
+- **HTTP status:** 503
+- **What to do:** Implement ensureSourceSnapshotFresh() or refreshSourceSnapshot() on the filesystem adapter that serves this mutable source
+
 ## Server and client boundary
 
 Raised when server-only and client-only code are mixed incorrectly.
