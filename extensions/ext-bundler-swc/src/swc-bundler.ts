@@ -31,11 +31,6 @@ type TsconfigRaw = {
   };
 };
 
-export interface SwcBundlerOptions {
-  /** @internal Test seam for the graph-bundling delegate. */
-  readonly delegate?: Bundler;
-}
-
 function rawDecoratorOptions(value: unknown): TypeScriptDecoratorOptions | undefined {
   if (typeof value === "string") {
     value = parseExtensionManifest<TsconfigRaw>(value, "jsonc", "tsconfigRaw");
@@ -369,8 +364,8 @@ async function prepareLegacyDecoratorBundle(
 export class SwcBundler implements Bundler {
   readonly #delegate: Bundler;
 
-  constructor(options: SwcBundlerOptions = {}) {
-    this.#delegate = options.delegate ?? new EsbuildBundler();
+  constructor() {
+    this.#delegate = new EsbuildBundler();
   }
 
   shouldBundleTypeScript(options: TypeScriptDecoratorOptions): boolean {

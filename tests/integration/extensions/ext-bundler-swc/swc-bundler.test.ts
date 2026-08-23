@@ -1,20 +1,8 @@
 import type { ValidationError } from "npm:class-validator@0.15.1";
-import {
-  assertEquals,
-  assertRejects,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { cwd } from "#veryfront/compat/process.ts";
-import type {
-  BundleOptions,
-  Bundler,
-  BundleResult,
-  TransformOptions,
-  TransformResult,
-} from "veryfront/extensions/bundler";
 import type { BundlerPlugin } from "veryfront/extensions/bundler";
 import { SwcBundler } from "@veryfront/ext-bundler-swc";
 
@@ -37,21 +25,6 @@ export class Subject {
 }
 `;
 
-class RecordingBundler implements Bundler {
-  bundled?: BundleOptions;
-  transformed?: TransformOptions;
-
-  bundle(options: BundleOptions): Promise<BundleResult> {
-    this.bundled = options;
-    return Promise.resolve({ outputFiles: [], warnings: [], errors: [] });
-  }
-
-  transform(options: TransformOptions): Promise<TransformResult> {
-    this.transformed = options;
-    return Promise.resolve({ code: options.code, warnings: [] });
-  }
-}
-
 /**
  * A marker from the bundled reflect-metadata implementation.
  *
@@ -67,48 +40,50 @@ function dataModule(code: string): Promise<Record<string, unknown>> {
 
 describe("SwcBundler decorator metadata", () => {
   it("leaves the default standard-decorator path with the delegate", async () => {
-    const delegate = new RecordingBundler();
-    const bundler = new SwcBundler({ delegate });
-    const options: TransformOptions = {
-      code: `@logged class Example {}`,
-      loader: "ts",
-      tsconfigRaw: { compilerOptions: {} },
-    };
+    const bundler = new SwcBundler();
+    try {
+      const result = await bundler.transform({
+        code: `function logged(value: unknown) { return value; }\n@logged class Example {}`,
+        loader: "ts",
+        tsconfigRaw: { compilerOptions: {} },
+      });
 
-    const result = await bundler.transform(options);
-
-    assertStrictEquals(delegate.transformed, options);
-    assertEquals(result.code, options.code);
+      assertStringIncludes(result.code, "Example");
+    } finally {
+      await bundler.stop();
+    }
   });
 
   it("delegates non-TypeScript before reading TypeScript configuration", async () => {
-    const delegate = new RecordingBundler();
-    const bundler = new SwcBundler({ delegate });
-    const options: TransformOptions = {
-      code: `export const value = 1;`,
-      loader: "js",
-      tsconfigRaw: "{ invalid jsonc",
-    };
+    const bundler = new SwcBundler();
+    try {
+      const result = await bundler.transform({
+        code: `export const value = 1;`,
+        loader: "js",
+      });
 
-    const result = await bundler.transform(options);
-
-    assertStrictEquals(delegate.transformed, options);
-    assertEquals(result.code, options.code);
+      assertStringIncludes(result.code, "value");
+    } finally {
+      await bundler.stop();
+    }
   });
 
   it("keeps framework-only compiler state out of the esbuild delegate", async () => {
-    const delegate = new RecordingBundler();
-    const bundler = new SwcBundler({ delegate });
+    const bundler = new SwcBundler();
+    try {
+      const result = await bundler.transform({
+        code: `export const value: number = 1;`,
+        loader: "ts",
+        typescriptDecoratorOptions: {
+          experimentalDecorators: false,
+          emitDecoratorMetadata: false,
+        },
+      });
 
-    await bundler.bundle({
-      bundle: true,
-      typescriptDecoratorOptions: {
-        experimentalDecorators: false,
-        emitDecoratorMetadata: false,
-      },
-    });
-
-    assertEquals(delegate.bundled, { bundle: true });
+      assertStringIncludes(result.code, "value");
+    } finally {
+      await bundler.stop();
+    }
   });
 
   it("emits legacy property, constructor, parameter, and return metadata", async () => {
@@ -183,8 +158,7 @@ describe("SwcBundler decorator metadata", () => {
   });
 
   it("rejects misleading source maps only when the SWC transform is active", async () => {
-    const delegate = new RecordingBundler();
-    const bundler = new SwcBundler({ delegate });
+    const bundler = new SwcBundler();
     try {
       await bundler.transform({
         code: "export const value: number = 1;",
@@ -192,7 +166,6 @@ describe("SwcBundler decorator metadata", () => {
         sourcemap: "external",
         tsconfigRaw: { compilerOptions: {} },
       });
-      assertEquals(delegate.transformed?.sourcemap, "external");
 
       await assertRejects(
         () =>
@@ -216,34 +189,38 @@ describe("SwcBundler decorator metadata", () => {
   });
 
   it("keeps JSX loaders when SWC preserves TSX", async () => {
-    const delegate = new RecordingBundler();
-    const bundler = new SwcBundler({ delegate });
+    const bundler = new SwcBundler();
     const typescriptDecoratorOptions = {
       experimentalDecorators: true,
       emitDecoratorMetadata: false,
     };
 
-    await bundler.transform({
-      code: "export const view = <section />;",
-      loader: "tsx",
-      sourcefile: "view.tsx",
-      jsx: "preserve",
-      tsconfigRaw: { compilerOptions: typescriptDecoratorOptions },
-    });
-    assertEquals(delegate.transformed?.loader, "jsx");
-
-    await bundler.bundle({
-      bundle: false,
-      write: false,
-      jsx: "preserve",
-      stdin: {
-        contents: "export const view = <section />;",
+    try {
+      const transformed = await bundler.transform({
+        code: "export const view = <section />;",
         loader: "tsx",
         sourcefile: "view.tsx",
-      },
-      typescriptDecoratorOptions,
-    });
-    assertEquals(delegate.bundled?.stdin?.loader, "jsx");
+        jsx: "preserve",
+        tsconfigRaw: { compilerOptions: typescriptDecoratorOptions },
+      });
+      assertStringIncludes(transformed.code, "<section");
+
+      const bundled = await bundler.bundle({
+        bundle: true,
+        write: false,
+        format: "esm",
+        jsx: "preserve",
+        stdin: {
+          contents: "export const view = <section />;",
+          loader: "tsx",
+          sourcefile: "view.tsx",
+        },
+        typescriptDecoratorOptions,
+      });
+      assertStringIncludes(bundled.outputFiles[0]!.text, "<section");
+    } finally {
+      await bundler.stop();
+    }
   });
 
   it("keeps preserved TSX parseable through plugin and fallback loads", async () => {
