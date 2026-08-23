@@ -738,6 +738,47 @@ function createWorker(globalThis: { Worker: new () => unknown }) {
     );
   });
 
+  it("propagates aliased global runtime constructors", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const WorkerCtor = globalThis.Worker;
+const DirectWorker = Worker;
+const DirectSocket = WebSocket;
+const runtime = window;
+const { Worker: WindowWorker, WebSocket: Socket } = runtime;
+new WorkerCtor("./worker.ts");
+new DirectWorker("./worker.ts");
+new DirectSocket("ws://localhost/socket");
+new WindowWorker("./worker.ts");
+new Socket("ws://localhost/socket");
+new runtime.WebSocket("ws://localhost/socket");
+`,
+        "src/aliased-runtime-constructors.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["process", "WorkerCtor"],
+        ["process", "DirectWorker"],
+        ["network", "DirectSocket"],
+        ["process", "WindowWorker"],
+        ["network", "Socket"],
+        ["network", "runtime.WebSocket"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+function local(window: { Worker: new () => unknown }) {
+  const WorkerCtor = window.Worker;
+  return new WorkerCtor();
+}
+`,
+        "src/shadowed-aliased-runtime-constructor.test.ts",
+      ),
+      [],
+    );
+  });
+
   it("classifies Node worker_threads constructors as process debt", () => {
     assertEquals(
       collectSemanticMarkers(
@@ -767,6 +808,8 @@ new WebSocket("ws://localhost/socket");
 new globalThis.WebSocket("ws://localhost/socket");
 new window.WebSocket("ws://localhost/socket");
 new self.WebSocket("ws://localhost/socket");
+new EventSource("https://localhost/events");
+new XMLHttpRequest();
 `,
         "src/global-websocket.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
@@ -775,6 +818,8 @@ new self.WebSocket("ws://localhost/socket");
         ["network", "globalThis.WebSocket"],
         ["network", "window.WebSocket"],
         ["network", "self.WebSocket"],
+        ["network", "EventSource"],
+        ["network", "XMLHttpRequest"],
       ],
     );
     assertEquals(
@@ -954,6 +999,36 @@ function mutate(globalThis: { window: unknown; navigator?: unknown }) {
         "src/local-global-runtime-mutation.test.ts",
       ),
       [],
+    );
+  });
+
+  it("classifies shared working-directory reads through globals and aliases", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import { cwd as processCwd } from "node:process";
+import * as processRuntime from "node:process";
+Deno.cwd();
+process.cwd();
+processCwd();
+processRuntime.cwd();
+const denoRuntime = Deno;
+const { cwd: denoCwd } = denoRuntime;
+denoCwd();
+function local(Deno: { cwd(): string }, process: { cwd(): string }) {
+  Deno.cwd();
+  process.cwd();
+}
+`,
+        "src/shared-cwd-reads.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["shared-cwd", "Deno.cwd"],
+        ["shared-cwd", "process.cwd"],
+        ["shared-cwd", "processCwd"],
+        ["shared-cwd", "processRuntime.cwd"],
+        ["shared-cwd", "denoCwd"],
+      ],
     );
   });
 

@@ -222,10 +222,13 @@ const PROCESS_METHODS = new Set([
 ]);
 
 const PROCESS_CONSTRUCTORS = new Set(["Worker"]);
+const SHARED_CWD_METHODS = new Set(["chdir", "cwd"]);
 
 const GLOBAL_CONSTRUCTOR_EFFECTS = new Map<string, SemanticEffect>([
+  ["EventSource", "network"],
   ["Worker", "process"],
   ["WebSocket", "network"],
+  ["XMLHttpRequest", "network"],
 ]);
 
 const NETWORK_GLOBAL_PROPERTIES = new Set([
@@ -316,6 +319,7 @@ interface ImportBindings {
   readonly filesystemWrite: Set<string>;
   readonly filesystemOpen: Map<string, string>;
   readonly filesystemNamespaces: Set<string>;
+  readonly sharedCwd: Set<string>;
   readonly process: Set<string>;
   readonly processNamespaces: Set<string>;
   readonly server: Set<string>;
@@ -332,6 +336,11 @@ type RuntimeBinding =
   | { readonly kind: "effect"; readonly effect: SemanticEffect }
   | { readonly kind: "effect-object"; readonly effect: SemanticEffect }
   | { readonly kind: "filesystem-open"; readonly source: string }
+  | { readonly kind: "global-object" }
+  | {
+    readonly kind: "constructor-effect";
+    readonly effect: SemanticEffect;
+  }
   | {
     readonly kind: "global-runtime";
     readonly runtime: "Deno" | "process";
@@ -877,15 +886,25 @@ function markerForNode(
     const name = callee.name as string;
     const local = resolveLocalBinding(name, scopes);
     if (local.declared) {
-      return local.binding?.kind === "effect"
-        ? { effect: local.binding.effect, line, symbol: name }
-        : undefined;
+      if (local.binding?.kind === "effect") {
+        return { effect: local.binding.effect, line, symbol: name };
+      }
+      if (
+        node.type === "NewExpression" &&
+        local.binding?.kind === "constructor-effect"
+      ) {
+        return { effect: local.binding.effect, line, symbol: name };
+      }
+      return undefined;
     }
     if (bindings.filesystemRead.has(name) && !isShadowed(name, scopes)) {
       return { effect: "filesystem-read", line, symbol: name };
     }
     if (bindings.filesystemWrite.has(name) && !isShadowed(name, scopes)) {
       return { effect: "filesystem-write", line, symbol: name };
+    }
+    if (bindings.sharedCwd.has(name) && !isShadowed(name, scopes)) {
+      return { effect: "shared-cwd", line, symbol: name };
     }
     if (bindings.process.has(name) && !isShadowed(name, scopes)) {
       return { effect: "process", line, symbol: name };
@@ -920,8 +939,11 @@ function markerForNode(
   const constructorEffect = GLOBAL_CONSTRUCTOR_EFFECTS.get(method);
   if (
     node.type === "NewExpression" && constructorEffect &&
-    GLOBAL_RUNTIME_RECEIVERS.has(objectName) &&
-    !isGlobalShadowed(objectName, scopes, bindings.importedNames)
+    isGlobalRuntimeReceiver(
+      objectName,
+      scopes,
+      bindings.importedNames,
+    )
   ) {
     return {
       effect: constructorEffect,
@@ -966,8 +988,8 @@ function markerForNode(
     if (NETWORK_METHODS.has(method)) {
       return { effect: "network", line, symbol: `Deno.${method}` };
     }
-    if (method === "chdir") {
-      return { effect: "shared-cwd", line, symbol: "Deno.chdir" };
+    if (SHARED_CWD_METHODS.has(method)) {
+      return { effect: "shared-cwd", line, symbol: `Deno.${method}` };
     }
   }
 
@@ -992,10 +1014,18 @@ function markerForNode(
   }
   if (
     bindings.processNamespaces.has(objectName) &&
-    !isShadowed(objectName, scopes) &&
-    isProcessEffectMethod(method)
+    !isShadowed(objectName, scopes)
   ) {
-    return { effect: "process", line, symbol: `${objectName}.${method}` };
+    if (SHARED_CWD_METHODS.has(method)) {
+      return {
+        effect: "shared-cwd",
+        line,
+        symbol: `${objectName}.${method}`,
+      };
+    }
+    if (isProcessEffectMethod(method)) {
+      return { effect: "process", line, symbol: `${objectName}.${method}` };
+    }
   }
   if (
     bindings.serverNamespaces.has(objectName) &&
@@ -1164,8 +1194,11 @@ function globalPropertyMutationMarker(
   const property = literalValue(args[1]);
   if (
     !target || target.type !== "Identifier" ||
-    !GLOBAL_RUNTIME_RECEIVERS.has(target.name as string) ||
-    isGlobalShadowed(target.name as string, scopes, importedNames)
+    !isGlobalRuntimeReceiver(
+      target.name as string,
+      scopes,
+      importedNames,
+    )
   ) {
     return undefined;
   }
@@ -1199,8 +1232,8 @@ function globalRuntimeMemberMutationMarker(
       ? directReceiver.name as string
       : undefined);
   if (
-    !receiver || !GLOBAL_RUNTIME_RECEIVERS.has(receiver) ||
-    isGlobalShadowed(receiver, scopes, importedNames)
+    !receiver ||
+    !isGlobalRuntimeReceiver(receiver, scopes, importedNames)
   ) {
     return undefined;
   }
@@ -1253,6 +1286,18 @@ function processGlobalMarker(
       };
     }
     if (
+      chain?.length === 2 &&
+      (chain[0] === "Deno" || chain[0] === "process") &&
+      SHARED_CWD_METHODS.has(chain[1]) &&
+      !isGlobalShadowed(chain[0], scopes, importedNames)
+    ) {
+      return {
+        effect: "shared-cwd",
+        line,
+        symbol: `${chain[0]}.${chain[1]}`,
+      };
+    }
+    if (
       chain?.length === 2 && chain[0] === "Deno" &&
       PROCESS_METHODS.has(chain[1]) &&
       !isGlobalShadowed("Deno", scopes, importedNames)
@@ -1266,13 +1311,6 @@ function processGlobalMarker(
     ) {
       return { effect: "process", line, symbol: `process.${chain[1]}` };
     }
-    if (
-      chain?.length === 2 && chain[0] === "process" &&
-      chain[1] === "chdir" &&
-      !isGlobalShadowed("process", scopes, importedNames)
-    ) {
-      return { effect: "shared-cwd", line, symbol: "process.chdir" };
-    }
   }
 
   if (node.type !== "CallExpression" || !isNode(node.callee)) {
@@ -1280,17 +1318,23 @@ function processGlobalMarker(
   }
   const callee = memberChain(node.callee);
   if (
+    callee?.length === 2 &&
+    (callee[0] === "Deno" || callee[0] === "process") &&
+    SHARED_CWD_METHODS.has(callee[1]) &&
+    !isGlobalShadowed(callee[0], scopes, importedNames)
+  ) {
+    return {
+      effect: "shared-cwd",
+      line,
+      symbol: `${callee[0]}.${callee[1]}`,
+    };
+  }
+  if (
     callee?.length === 2 && callee[0] === "process" &&
     isProcessEffectMethod(callee[1]) &&
     !isGlobalShadowed("process", scopes, importedNames)
   ) {
     return { effect: "process", line, symbol: `process.${callee[1]}` };
-  }
-  if (
-    callee?.[0] === "process" && callee[1] === "chdir" &&
-    !isGlobalShadowed("process", scopes, importedNames)
-  ) {
-    return { effect: "shared-cwd", line, symbol: "process.chdir" };
   }
   return undefined;
 }
@@ -1308,8 +1352,8 @@ function globalFetchMarker(
   }
   const receiver = memberObjectName(member);
   if (
-    !receiver || !GLOBAL_RUNTIME_RECEIVERS.has(receiver) ||
-    isGlobalShadowed(receiver, scopes, importedNames)
+    !receiver ||
+    !isGlobalRuntimeReceiver(receiver, scopes, importedNames)
   ) {
     return undefined;
   }
@@ -1322,6 +1366,7 @@ function collectImportBindings(program: Node): ImportBindings {
     filesystemWrite: new Set(),
     filesystemOpen: new Map(),
     filesystemNamespaces: new Set(),
+    sharedCwd: new Set(),
     process: new Set(),
     processNamespaces: new Set(),
     server: new Set(),
@@ -1373,8 +1418,12 @@ function collectImportBindings(program: Node): ImportBindings {
           bindings.filesystemWrite.add(local);
         }
       }
-      if (isProcessSpecifier(source) && isProcessEffectMethod(importedName)) {
-        bindings.process.add(local);
+      if (isProcessSpecifier(source)) {
+        if (SHARED_CWD_METHODS.has(importedName)) {
+          bindings.sharedCwd.add(local);
+        } else if (isProcessEffectMethod(importedName)) {
+          bindings.process.add(local);
+        }
       }
       if (isServerSpecifier(source) && SERVER_METHODS.has(importedName)) {
         bindings.server.add(local);
@@ -1571,6 +1620,9 @@ function identifierRuntimeBinding(
   if (imports.filesystemWrite.has(name)) {
     return { kind: "effect", effect: "filesystem-write" };
   }
+  if (imports.sharedCwd.has(name)) {
+    return { kind: "effect", effect: "shared-cwd" };
+  }
   if (imports.process.has(name)) return { kind: "effect", effect: "process" };
   if (imports.server.has(name)) return { kind: "effect", effect: "server" };
   if (imports.network.has(name)) return { kind: "effect", effect: "network" };
@@ -1600,7 +1652,26 @@ function globalRuntimeAliasBinding(
   if (init.type === "Identifier") {
     const name = init.name as string;
     const resolved = resolveLocalBinding(name, scopes);
-    if (resolved.binding?.kind === "global-runtime") return resolved.binding;
+    if (
+      resolved.binding?.kind === "global-runtime" ||
+      resolved.binding?.kind === "global-object" ||
+      resolved.binding?.kind === "constructor-effect"
+    ) {
+      return resolved.binding;
+    }
+    const constructorEffect = GLOBAL_CONSTRUCTOR_EFFECTS.get(name);
+    if (
+      constructorEffect &&
+      !isGlobalShadowed(name, scopes, imports.importedNames)
+    ) {
+      return { kind: "constructor-effect", effect: constructorEffect };
+    }
+    if (
+      GLOBAL_RUNTIME_RECEIVERS.has(name) &&
+      !isGlobalShadowed(name, scopes, imports.importedNames)
+    ) {
+      return { kind: "global-object" };
+    }
     if (
       (name === "Deno" || name === "process") &&
       !isGlobalShadowed(name, scopes, imports.importedNames)
@@ -1612,13 +1683,30 @@ function globalRuntimeAliasBinding(
 
   const chain = memberChain(init);
   if (
-    chain?.length === 2 && chain[0] === "globalThis" &&
-    (chain[1] === "Deno" || chain[1] === "process") &&
-    !isGlobalShadowed("globalThis", scopes, imports.importedNames)
+    chain?.length === 2 &&
+    isGlobalRuntimeReceiver(chain[0], scopes, imports.importedNames)
   ) {
-    return { kind: "global-runtime", runtime: chain[1] };
+    return globalObjectPropertyBinding(chain[1]);
   }
   return undefined;
+}
+
+function globalObjectPropertyBinding(
+  property: string,
+): RuntimeBinding | undefined {
+  if (property === "Deno" || property === "process") {
+    return { kind: "global-runtime", runtime: property };
+  }
+  if (GLOBAL_RUNTIME_RECEIVERS.has(property)) {
+    return { kind: "global-object" };
+  }
+  const constructorEffect = GLOBAL_CONSTRUCTOR_EFFECTS.get(property);
+  if (constructorEffect) {
+    return { kind: "constructor-effect", effect: constructorEffect };
+  }
+  return property === "fetch"
+    ? { kind: "effect", effect: "network" }
+    : undefined;
 }
 
 function bindPatternToRuntime(
@@ -1630,7 +1718,10 @@ function bindPatternToRuntime(
     scope.runtimeBindings.set(pattern.name as string, binding);
     return;
   }
-  if (pattern.type !== "ObjectPattern" || binding.kind !== "global-runtime") {
+  if (
+    pattern.type !== "ObjectPattern" ||
+    (binding.kind !== "global-runtime" && binding.kind !== "global-object")
+  ) {
     return;
   }
   for (
@@ -1655,6 +1746,13 @@ function bindPatternToRuntime(
       ? property.value.left.name as string
       : undefined;
     if (!method || !localName) continue;
+    if (binding.kind === "global-object") {
+      const propertyBinding = globalObjectPropertyBinding(method);
+      if (propertyBinding) {
+        scope.runtimeBindings.set(localName, propertyBinding);
+      }
+      continue;
+    }
     const effect = effectForGlobalRuntimeMethod(binding.runtime, method);
     if (!effect) continue;
     scope.runtimeBindings.set(
@@ -1848,6 +1946,17 @@ function isGlobalShadowed(
   return importedNames.has(name) || isShadowed(name, scopes);
 }
 
+function isGlobalRuntimeReceiver(
+  name: string,
+  scopes: readonly Scope[],
+  importedNames: ReadonlySet<string>,
+): boolean {
+  const resolved = resolveLocalBinding(name, scopes);
+  if (resolved.binding?.kind === "global-object") return true;
+  return GLOBAL_RUNTIME_RECEIVERS.has(name) &&
+    !isGlobalShadowed(name, scopes, importedNames);
+}
+
 function resolveLocalBinding(
   name: string,
   scopes: readonly Scope[],
@@ -1917,6 +2026,9 @@ function effectForModuleMethod(
     if (READ_METHODS.has(method)) return "filesystem-read";
     if (WRITE_METHODS.has(method)) return "filesystem-write";
   }
+  if (isProcessSpecifier(source) && SHARED_CWD_METHODS.has(method)) {
+    return "shared-cwd";
+  }
   if (isProcessSpecifier(source) && isProcessEffectMethod(method)) {
     return "process";
   }
@@ -1934,17 +2046,16 @@ function effectForGlobalRuntimeMethod(
   runtime: "Deno" | "process",
   method: string,
 ): SemanticEffect | undefined {
+  if (SHARED_CWD_METHODS.has(method)) return "shared-cwd";
   if (runtime === "Deno") {
     if (READ_METHODS.has(method)) return "filesystem-read";
     if (WRITE_METHODS.has(method)) return "filesystem-write";
     if (PROCESS_METHODS.has(method) || method === "env") return "process";
     if (SERVER_METHODS.has(method)) return "server";
     if (NETWORK_METHODS.has(method)) return "network";
-    if (method === "chdir") return "shared-cwd";
     return undefined;
   }
   if (isProcessEffectMethod(method)) return "process";
-  if (method === "chdir") return "shared-cwd";
   return undefined;
 }
 
