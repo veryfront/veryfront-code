@@ -11,6 +11,7 @@
     "#cli/shared/constants": "./shared/constants.ts",
     "#cli/shared/config": "./shared/config.ts",
     "#cli/shared/default-contracts": "./shared/default-contracts.ts",
+    "#cli/shared/port-env": "./shared/port-env.ts",
     "#cli/shared/project-source-context": "./shared/project-source-context.ts",
     "#cli/shared/slug": "./shared/slug.ts",
     "#cli/shared/reserve-slug": "./shared/reserve-slug.ts",

@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { createInMemoryHostRuntime } from "#veryfront/platform/compat/process.ts";
 import {
   checkForUpdates,
   compareVersions,
@@ -44,82 +45,39 @@ describe("update-check", () => {
   });
 
   describe("shouldSkip", () => {
-    function restoreEnv(keys: string[], saved: (string | undefined)[]) {
-      keys.forEach((k, i) => {
-        if (saved[i] === undefined) Deno.env.delete(k);
-        else Deno.env.set(k, saved[i]!);
-      });
+    afterEach(() => {
       setJsonMode(false);
       setQuietMode(false);
-    }
+    });
 
     it("skips when VERYFRONT_NO_UPDATE_CHECK=1", () => {
-      const saved = Deno.env.get("VERYFRONT_NO_UPDATE_CHECK");
-      Deno.env.set("VERYFRONT_NO_UPDATE_CHECK", "1");
-      try {
-        assertEquals(shouldSkip(), true);
-      } finally {
-        restoreEnv(["VERYFRONT_NO_UPDATE_CHECK"], [saved]);
-      }
+      const host = createInMemoryHostRuntime({ env: { VERYFRONT_NO_UPDATE_CHECK: "1" } });
+      assertEquals(shouldSkip(host), true, "the opt-out variable skips the check");
     });
 
     it("skips when CI=true", () => {
-      const saved = Deno.env.get("CI");
-      Deno.env.set("CI", "true");
-      try {
-        assertEquals(shouldSkip(), true);
-      } finally {
-        restoreEnv(["CI"], [saved]);
-      }
+      const host = createInMemoryHostRuntime({ env: { CI: "true" } });
+      assertEquals(shouldSkip(host), true, "CI skips the check");
     });
 
     it("skips when GITHUB_ACTIONS is set", () => {
-      const saved = Deno.env.get("GITHUB_ACTIONS");
-      Deno.env.set("GITHUB_ACTIONS", "true");
-      try {
-        assertEquals(shouldSkip(), true);
-      } finally {
-        restoreEnv(["GITHUB_ACTIONS"], [saved]);
-      }
+      const host = createInMemoryHostRuntime({ env: { GITHUB_ACTIONS: "true" } });
+      assertEquals(shouldSkip(host), true, "GitHub Actions counts as CI");
     });
 
     it("skips in JSON mode", () => {
       setJsonMode(true);
-      try {
-        assertEquals(shouldSkip(), true);
-      } finally {
-        setJsonMode(false);
-      }
+      assertEquals(shouldSkip(createInMemoryHostRuntime()), true, "JSON output skips the check");
     });
 
     it("skips in quiet mode", () => {
       setQuietMode(true);
-      try {
-        assertEquals(shouldSkip(), true);
-      } finally {
-        setQuietMode(false);
-      }
+      assertEquals(shouldSkip(createInMemoryHostRuntime()), true, "quiet mode skips the check");
     });
 
     it("does not skip under normal conditions", () => {
-      const keys = [
-        "VERYFRONT_NO_UPDATE_CHECK",
-        "CI",
-        "GITHUB_ACTIONS",
-        "GITLAB_CI",
-        "JENKINS_URL",
-        "CIRCLECI",
-        "BUILDKITE",
-      ];
-      const saved = keys.map((k) => Deno.env.get(k));
-      keys.forEach((k) => Deno.env.delete(k));
-      setJsonMode(false);
-      setQuietMode(false);
-      try {
-        assertEquals(shouldSkip(), false);
-      } finally {
-        restoreEnv(keys, saved);
-      }
+      const host = createInMemoryHostRuntime({ env: { CI: "false", GITLAB_CI: "0" } });
+      assertEquals(shouldSkip(host), false, "an interactive non-CI shell checks for updates");
     });
   });
 
