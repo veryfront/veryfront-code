@@ -230,12 +230,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     name: coverage shard ${{ matrix.shard }}/8
-    # Job-level permissions replace the workflow default entirely, so `contents:
-    # read` is restated here for checkout. `id-token: write` lets the Codecov
-    # upload authenticate via OIDC instead of a stored CODECOV_TOKEN secret.
-    permissions:
-      contents: read
-      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -259,33 +253,6 @@ jobs:
           name: coverage-shard-${{ matrix.shard }}
           path: coverage-shard-${{ matrix.shard }}/lcov.info
           retention-days: 1
-      # `deno coverage --lcov` emits absolute `SF:` paths (e.g.
-      # /home/runner/work/veryfront-code/veryfront-code/src/...). Codecov matches
-      # coverage records against repo-relative paths, so strip the workspace
-      # prefix into a separate file. The original lcov.info is left untouched so
-      # the artifact and the `coverage gate` job keep their existing behaviour.
-      - name: Normalize lcov paths for Codecov
-        if: ${{ success() }}
-        run: |
-          sed "s|^SF:${GITHUB_WORKSPACE}/|SF:|" \
-            "coverage-shard-${{ matrix.shard }}/lcov.info" \
-            > "coverage-shard-${{ matrix.shard }}/lcov.codecov.info"
-      # Authenticated with OIDC (`id-token: write` above) rather than a stored
-      # CODECOV_TOKEN, so there is no upload secret to manage or rotate. A token
-      # is otherwise mandatory here: `main` is a protected branch, and Codecov
-      # only permits tokenless uploads for fork PRs.
-      #
-      # Advisory only: `fail_ci_if_error` stays false so a Codecov outage can
-      # never break CI. The blocking threshold remains `deno task coverage:gate`.
-      - name: Upload coverage to Codecov
-        if: ${{ success() }}
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
-        with:
-          use_oidc: true
-          files: coverage-shard-${{ matrix.shard }}/lcov.codecov.info
-          disable_search: true
-          name: unit-shard-${{ matrix.shard }}
-          fail_ci_if_error: false
       - name: Add coverage shard summary
         run: echo "### Coverage shard ${{ matrix.shard }}/8 completed in ${{ steps.coverage.outputs.duration }}" >> "$GITHUB_STEP_SUMMARY"
 
@@ -338,6 +305,58 @@ jobs:
           echo "duration=$(($(date +%s) - START))s" >> "$GITHUB_OUTPUT"
       - name: Add coverage summary
         run: echo "### Coverage shard merge completed in ${{ steps.coverage.outputs.duration }}" >> "$GITHUB_STEP_SUMMARY"
+
+  # Uploading is a separate job from `coverage-shards` on purpose. The shard job
+  # runs the unit suite with `--allow-all`, so any code on the branch executes
+  # there. Granting that job `id-token: write` would let branch code mint a
+  # repository OIDC token. This job runs no repository code: it downloads the
+  # shard artifacts, rewrites paths with sed, and calls the upload action.
+  codecov-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    name: codecov upload
+    needs: [coverage-shards]
+    if: ${{ needs.coverage-shards.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download unit coverage lcov files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: coverage-profiles
+          pattern: coverage-shard-*
+      # `deno coverage --lcov` emits absolute `SF:` paths (e.g.
+      # /home/runner/work/veryfront-code/veryfront-code/src/...). Codecov matches
+      # coverage records against repo-relative paths, so strip the workspace
+      # prefix. This edits the downloaded copies only. The stored artifact and
+      # the `coverage gate` job read their own copies and are unaffected.
+      - name: Normalize lcov paths for Codecov
+        run: |
+          for file in coverage-profiles/coverage-shard-*/lcov.info; do
+            sed -i "s|^SF:${GITHUB_WORKSPACE}/|SF:|" "$file"
+          done
+      # Authenticated with OIDC rather than a stored CODECOV_TOKEN, so there is
+      # no upload secret to manage or rotate. A token is otherwise mandatory
+      # here: `main` is a protected branch, and Codecov only permits tokenless
+      # uploads for fork PRs.
+      #
+      # Advisory only: `fail_ci_if_error` stays false so a Codecov outage can
+      # never fail this job, and this job is not a required status check. The
+      # blocking threshold remains `deno task coverage:gate`.
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          use_oidc: true
+          # Comma separated, the form the action documents. All 8 files go up
+          # in one call, so Codecov records one upload per commit.
+          files: coverage-profiles/coverage-shard-1/lcov.info,coverage-profiles/coverage-shard-2/lcov.info,coverage-profiles/coverage-shard-3/lcov.info,coverage-profiles/coverage-shard-4/lcov.info,coverage-profiles/coverage-shard-5/lcov.info,coverage-profiles/coverage-shard-6/lcov.info,coverage-profiles/coverage-shard-7/lcov.info,coverage-profiles/coverage-shard-8/lcov.info
+          disable_search: true
+          name: unit
+          fail_ci_if_error: false
 
   tests-e2e-rsc-browser:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
