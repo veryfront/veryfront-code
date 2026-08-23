@@ -2,7 +2,6 @@ import "#veryfront/schemas/_test-setup.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { withCwd } from "#veryfront/testing/cwd.ts";
 import { COMMANDS } from "./help/command-definitions.ts";
 import { parseLoginMethod } from "./auth/utils.ts";
 import { routeCommand } from "./router.ts";
@@ -675,14 +674,12 @@ describe("cli/router helpers", () => {
         Deno.env.set("XDG_CONFIG_HOME", configHome);
         _resetEnvironmentConfig();
 
-        // Scoped to the call that resolves veryfront.json from the cwd, rather
-        // than held across the whole test.
-        const code = await withCwd(projectDir, () =>
-          runAndCaptureExit({
-            _: ["schedule", "run", "process-job-submissions"],
-            remote: true,
-            json: true,
-          } as ParsedArgs));
+        const code = await runAndCaptureExit({
+          _: ["schedule", "run", "process-job-submissions"],
+          "project-dir": projectDir,
+          remote: true,
+          json: true,
+        } as ParsedArgs);
         assertEquals(code, 1);
         assertEquals(consoleOutput.length, 1);
         const parsed = JSON.parse(consoleOutput[0] ?? "{}");

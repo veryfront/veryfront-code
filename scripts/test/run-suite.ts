@@ -66,11 +66,7 @@ const UNIT_ROOTS = (() => {
   return unit.pathSelectors.filter((root) => !UNPLANNABLE_UNIT_ROOTS.has(root));
 })();
 const UNIT_CWD_FILES = [
-  "cli/router.test.ts",
-  "cli/app/operations/project-creation.test.ts",
-  "cli/commands/schedule/handler.test.ts",
   "cli/commands/skills/validate.test.ts",
-  "cli/commands/webhook/handler.test.ts",
   "src/platform/compat/process.test.ts",
   "src/testing/cwd.test.ts",
 ];

@@ -3,7 +3,6 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import { withCwd } from "#veryfront/testing/cwd.ts";
 import { join } from "veryfront/platform/path";
 import { createProject } from "./project-creation.ts";
 import { createInitialState } from "../state.ts";
@@ -56,14 +55,11 @@ describe("TUI project creation", () => {
         throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
       }) as typeof fetch;
 
-      // Only the call itself needs the directory: it resolves the new project
-      // relative to the process cwd. Everything around it uses absolute paths.
-      const state = await withCwd(workDir, () =>
-        createProject(
-          { state: createInitialState(), render: () => {} },
-          "My App",
-          "minimal",
-        ));
+      const state = await createProject(
+        { state: createInitialState(), render: () => {}, baseDir: workDir },
+        "My App",
+        "minimal",
+      );
 
       const link = JSON.parse(
         await Deno.readTextFile(
@@ -128,12 +124,11 @@ describe("TUI project creation", () => {
         throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
       }) as typeof fetch;
 
-      const state = await withCwd(workDir, () =>
-        createProject(
-          { state: createInitialState(), render: () => {} },
-          "My App",
-          "minimal",
-        ));
+      const state = await createProject(
+        { state: createInitialState(), render: () => {}, baseDir: workDir },
+        "My App",
+        "minimal",
+      );
 
       assertEquals(
         state.logs.some((entry) => entry.message.includes("projects/my-app already exists")),

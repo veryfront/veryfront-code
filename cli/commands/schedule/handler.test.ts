@@ -11,7 +11,6 @@ import { clearProjectAgentRuntimeRegistries } from "../../../src/agent/project/a
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { VeryfrontError } from "veryfront/errors";
-import { withCwd } from "#veryfront/testing/cwd.ts";
 import type { CreateScheduleRunFromSourceResult, Run, VeryfrontRunsClient } from "veryfront/runs";
 import type { ScheduleDefinition } from "veryfront/schedule";
 import { setJsonMode } from "../../shared/json-output.ts";
@@ -127,8 +126,6 @@ function restoreEnvironment(): void {
 
 describe("schedule command", () => {
   afterEach(() => {
-    // No chdir here: withCwd already handed the directory back, and reaching
-    // for it outside a turn would yank it from whichever test file holds it now.
     // deno-lint-ignore no-explicit-any
     (Deno as any).exit = originalExit;
     restoreMockFetch();
@@ -216,19 +213,17 @@ describe("schedule command", () => {
       };
 
       let exitCode: number | undefined;
-      // Held only for the command, which resolves veryfront.json from the cwd.
-      await withCwd(projectDir, async () => {
-        try {
-          await handleScheduleCommand({
-            _: ["schedule", "run", "process-job-submissions"],
-            remote: true,
-            json: true,
-          } as ParsedArgs);
-        } catch (error) {
-          if (!(error instanceof ExitSentinel)) throw error;
-          exitCode = error.code;
-        }
-      });
+      try {
+        await handleScheduleCommand({
+          _: ["schedule", "run", "process-job-submissions"],
+          "project-dir": projectDir,
+          remote: true,
+          json: true,
+        } as ParsedArgs);
+      } catch (error) {
+        if (!(error instanceof ExitSentinel)) throw error;
+        exitCode = error.code;
+      }
 
       assertEquals(exitCode, 0);
       assertEquals(requests.map((request) => request.url), [
@@ -330,19 +325,16 @@ describe("schedule command", () => {
       };
 
       let exitCode: number | undefined;
-      // Held only for the command, which discovers schedules/ and tasks/
-      // relative to the cwd.
-      await withCwd(projectDir, async () => {
-        try {
-          await handleScheduleCommand({
-            _: ["schedule", "run", "timed-task"],
-            json: true,
-          } as ParsedArgs);
-        } catch (error) {
-          if (!(error instanceof ExitSentinel)) throw error;
-          exitCode = error.code;
-        }
-      });
+      try {
+        await handleScheduleCommand({
+          _: ["schedule", "run", "timed-task"],
+          "project-dir": projectDir,
+          json: true,
+        } as ParsedArgs);
+      } catch (error) {
+        if (!(error instanceof ExitSentinel)) throw error;
+        exitCode = error.code;
+      }
 
       assertEquals(exitCode, 0);
       assertEquals(JSON.parse(output.at(-1) ?? "{}").data.output, {

@@ -1,4 +1,4 @@
-import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
+import { CommonArgs, createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import { withProjectSourceContext } from "#cli/shared/project-source-context";
 import type { ParsedArgs } from "#cli/shared/types";
 import { cliLogger, exitProcess } from "#cli/utils";
@@ -23,6 +23,7 @@ const getWebhookArgsSchema = defineSchema((v) =>
     action: v.enum(["run", "list"]).optional(),
     id: v.string().optional(),
     payload: v.string().optional(),
+    projectDir: v.string().optional(),
     debug: v.boolean().default(false),
   })
 );
@@ -35,6 +36,7 @@ const parseWebhookArgs = createArgParser(WebhookArgsSchema, {
   action: { keys: ["action"], type: "string", positional: 0 },
   id: { keys: ["id"], type: "string", positional: 1 },
   payload: { keys: ["payload"], type: "string" },
+  projectDir: CommonArgs.projectDir,
   debug: { keys: ["debug"], type: "boolean" },
 });
 
@@ -99,8 +101,7 @@ function formatWebhook(webhook: WebhookDefinition): string {
   return `${webhook.id} -> ${webhook.target.kind}:${webhook.target.id}`;
 }
 
-async function handleWebhookList(_args: ParsedArgs): Promise<void> {
-  const projectDir = Deno.cwd();
+async function handleWebhookList(projectDir: string): Promise<void> {
   await withProjectSourceContext(projectDir, async ({ adapter, config }) => {
     const result = await discoverWebhooks({
       projectDir,
@@ -119,10 +120,11 @@ async function handleWebhookList(_args: ParsedArgs): Promise<void> {
 
 export async function handleWebhookCommand(args: ParsedArgs): Promise<void> {
   const opts: WebhookArgs = parseArgsOrThrow(parseWebhookArgs, "webhook", args);
+  const projectDir = opts.projectDir ?? Deno.cwd();
 
   // Dispatch "list" (also the default when no action is given)
   if (!opts.action || opts.action === "list") {
-    await handleWebhookList(args);
+    await handleWebhookList(projectDir);
     return;
   }
 
@@ -137,7 +139,6 @@ export async function handleWebhookCommand(args: ParsedArgs): Promise<void> {
     throw INVALID_ARGUMENT.create({ detail: `Invalid webhook id: "${opts.id}".` });
   }
 
-  const projectDir = Deno.cwd();
   const payload = await readJsonFile(opts.payload, "--payload JSON file");
 
   await withProjectSourceContext(projectDir, async (context) => {

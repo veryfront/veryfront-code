@@ -24,6 +24,8 @@ import type { InitTemplate } from "../../commands/init/types.ts";
 export interface ProjectCreationContext {
   state: AppState;
   render: () => void;
+  /** Directory whose `projects/` folder receives the new project. Defaults to the working directory. */
+  baseDir?: string;
 }
 
 /**
@@ -37,6 +39,7 @@ export async function createProject(
   let { state } = ctx;
 
   try {
+    const baseDir = ctx.baseDir ?? cwd();
     state = addLog("info", "Creating project...")(state);
     ctx.render();
 
@@ -54,7 +57,7 @@ export async function createProject(
     // slug, and `resolveOrCreateProject` below writes the link for it. Adopting
     // an existing `projects/<slug>` would point a directory that is already
     // someone else's project at the project just reserved.
-    const projectDir = join(cwd(), "projects", slug);
+    const projectDir = join(baseDir, "projects", slug);
     if (await createFileSystem().exists(projectDir)) {
       return addLog(
         "error",
@@ -64,7 +67,7 @@ export async function createProject(
 
     const creation = await createSharedProject({
       name: slug,
-      parentDir: join(cwd(), "projects"),
+      parentDir: join(baseDir, "projects"),
       template,
       runtime: "node",
       integrations: [],
@@ -101,7 +104,7 @@ export async function createProject(
     state = setProjects(currentProjects)(state);
 
     const result = await fetchRemoteProjects();
-    state = setRemoteProjects(result.projects)(state);
+    state = setRemoteProjects(result.projects, baseDir)(state);
 
     return addLog("info", `Created ${slug}`)(state);
   } catch (error) {

@@ -12,6 +12,10 @@ export const webhookHelp: CommandHelp = {
         "JSON payload fixture (run only; 64 KiB maximum; filters and agent templates are applied)",
     },
     {
+      flag: "-d, --dir <path>",
+      description: "Project directory (default: current directory)",
+    },
+    {
       flag: "--json",
       description: "Output as JSON",
     },

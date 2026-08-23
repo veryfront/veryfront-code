@@ -16,6 +16,10 @@ export const scheduleHelp: CommandHelp = {
         "Run the pushed source schedule in the Veryfront cloud runtime; cannot be combined with --input (run only)",
     },
     {
+      flag: "-d, --dir <path>",
+      description: "Project directory (default: current directory)",
+    },
+    {
       flag: "--json",
       description: "Output as JSON",
     },

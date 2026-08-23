@@ -1,4 +1,4 @@
-import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
+import { CommonArgs, createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import { resolveConfigWithAuth } from "#cli/shared/config";
 import { withProjectSourceContext } from "#cli/shared/project-source-context";
 import type { ParsedArgs } from "#cli/shared/types";
@@ -48,6 +48,7 @@ const getScheduleArgsSchema = defineSchema((v) =>
     action: v.enum(["run", "list"]).optional(),
     id: v.string().optional(),
     input: v.string().optional(),
+    projectDir: v.string().optional(),
     remote: v.boolean().default(false),
     debug: v.boolean().default(false),
   })
@@ -61,6 +62,7 @@ const parseScheduleArgs = createArgParser(ScheduleArgsSchema, {
   action: { keys: ["action"], type: "string", positional: 0 },
   id: { keys: ["id"], type: "string", positional: 1 },
   input: { keys: ["input"], type: "string" },
+  projectDir: CommonArgs.projectDir,
   remote: { keys: ["remote"], type: "boolean" },
   debug: { keys: ["debug"], type: "boolean" },
 });
@@ -69,8 +71,7 @@ function formatSchedule(schedule: ScheduleDefinition): string {
   return `${schedule.id} -> ${schedule.target.kind}:${schedule.target.id} (${schedule.schedule})`;
 }
 
-async function handleScheduleList(_args: ParsedArgs): Promise<void> {
-  const projectDir = Deno.cwd();
+async function handleScheduleList(projectDir: string): Promise<void> {
   await withProjectSourceContext(projectDir, async ({ adapter, config }) => {
     const result = await discoverSchedules({
       projectDir,
@@ -395,10 +396,11 @@ async function runRemoteSchedule(
 
 export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
   const opts: ScheduleArgs = parseArgsOrThrow(parseScheduleArgs, "schedule", args);
+  const projectDir = opts.projectDir ?? Deno.cwd();
 
   // Dispatch "list" (also the default when no action is given)
   if (!opts.action || opts.action === "list") {
-    await handleScheduleList(args);
+    await handleScheduleList(projectDir);
     return;
   }
 
@@ -407,7 +409,6 @@ export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
     throw INVALID_ARGUMENT.create({ detail: "Usage: veryfront schedule run <id>" });
   }
 
-  const projectDir = Deno.cwd();
   if (!isTriggerId(opts.id)) {
     throw INVALID_ARGUMENT.create({ detail: `Invalid schedule id: "${opts.id}".` });
   }

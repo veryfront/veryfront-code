@@ -26,11 +26,7 @@ import {
 } from "./run-suite.ts";
 
 const UNIT_CWD_FILES = [
-  "cli/router.test.ts",
-  "cli/app/operations/project-creation.test.ts",
-  "cli/commands/schedule/handler.test.ts",
   "cli/commands/skills/validate.test.ts",
-  "cli/commands/webhook/handler.test.ts",
   "src/platform/compat/process.test.ts",
   "src/testing/cwd.test.ts",
 ];
@@ -199,7 +195,7 @@ describe("migration command surface", () => {
       "src/a test.test.ts",
     ]);
     const cwd = buildDenoSuiteCommandArgs("unit:cwd", [
-      "cli/router.test.ts",
+      "src/testing/cwd.test.ts",
     ]);
     const integration = buildDenoSuiteCommandArgs(
       "integration:legacy-tests-root",
