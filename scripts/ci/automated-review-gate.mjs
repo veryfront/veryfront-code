@@ -4,6 +4,7 @@ const AUTOMATED_REVIEW_LOGINS = new Set([
 ]);
 const CODERABBIT_LOGIN = "coderabbitai[bot]";
 const CODERABBIT_RECENT_REVIEW_MARKER = "<!-- recent_review_start -->";
+const CODERABBIT_RECENT_REVIEW_END_MARKER = "<!-- recent_review_end -->";
 const CODEX_LOGIN = "chatgpt-codex-connector[bot]";
 const CODEX_BOT_ID = 199175422;
 const CODEX_NO_FINDING_PREFIX = "Codex Review: Didn't find any major issues.";
@@ -82,12 +83,11 @@ export async function findAutomatedReview(
         }
       }
     }
+    const recentReview = codeRabbitRecentReview(body);
     if (
       typeof login !== "string" ||
       login.toLowerCase() !== CODERABBIT_LOGIN ||
-      typeof body !== "string" ||
-      !body.includes(CODERABBIT_RECENT_REVIEW_MARKER) ||
-      !body.includes(headSha)
+      !recentReview?.includes(headSha)
     ) {
       continue;
     }
@@ -99,6 +99,15 @@ export async function findAutomatedReview(
     };
   }
   return undefined;
+}
+
+function codeRabbitRecentReview(body) {
+  if (typeof body !== "string") return undefined;
+  const start = body.lastIndexOf(CODERABBIT_RECENT_REVIEW_MARKER);
+  if (start < 0) return undefined;
+  const contentStart = start + CODERABBIT_RECENT_REVIEW_MARKER.length;
+  const end = body.indexOf(CODERABBIT_RECENT_REVIEW_END_MARKER, contentStart);
+  return end < 0 ? undefined : body.slice(contentStart, end);
 }
 
 /** Publish the current automated-review decision on the exact PR head SHA. */

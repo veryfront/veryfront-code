@@ -37,6 +37,7 @@ function codeRabbitSummary(
       "<!-- recent_review_start -->",
       "No actionable comments were generated in the recent review.",
       `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+      "<!-- recent_review_end -->",
     ].join("\n"),
     html_url:
       "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
@@ -214,6 +215,14 @@ describe("automated review gate", () => {
           skippedIssueComment,
           codeRabbitSummary({
             body: "<!-- recent_review_start -->\nstale review",
+          }),
+          codeRabbitSummary({
+            body: [
+              "<!-- recent_review_start -->",
+              `Reviewing files through ${STALE_SHA}.`,
+              "<!-- recent_review_end -->",
+              `Review skipped for current commit ${HEAD_SHA}.`,
+            ].join("\n"),
           }),
         ],
       }, HEAD_SHA),
