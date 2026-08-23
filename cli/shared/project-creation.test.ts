@@ -915,6 +915,51 @@ describe("createProject when a path cannot be written through", () => {
     }
   });
 
+  it("refuses a .gitignore directory before writing scaffold files", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-gitignore-dir-" });
+    const projectDir = join(parentDir, "contract-project");
+
+    try {
+      await Deno.mkdir(join(projectDir, ".gitignore"), { recursive: true });
+
+      await assertRejects(
+        () => createProject(baseRequest(parentDir)),
+        Error,
+        'Directory "contract-project" already contains .gitignore as a file or a link',
+      );
+
+      assertEquals(await exists(join(projectDir, "README.md")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("refuses installer lockfiles before dependency installation can replace them", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-lockfile-conflict-" });
+    const projectDir = join(parentDir, "contract-project");
+    const lockfile = join(projectDir, "package-lock.json");
+
+    try {
+      await Deno.mkdir(projectDir);
+      await Deno.writeTextFile(lockfile, "keep-me\n");
+
+      await assertRejects(
+        () =>
+          createProject({
+            ...baseRequest(parentDir),
+            installDependencies: true,
+          }),
+        Error,
+        'Directory "contract-project" already contains package-lock.json. Use --force to overwrite.',
+      );
+
+      assertEquals(await Deno.readTextFile(lockfile), "keep-me\n");
+      assertEquals(await exists(join(projectDir, "README.md")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
   it("still reports a real file at a scaffold path as an overwritable conflict", async () => {
     const parentDir = await makeTempDir({ prefix: "veryfront-create-leaf-file-" });
     const projectDir = join(parentDir, "contract-project");

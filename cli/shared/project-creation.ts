@@ -27,6 +27,7 @@ import {
   installDependencies,
   type PackageManager,
 } from "../utils/package-manager.ts";
+import { LOCKFILE_CLIENTS } from "veryfront/utils/package-client";
 import {
   loadIntegrationBaseConfig,
   loadIntegrationBaseFilesFromDirectory,
@@ -504,11 +505,28 @@ function scaffoldWritePaths(assembly: ScaffoldAssembly, request: CreateProjectRe
   return paths;
 }
 
-function protectedWritePaths(
+function installerWritePaths(request: CreateProjectRequest): string[] {
+  if (!request.installDependencies) return [];
+
+  const packageManager = packageManagerPreference(request.runtime);
+  return LOCKFILE_CLIENTS
+    .filter(([, client]) => client === packageManager)
+    .map(([path]) => path);
+}
+
+function conflictWritePaths(
   assembly: ScaffoldAssembly,
   request: CreateProjectRequest,
 ): string[] {
-  return [...scaffoldWritePaths(assembly, request), ".gitignore"];
+  return [...scaffoldWritePaths(assembly, request), ...installerWritePaths(request)];
+}
+
+function protectedMergePaths(): string[] {
+  return [".gitignore"];
+}
+
+function protectedLeafPaths(request: CreateProjectRequest): string[] {
+  return [...protectedMergePaths(), ...installerWritePaths(request)];
 }
 
 async function findExistingPaths(dir: string, paths: string[]): Promise<string[]> {
@@ -550,7 +568,11 @@ async function isSymlinkPath(path: string): Promise<boolean> {
   }
 }
 
-async function findUnwritablePaths(dir: string, paths: string[]): Promise<string[]> {
+async function findUnwritablePaths(
+  dir: string,
+  paths: string[],
+  protectedLeafPaths: string[] = [],
+): Promise<string[]> {
   const fs = createFileSystem();
   // `lstat` is what makes a link visible: `stat` follows it and reports the
   // target. It is optional only for virtual filesystems that have no links of
@@ -559,7 +581,7 @@ async function findUnwritablePaths(dir: string, paths: string[]): Promise<string
   const describe = fs.lstat?.bind(fs) ?? fs.stat.bind(fs);
   const blocked = new Set<string>();
 
-  for (const path of paths) {
+  for (const path of [...paths, ...protectedLeafPaths]) {
     const segments = path.split("/");
     for (let depth = 1; depth <= segments.length; depth++) {
       const prefix = segments.slice(0, depth).join("/");
@@ -571,6 +593,10 @@ async function findUnwritablePaths(dir: string, paths: string[]): Promise<string
         break; // Nothing there yet, so nothing below it either.
       }
       if (info.isSymlink) {
+        blocked.add(prefix);
+        break;
+      }
+      if (protectedLeafPaths.includes(prefix) && depth === segments.length && info.isDirectory) {
         blocked.add(prefix);
         break;
       }
@@ -603,7 +629,7 @@ export async function createProject(
   validateIntegrationsOrThrow(request.integrations);
 
   const assembly = await assembleScaffold(request);
-  const writePaths = scaffoldWritePaths(assembly, request);
+  const writePaths = conflictWritePaths(assembly, request);
   const where = projectName === undefined ? "Directory" : `Directory "${projectName}"`;
 
   // The scaffold picks this path itself by joining the name onto the parent, so
@@ -621,7 +647,7 @@ export async function createProject(
 
   // Checked whatever the conflict policy is: `--force` says you accept your
   // files being replaced, not the scaffold writing somewhere else entirely.
-  const unwritable = await findUnwritablePaths(projectDir, protectedWritePaths(assembly, request));
+  const unwritable = await findUnwritablePaths(projectDir, writePaths, protectedLeafPaths(request));
   if (unwritable.length) {
     throw ALREADY_EXISTS.create({
       detail: `${where} already contains ${unwritable.join(", ")} as a file or a link ` +

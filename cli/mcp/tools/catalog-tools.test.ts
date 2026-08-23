@@ -304,6 +304,60 @@ describe("mcp/tools/catalog-tools", () => {
       assertEquals(await Deno.readTextFile(join(projectDir, ".gitignore")), "keep-me\n");
     });
 
+    it("refuses a .gitignore directory before partially scaffolding", async () => {
+      const parentDir = await Deno.makeTempDir();
+      createdDirs.push(parentDir);
+      const projectDir = join(parentDir, "example-app");
+      await Deno.mkdir(join(projectDir, ".gitignore"), { recursive: true });
+
+      const result = await vfCreateProject.execute({
+        name: "Example App",
+        template: "minimal",
+        directory: parentDir,
+      });
+
+      assertEquals(result.success, false);
+      assertEquals(result.projectDir, undefined);
+      assertEquals(
+        result.message.includes("already contains .gitignore as a file or a link"),
+        true,
+      );
+      assertEquals(
+        await Deno.readTextFile(join(projectDir, ".gitignore", "README.md")).catch(
+          () => "absent",
+        ),
+        "absent",
+      );
+      assertEquals(
+        await Deno.readTextFile(join(projectDir, "README.md")).catch(() => "absent"),
+        "absent",
+      );
+    });
+
+    it("refuses a package lock before dependency installation can replace it", async () => {
+      const parentDir = await Deno.makeTempDir();
+      createdDirs.push(parentDir);
+      const projectDir = join(parentDir, "example-app");
+      const lockfile = join(projectDir, "package-lock.json");
+      await Deno.mkdir(projectDir);
+      await Deno.writeTextFile(lockfile, "keep-me\n");
+
+      const result = await vfCreateProject.execute({
+        name: "Example App",
+        template: "minimal",
+        directory: parentDir,
+      });
+
+      assertEquals(result.success, false);
+      assertEquals(result.projectDir, undefined);
+      assertEquals(result.message.includes("already contains package-lock.json"), true);
+      assertEquals(await Deno.readTextFile(lockfile), "keep-me\n");
+      assertEquals(
+        await Deno.readTextFile(join(projectDir, "README.md")).catch(() => "absent"),
+        "absent",
+      );
+    });
+
     it("reports project-name validation failures", async () => {
       const result = await vfCreateProject.execute({
         name: "invalid/name",
