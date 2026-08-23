@@ -3,7 +3,12 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isTriggerTarget } from "#veryfront/trigger/target.ts";
 import type { Run } from "./schemas.ts";
-import { getRunKindSchema, getScheduleReferenceListSchema, RunSchema } from "./schemas.ts";
+import {
+  getRunEventSchema,
+  getRunKindSchema,
+  getScheduleReferenceListSchema,
+  RunSchema,
+} from "./schemas.ts";
 
 function makeRun(overrides: Partial<Run> = {}): Run {
   return {
@@ -55,6 +60,69 @@ describe("runs/schemas", () => {
     });
 
     assertEquals(RunSchema.parse(run), run);
+  });
+
+  it("rejects impossible numeric run state", () => {
+    for (
+      const [field, value] of [
+        ["duration_ms", -1],
+        ["timeout_seconds", 0],
+        ["timeout_seconds", -1],
+        ["backoff_limit", -1],
+      ] as const
+    ) {
+      assertEquals(
+        RunSchema.safeParse(makeRun({ [field]: value })).success,
+        false,
+        `${field}=${value} is rejected`,
+      );
+    }
+
+    assertEquals(RunSchema.safeParse(makeRun({ duration_ms: 0 })).success, true);
+    assertEquals(RunSchema.safeParse(makeRun({ timeout_seconds: 1 })).success, true);
+    assertEquals(RunSchema.safeParse(makeRun({ backoff_limit: 0 })).success, true);
+  });
+
+  it("requires run event ids to be non-negative integers", () => {
+    const event = {
+      event_id: 0,
+      event_type: "RUN_STARTED",
+      payload: {},
+      created_at: "2026-06-20T08:00:00.000Z",
+    };
+
+    assertEquals(getRunEventSchema().safeParse(event).success, true);
+    assertEquals(
+      getRunEventSchema().safeParse({ ...event, event_id: -1 }).success,
+      false,
+    );
+    assertEquals(
+      getRunEventSchema().safeParse({ ...event, event_id: 1.5 }).success,
+      false,
+    );
+  });
+
+  it("requires source schedule timeouts to be positive integers", () => {
+    const response = (timeout_seconds: number) => ({
+      schedules: [{
+        id: "schedule_1",
+        name: "Sync helpdesk",
+        status: "active",
+        target: { kind: "task", id: "sync-helpdesk" },
+        definition_source: "source",
+        source_trigger_id: "sync-helpdesk",
+        timeout_seconds,
+      }],
+    });
+
+    assertEquals(getScheduleReferenceListSchema().safeParse(response(1)).success, true);
+    for (const timeout of [-1, 0, 1.5]) {
+      assertEquals(
+        getScheduleReferenceListSchema().safeParse(response(timeout)).success,
+        false,
+        `timeout_seconds=${timeout} is rejected`,
+      );
+    }
   });
 
   // A schedules-list response is the one place a target crosses the wire from

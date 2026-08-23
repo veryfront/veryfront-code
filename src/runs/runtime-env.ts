@@ -74,7 +74,7 @@ export function buildTaskContextEnv(
   const taskContextEnv: Record<string, string> = {};
 
   for (const [key, value] of Object.entries(allEnv)) {
-    if (isReservedTaskEnvKey(key)) {
+    if (UNSAFE_INJECTED_ENV_KEYS.has(key) || isReservedTaskEnvKey(key)) {
       continue;
     }
     if (allowedEnvKeys && !allowedEnvKeys.has(key)) {

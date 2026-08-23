@@ -56,11 +56,11 @@ export const getRunSchema = defineSchema((v) =>
     error: getRunExecutionErrorSchema().nullable(),
     logs: v.string().nullable(),
     artifacts: v.array(v.unknown()),
-    duration_ms: v.number().int().nullable(),
+    duration_ms: v.number().int().nonnegative().nullable(),
     exit_code: v.number().int().nullable(),
     start_mode: v.string().nullable(),
-    timeout_seconds: v.number().int().nullable(),
-    backoff_limit: v.number().int().nullable(),
+    timeout_seconds: v.number().int().positive().nullable(),
+    backoff_limit: v.number().int().nonnegative().nullable(),
     trigger_kind: getRunTriggerKindSchema().nullable(),
     trigger_id: v.string().nullable(),
     created_by: v.string().nullable(),
@@ -130,7 +130,7 @@ export const getScheduleReferenceListSchema = defineSchema((v) =>
         }),
         definition_source: v.enum(["manual", "source"] as const),
         source_trigger_id: v.string().nullable(),
-        timeout_seconds: v.number().int(),
+        timeout_seconds: v.number().int().positive(),
       }),
     ),
   })
@@ -145,7 +145,7 @@ export const getCancelRunResponseSchema = defineSchema((v) =>
 
 export const getRunEventSchema = defineSchema((v) =>
   v.object({
-    event_id: v.number(),
+    event_id: v.number().int().nonnegative(),
     event_type: v.string(),
     payload: v.unknown(),
     created_at: v.string(),

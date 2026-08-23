@@ -27,6 +27,14 @@ describe("runs/runtime-env", () => {
     );
   });
 
+  it("filters unsafe keys from the ambient environment too", () => {
+    const allEnv = JSON.parse(
+      '{"SAFE_VALUE":"ok","__proto__":"polluted","constructor":"polluted","prototype":"polluted"}',
+    ) as Record<string, string>;
+
+    assertEquals(buildTaskContextEnv(allEnv), { SAFE_VALUE: "ok" });
+  });
+
   it("builds task context env from visible and allowlisted injected values", () => {
     assertEquals(
       buildTaskContextEnv(

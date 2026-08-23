@@ -54,7 +54,7 @@ const events = await runs.events(accepted.run.run_id);
 
 | Name               | Description           | Source                                                                                       |
 | ------------------ | --------------------- | -------------------------------------------------------------------------------------------- |
-| `createRunsClient` | Create a runs client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L499) |
+| `createRunsClient` | Create a runs client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L500) |
 
 ### Classes
 
