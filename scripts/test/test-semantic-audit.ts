@@ -648,9 +648,23 @@ interface RuntimePropertyResolution {
   readonly binding?: RuntimeBinding;
   readonly aliasTargets?: readonly RuntimeAliasTarget[];
   readonly defaultMayRun: boolean;
+  readonly propertyMayBeAbsent?: boolean;
+  readonly presentValueMayBeUndefined?: boolean;
   readonly enumerable?: boolean;
   readonly configurable?: boolean;
   readonly writable?: boolean;
+}
+
+function runtimePropertyMayBeAbsent(
+  resolution: RuntimePropertyResolution,
+): boolean {
+  return resolution.propertyMayBeAbsent ?? resolution.defaultMayRun;
+}
+
+function runtimePresentValueMayBeUndefined(
+  resolution: RuntimePropertyResolution,
+): boolean {
+  return resolution.presentValueMayBeUndefined ?? resolution.defaultMayRun;
 }
 
 interface RuntimePatternEntry {
@@ -7941,6 +7955,11 @@ function runtimeTryEntryPrefixClearingCall(
     : scopes;
   const args = Array.isArray(call.arguments) ? call.arguments : [];
   if (
+    !runtimeTryEntryArgumentEvaluationIsNonThrowing(
+      call.callee,
+      imports,
+      blockScopes,
+    ) ||
     !args.every((argument) =>
       runtimeTryEntryArgumentEvaluationIsNonThrowing(
         argument,
@@ -7951,15 +7970,18 @@ function runtimeTryEntryPrefixClearingCall(
   ) {
     return undefined;
   }
-  const isObjectAssign = mutationMethodInvocations(
+  const calleeBinding = runtimeBindingForExpression(
     call.callee,
-    args,
     imports,
     blockScopes,
-  ).some((invocation) =>
-    invocation.binding.receiver === "Object" &&
-    invocation.binding.method === "assign"
   );
+  const calleeBindings = flattenRuntimeBindings(calleeBinding);
+  const isObjectAssign = !runtimeBindingHasPartialAlternative(calleeBinding) &&
+    calleeBindings.length > 0 &&
+    calleeBindings.every((binding) =>
+      binding.kind === "mutation-method" && binding.receiver === "Object" &&
+      binding.method === "assign"
+    );
   return isObjectAssign ? call : undefined;
 }
 
@@ -8011,11 +8033,13 @@ function runtimeTryEntryArgumentEvaluationIsNonThrowing(
       imports,
       scopes,
     );
-    const propertyBinding = objectBinding && property
-      ? runtimePropertyResolution(objectBinding, property, true).binding
+    const propertyResolution = objectBinding && property
+      ? runtimePropertyResolution(objectBinding, property, true)
       : undefined;
+    const propertyBinding = propertyResolution?.binding;
     return value.computed !== true && property !== undefined &&
       objectBinding !== undefined &&
+      propertyResolution?.defaultMayRun === false &&
       !flattenRuntimeBindings(propertyBinding).some((binding) =>
         binding.kind === "property-getter-effect" ||
         binding.kind === "property-getter-value"
@@ -8620,6 +8644,13 @@ function objectLiteralRuntimeBinding(
         });
       } else {
         hasUnknownOwnProperties = true;
+        propertyOperations.push({
+          kind: "define-unknown",
+          defaultMayRun: true,
+          configurable: true,
+          enumerable: true,
+          writable: true,
+        });
       }
       continue;
     }
@@ -9486,6 +9517,8 @@ function runtimePropertyResolution(
           ? { kind: "partial", binding: resolution.binding }
           : undefined,
         defaultMayRun: true,
+        propertyMayBeAbsent: true,
+        presentValueMayBeUndefined: true,
       });
       continue;
     }
@@ -9493,6 +9526,10 @@ function runtimePropertyResolution(
       const candidates = frame.count === 0
         ? []
         : resolutions.splice(-frame.count, frame.count);
+      const propertyMayBeAbsent = candidates.length === 0 ||
+        candidates.some(runtimePropertyMayBeAbsent);
+      const presentValueMayBeUndefined = candidates.length === 0 ||
+        candidates.some(runtimePresentValueMayBeUndefined);
       resolutions.push({
         binding: unionRuntimeBindingsPreservingPartial(
           candidates.flatMap((resolution) => resolution.binding ?? []),
@@ -9500,9 +9537,9 @@ function runtimePropertyResolution(
         aliasTargets: uniqueRuntimeAliasTargets(
           candidates.flatMap((resolution) => resolution.aliasTargets ?? []),
         ),
-        defaultMayRun: candidates.some((resolution) =>
-          resolution.defaultMayRun
-        ),
+        defaultMayRun: propertyMayBeAbsent || presentValueMayBeUndefined,
+        propertyMayBeAbsent,
+        presentValueMayBeUndefined,
         enumerable: candidates.every((resolution) =>
             resolution.enumerable === candidates[0]?.enumerable
           )
@@ -9526,7 +9563,11 @@ function runtimePropertyResolution(
         ? []
         : resolutions.splice(-frame.spreadCount, frame.spreadCount);
       let spreadIndex = 0;
-      let resolution: RuntimePropertyResolution = { defaultMayRun: true };
+      let resolution: RuntimePropertyResolution = {
+        defaultMayRun: true,
+        propertyMayBeAbsent: true,
+        presentValueMayBeUndefined: false,
+      };
       const fallbackOperations: Extract<
         NamespacePropertyOperation,
         { readonly kind: "define-unknown" }
@@ -9539,6 +9580,8 @@ function runtimePropertyResolution(
             ) {
               resolution = {
                 defaultMayRun: true,
+                propertyMayBeAbsent: true,
+                presentValueMayBeUndefined: false,
                 enumerable: false,
                 configurable: operation.configurable,
                 writable: operation.writable,
@@ -9551,8 +9594,14 @@ function runtimePropertyResolution(
                 currentRuntimeAliasBinding(operation.aliasTargets),
               ].flatMap((candidate) => candidate ?? []),
             );
-            resolution = operation.preservesPrevious
-              ? {
+            if (operation.preservesPrevious) {
+              const propertyMayBeAbsent = runtimePropertyMayBeAbsent(
+                resolution,
+              );
+              const presentValueMayBeUndefined =
+                runtimePresentValueMayBeUndefined(resolution) ||
+                operation.defaultMayRun;
+              resolution = {
                 binding: unionRuntimeBindingsPreservingPartial(
                   [resolution.binding, operationBinding].flatMap(
                     (candidate) => candidate ?? [],
@@ -9562,8 +9611,10 @@ function runtimePropertyResolution(
                   ...(resolution.aliasTargets ?? []),
                   ...(operation.aliasTargets ?? []),
                 ]),
-                defaultMayRun: resolution.defaultMayRun ||
-                  operation.defaultMayRun,
+                defaultMayRun: propertyMayBeAbsent ||
+                  presentValueMayBeUndefined,
+                propertyMayBeAbsent,
+                presentValueMayBeUndefined,
                 enumerable: resolution.enumerable === operation.enumerable
                   ? resolution.enumerable
                   : undefined,
@@ -9573,15 +9624,19 @@ function runtimePropertyResolution(
                 writable: resolution.writable === operation.writable
                   ? resolution.writable
                   : undefined,
-              }
-              : {
+              };
+            } else {
+              resolution = {
                 binding: operationBinding,
                 aliasTargets: operation.aliasTargets,
                 defaultMayRun: operation.defaultMayRun,
+                propertyMayBeAbsent: false,
+                presentValueMayBeUndefined: operation.defaultMayRun,
                 enumerable: operation.enumerable,
                 configurable: operation.configurable,
                 writable: operation.writable,
               };
+            }
           }
           continue;
         }
@@ -9613,24 +9668,33 @@ function runtimePropertyResolution(
             conservativeSemanticEffectBinding(),
           ].flatMap((candidate) => candidate ?? []))
           : spreadResolution.binding;
+        const spreadPropertyMayBeAbsent = runtimePropertyMayBeAbsent(
+          spreadResolution,
+        );
+        const propertyMayBeAbsent = spreadPropertyMayBeAbsent &&
+          runtimePropertyMayBeAbsent(resolution);
+        const presentValueMayBeUndefined =
+          runtimePresentValueMayBeUndefined(spreadResolution) ||
+          (spreadPropertyMayBeAbsent &&
+            runtimePresentValueMayBeUndefined(resolution));
         resolution = {
           binding: unionRuntimeBindingsPreservingPartial(
             [
               spreadBinding,
-              spreadResolution.defaultMayRun ? resolution.binding : undefined,
+              spreadPropertyMayBeAbsent ? resolution.binding : undefined,
             ].flatMap((candidate) => candidate ?? []),
           ),
           aliasTargets: uniqueRuntimeAliasTargets([
             ...(spreadResolution.aliasTargets ?? []),
-            ...(spreadResolution.defaultMayRun
-              ? resolution.aliasTargets ?? []
-              : []),
+            ...(spreadPropertyMayBeAbsent ? resolution.aliasTargets ?? [] : []),
           ]),
-          defaultMayRun: spreadResolution.defaultMayRun &&
-            resolution.defaultMayRun,
-          enumerable: spreadResolution.defaultMayRun ? undefined : true,
-          configurable: spreadResolution.defaultMayRun ? undefined : true,
-          writable: spreadResolution.defaultMayRun ? undefined : true,
+          defaultMayRun: propertyMayBeAbsent ||
+            presentValueMayBeUndefined,
+          propertyMayBeAbsent,
+          presentValueMayBeUndefined,
+          enumerable: spreadPropertyMayBeAbsent ? undefined : true,
+          configurable: spreadPropertyMayBeAbsent ? undefined : true,
+          writable: spreadPropertyMayBeAbsent ? undefined : true,
         };
       }
       for (const operation of fallbackOperations) {
@@ -9749,6 +9813,12 @@ function applyRuntimeFallbackSourceOperation(
     !hasOwnCandidate || resolution[attribute] === fallback[attribute]
       ? fallback[attribute]
       : undefined;
+  const propertyMayBeAbsent = runtimePropertyMayBeAbsent(resolution) &&
+    runtimePropertyMayBeAbsent(fallback);
+  const presentValueMayBeUndefined =
+    runtimePresentValueMayBeUndefined(resolution) ||
+    (runtimePropertyMayBeAbsent(resolution) &&
+      runtimePresentValueMayBeUndefined(fallback));
   return {
     binding: unionRuntimeBindingsPreservingPartial(
       [resolution.binding, fallback.binding].flatMap((candidate) =>
@@ -9759,7 +9829,9 @@ function applyRuntimeFallbackSourceOperation(
       ...(resolution.aliasTargets ?? []),
       ...(fallback.aliasTargets ?? []),
     ]),
-    defaultMayRun: resolution.defaultMayRun && fallback.defaultMayRun,
+    defaultMayRun: propertyMayBeAbsent || presentValueMayBeUndefined,
+    propertyMayBeAbsent,
+    presentValueMayBeUndefined,
     configurable: inheritedAttribute("configurable"),
     enumerable: inheritedAttribute("enumerable"),
     writable: inheritedAttribute("writable"),
@@ -9781,19 +9853,32 @@ function applyRuntimeUnknownPropertyOperation(
   ) {
     return resolution;
   }
-  return {
-    binding: unionRuntimeBindingsPreservingPartial(
-      [
-        resolution.binding,
-        operation.binding,
-        currentRuntimeAliasBinding(operation.aliasTargets),
-      ].flatMap((candidate) => candidate ?? []),
+  const propertyMayBeAbsent = runtimePropertyMayBeAbsent(resolution);
+  const presentValueMayBeUndefined =
+    runtimePresentValueMayBeUndefined(resolution) || operation.defaultMayRun;
+  const operationBinding = unionRuntimeBindingsPreservingPartial(
+    [
+      operation.binding,
+      currentRuntimeAliasBinding(operation.aliasTargets),
+    ].flatMap((candidate) => candidate ?? []),
+  );
+  const combinedBinding = unionRuntimeBindingsPreservingPartial(
+    [resolution.binding, operationBinding].flatMap((candidate) =>
+      candidate ?? []
     ),
+  );
+  return {
+    binding: operationBinding === undefined && combinedBinding !== undefined &&
+        !runtimeBindingHasPartialAlternative(combinedBinding)
+      ? { kind: "partial", binding: combinedBinding }
+      : combinedBinding,
     aliasTargets: uniqueRuntimeAliasTargets([
       ...(resolution.aliasTargets ?? []),
       ...(operation.aliasTargets ?? []),
     ]),
-    defaultMayRun: resolution.defaultMayRun || operation.defaultMayRun,
+    defaultMayRun: propertyMayBeAbsent || presentValueMayBeUndefined,
+    propertyMayBeAbsent,
+    presentValueMayBeUndefined,
     enumerable: resolution.enumerable === operation.enumerable
       ? resolution.enumerable
       : undefined,
@@ -9844,10 +9929,16 @@ function directRuntimePropertyResolution(
         ? mutationMethodBinding("Array", property)
         : undefined);
   }
+  const propertyMayBeAbsent = propertyBinding === undefined;
+  const presentValueMayBeUndefined = propertyBinding === undefined &&
+    binding.kind === "namespace-object" &&
+    binding.hasUnknownOwnProperties === true;
   return finalizeRuntimePropertyResolution(
     {
       binding: propertyBinding,
-      defaultMayRun: propertyBinding === undefined,
+      defaultMayRun: propertyMayBeAbsent || presentValueMayBeUndefined,
+      propertyMayBeAbsent,
+      presentValueMayBeUndefined,
       enumerable: binding.kind === "namespace-object" && propertyBinding
         ? true
         : undefined,
@@ -9874,10 +9965,14 @@ function finalizeRuntimePropertyResolution(
       candidate.kind === "property-getter-effect" ||
       candidate.kind === "property-setter"
     );
+  const presentValueMayBeUndefined =
+    runtimePresentValueMayBeUndefined(resolution) || accessorOnly;
   return {
     ...resolution,
     binding: resolvedBinding,
-    defaultMayRun: resolution.defaultMayRun || accessorOnly,
+    defaultMayRun: runtimePropertyMayBeAbsent(resolution) ||
+      presentValueMayBeUndefined,
+    presentValueMayBeUndefined,
   };
 }
 

@@ -3703,6 +3703,259 @@ target.safe("retained-before-source-initialization.txt");
     ).map((marker) => marker.effect);
     assertEquals(temporalDeadZoneSource, ["filesystem-write"]);
 
+    const temporalDeadZoneCallee = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  assign(target, { safe: () => undefined });
+} catch {}
+const assign = Object.assign;
+target.safe("retained-before-callee-initialization.txt");
+`,
+      "src/runtime-object-assign-tdz-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(temporalDeadZoneCallee, ["filesystem-write"]);
+
+    const temporalDeadZoneCalleeReceiver = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  holder.assign(target, { safe: () => undefined });
+} catch {}
+const holder = { assign: Object.assign };
+target.safe("retained-before-callee-receiver-initialization.txt");
+`,
+      "src/runtime-object-assign-tdz-callee-receiver.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(temporalDeadZoneCalleeReceiver, ["filesystem-write"]);
+
+    const capturedCallee = collectSemanticMarkers(
+      `
+run();
+const assign = Object.assign;
+function run() {
+  const target = { safe: Deno.remove };
+  Object.preventExtensions(target);
+  try {
+    assign(target, { safe: () => undefined });
+  } catch {}
+  target.safe("retained-for-captured-callee.txt");
+}
+`,
+      "src/runtime-object-assign-captured-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(capturedCallee, ["filesystem-write"]);
+
+    const getterBackedCallee = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+const holder = Object.defineProperty({}, "assign", {
+  get: () => {
+    throw new Error("callee getter failed");
+  },
+});
+try {
+  holder.assign(target, { safe: () => undefined });
+} catch {}
+target.safe("retained-after-callee-getter.txt");
+`,
+      "src/runtime-object-assign-getter-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(getterBackedCallee, ["filesystem-write"]);
+
+    const initializedCallee = collectSemanticMarkers(
+      `
+const assign = Object.assign;
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  assign(target, { safe: () => undefined });
+} catch {}
+target.safe("cleared-after-callee-initialization.txt");
+`,
+      "src/runtime-object-assign-initialized-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(initializedCallee, []);
+
+    const initializedCalleeReceiver = collectSemanticMarkers(
+      `
+const holder = { assign: Object.assign };
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  holder.assign(target, { safe: () => undefined });
+} catch {}
+target.safe("cleared-after-callee-receiver-initialization.txt");
+`,
+      "src/runtime-object-assign-initialized-callee-receiver.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(initializedCalleeReceiver, []);
+
+    const alternativeCallee = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+const assign = Math.random() > 0.5 ? Object.assign : Object.freeze;
+try {
+  assign(target, { safe: () => undefined });
+} catch {}
+target.safe("retained-for-alternative-callee.txt");
+`,
+      "src/runtime-object-assign-alternative-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(alternativeCallee, ["filesystem-write"]);
+
+    const partialMemberCallee = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+const holder = Math.random() > 0.5
+  ? { assign: Object.assign }
+  : { assign: undefined };
+try {
+  holder.assign(target, { safe: () => undefined });
+} catch {}
+target.safe("retained-for-partial-member-callee.txt");
+`,
+      "src/runtime-object-assign-partial-member-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(partialMemberCallee, ["filesystem-write"]);
+
+    const opaqueTrailingSpreadCallee = collectSemanticMarkers(
+      `
+function run(maybeHolder) {
+  const target = { safe: Deno.remove };
+  Object.preventExtensions(target);
+  const holder = { assign: Object.assign, ...maybeHolder };
+  try {
+    holder.assign(target, { safe: () => undefined });
+  } catch {}
+  target.safe("retained-for-opaque-trailing-spread-callee.txt");
+}
+run({});
+`,
+      "src/runtime-object-assign-opaque-trailing-spread-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(opaqueTrailingSpreadCallee, ["filesystem-write"]);
+
+    const exactTrailingPropertyCallee = collectSemanticMarkers(
+      `
+function run(maybeHolder) {
+  const target = { safe: Deno.remove };
+  Object.preventExtensions(target);
+  const holder = { ...maybeHolder, assign: Object.assign };
+  try {
+    holder.assign(target, { safe: () => undefined });
+  } catch {}
+  target.safe("cleared-for-exact-trailing-property-callee.txt");
+}
+run({});
+`,
+      "src/runtime-object-assign-exact-trailing-property-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(exactTrailingPropertyCallee, []);
+
+    const emptyTrailingSpreadCallee = collectSemanticMarkers(
+      `
+const source = {};
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+const holder = { assign: Object.assign, ...source };
+try {
+  holder.assign(target, { safe: () => undefined });
+} catch {}
+target.safe("cleared-for-empty-trailing-spread-callee.txt");
+`,
+      "src/runtime-object-assign-empty-trailing-spread-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(emptyTrailingSpreadCallee, []);
+
+    const undefinedTrailingSpreadCallee = collectSemanticMarkers(
+      `
+const source = { assign: undefined };
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+const holder = { assign: Object.assign, ...source };
+try {
+  holder.assign(target, { safe: () => undefined });
+} catch {}
+target.safe("retained-for-undefined-trailing-spread-callee.txt");
+`,
+      "src/runtime-object-assign-undefined-trailing-spread-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(undefinedTrailingSpreadCallee, ["filesystem-write"]);
+
+    const maybeUndefinedTrailingSpreadCallee = collectSemanticMarkers(
+      `
+const source = Math.random() > 0.5
+  ? { assign: Object.assign }
+  : { assign: undefined };
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+const holder = { assign: Object.assign, ...source };
+try {
+  holder.assign(target, { safe: () => undefined });
+} catch {}
+target.safe("retained-for-maybe-undefined-trailing-spread-callee.txt");
+`,
+      "src/runtime-object-assign-maybe-undefined-trailing-spread-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(maybeUndefinedTrailingSpreadCallee, ["filesystem-write"]);
+
+    const computedCallableOverrideCallee = collectSemanticMarkers(
+      `
+function run(key) {
+  const target = { safe: Deno.remove };
+  Object.preventExtensions(target);
+  const holder = { assign: Object.assign, [key]: () => undefined };
+  try {
+    holder.assign(target, { safe: () => undefined });
+  } catch {}
+  target.safe("retained-for-computed-callable-override-callee.txt");
+}
+run("assign");
+`,
+      "src/runtime-object-assign-computed-callable-override-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(computedCallableOverrideCallee, ["filesystem-write"]);
+
+    const computedPrimitiveOverrideCallee = collectSemanticMarkers(
+      `
+function run(key) {
+  const target = { safe: Deno.remove };
+  Object.preventExtensions(target);
+  const holder = { assign: Object.assign, [key]: "not callable" };
+  try {
+    holder.assign(target, { safe: () => undefined });
+  } catch {}
+  target.safe("retained-for-computed-primitive-override-callee.txt");
+}
+run("assign");
+`,
+      "src/runtime-object-assign-computed-primitive-override-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(computedPrimitiveOverrideCallee, ["filesystem-write"]);
+
+    const exactPropertyAfterComputedCallee = collectSemanticMarkers(
+      `
+function run(key) {
+  const target = { safe: Deno.remove };
+  Object.preventExtensions(target);
+  const holder = { [key]: "not callable", assign: Object.assign };
+  try {
+    holder.assign(target, { safe: () => undefined });
+  } catch {}
+  target.safe("cleared-for-exact-property-after-computed-callee.txt");
+}
+run("other");
+`,
+      "src/runtime-object-assign-exact-property-after-computed-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(exactPropertyAfterComputedCallee, []);
+
     for (
       const [kind, declaration, expected] of [
         ["let", "let source = {};", ["filesystem-write"]],
