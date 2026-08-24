@@ -102,6 +102,7 @@ export class ApprovalManager {
     nodeId: string,
     waitConfig: WaitNodeConfig,
     context: WorkflowContext,
+    options: { responseSchemaId?: string } = {},
   ): Promise<ApprovalRequest> {
     const runId = run.id;
     const workerId = run.workerId;
@@ -121,6 +122,9 @@ export class ApprovalManager {
       requestedAt: new Date(),
       expiresAt,
       status: "pending",
+      ...(options.responseSchemaId === undefined
+        ? {}
+        : { responseSchemaId: options.responseSchemaId }),
     };
 
     logger.debug("Creating approval", {

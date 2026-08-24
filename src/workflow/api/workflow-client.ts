@@ -5,6 +5,7 @@
  **************************/
 
 import { logger as baseLogger } from "#veryfront/utils";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import type {
   PendingApproval,
   RunFilter,
@@ -52,6 +53,10 @@ export class WorkflowClient {
   private debug: boolean;
   /** Wait-node configs from registered definitions, keyed "<workflowId>::<nodeId>". */
   private waitNodeConfigs = new Map<string, WaitNodeConfig>();
+  /** Registered response schemas keyed by a durable definition-path identity. */
+  private responseSchemas = new Map<string, Schema<unknown>>();
+  /** Definition-path identities for schemas used by the active executor config. */
+  private responseSchemaIds = new WeakMap<Schema<unknown>, Map<string, string>>();
 
   constructor(config: WorkflowClientConfig = {}) {
     this.debug = config.debug ?? false;
@@ -71,12 +76,12 @@ export class WorkflowClient {
 
         if (!input) {
           logger.debug("No wait config found for node", { nodeId });
-          await userOnWaiting?.(run, nodeId);
+          await userOnWaiting?.(run, nodeId, activeWaitConfig);
           return;
         }
 
         if (input.type !== "approval") {
-          await userOnWaiting?.(run, nodeId);
+          await userOnWaiting?.(run, nodeId, activeWaitConfig);
           return;
         }
 
@@ -100,14 +105,23 @@ export class WorkflowClient {
         };
 
         try {
-          await this.approvalManager.createApproval(run, nodeId, waitConfig, run.context);
+          const responseSchemaId = configured?.responseSchema
+            ? this.responseSchemaIds.get(configured.responseSchema)?.get(run.workflowId)
+            : undefined;
+          await this.approvalManager.createApproval(
+            run,
+            nodeId,
+            waitConfig,
+            run.context,
+            responseSchemaId === undefined ? undefined : { responseSchemaId },
+          );
           logger.debug("Created approval for node", { nodeId });
         } catch (error) {
           logger.error("Failed to create approval", error);
           throw error;
         }
 
-        await userOnWaiting?.(run, nodeId);
+        await userOnWaiting?.(run, nodeId, activeWaitConfig);
       },
     });
 
@@ -119,6 +133,12 @@ export class WorkflowClient {
       responseSchemaResolver: async (input) => {
         const userSchema = await userResponseSchemaResolver?.(input);
         if (userSchema) return userSchema;
+
+        if (input.approval.responseSchemaId !== undefined) {
+          return this.responseSchemas.get(
+            `${input.run.workflowId}::${input.approval.responseSchemaId}`,
+          );
+        }
 
         return this.waitNodeConfigs.get(`${input.run.workflowId}::${input.approval.nodeId}`)
           ?.responseSchema;
@@ -134,15 +154,15 @@ export class WorkflowClient {
   }
 
   /**
-   * Record every wait node's config under "<workflowId>::<nodeId>".
+   * Index every wait node under its runtime node id and registered-definition path.
    *
-   * `responseSchema` is a live object and cannot be persisted on an approval,
-   * so this index lets a later process recover decision validation from the
-   * currently registered definition. Node ids are already arm-qualified by
-   * the DSL, so they match what an approval is keyed by. A statically declared
-   * sub-workflow is walked too: its child node ids are not namespaced at
-   * runtime and its approvals are reported on the parent run, so its wait
-   * nodes are keyed under the registering workflow's id.
+   * `responseSchema` is a live object and cannot be persisted on an approval.
+   * Persisting the definition-path identity lets a later process recover the
+   * exact registered schema even when a parent wait and a static sub-workflow
+   * wait share a runtime node id. The node-id index remains the compatibility
+   * fallback for approvals created before definition-path identities existed.
+   * Static sub-workflows are indexed under the registering workflow's id
+   * because their approvals belong to the parent run.
    *
    * A workflow or loop whose `steps` is a function is not walked: the node list
    * depends on runtime input/iteration state, so no schema can be recovered
@@ -156,11 +176,17 @@ export class WorkflowClient {
         this.waitNodeConfigs.delete(key);
       }
     }
+    for (const key of this.responseSchemas.keys()) {
+      if (key.startsWith(keyPrefix)) {
+        this.responseSchemas.delete(key);
+      }
+    }
 
     if (!Array.isArray(definition.steps)) return;
 
-    const visit = (nodes: readonly WorkflowNode[]): void => {
+    const visit = (nodes: readonly WorkflowNode[], path: readonly string[]): void => {
       for (const node of nodes) {
+        const nodePath = [...path, node.id];
         const config = node.config as {
           type?: string;
           nodes?: WorkflowNode[];
@@ -170,22 +196,37 @@ export class WorkflowClient {
           workflow?: string | WorkflowDefinition;
         };
         if (config.type === "wait") {
-          this.waitNodeConfigs.set(`${definition.id}::${node.id}`, node.config as WaitNodeConfig);
+          const waitConfig = node.config as WaitNodeConfig;
+          this.waitNodeConfigs.set(`${definition.id}::${node.id}`, waitConfig);
+          if (waitConfig.responseSchema) {
+            const responseSchemaId = JSON.stringify(nodePath);
+            this.responseSchemas.set(
+              `${definition.id}::${responseSchemaId}`,
+              waitConfig.responseSchema,
+            );
+            const workflowIds = this.responseSchemaIds.get(waitConfig.responseSchema) ?? new Map();
+            workflowIds.set(definition.id, responseSchemaId);
+            this.responseSchemaIds.set(waitConfig.responseSchema, workflowIds);
+          }
         }
-        if (Array.isArray(config.nodes)) visit(config.nodes);
-        if (Array.isArray(config.then)) visit(config.then);
-        if (Array.isArray(config.else)) visit(config.else);
-        if (Array.isArray(config.steps)) visit(config.steps);
+        if (Array.isArray(config.nodes)) visit(config.nodes, [...nodePath, "nodes"]);
+        if (Array.isArray(config.then)) visit(config.then, [...nodePath, "then"]);
+        if (Array.isArray(config.else)) visit(config.else, [...nodePath, "else"]);
+        if (Array.isArray(config.steps)) visit(config.steps, [...nodePath, "steps"]);
         if (
           typeof config.workflow === "object" &&
           Array.isArray(config.workflow.steps)
         ) {
-          visit(config.workflow.steps);
+          visit(config.workflow.steps, [
+            ...nodePath,
+            "workflow",
+            config.workflow.id,
+          ]);
         }
       }
     };
 
-    visit(definition.steps);
+    visit(definition.steps, ["steps"]);
   }
 
   registerAll(workflows: Array<Workflow | WorkflowDefinition>): void {

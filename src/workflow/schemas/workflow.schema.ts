@@ -153,6 +153,9 @@ export const getPendingApprovalSchema = defineSchema((v) =>
     message: v.string(),
     payload: v.unknown(),
     approvers: v.array(v.string()).optional(),
+    // Durable registered-definition identity used to recover a non-serializable
+    // response schema after a process restart.
+    responseSchemaId: v.string().optional(),
     requestedAt: v.date(),
     expiresAt: v.date().optional(),
     status: getApprovalStatusSchema(),

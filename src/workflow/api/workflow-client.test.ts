@@ -17,7 +17,7 @@ import { parallel } from "../dsl/parallel.ts";
 import { step } from "../dsl/step.ts";
 import { subWorkflow } from "../dsl/sub-workflow.ts";
 import { waitForApproval } from "../dsl/wait.ts";
-import type { PendingApproval, WorkflowRun } from "../types.ts";
+import type { PendingApproval, WaitNodeConfig, WorkflowRun } from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
@@ -406,6 +406,63 @@ describe("WorkflowClient", () => {
       await client.approve(handle.runId, approval.id, "reviewer", "looks good");
       assertEquals(await backend.getPendingApprovals(handle.runId), []);
     });
+
+    it("recovers a parent schema when a sub-workflow reuses its node id", async () => {
+      const collidingSchemaWorkflow = workflow({
+        id: "colliding-persisted-schema-workflow",
+        steps: [
+          waitForApproval("shared-review", {
+            message: "Parent review",
+            responseSchema: defineSchema((v) => v.object({ parent: v.string() }))(),
+          }),
+          dependsOn(
+            subWorkflow("child-workflow", {
+              workflow: workflow({
+                id: "colliding-persisted-schema-child",
+                steps: [
+                  waitForApproval("shared-review", {
+                    message: "Child review",
+                    responseSchema: defineSchema((v) => v.object({ child: v.boolean() }))(),
+                  }),
+                ],
+              }).definition,
+            }),
+            "shared-review",
+          ),
+        ],
+      });
+      client.register(collidingSchemaWorkflow);
+
+      const handle = await client.start(collidingSchemaWorkflow.id, {});
+      await handle.settled();
+      const [parentApproval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(parentApproval);
+      assertEquals(parentApproval.message, "Parent review");
+      assertExists(parentApproval.responseSchemaId);
+
+      client.getApprovalManager().stop();
+      client = createWorkflowClient({ backend });
+      client.register(collidingSchemaWorkflow);
+
+      await assertRejects(() =>
+        client.approve(
+          handle.runId,
+          parentApproval.id,
+          "reviewer",
+          undefined,
+          { child: true },
+        )
+      );
+
+      await client.approve(
+        handle.runId,
+        parentApproval.id,
+        "reviewer",
+        undefined,
+        { parent: "approved" },
+      );
+      assertEquals(await backend.getPendingApprovals(handle.runId), []);
+    });
   });
 
   describe("definition-resolved wait config", () => {
@@ -624,6 +681,40 @@ describe("WorkflowClient", () => {
         })
       );
       assertEquals((await backend.getPendingApprovals(handle.runId))[0]?.status, "pending");
+    });
+
+    it("forwards the active wait config to the user callback", async () => {
+      const callbackBackend = new MemoryBackend();
+      let observedConfig: WaitNodeConfig | undefined;
+      const callbackClient = createWorkflowClient({
+        backend: callbackBackend,
+        executor: {
+          onWaiting: (_run, _nodeId, waitConfig) => {
+            observedConfig = waitConfig;
+          },
+        },
+      });
+
+      try {
+        callbackClient.register(workflow({
+          id: "wait-config-callback-workflow",
+          steps: [
+            waitForApproval("review", {
+              message: "Inspect this policy",
+              timeout: "1h",
+              approvers: ["alice"],
+            }),
+          ],
+        }));
+
+        const handle = await callbackClient.start("wait-config-callback-workflow", {});
+        await handle.settled();
+
+        assertEquals(observedConfig?.timeout, "1h");
+        assertEquals(observedConfig?.approvers, ["alice"]);
+      } finally {
+        await callbackClient.destroy();
+      }
     });
   });
 
