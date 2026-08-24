@@ -100,7 +100,7 @@ describe("module-fetcher/dependency-recovery", () => {
 
   it("reports a vfmod as missing when its HTTP bundles cannot be restored", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-vfmod-recovery-bundles-" });
-    const distributedCache = new FakeDistributedCache();
+    const distributedCache = new MockCacheBackend({ type: "redis", ignoreTtl: true });
     const sourceDir = join(getMdxEsmCacheDir(), "project-a", "preview-main");
     const childPath = join(sourceDir, "vfmod-child.mjs");
     // A bundle hash that is not present locally and cannot be restored: the
