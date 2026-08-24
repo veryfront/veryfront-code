@@ -2455,6 +2455,13 @@ describe("automated review gate", () => {
         ["`inline code starts", "\\` closes inline code"],
         ["ordinary <https://example.com/`>"],
         ["ordinary <foo`bar@example.com>"],
+        ["ordinary [link](https://example.com/`)"],
+        ["ordinary ![image](https://example.com/`)"],
+        ["ordinary [link](https://example.com/ 'title `')"],
+        ["ordinary [link](`)"],
+        ["ordinary ![image](`)"],
+        ["ordinary [link](`a)"],
+        ["`[link](https://example.com/`)"],
         ["", "[reference]: https://example.com/`"],
         ["", "[reference]:", "  https://example.com/`"],
         ["", "[reference]: https://example.com/", '  "title `"'],
@@ -2487,6 +2494,91 @@ describe("automated review gate", () => {
           HEAD_SHA,
         ),
         undefined,
+      );
+    }
+  });
+
+  it("keeps link destinations and titles out of review evidence", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    const newerRangeInsideLinkTitle = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        '[link](https://example.com/ "title',
+        codeRabbitReviewRange(),
+        'continued")',
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerRangeInsideLinkTitle],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+
+    const newerRangeInsideInvalidLinkTitle = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        '[link](https://example.com/ "title',
+        "",
+        MALFORMED_CURRENT_RANGE,
+        'continued")',
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerRangeInsideInvalidLinkTitle],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+  });
+
+  it("keeps invalid link tails inside inline code", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    for (
+      const invalidLinkTail of [
+        'ordinary [link](https://example.com/ "title `)',
+        "ordinary [link](https://example.com/`",
+        "ordinary \\[link](https://example.com/`)",
+        "ordinary ![image](https://example.com/`",
+      ]
+    ) {
+      const newerHiddenCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          invalidLinkTail,
+          MALFORMED_CURRENT_RANGE,
+          "`",
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerHiddenCurrentRange],
+          },
+          HEAD_SHA,
+        ))?.source,
+        "summary",
       );
     }
   });
@@ -3175,6 +3267,63 @@ describe("automated review gate", () => {
     assert(
       performance.now() - denseReferenceDefinitionsStartedAt < 1_000,
       "dense reference-definition scanning must stay linear",
+    );
+
+    const newerDenseUnclosedInlineLinks = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        `[link](`.repeat(8_000),
+        MALFORMED_CURRENT_RANGE,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:02Z",
+      updated_at: "2026-08-22T12:02:02Z",
+    });
+    const denseUnclosedInlineLinksStartedAt = performance.now();
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerDenseUnclosedInlineLinks],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+    assert(
+      performance.now() - denseUnclosedInlineLinksStartedAt < 1_000,
+      "dense unclosed inline-link scanning must stay linear",
+    );
+
+    const newerDenseValidInlineLinks = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        Array.from(
+          { length: 4_000 },
+          (_, index) => `[link-${index}](https://example.com/${index}\`)`,
+        ).join(" "),
+        MALFORMED_CURRENT_RANGE,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:02Z",
+      updated_at: "2026-08-22T12:02:02Z",
+    });
+    const denseValidInlineLinksStartedAt = performance.now();
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerDenseValidInlineLinks],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+    assert(
+      performance.now() - denseValidInlineLinksStartedAt < 1_000,
+      "dense valid inline-link scanning must stay linear",
     );
 
     const newerDenseRawHtmlBlocks = codeRabbitSummary({

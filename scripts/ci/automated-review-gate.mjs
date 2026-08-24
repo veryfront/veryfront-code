@@ -432,17 +432,20 @@ function visibleMarkdownMatches(content, patterns, excludedRanges) {
 function scanMarkdownStructure(content) {
   const ranges = [];
   const reviewMarkers = [];
-  const { inlineCodeRanges, inlineHtmlRanges } = markdownInlineStructureRanges(
-    content,
+  const { inlineCodeRanges, inlineHtmlRanges, inlineLinkRanges } =
+    markdownInlineStructureRanges(content);
+  const inlineExcludedRanges = mergeMarkdownRanges(
+    inlineCodeRanges,
+    inlineLinkRanges,
   );
   let inlineCodeRangeIndex = 0;
   const isInsideInlineCode = (index) => {
     while (
-      inlineCodeRanges[inlineCodeRangeIndex]?.[1] <= index
+      inlineExcludedRanges[inlineCodeRangeIndex]?.[1] <= index
     ) {
       inlineCodeRangeIndex += 1;
     }
-    const range = inlineCodeRanges[inlineCodeRangeIndex];
+    const range = inlineExcludedRanges[inlineCodeRangeIndex];
     return range?.[0] <= index && index < range[1];
   };
   let openFence;
@@ -626,13 +629,17 @@ function scanMarkdownStructure(content) {
   }
   const blockRanges = mergeMarkdownRanges(ranges, []);
   const refinedInlineRanges = blockRanges.length === 0
-    ? { inlineCodeRanges, inlineHtmlRanges }
+    ? { inlineCodeRanges, inlineHtmlRanges, inlineLinkRanges }
     : markdownInlineStructureRanges(content, blockRanges);
+  const refinedInlineExcludedRanges = mergeMarkdownRanges(
+    refinedInlineRanges.inlineCodeRanges,
+    refinedInlineRanges.inlineLinkRanges,
+  );
   return {
     excludedRanges: mergeMarkdownRanges(
       blockRanges,
       mergeMarkdownRanges(
-        refinedInlineRanges.inlineCodeRanges,
+        refinedInlineExcludedRanges,
         refinedInlineRanges.inlineHtmlRanges,
       ),
     ),
@@ -907,6 +914,7 @@ function markdownHtmlCommentBlockContainer(line, commentStart) {
 function markdownInlineStructureRanges(content, excludedRanges = []) {
   const inlineCodeRanges = [];
   const inlineHtmlRanges = [];
+  const inlineLinkRanges = [];
   const excludedRangeCursor = { index: 0 };
   const lines = [];
   let nextLineStart = 0;
@@ -954,6 +962,7 @@ function markdownInlineStructureRanges(content, excludedRanges = []) {
         lineStart,
         inlineCodeRanges,
         inlineHtmlRanges,
+        inlineLinkRanges,
         excludedRanges,
         excludedRangeCursor,
       );
@@ -980,6 +989,7 @@ function markdownInlineStructureRanges(content, excludedRanges = []) {
         lineStart,
         inlineCodeRanges,
         inlineHtmlRanges,
+        inlineLinkRanges,
         excludedRanges,
         excludedRangeCursor,
       );
@@ -1003,10 +1013,11 @@ function markdownInlineStructureRanges(content, excludedRanges = []) {
     content.length,
     inlineCodeRanges,
     inlineHtmlRanges,
+    inlineLinkRanges,
     excludedRanges,
     excludedRangeCursor,
   );
-  return { inlineCodeRanges, inlineHtmlRanges };
+  return { inlineCodeRanges, inlineHtmlRanges, inlineLinkRanges };
 }
 
 function isMarkdownInlineCodeBarrier(line) {
@@ -1244,6 +1255,7 @@ function appendMarkdownInlineCodeRanges(
   end,
   inlineCodeRanges,
   inlineHtmlRanges,
+  inlineLinkRanges,
   excludedRanges,
   excludedRangeCursor,
 ) {
@@ -1262,6 +1274,7 @@ function appendMarkdownInlineCodeRanges(
         Math.min(excludedStart, end),
         inlineCodeRanges,
         inlineHtmlRanges,
+        inlineLinkRanges,
       );
     }
     segmentStart = Math.max(segmentStart, excludedEnd);
@@ -1283,6 +1296,7 @@ function appendMarkdownInlineCodeRanges(
       end,
       inlineCodeRanges,
       inlineHtmlRanges,
+      inlineLinkRanges,
     );
   }
 }
@@ -1293,6 +1307,7 @@ function appendMarkdownInlineCodeRangesInSegment(
   end,
   inlineCodeRanges,
   inlineHtmlRanges,
+  inlineLinkRanges,
 ) {
   const delimiterRuns = [];
   for (let index = start; index < end;) {
@@ -1323,9 +1338,34 @@ function appendMarkdownInlineCodeRangesInSegment(
   }
 
   const findHtmlTerminator = createMarkdownInlineTerminatorFinder(content, end);
+  let inlineLinkTailEndFinder;
+  const findInlineLinkTailEnd = (tailStart) => {
+    inlineLinkTailEndFinder ??= createMarkdownInlineLinkTailEndFinder(
+      content,
+      start,
+      end,
+    );
+    return inlineLinkTailEndFinder(tailStart);
+  };
+  const segmentInlineLinkRanges = markdownInlineLinkRanges(
+    content,
+    start,
+    end,
+    delimiterRuns,
+    nextRunWithLength,
+    findHtmlTerminator,
+    findInlineLinkTailEnd,
+  );
+  inlineLinkRanges.push(...segmentInlineLinkRanges);
+  let inlineLinkRangeIndex = 0;
   let delimiterIndex = 0;
   let cursor = start;
   while (cursor < end) {
+    while (
+      segmentInlineLinkRanges[inlineLinkRangeIndex]?.[1] <= cursor
+    ) {
+      inlineLinkRangeIndex += 1;
+    }
     while (delimiterRuns[delimiterIndex]?.end <= cursor) {
       delimiterIndex += 1;
     }
@@ -1345,6 +1385,19 @@ function appendMarkdownInlineCodeRangesInSegment(
       }
       : delimiterRun;
     const htmlStart = content.indexOf("<", cursor);
+    const inlineLinkRange = segmentInlineLinkRanges[inlineLinkRangeIndex];
+    if (
+      inlineLinkRange !== undefined &&
+      (delimiter === undefined || inlineLinkRange[0] <= delimiter.start) &&
+      (htmlStart < 0 || htmlStart >= end || inlineLinkRange[0] < htmlStart)
+    ) {
+      cursor = inlineLinkRange[1];
+      inlineLinkRangeIndex += 1;
+      while (delimiterRuns[delimiterIndex]?.start < cursor) {
+        delimiterIndex += 1;
+      }
+      continue;
+    }
     if (
       htmlStart >= 0 && htmlStart < end &&
       (delimiter === undefined || htmlStart < delimiter.start)
@@ -1385,6 +1438,269 @@ function appendMarkdownInlineCodeRangesInSegment(
     cursor = delimiterRuns[closingIndex].end;
     delimiterIndex = closingIndex + 1;
   }
+}
+
+function markdownInlineLinkRanges(
+  content,
+  start,
+  end,
+  delimiterRuns,
+  nextRunWithLength,
+  findHtmlTerminator,
+  findInlineLinkTailEnd,
+) {
+  const ranges = [];
+  const labelOpeners = [];
+  let delimiterIndex = 0;
+  for (let cursor = start; cursor < end;) {
+    while (delimiterRuns[delimiterIndex]?.end <= cursor) {
+      delimiterIndex += 1;
+    }
+    const delimiterRun = delimiterRuns[delimiterIndex];
+    const delimiter = delimiterRun?.escaped
+      ? {
+        start: delimiterRun.start + 1,
+        end: delimiterRun.end,
+        length: delimiterRun.length - 1,
+      }
+      : delimiterRun;
+    if (delimiter?.length > 0 && delimiter.start === cursor) {
+      const closingIndex = nextRunWithLength[delimiterIndex];
+      if (closingIndex !== undefined) {
+        cursor = delimiterRuns[closingIndex].end;
+        delimiterIndex = closingIndex + 1;
+      } else {
+        cursor = delimiter.end;
+        delimiterIndex += 1;
+      }
+      continue;
+    }
+
+    const character = content[cursor];
+    if (character === "\\" && cursor + 1 < end) {
+      cursor += 2;
+      continue;
+    }
+    if (character === "<") {
+      const htmlEnd = markdownInlineHtmlEnd(
+        content,
+        cursor,
+        end,
+        findHtmlTerminator,
+      );
+      if (htmlEnd !== undefined) {
+        cursor = htmlEnd;
+        continue;
+      }
+    }
+    if (character === "[") {
+      labelOpeners.push({
+        image: cursor > start && content[cursor - 1] === "!" &&
+          !isEscapedMarkdownToken(content, cursor - 1),
+        start: cursor,
+      });
+      cursor += 1;
+      continue;
+    }
+    if (character !== "]" || labelOpeners.length === 0) {
+      cursor += 1;
+      continue;
+    }
+
+    const labelOpener = labelOpeners.pop();
+    const tailStart = cursor + 2;
+    if (
+      content[cursor + 1] !== "(" ||
+      cursor - labelOpener.start > 1_000
+    ) {
+      cursor += 1;
+      continue;
+    }
+    const tailEnd = findInlineLinkTailEnd(tailStart);
+    if (tailEnd === undefined) {
+      cursor += 1;
+      continue;
+    }
+
+    ranges.push([tailStart, tailEnd]);
+    if (!labelOpener.image) labelOpeners.length = 0;
+    cursor = tailEnd;
+  }
+  return ranges;
+}
+
+function createMarkdownInlineLinkTailEndFinder(content, start, end) {
+  const length = end - start;
+  const escaped = new Uint8Array(length);
+  let precedingBackslashes = 0;
+  for (let offset = 0; offset < length; offset += 1) {
+    escaped[offset] = precedingBackslashes % 2;
+    if (content[start + offset] === "\\") precedingBackslashes += 1;
+    else precedingBackslashes = 0;
+  }
+
+  const nextUnescapedByCharacter = new Map();
+  for (const character of ["<", ">", '"', "'", "(", ")", "\r", "\n"]) {
+    const nextIndexes = new Int32Array(length + 1);
+    nextIndexes.fill(-1);
+    let nextIndex = -1;
+    for (let offset = length - 1; offset >= 0; offset -= 1) {
+      if (
+        content[start + offset] === character &&
+        (character === "\r" || character === "\n" || escaped[offset] === 0)
+      ) nextIndex = start + offset;
+      nextIndexes[offset] = nextIndex;
+    }
+    nextUnescapedByCharacter.set(character, nextIndexes);
+  }
+  const nextUnescaped = (character, index) => {
+    if (index < start || index >= end) return undefined;
+    const nextIndex = nextUnescapedByCharacter.get(character)[index - start];
+    return nextIndex < 0 ? undefined : nextIndex;
+  };
+
+  const spaceTabEnd = new Int32Array(length + 1);
+  spaceTabEnd[length] = end;
+  for (let offset = length - 1; offset >= 0; offset -= 1) {
+    const index = start + offset;
+    spaceTabEnd[offset] = content[index] === " " || content[index] === "\t"
+      ? spaceTabEnd[offset + 1]
+      : index;
+  }
+  const lineEndingEnd = (index) => {
+    if (content[index] === "\n") return index + 1;
+    if (content[index] !== "\r") return undefined;
+    return content[index + 1] === "\n" ? index + 2 : index + 1;
+  };
+  const whitespaceEnd = (index) => {
+    const spacesEnd = spaceTabEnd[index - start];
+    const lineEnd = lineEndingEnd(spacesEnd);
+    const finalEnd = lineEnd === undefined
+      ? spacesEnd
+      : spaceTabEnd[lineEnd - start];
+    return { end: finalEnd, hasWhitespace: finalEnd > index };
+  };
+
+  const nextBlankLine = new Int32Array(length + 1);
+  nextBlankLine.fill(-1);
+  let nextBlankLineIndex = -1;
+  for (let offset = length - 1; offset >= 0; offset -= 1) {
+    const index = start + offset;
+    const firstLineEnd = lineEndingEnd(index);
+    if (firstLineEnd !== undefined) {
+      const secondLineStart = spaceTabEnd[firstLineEnd - start];
+      if (lineEndingEnd(secondLineStart) !== undefined) {
+        nextBlankLineIndex = index;
+      }
+    }
+    nextBlankLine[offset] = nextBlankLineIndex;
+  }
+
+  const bareDestinationEnd = new Int32Array(length + 1);
+  bareDestinationEnd.fill(-1);
+  for (let tokenStart = start; tokenStart < end;) {
+    const firstCode = content.charCodeAt(tokenStart);
+    if (firstCode <= 0x20 || firstCode === 0x7f) {
+      tokenStart += 1;
+      continue;
+    }
+    let tokenEnd = tokenStart + 1;
+    while (tokenEnd < end) {
+      const characterCode = content.charCodeAt(tokenEnd);
+      if (characterCode <= 0x20 || characterCode === 0x7f) break;
+      tokenEnd += 1;
+    }
+
+    const tokenLength = tokenEnd - tokenStart;
+    const balances = new Int32Array(tokenLength + 1);
+    for (let offset = 0; offset < tokenLength; offset += 1) {
+      const index = tokenStart + offset;
+      let change = 0;
+      if (escaped[index - start] === 0) {
+        if (content[index] === "(") change = 1;
+        else if (content[index] === ")") change = -1;
+      }
+      balances[offset + 1] = balances[offset] + change;
+    }
+
+    const nextSmallerBoundary = new Int32Array(tokenLength + 1);
+    nextSmallerBoundary.fill(-1);
+    const boundaryStack = [];
+    for (let offset = tokenLength; offset >= 0; offset -= 1) {
+      while (
+        boundaryStack.length > 0 &&
+        balances[boundaryStack.at(-1)] >= balances[offset]
+      ) boundaryStack.pop();
+      if (boundaryStack.length > 0) {
+        nextSmallerBoundary[offset] = boundaryStack.at(-1);
+      }
+      boundaryStack.push(offset);
+    }
+    for (let offset = 0; offset < tokenLength; offset += 1) {
+      const smallerBoundary = nextSmallerBoundary[offset];
+      if (smallerBoundary >= 0) {
+        bareDestinationEnd[tokenStart + offset - start] = tokenStart +
+          smallerBoundary - 1;
+      } else if (balances[tokenLength] === balances[offset]) {
+        bareDestinationEnd[tokenStart + offset - start] = tokenEnd;
+      }
+    }
+    tokenStart = tokenEnd;
+  }
+
+  const destinationEnd = (index) => {
+    if (index < start || index >= end) return undefined;
+    if (content[index] !== "<") {
+      const destination = bareDestinationEnd[index - start];
+      return destination < 0 ? undefined : destination;
+    }
+    const closing = nextUnescaped(">", index + 1);
+    if (closing === undefined) return undefined;
+    const nestedOpening = nextUnescaped("<", index + 1);
+    const carriageReturn = nextUnescaped("\r", index + 1);
+    const lineFeed = nextUnescaped("\n", index + 1);
+    const forbidden = Math.min(
+      nestedOpening ?? Infinity,
+      carriageReturn ?? Infinity,
+      lineFeed ?? Infinity,
+    );
+    return forbidden < closing ? undefined : closing + 1;
+  };
+
+  const titleEnd = (index) => {
+    const opening = content[index];
+    const closingCharacter = opening === "(" ? ")" : opening;
+    if (opening !== '"' && opening !== "'" && opening !== "(") {
+      return undefined;
+    }
+    const closing = nextUnescaped(closingCharacter, index + 1);
+    if (closing === undefined) return undefined;
+    const nestedOpening = opening === "("
+      ? nextUnescaped("(", index + 1)
+      : undefined;
+    if (nestedOpening !== undefined && nestedOpening < closing) {
+      return undefined;
+    }
+    const blankLine = nextBlankLine[index - start];
+    return blankLine >= 0 && blankLine < closing ? undefined : closing + 1;
+  };
+
+  return (tailStart) => {
+    const beforeDestination = whitespaceEnd(tailStart);
+    const parsedDestinationEnd = destinationEnd(beforeDestination.end);
+    if (parsedDestinationEnd === undefined) return undefined;
+
+    const afterDestination = whitespaceEnd(parsedDestinationEnd);
+    if (content[afterDestination.end] === ")") {
+      return afterDestination.end + 1;
+    }
+    if (!afterDestination.hasWhitespace) return undefined;
+
+    const parsedTitleEnd = titleEnd(afterDestination.end);
+    if (parsedTitleEnd === undefined) return undefined;
+    const afterTitle = whitespaceEnd(parsedTitleEnd);
+    return content[afterTitle.end] === ")" ? afterTitle.end + 1 : undefined;
+  };
 }
 
 function appendMarkdownInlineHtmlRanges(content, start, end, ranges) {
