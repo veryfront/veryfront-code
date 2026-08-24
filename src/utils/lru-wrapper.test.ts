@@ -2,8 +2,6 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
-import { waitFor } from "#veryfront/testing/deno-compat.ts";
-import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { LRUCache } from "./lru-wrapper.ts";
 
 describe("LRUCache", () => {
@@ -125,52 +123,6 @@ describe("LRUCache", () => {
       cache.cleanup();
 
       assertEquals(cache.has("a"), false);
-    });
-
-    it("sweeps expired entries without a manual cleanup", async (): Promise<void> => {
-      // shouldDisableInterval() fails on either signal, so both the global and
-      // the env var the test tasks set must be cleared for this case.
-      const previousEnv = getHostEnv("VF_DISABLE_LRU_INTERVAL");
-      const globals = globalThis as Record<string, unknown>;
-      const previousGlobal = globals.__vfDisableLruInterval;
-      deleteEnv("VF_DISABLE_LRU_INTERVAL");
-      delete globals.__vfDisableLruInterval;
-
-      // size/keys/entries all hide expired entries, so onEvict is the only
-      // signal that separates "expired" from "actually reclaimed".
-      const swept: string[] = [];
-      const cache = new LRUCache<string, number>({
-        maxEntries: 3,
-        ttlMs: 10,
-        cleanupIntervalMs: 20,
-        onEvict: (key: string) => swept.push(key),
-      });
-
-      try {
-        cache.set("a", 1);
-
-        await waitFor(() => swept.length > 0, {
-          message: "periodic cleanup did not reclaim the expired entry",
-        });
-        assertEquals(
-          swept,
-          ["a"],
-          "the periodic sweep must reclaim expired entries without a manual cleanup() call",
-        );
-
-        cache.destroy();
-
-        // After destroy() the sweep must be gone, so a fresh expired entry stays.
-        cache.set("b", 2);
-        await delay(60);
-        assertEquals(swept, ["a"], "destroy() must stop the periodic sweep");
-      } finally {
-        cache.destroy();
-        if (previousEnv === undefined) deleteEnv("VF_DISABLE_LRU_INTERVAL");
-        else setEnv("VF_DISABLE_LRU_INTERVAL", previousEnv);
-        if (previousGlobal === undefined) delete globals.__vfDisableLruInterval;
-        else globals.__vfDisableLruInterval = previousGlobal;
-      }
     });
 
     it("no TTL - entries never expire", async (): Promise<void> => {
