@@ -76,14 +76,50 @@ function createRedisClient(
   };
 }
 
+function createPayload(html: string): CachePayload {
+  return {
+    result: { html, frontmatter: {}, stream: null },
+    storedAt: 1_000,
+  };
+}
+
 describe("RedisCacheStore", () => {
   describe("constructor", () => {
     it("should create store with default options", () => {
       assertEquals(createStore() instanceof RedisCacheStore, true);
     });
 
-    it("should create store with custom key prefix", () => {
-      assertEquals(createStore({ keyPrefix: "custom:" }) instanceof RedisCacheStore, true);
+    it("namespaces Redis keys with the custom key prefix", async () => {
+      let setKey: string | undefined;
+      let getKey: string | undefined;
+      let raw: string | null = null;
+      const client: RedisClient = {
+        ...createRedisClient(),
+        get: (key) => {
+          getKey = key;
+          return Promise.resolve(raw);
+        },
+        set: (key, value) => {
+          setKey = key;
+          raw = value;
+          return Promise.resolve("OK");
+        },
+      };
+      register(
+        RedisRuntimeProviderName,
+        createRedisProvider(client, () => Promise.resolve()),
+      );
+      const store = createStore({ keyPrefix: "custom:" });
+
+      try {
+        await store.set("page-1", createPayload("<p>prefixed</p>"));
+        await store.get("page-1");
+        assertEquals(setKey, "custom:page-1", "SET must be namespaced by keyPrefix");
+        assertEquals(getKey, "custom:page-1", "GET must use the same namespaced key");
+      } finally {
+        await store.destroy();
+        unregister(RedisRuntimeProviderName);
+      }
     });
 
     it("should create store with fallback disabled", () => {
@@ -105,8 +141,48 @@ describe("RedisCacheStore", () => {
       );
     });
 
-    it("should accept custom TTL seconds", () => {
-      assertEquals(createStore({ ttlSeconds: 7200 }) instanceof RedisCacheStore, true);
+    it("applies the configured TTL seconds to the Redis SET options", async () => {
+      let setOptions: { EX?: number; NX?: boolean } | undefined;
+      const client: RedisClient = {
+        ...createRedisClient(),
+        set: (_key, _value, options) => {
+          setOptions = options;
+          return Promise.resolve("OK");
+        },
+      };
+      register(
+        RedisRuntimeProviderName,
+        createRedisProvider(client, () => Promise.resolve()),
+      );
+      const store = createStore({ keyPrefix: "render:", ttlSeconds: 7200 });
+
+      try {
+        await store.set("ttl-key", createPayload("<p>ttl</p>"));
+        assertEquals(
+          setOptions,
+          { EX: 7200 },
+          "configured ttlSeconds must reach the Redis SET options",
+        );
+      } finally {
+        await store.destroy();
+        unregister(RedisRuntimeProviderName);
+      }
+    });
+
+    it("keeps the fallback cache disabled by default", async () => {
+      const store = createStore({ keyPrefix: "render:" });
+
+      try {
+        (store as any).redisUnavailable = true;
+        await store.set("fallback-default", createPayload("<p>skipped</p>"));
+        assertEquals(
+          await store.get("fallback-default"),
+          undefined,
+          "fallback must stay off by default",
+        );
+      } finally {
+        await store.destroy();
+      }
     });
 
     it("should accept combined options", () => {
@@ -137,11 +213,13 @@ describe("RedisCacheStore", () => {
   describe("extension-owned Redis connection", () => {
     it("preserves Dates and compare-deletes only the observed value", async () => {
       let raw: string | null = null;
+      let setOptions: { EX?: number; NX?: boolean } | undefined;
       const client: RedisClient = {
         ...createRedisClient(),
         get: () => Promise.resolve(raw),
-        set: (_key, value) => {
+        set: (_key, value, options) => {
           raw = value;
+          setOptions = options;
           return Promise.resolve("OK");
         },
         eval: (_script, options) => {
@@ -174,6 +252,11 @@ describe("RedisCacheStore", () => {
 
       try {
         await store.set("dated-key", observed);
+        assertEquals(
+          setOptions,
+          { EX: 3_600 },
+          "default Redis SET must carry the 1 hour expiry",
+        );
         const roundTripped = await store.get("dated-key");
         assertEquals(roundTripped?.result.frontmatter as unknown, {
           publishedAt: new Date("2026-07-24T08:30:00.000Z"),
@@ -326,9 +409,13 @@ describe("RedisCacheStore", () => {
         { cursor: 0, keys: ["render:b"] },
       ];
       const deleted: string[] = [];
+      const scanPatterns: Array<string | undefined> = [];
       let closeCalls = 0;
       const client = createRedisClient(
-        () => Promise.resolve(scanResults.shift()!),
+        (_cursor, options) => {
+          scanPatterns.push(options?.MATCH);
+          return Promise.resolve(scanResults.shift()!);
+        },
         (key) => {
           if (typeof key === "string") deleted.push(key);
           return Promise.resolve(1);
@@ -346,6 +433,21 @@ describe("RedisCacheStore", () => {
       try {
         assertEquals(await store.deleteByPrefix(""), 2);
         assertEquals(deleted, ["render:a", "render:b"]);
+        assertEquals(
+          scanPatterns,
+          ["render:*", "render:*"],
+          "deleteByPrefix must scope SCAN to the store key prefix",
+        );
+
+        scanPatterns.length = 0;
+        scanResults.push({ cursor: 0, keys: [] });
+        await store.deleteByPrefix("page:");
+        assertEquals(
+          scanPatterns,
+          ["render:page:*"],
+          "deleteByPrefix must scope SCAN to the requested prefix",
+        );
+
         await store.destroy();
         assertEquals(closeCalls, 1);
       } finally {

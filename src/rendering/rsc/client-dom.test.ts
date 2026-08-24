@@ -151,22 +151,43 @@ describe("rendering/rsc/client-dom", () => {
     hydrationData.textContent = JSON.stringify({ reactVersion: "19.2.4" });
     (doc.body as unknown as MockElement).appendChild(hydrationData);
 
+    // Record the snapshot the document carries when the first chunk is pulled,
+    // so the assertion sees the ordering and not just the final state.
+    let snapshotAtFirstChunk: string | undefined;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        snapshotAtFirstChunk ??= hydrationData.textContent;
+        controller.enqueue(
+          new TextEncoder().encode('{"type":"slot","id":"root","html":"<div>Ready</div>"}\n'),
+        );
+        controller.close();
+      },
+    });
+
     await consumeNdjsonStream(
-      new Response(
-        '{"type":"slot","id":"root","html":"<div>Ready</div>"}\n',
-        {
-          headers: {
-            [RSC_DEPENDENCY_PINNING_HEADER]: "on:pins-a",
-          },
+      new Response(body, {
+        headers: {
+          [RSC_DEPENDENCY_PINNING_HEADER]: "on:pins-a",
         },
-      ),
+      }),
       doc,
     );
 
+    assertExists(snapshotAtFirstChunk, "the stream body was consumed");
+    assertEquals(
+      JSON.parse(snapshotAtFirstChunk).dependencyPinningCacheKey,
+      "on:pins-a",
+      "the snapshot must be seeded before the first chunk is applied",
+    );
     assertEquals(JSON.parse(hydrationData.textContent), {
       reactVersion: "19.2.4",
       dependencyPinningCacheKey: "on:pins-a",
     });
+    assertEquals(
+      doc.getElementById(RSC_ROOT_ID)?.innerHTML.includes("Ready"),
+      true,
+      "the streamed slot must be applied",
+    );
   });
 
   it("applies streamed slot HTML and marks client boundaries as hydrated", async () => {
@@ -206,6 +227,72 @@ describe("rendering/rsc/client-dom", () => {
     assertExists(sidebar);
     assertEquals(root.innerHTML.includes("Parsed"), true);
     assertEquals(sidebar.innerHTML.includes("Ready"), true);
+  });
+
+  it("renders a final NDJSON line delivered without a trailing newline", async () => {
+    const doc = createDocument();
+
+    await consumeNdjsonStream(
+      createStream([
+        '{"type":"slot","id":"root","htm',
+        'l":"<div>Last</div>"}',
+      ]),
+      doc,
+    );
+
+    const root = doc.getElementById(RSC_ROOT_ID);
+    assertExists(root);
+    assertEquals(
+      root.innerHTML.includes("Last"),
+      true,
+      "the last line is flushed when the stream closes without a newline",
+    );
+  });
+
+  it("rejects streamed slot HTML carrying an event handler attribute", async () => {
+    const doc = createDocument();
+
+    await assertRejects(
+      () =>
+        consumeNdjsonStream(
+          createStream([
+            '{"type":"slot","id":"root","html":"<div onclick=\\"steal()\\"></div>"}\n',
+          ]),
+          doc,
+        ),
+      Error,
+      "Potentially unsafe HTML",
+      "a suspicious slot payload must be rejected by validateTrustedHtml",
+    );
+
+    assertEquals(
+      doc.getElementById(RSC_ROOT_ID)?.innerHTML ?? "",
+      "",
+      "unsafe HTML must not reach the DOM",
+    );
+  });
+
+  it("rejects streamed slot HTML carrying an inline script", async () => {
+    const doc = createDocument();
+
+    await assertRejects(
+      () =>
+        consumeNdjsonStream(
+          createStream([
+            '{"type":"slot","id":"root","html":"<script>steal()<\\/script>"}\n',
+          ]),
+          doc,
+        ),
+      Error,
+      "Potentially unsafe HTML",
+      "an inline script in a slot payload must be rejected",
+    );
+
+    assertEquals(
+      doc.getElementById(RSC_ROOT_ID)?.innerHTML ?? "",
+      "",
+      "inline script HTML must not reach the DOM",
+    );
   });
 
   it("aborts pending reads and cancels the underlying stream", async () => {

@@ -45,10 +45,39 @@ describe("rendering/rsc/ids", () => {
       assertExists(clientEntry);
       assertExists(serverEntry);
 
-      assertEquals(typeof clientEntry.id, "string");
-      assertEquals(typeof serverEntry.id, "string");
+      assertEquals(
+        clientEntry.id,
+        computeStableId("/components/Button.tsx"),
+        "ids are derived from the app-root-relative path",
+      );
+      assertEquals(
+        serverEntry.id,
+        computeStableId("/pages/index.tsx"),
+        "server ids are derived from the app-root-relative path too",
+      );
       assertEquals(clientEntry.path, "/project/app/components/Button.tsx");
       assertEquals(serverEntry.path, "/project/app/pages/index.tsx");
+    });
+
+    it("gives the same file the same id under different project roots", () => {
+      const underProject = withStableIds("/project", {
+        client: [{ path: "/project/app/components/Button.tsx" }],
+        server: [],
+      });
+      const underBuild = withStableIds("/build/checkout", {
+        client: [{ path: "/build/checkout/app/components/Button.tsx" }],
+        server: [],
+      });
+
+      const first = underProject.client[0];
+      const second = underBuild.client[0];
+      assertExists(first);
+      assertExists(second);
+      assertEquals(
+        first.id,
+        second.id,
+        "the same relative file gets the same id under different project roots",
+      );
     });
 
     it("should compute relative paths from app root", () => {

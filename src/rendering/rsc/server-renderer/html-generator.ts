@@ -7,6 +7,16 @@ export { escapeHtml };
 
 const SKIP_PROPS = new Set(["children", "key", "ref"]);
 
+/**
+ * React prop names that differ from the HTML attribute they render to.
+ * `htmlFor` must become `for` or the label loses its input association and
+ * React reports an attribute mismatch when it hydrates the same element.
+ */
+const REACT_PROP_ATTRIBUTE_NAMES: Readonly<Record<string, string>> = {
+  className: "class",
+  htmlFor: "for",
+};
+
 export function renderAttributes(props: Record<string, unknown>): string {
   const attrs: string[] = [];
 
@@ -14,7 +24,7 @@ export function renderAttributes(props: Record<string, unknown>): string {
     if (value == null || SKIP_PROPS.has(key)) continue;
     if (!isSafeSerializedPropName(key)) continue;
 
-    const attrName = key === "className" ? "class" : key;
+    const attrName = REACT_PROP_ATTRIBUTE_NAMES[key] ?? key;
 
     if (typeof value === "boolean") {
       if (value) attrs.push(attrName);

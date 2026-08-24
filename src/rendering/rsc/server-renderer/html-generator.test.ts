@@ -48,8 +48,16 @@ describe("rendering/rsc/server-renderer/html-generator", () => {
     });
 
     it("should escape HTML in attribute values", () => {
-      const result = renderAttributes({ title: '<script>alert("xss")</script>' });
-      assertEquals(result.includes("<script>"), false);
+      assertEquals(
+        renderAttributes({ title: '<script>alert("xss")</script>' }),
+        ' title="&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;"',
+        "attribute values escape quotes, not just angle brackets",
+      );
+      assertEquals(
+        renderAttributes({ title: "it's & <b>" }),
+        ' title="it&#39;s &amp; &lt;b&gt;"',
+        "single quotes and ampersands are escaped exactly once",
+      );
     });
 
     it("should render number attributes as strings", () => {
@@ -72,7 +80,12 @@ describe("rendering/rsc/server-renderer/html-generator", () => {
       assertEquals(result.toLowerCase().includes("onclick"), false);
       assertEquals(result.toLowerCase().includes("onload"), false);
       assertEquals(result.includes('class="safe"'), true);
-      assertEquals(result.includes('htmlFor="field"'), true);
+      assertEquals(
+        result.includes('for="field"'),
+        true,
+        "htmlFor is emitted as the HTML for attribute",
+      );
+      assertEquals(result.includes("htmlFor"), false, "the React prop name is not emitted");
       assertEquals(result.includes('aria-label="Field"'), true);
       assertEquals(result.includes('data-test-id="field"'), true);
     });

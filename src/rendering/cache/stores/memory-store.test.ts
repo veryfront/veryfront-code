@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import { MemoryCacheStore } from "./memory-store.ts";
 import type { CachePayload } from "../types.ts";
 
@@ -74,6 +75,21 @@ describe("rendering/cache/stores/memory-store", () => {
 
       assertEquals(await store.get("a"), undefined);
       assertEquals((await store.get("c"))?.result.html, "c");
+    });
+
+    it("does not apply store TTL when enforceStoreTtl is false", async () => {
+      using time = new FakeTime();
+      const store = new MemoryCacheStore({ ttlMs: 10, enforceStoreTtl: false });
+      await store.set("k", makePayload());
+
+      await time.tickAsync(1000);
+
+      assertEquals(
+        (await store.get("k"))?.result.html,
+        "<p>test</p>",
+        "enforceStoreTtl:false must suppress store-level TTL eviction",
+      );
+      await store.destroy();
     });
 
     it("should destroy without error", async () => {

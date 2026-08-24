@@ -66,11 +66,19 @@ class MockMutationObserver {
   }
 
   triggerMutation(addedNodes: Node[]): void {
+    this.trigger(addedNodes, []);
+  }
+
+  triggerRemoval(removedNodes: Node[]): void {
+    this.trigger([], removedNodes);
+  }
+
+  private trigger(addedNodes: Node[], removedNodes: Node[]): void {
     const mutation: MutationRecord = {
       type: "childList",
       target: this.observedTarget!,
       addedNodes: addedNodes as unknown as NodeList,
-      removedNodes: [] as unknown as NodeList,
+      removedNodes: removedNodes as unknown as NodeList,
       previousSibling: null,
       nextSibling: null,
       attributeName: null,
@@ -589,6 +597,141 @@ describe("LinkObserver", () => {
       });
     });
 
+    it("should not observe invalid links added via mutation observer", () => {
+      withMocks((mocks) => {
+        mocks.setDocument({
+          querySelectorAll: () => [],
+          body: {},
+        });
+
+        withObserver(mocks, createOptions(), new Set<string>(), (observer) => {
+          observer.init();
+
+          const mockIO = mocks.getMockIntersectionObserver();
+
+          const externalLink = {
+            nodeType: 1,
+            ...createLink({
+              href: "http://external.com/page",
+              hostname: "external.com",
+              pathname: "/page",
+            }),
+            querySelectorAll: () => [],
+          };
+
+          const optedOutLink = {
+            nodeType: 1,
+            ...createLink({
+              href: "http://example.com/opt-out",
+              pathname: "/opt-out",
+              dataset: { noPrefetch: true },
+            }),
+            querySelectorAll: () => [],
+          };
+
+          mocks.getMockMutationObserver().triggerMutation([
+            externalLink as any,
+            optedOutLink as any,
+          ]);
+
+          assertEquals(
+            mockIO.observedElements.size,
+            0,
+            "anchors injected after load must still pass isValidLink",
+          );
+        });
+      });
+    });
+
+    it("cancels a pending prefetch when the link is removed before the delay elapses", async () => {
+      await withMocksAsync(async (mocks) => {
+        using time = new FakeTime();
+
+        const link = {
+          nodeType: 1,
+          ...createLink(),
+          querySelectorAll: () => [],
+        };
+
+        mocks.setDocument({
+          querySelectorAll: () => [link],
+          body: {},
+        });
+
+        let callbackCalled = false;
+
+        await withObserverAsync(
+          mocks,
+          createOptions({
+            delay: 100,
+            onLinkVisible: () => {
+              callbackCalled = true;
+            },
+          }),
+          new Set<string>(),
+          async (observer) => {
+            observer.init();
+            mocks.getMockIntersectionObserver().triggerIntersection(link as any, true);
+
+            mocks.getMockMutationObserver().triggerRemoval([link as any]);
+
+            await time.tickAsync(101);
+
+            assertEquals(callbackCalled, false, "a removed link must not be prefetched");
+          },
+        );
+      });
+    });
+
+    it("cancels a pending prefetch when an ancestor container is removed", async () => {
+      await withMocksAsync(async (mocks) => {
+        using time = new FakeTime();
+
+        const innerLink = createLink({
+          href: "http://example.com/inner",
+          pathname: "/inner",
+        });
+
+        const container = {
+          nodeType: 1,
+          tagName: "DIV",
+          querySelectorAll: (selector: string) => (selector === "a" ? [innerLink] : []),
+        };
+
+        mocks.setDocument({
+          querySelectorAll: () => [innerLink],
+          body: {},
+        });
+
+        let callbackCalled = false;
+
+        await withObserverAsync(
+          mocks,
+          createOptions({
+            delay: 100,
+            onLinkVisible: () => {
+              callbackCalled = true;
+            },
+          }),
+          new Set<string>(),
+          async (observer) => {
+            observer.init();
+            mocks.getMockIntersectionObserver().triggerIntersection(innerLink as any, true);
+
+            mocks.getMockMutationObserver().triggerRemoval([container as any]);
+
+            await time.tickAsync(101);
+
+            assertEquals(
+              callbackCalled,
+              false,
+              "a link inside a removed container must not be prefetched",
+            );
+          },
+        );
+      });
+    });
+
     it("should not observe invalid nodes added via mutation observer", () => {
       withMocks((mocks) => {
         mocks.setDocument({
@@ -611,8 +754,14 @@ describe("LinkObserver", () => {
   describe("Cleanup and Destroy", () => {
     it("should disconnect observers on destroy", () => {
       withMocks((mocks) => {
+        const link1 = createLink({ href: "http://example.com/page1", pathname: "/page1" });
+        const link2 = createLink({ href: "http://example.com/page2", pathname: "/page2" });
+
         mocks.setDocument({
-          querySelectorAll: () => [],
+          querySelectorAll: (selector: string) => {
+            if (selector === 'a[href^="/"], a[href^="./"]') return [link1, link2];
+            return [];
+          },
           body: {},
         });
 
@@ -622,13 +771,52 @@ describe("LinkObserver", () => {
         const mockIO = mocks.getMockIntersectionObserver();
         const mockMO = mocks.getMockMutationObserver();
 
-        assertEquals(mockIO.observedElements.size >= 0, true);
+        assertEquals(mockIO.observedElements.size, 2, "init observes the page links");
         assertEquals(mockMO.observedTarget !== null, true);
 
         observer.destroy();
 
-        assertEquals(mockIO.observedElements.size, 0);
+        assertEquals(
+          mockIO.observedElements.size,
+          0,
+          "destroy disconnects the IntersectionObserver",
+        );
         assertEquals(mockMO.observedTarget, null);
+      });
+    });
+
+    it("should clear pending prefetch timeouts on destroy", async () => {
+      await withMocksAsync(async (mocks) => {
+        using time = new FakeTime();
+        const link = createLink();
+
+        mocks.setDocument({
+          querySelectorAll: () => [link],
+          body: {},
+        });
+
+        let calls = 0;
+        const observer = new LinkObserver(
+          createOptions({
+            delay: 100,
+            onLinkVisible: () => {
+              calls++;
+            },
+          }),
+          new Set<string>(),
+        );
+
+        observer.init();
+        mocks.getMockIntersectionObserver().triggerIntersection(link as any, true);
+        observer.destroy();
+
+        await time.tickAsync(200);
+
+        assertEquals(
+          calls,
+          0,
+          "destroy() must clear pending prefetch timeouts so onLinkVisible never fires after teardown",
+        );
       });
     });
 

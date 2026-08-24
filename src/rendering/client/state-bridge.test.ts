@@ -14,9 +14,6 @@ import {
   useBridgedState,
 } from "./state-bridge.ts";
 
-const isBrowser = typeof globalThis.dispatchEvent === "function";
-const browserOnlyIt = isBrowser ? it : it.skip;
-
 class MockSessionStorage {
   private storage = new Map<string, string>();
 
@@ -95,6 +92,10 @@ class MockReactHooks {
 
     this.effects = [];
     return cleanups;
+  }
+
+  readState(index = 0): unknown {
+    return [...this.states.values()][index]?.value;
   }
 
   reset(): void {
@@ -320,21 +321,36 @@ describe("State Bridge", () => {
     });
 
     it("should restore state from sessionStorage", () => {
+      // The seed must land after the previous bridge is torn down, because destroy()
+      // clears sessionStorage, and before the next bridge is constructed, because
+      // restoreState() only runs in the constructor.
+      __resetBridgeForTests();
       mockSessionStorage.setItem("veryfront-state", JSON.stringify({ key: "value" }));
 
       const bridge = getStateBridge();
-      bridge.clear();
 
-      assertEquals(bridge.get("key"), undefined);
+      assertEquals(bridge.get("key"), "value", "constructor rehydrates persisted session state");
 
-      mockSessionStorage.setItem("veryfront-state", JSON.stringify({ restored: "data" }));
+      bridge.set("key", "other");
+      assertEquals(
+        JSON.parse(mockSessionStorage.getItem("veryfront-state")!).key,
+        "other",
+        "restored keys stay persisted without an explicit persist() call",
+      );
     });
 
     it("should handle invalid JSON in sessionStorage", () => {
+      __resetBridgeForTests();
       mockSessionStorage.setItem("veryfront-state", "invalid json");
 
       const bridge = getStateBridge();
-      assertEquals(bridge.get("any-key"), undefined);
+
+      assertEquals(bridge.get("any-key"), undefined, "corrupted state restores nothing");
+      assertEquals(
+        mockSessionStorage.getItem("veryfront-state"),
+        null,
+        "the corrupted entry is removed from sessionStorage",
+      );
     });
 
     it("should recover when saving after corrupted persisted state", () => {
@@ -419,7 +435,21 @@ describe("State Bridge", () => {
       assertEquals(cleanups.length, 1);
       assertEquals(typeof cleanups[0], "function");
 
+      getStateBridge().set("key", "external");
+      assertEquals(
+        mockReact.readState(0),
+        "external",
+        "an external bridge.set must reach the hook's setState",
+      );
+
       cleanups.forEach((cleanup) => cleanup());
+
+      getStateBridge().set("key", "later");
+      assertEquals(
+        mockReact.readState(0),
+        "external",
+        "cleanup unsubscribes the hook from further bridge updates",
+      );
     });
 
     it("should persist when persist option is true", () => {
@@ -495,16 +525,37 @@ describe("State Bridge", () => {
   });
 
   describe("beforeunload Event", () => {
-    browserOnlyIt("should save state on beforeunload", () => {
-      const bridge = getStateBridge();
-      bridge.set("key1", "value1");
-      bridge.persist("key1");
+    it("should save state on beforeunload", () => {
+      // The listener is only registered when `window` exists, so install it before
+      // the bridge is constructed.
+      (globalThis as any).window = {};
+      __resetBridgeForTests();
 
-      globalThis.dispatchEvent(new Event("beforeunload"));
+      try {
+        const bridge = getStateBridge();
+        bridge.set("key1", "value1");
+        bridge.persist("key1");
 
-      const stored = (globalThis as any).sessionStorage.getItem("veryfront-state");
-      assertExists(stored);
-      assertEquals(JSON.parse(stored).key1, "value1");
+        (globalThis as any).sessionStorage.removeItem("veryfront-state");
+        assertEquals(
+          (globalThis as any).sessionStorage.getItem("veryfront-state"),
+          null,
+          "nothing is persisted before the unload handler runs",
+        );
+
+        globalThis.dispatchEvent(new Event("beforeunload"));
+
+        const stored = (globalThis as any).sessionStorage.getItem("veryfront-state");
+        assertExists(stored, "the beforeunload handler writes persisted state");
+        assertEquals(
+          JSON.parse(stored).key1,
+          "value1",
+          "beforeunload handler re-persists in-memory state",
+        );
+      } finally {
+        __resetBridgeForTests();
+        delete (globalThis as any).window;
+      }
     });
   });
 

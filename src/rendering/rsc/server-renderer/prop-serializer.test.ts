@@ -47,6 +47,31 @@ describe("rendering/rsc/server-renderer/prop-serializer", () => {
       );
     });
 
+    it("drops each markup-breaking character class in prop names", () => {
+      const unsafeNames = [
+        "x onload",
+        'a"b',
+        "a'b",
+        "a`b",
+        "a=b",
+        "a<b",
+        "a>b",
+        "a/b",
+        "a\tb",
+        "a\u0000b",
+      ];
+
+      for (const name of unsafeNames) {
+        assertEquals(
+          serializeProps({ [name]: "v", keep: "ok" }),
+          { keep: "ok" },
+          `serializeProps should drop prop name ${
+            JSON.stringify(name)
+          } that can break attribute markup`,
+        );
+      }
+    });
+
     it("should skip symbol values", () => {
       assertEquals(serializeProps({ sym: Symbol("test"), text: "ok" }), {
         text: "ok",
@@ -89,6 +114,20 @@ describe("rendering/rsc/server-renderer/prop-serializer", () => {
 
       const parsed = JSON.parse(stringifyProps(obj));
       assertEquals(parsed, { a: 1 });
+    });
+
+    it("does not leak dedupe state between calls", () => {
+      const props = { a: { id: 1 } };
+
+      const first = stringifyProps(props);
+      const second = stringifyProps(props);
+
+      assertEquals(second, first, "a second call must not see the first call's seen-set");
+      assertEquals(
+        JSON.parse(second),
+        { a: { id: 1 } },
+        "re-serializing the same props object yields the same payload",
+      );
     });
 
     it("should handle null values", () => {

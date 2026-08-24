@@ -120,6 +120,22 @@ describe("rendering/rsc/actions/helpers", () => {
       assertEquals(decodeUnverifiedJwtClaims(req), null);
     });
 
+    it("returns null when the payload segment is not a JSON object", () => {
+      // A JWT payload must decode to a claims record; scalars must not be
+      // handed back as one. Padding is stripped the way real tokens do.
+      for (const value of [123, "str", true, null]) {
+        const encoded = btoa(JSON.stringify(value)).replaceAll("=", "");
+        const req = new Request("http://localhost/", {
+          headers: { cookie: `session=h.${encoded}.s` },
+        });
+        assertEquals(
+          decodeUnverifiedJwtClaims(req),
+          null,
+          `scalar JWT payload ${JSON.stringify(value)} must not be returned as a claims record`,
+        );
+      }
+    });
+
     it("decodes real base64url-encoded payloads (RFC 7515, not standard base64)", () => {
       // Real JWTs are base64url: `+`/`/` become `-`/`_`, padding stripped.
       // Pick a payload whose JSON produces all three transform characters so

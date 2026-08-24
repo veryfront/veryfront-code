@@ -2,6 +2,7 @@ import { JSDOM } from "npm:jsdom@28.0.0";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontRouter } from "./router.ts";
+import type { RevalidateContext } from "./router.ts";
 import { getNavigationStore } from "./navigation-store.ts";
 import type { RouteData } from "#veryfront/routing";
 
@@ -131,9 +132,13 @@ describe("rendering/client/VeryfrontRouter — soft same-route navigation", () =
   it("soft path (shouldRevalidate=false) updates the URL and notifies, no page load", async () => {
     const restore = installDom("https://example.com/dashboard");
     try {
+      const seen: RevalidateContext[] = [];
       const router = new VeryfrontRouter({
         baseUrl: "https://example.com",
-        shouldRevalidate: () => false,
+        shouldRevalidate: (context) => {
+          seen.push(context);
+          return false;
+        },
       });
       const loads = spyOnLoaders(router);
 
@@ -146,6 +151,11 @@ describe("rendering/client/VeryfrontRouter — soft same-route navigation", () =
       assertEquals(notifications, 1);
       assertEquals(globalThis.location.search, "?tab=activity");
       assertEquals(getNavigationStore().getHref(), "/dashboard?tab=activity");
+      assertEquals(
+        seen,
+        [{ currentHref: "/dashboard", nextHref: "/dashboard?tab=activity", sameRoute: true }],
+        "shouldRevalidate must receive the current href, the next href, and the same-route flag",
+      );
     } finally {
       restore();
     }
@@ -181,6 +191,37 @@ describe("rendering/client/VeryfrontRouter — soft same-route navigation", () =
 
       assertEquals(loads, ["/settings"]);
       assertEquals(notifications, 1);
+    } finally {
+      restore();
+    }
+  });
+
+  it("a route change refetches even when shouldRevalidate returns false", async () => {
+    const restore = installDom("https://example.com/dashboard");
+    try {
+      const seen: RevalidateContext[] = [];
+      const router = new VeryfrontRouter({
+        baseUrl: "https://example.com",
+        shouldRevalidate: (context) => {
+          seen.push(context);
+          return false;
+        },
+      });
+      const loads = spyOnLoaders(router);
+
+      await router.navigate("/settings");
+
+      assertEquals(
+        loads,
+        ["/settings"],
+        "a route change must refetch regardless of shouldRevalidate",
+      );
+      assertEquals(
+        globalThis.location.pathname,
+        "/settings",
+        "the route change still updates the URL",
+      );
+      assertEquals(seen, [], "a route change never consults the revalidation policy");
     } finally {
       restore();
     }
@@ -355,6 +396,35 @@ describe("rendering/client/VeryfrontRouter — soft same-route navigation", () =
     }
   });
 
+  it("replace mode swaps the current history entry", async () => {
+    const restore = installDom("https://example.com/dashboard?tab=a");
+    try {
+      const router = new VeryfrontRouter({
+        baseUrl: "https://example.com",
+        shouldRevalidate: () => false,
+      });
+      spyOnLoaders(router);
+
+      const before = globalThis.history.length;
+
+      await router.navigate("/dashboard?tab=b", { history: "replace" });
+
+      assertEquals(globalThis.location.search, "?tab=b", "replace updates the URL");
+      assertEquals(globalThis.history.length, before, "replace must not add a history entry");
+
+      await router.navigate("/dashboard?tab=c");
+
+      assertEquals(globalThis.location.search, "?tab=c", "the default push updates the URL");
+      assertEquals(
+        globalThis.history.length,
+        before + 1,
+        "the default push adds a history entry",
+      );
+    } finally {
+      restore();
+    }
+  });
+
   it("accepts the deprecated boolean history arg (false = no history change)", async () => {
     const restore = installDom("https://example.com/dashboard?tab=a");
     try {
@@ -364,10 +434,23 @@ describe("rendering/client/VeryfrontRouter — soft same-route navigation", () =
       });
       spyOnLoaders(router);
 
+      const before = globalThis.history.length;
+
       // Legacy call shape `navigate(url, false)` maps to `{ history: "none" }`.
       await router.navigate("/dashboard?tab=b", false);
 
       assertEquals(globalThis.location.search, "?tab=a");
+      assertEquals(globalThis.history.length, before, "legacy `false` records no history entry");
+
+      // Legacy call shape `navigate(url, true)` maps to `{ history: "push" }`.
+      await router.navigate("/dashboard?tab=c", true);
+
+      assertEquals(globalThis.location.search, "?tab=c", "legacy `true` pushes the new URL");
+      assertEquals(
+        globalThis.history.length,
+        before + 1,
+        "legacy `true` records a history entry",
+      );
     } finally {
       restore();
     }
@@ -533,18 +616,55 @@ describe("rendering/client/VeryfrontRouter — soft same-route navigation", () =
       (router as any).navigationHandlers.isPopStateNav = true;
       // deno-lint-ignore no-explicit-any
       (router as any).navigationHandlers.scrollPositions.set("/target", 321);
+      let receivedIsPopState: boolean | undefined;
       // deno-lint-ignore no-explicit-any
       (router as any).pageTransition.updatePage = (
         _data: RouteData,
-        _isPopState: boolean,
+        isPopState: boolean,
         scrollY: number,
       ) => {
+        receivedIsPopState = isPopState;
         restoredScrollY = scrollY;
       };
 
       await router.navigate("/target", { history: "none" });
 
-      assertEquals(restoredScrollY, 321);
+      assertEquals(restoredScrollY, 321, "the stored offset for /target is passed through");
+      assertEquals(
+        receivedIsPopState,
+        true,
+        "popstate navigations restore the saved scroll offset",
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it("scrolls a forward navigation to the top instead of a saved offset", async () => {
+    const restore = installDom("https://example.com/from");
+    try {
+      const router = new VeryfrontRouter({ baseUrl: "https://example.com" });
+      let receivedIsPopState: boolean | undefined;
+      let receivedScrollY: number | undefined;
+      // The test observes the transition call without mounting a real React root.
+      // deno-lint-ignore no-explicit-any
+      (router as any).root = {};
+      // deno-lint-ignore no-explicit-any
+      (router as any).pageLoader.loadPage = () => Promise.resolve({ html: "target" });
+      // deno-lint-ignore no-explicit-any
+      (router as any).pageTransition.updatePage = (
+        _data: RouteData,
+        isPopState: boolean,
+        scrollY: number,
+      ) => {
+        receivedIsPopState = isPopState;
+        receivedScrollY = scrollY;
+      };
+
+      await router.navigate("/unvisited");
+
+      assertEquals(receivedIsPopState, false, "forward navigations scroll to top");
+      assertEquals(receivedScrollY, 0, "an unvisited path has no stored scroll offset");
     } finally {
       restore();
     }

@@ -68,6 +68,16 @@ describe("rendering/rsc/export-extractor", () => {
     });
 
     it("should not duplicate names", async () => {
+      const names = await extractExportNames(`export const App = () => {};\nexport { App };`);
+      assertEquals(
+        names.filter((n) => n === "App").length,
+        1,
+        "a binding exported twice must appear once in the manifest",
+      );
+      assertEquals(names, ["App"], "the double export yields exactly one manifest entry");
+    });
+
+    it("should emit the default export exactly once", async () => {
       const names = await extractExportNames(`export default function App() {}\nexport { App };`);
       const defaultCount = names.filter((n) => n === "default").length;
       assertEquals(defaultCount, 1);
@@ -89,6 +99,24 @@ describe("rendering/rsc/export-extractor", () => {
         /* export class Hidden {} */
       `);
       assertEquals(names, []);
+    });
+
+    it("should skip ambient declare exports", async () => {
+      assertEquals(
+        await extractExportNames(`export declare const ambient: number;`),
+        [],
+        "ambient declare exports are not runtime exports",
+      );
+      assertEquals(
+        await extractExportNames(`export declare function ambientFn(): void;`),
+        [],
+        "ambient declare functions are not runtime exports",
+      );
+    });
+
+    it("should extract exported enums", async () => {
+      const names = await extractExportNames(`export enum Color { Red }`);
+      assertEquals(names, ["Color"], "an exported enum is a runtime value");
     });
 
     it("should skip type-only exports", async () => {

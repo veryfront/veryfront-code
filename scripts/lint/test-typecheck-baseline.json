@@ -31,7 +31,6 @@
   "src/middleware/core/pipeline/composer.test.ts",
   "src/modules/react-loader/ssr-module-loader.stress.test.ts",
   "src/platform/adapters/fs/veryfront/directory-operations.test.ts",
-  "src/rendering/client/browser-logger.test.ts",
   "src/rendering/element-validator/validator-core.test.ts",
   "src/rendering/layouts/utils/compiler.test.ts",
   "src/rendering/layouts/utils/discovery.test.ts",

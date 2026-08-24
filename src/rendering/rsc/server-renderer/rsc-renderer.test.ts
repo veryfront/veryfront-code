@@ -1,14 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
-import "#veryfront/react/compat/ssr-adapter/test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { useLocalReactForSSRTests } from "#veryfront/react/compat/ssr-adapter/test-setup.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  __setServerModuleLoaderForTests,
+  resetReactCache,
+} from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 import { RSCRenderer } from "./rsc-renderer.ts";
 import * as React from "react";
+import * as ReactDOMServer from "react-dom/server";
 
-describe("rendering/rsc/server-renderer/rsc-renderer", {
-  sanitizeResources: false,
-  sanitizeOps: false,
-}, () => {
+describe("rendering/rsc/server-renderer/rsc-renderer", () => {
   describe("RSCRenderer constructor", () => {
     it("should create renderer with empty client manifest", () => {
       const renderer = new RSCRenderer({
@@ -52,21 +54,84 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
       );
     });
 
-    it("retains the configured React version for server rendering", () => {
-      const renderer = new RSCRenderer({
-        clientManifest: new Map(),
-        projectDir: "/tmp/test-project",
-        reactVersion: "18.3.1",
+    it("retains the configured React version for server rendering", async () => {
+      const versions: string[] = [];
+      resetReactCache();
+      __setServerModuleLoaderForTests((_url, label, reactVersion) => {
+        versions.push(reactVersion);
+        return Promise.resolve(label === "React" ? { default: React } : ReactDOMServer);
       });
 
-      assertEquals(
-        (renderer as unknown as { reactVersion?: string }).reactVersion,
-        "18.3.1",
-      );
+      try {
+        const renderer = new RSCRenderer({
+          clientManifest: new Map(),
+          projectDir: "/tmp/test-project",
+          reactVersion: "18.3.1",
+        });
+
+        await renderer.renderToPayload(() => React.createElement("div", null, "v"));
+
+        assertEquals(
+          new Set(versions),
+          new Set(["18.3.1"]),
+          "the configured React version must reach the SSR adapter",
+        );
+      } finally {
+        useLocalReactForSSRTests();
+      }
+    });
+
+    it("lets a per-call React version override the configured one", async () => {
+      const versions: string[] = [];
+      resetReactCache();
+      __setServerModuleLoaderForTests((_url, label, reactVersion) => {
+        versions.push(reactVersion);
+        return Promise.resolve(label === "React" ? { default: React } : ReactDOMServer);
+      });
+
+      try {
+        const renderer = new RSCRenderer({
+          clientManifest: new Map(),
+          projectDir: "/tmp/test-project",
+          reactVersion: "18.3.1",
+        });
+
+        await renderer.renderToPayload(
+          () => React.createElement("div", null, "v"),
+          {},
+          { reactVersion: "19.2.4" },
+        );
+
+        assertEquals(
+          new Set(versions),
+          new Set(["19.2.4"]),
+          "the per-call React version must win over the configured one",
+        );
+      } finally {
+        useLocalReactForSSRTests();
+      }
     });
   });
 
   describe("renderToPayload", () => {
+    it("rethrows render failures instead of returning empty html", async () => {
+      const renderer = new RSCRenderer({
+        clientManifest: new Map(),
+        projectDir: "/tmp/test-project",
+      });
+
+      function Boom(): never {
+        throw new Error("boom");
+      }
+
+      await assertRejects(
+        () => renderer.renderToPayload(Boom),
+        Error,
+        "boom",
+        "a throwing server component must surface to the caller",
+      );
+    });
+
     it("should render a simple HTML element", async () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
@@ -259,6 +324,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
             {
               id: "LegacyClient",
               path: "/_veryfront/fs/legacy-client.js",
+              contentHash: "rev-b",
               exports: ["default"],
             },
           ],
@@ -271,9 +337,14 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
 
       assertStringIncludes(
         payload.html,
-        'data-client-ref="/_veryfront/fs/legacy-client.js#default"',
+        'data-client-ref="/_veryfront/fs/legacy-client.js?v=rev-b#default"',
+        "legacy client module URLs carry the content version",
       );
-      assertEquals(payload.clientRefs.LegacyClient, "/_veryfront/fs/legacy-client.js");
+      assertEquals(
+        payload.clientRefs.LegacyClient,
+        "/_veryfront/fs/legacy-client.js?v=rev-b",
+        "the legacy client ref keeps its cache-busting version",
+      );
     });
 
     it("keeps local production client references on the filesystem module endpoint", async () => {
@@ -290,6 +361,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
               id: "ClientComponent",
               path: "/_veryfront/fs/YXBwL0NsaWVudENvbXBvbmVudC50c3g",
               rel: "app/ClientComponent.tsx",
+              contentHash: "rev-a",
               exports: ["default"],
             },
           ],
@@ -303,7 +375,8 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
 
       assertStringIncludes(
         payload.html,
-        'data-client-ref="/_veryfront/fs/YXBwL0NsaWVudENvbXBvbmVudC50c3g#default"',
+        'data-client-ref="/_veryfront/fs/YXBwL0NsaWVudENvbXBvbmVudC50c3g?v=rev-a#default"',
+        "fs client module URLs carry the content version",
       );
       assertEquals(payload.tree, undefined);
     });
