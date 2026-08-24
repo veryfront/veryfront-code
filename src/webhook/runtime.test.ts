@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { webhook } from "./factory.ts";
 import { prepareWebhookInvocation, renderWebhookPromptTemplate } from "./runtime.ts";
+import type { WebhookEventFilterCondition } from "./types.ts";
 
 describe("webhook/runtime", () => {
   it("normalizes JSONPath root prefixes before evaluating filters", () => {
@@ -69,6 +70,100 @@ describe("webhook/runtime", () => {
     });
 
     assertEquals(invocation.matched, true);
+  });
+
+  it("rejects payloads that fail each hosted filter operator", () => {
+    function matched(
+      condition: WebhookEventFilterCondition,
+      payload: Record<string, unknown>,
+    ): boolean {
+      const definition = webhook({
+        id: "operator-negative",
+        target: { kind: "task", id: "process-event" },
+        eventFilter: { mode: "all", conditions: [condition] },
+      });
+      return prepareWebhookInvocation(definition, payload).matched;
+    }
+
+    assertEquals(
+      matched({ path: "action", operator: "equals", value: "opened" }, { action: "closed" }),
+      false,
+      "equals must reject a different value",
+    );
+    assertEquals(
+      matched(
+        { path: "pull_request.draft", operator: "not_equals", value: true },
+        { pull_request: { draft: true } },
+      ),
+      false,
+      "not_equals must reject a payload holding the excluded value",
+    );
+    assertEquals(
+      matched(
+        { path: "action", operator: "in", value: ["opened", "reopened", "synchronize"] },
+        { action: "closed" },
+      ),
+      false,
+      "in must reject a value outside the declared set",
+    );
+    assertEquals(
+      matched({ path: "pull_request.number", operator: "exists" }, { pull_request: {} }),
+      false,
+      "exists must reject a payload missing the demanded path",
+    );
+    assertEquals(
+      matched(
+        { path: "pull_request.labels", operator: "contains", value: "backend" },
+        { pull_request: { labels: ["needs-review"] } },
+      ),
+      false,
+      "contains must reject an array without the demanded member",
+    );
+    assertEquals(
+      matched(
+        { path: "repository.full_name", operator: "contains", value: "veryfront/" },
+        { repository: { full_name: "other/veryfront-code" } },
+      ),
+      false,
+      "contains must reject a string without the demanded substring",
+    );
+  });
+
+  it("rejects a payload object that omits keys the condition demands", () => {
+    const base = {
+      id: "structural-equality",
+      target: { kind: "task" as const, id: "process-event" },
+    };
+    const equals = webhook({
+      ...base,
+      eventFilter: {
+        mode: "all",
+        conditions: [{ path: "metadata", operator: "equals", value: { first: 1, second: 2 } }],
+      },
+    });
+    const notEquals = webhook({
+      ...base,
+      eventFilter: {
+        mode: "all",
+        conditions: [{ path: "metadata", operator: "not_equals", value: { first: 1, second: 2 } }],
+      },
+    });
+
+    assertEquals(
+      prepareWebhookInvocation(equals, { metadata: { first: 1 } }).matched,
+      false,
+      "equals must not match a payload object missing a demanded key",
+    );
+    assertEquals(
+      prepareWebhookInvocation(notEquals, { metadata: { first: 1 } }).matched,
+      true,
+      "not_equals must treat a payload object missing a demanded key as different",
+    );
+    assertEquals(
+      prepareWebhookInvocation(equals, { metadata: { first: 1, second: 2, third: 3 } }).matched,
+      false,
+      "equals must not match a payload object carrying extra keys",
+    );
   });
 
   it("preserves all, any, empty-filter, and missing-path semantics", () => {
@@ -168,9 +263,10 @@ describe("webhook/runtime", () => {
     assertEquals(
       renderWebhookPromptTemplate(
         "{{payload.literal}}",
-        { literal: "{{payload.literal}}" },
+        { literal: "{{payload.secret}}", secret: "leaked" },
       ),
-      "{{payload.literal}}",
+      "{{payload.secret}}",
+      "rendered payload values must never be re-expanded as placeholders",
     );
   });
 
