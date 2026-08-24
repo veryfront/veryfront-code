@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { waitFor } from "#veryfront/testing";
+import { FakeTime } from "#std/testing/time";
 import { NETWORK_ERROR } from "#veryfront/errors";
 import {
   type AgentServiceRegistrationLogger,
@@ -290,6 +291,25 @@ function lifecycleOptions(
   };
 }
 
+function abortAwareDelayedJsonResponse(
+  body: unknown,
+  delayMs: number,
+  signal?: AbortSignal | null,
+): Promise<Response> {
+  return new Promise<Response>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve(jsonResponse(body));
+    }, delayMs);
+    function onAbort() {
+      clearTimeout(timer);
+      reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+    }
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 describe("agent/agent-service-registration heartbeat retry", () => {
   it("retries a transient 500 so a one-second blip never counts as a failure", async () => {
     const script = scriptedHeartbeatFetch([500, 200]);
@@ -460,71 +480,120 @@ describe("agent/agent-service-registration heartbeat retry", () => {
     );
   });
 
-  it(
-    "times out a permanently hung heartbeat and escalates in bounded time",
-    { timeout: 60_000 },
-    async () => {
-      const intervalMs = 20;
-      let heartbeatRequests = 0;
-      const activeSignals = new Set<AbortSignal>();
-      let maxConcurrent = 0;
-      const log = recordingLogger();
+  it("times out a permanently hung heartbeat and escalates with fake time", async () => {
+    using time = new FakeTime();
+    const intervalMs = 20;
+    let heartbeatRequests = 0;
+    const activeSignals = new Set<AbortSignal>();
+    let maxConcurrent = 0;
+    const log = recordingLogger();
 
-      const fetch: typeof globalThis.fetch = (input, init) => {
-        if (!input.toString().endsWith("/heartbeat")) {
-          return Promise.resolve(jsonResponse(serviceResponse));
-        }
-        heartbeatRequests++;
-        const signal = init?.signal;
-        assert(signal, "heartbeat requests must carry an abort signal");
-        activeSignals.add(signal);
-        maxConcurrent = Math.max(maxConcurrent, activeSignals.size);
-        return new Promise<Response>((_resolve, reject) => {
-          const abort = () => {
-            activeSignals.delete(signal);
-            reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
-          };
-          if (signal?.aborted) abort();
-          else signal?.addEventListener("abort", abort, { once: true });
-        });
-      };
-
-      const lifecycle = await createAgentServiceRegistrationLifecycle(
-        lifecycleOptions(fetch, { heartbeatIntervalMs: intervalMs, logger: log.logger }),
-      );
-
-      const escalationBudgetMs = 50_000;
-      const startedAt = Date.now();
-      try {
-        await waitFor(() => log.errors.length > 0, {
-          timeout: escalationBudgetMs,
-          interval: 10,
-          message: "hung heartbeat attempts never reached persistent-failure escalation",
-        });
-        assert(
-          Date.now() - startedAt < escalationBudgetMs,
-          "hung heartbeat escalation exceeded its bounded test budget",
-        );
-        assertEquals(
-          log.errors[0]?.metadata?.consecutiveFailures,
-          3,
-          "a timeout must count as one failed tick after its retries are exhausted",
-        );
-        assert(
-          heartbeatRequests >= 9,
-          "three failed ticks must each exhaust the three-attempt retry policy",
-        );
-        assertEquals(maxConcurrent, 1, "timeouts must preserve the in-flight guard");
-      } finally {
-        lifecycle.stop();
-        await waitFor(() => activeSignals.size === 0, {
-          timeout: 1_000,
-          interval: 10,
-          message: "stop() did not abort the hung heartbeat request",
-        });
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      if (!input.toString().endsWith("/heartbeat")) {
+        return Promise.resolve(jsonResponse(serviceResponse));
       }
-    },
-  );
+      heartbeatRequests++;
+      const signal = init?.signal;
+      assert(signal, "heartbeat requests must carry an abort signal");
+      activeSignals.add(signal);
+      maxConcurrent = Math.max(maxConcurrent, activeSignals.size);
+      return new Promise<Response>((_resolve, reject) => {
+        const abort = () => {
+          activeSignals.delete(signal);
+          reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+        };
+        if (signal.aborted) abort();
+        else signal.addEventListener("abort", abort, { once: true });
+      });
+    };
+
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(fetch, { heartbeatIntervalMs: intervalMs, logger: log.logger }),
+    );
+
+    await time.tickAsync(intervalMs);
+    for (let step = 0; step < 20 && log.errors.length === 0; step++) {
+      await time.tickAsync(5_010);
+      await time.tickAsync(0);
+    }
+    assertEquals(heartbeatRequests, 9, "three failed ticks must exhaust three attempts each");
+    assertEquals(
+      log.errors[0]?.metadata?.consecutiveFailures,
+      3,
+      "a timeout must count as one failed tick after its retries are exhausted",
+    );
+    assertEquals(maxConcurrent, 1, "timeouts must preserve the in-flight guard");
+
+    await time.tickAsync(intervalMs);
+    assertEquals(activeSignals.size, 1, "the next heartbeat must be in flight before teardown");
+    lifecycle.stop();
+    await time.tickAsync(0);
+    assertEquals(activeSignals.size, 0, "stop() must abort the hung heartbeat request");
+  });
+
+  it("floors a short heartbeat attempt timeout at five seconds", async () => {
+    using time = new FakeTime();
+    let aborts = 0;
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      if (!input.toString().endsWith("/heartbeat")) {
+        return Promise.resolve(jsonResponse(serviceResponse));
+      }
+      const signal = init?.signal;
+      assert(signal, "heartbeat requests must carry an abort signal");
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          aborts++;
+          reject(signal.reason);
+        }, { once: true });
+      });
+    };
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(fetch, { heartbeatIntervalMs: 100 }),
+    );
+    const pending = lifecycle.heartbeat().catch(() => undefined);
+    await time.tickAsync(0);
+
+    await time.tickAsync(4_999);
+    assertEquals(aborts, 0, "a short interval must not abort before the five-second floor");
+    await time.tickAsync(1);
+    assertEquals(aborts, 1, "the first attempt must abort at the five-second floor");
+
+    lifecycle.stop();
+    await time.tickAsync(0);
+    await pending;
+  });
+
+  it("keeps a configured heartbeat attempt timeout above five seconds", async () => {
+    using time = new FakeTime();
+    let aborts = 0;
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      if (!input.toString().endsWith("/heartbeat")) {
+        return Promise.resolve(jsonResponse(serviceResponse));
+      }
+      const signal = init?.signal;
+      assert(signal, "heartbeat requests must carry an abort signal");
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          aborts++;
+          reject(signal.reason);
+        }, { once: true });
+      });
+    };
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(fetch, { heartbeatIntervalMs: 30_000 }),
+    );
+    const pending = lifecycle.heartbeat().catch(() => undefined);
+    await time.tickAsync(0);
+
+    await time.tickAsync(29_999);
+    assertEquals(aborts, 0, "a higher configured interval must remain the attempt timeout");
+    await time.tickAsync(1);
+    assertEquals(aborts, 1, "the first attempt must abort at the configured higher interval");
+
+    lifecycle.stop();
+    await time.tickAsync(0);
+    await pending;
+  });
 
   it("lets a known-valid slow heartbeat finish with a short configured interval", async () => {
     // The control plane has been seen answering in about 2.7s while degraded.
@@ -542,23 +611,17 @@ describe("agent/agent-service-registration heartbeat retry", () => {
       }
       const signal = init?.signal;
       inFlight++;
-      return new Promise<Response>((resolve, reject) => {
-        // Honour the abort the way a real fetch does, so a deadline that fires
-        // early actually shows up here instead of being answered late anyway.
-        const timer = setTimeout(() => {
-          signal?.removeEventListener("abort", onAbort);
+      return abortAwareDelayedJsonResponse(serviceResponse, slowLatencyMs, signal).then(
+        (response) => {
           completedHeartbeats++;
           inFlight--;
-          resolve(jsonResponse(serviceResponse));
-        }, slowLatencyMs);
-        function onAbort() {
-          clearTimeout(timer);
+          return response;
+        },
+        (error) => {
           inFlight--;
-          reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
-        }
-        if (signal?.aborted) onAbort();
-        else signal?.addEventListener("abort", onAbort, { once: true });
-      });
+          throw error;
+        },
+      );
     };
 
     const lifecycle = await createAgentServiceRegistrationLifecycle(
@@ -572,6 +635,13 @@ describe("agent/agent-service-registration heartbeat retry", () => {
         message: "the slow heartbeat neither completed nor escalated",
       });
       assertEquals(completedHeartbeats, 1, "a known-valid slow heartbeat must complete");
+      assertEquals(
+        log.warnings.filter((entry) =>
+          entry.message === "Agent service heartbeat tick skipped, previous tick still running"
+        ).length,
+        1,
+        "one slow successful heartbeat must log at most one skip warning",
+      );
       assertEquals(
         log.warnings.filter((entry) => entry.message.includes("retrying")).length,
         0,
@@ -607,20 +677,7 @@ describe("agent/agent-service-registration heartbeat retry", () => {
       }
       heartbeatRequests++;
       const signal = init?.signal;
-      return new Promise<Response>((resolve, reject) => {
-        // Raw timer on purpose: this is the double's simulated latency, on the
-        // same unscaled clock as the deadline it is being measured against.
-        const timer = setTimeout(() => {
-          signal?.removeEventListener("abort", onAbort);
-          resolve(jsonResponse(serviceResponse));
-        }, slowLatencyMs);
-        function onAbort() {
-          clearTimeout(timer);
-          reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
-        }
-        if (signal?.aborted) onAbort();
-        else signal?.addEventListener("abort", onAbort, { once: true });
-      });
+      return abortAwareDelayedJsonResponse(serviceResponse, slowLatencyMs, signal);
     };
 
     const lifecycle = await createAgentServiceRegistrationLifecycle(

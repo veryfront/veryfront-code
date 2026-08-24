@@ -553,6 +553,7 @@ export async function createAgentServiceRegistrationLifecycle(
 
   let consecutiveHeartbeatFailures = 0;
   let heartbeatInFlight = false;
+  let heartbeatSkipLogged = false;
 
   const interval = setInterval(() => {
     // Retries make a tick outlive its interval whenever the control plane is
@@ -560,12 +561,17 @@ export async function createAgentServiceRegistrationLifecycle(
     // that is already struggling, and would let the failure counter advance
     // out of order, so the beat is skipped instead.
     if (heartbeatInFlight) {
-      options.logger?.warn?.("Agent service heartbeat tick skipped, previous tick still running", {
-        serviceId: service.id,
-      });
+      if (!heartbeatSkipLogged) {
+        heartbeatSkipLogged = true;
+        options.logger?.warn?.(
+          "Agent service heartbeat tick skipped, previous tick still running",
+          { serviceId: service.id },
+        );
+      }
       return;
     }
     heartbeatInFlight = true;
+    heartbeatSkipLogged = false;
     void heartbeat().then(() => {
       consecutiveHeartbeatFailures = 0;
     }).catch((error: unknown) => {
