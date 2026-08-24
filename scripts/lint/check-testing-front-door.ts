@@ -27,21 +27,22 @@
  *    (`deno-compat.ts` for the first two, `dom-globals.ts` for the DOM pair),
  *    and the name collision is exactly what blocked earlier migrations.
  *
- *  - `jsdom`: a `new JSDOM(` in a test file. Constructing the DOM is fine;
- *    the finding marks files to check for hand-rolled global installs. The
- *    home for installing and restoring browser globals is
+ *  - `jsdom`: a `new JSDOM(` whose DOM is not handed to the shared harness.
+ *    Constructing the DOM is fine; the bypass is wiring its globals by hand.
+ *    The home for installing and restoring browser globals is
  *    `installComponentDom` in `src/testing/dom-globals.ts`, which also drains
  *    pending animation frames so the op sanitizer does not report a leak.
  *
  * Matching is textual over comment- and string-stripped source, like the
  * sanitizer and skipped-test ratchets: every rule here is a syntactic spelling
- * that cannot hide behind formatting the way execution scope can.
+ * that cannot hide behind formatting the way execution scope can. The scan
+ * covers every executable test filename tests/README.md documents, Playwright
+ * suites included, so no runner's tests can grow a bypass off-baseline.
  */
 
 import {
   type Finding,
-  findLineMatches,
-  isTestFile,
+  isExecutableTestFile,
   type RatchetSpec,
   runRatchet,
   stripCommentsAndStrings,
@@ -51,10 +52,10 @@ import {
 export interface FrontDoorRule {
   /** Baseline group key in testing-front-door-baseline.json. */
   group: string;
-  /** Line-oriented pattern, matched against stripped source. Global flag required. */
+  /** Pattern over the stripped source. Global flag required. */
   pattern: RegExp;
-  /** Skip the whole file when the RAW source matches: it is already at the front door. */
-  exemptWhenRawSourceMatches?: RegExp;
+  /** Skip one match that the stripped source shows is already at the front door. */
+  exemptMatch?: (match: RegExpExecArray, stripped: string) => boolean;
   message: string | ((match: RegExpExecArray) => string);
 }
 
@@ -83,33 +84,67 @@ export const FRONT_DOOR_RULES: readonly FrontDoorRule[] = [
   },
   {
     group: "jsdom",
-    pattern: /\bnew\s+JSDOM\s*\(/g,
+    // The optional binding capture ties each construction to the variable it
+    // is assigned to, so the exemption can demand a harness call for that
+    // specific DOM.
+    pattern:
+      /(?:\b(?:const|let|var)\s+)?(?:([A-Za-z_$][\w$]*)\s*=\s*)?\bnew\s+JSDOM\s*\(/g,
     // Constructing a JSDOM is the prescribed first half of the pattern; the
-    // bypass is wiring its globals by hand. A file that brings in the shared
-    // harness is already at the front door, so it is exempt. The exemption is
-    // checked against the raw source because import specifiers are string
-    // literals, which the stripper removes.
-    exemptWhenRawSourceMatches: /\binstallComponentDom\b/,
+    // bypass is wiring its globals by hand. A construction is exempt only when
+    // its DOM demonstrably reaches the shared harness: either the `new` sits
+    // directly inside the `installComponentDom(...)` argument, or the binding
+    // it is assigned to is passed to `installComponentDom` elsewhere in the
+    // file. An unused import or a mention in a comment exempts nothing, and a
+    // hand-wired DOM keeps counting beside a correctly wrapped one.
+    exemptMatch: (match, stripped) => {
+      if (
+        /\binstallComponentDom\s*\(\s*$/.test(stripped.slice(0, match.index))
+      ) {
+        return true;
+      }
+      const binding = match[1];
+      return binding !== undefined &&
+        new RegExp(`\\binstallComponentDom\\s*\\(\\s*${binding}\\b`)
+          .test(stripped);
+    },
     message:
       "new JSDOM in a test file; install and restore its globals through installComponentDom",
   },
 ];
+
+/** 1-based line of `index` in `text`, whose newlines mirror the source's. */
+function lineAt(text: string, index: number): number {
+  let line = 1;
+  for (let i = 0; i < index; i += 1) {
+    if (text.charCodeAt(i) === 10) line += 1;
+  }
+  return line;
+}
 
 /** Every front-door bypass in `source`, tagged with its rule's baseline group. */
 export function findFrontDoorBypasses(source: string, file: string): Finding[] {
   const stripped = stripCommentsAndStrings(source);
   const findings: Finding[] = [];
   for (const rule of FRONT_DOOR_RULES) {
-    if (rule.exemptWhenRawSourceMatches?.test(source)) continue;
+    if (!rule.pattern.global) {
+      throw new Error(`front-door rule needs a global pattern: ${rule.group}`);
+    }
+    rule.pattern.lastIndex = 0;
     for (
-      const finding of findLineMatches(
-        stripped,
-        file,
-        rule.pattern,
-        rule.message,
-      )
+      let match = rule.pattern.exec(stripped);
+      match !== null;
+      match = rule.pattern.exec(stripped)
     ) {
-      findings.push({ ...finding, group: rule.group });
+      if (match[0].length === 0) rule.pattern.lastIndex += 1;
+      if (rule.exemptMatch?.(match, stripped)) continue;
+      findings.push({
+        file,
+        line: lineAt(stripped, match.index),
+        message: typeof rule.message === "string"
+          ? rule.message
+          : rule.message(match),
+        group: rule.group,
+      });
     }
   }
   return findings;
@@ -119,7 +154,7 @@ export const spec: RatchetSpec = {
   label: "Test primitive front-door bypasses",
   task: "lint:testing-front-door",
   scope: "test",
-  select: isTestFile,
+  select: isExecutableTestFile,
   scan: findFrontDoorBypasses,
   baseline: {
     kind: "per-group-file",
