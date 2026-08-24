@@ -15,6 +15,7 @@ import {
   buildProviderError,
   createAnthropicRequestInit,
   createWarningCollector,
+  DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS,
   getAnthropicMessagesUrl,
   isNumberArray,
   mergeUsage,
@@ -615,6 +616,7 @@ export function createAnthropicModelRuntime(
       const enableMcpConnector = usesAnthropicMcpConnector(body);
       throwIfAnthropicRequestAborted(options.abortSignal);
       const providerAbortScope = createProviderAbortScope(options.abortSignal);
+      const streamHeadersBudgetStartedAt = Math.floor(performance.now());
       const issueStream = (
         requestBody: AnthropicRequestBody,
       ): Promise<ReadableStream<Uint8Array>> =>
@@ -633,6 +635,11 @@ export function createAnthropicModelRuntime(
             body: JSON.stringify(requestBody),
             signal: providerAbortScope.controller.signal,
           }),
+          totalHeadersBudgetMs: Math.max(
+            0,
+            DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS -
+              (Math.floor(performance.now()) - streamHeadersBudgetStartedAt),
+          ),
         });
       let firstResponseStream: ReadableStream<Uint8Array>;
       try {
@@ -685,6 +692,12 @@ export function createAnthropicModelRuntime(
               yieldedThisAttempt ||
               streamReplayCount >= MAX_ANTHROPIC_STREAM_REPLAYS ||
               !isReplayableAnthropicStreamFailure(error)
+            ) {
+              throw error;
+            }
+            if (
+              Math.floor(performance.now()) - streamHeadersBudgetStartedAt >=
+                DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS
             ) {
               throw error;
             }

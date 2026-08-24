@@ -9,6 +9,7 @@ import type { ProviderKind } from "./runtime-loader/provider-http.ts";
 import type { ModelRuntimePromptMessage, ModelRuntimeToolDefinition } from "./types.ts";
 import {
   buildProviderError,
+  DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS,
   parseRetryAfterMs,
   requestJson,
   requestStream,
@@ -37,6 +38,7 @@ export {
 export { TOOL_INPUT_PENDING_THRESHOLD_MS, withToolInputStatusTransitions };
 export {
   buildProviderError,
+  DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS,
   isNumberArray,
   mergeUsage,
   parseRetryAfterMs,

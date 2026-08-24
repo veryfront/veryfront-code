@@ -4481,6 +4481,33 @@ describe("anthropic-provider", () => {
       assertEquals(attemptCount(), 4);
     });
 
+    it("shares one header budget across initial stream requests and in-stream replays", async () => {
+      const originalNow = performance.now;
+      let now = 0;
+      const { runtime, attemptCount } = runtimeFor([
+        () => streamResponse(OVERLOADED),
+        () => streamResponse(SUCCESS),
+      ]);
+
+      try {
+        performance.now = () => now;
+        const result = await runtime.doStream({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+          maxOutputTokens: 64,
+        });
+        now = 41_000;
+
+        await assertRejects(
+          () => collectAsync(result.stream),
+          ProviderOverloadedError,
+          "provider overloaded",
+        );
+        assertEquals(attemptCount(), 1);
+      } finally {
+        performance.now = originalNow;
+      }
+    });
+
     it("bounds the replays and surfaces the provider failure when they are exhausted", async () => {
       const { runtime, attemptCount } = runtimeFor([() => streamResponse(OVERLOADED)]);
 

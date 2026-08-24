@@ -43,6 +43,7 @@ export {
 export {
   buildProviderError,
   createWarningCollector,
+  DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS,
   isNumberArray,
   jsonValuesEqual,
   mergeUsage,
