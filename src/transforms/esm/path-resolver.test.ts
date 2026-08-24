@@ -85,7 +85,11 @@ describe("transforms/esm/path-resolver", () => {
     it("appends .js extension when specifier has no extension", async () => {
       const code = `import { foo } from "@/lib/foo";`;
       const result = await resolvePathAliases(code, "/project/index.tsx", "/project");
-      assertEquals(result.includes(".js"), true);
+      assertEquals(
+        result.includes('"./lib/foo.js"'),
+        true,
+        "extensionless aliases resolve to a .js module",
+      );
     });
 
     it("does not modify non-alias imports", async () => {
@@ -103,7 +107,11 @@ describe("transforms/esm/path-resolver", () => {
     it("handles SSR mode replacing extensions with .js", async () => {
       const code = `import { Button } from "@/components/Button.tsx";`;
       const result = await resolvePathAliases(code, "/project/index.tsx", "/project", true);
-      assertEquals(result.includes(".js"), true);
+      assertEquals(
+        result.includes('"./components/Button.js"'),
+        true,
+        "SSR rewrites .tsx to .js on the resolved alias path",
+      );
       assertEquals(result.includes(".tsx"), false);
     });
 
@@ -157,7 +165,26 @@ describe("transforms/esm/path-resolver", () => {
         "/project",
         "https://modules.example.com",
       );
-      assertEquals(result.includes("https://modules.example.com/"), true);
+      assertEquals(
+        result.includes('"https://modules.example.com/src/foo.js"'),
+        true,
+        "the specifier resolves against the importing file's directory",
+      );
+    });
+
+    it("collapses parent segments against the module server URL", async () => {
+      const code = `import { bar } from "../lib/bar.tsx";`;
+      const result = await resolveRelativeImports(
+        code,
+        "/project/src/pages/index.tsx",
+        "/project",
+        "https://modules.example.com",
+      );
+      assertEquals(
+        result.includes('"https://modules.example.com/src/lib/bar.js"'),
+        true,
+        "parent segments collapse against the importer directory",
+      );
     });
 
     it("handles parent directory references", async () => {

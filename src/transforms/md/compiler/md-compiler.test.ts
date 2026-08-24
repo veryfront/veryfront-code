@@ -38,7 +38,6 @@ async function withYamlSyntaxErrorProvider(body: () => Promise<void>): Promise<v
 
 describe(
   "transforms/md/compiler/md-compiler",
-  { sanitizeResources: false, sanitizeOps: false },
   () => {
     describe("compileMarkdownRuntime", () => {
       it("compiles simple markdown to a React component", async () => {
@@ -220,8 +219,16 @@ describe(
           "/tmp/project",
           markdown,
         );
-        assertEquals(typeof result.rawHtml, "string");
-        assertEquals(result.rawHtml!.length > 0, true);
+        assertEquals(
+          result.rawHtml!.includes('class="language-js"'),
+          true,
+          "code fence keeps its language class",
+        );
+        assertEquals(
+          result.rawHtml!.includes("<span>const</span>"),
+          true,
+          "starry-night must tokenize the code block",
+        );
       });
 
       it("uses preview wrapper for non-routable files", async () => {
@@ -235,7 +242,7 @@ describe(
         assertEquals(result.compiledCode.includes("markdown-body"), true);
       });
 
-      it("uses standard wrapper for pages/ files", async () => {
+      it("uses the preview wrapper for pages/ files", async () => {
         const result = await compileMarkdownRuntime(
           markdownCompilationMode,
           "/tmp/project",
@@ -243,7 +250,36 @@ describe(
           undefined,
           "pages/about.md",
         );
-        assertEquals(result.compiledCode.includes("className"), true);
+        assertEquals(
+          result.compiledCode.includes('className: "markdown-body"'),
+          true,
+          "pages/ Markdown renders with the preview wrapper",
+        );
+        assertEquals(
+          result.compiledCode.includes("params, className,"),
+          false,
+          "the preview wrapper does not forward a caller className",
+        );
+      });
+
+      it("uses the standard wrapper when prose is disabled", async () => {
+        const result = await compileMarkdownRuntime(
+          markdownCompilationMode,
+          "/tmp/project",
+          "---\nprose: false\n---\n# Page Content",
+          undefined,
+          "pages/about.md",
+        );
+        assertEquals(
+          result.compiledCode.includes("params, className,"),
+          true,
+          "prose: false forwards the caller className",
+        );
+        assertEquals(
+          result.compiledCode.includes("markdown-body"),
+          false,
+          "the standard wrapper never hard-codes the preview class",
+        );
       });
     });
 

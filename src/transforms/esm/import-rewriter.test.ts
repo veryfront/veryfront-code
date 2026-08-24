@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { addHMRTimestamps, rewriteBareImports } from "./import-rewriter.ts";
+import { DEFAULT_REACT_VERSION, getReactImportMap } from "./react-cdn.ts";
 
 describe("transforms/esm/import-rewriter", () => {
   describe("addHMRTimestamps", () => {
@@ -76,9 +77,21 @@ describe("transforms/esm/import-rewriter", () => {
     it("rewrites bare imports to esm.sh URLs", async () => {
       const code = `import lodash from "lodash";`;
       const result = await rewriteBareImports(code);
-      assertEquals(result.includes("https://esm.sh/"), true);
-      assertEquals(result.includes("external=react"), true);
-      assertEquals(result.includes("target=es2022"), true);
+      assertEquals(
+        result,
+        `import lodash from "https://esm.sh/lodash?external=react&target=es2022";`,
+        "a bare specifier must produce the documented esm.sh URL",
+      );
+    });
+
+    it("strips a pinned version before building the esm.sh URL", async () => {
+      const code = `import l from "lodash@4.17.21";`;
+      const result = await rewriteBareImports(code);
+      assertEquals(
+        result,
+        `import l from "https://esm.sh/lodash?external=react&target=es2022";`,
+        "a pinned bare specifier must produce the documented esm.sh URL",
+      );
     });
 
     it("does not rewrite relative imports", async () => {
@@ -112,10 +125,28 @@ describe("transforms/esm/import-rewriter", () => {
     });
 
     it("maps react imports to react import map URLs", async () => {
-      const code = `import React from "react";`;
-      const result = await rewriteBareImports(code);
-      // React should be mapped to a specific URL, not generic esm.sh
-      assertEquals(typeof result, "string");
+      const reactImportMap = getReactImportMap(DEFAULT_REACT_VERSION);
+
+      const result = await rewriteBareImports(`import React from "react";`);
+      assertEquals(
+        result,
+        `import React from "${reactImportMap.react}";`,
+        "react must resolve through the react import map, not the generic esm.sh fallback",
+      );
+      assertEquals(
+        result.includes("external=react"),
+        false,
+        "react must not be made external to itself",
+      );
+
+      const clientResult = await rewriteBareImports(
+        `import { createRoot } from "react-dom/client";`,
+      );
+      assertEquals(
+        clientResult,
+        `import { createRoot } from "${reactImportMap["react-dom/client"]}";`,
+        "react-dom/client must resolve through the react import map too",
+      );
     });
 
     it("handles scoped packages", async () => {

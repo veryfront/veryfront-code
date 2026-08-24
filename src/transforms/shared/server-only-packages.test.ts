@@ -442,6 +442,29 @@ describe("isServerOnlyPackage", () => {
     assertEquals(diagnostic.sourceIdentity, "app/page.ts");
   });
 
+  it("redacts absolute importers outside the project from browser diagnostics", () => {
+    for (
+      const sourceModule of [
+        "/var/secrets/app/page.ts",
+        "/etc/app/page.ts",
+        "C:/other/app/page.ts",
+        "D:\\other\\app\\page.ts",
+      ]
+    ) {
+      const diagnostic = describeServerExternalBrowserViolation("knex", sourceModule, "/project");
+      assertEquals(
+        diagnostic.sourceIdentity,
+        undefined,
+        `${sourceModule} must not appear as an identity`,
+      );
+      assertEquals(
+        diagnostic.message.includes(sourceModule),
+        false,
+        "the absolute server path must not reach the browser diagnostic",
+      );
+    }
+  });
+
   it("redacts traversal segments from browser diagnostics", () => {
     for (
       const sourceModule of [

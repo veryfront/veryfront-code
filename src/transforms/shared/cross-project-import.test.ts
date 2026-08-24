@@ -30,6 +30,7 @@ describe("transforms/shared/cross-project-import", () => {
       ["empty string", ""],
       ["uppercase slug", "MyProject/@/foo"],
       ["no path after /@/", "my-project@1.0.0/@/"],
+      ["no path after /@/ (unversioned)", "my-project/@/"],
     ];
 
     for (const [label, specifier] of negativeTable) {
@@ -37,6 +38,16 @@ describe("transforms/shared/cross-project-import", () => {
         assertEquals(isCrossProjectImport(specifier), false);
       });
     }
+
+    it("agrees with parseCrossProjectImport on every table specifier", () => {
+      for (const [, specifier] of [...positiveTable, ...negativeTable]) {
+        assertEquals(
+          isCrossProjectImport(specifier),
+          parseCrossProjectImport(specifier) !== null,
+          `matcher and parser must agree on ${specifier}`,
+        );
+      }
+    });
   });
 
   describe("parseCrossProjectImport", () => {
@@ -90,6 +101,14 @@ describe("transforms/shared/cross-project-import", () => {
 
     it("returns null for relative path", () => {
       assertEquals(parseCrossProjectImport("./foo"), null);
+    });
+
+    it("returns null for an empty path after /@/", () => {
+      assertEquals(
+        parseCrossProjectImport("my-project/@/"),
+        null,
+        "an empty path after /@/ does not parse",
+      );
     });
 
     it("handles deep nested path", () => {

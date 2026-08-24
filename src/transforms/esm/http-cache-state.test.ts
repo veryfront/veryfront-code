@@ -21,6 +21,17 @@ describe("transforms/esm/http-cache-state", () => {
       const cache = getCachedPaths();
       assertEquals(typeof cache.get, "function");
       assertEquals(typeof cache.set, "function");
+
+      try {
+        cache.set("__vf_singleton_probe", "v");
+        assertEquals(
+          getCachedPaths().get("__vf_singleton_probe"),
+          "v",
+          "the default cached-paths cache must be the shared singleton",
+        );
+      } finally {
+        cache.delete("__vf_singleton_probe");
+      }
     });
 
     it("returns injected cache when provided", () => {
@@ -36,6 +47,17 @@ describe("transforms/esm/http-cache-state", () => {
       const stack = getProcessingStack();
       assertEquals(typeof stack.has, "function");
       assertEquals(typeof stack.add, "function");
+
+      try {
+        stack.add("__vf_singleton_probe");
+        assertEquals(
+          getProcessingStack().has("__vf_singleton_probe"),
+          true,
+          "the default processing stack must be the shared singleton",
+        );
+      } finally {
+        stack.delete("__vf_singleton_probe");
+      }
     });
 
     it("returns injected stack when provided", () => {
@@ -50,6 +72,17 @@ describe("transforms/esm/http-cache-state", () => {
       const cache = getLastDistributedRefresh();
       assertEquals(typeof cache.get, "function");
       assertEquals(typeof cache.set, "function");
+
+      try {
+        cache.set("__vf_singleton_probe", 12345);
+        assertEquals(
+          getLastDistributedRefresh().get("__vf_singleton_probe"),
+          12345,
+          "the default refresh cache must be the shared singleton",
+        );
+      } finally {
+        cache.delete("__vf_singleton_probe");
+      }
     });
 
     it("returns injected cache when provided", () => {

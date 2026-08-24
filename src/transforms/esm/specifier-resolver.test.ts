@@ -1,9 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { CacheHttpModuleFn } from "./specifier-resolver.ts";
 import { buildReplacements, rewriteModuleImports } from "./specifier-resolver.ts";
 import type { CacheOptions } from "./http-cache-helpers.ts";
+import {
+  fingerprintHttpModuleRequest,
+  getEffectiveHttpCacheRequest,
+  normalizeHttpUrl,
+} from "./http-cache-helpers.ts";
+import { BUILD_FAILED, VeryfrontError } from "#veryfront/errors";
 import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
 import { aliasStrategy } from "#veryfront/transforms/import-rewriter/strategies/alias-strategy.ts";
 
@@ -208,6 +214,21 @@ describe("transforms/esm/specifier-resolver", () => {
       // local-dev module-server origin.
       assertEquals(cacheCalls, ["https://cdn.example/child.js"]);
       assertEquals(result.replacements.get(specifier), "./http-child.mjs");
+    });
+
+    it("fails closed when a protocol-relative specifier has no resolvable base", async () => {
+      await assertRejects(
+        () =>
+          buildReplacements(
+            `import x from "//cdn.example/child.js";`,
+            undefined,
+            defaultOptions,
+            noopCache,
+          ),
+        Error,
+        "Cannot resolve protocol-relative HTTP module //cdn.example/child.js",
+        "an unresolvable protocol-relative specifier must fail closed, never be emitted unrewritten",
+      );
     });
 
     it("keeps the module server's own scheme for same-origin protocol-relative imports", async () => {
@@ -495,6 +516,66 @@ describe("transforms/esm/specifier-resolver", () => {
           }),
         Error,
         "cache failed",
+      );
+    });
+
+    it("classifies a 404 on the authored package itself as a tenant build failure", async () => {
+      const code = `import x from "some-package";`;
+      const error = await assertRejects(
+        () =>
+          buildReplacements(code, undefined, defaultOptions, async (url, cacheOptions) => {
+            const effective = getEffectiveHttpCacheRequest(url, cacheOptions);
+            throw BUILD_FAILED.create({
+              detail: "not found",
+              context: {
+                httpStatus: 404,
+                httpModuleRequestFingerprint: await fingerprintHttpModuleRequest(
+                  normalizeHttpUrl(effective.url),
+                ),
+              },
+            });
+          }),
+        VeryfrontError,
+      );
+
+      assertEquals(
+        ((error as VeryfrontError).context as
+          | { tenantBuildFailure?: unknown }
+          | undefined)?.tenantBuildFailure,
+        true,
+        "a 404 on the authored package itself is a tenant build failure",
+      );
+    });
+
+    it("leaves a 404 on a transitive dependency classified as a platform failure", async () => {
+      const code = `import x from "some-package";`;
+      let thrown: unknown;
+      const error = await assertRejects(
+        () =>
+          buildReplacements(code, undefined, defaultOptions, async () => {
+            thrown = BUILD_FAILED.create({
+              detail: "not found",
+              context: {
+                httpStatus: 404,
+                httpModuleRequestFingerprint: "different-fingerprint",
+              },
+            });
+            throw thrown;
+          }),
+        VeryfrontError,
+      );
+
+      assertStrictEquals(
+        error,
+        thrown,
+        "a 404 whose fingerprint is not the authored package must propagate unchanged",
+      );
+      assertEquals(
+        ((error as VeryfrontError).context as
+          | { tenantBuildFailure?: unknown }
+          | undefined)?.tenantBuildFailure,
+        undefined,
+        "a 404 on a transitive dependency stays a platform build failure",
       );
     });
 

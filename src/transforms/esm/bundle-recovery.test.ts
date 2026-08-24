@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import type { CacheBackend } from "#veryfront/cache/types.ts";
@@ -11,6 +11,8 @@ import {
 import { __injectCachesForTests } from "./http-cache-state.ts";
 import { __setDistributedCacheAccessorForTests } from "./http-cache-wrapper.ts";
 import { buildHttpCacheIdentity, hashHttpCacheIdentity } from "./http-cache-helpers.ts";
+import { markDegradedArtifact } from "./degraded-artifact.ts";
+import { MAX_CACHED_HTTP_BUNDLE_BYTES } from "./http-bundle-file.ts";
 
 function createSuffixCacheBackend(entries: Record<string, string>): CacheBackend {
   const values = new Map(Object.entries(entries));
@@ -200,9 +202,123 @@ describe("transforms/esm/bundle-recovery", () => {
         await Deno.remove(cacheDir, { recursive: true });
       }
     });
+
+    it("refuses cached code that fails the direct-recovery guard", async () => {
+      const rejectedCodeCases: Array<[string, string]> = [
+        ["a degraded artifact", markDegradedArtifact("export const x = 1;")],
+        [
+          "code carrying another pod's absolute cache paths",
+          `import "file:///other-pod/.cache/veryfront-http-bundle/http-abc.mjs";\n`,
+        ],
+        [
+          "code larger than the cached bundle byte limit",
+          `export const big = "${"x".repeat(MAX_CACHED_HTTP_BUNDLE_BYTES)}";`,
+        ],
+      ];
+
+      for (const [label, cachedCode] of rejectedCodeCases) {
+        const cacheDir = await Deno.makeTempDir();
+        const hash = "abc123";
+        const url = "https://esm.sh/rejected@1";
+        const refetched: string[] = [];
+        __setDistributedCacheAccessorForTests(() =>
+          Promise.resolve(createSuffixCacheBackend({
+            [`code:${hash}`]: cachedCode,
+            [`hash:${hash}`]: url,
+          }))
+        );
+
+        try {
+          const recovered = await recoverHttpBundleByHash(
+            hash,
+            cacheDir,
+            (requestedUrl) => {
+              refetched.push(requestedUrl);
+              return Promise.resolve(null);
+            },
+          );
+
+          assertEquals(refetched, [url], `${label} falls through to URL re-fetch`);
+          assertEquals(recovered, false, `${label} is not reported as a successful recovery`);
+          await assertRejects(
+            () => Deno.readTextFile(join(cacheDir, `http-${hash}.mjs`)),
+            `${label} must never be written to the canonical bundle path`,
+          );
+        } finally {
+          await Deno.remove(cacheDir, { recursive: true });
+        }
+      }
+    });
   });
 
   describe("ensureHttpBundlesExist", () => {
+    it("materializes distributed-cache hits and their transitive deps on disk", async () => {
+      const cacheDir = await Deno.makeTempDir();
+      const hashA = "aaa111";
+      const hashB = "bbb222";
+      const codeA = `import "./http-${hashB}.mjs";\nexport const a = 1;\n`;
+      const codeB = "export const b = 2;\n";
+      __setDistributedCacheAccessorForTests(() =>
+        Promise.resolve(createSuffixCacheBackend({
+          [`code:${hashA}`]: codeA,
+          [`hash:${hashA}`]: "https://esm.sh/a@1",
+          [`code:${hashB}`]: codeB,
+          [`hash:${hashB}`]: "https://esm.sh/b@1",
+        }))
+      );
+
+      try {
+        const failed = await ensureHttpBundlesExist(
+          [{ path: join(cacheDir, `http-${hashA}.mjs`), hash: hashA }],
+          cacheDir,
+          () => Promise.resolve(null),
+        );
+
+        assertEquals(failed, [], "a distributed-cache hit satisfies the bundle");
+        assertEquals(
+          await Deno.readTextFile(join(cacheDir, `http-${hashA}.mjs`)),
+          codeA,
+          "the recovered bundle is materialized at the canonical path",
+        );
+        assertEquals(
+          await Deno.readTextFile(join(cacheDir, `http-${hashB}.mjs`)),
+          codeB,
+          "transitive deps of a recovered bundle are recovered too",
+        );
+      } finally {
+        await Deno.remove(cacheDir, { recursive: true });
+      }
+    });
+
+    it("reports a transitive dep the distributed cache cannot supply", async () => {
+      const cacheDir = await Deno.makeTempDir();
+      const hashA = "aaa111";
+      const hashB = "bbb222";
+      const codeA = `import "./http-${hashB}.mjs";\nexport const a = 1;\n`;
+      __setDistributedCacheAccessorForTests(() =>
+        Promise.resolve(createSuffixCacheBackend({
+          [`code:${hashA}`]: codeA,
+          [`hash:${hashA}`]: "https://esm.sh/a@1",
+        }))
+      );
+
+      try {
+        const failed = await ensureHttpBundlesExist(
+          [{ path: join(cacheDir, `http-${hashA}.mjs`), hash: hashA }],
+          cacheDir,
+          () => Promise.resolve(null),
+        );
+
+        assertEquals(
+          failed,
+          [hashB],
+          "an unrecoverable transitive dep is reported as failed",
+        );
+      } finally {
+        await Deno.remove(cacheDir, { recursive: true });
+      }
+    });
+
     it("returns an empty array for an empty bundle list without touching the cache", async () => {
       const failed = await ensureHttpBundlesExist(
         [],
