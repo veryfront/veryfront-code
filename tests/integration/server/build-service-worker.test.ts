@@ -71,10 +71,11 @@ describe(
         );
       });
 
-      it("should include runtime cache constant", () => {
+      it("should read runtime requests from the preloaded versioned cache", () => {
         const code = generateServiceWorker(createTestManifest());
 
-        assert(code.includes("const RUNTIME_CACHE = 'veryfront-runtime'"));
+        assert(!code.includes("RUNTIME_CACHE"));
+        assertEquals(code.match(/caches\.open\(CACHE_VERSION\)/g)?.length, 2);
       });
 
       it("should include static cache URLs", () => {
@@ -170,7 +171,6 @@ describe(
         const code = generateServiceWorker(createTestManifest());
 
         assert(code.includes("name !== CACHE_VERSION"));
-        assert(code.includes("name !== RUNTIME_CACHE"));
       });
 
       it("should include fetch event listener", () => {
@@ -197,7 +197,7 @@ describe(
         const code = generateServiceWorker(createTestManifest());
 
         assert(code.includes("async function handleRequest(request, strategy)"));
-        assert(code.includes("caches.open(RUNTIME_CACHE)"));
+        assert(code.includes("caches.open(CACHE_VERSION)"));
       });
 
       it("should implement networkFirst strategy", () => {
@@ -286,7 +286,7 @@ describe(
 
         assert(code.includes("self.addEventListener"));
         assert(code.includes("CACHE_VERSION"));
-        assert(code.includes("RUNTIME_CACHE"));
+        assert(!code.includes("RUNTIME_CACHE"));
         assertEquals(typeof code, "string");
         assert(code.length > 500);
       });
@@ -363,7 +363,6 @@ describe(
 
         assert(code.includes("caches.keys()"));
         assert(code.includes("name !== CACHE_VERSION"));
-        assert(code.includes("name !== RUNTIME_CACHE"));
         assert(code.includes("caches.delete(name)"));
         assert(code.includes("Promise.all"));
       });
@@ -404,12 +403,11 @@ describe(
         assert(code.includes("return cache.match(request)"));
       });
 
-      it("should create runtime cache for dynamic content", () => {
+      it("should keep dynamic content in the versioned cache", () => {
         const code = generateServiceWorker(createTestManifest());
 
-        assert(code.includes("const RUNTIME_CACHE = 'veryfront-runtime'"));
-        assert(code.includes("caches.open(RUNTIME_CACHE)"));
-        assert(code.includes("name !== RUNTIME_CACHE"));
+        assert(!code.includes("RUNTIME_CACHE"));
+        assert(code.includes("caches.open(CACHE_VERSION)"));
       });
 
       it("should use versioned cache names", () => {

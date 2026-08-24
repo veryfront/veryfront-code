@@ -64,7 +64,6 @@ export function generateServiceWorker(manifest: BuildManifest): string {
 // Generated at: ${new Date().toISOString()}
 
 const CACHE_VERSION = '${cacheVersion}';
-const RUNTIME_CACHE = 'veryfront-runtime';
 
 // Static resources to cache
 const STATIC_CACHE_URLS = ${JSON.stringify(staticAssets, null, 2)};
@@ -99,7 +98,7 @@ self.addEventListener('activate', (event) => {
     caches.keys()
       .then(cacheNames => Promise.all(
         cacheNames
-          .filter(name => name !== CACHE_VERSION && name !== RUNTIME_CACHE)
+          .filter(name => name !== CACHE_VERSION)
           .map(name => caches.delete(name))
       ))
       .then(() => self.clients.claim())
@@ -126,7 +125,7 @@ self.addEventListener('fetch', (event) => {
 });
 
 async function handleRequest(request, strategy) {
-  const cache = await caches.open(RUNTIME_CACHE);
+  const cache = await caches.open(CACHE_VERSION);
 
   switch (strategy) {
     case 'networkFirst':

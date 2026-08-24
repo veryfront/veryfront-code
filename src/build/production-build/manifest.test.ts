@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateManifest, generateRedirects } from "./manifest.ts";
+import { VERSION } from "#veryfront/utils/version-constant.ts";
 
 describe("build/production-build/manifest", () => {
   describe("generateManifest", () => {
@@ -27,7 +28,7 @@ describe("build/production-build/manifest", () => {
 
     it("should generate manifest with correct version", () => {
       const result = generateManifest(baseOptions);
-      assertEquals(result.version, "2.0.0");
+      assertEquals(result.version, VERSION);
     });
 
     it("should include buildTime as ISO string", () => {

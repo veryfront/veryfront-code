@@ -6,6 +6,7 @@ import {
   generateImportMap,
 } from "../../../../src/build/production-build/index.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { VERSION } from "#veryfront/utils/version-constant.ts";
 
 describe(
   "Client Runtime Generation",
@@ -27,21 +28,21 @@ describe(
       it("should include Veryfront version", () => {
         const code = generateAppModule();
 
-        assertStringIncludes(code, "version = '2.0.0'");
+        assertStringIncludes(code, `version = ${JSON.stringify(VERSION)}`);
       });
 
       it("should initialize window.__veryfront object", () => {
         const code = generateAppModule();
 
         assertStringIncludes(code, "window.__veryfront = window.__veryfront || {}");
-        assertStringIncludes(code, "window.__veryfront.version = '2.0.0'");
+        assertStringIncludes(code, "window.__veryfront.version = version");
         assertStringIncludes(code, "window.__veryfront.initialized = true");
       });
 
       it("should define hydrate function", () => {
         const code = generateAppModule();
 
-        assertStringIncludes(code, "window.hydrate = async function");
+        assertStringIncludes(code, "export function hydrate");
         assertStringIncludes(code, "slug, options = {}");
       });
 
@@ -49,21 +50,20 @@ describe(
         const code = generateAppModule();
 
         assertStringIncludes(code, "export const version");
-        assertStringIncludes(code, "export const hydrate");
+        assertStringIncludes(code, "export function hydrate");
       });
 
-      it("should include console logging", () => {
+      it("should delegate to the router runtime", () => {
         const code = generateAppModule();
 
-        assertStringIncludes(code, "[Veryfront] App module loaded");
-        assertStringIncludes(code, "[Veryfront] Hydrating page:");
+        assertStringIncludes(code, "import { boot } from './router.js'");
+        assertStringIncludes(code, "return boot({ ...options, slug })");
       });
 
-      it("should set data-hydrated attribute", () => {
+      it("should not claim hydration by setting a marker", () => {
         const code = generateAppModule();
 
-        assertStringIncludes(code, "document.getElementById('root')");
-        assertStringIncludes(code, "setAttribute('data-hydrated', 'true')");
+        assert(!code.includes("data-hydrated"));
       });
 
       it("should check for window object", () => {
@@ -72,17 +72,17 @@ describe(
         assertStringIncludes(code, "typeof window !== 'undefined'");
       });
 
-      it("should be wrapped in IIFE", () => {
+      it("should use an ESM compatibility module", () => {
         const code = generateAppModule();
 
-        assertStringIncludes(code, "(() => {");
-        assertStringIncludes(code, "})();");
+        assertStringIncludes(code, "export const version");
+        assert(!code.includes("(() => {"));
       });
 
       it("should handle hydration with slug parameter", () => {
         const code = generateAppModule();
 
-        assertStringIncludes(code, "Hydrating page:");
+        assertStringIncludes(code, "return boot({ ...options, slug })");
         assertStringIncludes(code, "slug");
       });
     });
@@ -190,7 +190,7 @@ describe(
         const appCode = generateAppModule();
 
         assert(importMap.includes("19.2.4"));
-        assertStringIncludes(appCode, "2.0.0");
+        assertStringIncludes(appCode, VERSION);
       });
     });
   },

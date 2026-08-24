@@ -228,8 +228,7 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
       });
     });
 
-    // TODO: Re-enable after investigating App Router SSG regression
-    it.ignore("statically renders App Router literal routes", async () => {
+    it("statically renders App Router literal routes", async () => {
       await withTestContext("build-app-router-ssg", async (context) => {
         const outputDir = join(context.projectDir, "dist");
 
@@ -257,8 +256,7 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
       });
     });
 
-    // TODO: Re-enable after investigating App Router SSG regression
-    it.ignore(
+    it(
       "App Router SSG respects dynamic hint: force-dynamic skips SSG, force-static included",
       async () => {
         await withTestContext("build-app-router-dynamic", async (context) => {
@@ -341,8 +339,7 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
   });
 
   describe("buildProduction - SSG Filters and Router Detection", () => {
-    // TODO: Re-enable after investigating App Router SSG regression
-    it.ignore("dry-run SSG includes/excludes and app router detection", async () => {
+    it("dry-run SSG includes/excludes and app router detection", async () => {
       await withTestContext("build-ssg-dryrun", async (context) => {
         await removeAppDir(context.projectDir);
         await remove(join(context.projectDir, "pages"), { recursive: true });
@@ -370,22 +367,16 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
           dryRun: true,
           ssg: true,
         });
-        assert((res as any).ssgPaths);
-        console.log("All SSG paths without filter:", (res as any).ssgPaths);
+        assertEquals(res.ssgPaths, ["/", "/blog", "/docs"]);
 
         const resInc = await buildProduction({
           projectDir: context.projectDir,
           outputDir: join(context.projectDir, "dist2"),
           dryRun: true,
           ssg: true,
-          include: ["/", "/docs"],
+          include: ["/docs"],
         });
-        const inc = (resInc as any).ssgPaths as string[];
-        console.log("SSG paths with include filter:", inc);
-
-        assert(inc.includes("/docs"));
-        assertEquals(inc.includes("/blog"), false);
-        assertEquals(inc.includes("/"), false);
+        assertEquals(resInc.ssgPaths, ["/docs"]);
 
         const resExc = await buildProduction({
           projectDir: context.projectDir,
@@ -394,8 +385,7 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
           ssg: true,
           exclude: ["/blog"],
         });
-        const exc = (resExc as any).ssgPaths as string[];
-        assertEquals(exc.includes("/blog"), false);
+        assertEquals(resExc.ssgPaths, ["/", "/docs"]);
       });
     });
   });
@@ -500,8 +490,7 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
       });
     });
 
-    // TODO: Re-enable after investigating App Router SSG regression
-    it.ignore("handles mixed Pages and App Router", async () => {
+    it("handles mixed Pages and App Router", async () => {
       await withTestContext("build-mixed-router", async (context) => {
         const outputDir = join(context.projectDir, "dist");
 
