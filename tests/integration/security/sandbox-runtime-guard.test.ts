@@ -1,3 +1,4 @@
+// @veryfront-test runtime-guarded-deno
 /**
  * SEC-008 end-to-end runtime guard for `runInWorker`.
  *

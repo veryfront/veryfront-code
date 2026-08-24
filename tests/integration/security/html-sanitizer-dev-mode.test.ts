@@ -57,12 +57,22 @@ describe("security/client/html-sanitizer validateTrustedHtml dev mode", () => {
   it("warns and passes suspicious HTML through in dev mode", async () => {
     await withEnv({ VERYFRONT_ENV: "production" }, () => {
       withDevFlag(true, () => {
+        const originalWarn = console.warn;
+        const warnings: unknown[][] = [];
         const svg = '<svg onload="alert(1)"></svg>';
-        assertEquals(
-          validateTrustedHtml(svg, { warn: false }),
-          svg,
-          "dev mode must warn and pass suspicious HTML through instead of throwing",
-        );
+        console.warn = (...args: unknown[]) => warnings.push(args);
+        try {
+          assertEquals(
+            validateTrustedHtml(svg),
+            svg,
+            "dev mode must warn and pass suspicious HTML through instead of throwing",
+          );
+          assertEquals(warnings, [[
+            "[Security] Suspicious event handler attribute detected in server HTML",
+          ]]);
+        } finally {
+          console.warn = originalWarn;
+        }
       });
       return Promise.resolve();
     });
