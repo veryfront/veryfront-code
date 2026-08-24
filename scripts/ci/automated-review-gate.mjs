@@ -10,15 +10,15 @@ const CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER =
 const CODERABBIT_REVIEW_RANGE_PATTERN =
   /(?:^|\r\n|[\r\n])Reviewing files that changed from the base of the PR and between ([0-9a-f]{40}) and ([0-9a-f]{40})\.(?=\r\n|[\r\n]|$)/;
 const CODERABBIT_REVIEW_RANGE_STATEMENT_START_PATTERN =
-  /(?<![A-Za-z0-9])(?=(Reviewing[ \t]+(?:files(?:[ \t]+that[ \t]+changed[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?|changed[ \t]+files(?:[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?)[ \t]+(?:and[ \t]+)?between))/gi;
+  /(?<![A-Za-z0-9])(?=(Reviewing\b))/gi;
+const CODERABBIT_REVIEW_RANGE_BASE_INTRO_PATTERN =
+  /^(?:files(?: that changed from the base of the pr)?|changed files(?: from the base of the pr)?)(?: and)? between(?: |$)/;
 const CODERABBIT_REVIEW_RANGE_CONTINUATION_PREFIX_PATTERN =
   /^[ \t]*(?:(?:>[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*/;
 const CODERABBIT_REVIEW_RANGE_SEPARATOR_PATTERN =
   /(^|[ \t])and[ \t]+([0-9a-f]{40})(?![0-9a-f])/i;
 const CODERABBIT_REVIEW_RANGE_WRAPPED_TIP_PATTERN =
   /^[ \t]*([0-9a-f]{40})(?![0-9a-f])/i;
-const CODERABBIT_REVIEW_RANGE_WRAPPED_SEPARATOR_PATTERN =
-  /^[ \t]*and[ \t]+([0-9a-f]{40})(?![0-9a-f])/i;
 const FULL_COMMIT_TOKEN_PATTERN = /(^|[^0-9a-f])([0-9a-f]{40})(?![0-9a-f])/gi;
 const MARKDOWN_FENCE_LINE_PATTERN =
   /^( {0,3}(?:(?:>[ \t]*)|(?:(?:[-*+]|\d{1,9}[.)])[ \t]+))*)(`{3,}|~{3,})/;
@@ -354,6 +354,8 @@ function classifyCodeRabbitRangeEvidence(selectedRecentReview, headSha) {
 function codeRabbitRangeEvidenceStatements(content) {
   const markdownStructure = scanMarkdownStructure(content);
   const excludedRanges = markdownStructure.excludedRanges;
+  const paragraphContinuationLineStarts =
+    markdownStructure.paragraphContinuationLineStarts;
   const matches = mergeCodeRabbitRangeMatches(
     [...content.matchAll(CODERABBIT_REVIEW_RANGE_STATEMENT_START_PATTERN)],
     markdownTableRangeEvidenceMatches(
@@ -388,6 +390,7 @@ function codeRabbitRangeEvidenceStatements(content) {
       match,
       continuationEnd,
       nextStatementIndex,
+      paragraphContinuationLineStarts,
     );
     if (statement) {
       statement.insideTableCell = match.tableCell !== undefined;
@@ -542,6 +545,7 @@ function visibleMarkdownMatches(content, patterns, excludedRanges) {
 function scanMarkdownStructure(content) {
   const ranges = [];
   const reviewMarkers = [];
+  const paragraphContinuationLineStarts = new Set();
   const {
     inlineCodeRanges,
     inlineHtmlRanges,
@@ -582,6 +586,7 @@ function scanMarkdownStructure(content) {
       paragraphLine,
       openParagraph,
     );
+    if (continuesParagraph) paragraphContinuationLineStarts.add(lineStart);
     const listContextsForLine = markdownListContextsForLine(
       paragraphLine,
       openListContexts,
@@ -792,6 +797,7 @@ function scanMarkdownStructure(content) {
       ),
     ),
     reviewMarkers,
+    paragraphContinuationLineStarts,
     tableCellRanges: refinedInlineRanges.tableCellRanges,
   };
 }
@@ -2414,6 +2420,7 @@ function parseCodeRabbitRangeStatement(
   match,
   continuationEnd,
   nextStatementIndex,
+  paragraphContinuationLineStarts,
 ) {
   const statementPhrase = match[1];
   const statementEnd = match.index + statementPhrase.length;
@@ -2437,9 +2444,13 @@ function parseCodeRabbitRangeStatement(
     CODERABBIT_REVIEW_RANGE_SEPARATOR_PATTERN,
   );
   if (sameLineSeparator) {
+    const baseSegment = codeRabbitBaseSegment(
+      [],
+      firstLineTail.slice(0, sameLineSeparator.index),
+    );
+    if (baseSegment === undefined) return undefined;
     return {
-      baseSegment: firstLineTail.slice(0, sameLineSeparator.index).trim()
-        .toLowerCase(),
+      baseSegment,
       statement: statementStart + firstLineTail,
       tipToken: sameLineSeparator[2].toLowerCase(),
       trailingStatement: firstLineTail.slice(
@@ -2471,7 +2482,10 @@ function parseCodeRabbitRangeStatement(
     if (
       continuationContent.trim().length === 0 ||
       continuationContent.trimStart().startsWith("<!--") ||
-      codeRabbitRangeContainerSignature(continuationPrefix) !== statementPrefix
+      (codeRabbitRangeContainerSignature(continuationPrefix) !==
+          statementPrefix &&
+        (match.tableCell !== undefined ||
+          !paragraphContinuationLineStarts.has(nextLine.lineStart)))
     ) return undefined;
     statementParts.push(nextLine.separator, nextLine.content);
 
@@ -2481,30 +2495,34 @@ function parseCodeRabbitRangeStatement(
       CODERABBIT_REVIEW_RANGE_WRAPPED_TIP_PATTERN,
     );
     if (trailingAnd && wrappedTip) {
+      const baseSegment = codeRabbitBaseSegment(
+        baseLines.slice(0, -1),
+        previousLine.slice(0, trailingAnd.index),
+      );
+      if (baseSegment === undefined) return undefined;
       return {
-        baseSegment: codeRabbitBaseSegment(
-          baseLines.slice(0, -1),
-          previousLine.slice(0, trailingAnd.index),
-        ),
+        baseSegment,
         statement: statementParts.join(""),
         tipToken: wrappedTip[1].toLowerCase(),
         trailingStatement: continuationContent.slice(wrappedTip[0].length),
       };
     }
 
-    const wrappedSeparator = continuationContent.match(
-      CODERABBIT_REVIEW_RANGE_WRAPPED_SEPARATOR_PATTERN,
+    const continuationSeparator = continuationContent.match(
+      CODERABBIT_REVIEW_RANGE_SEPARATOR_PATTERN,
     );
-    if (wrappedSeparator) {
+    if (continuationSeparator) {
+      const baseSegment = codeRabbitBaseSegment(
+        baseLines,
+        continuationContent.slice(0, continuationSeparator.index),
+      );
+      if (baseSegment === undefined) return undefined;
       return {
-        baseSegment: codeRabbitBaseSegment(
-          baseLines,
-          continuationContent.slice(0, wrappedSeparator.index),
-        ),
+        baseSegment,
         statement: statementParts.join(""),
-        tipToken: wrappedSeparator[1].toLowerCase(),
+        tipToken: continuationSeparator[2].toLowerCase(),
         trailingStatement: continuationContent.slice(
-          wrappedSeparator[0].length,
+          continuationSeparator.index + continuationSeparator[0].length,
         ),
       };
     }
@@ -2519,6 +2537,7 @@ function codeRabbitNextTableCell(content, cell, continuationEnd) {
   const cellEnd = Math.min(cell.end, continuationEnd);
   return {
     content: content.slice(cell.start, cellEnd),
+    lineStart: cell.start,
     lineEnd: cellEnd,
     nextTableCell: cell.nextTableCell,
     separator: "\n",
@@ -2539,7 +2558,13 @@ function codeRabbitRangeContainerSignature(prefix) {
 }
 
 function codeRabbitBaseSegment(lines, finalLine) {
-  return [...lines, finalLine].join("\n").trim().toLowerCase();
+  const normalized = [...lines, finalLine].join("\n").trim().toLowerCase()
+    .replace(/[ \t]*(?:\r\n|[\r\n])[ \t]*/g, " ")
+    .replace(/[ \t]+/g, " ");
+  const intro = normalized.match(
+    CODERABBIT_REVIEW_RANGE_BASE_INTRO_PATTERN,
+  )?.[0];
+  return intro === undefined ? undefined : normalized.slice(intro.length);
 }
 
 function codeRabbitNextLine(content, lineEnd, continuationEnd) {
@@ -2565,6 +2590,7 @@ function codeRabbitNextLine(content, lineEnd, continuationEnd) {
       contentStart,
       nextLineEnd < 0 ? content.length : nextLineEnd,
     ),
+    lineStart: contentStart,
     lineEnd: nextLineEnd < 0 ? content.length : nextLineEnd,
     separator,
   };

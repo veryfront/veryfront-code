@@ -769,9 +769,47 @@ describe("automated review gate", () => {
 
   it("classifies malformed and wrapped current-head ranges fail closed", async () => {
     const olderSuccess = olderCodeRabbitSuccess();
+    const rangeWords = [
+      "Reviewing",
+      "files",
+      "that",
+      "changed",
+      "from",
+      "the",
+      "base",
+      "of",
+      "the",
+      "PR",
+      "and",
+      "between",
+      "not-a-sha",
+      "and",
+      `${HEAD_SHA}.`,
+    ];
+    const softWrappedIntroRanges = Array.from(
+      { length: 11 },
+      (_, index) =>
+        [
+          rangeWords.slice(0, index + 1).join(" "),
+          rangeWords.slice(index + 1).join(" "),
+        ].join("\n"),
+    );
 
     for (
       const malformedCurrentRange of [
+        ...softWrappedIntroRanges,
+        "> Reviewing files that changed from the base\n" +
+        `> of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "> Reviewing files that changed from the base\n" +
+        `of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "> > Reviewing files that changed from the base\n" +
+        `> of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "> > Reviewing files that changed from the base\n" +
+        `of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "> Reviewing files that changed from the base of the PR and between " +
+        `${STALE_SHA} and\n${HEAD_SHA}.`,
+        "- Reviewing files that changed from the base\n" +
+        `  of the PR and between not-a-sha and ${HEAD_SHA}.`,
         "`Reviewing files that changed from the base of the PR and between " +
         `not-a-sha and ${HEAD_SHA}.`,
         "`Reviewing files that changed from the base of the PR and between " +
@@ -838,8 +876,30 @@ describe("automated review gate", () => {
           HEAD_SHA,
         ),
         undefined,
+        `Expected the current-head range to fail closed: ${malformedCurrentRange}`,
       );
     }
+
+    const newerUnrelatedReviewingText = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        `Reviewing bananas and ${HEAD_SHA}.`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:00Z",
+      updated_at: "2026-08-22T12:02:00Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerUnrelatedReviewingText],
+        },
+        HEAD_SHA,
+      ))?.url,
+      olderSuccess.html_url,
+    );
 
     const newerBareCarriageReturnCurrentRange = codeRabbitSummary({
       body: [
@@ -979,8 +1039,6 @@ describe("automated review gate", () => {
 
     for (
       const separatedCurrentRange of [
-        "> Reviewing files that changed from the base of the PR and between " +
-        `${STALE_SHA} and\n${HEAD_SHA}.`,
         "Reviewing files that changed from the base of the PR and between " +
         `${STALE_SHA} and\n> ${HEAD_SHA}.`,
         "1. Reviewing files that changed from the base of the PR and between " +
@@ -989,6 +1047,12 @@ describe("automated review gate", () => {
         `not-a-sha\n<!-- evidence boundary -->\nand ${HEAD_SHA}.`,
         "- Reviewing files that changed from the base of the PR and between " +
         `not-a-sha and\n\n      ${HEAD_SHA}.`,
+        "> Reviewing files that changed from the base\n\n" +
+        `of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "> Reviewing files that changed from the base\n- " +
+        `of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "> Reviewing files that changed from the base\n---\n" +
+        `of the PR and between not-a-sha and ${HEAD_SHA}.`,
       ]
     ) {
       const newerSeparatedCurrentRange = codeRabbitSummary({
