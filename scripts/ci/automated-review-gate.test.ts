@@ -1029,6 +1029,19 @@ describe("automated review gate", () => {
           "<!-- recent_review_end -->",
         ].join("\n"),
     );
+    const decoratedVisibleMalformedBodies = [
+      ["**", "**"],
+      ["_", "_"],
+      ["~~", "~~"],
+      ["[", "](https://example.com)"],
+    ].map(([prefix, suffix]) =>
+      [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        prefix + MALFORMED_CURRENT_RANGE + suffix,
+        "<!-- recent_review_end -->",
+      ].join("\n")
+    );
 
     for (
       const unterminatedCurrentRange of [
@@ -1061,6 +1074,7 @@ describe("automated review gate", () => {
     for (
       const newerMalformedBody of [
         ...escapedVisibleMalformedBodies,
+        ...decoratedVisibleMalformedBodies,
         [
           "<!-- recent_review_start -->",
           "No actionable comments were generated in the recent review.",
