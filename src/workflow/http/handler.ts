@@ -276,8 +276,13 @@ function runEventStream(
       if (snapshotPending) {
         snapshotPending = false;
         try {
-          controller.enqueue(encode("snapshot", projectRun(observation.initial)));
-          if (isTerminalRunStatus(observation.initial.status)) close();
+          // Read the frame and the status before enqueueing anything, so a
+          // stateful accessor that throws on a later read cannot append an
+          // error frame behind an already-delivered snapshot.
+          const snapshot = encode("snapshot", projectRun(observation.initial));
+          const terminal = isTerminalRunStatus(observation.initial.status);
+          controller.enqueue(snapshot);
+          if (terminal) close();
         } catch {
           // A snapshot failure raises the run's own data (a getter or `toJSON`
           // can throw with customer content), so log a classification rather

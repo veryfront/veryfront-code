@@ -978,6 +978,52 @@ describe("createWorkflowHandler", () => {
       expect(closeCalls).toBe(1);
     });
 
+    it("does not deliver a snapshot when the status read throws after projection", async () => {
+      const runId = await startRun();
+      const persisted = await client.getRun(runId);
+      if (!persisted) throw new Error("expected the run to exist");
+      // A stateful accessor can serialize cleanly and then throw on the
+      // follow-up terminal-status read; the stream must carry only the
+      // sanitized error frame, never a snapshot with an error appended.
+      let statusReads = 0;
+      const initial = { ...persisted };
+      Object.defineProperty(initial, "status", {
+        enumerable: true,
+        get(): WorkflowRun["status"] {
+          statusReads++;
+          if (statusReads > 1) throw new Error("stateful status detail");
+          return "running";
+        },
+      });
+      let returnCalls = 0;
+      let closeCalls = 0;
+      replaceObservation({
+        supported: true,
+        initial: initial as WorkflowRun,
+        events: {
+          [Symbol.asyncIterator]: () => ({
+            next: () => Promise.resolve({ value: undefined, done: true as const }),
+            return: () => {
+              returnCalls++;
+              return Promise.resolve({ value: undefined, done: true as const });
+            },
+          }),
+        },
+        close: () => {
+          closeCalls++;
+          return Promise.resolve();
+        },
+      });
+
+      const response = await handlers.GET(get(`/api/workflows/runs/${runId}/events`));
+      const frames = await readStream(response);
+
+      expect(frames.map(([name]) => name)).toEqual(["error"]);
+      expect(JSON.stringify(frames)).not.toContain("stateful status detail");
+      expect(returnCalls).toBe(1);
+      expect(closeCalls).toBe(1);
+    });
+
     it("logs only a classification when the snapshot raises run content", async () => {
       const runId = await startRun();
       const persisted = await client.getRun(runId);
