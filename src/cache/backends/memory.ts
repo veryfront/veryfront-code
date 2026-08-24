@@ -134,7 +134,9 @@ export class MemoryCacheBackend implements CacheBackend {
     });
   }
 
-  setBatch(entries: Array<{ key: string; value: string; ttl?: number }>): Promise<void> {
+  // `async` so an invalid TTL surfaces as a rejected promise, matching `set`
+  // and the API/Redis backends instead of throwing synchronously at the caller.
+  async setBatch(entries: Array<{ key: string; value: string; ttl?: number }>): Promise<void> {
     const now = Date.now();
 
     for (const { key, value, ttl } of entries) {
@@ -175,8 +177,6 @@ export class MemoryCacheBackend implements CacheBackend {
         sizeBytes: entrySize,
       });
     }
-
-    return Promise.resolve();
   }
 
   del(key: string): Promise<void> {

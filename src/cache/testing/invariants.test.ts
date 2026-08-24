@@ -269,3 +269,34 @@ Deno.test("cache/testing/invariants - detects concurrent writes sharing one slot
     "invariants must reject a cache whose concurrent writes share one slot",
   );
 });
+
+// A cache that stores an envelope reconstructs an equivalent — not structurally
+// identical — value, and declares that through `isEqual`. The concurrent
+// invariant must honor the comparator exactly as the sequential and
+// collision invariants do, rather than demanding structural identity.
+Deno.test("cache/testing/invariants - honors isEqual under concurrency", async () => {
+  type Entry = { id: string; revision?: number };
+
+  const envelopeCache = (): MinimalCache<Entry> => {
+    const store = new Map<string, Entry>();
+    return {
+      get: (key: string) => {
+        const stored = store.get(key);
+        return stored ? { id: stored.id, revision: 1 } : null;
+      },
+      set: (key: string, value: Entry) => {
+        store.set(key, { id: value.id });
+      },
+    };
+  };
+
+  const { steps, context } = collectSteps();
+  await testConcurrentAccess<Entry>(context, {
+    createCache: envelopeCache,
+    createValue: () => ({ id: uniqueValue("envelope") }),
+    isEqual: (a, b) => a.id === b.id,
+  });
+
+  // Runs clean: a structural comparison would reject the added `revision`.
+  await findStep(steps, "concurrent sets don't corrupt data").fn();
+});

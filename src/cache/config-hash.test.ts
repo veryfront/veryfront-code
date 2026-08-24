@@ -102,12 +102,19 @@ describe("cache/config-hash", () => {
       let firstPoisoned: string | undefined;
       let secondPoisoned: string | undefined;
 
+      // `toJSON` is normally absent from Object.prototype, but restore whatever
+      // was there so this test cannot delete a property another test installed.
+      const originalToJson = Reflect.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+
       try {
         Reflect.set(Object.prototype, "toJSON", () => "x");
         firstPoisoned = await computeConfigHash(firstConfig);
         secondPoisoned = await computeConfigHash(secondConfig);
       } finally {
         Reflect.deleteProperty(Object.prototype, "toJSON");
+        if (originalToJson) {
+          Reflect.defineProperty(Object.prototype, "toJSON", originalToJson);
+        }
       }
 
       assertEquals(

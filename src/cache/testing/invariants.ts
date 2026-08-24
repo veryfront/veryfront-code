@@ -233,7 +233,7 @@ export async function testConcurrentAccess<T = string>(
   t: Deno.TestContext,
   options: CacheInvariantTestOptions<T>,
 ): Promise<void> {
-  const { createCache, createValue, name = "cache" } = options;
+  const { createCache, createValue, isEqual, name = "cache" } = options;
 
   await t.step(`${name}: concurrent sets don't corrupt data`, async () => {
     const cache = await createCache();
@@ -248,8 +248,16 @@ export async function testConcurrentAccess<T = string>(
           await cache.set(key, value);
           const result = await cache.get(key);
           // Each iteration owns its key, so the expected value is fully
-          // determined even under concurrency.
-          assertEquals(result, value, `concurrent write to ${key} must round-trip its own value`);
+          // determined even under concurrency. A cache that reconstructs an
+          // equivalent value declares that through `isEqual`, so honor it here
+          // exactly as the sequential and collision invariants do.
+          const message = `concurrent write to ${key} must round-trip its own value`;
+          assertExists(result, message);
+          if (isEqual) {
+            assertEquals(isEqual(result as T, value), true, message);
+          } else {
+            assertEquals(result, value, message);
+          }
         })(),
       );
     }

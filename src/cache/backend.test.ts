@@ -316,6 +316,23 @@ Deno.test("MemoryCacheBackend rejects a non-finite TTL", async () => {
   assertEquals(cache.size, 0, "a rejected TTL must not leave an entry behind");
 });
 
+Deno.test("MemoryCacheBackend setBatch rejects a non-finite TTL without throwing synchronously", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+
+  const cache = new MemoryCacheBackend(10);
+  // `assertRejects` fails when the call throws synchronously, which is exactly
+  // the contract at stake: callers hold a declared `Promise<void>`, so an
+  // invalid TTL must surface through `.catch()` the way `set` and the
+  // API/Redis backends surface it.
+  await assertRejects(
+    () => cache.setBatch([{ key: "k", value: "v", ttl: Number.POSITIVE_INFINITY }]),
+    RangeError,
+    "finite number of seconds",
+    "a batched non-finite TTL must reject the returned promise",
+  );
+  assertEquals(cache.size, 0, "a rejected batch TTL must not leave an entry behind");
+});
+
 Deno.test("MemoryCacheBackend setBatch sets multiple entries", async () => {
   const { MemoryCacheBackend } = await importBackend();
 

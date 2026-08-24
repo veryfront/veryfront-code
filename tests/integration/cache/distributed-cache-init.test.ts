@@ -1,18 +1,22 @@
 /**
- * Backend resolution for the distributed cache initializers.
+ * Backend resolution and layering for the distributed cache initializers.
  *
  * `initializeDistributedCaches` picks its backend from the process
  * environment: a hosted API cache wins, then a configured Redis, then a
  * persistent local disk cache, and a plain memory runtime short-circuits
  * before any initializer runs. Those cases read and mutate real process env,
- * so they live here rather than in the colocated unit file. The hermetic
- * assertions about the initializer fan-out stay in
- * `src/cache/distributed-cache-init.test.ts`.
+ * and the layering guard reads the module source off disk, so both live here
+ * rather than in the colocated unit file: naming the Deno namespace or reading
+ * a non-hermetic path from `src/cache/distributed-cache-init.test.ts` would
+ * drop that file from the Node and Bun runners. The hermetic assertions about
+ * the initializer fan-out stay there.
  */
 
 import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
+import { readTextFile } from "#veryfront/platform/compat/fs.ts";
+import { fromFileUrl } from "#veryfront/platform/compat/path/index.ts";
 import { initializeDistributedCaches } from "#veryfront/cache/distributed-cache-init.ts";
 
 type DistributedCacheInitializers = Parameters<typeof initializeDistributedCaches>[0];
@@ -56,6 +60,34 @@ function createCountingInitializers(): {
     },
   };
 }
+
+describe("distributed cache init layering", () => {
+  it("does not import higher layers (rendering/transform/platform)", async () => {
+    // Layering guard (#1987): src/cache is a low-level layer and must not reach
+    // up into html / transforms / modules / platform. The concrete initializers
+    // are injected from the server composition root instead. If this fails, a
+    // cross-layer import was re-introduced into distributed-cache-init.ts.
+    const source = await readTextFile(
+      fromFileUrl(
+        new URL("../../../src/cache/distributed-cache-init.ts", import.meta.url),
+      ),
+    );
+    const forbidden = [
+      "#veryfront/html/",
+      "#veryfront/transforms/",
+      "#veryfront/modules/",
+      "#veryfront/platform/",
+    ];
+
+    for (const specifier of forbidden) {
+      assertEquals(
+        source.includes(specifier),
+        false,
+        `distributed-cache-init.ts must not import ${specifier} (inject initializers from the server layer instead)`,
+      );
+    }
+  });
+});
 
 describe("distributed cache init backend resolution", () => {
   it("resolves the api backend when the hosted cache is available", async () => {
