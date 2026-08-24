@@ -1,15 +1,26 @@
 import "#veryfront/schemas/_test-setup.ts";
+import "./__tests__/css-processor-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { createStyleScopeProfile } from "./style-scope-profile.ts";
 import {
+  buildPreparedCSSArtifactFromFiles,
   collectLocalProjectSourceFiles,
   findGlobalStylesheet,
   findStylesheetFromFiles,
   readLocalProjectStylesheet,
+  warmPreparedCSSArtifactFromFiles,
 } from "./css-pregeneration.ts";
+import { acquireCSSGenerationSession, extractCandidatesFromFiles } from "./tailwind-compiler.ts";
+import { hashCandidates } from "./css-identity.ts";
+import {
+  createPreparedProjectCSSContext,
+  invalidatePreparedProjectCSS,
+  tryGetPreparedProjectCSS,
+} from "./prepared-project-css-cache.ts";
 
 describe("styles-builder/css-pregeneration", () => {
   describe("findGlobalStylesheet", () => {
@@ -112,7 +123,21 @@ describe("styles-builder/css-pregeneration", () => {
     it("should not match files that end with globals.css but have different prefix", () => {
       assertEquals(
         findGlobalStylesheet([{ path: "my-globals.css", content: "should not match" }]),
-        "should not match",
+        undefined,
+        "a prefixed filename must not be treated as the global stylesheet",
+      );
+    });
+
+    it("should still match a globals stylesheet under a nested repo root", () => {
+      assertEquals(
+        findGlobalStylesheet([{ path: "styles/globals.css", content: "nested" }]),
+        "nested",
+        "a conventional nested path must remain a global stylesheet match",
+      );
+      assertEquals(
+        findGlobalStylesheet([{ path: "project/src/globals.css", content: "deep" }]),
+        "deep",
+        "a globals stylesheet under a nested repo root must remain a match",
       );
     });
   });
@@ -263,6 +288,152 @@ describe("styles-builder/css-pregeneration", () => {
         );
       } finally {
         await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("falls back to a convention-named globals stylesheet", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-css-pregeneration-" });
+
+      try {
+        await mkdir(join(projectDir, "styles"), { recursive: true });
+        await writeTextFile(join(projectDir, "styles", "globals.css"), ".globals { color: blue; }");
+
+        assertEquals(
+          await readLocalProjectStylesheet(projectDir),
+          ".globals { color: blue; }",
+          "an unset tailwind.stylesheet must fall back to the conventional globals stylesheet",
+        );
+      } finally {
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("returns undefined when the configured stylesheet is missing", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-css-pregeneration-" });
+
+      try {
+        await writeTextFile(join(projectDir, "globals.css"), ".globals { color: blue; }");
+
+        assertEquals(
+          await readLocalProjectStylesheet(projectDir, "styles/custom.css"),
+          undefined,
+          "a configured stylesheet path is exclusive and does not fall back to globals",
+        );
+      } finally {
+        await remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  describe("warmPreparedCSSArtifactFromFiles", () => {
+    const STYLESHEET = `@import "tailwindcss";`;
+    const SOURCE_FILE = {
+      path: "pages/index.tsx",
+      content: `<div className="text-red-500" />`,
+    };
+
+    function warmOptions(projectSlug: string) {
+      return {
+        projectSlug,
+        projectVersion: "warm-version",
+        files: [SOURCE_FILE],
+        styleProfile: createStyleScopeProfile(),
+        stylesheet: STYLESHEET,
+        minify: false,
+      };
+    }
+
+    /**
+     * Rebuild the cache context the warm path derives, so a test can wait for
+     * the background build to store its artifact without starting a second one.
+     */
+    function preparedContextFor(options: ReturnType<typeof warmOptions>) {
+      const candidates = extractCandidatesFromFiles(options.files, {
+        styleProfile: options.styleProfile,
+      });
+      const session = acquireCSSGenerationSession(options.minify);
+      return createPreparedProjectCSSContext(
+        options.projectSlug,
+        options.projectVersion,
+        options.stylesheet,
+        options.styleProfile.hash,
+        {
+          cssPipelineIdentity: session.cacheIdentity,
+          candidatesHash: hashCandidates(candidates),
+          minify: options.minify,
+          environment: "preview",
+          buildMode: "production",
+        },
+      );
+    }
+
+    it("joins an in-flight build instead of starting a second compile", async () => {
+      const projectSlug = `warm-inflight-${crypto.randomUUID()}`;
+      const options = warmOptions(projectSlug);
+
+      try {
+        assertEquals(
+          await warmPreparedCSSArtifactFromFiles(options),
+          true,
+          "the first warm call must start the build",
+        );
+        assertEquals(
+          await warmPreparedCSSArtifactFromFiles(options),
+          false,
+          "a second warm call must join the in-flight build instead of recompiling",
+        );
+
+        await waitFor(
+          async () => (await tryGetPreparedProjectCSS(preparedContextFor(options))) !== undefined,
+          { message: "the warm build never stored its prepared artifact" },
+        );
+      } finally {
+        invalidatePreparedProjectCSS(projectSlug);
+      }
+    });
+
+    it("does not rebuild an artifact that is already prepared", async () => {
+      const projectSlug = `warm-cached-${crypto.randomUUID()}`;
+      const options = warmOptions(projectSlug);
+
+      try {
+        await buildPreparedCSSArtifactFromFiles(options);
+
+        assertEquals(
+          await warmPreparedCSSArtifactFromFiles(options),
+          false,
+          "a cached artifact must not be rebuilt",
+        );
+      } finally {
+        invalidatePreparedProjectCSS(projectSlug);
+      }
+    });
+
+    it("prefers an explicit stylesheet over one discovered in the files", async () => {
+      const projectSlug = `warm-stylesheet-${crypto.randomUUID()}`;
+      const options = warmOptions(projectSlug);
+
+      try {
+        // Prepare the artifact under the identity an explicit stylesheet
+        // implies, with no competing stylesheet in the file list at all.
+        await buildPreparedCSSArtifactFromFiles(options);
+
+        // The same warm request, now carrying a globals.css that resolves to
+        // different CSS, must still recognise the prepared artifact. It only
+        // can when `options.stylesheet` outranks findStylesheetFromFiles.
+        assertEquals(
+          await warmPreparedCSSArtifactFromFiles({
+            ...options,
+            files: [
+              SOURCE_FILE,
+              { path: "globals.css", content: `@import "tailwindcss";\n.from-files{}` },
+            ],
+          }),
+          false,
+          "an explicit stylesheet must outrank one discovered in the files",
+        );
+      } finally {
+        invalidatePreparedProjectCSS(projectSlug);
       }
     });
   });

@@ -5,6 +5,7 @@ import {
   addNonceToHtmlStream,
   addNonceToHtmlTags,
   bindHtmlNonceFromCache,
+  isHtmlNonceCacheCompatible,
   sealHtmlNonceForCache,
 } from "./nonce-injection.ts";
 
@@ -257,5 +258,30 @@ describe("html/nonce-injection", () => {
         value: originalToLowerCase,
       });
     }
+  });
+
+  it("rejects unsealed cache entries when the response enforces a nonce", () => {
+    assertEquals(
+      isHtmlNonceCacheCompatible(undefined, "nonce-a"),
+      false,
+      "a legacy entry with no placeholder must not be served to a nonce-enforcing response",
+    );
+    assertEquals(
+      isHtmlNonceCacheCompatible("not-a-placeholder", "nonce-a"),
+      false,
+      "only an internally minted placeholder may opt an entry into nonce rebinding",
+    );
+
+    const sealed = sealHtmlNonceForCache('<script nonce="nonce-a">f()</script>', "nonce-a");
+    assertEquals(
+      isHtmlNonceCacheCompatible(sealed.placeholder, "nonce-b"),
+      true,
+      "a sealed entry must be rebindable to a new response nonce",
+    );
+    assertEquals(
+      isHtmlNonceCacheCompatible(undefined, undefined),
+      true,
+      "responses without a nonce must still hit the cache",
+    );
   });
 });
