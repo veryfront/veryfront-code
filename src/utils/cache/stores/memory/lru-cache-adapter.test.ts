@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { delay } from "#std/async.ts";
 import { LRUCacheAdapter } from "./lru-cache-adapter.ts";
 
@@ -139,13 +140,25 @@ describe("LRUCacheAdapter", () => {
       const cacheWithTtl = new LRUCacheAdapter({ maxEntries: 10, ttlMs: 100, now: () => now });
 
       cacheWithTtl.set("key", "value");
-      expect(cacheWithTtl.get("key")).toBe("value");
+      assertEquals(
+        cacheWithTtl.get("key"),
+        "value",
+        "entry must be readable before the default TTL elapses",
+      );
 
       // The constructor ttlMs must reach entries stored without an explicit ttl,
       // otherwise they never expire.
       now = 1_100;
-      expect(cacheWithTtl.get("key")).toBeUndefined();
-      expect(cacheWithTtl.has("key")).toBe(false);
+      assertEquals(
+        cacheWithTtl.get("key"),
+        undefined,
+        "constructor ttlMs must expire entries stored without an explicit ttl",
+      );
+      assertEquals(
+        cacheWithTtl.has("key"),
+        false,
+        "has() must agree with get() once the default TTL elapsed",
+      );
     });
 
     it("should reclaim entries expired by the default TTL", () => {
@@ -155,7 +168,11 @@ describe("LRUCacheAdapter", () => {
       cacheWithTtl.set("key", "value");
       now = 1_100;
 
-      expect(cacheWithTtl.cleanupExpired()).toBe(1);
+      assertEquals(
+        cacheWithTtl.cleanupExpired(),
+        1,
+        "cleanupExpired must reclaim the entry expired by the default TTL",
+      );
     });
 
     it("should cleanup expired entries", async () => {
