@@ -12,6 +12,7 @@ import { updateRunIfStatus, type WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import { ApprovalDecisionSchema } from "../schemas/workflow.schema.ts";
 import { reconcileWorkflowRunControl } from "./workflow-run-control.ts";
+import { projectPendingApproval, projectRunPendingApprovals } from "./pending-approval-metadata.ts";
 import {
   INVALID_ARGUMENT,
   ORCHESTRATION_ERROR,
@@ -113,7 +114,7 @@ export class ApprovalManager {
 
     const expiresAt = timeoutMs ? new Date(Date.now() + timeoutMs) : undefined;
 
-    const approval: PendingApproval = {
+    const approval: PendingApproval & { responseSchemaId?: string } = {
       id: generateId("apr"),
       nodeId,
       message: waitConfig.message || "Approval required",
@@ -174,8 +175,8 @@ export class ApprovalManager {
 
     try {
       await this.config.notifier?.(
-        structuredClone(approval),
-        structuredClone(run),
+        structuredClone(projectPendingApproval(approval)),
+        structuredClone(projectRunPendingApprovals(run)),
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -231,6 +232,14 @@ export class ApprovalManager {
     runId: string,
     approvalId: string,
   ): Promise<PendingApproval | null> {
+    const approval = await this.getPersistedApproval(runId, approvalId);
+    return approval ? projectPendingApproval(approval) : null;
+  }
+
+  private async getPersistedApproval(
+    runId: string,
+    approvalId: string,
+  ): Promise<PendingApproval | null> {
     if (this.config.backend.getPendingApproval) {
       return this.config.backend.getPendingApproval(runId, approvalId);
     }
@@ -240,8 +249,9 @@ export class ApprovalManager {
   }
 
   /** Get all pending approvals for a run */
-  getPendingApprovals(runId: string): Promise<PendingApproval[]> {
-    return this.config.backend.getPendingApprovals(runId);
+  async getPendingApprovals(runId: string): Promise<PendingApproval[]> {
+    const approvals = await this.config.backend.getPendingApprovals(runId);
+    return approvals.map(projectPendingApproval);
   }
 
   private responseSchemaKey(runId: string, approvalId: string): string {
@@ -298,7 +308,7 @@ export class ApprovalManager {
     // only an early-out for the common already-decided case. It is NOT the
     // authoritative gate, because a concurrent decision could slip in between
     // this read and the write below.
-    const approval = await this.getApproval(runId, approvalId);
+    const approval = await this.getPersistedApproval(runId, approvalId);
     if (!approval) {
       throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
     }
@@ -410,7 +420,12 @@ export class ApprovalManager {
       return Promise.resolve([]);
     }
 
-    return list({ ...filter, status: "pending" });
+    return list({ ...filter, status: "pending" }).then((entries) =>
+      entries.map(({ runId, approval }) => ({
+        runId,
+        approval: projectPendingApproval(approval),
+      }))
+    );
   }
 
   /** Check and expire stale approvals */

@@ -25,6 +25,11 @@ import {
 } from "../executor/workflow-executor.ts";
 import { ApprovalManager, type ApprovalManagerConfig } from "../runtime/approval-manager.ts";
 import type { Workflow } from "../dsl/workflow.ts";
+import {
+  getPendingApprovalResponseSchemaId,
+  projectPendingApproval,
+  projectRunPendingApprovals,
+} from "../runtime/pending-approval-metadata.ts";
 
 const logger = baseLogger.component("workflow-client");
 
@@ -131,12 +136,16 @@ export class WorkflowClient {
       debug: this.debug,
       ...config.approval,
       responseSchemaResolver: async (input) => {
-        const userSchema = await userResponseSchemaResolver?.(input);
+        const userSchema = await userResponseSchemaResolver?.({
+          run: projectRunPendingApprovals(input.run),
+          approval: projectPendingApproval(input.approval),
+        });
         if (userSchema) return userSchema;
 
-        if (input.approval.responseSchemaId !== undefined) {
+        const responseSchemaId = getPendingApprovalResponseSchemaId(input.approval);
+        if (responseSchemaId !== undefined) {
           return this.responseSchemas.get(
-            `${input.run.workflowId}::${input.approval.responseSchemaId}`,
+            `${input.run.workflowId}::${responseSchemaId}`,
           );
         }
 
@@ -194,6 +203,7 @@ export class WorkflowClient {
           else?: WorkflowNode[];
           steps?: WorkflowNode[] | ((...args: never[]) => WorkflowNode[]);
           workflow?: string | WorkflowDefinition;
+          processor?: WorkflowNode | WorkflowDefinition;
         };
         if (config.type === "wait") {
           const waitConfig = node.config as WaitNodeConfig;
@@ -213,6 +223,17 @@ export class WorkflowClient {
         if (Array.isArray(config.then)) visit(config.then, [...nodePath, "then"]);
         if (Array.isArray(config.else)) visit(config.else, [...nodePath, "else"]);
         if (Array.isArray(config.steps)) visit(config.steps, [...nodePath, "steps"]);
+        if (config.processor && "steps" in config.processor) {
+          if (Array.isArray(config.processor.steps)) {
+            visit(config.processor.steps, [
+              ...nodePath,
+              "processor",
+              config.processor.id,
+            ]);
+          }
+        } else if (config.processor) {
+          visit([config.processor], [...nodePath, "processor"]);
+        }
         if (
           typeof config.workflow === "object" &&
           Array.isArray(config.workflow.steps)
@@ -254,23 +275,27 @@ export class WorkflowClient {
   }
 
   /** Read a run, including the approvals it is currently waiting on. */
-  getRun(runId: string): Promise<WorkflowRun | null> {
-    return this.backend.getRun(runId);
+  async getRun(runId: string): Promise<WorkflowRun | null> {
+    const run = await this.backend.getRun(runId);
+    return run ? projectRunPendingApprovals(run) : null;
   }
 
-  listRuns(filter?: RunFilter): Promise<WorkflowRun[]> {
-    return this.backend.listRuns(filter ?? {});
+  async listRuns(filter?: RunFilter): Promise<WorkflowRun[]> {
+    const runs = await this.backend.listRuns(filter ?? {});
+    return runs.map(projectRunPendingApprovals);
   }
 
-  getRunsByStatus(
+  async getRunsByStatus(
     status: WorkflowStatus | WorkflowStatus[],
     limit?: number,
   ): Promise<WorkflowRun[]> {
-    return this.backend.listRuns({ status, limit });
+    const runs = await this.backend.listRuns({ status, limit });
+    return runs.map(projectRunPendingApprovals);
   }
 
-  getRunsForWorkflow(workflowId: string, limit?: number): Promise<WorkflowRun[]> {
-    return this.backend.listRuns({ workflowId, limit });
+  async getRunsForWorkflow(workflowId: string, limit?: number): Promise<WorkflowRun[]> {
+    const runs = await this.backend.listRuns({ workflowId, limit });
+    return runs.map(projectRunPendingApprovals);
   }
 
   getPendingApprovals(runId: string): Promise<PendingApproval[]> {
@@ -314,7 +339,12 @@ export class WorkflowClient {
     }
     const observation = await this.backend.openRunObservation(runId, options);
     if (!observation) return null;
-    return { supported: true, ...deriveWorkflowRunEventObservation(observation) };
+    const derived = deriveWorkflowRunEventObservation(observation);
+    return {
+      supported: true,
+      ...derived,
+      initial: projectRunPendingApprovals(derived.initial),
+    };
   }
 
   getBackend(): WorkflowBackend {

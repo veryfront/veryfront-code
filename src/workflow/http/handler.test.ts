@@ -372,7 +372,10 @@ describe("createWorkflowHandler", () => {
       workflow({
         id: "needs-approval",
         steps: [
-          waitForApproval("sign-off", { message: "ok?" }),
+          waitForApproval("sign-off", {
+            message: "ok?",
+            responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
+          }),
           step("after", { tool: passthroughTool("after") }),
         ],
       }),
@@ -389,8 +392,11 @@ describe("createWorkflowHandler", () => {
     // useWorkflow surfaces approvals off the run body, so the run has to carry
     // them, not just the approval manager.
     const runResponse = await handlers.GET(get(`/api/workflows/runs/${runId}`));
-    const run = await runResponse.json() as { pendingApprovals?: Array<{ id: string }> };
+    const run = await runResponse.json() as {
+      pendingApprovals?: Array<{ id: string; responseSchemaId?: string }>;
+    };
     expect(run.pendingApprovals?.length).toBe(1);
+    expect("responseSchemaId" in run.pendingApprovals![0]!).toBe(false);
     const approvalId = run.pendingApprovals?.[0]?.id;
     expect(typeof approvalId).toBe("string");
 
@@ -398,11 +404,14 @@ describe("createWorkflowHandler", () => {
       get(`/api/workflows/runs/${runId}/approvals/${approvalId}`),
     );
     expect(fetched.status).toBe(200);
+    const fetchedApproval = await fetched.json() as { responseSchemaId?: string };
+    expect("responseSchemaId" in fetchedApproval).toBe(false);
 
     const decided = await handlers.POST(
       post(`/api/workflows/runs/${runId}/approvals/${approvalId}`, {
         approved: true,
         approver: "tester",
+        data: { confirmed: true },
       }),
     );
     expect(decided.status).toBe(200);
