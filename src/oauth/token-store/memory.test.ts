@@ -157,22 +157,31 @@ it("MemoryTokenStore warns once when persisting tokens in production (#1989)", a
 });
 
 it("MemoryTokenStore stays silent outside production", async () => {
-  const originalWarn = console.warn;
-  const warnings: string[] = [];
-  console.warn = (...args: unknown[]) => {
-    warnings.push(args.map(String).join(" "));
-  };
-  try {
-    await new MemoryTokenStore().setTokens("svc", "alice", tokens("a-token"));
+  const script = `
+    const warnings = [];
+    console.warn = (...args) => warnings.push(args.map(String).join(" "));
+    const { MemoryTokenStore } = await import("./src/oauth/token-store/memory.ts");
+    await new MemoryTokenStore().setTokens("svc", "alice", { accessToken: "a-token" });
+    const matched = warnings.filter((warning) => warning.includes("MemoryTokenStore"));
+    console.log(JSON.stringify({ matched: matched.length }));
+  `;
+  const output = await new Deno.Command(Deno.execPath(), {
+    args: ["eval", script],
+    clearEnv: true,
+    cwd: new URL("../../../", import.meta.url).pathname,
+    env: { NODE_ENV: "development" },
+  }).output();
 
-    assertEquals(
-      warnings.filter((w) => w.includes("MemoryTokenStore")).length,
-      0,
-      "non-production token writes must not warn",
-    );
-  } finally {
-    console.warn = originalWarn;
-  }
+  assertEquals(
+    output.success,
+    true,
+    new TextDecoder().decode(output.stderr),
+  );
+  assertEquals(
+    JSON.parse(new TextDecoder().decode(output.stdout)).matched,
+    0,
+    "non-production token writes must not warn",
+  );
 });
 
 it("MemoryTokenStore encodes tuple keys without delimiter collisions", async () => {
