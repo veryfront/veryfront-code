@@ -1562,6 +1562,28 @@ describe("automated review gate", () => {
       undefined,
     );
 
+    const newerVisibleRangeAfterTaskCheckboxText = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "- [ ] ~~~text",
+        `      ${MALFORMED_CURRENT_RANGE}`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerVisibleRangeAfterTaskCheckboxText],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+
     for (
       const visibleRangeAfterCommentLookalike of [
         ["\\<!--", MALFORMED_CURRENT_RANGE, "-->"],

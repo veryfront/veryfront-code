@@ -21,13 +21,11 @@ const CODERABBIT_REVIEW_RANGE_WRAPPED_SEPARATOR_PATTERN =
   /^[ \t]*and[ \t]+([0-9a-f]{40})(?![0-9a-f])/i;
 const FULL_COMMIT_TOKEN_PATTERN = /(^|[^0-9a-f])([0-9a-f]{40})(?![0-9a-f])/gi;
 const MARKDOWN_FENCE_LINE_PATTERN =
-  /^( {0,3}(?:(?:>[ \t]*)|(?:(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*)(`{3,}|~{3,})/;
+  /^( {0,3}(?:(?:>[ \t]*)|(?:(?:[-*+]|\d{1,9}[.)])[ \t]+))*)(`{3,}|~{3,})/;
 const MARKDOWN_HTML_COMMENT_BLOCK_START_PATTERN =
-  /^( {0,3}(?:(?:>[ \t]*)|(?:(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*)<!--/;
-const MARKDOWN_LIST_PREFIX_PATTERN =
-  /([-*+]|\d{1,9}[.)])([ \t]+)(?:\[[ xX]\][ \t]+)?/g;
-const MARKDOWN_PARAGRAPH_LIST_PREFIX_PATTERN =
-  /^(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[ xX]\][ \t]+)?/;
+  /^( {0,3}(?:(?:>[ \t]*)|(?:(?:[-*+]|\d{1,9}[.)])[ \t]+))*)<!--/;
+const MARKDOWN_LIST_PREFIX_PATTERN = /([-*+]|\d{1,9}[.)])([ \t]+)/g;
+const MARKDOWN_PARAGRAPH_LIST_PREFIX_PATTERN = /^(?:[-*+]|\d{1,9}[.)])[ \t]+/;
 const MARKDOWN_RAW_HTML_BLOCK_START_PATTERN =
   /^<(script|pre|style|textarea)(?:[ \t]|>|$)/i;
 const MARKDOWN_PARAGRAPH_INTERRUPTING_HTML_TAG_PATTERN =
