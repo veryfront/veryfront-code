@@ -137,6 +137,29 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
     assertNotEquals(snapshotA, otherOrigin);
   });
 
+  it("frames opaque project ids separately from colon-delimited specifiers", () => {
+    const shared = {
+      reactVersion: "19.1.1",
+      registryBaseUrl: "https://registry.example.com",
+    };
+    const colonInSpecifier = buildCrossProjectImportCacheKey({
+      ...shared,
+      specifier: "@acme/component:tenant",
+      projectId: "project:01J2XYZ",
+    });
+    const colonInProjectId = buildCrossProjectImportCacheKey({
+      ...shared,
+      specifier: "@acme/component",
+      projectId: "tenant:project:01J2XYZ",
+    });
+
+    assertNotEquals(
+      colonInSpecifier,
+      colonInProjectId,
+      "specifier and opaque project-id delimiters must not collapse to the same cache key",
+    );
+  });
+
   it("fetches, transforms, writes temp file, and caches transformed cross-project import", async () => {
     globalCrossProjectCache.clear();
 

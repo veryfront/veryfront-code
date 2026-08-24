@@ -15,6 +15,7 @@
 
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { isKeyForProject, registerMapCache } from "#veryfront/cache/keys.ts";
+import { decodeCacheKeySegment } from "#veryfront/cache/keys/segment-codec.ts";
 import type { CacheStatsSource } from "#veryfront/cache/registry.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { rendererLogger, throwIfAborted } from "#veryfront/utils";
@@ -349,9 +350,9 @@ export function clearSSRModuleCache(): void {
 }
 
 /**
- * Cross-project cache keys put the raw import specifier before the owning
- * project id, so the specifier may contain arbitrary `:` characters. Parse
- * from the stable `:registry:` suffix instead of assuming fixed segments.
+ * Cross-project cache keys put the raw import specifier before a framed owner.
+ * Parse backward from the stable `:registry:` suffix so arbitrary delimiters
+ * in the specifier or opaque project id cannot change cache ownership.
  */
 function parseCrossProjectCacheKeyOwner(
   key: string,
@@ -360,6 +361,19 @@ function parseCrossProjectCacheKeyOwner(
   const markerIndex = key.lastIndexOf(registryMarker);
   if (markerIndex < 0) return { isCrossProjectKey: false };
 
+  const ownerMarker = ":owner:";
+  const ownerMarkerIndex = key.lastIndexOf(ownerMarker, markerIndex);
+  if (ownerMarkerIndex >= 0) {
+    const encodedOwner = key.slice(ownerMarkerIndex + ownerMarker.length, markerIndex);
+    if (!encodedOwner.includes(":")) {
+      return {
+        isCrossProjectKey: true,
+        projectId: decodeCacheKeySegment(encodedOwner) ?? undefined,
+      };
+    }
+  }
+
+  // Compatibility for cache entries built before owner segments were framed.
   const baseKey = key.slice(0, markerIndex);
   const reactVersionSeparator = baseKey.lastIndexOf(":");
   if (reactVersionSeparator < 0) return { isCrossProjectKey: true };

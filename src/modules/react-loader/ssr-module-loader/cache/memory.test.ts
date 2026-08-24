@@ -307,6 +307,26 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
         tempPath: "/tmp/foreign-specifier.mjs",
         contentHash: "foreign-specifier",
       });
+      const opaqueProjectIdKey = buildCrossProjectImportCacheKey({
+        projectId: "project:01J2XYZ",
+        specifier: "@acme/component",
+        reactVersion: "1.0.0",
+        registryBaseUrl: "https://registry.example.com",
+      });
+      globalCrossProjectCache.set(opaqueProjectIdKey, {
+        tempPath: "/tmp/opaque-project-id.mjs",
+        contentHash: "opaque-project-id",
+      });
+      const opaqueSuffixSharingProjectKey = buildCrossProjectImportCacheKey({
+        projectId: "tenant:project:01J2XYZ",
+        specifier: "@acme/component",
+        reactVersion: "1.0.0",
+        registryBaseUrl: "https://registry.example.com",
+      });
+      globalCrossProjectCache.set(opaqueSuffixSharingProjectKey, {
+        tempPath: "/tmp/opaque-suffix-sharing-project.mjs",
+        contentHash: "opaque-suffix-sharing-project",
+      });
       globalCrossProjectCache.set("prefix:project-2:mod", {
         tempPath: "/tmp/y.mjs",
         contentHash: "y",
@@ -340,6 +360,19 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
         globalCrossProjectCache.has("prefix:project-2:mod"),
         true,
         "another project's cross-project entries must survive",
+      );
+
+      clearSSRModuleCacheForProject("project:01J2XYZ");
+
+      assertEquals(
+        globalCrossProjectCache.has(opaqueProjectIdKey),
+        false,
+        "opaque project ids containing colons must still own their cache entries",
+      );
+      assertEquals(
+        globalCrossProjectCache.has(opaqueSuffixSharingProjectKey),
+        true,
+        "a foreign opaque project id sharing the cleared suffix must survive",
       );
 
       globalModuleCache.clear();
