@@ -24,9 +24,18 @@ describe("security/path-validation/rules", () => {
       assertEquals(code, PathValidationError.PATH_TOO_LONG);
     });
 
-    it("should reject paths with forbidden patterns", () => {
+    it("treats dotfiles as ordinary path segments (no forbidden-pattern rule)", () => {
       const result = validatePathBasics("/project/.env");
-      assertEquals(typeof result.valid, "boolean");
+      assertEquals(
+        result.valid,
+        true,
+        "validatePathBasics applies no forbidden-pattern rule; dotfile policy belongs to the allowlist layer",
+      );
+      assertEquals(
+        result.code,
+        undefined,
+        "no FORBIDDEN_PATTERN code is produced anywhere in src",
+      );
     });
 
     it("should reject excessive traversal depth", () => {

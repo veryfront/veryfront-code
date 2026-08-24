@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { DataFetcher } from "./data-fetcher.ts";
 import type { DataContext, DataResult, PageWithData } from "./types.ts";
 
@@ -17,6 +18,38 @@ function createContext(overrides: Partial<DataContext> = {}): DataContext {
 function getProps<T>(result: DataResult): T {
   assertExists(result.props);
   return result.props as T;
+}
+
+/** Identity a production render caches under. */
+const CACHE_KEY_CONTEXT = {
+  projectId: "p",
+  mode: "production",
+  versionId: "r",
+} as const;
+
+function createPostContext(id: number): DataContext {
+  return createContext({
+    request: new Request(`http://localhost/posts/${id}`),
+    url: new URL(`http://localhost/posts/${id}`),
+  });
+}
+
+/** A static page that reports how many times its loader actually ran. */
+function createCountingStaticPage(): {
+  calls: () => number;
+  pageModule: PageWithData<{ n: number }>;
+} {
+  let calls = 0;
+  return {
+    calls: () => calls,
+    pageModule: {
+      default: () => null,
+      getStaticData: () => {
+        calls += 1;
+        return { props: { n: calls }, revalidate: 3600 };
+      },
+    },
+  };
 }
 
 describe("DataFetcher", () => {
@@ -225,27 +258,60 @@ describe("DataFetcher", () => {
 
   describe("clearCache", () => {
     it("should clear all cache without pattern", async () => {
-      const fetcher = new DataFetcher();
-      const pageModule: PageWithData = {
-        default: () => null,
-        getStaticData: () => ({
-          props: { cached: true },
-          revalidate: 3600,
-        }),
-      };
+      await runWithCacheKeyContext(CACHE_KEY_CONTEXT, async () => {
+        const fetcher = new DataFetcher();
+        const counter = createCountingStaticPage();
+        const context = createPostContext(1);
 
-      await fetcher.fetchData(pageModule, createContext(), "production");
-      fetcher.clearCache();
+        await fetcher.fetchData(counter.pageModule, context, "production");
+        await fetcher.fetchData(counter.pageModule, context, "production");
+        assertEquals(counter.calls(), 1, "a second production fetch must be served from cache");
+
+        fetcher.clearCache();
+
+        await fetcher.fetchData(counter.pageModule, context, "production");
+        assertEquals(counter.calls(), 2, "clearCache() must evict the cached static-data entry");
+      });
     });
 
-    it("should clear cache matching pattern", () => {
-      const fetcher = new DataFetcher();
-      fetcher.clearCache("/blog");
+    it("should clear cache matching pattern", async () => {
+      await runWithCacheKeyContext(CACHE_KEY_CONTEXT, async () => {
+        const fetcher = new DataFetcher();
+        const counter = createCountingStaticPage();
+
+        await fetcher.fetchData(counter.pageModule, createPostContext(1), "production");
+        await fetcher.fetchData(counter.pageModule, createPostContext(2), "production");
+        assertEquals(counter.calls(), 2, "each page must be fetched once before the eviction");
+
+        fetcher.clearCache("/posts/1");
+
+        await fetcher.fetchData(counter.pageModule, createPostContext(1), "production");
+        await fetcher.fetchData(counter.pageModule, createPostContext(2), "production");
+        assertEquals(
+          counter.calls(),
+          3,
+          "clearCache(pattern) must evict only the matching page",
+        );
+      });
     });
 
-    it("should not throw with empty pattern", () => {
-      const fetcher = new DataFetcher();
-      fetcher.clearCache("");
+    it("should clear every entry for an empty pattern", async () => {
+      await runWithCacheKeyContext(CACHE_KEY_CONTEXT, async () => {
+        const fetcher = new DataFetcher();
+        const counter = createCountingStaticPage();
+
+        await fetcher.fetchData(counter.pageModule, createPostContext(1), "production");
+        await fetcher.fetchData(counter.pageModule, createPostContext(2), "production");
+        assertEquals(counter.calls(), 2, "each page must be fetched once before the eviction");
+
+        // Every cache key contains the empty string, so an empty pattern is a
+        // full clear rather than a no-op.
+        fetcher.clearCache("");
+
+        await fetcher.fetchData(counter.pageModule, createPostContext(1), "production");
+        await fetcher.fetchData(counter.pageModule, createPostContext(2), "production");
+        assertEquals(counter.calls(), 4, "an empty pattern must evict every cached entry");
+      });
     });
   });
 

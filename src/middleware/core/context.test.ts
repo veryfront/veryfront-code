@@ -85,6 +85,11 @@ describe("MiddlewareContext", () => {
       const response = ctx.text("Created", { status: 201 });
 
       assertEquals(response.status, 201);
+      assertEquals(
+        response.headers.get("content-type"),
+        "text/plain; charset=utf-8",
+        "content-type must survive a custom init",
+      );
     });
   });
 
@@ -103,6 +108,27 @@ describe("MiddlewareContext", () => {
       const response = ctx.html("<h1>Error</h1>", { status: 500 });
 
       assertEquals(response.status, 500);
+      assertEquals(
+        response.headers.get("content-type"),
+        "text/html; charset=utf-8",
+        "content-type must survive a custom init",
+      );
+    });
+
+    it("should merge caller headers with the default content-type", () => {
+      const ctx = createCtx();
+      const response = ctx.html("<h1>Hi</h1>", { headers: { "x-trace": "1" } });
+
+      assertEquals(
+        response.headers.get("x-trace"),
+        "1",
+        "caller headers must be preserved",
+      );
+      assertEquals(
+        response.headers.get("content-type"),
+        "text/html; charset=utf-8",
+        "the default content-type must merge with caller headers",
+      );
     });
   });
 

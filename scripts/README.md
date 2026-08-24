@@ -61,6 +61,7 @@ immutable artifact.
 | `ban-internal-root-imports.ts`   | `lint:ban-internal-root-imports` | Prevents root-level imports in internal modules                                            |
 | `check-module-boundaries.ts`     | `lint:module-boundaries`         | Ratchets broad imports in sensitive layers and dependency edges that participate in cycles |
 | `check-unawaited-promises.ts`    | `lint:check-awaits`              | Detects unawaited async cleanup calls                                                      |
+| `ratchet.ts`                     | (library)                        | Shared engine behind the baseline ratchets: walk, predicates, baseline compare, CLI        |
 | `find-duplicate-functions.ts`    | `dupes`                          | Finds exact and near-duplicate functions, plus semantic AST-based matches via `--semantic` |
 | `lint-platform-agnostic.ts`      | `lint:platform`                  | Checks platform-agnostic code boundaries                                                   |
 | `validate-architecture.ts`       | `validate:architecture`          | Validates module dependency boundaries                                                     |

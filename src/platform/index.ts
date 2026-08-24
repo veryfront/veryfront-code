@@ -37,6 +37,19 @@ export {
   writeStdoutAsync,
 } from "./compat/process.ts";
 
+// Compat: host runtime seam (live in production, in-memory in tests)
+export {
+  createInMemoryHostRuntime,
+  HostExit,
+  type HostRuntime,
+  type HostRuntimeEnv,
+  type HostSignal,
+  type InMemoryHostRuntime,
+  type InMemoryHostRuntimeInit,
+  isHostExit,
+  liveHostRuntime,
+} from "./compat/process/host-runtime.ts";
+
 // Compat: filesystem
 export {
   createFileSystem,

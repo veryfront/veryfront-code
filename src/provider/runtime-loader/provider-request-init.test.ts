@@ -19,6 +19,19 @@ describe("provider/runtime-loader/provider-request-init", () => {
     assertEquals(headers.get("anthropic-version"), "2023-06-01");
   });
 
+  it("lets a caller-supplied Anthropic API version override the built-in default", () => {
+    const headers = createAnthropicRequestHeaders({
+      apiKey: "test-anthropic-key",
+      extraHeaders: { "anthropic-version": "2026-02-01" },
+    });
+
+    assertEquals(
+      headers.get("anthropic-version"),
+      "2026-02-01",
+      "a caller-supplied anthropic-version must win over the built-in default",
+    );
+  });
+
   it("merges the fine-grained tool streaming beta with caller-supplied Anthropic betas", () => {
     const headers = createAnthropicRequestHeaders({
       apiKey: "test-anthropic-key",
@@ -104,6 +117,41 @@ describe("provider/runtime-loader/provider-request-init", () => {
 
     assertEquals(headers.get("x-api-key"), "active-api-key");
     assertEquals(headers.get("authorization"), null);
+  });
+
+  it("resolved credentials outrank caller-supplied auth headers", () => {
+    const openai = new Headers(
+      createOpenAIRequestInit({
+        apiKey: "real",
+        body: "{}",
+        extraHeaders: { authorization: "Bearer stale", "content-type": "text/plain" },
+      }).headers,
+    );
+
+    assertEquals(
+      openai.get("authorization"),
+      "Bearer real",
+      "the resolved OpenAI key must overwrite a caller authorization header",
+    );
+    assertEquals(
+      openai.get("content-type"),
+      "application/json",
+      "content-type must be forced to application/json",
+    );
+
+    const google = new Headers(
+      createGoogleRequestInit({
+        apiKey: "real",
+        body: "{}",
+        extraHeaders: { "x-goog-api-key": "stale" },
+      }).headers,
+    );
+
+    assertEquals(
+      google.get("x-goog-api-key"),
+      "real",
+      "the resolved Google key must overwrite a caller x-goog-api-key header",
+    );
   });
 
   it("rejects malformed or oversized provider credentials before building headers", () => {

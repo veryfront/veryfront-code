@@ -66,6 +66,45 @@ describe("studio/bridge/bridge-config", () => {
     initConfig();
 
     assertEquals(getConfig().studioMode, "simple");
+    assertEquals(
+      getConfig().pagePath,
+      "page-1.mdx",
+      "an explicitly injected pagePath wins over pageId",
+    );
+  });
+
+  it("honors the injected simple mode without a query override", () => {
+    setTestWindow("");
+    setInjectedConfig({
+      projectId: "project-1",
+      pageId: "page-1",
+      studioMode: "simple",
+    });
+
+    initConfig();
+
+    assertEquals(
+      getConfig().studioMode,
+      "simple",
+      "injected studioMode simple must win with an empty query string",
+    );
+  });
+
+  it("falls back to advanced for an unrecognized injected mode", () => {
+    setTestWindow("");
+    setInjectedConfig({
+      projectId: "project-1",
+      pageId: "page-1",
+      studioMode: "SIMPLE",
+    });
+
+    initConfig();
+
+    assertEquals(
+      getConfig().studioMode,
+      "advanced",
+      "only the exact value simple selects simple mode",
+    );
   });
 
   it("normalizes injected config values and falls back pagePath to pageId", () => {

@@ -87,24 +87,30 @@ describe("rendering/layouts/utils/app-resolver", () => {
       await assertRejects(
         () => resolveAppComponentPath("/project", adapter, config),
         VeryfrontError,
+        "does not exist",
+        "a missing config.app file must be rejected by the existence check",
       );
     });
 
     it("should throw for invalid extension in config.app", async () => {
-      const adapter = createMockAdapter();
+      const adapter = createMockAdapter(new Set(["/project/app.css"]));
       const config = { app: "app.css" } as unknown as VeryfrontConfig;
       await assertRejects(
         () => resolveAppComponentPath("/project", adapter, config),
         VeryfrontError,
+        'Invalid app component path: "app.css"',
+        "an existing file with a non-component extension must be rejected by the extension check, not the existence check",
       );
     });
 
     it("should throw for config.app without extension", async () => {
-      const adapter = createMockAdapter();
+      const adapter = createMockAdapter(new Set(["/project/app"]));
       const config = { app: "app" } as unknown as VeryfrontConfig;
       await assertRejects(
         () => resolveAppComponentPath("/project", adapter, config),
         VeryfrontError,
+        'Invalid app component path: "app"',
+        "an existing extension-less file must be rejected by the extension check, not the existence check",
       );
     });
 

@@ -117,5 +117,15 @@ describe("LLMProviderRegistry", () => {
       TypeError,
       'optional method "createEmbedding"',
     );
+    assertThrows(
+      () =>
+        reg.register({
+          ...fakeProvider("bad-responses"),
+          createResponses: "not a function",
+        } as never),
+      TypeError,
+      'optional method "createResponses"',
+      "a non-function createResponses must be rejected at the registration boundary",
+    );
   });
 });

@@ -74,6 +74,29 @@ describe("validateOriginSync", () => {
     });
   });
 
+  describe("missing request origin", () => {
+    it("should deny a missing origin under a restrictive policy", () => {
+      const list = validateOriginSync(null, { origin: ["https://app.example.com"] });
+      assertEquals(
+        list.allowedOrigin,
+        null,
+        "a missing Origin must not receive a wildcard under an allowlist policy",
+      );
+      assertEquals(
+        list.allowCredentials,
+        false,
+        "a denied result must not carry credentials",
+      );
+
+      const single = validateOriginSync(null, { origin: "https://app.example.com" });
+      assertEquals(
+        single.allowedOrigin,
+        null,
+        "a missing Origin must not receive a wildcard under a string-origin policy",
+      );
+    });
+  });
+
   describe("string origin", () => {
     it("should allow matching origin", () => {
       const result = validateOriginSync("https://example.com", {

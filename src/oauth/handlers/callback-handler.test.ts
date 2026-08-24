@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals, assertThrows } from "#std/assert";
+import { it } from "#veryfront/testing/bdd.ts";
+import { assertEquals, assertNotEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { FakeTime } from "#std/testing/time";
 import { createTestEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
@@ -83,7 +84,7 @@ function createConsumedStateStore(state: StoredOAuthState): TokenStore {
   };
 }
 
-Deno.test("callback-handler rejects non-GET requests before consuming state", async () => {
+it("callback-handler rejects non-GET requests before consuming state", async () => {
   let consumeCalls = 0;
   const tokenStore = new MemoryTokenStore();
   tokenStore.consumeState = () => {
@@ -106,7 +107,7 @@ Deno.test("callback-handler rejects non-GET requests before consuming state", as
   assertEquals(consumeCalls, 0);
 });
 
-Deno.test("callback-handler: rejects request when state parameter is missing", async () => {
+it("callback-handler: rejects request when state parameter is missing", async () => {
   const tokenStore = new MemoryTokenStore();
   const handler = createOAuthCallbackHandler(TEST_CONFIG, {
     tokenStore,
@@ -121,7 +122,7 @@ Deno.test("callback-handler: rejects request when state parameter is missing", a
   assertEquals(location.searchParams.get("error"), "invalid_state");
 });
 
-Deno.test("callback-handler: rejects request when state is unknown (forged)", async () => {
+it("callback-handler: rejects request when state is unknown (forged)", async () => {
   const tokenStore = new MemoryTokenStore();
   const handler = createOAuthCallbackHandler(TEST_CONFIG, {
     tokenStore,
@@ -138,7 +139,7 @@ Deno.test("callback-handler: rejects request when state is unknown (forged)", as
   assertEquals(location.searchParams.get("error"), "invalid_state");
 });
 
-Deno.test("callback-handler: rejects request when state serviceId does not match", async () => {
+it("callback-handler: rejects request when state serviceId does not match", async () => {
   const tokenStore = new MemoryTokenStore();
 
   await tokenStore.setState("valid-state", {
@@ -165,7 +166,7 @@ Deno.test("callback-handler: rejects request when state serviceId does not match
   assertEquals(location.searchParams.get("error"), "invalid_state");
 });
 
-Deno.test("callback-handler: rejects request when state has expired", async () => {
+it("callback-handler: rejects request when state has expired", async () => {
   const tokenStore = createConsumedStateStore({
     userId: "alice",
     serviceId: TEST_CONFIG.serviceId,
@@ -190,7 +191,7 @@ Deno.test("callback-handler: rejects request when state has expired", async () =
   assertEquals(location.searchParams.get("error"), "invalid_state");
 });
 
-Deno.test("callback-handler: rejects state that expired inside the token store", async () => {
+it("callback-handler: rejects state that expired inside the token store", async () => {
   using time = new FakeTime();
   const tokenStore = new MemoryTokenStore();
   await tokenStore.setState("expired-state", {
@@ -219,7 +220,7 @@ Deno.test("callback-handler: rejects state that expired inside the token store",
   assertEquals(location.searchParams.get("error"), "invalid_state");
 });
 
-Deno.test("callback-handler: rejects stored state without a valid PKCE verifier", async () => {
+it("callback-handler: rejects stored state without a valid PKCE verifier", async () => {
   const tokenStore = createConsumedStateStore({
     userId: "alice",
     serviceId: TEST_CONFIG.serviceId,
@@ -243,7 +244,7 @@ Deno.test("callback-handler: rejects stored state without a valid PKCE verifier"
   );
 });
 
-Deno.test("callback-handler rejects legacy state rows without transaction bindings", async () => {
+it("callback-handler rejects legacy state rows without transaction bindings", async () => {
   const legacyState: StoredOAuthState = {
     userId: "alice",
     serviceId: TEST_CONFIG.serviceId,
@@ -267,7 +268,7 @@ Deno.test("callback-handler rejects legacy state rows without transaction bindin
   );
 });
 
-Deno.test("callback-handler accepts verifier-free state for a provider without PKCE", async () => {
+it("callback-handler accepts verifier-free state for a provider without PKCE", async () => {
   const config = { ...TEST_CONFIG, pkceMode: "unsupported" as const };
   const tokenStore = createConsumedStateStore({
     userId: "alice",
@@ -296,7 +297,7 @@ Deno.test("callback-handler accepts verifier-free state for a provider without P
   );
 });
 
-Deno.test("callback-handler: consumes state once (double-use rejected)", async () => {
+it("callback-handler: consumes state once (double-use rejected)", async () => {
   const tokenStore = new MemoryTokenStore();
 
   await tokenStore.setState("valid-state", {
@@ -329,7 +330,7 @@ Deno.test("callback-handler: consumes state once (double-use rejected)", async (
   assertEquals(location.searchParams.get("error"), "invalid_state");
 });
 
-Deno.test("callback-handler: rejects the unsafe state-validation bypass", () => {
+it("callback-handler: rejects the unsafe state-validation bypass", () => {
   assertThrows(
     () =>
       createOAuthCallbackHandler(TEST_CONFIG, {
@@ -344,7 +345,7 @@ Deno.test("callback-handler: rejects the unsafe state-validation bypass", () => 
   );
 });
 
-Deno.test("callback-handler: calls onError with invalid_state when state is missing", async () => {
+it("callback-handler: calls onError with invalid_state when state is missing", async () => {
   const tokenStore = new MemoryTokenStore();
   let errorServiceId = "";
   let errorCode = "";
@@ -365,7 +366,7 @@ Deno.test("callback-handler: calls onError with invalid_state when state is miss
   assertEquals(errorCode, "invalid_state");
 });
 
-Deno.test("callback-handler: proceeds with valid state matching serviceId", async () => {
+it("callback-handler: proceeds with valid state matching serviceId", async () => {
   const tokenStore = new MemoryTokenStore();
 
   await tokenStore.setState("valid-state-abc", {
@@ -400,7 +401,7 @@ Deno.test("callback-handler: proceeds with valid state matching serviceId", asyn
   }
 });
 
-Deno.test("callback-handler: stores tokens keyed by (serviceId, userId) — bob's slot untouched", async () => {
+it("callback-handler: stores tokens keyed by (serviceId, userId) — bob's slot untouched", async () => {
   const tokenStore = new MemoryTokenStore();
   // Bob already connected
   await tokenStore.setTokens(TEST_CONFIG.serviceId, "bob", {
@@ -417,39 +418,63 @@ Deno.test("callback-handler: stores tokens keyed by (serviceId, userId) — bob'
     createdAt: Date.now(),
   });
 
-  await withTokenExchange(
-    () =>
-      Response.json({
-        access_token: "alice-access-token",
-        refresh_token: "alice-refresh-token",
-        expires_in: 3600,
-        token_type: "Bearer",
-        scope: "read",
-      }),
-    async () => {
-      const handler = createOAuthCallbackHandler(TEST_CONFIG, {
-        tokenStore,
-        baseUrl: "http://localhost:3000",
-        envReader: (key) => ENV[key],
-      });
+  // Captured inside the mock but asserted after it resolves: a throw inside the
+  // fetch mock is swallowed by the handler and surfaces as a callback_error redirect.
+  const exchange: { url?: string; method?: string; body?: URLSearchParams } = {};
 
-      const response = await handler(
-        makeRequest({ code: "auth-code-abc", state: "alice-state" }),
-      );
-      assertEquals(response.status, 302);
+  await withMockFetch(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    exchange.url = request.url;
+    exchange.method = request.method;
+    exchange.body = new URLSearchParams(await request.text());
+    return Response.json({
+      access_token: "alice-access-token",
+      refresh_token: "alice-refresh-token",
+      expires_in: 3600,
+      token_type: "Bearer",
+      scope: "read",
+    });
+  }, async () => {
+    const handler = createOAuthCallbackHandler(TEST_CONFIG, {
+      tokenStore,
+      baseUrl: "http://localhost:3000",
+      envReader: (key) => ENV[key],
+    });
 
-      // Alice's tokens stored under her userId
-      const aliceTokens = await tokenStore.getTokens(TEST_CONFIG.serviceId, "alice");
-      assertEquals(aliceTokens?.accessToken, "alice-access-token");
+    const response = await handler(
+      makeRequest({ code: "auth-code-abc", state: "alice-state" }),
+    );
+    assertEquals(response.status, 302);
 
-      // Bob's slot untouched
-      const bobTokens = await tokenStore.getTokens(TEST_CONFIG.serviceId, "bob");
-      assertEquals(bobTokens?.accessToken, "bob-existing-token");
-    },
+    // Alice's tokens stored under her userId
+    const aliceTokens = await tokenStore.getTokens(TEST_CONFIG.serviceId, "alice");
+    assertEquals(aliceTokens?.accessToken, "alice-access-token");
+
+    // Bob's slot untouched
+    const bobTokens = await tokenStore.getTokens(TEST_CONFIG.serviceId, "bob");
+    assertEquals(bobTokens?.accessToken, "bob-existing-token");
+  });
+
+  assertEquals(exchange.url, TEST_CONFIG.tokenUrl, "the exchange must target the token URL");
+  assertEquals(exchange.method, "POST", "the exchange must be a POST");
+  assertEquals(
+    exchange.body?.get("code_verifier"),
+    CODE_VERIFIER,
+    "exchange must carry the consumed state's PKCE verifier",
+  );
+  assertEquals(
+    exchange.body?.get("code"),
+    "auth-code-abc",
+    "exchange must redeem the callback code",
+  );
+  assertEquals(
+    exchange.body?.get("redirect_uri"),
+    "http://localhost:3000/api/auth/test-provider/callback",
+    "exchange must reuse the state's redirect URI",
   );
 });
 
-Deno.test("callback-handler: validates and consumes state before handling provider errors", async () => {
+it("callback-handler: validates and consumes state before handling provider errors", async () => {
   const tokenStore = new MemoryTokenStore();
   const handler = createOAuthCallbackHandler(TEST_CONFIG, {
     tokenStore,
@@ -488,7 +513,7 @@ Deno.test("callback-handler: validates and consumes state before handling provid
   assertEquals(new URL(replay.headers.get("location")!).searchParams.get("error"), "invalid_state");
 });
 
-Deno.test("callback-handler: rejects duplicate security-sensitive query parameters", async () => {
+it("callback-handler: rejects duplicate security-sensitive query parameters", async () => {
   const tokenStore = new MemoryTokenStore();
   await tokenStore.setState("first", {
     userId: "alice",
@@ -517,7 +542,7 @@ Deno.test("callback-handler: rejects duplicate security-sensitive query paramete
   assertEquals((await tokenStore.consumeState("first"))?.userId, "alice");
 });
 
-Deno.test("callback-handler: rejects oversized state before touching the store", async () => {
+it("callback-handler: rejects oversized state before touching the store", async () => {
   const tokenStore = new MemoryTokenStore();
   let consumeCalls = 0;
   tokenStore.consumeState = () => {
@@ -541,7 +566,7 @@ Deno.test("callback-handler: rejects oversized state before touching the store",
   assertEquals(consumeCalls, 0);
 });
 
-Deno.test("callback-handler: rejects oversized codes before token exchange", async () => {
+it("callback-handler: rejects oversized codes before token exchange", async () => {
   const tokenStore = new MemoryTokenStore();
   await tokenStore.setState("valid-state", {
     userId: "alice",
@@ -578,7 +603,7 @@ Deno.test("callback-handler: rejects oversized codes before token exchange", asy
   }
 });
 
-Deno.test("callback-handler: rejects a state bound to a different redirect URI", async () => {
+it("callback-handler: rejects a state bound to a different redirect URI", async () => {
   const tokenStore = new MemoryTokenStore();
   await tokenStore.setState("wrong-redirect", {
     userId: "alice",
@@ -614,7 +639,7 @@ Deno.test("callback-handler: rejects a state bound to a different redirect URI",
   }
 });
 
-Deno.test("callback-handler: rejects cross-origin completion redirects", () => {
+it("callback-handler: rejects cross-origin completion redirects", () => {
   assertThrows(
     () =>
       createOAuthCallbackHandler(TEST_CONFIG, {
@@ -653,7 +678,7 @@ Deno.test("callback-handler: rejects cross-origin completion redirects", () => {
   );
 });
 
-Deno.test("callback-handler: redirect responses prevent caching and referrer leakage", async () => {
+it("callback-handler: redirect responses prevent caching and referrer leakage", async () => {
   const handler = createOAuthCallbackHandler(TEST_CONFIG, {
     tokenStore: new MemoryTokenStore(),
     baseUrl: "http://localhost:3000",
@@ -665,7 +690,48 @@ Deno.test("callback-handler: redirect responses prevent caching and referrer lea
   assertEquals(response.headers.get("referrer-policy"), "no-referrer");
 });
 
-Deno.test("callback-handler: detaches persisted tokens from post-commit hooks", async () => {
+it("callback-handler: success redirects prevent caching and referrer leakage", async () => {
+  const storedState: StoredOAuthState = {
+    userId: "alice",
+    serviceId: TEST_CONFIG.serviceId,
+    codeVerifier: CODE_VERIFIER,
+    redirectUri: "http://localhost:3000/api/auth/test-provider/callback",
+    scopes: ["read"],
+    createdAt: Date.now(),
+  };
+  const tokenStore = createConsumedStateStore(storedState);
+
+  await withTokenExchange(
+    () => Response.json({ access_token: "provider-token" }),
+    async () => {
+      const handler = createOAuthCallbackHandler(TEST_CONFIG, {
+        tokenStore,
+        baseUrl: "http://localhost:3000",
+        envReader: (key) => ENV[key],
+      });
+      const response = await handler(makeRequest({ code: "code", state: "state" }));
+
+      assertEquals(response.status, 302, "a completed connection must redirect");
+      assertEquals(
+        new URL(response.headers.get("location")!).searchParams.get("connected"),
+        TEST_CONFIG.serviceId,
+        "the success redirect must report the connected service",
+      );
+      assertEquals(
+        response.headers.get("cache-control"),
+        "no-store",
+        "the success redirect must not be cached",
+      );
+      assertEquals(
+        response.headers.get("referrer-policy"),
+        "no-referrer",
+        "the success redirect must not leak the authorization code through the referrer",
+      );
+    },
+  );
+});
+
+it("callback-handler: detaches persisted tokens from post-commit hooks", async () => {
   const storedState: StoredOAuthState = {
     userId: "alice",
     serviceId: TEST_CONFIG.serviceId,
@@ -708,7 +774,7 @@ Deno.test("callback-handler: detaches persisted tokens from post-commit hooks", 
   );
 });
 
-Deno.test("callback-handler: error hook failures do not replace the OAuth response", async () => {
+it("callback-handler: error hook failures do not replace the OAuth response", async () => {
   const handler = createOAuthCallbackHandler(TEST_CONFIG, {
     tokenStore: new MemoryTokenStore(),
     baseUrl: "http://localhost:3000",

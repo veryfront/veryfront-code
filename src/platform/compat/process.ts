@@ -34,5 +34,17 @@ export {
   writeStdout,
   writeStdoutAsync,
 } from "./process/lifecycle.ts";
+export {
+  createInMemoryHostRuntime,
+  HostExit,
+  type HostRuntime,
+  type HostRuntimeEnv,
+  type HostSignal,
+  IN_MEMORY_HOST_CWD,
+  type InMemoryHostRuntime,
+  type InMemoryHostRuntimeInit,
+  isHostExit,
+  liveHostRuntime,
+} from "./process/host-runtime.ts";
 export { testHasRuntimeProcess } from "./process/runtime-process.ts";
 export { type CommandOptions, type CommandResult, runCommand } from "./process/command.ts";

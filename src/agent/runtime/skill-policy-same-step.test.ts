@@ -1,12 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { ModelRuntime } from "#veryfront/provider";
 import { defineSchema } from "#veryfront/schemas";
 import { type Tool, tool } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { agent } from "../index.ts";
 import type { AgentConfig } from "../types.ts";
+import { scriptedModel, type ScriptedTurn } from "./model-runtime.test-helpers.ts";
 import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
 
 // Asserting on message text would pin wording that no longer exists: the
@@ -16,82 +16,6 @@ import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
 // all, which catches any future blocking however it is phrased.
 
 type RuntimeMode = "generate" | "stream";
-
-type ScriptedToolCall = { id: string; name: string; input: Record<string, unknown> };
-
-type ScriptedStep =
-  | { toolCalls: ScriptedToolCall[] }
-  | { text: string };
-
-function createRuntimeStream(parts: unknown[]) {
-  return new ReadableStream<unknown>({
-    start(controller) {
-      for (const part of parts) controller.enqueue(part);
-      controller.close();
-    },
-  });
-}
-
-function stepContent(step: ScriptedStep): {
-  content: unknown[];
-  finishReason: "tool-calls" | "stop";
-} {
-  if ("text" in step) {
-    return { content: [{ type: "text", text: step.text }], finishReason: "stop" };
-  }
-  return {
-    content: step.toolCalls.map((call) => ({
-      type: "tool-call",
-      toolCallId: call.id,
-      toolName: call.name,
-      input: call.input,
-    })),
-    finishReason: "tool-calls",
-  };
-}
-
-function scriptedModel(modelId: string, steps: readonly ScriptedStep[]): ModelRuntime {
-  let index = 0;
-  const nextOutput = () => {
-    const step = steps[Math.min(index, steps.length - 1)]!;
-    index += 1;
-    return stepContent(step);
-  };
-
-  return {
-    provider: "hosted",
-    modelId,
-    // deno-lint-ignore require-await -- ModelRuntime.doGenerate is async by contract
-    async doGenerate() {
-      const output = nextOutput();
-      return {
-        ...output,
-        content: output.content.map((part) =>
-          typeof part === "object" && part !== null &&
-            (part as { type?: unknown }).type === "tool-call"
-            ? { ...part, input: JSON.stringify((part as { input: unknown }).input) }
-            : part
-        ),
-        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-      };
-    },
-    // deno-lint-ignore require-await -- ModelRuntime.doStream is async by contract
-    async doStream() {
-      const output = nextOutput();
-      return {
-        stream: createRuntimeStream([
-          ...output.content.map((part) =>
-            typeof part === "object" && part !== null &&
-              (part as { type?: unknown }).type === "text"
-              ? { type: "text-delta", text: (part as { text: string }).text }
-              : part
-          ),
-          { type: "finish", finishReason: output.finishReason },
-        ]),
-      };
-    },
-  };
-}
 
 type BatchRun = {
   /** Every surfaced tool error, joined; the transports report errors differently. */
@@ -107,7 +31,7 @@ type BatchRun = {
 async function runBatch(options: {
   scenario: string;
   mode: RuntimeMode;
-  steps: readonly ScriptedStep[];
+  steps: readonly ScriptedTurn[];
   loadSkillResult: () => Record<string, unknown>;
   probeToolIds: readonly string[];
 }): Promise<BatchRun> {
@@ -147,7 +71,7 @@ async function runBatch(options: {
         tools,
         maxSteps: 4,
         resolveModelTransport: () => ({
-          model: scriptedModel(`hosted/same-step-${suffix}`, steps),
+          model: scriptedModel(steps, { modelId: `hosted/same-step-${suffix}` }),
         }),
         __vfToolLoadingMode: "eager",
       } as AgentConfig & RuntimeToolFilterConfig,

@@ -16,12 +16,12 @@ import {
 import { snapshotBoundedJsonValue } from "./json-value.ts";
 import { MAX_PATH_LENGTH_CHARS } from "../utils/constants/index.ts";
 
-function assertParseSuccess(result: { success: boolean }): void {
-  assertEquals(result.success, true);
+function assertParseSuccess(result: { success: boolean }, message?: string): void {
+  assertEquals(result.success, true, message);
 }
 
-function assertParseFailure(result: { success: boolean }): void {
-  assertEquals(result.success, false);
+function assertParseFailure(result: { success: boolean }, message?: string): void {
+  assertEquals(result.success, false, message);
 }
 
 describe("primitive schemas", () => {
@@ -226,8 +226,73 @@ describe("primitive schemas", () => {
       assertParseFailure(getJsonValueSchema().safeParse(value));
     });
 
+    it("accepts values nested to exactly the validation limit", () => {
+      let value: unknown = null;
+      for (let depth = 0; depth < 128; depth++) value = [value];
+
+      assertParseSuccess(
+        getJsonValueSchema().safeParse(value),
+        "a value nested to exactly the documented depth limit must be accepted",
+      );
+    });
+
     it("rejects oversized strings", () => {
       assertParseFailure(getJsonValueSchema().safeParse("x".repeat(1_048_577)));
+      assertParseSuccess(
+        getJsonValueSchema().safeParse("x".repeat(1_048_576)),
+        "a string at exactly the documented string-byte limit must be accepted",
+      );
+    });
+
+    it("bounds the node count of a payload", () => {
+      // The container itself counts as one node, so an array of N elements
+      // walks N + 1 nodes against the 100_000-node limit.
+      assertEquals(
+        snapshotBoundedJsonValue(new Array(99_999).fill(0)).success,
+        true,
+        "an array at exactly the documented node limit must be accepted",
+      );
+      assertEquals(
+        snapshotBoundedJsonValue(new Array(100_000).fill(0)).success,
+        false,
+        "an array above the documented node limit must be rejected",
+      );
+      assertParseFailure(
+        getJsonValueSchema().safeParse(new Array(100_000).fill(0)),
+        "an oversized node count must fail validation rather than throw",
+      );
+    });
+
+    it("bounds the serialized size of a payload", () => {
+      const megabyte = "a".repeat(1024 * 1024);
+
+      assertEquals(
+        snapshotBoundedJsonValue([megabyte, megabyte, megabyte]).success,
+        true,
+        "a payload under the documented serialized-byte limit must be accepted",
+      );
+      assertEquals(
+        snapshotBoundedJsonValue([megabyte, megabyte, megabyte, megabyte, megabyte])
+          .success,
+        false,
+        "a payload above the documented serialized-byte limit must be rejected",
+      );
+    });
+
+    it("bounds the byte length of an object key", () => {
+      const maximumKey = "k".repeat(16 * 1024);
+      const oversizedKey = `${maximumKey}k`;
+
+      assertEquals(
+        snapshotBoundedJsonValue({ [maximumKey]: 1 }).success,
+        true,
+        "a key at exactly the documented key-byte limit must be accepted",
+      );
+      assertEquals(
+        snapshotBoundedJsonValue({ [oversizedKey]: 1 }),
+        { success: false, path: [oversizedKey] },
+        "a key above the documented key-byte limit must be rejected at that key",
+      );
     });
 
     it("rejects accessors without invoking them", () => {

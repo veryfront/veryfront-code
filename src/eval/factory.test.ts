@@ -10,6 +10,7 @@ describe("eval/factory", () => {
     const definition = evalAgent({
       id: "eval:deep-research",
       name: "Deep research eval",
+      description: "Regression coverage for answer quality.",
       target: "agent:researcher",
       dataset: datasets.inline([
         {
@@ -30,6 +31,11 @@ describe("eval/factory", () => {
     assertEquals(definition.targetKind, "agent");
     assertEquals(definition.id, "eval:deep-research");
     assertEquals(definition.name, "Deep research eval");
+    assertEquals(
+      definition.description,
+      "Regression coverage for answer quality.",
+      "description survives normalization",
+    );
     assertEquals(definition.target, "agent:researcher");
     assertEquals(definition.repetitions, 2);
     assertEquals(definition.tags, ["quality", "research"]);
@@ -45,6 +51,18 @@ describe("eval/factory", () => {
         metadata: { category: "geo" },
       },
     ]);
+
+    assertThrows(
+      () =>
+        evalAgent({
+          id: "eval:blank-description",
+          target: "agent:researcher",
+          dataset: datasets.inline([{ id: "q1", input: "hello" }]),
+          description: "   ",
+        }),
+      Error,
+      "Eval description must be a non-empty string",
+    );
   });
 
   it("creates a first-class tool eval definition", async () => {
@@ -71,6 +89,11 @@ describe("eval/factory", () => {
     assertEquals(definition.targetKind, "tool");
     assertEquals(definition.id, "eval:lookup-tool");
     assertEquals(definition.name, "Lookup tool eval");
+    assertEquals(
+      Object.hasOwn(definition, "description"),
+      false,
+      "description key is absent when not supplied",
+    );
     assertEquals(definition.target, "tool:lookup_order");
     assertEquals(definition.repetitions, 2);
     assertEquals(definition.tags, ["tool"]);

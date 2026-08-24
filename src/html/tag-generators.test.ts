@@ -37,6 +37,39 @@ describe("tag-generators", () => {
     assertEquals(output.includes("spoofed"), false);
   });
 
+  it("does not let structured metadata smuggle inline event handlers into the head", () => {
+    const handlerAttributes = {
+      onload: "alert(1)",
+      onClick: "alert(2)",
+      ONERROR: "alert(3)",
+    };
+    const output = [
+      generateMetaTags({
+        meta: [{ name: "author", content: "A", ...handlerAttributes }],
+      } as never),
+      generateLinkTags({
+        links: [{ rel: "preload", href: "/asset", ...handlerAttributes }],
+      } as never),
+      generateScriptTags({
+        scripts: [{ src: "/asset.js", ...handlerAttributes }],
+      } as never),
+      generateStyleTags({
+        styles: [{ content: ".safe{}", ...handlerAttributes }],
+      } as never),
+    ].join("\n");
+
+    assertEquals(
+      output.includes("alert("),
+      false,
+      "inline event handler values must never reach the head",
+    );
+    assertEquals(
+      /\son[a-z]+=/i.test(output),
+      false,
+      "no on* attribute may be serialized into a head tag",
+    );
+  });
+
   it("marks every structured route head entry except charset as shell-owned", () => {
     const metas = generateMetaTags({
       description: "Description",

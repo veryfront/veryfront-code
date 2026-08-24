@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { __resetEnvLoaderForTests, loadEnv, supportsEnvFiles } from "./env-loader.ts";
+import { __resetEnvLoaderForTests, getEnvSource, loadEnv, supportsEnvFiles } from "./env-loader.ts";
 import { __resetLoggerConfigForTests, type LogEntry, serverLogger } from "./logger/index.ts";
 
 describe("env-loader", () => {
@@ -134,6 +134,48 @@ describe("env-loader", () => {
       cleanupKeys(key1, key2);
     });
 
+    it("should expand a bare $VAR reference", async () => {
+      const key1 = createKey("BAREBASE");
+      const key2 = createKey("BAREUSED");
+      await writeEnvFile(".env", `${key1}=hello\n${key2}=$${key1}/db`);
+
+      await loadEnv({ cwd: tempDir, override: true });
+      assertEquals(getEnv(key2), "hello/db", "a bare $VAR reference must expand");
+
+      cleanupKeys(key1, key2);
+    });
+
+    it("should expand a reference that resolves from the process env", async () => {
+      const outer = createKey("FROMPROCESS");
+      const key = createKey("USESPROCESS");
+      setEnv(outer, "from-process");
+      await writeEnvFile(".env", `${key}=\${${outer}}/x`);
+
+      await loadEnv({ cwd: tempDir, override: true });
+      assertEquals(
+        getEnv(key),
+        "from-process/x",
+        "a reference missing from the file must fall back to the process env",
+      );
+
+      cleanupKeys(outer, key);
+    });
+
+    it("should collapse an unresolvable reference to an empty string", async () => {
+      const key = createKey("UNRESOLVED");
+      const missing = createKey("NEVER_DEFINED");
+      await writeEnvFile(".env", `${key}=[\${${missing}}]`);
+
+      await loadEnv({ cwd: tempDir, override: true });
+      assertEquals(
+        getEnv(key),
+        "[]",
+        "an unresolvable reference must collapse to an empty string, not stay literal",
+      );
+
+      cleanupKeys(key);
+    });
+
     it("should not override existing env vars by default", async () => {
       const key = createKey("NOOVERRIDE");
       setEnv(key, "existing");
@@ -175,6 +217,35 @@ describe("env-loader", () => {
       assertEquals(getEnv(key), "from_local");
 
       cleanupKeys(key);
+    });
+
+    it("should rank .env.local above .env.{NODE_ENV} above .env", async () => {
+      const previousNodeEnv = getEnv("NODE_ENV");
+      const key = createKey("ENVSPECIFIC");
+
+      try {
+        setEnv("NODE_ENV", "production");
+        await writeEnvFile(".env", `${key}=base`);
+        await writeEnvFile(".env.production", `${key}=env-specific`);
+        await writeEnvFile(".env.local", `${key}=local`);
+
+        await loadEnv({ cwd: tempDir, override: true });
+        assertEquals(getEnv(key), "local", ".env.local outranks .env.{NODE_ENV}");
+
+        __resetEnvLoaderForTests();
+        await Deno.remove(`${tempDir}/.env.local`);
+
+        await loadEnv({ cwd: tempDir, override: true });
+        assertEquals(
+          getEnv(key),
+          "env-specific",
+          ".env.{NODE_ENV} is loaded and outranks .env",
+        );
+      } finally {
+        cleanupKeys(key);
+        if (previousNodeEnv === undefined) deleteEnv("NODE_ENV");
+        else setEnv("NODE_ENV", previousNodeEnv);
+      }
     });
 
     it("should handle lines without equals sign", async () => {
@@ -313,6 +384,61 @@ describe("env-loader", () => {
         else setEnv("LOG_FORMAT", previousLogFormat);
         __resetLoggerConfigForTests();
       }
+    });
+  });
+
+  describe("getEnvSource", () => {
+    it("should attribute a value loaded from .env to that file", async () => {
+      const key = createKey("SOURCE_FILE");
+      await writeEnvFile(".env", `${key}=x`);
+
+      await loadEnv({ cwd: tempDir, override: true });
+      assertEquals(
+        getEnvSource(key),
+        { source: "env-file", file: `${tempDir}/.env` },
+        "a value loaded from .env must be attributed to the file",
+      );
+
+      cleanupKeys(key);
+    });
+
+    it("should keep the env-file attribution when the process also carries the key", async () => {
+      const key = createKey("SOURCE_BOTH");
+      setEnv(key, "from-process");
+      await writeEnvFile(".env", `${key}=from-file`);
+
+      await loadEnv({ cwd: tempDir, override: true });
+      // requiresProjectEnvInternalAuthorization() treats "process" as the
+      // trusted origin, so a project .env must never be reported as one.
+      assertEquals(
+        getEnvSource(key),
+        { source: "env-file", file: `${tempDir}/.env` },
+        "a project .env value must outrank the process env in provenance",
+      );
+
+      cleanupKeys(key);
+    });
+
+    it("should report a key present only in the process env as process", async () => {
+      const key = createKey("SOURCE_PROCESS");
+      setEnv(key, "only-process");
+
+      await loadEnv({ cwd: tempDir, override: true });
+      assertEquals(
+        getEnvSource(key),
+        { source: "process" },
+        "a key absent from every .env file comes from the process",
+      );
+
+      cleanupKeys(key);
+    });
+
+    it("should report an unknown key as unset", () => {
+      assertEquals(
+        getEnvSource(createKey("SOURCE_UNSET")),
+        { source: "unset" },
+        "a key present nowhere must be reported as unset",
+      );
     });
   });
 });

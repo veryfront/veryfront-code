@@ -244,15 +244,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/cli/commands/dev/dev.test.ts",
       "removalPr": "PR 4a",
     }),
-    entry("cli/commands/dev/handler.test.ts", ["process"], {
-      "disposition": "replaceable-fake",
-      "owner": "cli",
-      "rationale":
-        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
-      "replacement":
-        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
-      "removalPr": "PR 4a",
-    }),
     entry("cli/commands/dev/port-fallback.test.ts", [
       "filesystem-read",
       "server",
@@ -596,15 +587,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/cli/commands/schedule/handler.test.ts",
       "removalPr": "PR 4a",
     }),
-    entry("cli/commands/serve/handler.test.ts", ["process"], {
-      "disposition": "replaceable-fake",
-      "owner": "cli",
-      "rationale":
-        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
-      "replacement":
-        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
-      "removalPr": "PR 4a",
-    }),
     entry(
       "cli/commands/serve/proxy-extension-composition.test.ts",
       ["process"],
@@ -876,15 +858,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/cli/scaffold/engine.test.ts",
       "removalPr": "PR 4a",
     }),
-    entry("cli/shared/animation.test.ts", ["process"], {
-      "disposition": "replaceable-fake",
-      "owner": "cli",
-      "rationale":
-        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
-      "replacement":
-        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
-      "removalPr": "PR 4a",
-    }),
     entry("cli/shared/config.test.ts", [
       "filesystem-write",
       "process",
@@ -1007,24 +980,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
       "destination":
         "tests/integration/semantic-unit-boundary/cli/shared/runtime-auth.test.ts",
-      "removalPr": "PR 4a",
-    }),
-    entry("cli/shared/server-startup.test.ts", ["process"], {
-      "disposition": "replaceable-fake",
-      "owner": "cli",
-      "rationale":
-        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
-      "replacement":
-        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
-      "removalPr": "PR 4a",
-    }),
-    entry("cli/shared/update-check.test.ts", ["process"], {
-      "disposition": "replaceable-fake",
-      "owner": "cli",
-      "rationale":
-        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
-      "replacement":
-        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
       "removalPr": "PR 4a",
     }),
     entry("cli/skills/loader.test.ts", ["filesystem-write"], {
@@ -2719,12 +2674,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "replacement":
         "Inject an environment/runtime-state boundary instead of mutating shared global runtime objects or intrinsic constructors and prototypes.",
       "removalPr": "PR 4i",
-    }),
-    entry("src/cache/distributed-cache-init.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "config-tooling",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
     }),
     entry("src/cache/keys.test.ts", ["process"], {
       "disposition": "replaceable-fake",
@@ -5908,15 +5857,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
       "removalPr": "PR 4n",
     }),
-    entry("src/schedule/factory.test.ts", ["process"], {
-      "disposition": "replaceable-fake",
-      "owner": "core-runtime",
-      "rationale":
-        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
-      "replacement":
-        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
-      "removalPr": "PR 4n",
-    }),
     entry("src/schemas/primitives.test.ts", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "core-runtime",
@@ -6851,24 +6791,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "removalPr": "PR 4n",
     }),
     entry("src/studio/bridge/bridge-messaging.test.ts", ["process"], {
-      "disposition": "replaceable-fake",
-      "owner": "core-runtime",
-      "rationale":
-        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
-      "replacement":
-        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
-      "removalPr": "PR 4n",
-    }),
-    entry("src/task/discovery.test.ts", ["filesystem-write", "process"], {
-      "disposition": "integration-relocation",
-      "owner": "core-runtime",
-      "rationale":
-        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
-      "destination":
-        "tests/integration/semantic-unit-boundary/src/task/discovery.test.ts",
-      "removalPr": "PR 4n",
-    }),
-    entry("src/task/runner.test.ts", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "core-runtime",
       "rationale":

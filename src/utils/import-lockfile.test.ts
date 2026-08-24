@@ -2933,6 +2933,7 @@ describe("import-lockfile", () => {
 
     it("should fetch fresh content and persist the resolved entry on cache miss", async () => {
       const url = "https://cdn.com/mod.ts";
+      const finalUrl = "https://esm.sh/final/mod.ts";
       const content = "export const value = 2;";
       const mgr = createLockfileManager("/project", createMockFS());
 
@@ -2941,17 +2942,109 @@ describe("import-lockfile", () => {
         url,
         fetchFn: (input: string | URL | Request) => {
           assertEquals(String(input), url);
-          return Promise.resolve(new Response(content, { status: 200 }));
+          const res = new Response(content, { status: 200 });
+          Object.defineProperty(res, "url", { value: finalUrl });
+          return Promise.resolve(res);
         },
       });
 
       const saved = await mgr.get(url);
       assertExists(saved);
       assertEquals(result.fromCache, false);
-      assertEquals(result.resolvedUrl, url);
+      assertEquals(
+        result.resolvedUrl,
+        finalUrl,
+        "the lockfile must pin the final redirected url, not the requested one",
+      );
       assertEquals(result.content, content);
-      assertEquals(saved.resolved, url);
+      assertEquals(
+        saved.resolved,
+        finalUrl,
+        "the persisted entry must record the redirected url",
+      );
       assertEquals(saved.integrity, result.integrity);
+    });
+
+    it("refetches and re-pins when a cached body no longer matches its integrity", async () => {
+      const url = "https://cdn.com/mod.ts";
+      const mgr = createLockfileManager("/project", createMockFS());
+
+      await mgr.set(url, { resolved: url, integrity: await computeIntegrity("old") });
+
+      let calls = 0;
+      const result = await fetchWithLock({
+        lockfile: mgr,
+        url,
+        fetchFn: () => {
+          calls++;
+          return Promise.resolve(new Response("new", { status: 200 }));
+        },
+      });
+
+      assertEquals(
+        result.fromCache,
+        false,
+        "a mismatching cached body must not be served as a cache hit",
+      );
+      assertEquals(result.content, "new", "the refetched body is returned");
+      assertEquals(
+        result.integrity,
+        await computeIntegrity("new"),
+        "the returned integrity must be recomputed from the refetched body",
+      );
+      assertEquals(calls, 2, "the original url must be refetched after a mismatch");
+      assertEquals(
+        (await mgr.get(url))?.integrity,
+        await computeIntegrity("new"),
+        "the lockfile must be re-pinned",
+      );
+    });
+
+    it("fails loudly in strict mode when the pinned resolved url is dead", async () => {
+      const url = "https://cdn.com/mod.ts";
+      const resolved = "https://esm.sh/mod.ts";
+      const mgr = createLockfileManager("/project", createMockFS());
+
+      await mgr.set(url, { resolved, integrity: await computeIntegrity("x") });
+
+      await assertRejects(
+        () =>
+          fetchWithLock({
+            lockfile: mgr,
+            url,
+            strict: true,
+            fetchFn: () => Promise.resolve(new Response("", { status: 404 })),
+          }),
+        Error,
+        "Lockfile entry stale",
+      );
+    });
+
+    it("falls back to a fresh fetch when a stale pin is not strict", async () => {
+      const url = "https://cdn.com/mod.ts";
+      const resolved = "https://esm.sh/mod.ts";
+      const content = "export const value = 3;";
+      const mgr = createLockfileManager("/project", createMockFS());
+
+      await mgr.set(url, { resolved, integrity: await computeIntegrity("x") });
+
+      const requested: string[] = [];
+      const result = await fetchWithLock({
+        lockfile: mgr,
+        url,
+        fetchFn: (input: string | URL | Request) => {
+          requested.push(String(input));
+          return Promise.resolve(
+            String(input) === resolved
+              ? new Response("", { status: 404 })
+              : new Response(content, { status: 200 }),
+          );
+        },
+      });
+
+      assertEquals(result.fromCache, false, "a stale pin must fall back to a fresh fetch");
+      assertEquals(requested, [resolved, url], "the fallback fetch must target the original url");
+      assertEquals(result.content, content, "the freshly fetched body is returned");
     });
 
     it("should throw in strict mode when cached integrity mismatches", async () => {

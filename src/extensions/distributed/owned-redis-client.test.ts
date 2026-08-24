@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/index.ts";
 import { register, unregister } from "../contracts.ts";
 import { OwnedRedisClientConnection } from "./owned-redis-client.ts";
 import type {
@@ -159,7 +160,14 @@ describe("OwnedRedisClientConnection", () => {
       async () => {
         const connection = new OwnedRedisClientConnection();
         await connection.getClient();
-        await Promise.all([connection.close(), connection.close()]);
+        const first = connection.close();
+        const second = connection.close();
+        assertStrictEquals(
+          first,
+          second,
+          "concurrent close() calls must share one in-flight close promise",
+        );
+        await Promise.all([first, second]);
         await connection.close();
         assertEquals(closeCalls, 1);
       },
@@ -205,6 +213,199 @@ describe("OwnedRedisClientConnection", () => {
         assertEquals(opens, 2);
         assertEquals(firstCloseCalls, 1);
         assertEquals(await duplicate, replacementClient);
+        await connection.close();
+      },
+    );
+  });
+
+  it("closes a handle that arrives after close superseded the generation", async () => {
+    // `signal` is optional in RedisRuntimeProvider, so a provider that ignores
+    // it is contract-legal and still delivers a live socket after close won.
+    const client = createClient();
+    let closeCalls = 0;
+    let openStartedResolve: (() => void) | undefined;
+    const openStarted = new Promise<void>((resolve) => {
+      openStartedResolve = resolve;
+    });
+    let releaseOpen: (() => void) | undefined;
+    const opened = new Promise<void>((resolve) => {
+      releaseOpen = resolve;
+    });
+    await withProvider(
+      createProvider(() => {
+        openStartedResolve?.();
+        return opened.then(() => ({
+          client,
+          close() {
+            closeCalls++;
+            return Promise.resolve();
+          },
+        }));
+      }),
+      async () => {
+        const connection = new OwnedRedisClientConnection();
+        const opening = connection.getClient();
+        await openStarted;
+        const closing = connection.close();
+        releaseOpen?.();
+        await closing;
+
+        assertEquals(
+          closeCalls,
+          1,
+          "a handle delivered after the generation changed must be closed exactly once",
+        );
+        await assertRejects(() => opening, Error, "superseded");
+        await connection.close();
+        assertEquals(closeCalls, 1, "a drained handle must not be closed a second time");
+      },
+    );
+  });
+
+  it("makes a later getClient wait for the in-flight close", async () => {
+    const clients = [createClient(), createClient()];
+    let opens = 0;
+    let releaseClose: (() => void) | undefined;
+    const closeGate = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    await withProvider(
+      createProvider(() => {
+        const index = opens++;
+        return Promise.resolve({
+          client: clients[index]!,
+          close: () => (index === 0 ? closeGate : Promise.resolve()),
+        });
+      }),
+      async () => {
+        const connection = new OwnedRedisClientConnection();
+        await connection.getClient();
+        const closing = connection.close();
+        const reopened = connection.getClient();
+        for (let turn = 0; turn < 50; turn++) await Promise.resolve();
+        assertEquals(
+          opens,
+          1,
+          "getClient must not open a replacement while close is still draining",
+        );
+
+        releaseClose?.();
+        await closing;
+        await reopened;
+        assertEquals(opens, 2, "exactly one replacement handle must be opened");
+        assertEquals(
+          clients[1]!.listenerCount("error"),
+          1,
+          "getClient must resume on the second client once close settles",
+        );
+        await connection.close();
+      },
+    );
+  });
+
+  it("notifies the owner's lifecycle callbacks when the active client fails or ends", async () => {
+    const clients = [createClient(), createClient()];
+    let opens = 0;
+    const errors: unknown[] = [];
+    let ends = 0;
+    await withProvider(
+      createProvider(() =>
+        Promise.resolve({ client: clients[opens++]!, close: () => Promise.resolve() })
+      ),
+      async () => {
+        const connection = new OwnedRedisClientConnection({}, {
+          onError: (error) => errors.push(error),
+          onEnd: () => {
+            ends++;
+          },
+        });
+        await connection.getClient();
+        const socketError = new Error("socket lost");
+        clients[0]!.emit("error", socketError);
+
+        assertEquals(errors.length, 1, "onError must fire once for the active client's error");
+        assertStrictEquals(errors[0], socketError, "onError must receive the client's error");
+        assertEquals(ends, 0, "a socket error must not be reported as a clean end");
+
+        await connection.getClient();
+        clients[1]!.emit("end");
+        assertEquals(ends, 1, "onEnd must fire when the active client ends");
+        assertEquals(errors.length, 1, "a clean end must not be reported as an error");
+        await connection.close();
+      },
+    );
+  });
+
+  it("retains a handle whose close failed and reports the failure to the owner", async () => {
+    const client = createClient();
+    const closeFailure = new Error("close failed");
+    let closeCalls = 0;
+    const closeErrors: unknown[] = [];
+    await withProvider(
+      createProvider(() =>
+        Promise.resolve({
+          client,
+          close() {
+            closeCalls++;
+            return Promise.reject(closeFailure);
+          },
+        })
+      ),
+      async () => {
+        const connection = new OwnedRedisClientConnection({}, {
+          onCloseError: (error) => closeErrors.push(error),
+        });
+        await connection.getClient();
+        client.emit("error", new Error("socket lost"));
+        await waitFor(() => closeErrors.length === 1, {
+          interval: 1,
+          message: "onCloseError must receive a failed retirement close",
+        });
+        assertStrictEquals(
+          closeErrors[0],
+          closeFailure,
+          "onCloseError must receive the close rejection reason",
+        );
+        assertEquals(closeCalls, 1, "retirement must attempt the close once");
+
+        await assertRejects(
+          () => connection.close(),
+          Error,
+          "close failed",
+          "a handle whose close failed must be retried and its failure surfaced",
+        );
+        assertEquals(closeCalls, 2, "a failed close must be retried, not dropped");
+      },
+    );
+  });
+
+  it("retires the active client even when the owner's callback throws", async () => {
+    const clients = [createClient(), createClient()];
+    let opens = 0;
+    await withProvider(
+      createProvider(() =>
+        Promise.resolve({ client: clients[opens++]!, close: () => Promise.resolve() })
+      ),
+      async () => {
+        const connection = new OwnedRedisClientConnection({}, {
+          onError: () => {
+            throw new Error("diagnostics failed");
+          },
+        });
+        await connection.getClient();
+        clients[0]!.emit("error", new Error("socket lost"));
+
+        await connection.getClient();
+        assertEquals(
+          opens,
+          2,
+          "a throwing lifecycle callback must not block retirement of the failed client",
+        );
+        assertEquals(
+          clients[1]!.listenerCount("error"),
+          1,
+          "the replacement client must be wired for lifecycle events",
+        );
         await connection.close();
       },
     );

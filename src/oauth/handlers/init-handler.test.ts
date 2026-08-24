@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#std/assert";
+import { it } from "#veryfront/testing/bdd.ts";
+import { assertEquals, assertMatch, assertThrows } from "#std/assert";
 import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import {
@@ -77,7 +78,7 @@ function createFailingStateStore(message: string): TokenStore {
   };
 }
 
-Deno.test("init handler: returns 401 when getUserId is not provided (fail-closed)", async () => {
+it("init handler: returns 401 when getUserId is not provided (fail-closed)", async () => {
   // deno-lint-ignore no-explicit-any
   const handler = createOAuthInitHandler(TEST_CONFIG, {
     env: makeEnv(),
@@ -90,7 +91,7 @@ Deno.test("init handler: returns 401 when getUserId is not provided (fail-closed
   assertEquals(response.status, 401);
 });
 
-Deno.test("init handler: returns 401 when isAuthenticated returns false", async () => {
+it("init handler: returns 401 when isAuthenticated returns false", async () => {
   const store = new MemoryTokenStore();
   const handler = createOAuthInitHandler(TEST_CONFIG, {
     tokenStore: store,
@@ -104,7 +105,7 @@ Deno.test("init handler: returns 401 when isAuthenticated returns false", async 
   assertEquals(response.status, 401);
 });
 
-Deno.test("init handler: returns 401 when getUserId returns null", async () => {
+it("init handler: returns 401 when getUserId returns null", async () => {
   const store = new MemoryTokenStore();
   const handler = createOAuthInitHandler(TEST_CONFIG, {
     tokenStore: store,
@@ -117,7 +118,7 @@ Deno.test("init handler: returns 401 when getUserId returns null", async () => {
   assertEquals(response.status, 401);
 });
 
-Deno.test("init handler: returns 401 when getUserId returns empty string", async () => {
+it("init handler: returns 401 when getUserId returns empty string", async () => {
   const store = new MemoryTokenStore();
   const handler = createOAuthInitHandler(TEST_CONFIG, {
     tokenStore: store,
@@ -130,7 +131,7 @@ Deno.test("init handler: returns 401 when getUserId returns empty string", async
   assertEquals(response.status, 401);
 });
 
-Deno.test("OAuth handlers reject oversized user identifiers before store access", async () => {
+it("OAuth handlers reject oversized user identifiers before store access", async () => {
   const oversizedUserId = "u".repeat(MAX_OAUTH_USER_ID_LENGTH + 1);
   let storeOperations = 0;
   const store: TokenStore = {
@@ -172,7 +173,7 @@ Deno.test("OAuth handlers reject oversized user identifiers before store access"
   assertEquals(storeOperations, 0);
 });
 
-Deno.test("init handler: returns 503 when oauth is not configured", async () => {
+it("init handler: returns 503 when oauth is not configured", async () => {
   const handler = createOAuthInitHandler(TEST_CONFIG, {
     env: makeEnv(),
     envReader: () => undefined,
@@ -188,7 +189,7 @@ Deno.test("init handler: returns 503 when oauth is not configured", async () => 
   });
 });
 
-Deno.test("init handler: not-configured response does not leak env var names (SEC-009)", async () => {
+it("init handler: not-configured response does not leak env var names (SEC-009)", async () => {
   const handler = createOAuthInitHandler(TEST_CONFIG, {
     env: makeEnv(),
     envReader: () => undefined,
@@ -210,7 +211,7 @@ Deno.test("init handler: not-configured response does not leak env var names (SE
   assertEquals("details" in body, false);
 });
 
-Deno.test("init handler: stores state with userId and redirects to the provider", async () => {
+it("init handler: stores state with userId and redirects to the provider", async () => {
   const store = new MemoryTokenStore();
   const appUrl = "https://example.test";
   const handler = createOAuthInitHandler(TEST_CONFIG, {
@@ -234,6 +235,13 @@ Deno.test("init handler: stores state with userId and redirects to the provider"
   assertEquals(location.searchParams.get("scope"), "read");
   assertEquals(location.searchParams.get("code_challenge_method"), "S256");
 
+  const codeChallenge = location.searchParams.get("code_challenge");
+  assertMatch(
+    codeChallenge ?? "",
+    /^[A-Za-z0-9_-]{43}$/,
+    "an S256 authorization redirect must carry a 43-char base64url code_challenge",
+  );
+
   const state = location.searchParams.get("state");
   if (!state) {
     throw new Error("expected redirect state parameter to be present");
@@ -245,9 +253,28 @@ Deno.test("init handler: stores state with userId and redirects to the provider"
   assertEquals(storedState?.serviceId, "test-provider");
   assertEquals(storedState?.redirectUri, `${appUrl}/api/auth/test-provider/callback`);
   assertEquals(storedState?.scopes, ["read"]);
+
+  assertMatch(
+    storedState?.codeVerifier ?? "",
+    /^[A-Za-z0-9._~-]{43,128}$/,
+    "the persisted PKCE verifier must be a canonical code verifier",
+  );
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(storedState?.codeVerifier ?? ""),
+  );
+  const expectedChallenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+  assertEquals(
+    codeChallenge,
+    expectedChallenge,
+    "the redirect code_challenge must be S256 of the persisted code verifier",
+  );
 });
 
-Deno.test("init handler binds provider state to an explicit shared callback route", async () => {
+it("init handler binds provider state to an explicit shared callback route", async () => {
   const store = new MemoryTokenStore();
   const appUrl = "https://example.test";
   const handler = createOAuthInitHandler(TEST_CONFIG, {
@@ -267,7 +294,7 @@ Deno.test("init handler binds provider state to an explicit shared callback rout
   assertEquals((await store.consumeState(state))?.redirectUri, expectedRedirectUri);
 });
 
-Deno.test("init handler validates an explicit callback route eagerly", () => {
+it("init handler validates an explicit callback route eagerly", () => {
   assertThrows(
     () =>
       createOAuthInitHandler(TEST_CONFIG, {
@@ -281,7 +308,7 @@ Deno.test("init handler validates an explicit callback route eagerly", () => {
   );
 });
 
-Deno.test("init handler: supports async isAuthenticated and getUserId", async () => {
+it("init handler: supports async isAuthenticated and getUserId", async () => {
   const store = new MemoryTokenStore();
   const handler = createOAuthInitHandler(TEST_CONFIG, {
     tokenStore: store,
@@ -299,7 +326,7 @@ Deno.test("init handler: supports async isAuthenticated and getUserId", async ()
   assertEquals(storedState?.userId, "bob");
 });
 
-Deno.test("init handler: returns 500 when state persistence fails", async () => {
+it("init handler: returns 500 when state persistence fails", async () => {
   const handler = createOAuthInitHandler(TEST_CONFIG, {
     tokenStore: createFailingStateStore("state store failed"),
     env: makeEnv(),
@@ -317,7 +344,7 @@ Deno.test("init handler: returns 500 when state persistence fails", async () => 
   });
 });
 
-Deno.test("status handler: returns 401 when getUserId is not provided (fail-closed)", async () => {
+it("status handler: returns 401 when getUserId is not provided (fail-closed)", async () => {
   const store = new MemoryTokenStore();
   const handler = createOAuthStatusHandler(TEST_CONFIG, {
     tokenStore: store,
@@ -329,7 +356,7 @@ Deno.test("status handler: returns 401 when getUserId is not provided (fail-clos
   assertEquals(res.status, 401);
 });
 
-Deno.test("status handler: returns 401 when getUserId returns null", async () => {
+it("status handler: returns 401 when getUserId returns null", async () => {
   const store = new MemoryTokenStore();
   const handler = createOAuthStatusHandler(TEST_CONFIG, {
     tokenStore: store,
@@ -341,7 +368,7 @@ Deno.test("status handler: returns 401 when getUserId returns null", async () =>
   assertEquals(res.status, 401);
 });
 
-Deno.test("status handler: returns status for authenticated user", async () => {
+it("status handler: returns status for authenticated user", async () => {
   const store = new MemoryTokenStore();
   const handler = createOAuthStatusHandler(TEST_CONFIG, {
     tokenStore: store,
@@ -356,7 +383,7 @@ Deno.test("status handler: returns status for authenticated user", async () => {
   assertEquals(body.connected, false);
 });
 
-Deno.test("status handler: returns 401 when isAuthenticated returns false", async () => {
+it("status handler: returns 401 when isAuthenticated returns false", async () => {
   const store = new MemoryTokenStore();
   const handler = createOAuthStatusHandler(TEST_CONFIG, {
     tokenStore: store,
@@ -371,7 +398,7 @@ Deno.test("status handler: returns 401 when isAuthenticated returns false", asyn
   assertEquals(body.error, "Unauthorized");
 });
 
-Deno.test("status handler: scopes token lookup to caller userId", async () => {
+it("status handler: scopes token lookup to caller userId", async () => {
   const store = new MemoryTokenStore();
   await store.setTokens(TEST_CONFIG.serviceId, "alice", { accessToken: "alice-token" });
   await store.setTokens(TEST_CONFIG.serviceId, "bob", { accessToken: "bob-token" });
@@ -391,7 +418,7 @@ Deno.test("status handler: scopes token lookup to caller userId", async () => {
   assertEquals((await store.getTokens(TEST_CONFIG.serviceId, "bob"))?.accessToken, "bob-token");
 });
 
-Deno.test("status handler: treats expired access as connected when refresh token exists", async () => {
+it("status handler: treats expired access as connected when refresh token exists", async () => {
   const store = new MemoryTokenStore();
   await store.setTokens(TEST_CONFIG.serviceId, "alice", {
     accessToken: "access-token",
@@ -413,7 +440,7 @@ Deno.test("status handler: treats expired access as connected when refresh token
   assertEquals(body.hasRefreshToken, true);
 });
 
-Deno.test("status handler does not claim expired refreshable access without credentials", async () => {
+it("status handler does not claim expired refreshable access without credentials", async () => {
   const store = new MemoryTokenStore();
   await store.setTokens(TEST_CONFIG.serviceId, "alice", {
     accessToken: "expired",
@@ -433,7 +460,7 @@ Deno.test("status handler does not claim expired refreshable access without cred
   assertEquals(body.refreshCapable, true);
 });
 
-Deno.test("status handler does not claim an expired token is usable without refresh capabilities", async () => {
+it("status handler does not claim an expired token is usable without refresh capabilities", async () => {
   const store: TokenStore = {
     getTokens: () =>
       Promise.resolve({
@@ -459,7 +486,7 @@ Deno.test("status handler does not claim an expired token is usable without refr
   assertEquals(body.refreshCapable, false);
 });
 
-Deno.test("status handler: treats an epoch expiry as expired", async () => {
+it("status handler: treats an epoch expiry as expired", async () => {
   const store = new MemoryTokenStore();
   await store.setTokens(TEST_CONFIG.serviceId, "alice", {
     accessToken: "expired-access-token",
@@ -475,7 +502,7 @@ Deno.test("status handler: treats an epoch expiry as expired", async () => {
   assertEquals((await response.json()).connected, false);
 });
 
-Deno.test("status handler: supports async isAuthenticated and getUserId", async () => {
+it("status handler: supports async isAuthenticated and getUserId", async () => {
   const store = new MemoryTokenStore();
   const handler = createOAuthStatusHandler(TEST_CONFIG, {
     tokenStore: store,
@@ -488,7 +515,7 @@ Deno.test("status handler: supports async isAuthenticated and getUserId", async 
   assertEquals(res.status, 401);
 });
 
-Deno.test("disconnect handler: returns 401 when getUserId is not provided (fail-closed)", async () => {
+it("disconnect handler: returns 401 when getUserId is not provided (fail-closed)", async () => {
   const store = new MemoryTokenStore();
   const handler = createOAuthDisconnectHandler(TEST_CONFIG, {
     tokenStore: store,
@@ -500,7 +527,7 @@ Deno.test("disconnect handler: returns 401 when getUserId is not provided (fail-
   assertEquals(res.status, 401);
 });
 
-Deno.test("disconnect handler: clears only the calling user's tokens", async () => {
+it("disconnect handler: clears only the calling user's tokens", async () => {
   const store = new MemoryTokenStore();
   await store.setTokens(TEST_CONFIG.serviceId, "alice", { accessToken: "alice-token" });
   await store.setTokens(TEST_CONFIG.serviceId, "bob", { accessToken: "bob-token" });
@@ -524,7 +551,7 @@ Deno.test("disconnect handler: clears only the calling user's tokens", async () 
   );
 });
 
-Deno.test("disconnect handler: returns 401 when isAuthenticated returns false", async () => {
+it("disconnect handler: returns 401 when isAuthenticated returns false", async () => {
   const store = new MemoryTokenStore();
   const handler = createOAuthDisconnectHandler(TEST_CONFIG, {
     tokenStore: store,
@@ -539,7 +566,7 @@ Deno.test("disconnect handler: returns 401 when isAuthenticated returns false", 
   assertEquals(body.error, "Unauthorized");
 });
 
-Deno.test("disconnect handler: supports async isAuthenticated and getUserId", async () => {
+it("disconnect handler: supports async isAuthenticated and getUserId", async () => {
   const store = new MemoryTokenStore();
   const handler = createOAuthDisconnectHandler(TEST_CONFIG, {
     tokenStore: store,
@@ -552,7 +579,7 @@ Deno.test("disconnect handler: supports async isAuthenticated and getUserId", as
   assertEquals(res.status, 401);
 });
 
-Deno.test("OAuth handlers reject unexpected HTTP methods before application callbacks", async () => {
+it("OAuth handlers reject unexpected HTTP methods before application callbacks", async () => {
   let callbackCalls = 0;
   const options = {
     tokenStore: new MemoryTokenStore(),
@@ -584,7 +611,7 @@ Deno.test("OAuth handlers reject unexpected HTTP methods before application call
   assertEquals(callbackCalls, 0);
 });
 
-Deno.test("disconnect handler rejects missing and cross-origin CSRF origins", async () => {
+it("disconnect handler rejects missing and cross-origin CSRF origins", async () => {
   const store = new MemoryTokenStore();
   await store.setTokens(TEST_CONFIG.serviceId, "alice", { accessToken: "token" });
   let userIdCalls = 0;
@@ -607,7 +634,7 @@ Deno.test("disconnect handler rejects missing and cross-origin CSRF origins", as
   assertEquals((await store.getTokens(TEST_CONFIG.serviceId, "alice"))?.accessToken, "token");
 });
 
-Deno.test("init handler: rejects whitespace-only user identifiers", async () => {
+it("init handler: rejects whitespace-only user identifiers", async () => {
   const handler = createOAuthInitHandler(TEST_CONFIG, {
     env: makeEnv(),
     envReader: (key) => ENV[key],
@@ -617,7 +644,7 @@ Deno.test("init handler: rejects whitespace-only user identifiers", async () => 
   assertEquals((await handler(makeRequest())).status, 401);
 });
 
-Deno.test("init handler: rejects noncanonical user identifier whitespace", async () => {
+it("init handler: rejects noncanonical user identifier whitespace", async () => {
   const store = new MemoryTokenStore();
   const handler = createOAuthInitHandler(TEST_CONFIG, {
     tokenStore: store,
@@ -630,7 +657,7 @@ Deno.test("init handler: rejects noncanonical user identifier whitespace", async
   assertEquals(response.status, 401);
 });
 
-Deno.test("init handler: rejects caller-supplied state instead of weakening CSRF entropy", () => {
+it("init handler: rejects caller-supplied state instead of weakening CSRF entropy", () => {
   assertThrows(
     () =>
       createOAuthInitHandler(TEST_CONFIG, {
@@ -644,7 +671,7 @@ Deno.test("init handler: rejects caller-supplied state instead of weakening CSRF
   );
 });
 
-Deno.test("init handler rejects malformed or handler-owned authorization options eagerly", () => {
+it("init handler rejects malformed or handler-owned authorization options eagerly", () => {
   for (
     const [authOptions, expectedMessage] of [
       [{ redirectUri: "https://other.test/callback" }, "redirectUri"],
@@ -666,7 +693,7 @@ Deno.test("init handler rejects malformed or handler-owned authorization options
   }
 });
 
-Deno.test("init handler: requires PKCE instead of permitting a handler-level downgrade", () => {
+it("init handler: requires PKCE instead of permitting a handler-level downgrade", () => {
   assertThrows(
     () =>
       createOAuthInitHandler(TEST_CONFIG, {
@@ -680,7 +707,7 @@ Deno.test("init handler: requires PKCE instead of permitting a handler-level dow
   );
 });
 
-Deno.test("init handler omits PKCE only for providers declaring it unsupported", async () => {
+it("init handler omits PKCE only for providers declaring it unsupported", async () => {
   const store = new MemoryTokenStore();
   const config = { ...TEST_CONFIG, pkceMode: "unsupported" as const };
   const handler = createOAuthInitHandler(config, {
@@ -698,7 +725,7 @@ Deno.test("init handler omits PKCE only for providers declaring it unsupported",
   assertEquals(state?.codeVerifier, undefined);
 });
 
-Deno.test("init handler: snapshots authorization options at construction", async () => {
+it("init handler: snapshots authorization options at construction", async () => {
   const authOptions = {
     scopes: ["read"],
     additionalParams: { audience: "original" },
@@ -722,7 +749,7 @@ Deno.test("init handler: snapshots authorization options at construction", async
   assertEquals(location.searchParams.get("state") === "attacker-controlled", false);
 });
 
-Deno.test("init handler rejects accessor-backed auth options without invoking them", () => {
+it("init handler rejects accessor-backed auth options without invoking them", () => {
   let getterCalls = 0;
   const authOptions = Object.defineProperty({}, "additionalParams", {
     enumerable: true,
@@ -747,7 +774,7 @@ Deno.test("init handler rejects accessor-backed auth options without invoking th
   assertEquals(getterCalls, 0);
 });
 
-Deno.test("init handler: rejects invalid application base URLs eagerly", () => {
+it("init handler: rejects invalid application base URLs eagerly", () => {
   for (
     const baseUrl of [
       "javascript:alert(1)",
@@ -772,7 +799,7 @@ Deno.test("init handler: rejects invalid application base URLs eagerly", () => {
   }
 });
 
-Deno.test("init handler: authentication resolver failures return a generic 500", async () => {
+it("init handler: authentication resolver failures return a generic 500", async () => {
   const handler = createOAuthInitHandler(TEST_CONFIG, {
     env: makeEnv(),
     envReader: (key) => ENV[key],
@@ -786,7 +813,7 @@ Deno.test("init handler: authentication resolver failures return a generic 500",
   assertEquals(await response.json(), { error: "Failed to initiate OAuth flow" });
 });
 
-Deno.test("init handler: authorization redirects prevent caching and referrer leakage", async () => {
+it("init handler: authorization redirects prevent caching and referrer leakage", async () => {
   const handler = createOAuthInitHandler(TEST_CONFIG, {
     tokenStore: new MemoryTokenStore(),
     env: makeEnv(),
@@ -799,7 +826,7 @@ Deno.test("init handler: authorization redirects prevent caching and referrer le
   assertEquals(response.headers.get("referrer-policy"), "no-referrer");
 });
 
-Deno.test("status handler: token-store failures are sanitized and non-cacheable", async () => {
+it("status handler: token-store failures are sanitized and non-cacheable", async () => {
   const tokenStore = createFailingStateStore("unused");
   tokenStore.getTokens = () => Promise.reject(new Error("private database detail"));
   const handler = createOAuthStatusHandler(TEST_CONFIG, {
@@ -814,7 +841,7 @@ Deno.test("status handler: token-store failures are sanitized and non-cacheable"
   assertEquals(response.headers.get("cache-control"), "no-store");
 });
 
-Deno.test("status handler: malformed token-store rows fail closed", async () => {
+it("status handler: malformed token-store rows fail closed", async () => {
   const tokenStore = createFailingStateStore("unused");
   tokenStore.getTokens = () => Promise.resolve({ accessToken: "   " });
   const handler = createOAuthStatusHandler(TEST_CONFIG, {
@@ -828,7 +855,7 @@ Deno.test("status handler: malformed token-store rows fail closed", async () => 
   assertEquals(await response.json(), { error: "Failed to read OAuth status" });
 });
 
-Deno.test("disconnect handler: token-store failures do not report success", async () => {
+it("disconnect handler: token-store failures do not report success", async () => {
   const tokenStore = createFailingStateStore("unused");
   tokenStore.clearTokens = () => Promise.reject(new Error("private database detail"));
   const handler = createOAuthDisconnectHandler(TEST_CONFIG, {
@@ -843,7 +870,7 @@ Deno.test("disconnect handler: token-store failures do not report success", asyn
   assertEquals(response.headers.get("cache-control"), "no-store");
 });
 
-Deno.test("OAuth handlers require an explicit shared store outside development/test", () => {
+it("OAuth handlers require an explicit shared store outside development/test", () => {
   const env = makeDeploymentEnv("production");
   assertThrows(
     () =>
@@ -876,7 +903,7 @@ Deno.test("OAuth handlers require an explicit shared store outside development/t
   );
 });
 
-Deno.test("OAuth application URLs require HTTPS outside explicit local environments", () => {
+it("OAuth application URLs require HTTPS outside explicit local environments", () => {
   for (const nodeEnv of ["production", "staging", "preview", "custom"]) {
     assertThrows(
       () =>
@@ -903,7 +930,7 @@ Deno.test("OAuth application URLs require HTTPS outside explicit local environme
   );
 });
 
-Deno.test("status handler uses provider credential normalization", async () => {
+it("status handler uses provider credential normalization", async () => {
   const handler = createOAuthStatusHandler(TEST_CONFIG, {
     tokenStore: new MemoryTokenStore(),
     envReader: () => "   ",
@@ -914,7 +941,7 @@ Deno.test("status handler uses provider credential normalization", async () => {
   assertEquals((await response.json()).configured, false);
 });
 
-Deno.test("handler factories snapshot mutable provider configuration", async () => {
+it("handler factories snapshot mutable provider configuration", async () => {
   const config: OAuthServiceConfig = {
     ...TEST_CONFIG,
     defaultScopes: [...TEST_CONFIG.defaultScopes],

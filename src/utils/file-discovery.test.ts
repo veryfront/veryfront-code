@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { platform, tmpdir } from "node:os";
 import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
@@ -74,6 +74,16 @@ describe("file-discovery", () => {
     });
 
     assertExists(files);
+    assertEquals(
+      files.length > 0,
+      true,
+      "substring include pattern must match at least one file",
+    );
+    assertEquals(
+      files.some((f) => f.name === "file-discovery.test.ts"),
+      true,
+      "the substring pattern must match a known file in src/utils",
+    );
     assertEquals(files.every((f) => f.name.includes("test")), true);
   });
 
@@ -114,6 +124,16 @@ describe("file-discovery", () => {
 
     assertExists(files);
     assertEquals(files.every((f) => f.depth <= 1), true);
+    assertEquals(
+      files.some((f) => f.depth === 0),
+      true,
+      "depth-0 files must still be returned",
+    );
+    assertEquals(
+      files.some((f) => f.depth === 1),
+      true,
+      "maxDepth is inclusive so depth-1 files must be returned",
+    );
   });
 
   it("ignores patterns", async () => {
@@ -368,7 +388,69 @@ describe("file-discovery", () => {
     });
 
     assertExists(files);
+    assertEquals(
+      files.length > 0,
+      true,
+      "substring include pattern must match at least one file",
+    );
+    assertEquals(
+      files.some((f) => f.name === "flatten-route-params.ts"),
+      true,
+      "the substring pattern must match a known file in src/routing",
+    );
     assertEquals(files.every((f) => f.name.endsWith(".ts")), true);
     assertEquals(files.every((f) => f.name.includes("route")), true);
+  });
+
+  it({
+    name: "honours followSymlinks",
+    ignore: platform() === "win32",
+  }, async () => {
+    await withFixtureTree(
+      (root) => {
+        mkdirSync(join(root, "real"));
+        writeFileSync(join(root, "real", "target.ts"), "export const target = 1;");
+        symlinkSync(join(root, "real", "target.ts"), join(root, "link.ts"));
+        symlinkSync(join(root, "real"), join(root, "linked-dir"));
+        symlinkSync(join(root, "missing.ts"), join(root, "dangling.ts"));
+      },
+      async (root) => {
+        const skipped = await collectFiles({
+          baseDir: root,
+          extensions: [".ts"],
+          recursive: true,
+        });
+
+        assertEquals(
+          skipped.map((f) => f.name).sort(),
+          ["target.ts"],
+          "symlinks must be skipped unless followSymlinks is set",
+        );
+
+        const followed = await collectFiles({
+          baseDir: root,
+          extensions: [".ts"],
+          recursive: true,
+          followSymlinks: true,
+        });
+        const followedNames = followed.map((f) => f.name);
+
+        assertEquals(
+          followedNames.includes("link.ts"),
+          true,
+          "followSymlinks must return a file reached through a symlink",
+        );
+        assertEquals(
+          followedNames.filter((name) => name === "target.ts").length,
+          2,
+          "followSymlinks must walk a symlinked directory as well as the real one",
+        );
+        assertEquals(
+          followedNames.includes("dangling.ts"),
+          false,
+          "a broken symlink must be skipped, not raise",
+        );
+      },
+    );
   });
 });

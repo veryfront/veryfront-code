@@ -23,6 +23,8 @@
  * prop". Change a baseline here only alongside the tracked design decision.
  */
 
+import { stripCommentsAndStrings } from "./ratchet.ts";
+
 const SCAN_ROOT = "src/react/components/chat";
 
 // Lower each baseline when you burn violations down. Raising one means a new
@@ -44,16 +46,6 @@ const PASSTHROUGH_RE =
   /(?:^|\s)(?:[a-z][A-Za-z]*ClassName|icons|dragProps)\??:\s/gm;
 /** Inline `Provider value={{…}}` — a fresh object every render (F-3). */
 const INLINE_CONTEXT_RE = /\.Provider\s+value=\{\{/g;
-
-/** Strip comments + string/template literals so they can't trigger matches. */
-function stripCommentsAndStrings(text: string): string {
-  let out = text.replace(/\/\*[\s\S]*?\*\//g, "");
-  out = out.replace(/(^|[^:])\/\/[^\n]*/g, "$1");
-  out = out.replace(/`(?:\\.|[^`])*`/gs, "``");
-  out = out.replace(/'(?:\\.|[^'\n])*'/g, "''");
-  out = out.replace(/"(?:\\.|[^"\n])*"/g, '""');
-  return out;
-}
 
 export interface AntipatternCounts {
   forwardRef: number;

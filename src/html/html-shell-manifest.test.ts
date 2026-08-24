@@ -328,6 +328,33 @@ describe("html shell release asset manifest consumption", () => {
     assertEquals(imports["@/"], "/_vf_modules/");
   });
 
+  it("never consumes the release manifest for a studio embed", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    registerManifestFetcherForRelease(
+      "rel-1",
+      () => Promise.resolve({ state: "ready", manifest_version: 1, manifest: manifest() }),
+    );
+
+    const result = await generateHTMLShellParts(
+      meta(),
+      prodOptions({ releaseId: "rel-1", studioEmbed: true }),
+    );
+
+    assertEquals(
+      result.start.includes("/_vf/assets/"),
+      false,
+      "studio embeds must never emit content-addressed release asset URLs",
+    );
+    const pageModulePreloads = extractModulePreloadHrefs(result.start).filter((href) =>
+      href.startsWith("/_vf_modules/") || href.startsWith("/_vf/assets/")
+    );
+    assertEquals(
+      pageModulePreloads,
+      ["/_vf_modules/pages/index.js?studio_embed=true"],
+      "studio embeds must preload through the module server so live edits reach the iframe",
+    );
+  });
+
   it("falls back to the existing URL for an uncovered page when the flag is on", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     registerManifestFetcherForRelease(

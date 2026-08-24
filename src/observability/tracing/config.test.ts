@@ -1,6 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  _resetEnvironmentConfig,
+  _setEnvironmentConfigForTesting,
+} from "#veryfront/config/environment-config.ts";
 import { loadConfig } from "./config.ts";
 
 type RuntimeAdapter = import("#veryfront/platform/adapters/base.ts").RuntimeAdapter;
@@ -92,6 +96,43 @@ describe("observability/tracing/config", () => {
         TypeError,
         "serviceName",
       );
+    });
+
+    it("applies the host environment when no adapter is supplied", () => {
+      _setEnvironmentConfigForTesting({
+        otelEnabled: true,
+        otelServiceName: "host-svc",
+        otelTracesEndpoint: "http://traces:4318/v1/traces",
+        otelEndpoint: "http://generic:4318",
+        otelTracesExporter: "otlp",
+      });
+
+      try {
+        const result = loadConfig({});
+
+        assertEquals(
+          result.enabled,
+          true,
+          "host OTEL_TRACES_ENABLED applies when no adapter is given",
+        );
+        assertEquals(
+          result.serviceName,
+          "host-svc",
+          "host OTEL_SERVICE_NAME applies when no adapter is given",
+        );
+        assertEquals(
+          result.endpoint,
+          "http://traces:4318/v1/traces",
+          "tracesEndpoint must map to signalEndpoint and win over the generic endpoint",
+        );
+        assertEquals(
+          result.exporter,
+          "otlp",
+          "host OTEL_TRACES_EXPORTER applies when no adapter is given",
+        );
+      } finally {
+        _resetEnvironmentConfig();
+      }
     });
 
     it("contains adapter environment failures without consulting another environment", () => {

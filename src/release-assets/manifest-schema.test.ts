@@ -255,6 +255,17 @@ describe("release asset manifest schema", () => {
     assertEquals(parsed.state, "ready");
     assertEquals(parsed.manifest_version, manifest.manifestVersion);
     assertEquals(parsed.manifest, manifest);
+
+    for (const state of ["building", "partial", "failed", "superseded", "", "READY"]) {
+      assertEquals(
+        parseReadyReleaseAssetManifestResponse(
+          { state, manifest_version: manifest.manifestVersion, manifest },
+          manifest.releaseId,
+        ),
+        null,
+        `a ${state || "(empty)"} envelope must not parse as ready`,
+      );
+    }
   });
 
   it("rejects missing or mismatched response manifest versions", () => {
@@ -440,6 +451,34 @@ describe("release asset manifest schema", () => {
     const extraField = { ...validManifest(), unexpected: true };
     assertEquals(getReleaseAssetManifestSchema().safeParse(extraField).success, false);
     assertEquals(parseReleaseAssetManifest(extraField), null);
+
+    for (const builderVersion of ["0.1.765\u0000", "0.1.765\r\nX-Injected: 1"]) {
+      const ctrl = validManifest();
+      ctrl.builderVersion = builderVersion;
+      assertEquals(
+        parseReleaseAssetManifest(ctrl),
+        null,
+        "control characters must not pass builderVersion",
+      );
+      assertEquals(
+        getReleaseAssetManifestSchema().safeParse(ctrl).success,
+        false,
+        "the zod validator must reject a control character in builderVersion",
+      );
+    }
+
+    const untrimmed = validManifest();
+    untrimmed.projectId = " 11111111-1111-1111-1111-111111111111 ";
+    assertEquals(
+      parseReleaseAssetManifest(untrimmed),
+      null,
+      "identifiers must be trimmed",
+    );
+    assertEquals(
+      getReleaseAssetManifestSchema().safeParse(untrimmed).success,
+      false,
+      "identifiers must be trimmed",
+    );
   });
 
   it("never throws for hostile object input", () => {
@@ -551,6 +590,24 @@ describe("describeReadyReleaseAssetManifestRejection", () => {
     assertStringIncludes(
       describeReadyReleaseAssetManifestRejection({ state: "ready" }, "r1"),
       "no usable manifest_version",
+    );
+
+    const m = validManifest();
+    assertStringIncludes(
+      describeReadyReleaseAssetManifestRejection(
+        { state: "ready", manifest_version: m.manifestVersion, manifest: m },
+        "33333333-3333-3333-3333-333333333333",
+      ),
+      "identifies a different release",
+      "a release-identity mismatch must be named, not reported as unrecognized",
+    );
+    assertStringIncludes(
+      describeReadyReleaseAssetManifestRejection(
+        { state: "ready", manifest_version: m.manifestVersion + 1, manifest: m },
+        m.releaseId,
+      ),
+      "disagree on the manifest version",
+      "an envelope/body version disagreement must be named",
     );
   });
 

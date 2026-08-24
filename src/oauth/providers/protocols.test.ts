@@ -61,6 +61,29 @@ describe("built-in OAuth provider wire contracts", () => {
     assertEquals(result.success, true);
   });
 
+  it("sends Notion's required owner parameter on the authorize URL", async () => {
+    const credentials: Record<string, string> = {
+      [notionConfig.clientIdEnvVar]: "client-id",
+      [notionConfig.clientSecretEnvVar]: "client-secret",
+    };
+    const service = new OAuthService(notionConfig, undefined, (key) => credentials[key]);
+    const authorization = await service.createAuthorizationUrl({
+      redirectUri: "https://app.test/oauth/callback",
+    });
+    const authorizationUrl = new URL(authorization.url);
+
+    assertEquals(
+      authorizationUrl.searchParams.get("owner"),
+      "user",
+      "Notion authorize URL must request user-owned access",
+    );
+    assertEquals(
+      authorizationUrl.searchParams.has("code_challenge"),
+      false,
+      "Notion does not support PKCE on the authorize side",
+    );
+  });
+
   it("sends Atlassian's JSON token request with body credentials", async () => {
     const { request } = await captureExchange(jiraConfig);
 

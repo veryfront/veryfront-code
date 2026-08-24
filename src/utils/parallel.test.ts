@@ -1,7 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
+import { TIMEOUT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { parallelAll, parallelMap } from "./parallel.ts";
 
 describe("parallel", () => {
@@ -76,6 +78,84 @@ describe("parallel", () => {
       }, { concurrency: 2 });
 
       assertEquals(maxConcurrent, 2);
+    });
+
+    it("should release the permit when a mapper rejects", async () => {
+      const semaphore = new Semaphore(2);
+      const boom = new Error("mapper failed");
+
+      const error = await assertRejects(
+        () => parallelMap([1], () => Promise.reject(boom), { semaphore }),
+        Error,
+        "mapper failed",
+      );
+
+      assertStrictEquals(
+        error,
+        boom,
+        "the mapper's rejection must propagate unchanged",
+      );
+      assertEquals(
+        semaphore.available,
+        2,
+        "a rejecting mapper must still release its permit",
+      );
+      assertEquals(
+        semaphore.waiting,
+        0,
+        "no waiter may be left queued after a rejection",
+      );
+      assertEquals(
+        await parallelMap([1, 2], async (x) => x * 2, { semaphore }),
+        [2, 4],
+        "the semaphore must still be usable after a failed run",
+      );
+    });
+
+    it("should surface semaphore backpressure as a timeout error", async () => {
+      const semaphore = new Semaphore(1);
+      assertEquals(
+        await semaphore.tryAcquire(1_000),
+        true,
+        "the only permit must be drained before the run",
+      );
+
+      const error = await assertRejects(
+        () => parallelMap([1], async (x) => x, { semaphore, timeoutMs: 10 }),
+        VeryfrontError,
+        "timed out waiting for semaphore",
+      );
+
+      assertEquals(
+        (error as VeryfrontError).slug,
+        TIMEOUT_ERROR.slug,
+        "semaphore backpressure must be classified as timeout-error",
+      );
+
+      semaphore.release();
+    });
+
+    it("should reject an invalid declarative concurrency limit", async () => {
+      for (const concurrency of [0, -1, 1.5, Number.NaN]) {
+        let calls = 0;
+
+        await assertRejects(
+          () =>
+            parallelMap([1], (x) => {
+              calls++;
+              return Promise.resolve(x);
+            }, { concurrency }),
+          RangeError,
+          "positive safe integer",
+          `concurrency ${concurrency} must be rejected up front`,
+        );
+
+        assertEquals(
+          calls,
+          0,
+          `concurrency ${concurrency} must be rejected before any mapper runs`,
+        );
+      }
     });
   });
 

@@ -1,6 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLoggerConfigForTests,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+  LogLevel,
+  setLogLevel,
+} from "#veryfront/utils/logger/logger.ts";
 import { devLogger, logger, prodLogger, sanitizeHeaderForLog } from "./logger.ts";
 
 function makeCtx(
@@ -21,6 +29,24 @@ function next404(): Promise<Response> {
 
 function next500(): Promise<Response> {
   return Promise.resolve(new Response("error", { status: 500 }));
+}
+
+/**
+ * Capture the structured records the default `serverLogger` sink receives.
+ * `devLogger`/`prodLogger` pass no `log` callback, so this is the only way to
+ * observe the record they actually emit. The level is lowered through the
+ * `setLogLevel` seam rather than an env var so the case stays hermetic.
+ */
+function captureLogRecords(): LogEntry[] {
+  const entries: LogEntry[] = [];
+  setLogLevel(LogLevel.DEBUG);
+  __registerLogRecordEmitter((entry) => entries.push(entry));
+  return entries;
+}
+
+function restoreLogRecordCapture(): void {
+  __resetLoggerConfigForTests();
+  __resetLogRecordEmitterForTests();
 }
 
 function getFirstLog(logs: string[]): string {
@@ -360,22 +386,72 @@ describe("middleware/builtin/logger", () => {
   });
 
   describe("devLogger", () => {
+    afterEach(restoreLogRecordCapture);
+
     it("should create a logger with dev format", async () => {
+      const entries = captureLogRecords();
       const mw = devLogger();
 
       const res = await mw(makeCtx(), nextOk);
 
       assertEquals(res?.status, 200);
+      const entry = entries[0];
+      assertExists(entry, "devLogger must emit a request log record");
+      assert(
+        entry.message.includes("\x1b["),
+        `devLogger must emit the colorized dev format, got: ${entry.message}`,
+      );
     });
   });
 
   describe("prodLogger", () => {
+    afterEach(restoreLogRecordCapture);
+
     it("should create a logger with json format", async () => {
+      const entries = captureLogRecords();
       const mw = prodLogger();
 
-      const res = await mw(makeCtx(), nextOk);
+      const res = await mw(
+        makeCtx("http://localhost/api/data", {
+          "x-request-id": "req-42",
+          "x-forwarded-for": "203.0.113.7",
+        }),
+        nextOk,
+      );
 
       assertEquals(res?.status, 200);
+      const entry = entries[0];
+      assertExists(entry, "prodLogger must emit a structured request log record");
+      assertEquals(
+        entry.message,
+        "GET /api/data 200",
+        "the json format must summarize method, path and status",
+      );
+      assertEquals(
+        entry.request_id,
+        "req-42",
+        "the structured record must carry the incoming x-request-id",
+      );
+      assertEquals(
+        entry.request_url,
+        "/api/data",
+        "the structured record must carry the request path",
+      );
+      assertEquals(
+        entry.context?.method,
+        "GET",
+        "the structured record must carry the request method",
+      );
+      assertEquals(
+        entry.context?.statusCode,
+        200,
+        "the structured record must carry the response status code",
+      );
+      assertEquals(
+        entry.context?.remoteAddr,
+        "203.0.113.7",
+        "the structured record must carry the forwarded remote address",
+      );
     });
   });
 });

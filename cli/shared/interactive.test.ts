@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createInMemoryHostRuntime } from "#veryfront/platform/compat/process.ts";
 import {
   detectCI,
   isAutoConfirmEnabled,
@@ -39,6 +40,26 @@ describe("interactive", () => {
   describe("detectCI", () => {
     it("returns a boolean", () => {
       assertEquals(typeof detectCI(), "boolean");
+    });
+
+    it("treats any known CI variable with a truthy value as CI", () => {
+      for (
+        const key of ["CI", "GITHUB_ACTIONS", "GITLAB_CI", "JENKINS_URL", "CIRCLECI", "BUILDKITE"]
+      ) {
+        const host = createInMemoryHostRuntime({ env: { [key]: "1" } });
+        assertEquals(detectCI(host), true, `${key}=1 is CI`);
+      }
+    });
+
+    it("ignores CI variables that are empty, 0, or false", () => {
+      const host = createInMemoryHostRuntime({
+        env: { CI: "", GITHUB_ACTIONS: "0", GITLAB_CI: "false" },
+      });
+      assertEquals(detectCI(host), false, "explicitly disabled markers are not CI");
+    });
+
+    it("is not CI when no marker is present", () => {
+      assertEquals(detectCI(createInMemoryHostRuntime()), false, "an empty env is not CI");
     });
   });
 

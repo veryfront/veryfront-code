@@ -147,6 +147,46 @@ describe("extensions/setup-hint", () => {
     });
   });
 
+  it("names the higher-precedence config file when a project keeps two", async () => {
+    // Precedence is the loader's, not this module's to re-order: a project
+    // that keeps two files is told to edit the one findVeryfrontConfigFile
+    // actually loads. Spelled out rather than iterated over the constant so a
+    // reordered list cannot make the test agree with the regression.
+    await withTempDir(async (directory) => {
+      await writeTextFile(join(directory, "package.json"), `{"name":"js-and-ts"}`);
+      await writeTextFile(join(directory, "veryfront.config.js"), "export default {};\n");
+      await writeTextFile(join(directory, "veryfront.config.ts"), "export default {};\n");
+
+      const hint = formatExtensionSetupHint("@veryfront/ext-css-lightning", {
+        projectDirectory: directory,
+      });
+
+      assertEquals(hint.includes("veryfront.config.js"), true, hint);
+      assertEquals(
+        hint.includes("veryfront.config.ts"),
+        false,
+        `.ts must not be named while .js shadows it, got: ${hint}`,
+      );
+    });
+
+    await withTempDir(async (directory) => {
+      await writeTextFile(join(directory, "package.json"), `{"name":"ts-and-mjs"}`);
+      await writeTextFile(join(directory, "veryfront.config.ts"), "export default {};\n");
+      await writeTextFile(join(directory, "veryfront.config.mjs"), "export default {};\n");
+
+      const hint = formatExtensionSetupHint("@veryfront/ext-css-lightning", {
+        projectDirectory: directory,
+      });
+
+      assertEquals(hint.includes("veryfront.config.ts"), true, hint);
+      assertEquals(
+        hint.includes("veryfront.config.mjs"),
+        false,
+        `.mjs must not be named while .ts shadows it, got: ${hint}`,
+      );
+    });
+  });
+
   it("derives a binding that is a valid identifier for any recommendation", async () => {
     // Every first-party extension exports its factory as the module default,
     // so the local binding is the hint's to choose; it only has to be a legal

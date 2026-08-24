@@ -723,10 +723,25 @@ describe("security/http/response/security-handler", () => {
     it("should set HSTS in production", () => {
       const headers = applyHeaders();
 
-      const hsts = headers.get("Strict-Transport-Security");
-      assert(hsts !== null);
-      assert(hsts.includes("max-age="));
-      assert(hsts.includes("includeSubDomains"));
+      assertEquals(
+        headers.get("Strict-Transport-Security"),
+        "max-age=31536000; includeSubDomains",
+        "production HSTS must pin the one-year max-age with subdomains",
+      );
+    });
+
+    it("should let the security.hsts config drive every HSTS directive", () => {
+      const headers = applyHeaders({
+        config: {
+          hsts: { maxAge: 600, includeSubDomains: false, preload: true },
+        } as SecurityConfig,
+      });
+
+      assertEquals(
+        headers.get("Strict-Transport-Security"),
+        "max-age=600; preload",
+        "security.hsts config must drive max-age, includeSubDomains, and preload",
+      );
     });
 
     it("should not set HSTS in dev mode", () => {

@@ -31,6 +31,7 @@ import { ORCHESTRATION_ERROR, RESOURCE_NOT_FOUND } from "#veryfront/errors";
 import { requireWorkflowSourceIntegrationPolicy } from "../source-integration-policy.ts";
 
 const logger = baseLogger.component("memory-backend");
+const objectDefineProperty = Object.defineProperty;
 
 /**
  * Memory backend configuration
@@ -286,11 +287,16 @@ export class MemoryBackend implements WorkflowBackend {
     const nodes: WorkflowRunObservedState["nodes"] = {};
     for (const [nodeId, node] of Object.entries(run.nodeStates ?? {})) {
       if (!node) continue;
-      nodes[nodeId] = {
-        status: node.status,
-        attempt: node.attempt,
-        ...(node.error !== undefined ? { error: node.error } : {}),
-      };
+      objectDefineProperty(nodes, nodeId, {
+        value: {
+          status: node.status,
+          attempt: node.attempt,
+          ...(node.error !== undefined ? { error: node.error } : {}),
+        },
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
     }
     const state: WorkflowRunObservedState = {
       revision,

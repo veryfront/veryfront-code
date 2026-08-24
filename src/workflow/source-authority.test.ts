@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MAX_URL_LENGTH_FOR_VALIDATION } from "#veryfront/utils/constants/limits.ts";
@@ -55,7 +56,7 @@ describe("workflow source authority", () => {
             releaseId: value,
             environmentName: "Production",
           }),
-        Error,
+        VeryfrontError,
         "release ID must be a bounded non-empty canonical identifier",
       );
       assertThrows(
@@ -65,12 +66,12 @@ describe("workflow source authority", () => {
             releaseId: null,
             environmentName: value,
           }),
-        Error,
+        VeryfrontError,
         "environment name must be a bounded non-empty canonical identifier",
       );
       assertThrows(
         () => requireWorkflowContentSource({ productionMode: false, branch: value }),
-        Error,
+        VeryfrontError,
         "branch must be a bounded non-empty canonical identifier",
       );
     }
@@ -92,7 +93,7 @@ describe("workflow source authority", () => {
           releaseId: " ",
           environmentName: "Production",
         }),
-      Error,
+      VeryfrontError,
       "release ID must be a bounded non-empty canonical identifier",
     );
   });
@@ -113,7 +114,7 @@ describe("workflow source authority", () => {
 
     assertThrows(
       () => requireWorkflowContentSource(authority),
-      Error,
+      VeryfrontError,
       "must contain only own data properties",
     );
     assertEquals(getterCalls, 0);
@@ -124,7 +125,7 @@ describe("workflow source authority", () => {
     }) as WorkflowSourceAuthority;
     assertThrows(
       () => requireWorkflowContentSource(inherited),
-      Error,
+      VeryfrontError,
       "productionMode must be an explicit boolean",
     );
   });
@@ -138,7 +139,7 @@ describe("workflow source authority", () => {
 
     assertThrows(
       () => requireWorkflowContentSource(authority),
-      Error,
+      VeryfrontError,
       "must contain only own data properties",
     );
   });
@@ -146,12 +147,12 @@ describe("workflow source authority", () => {
   it("requires explicit source authority for the selected runtime mode", () => {
     assertThrows(
       () => requireWorkflowContentSource({ productionMode: true }),
-      Error,
+      VeryfrontError,
       "requires a release ID or environment name",
     );
     assertThrows(
       () => requireWorkflowContentSource({ productionMode: false }),
-      Error,
+      VeryfrontError,
       "requires an explicit branch",
     );
     assertThrows(
@@ -159,7 +160,7 @@ describe("workflow source authority", () => {
         requireWorkflowContentSource(
           { productionMode: undefined } as unknown as WorkflowSourceAuthority,
         ),
-      Error,
+      VeryfrontError,
       "productionMode must be an explicit boolean",
     );
   });
@@ -188,7 +189,7 @@ describe("workflow API base URL", () => {
 
     assertThrows(
       () => requireWorkflowApiBaseUrl(`${exactLimit}a`),
-      Error,
+      VeryfrontError,
       "bounded canonical HTTP(S) URL",
     );
 
@@ -196,7 +197,7 @@ describe("workflow API base URL", () => {
     assertEquals(expandingPath.length < MAX_URL_LENGTH_FOR_VALIDATION, true);
     assertThrows(
       () => requireWorkflowApiBaseUrl(expandingPath),
-      Error,
+      VeryfrontError,
       "bounded canonical HTTP(S) URL",
     );
   });
@@ -219,7 +220,7 @@ describe("workflow API base URL", () => {
     ];
 
     for (const value of invalidValues) {
-      assertThrows(() => requireWorkflowApiBaseUrl(value), Error);
+      assertThrows(() => requireWorkflowApiBaseUrl(value), VeryfrontError);
     }
   });
 });

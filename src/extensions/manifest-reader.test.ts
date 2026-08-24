@@ -222,6 +222,30 @@ describe("parseExtensionManifest()", () => {
       parseExtensionManifest(`{\u00a0\"activation\":\"explicit\"}`, "json")
     );
     assertEquals(strictError.slug, "extension-manifest-parse-failed");
+
+    const stringSafeWhitespace = [
+      0x85,
+      0xa0,
+      0x1680,
+      ...Array.from({ length: 11 }, (_, index) => 0x2000 + index),
+      0x2028,
+      0x2029,
+      0x202f,
+      0x205f,
+      0x3000,
+    ];
+    for (const codePoint of stringSafeWhitespace) {
+      const whitespace = String.fromCodePoint(codePoint);
+      const manifest = parseExtensionManifest<{ value: string }>(
+        `{\"value\":\"a${whitespace}b\"}`,
+        "jsonc",
+      );
+      assertEquals(
+        manifest.value,
+        `a${whitespace}b`,
+        "Deno whitespace inside a JSONC string must survive verbatim",
+      );
+    }
   });
 
   it("matches Deno line-comment termination semantics", () => {
@@ -480,6 +504,120 @@ describe("readExtensionManifest() file identity", () => {
     assertEquals(error.slug, "extension-manifest-file-invalid");
     assertEquals(state.openCalls, 0);
   });
+
+  it("applies identity and size validation to bigint stat results", async () => {
+    const data = encoder.encode('{"activation":"explicit"}');
+    const bigintInfo = fileInfo(BigInt(data.length), { dev: 11n, ino: 29n });
+    const accepted = createFakeFileSystem({
+      data,
+      handleInfo: bigintInfo,
+      pathInfos: [bigintInfo, bigintInfo, bigintInfo],
+    });
+
+    const result = await readExtensionManifest<{ activation: string }>("manifest.json", {
+      syntax: "json",
+      fileSystem: accepted.fileSystem,
+    });
+
+    assertEquals(
+      result.kind,
+      "found",
+      "a bigint dev and ino pair must verify the same way as numbers",
+    );
+    if (result.kind === "found") {
+      assertEquals(
+        result.manifest.activation,
+        "explicit",
+        "the parsed manifest must survive a bigint stat result unchanged",
+      );
+      assertEquals(
+        result.bytesRead,
+        data.length,
+        "bytesRead must report the byte length the bigint size described",
+      );
+    }
+    assertEquals(
+      accepted.state.closeCalls,
+      1,
+      "an accepted bigint stat read must still close its handle exactly once",
+    );
+
+    const oversized = fileInfo(BigInt(MAX_EXTENSION_MANIFEST_BYTES + 1), {
+      dev: 11n,
+      ino: 29n,
+    });
+    const large = createFakeFileSystem({ pathInfos: [oversized] });
+    const sizeFailure = await captureManifestError(() =>
+      readExtensionManifest("manifest.json", {
+        syntax: "json",
+        fileSystem: large.fileSystem,
+      })
+    );
+
+    assertEquals(
+      sizeFailure.slug,
+      "extension-manifest-too-large",
+      "the bigint pre-open size gate must reject an oversized manifest",
+    );
+    assertEquals(
+      large.state.openCalls,
+      0,
+      "an oversized manifest must be rejected before the file is opened",
+    );
+
+    const original = fileInfo(2n, { dev: 1n, ino: 10n });
+    const replacement = fileInfo(2n, { dev: 1n, ino: 11n });
+    const swapped = createFakeFileSystem({
+      handleInfo: original,
+      pathInfos: [original, replacement],
+    });
+    const identityFailure = await captureManifestError(() =>
+      readExtensionManifest("manifest.json", {
+        syntax: "json",
+        fileSystem: swapped.fileSystem,
+      })
+    );
+
+    assertEquals(
+      identityFailure.slug,
+      "extension-manifest-file-invalid",
+      "a bigint identity swap must surface as an invalid manifest file",
+    );
+    assertStringIncludes(
+      identityFailure.message,
+      "identity changed",
+      "a bigint identity swap must be detected, not silently accepted",
+    );
+    assertEquals(
+      swapped.state.closeCalls,
+      1,
+      "a rejected identity swap must still close the handle exactly once",
+    );
+
+    const negative = createFakeFileSystem({ pathInfos: [fileInfo(-1n)] });
+    const negativeFailure = await captureManifestError(() =>
+      readExtensionManifest("manifest.json", {
+        syntax: "json",
+        fileSystem: negative.fileSystem,
+      })
+    );
+
+    assertEquals(
+      negativeFailure.slug,
+      "extension-manifest-file-invalid",
+      "a negative bigint size must surface as an invalid manifest file",
+    );
+    assertStringIncludes(
+      negativeFailure.message,
+      "invalid negative size",
+      "a negative bigint size must fail closed before the file is opened",
+    );
+    assertEquals(
+      negative.state.openCalls,
+      0,
+      "a negative size must be rejected before the file is opened",
+    );
+  });
 });
 
 describe("readExtensionManifest() cleanup and errors", () => {
@@ -497,14 +635,9 @@ describe("readExtensionManifest() cleanup and errors", () => {
     assertEquals(state.openCalls, 0);
   });
 
-  it("closes the handle after success, stat, path, read, and parse failures", async () => {
+  it("closes the handle after success and parse failures", async () => {
     const cases: FakeFileSystemOptions[] = [
       {},
-      { statError: new Error("stat failed") },
-      {
-        pathInfos: [fileInfo(2), new Error("path failed")],
-      },
-      { readError: new Error("read failed") },
       { data: encoder.encode("{") },
     ];
 
@@ -518,6 +651,71 @@ describe("readExtensionManifest() cleanup and errors", () => {
       assertEquals(state.openCalls, 1);
       assertEquals(state.closeCalls, 1);
     }
+  });
+
+  it("classifies stat, path, and read I/O failures as typed read errors", async () => {
+    const cases: Array<{ options: FakeFileSystemOptions; cause: string }> = [
+      { options: { statError: new Error("stat failed") }, cause: "stat failed" },
+      {
+        options: { pathInfos: [fileInfo(2), new Error("path failed")] },
+        cause: "path failed",
+      },
+      { options: { readError: new Error("read failed") }, cause: "read failed" },
+    ];
+
+    for (const { options, cause } of cases) {
+      const { fileSystem, state } = createFakeFileSystem(options);
+      const error = await captureManifestError(() =>
+        readExtensionManifest("manifest.json", { syntax: "json", fileSystem })
+      );
+
+      assertEquals(
+        error.slug,
+        "extension-manifest-read-failed",
+        "an I/O failure must be a typed read error, never a truncated manifest",
+      );
+      assertEquals(
+        (error.context as { operation: string }).operation,
+        "read",
+        "the typed read error must carry the read operation in its context",
+      );
+      assertStringIncludes(
+        String(error.cause),
+        cause,
+        "the originating I/O failure must be preserved as the error cause",
+      );
+      assertEquals(
+        state.openCalls,
+        1,
+        "a classified I/O failure must open the file exactly once",
+      );
+      assertEquals(
+        state.closeCalls,
+        1,
+        "a classified I/O failure must still close the handle exactly once",
+      );
+    }
+  });
+
+  it("never accepts a failed read as an empty JSONC manifest", async () => {
+    const { fileSystem, state } = createFakeFileSystem({
+      readError: new Error("read failed"),
+    });
+
+    const error = await captureManifestError(() =>
+      readExtensionManifest("manifest.jsonc", { syntax: "jsonc", fileSystem })
+    );
+
+    assertEquals(
+      error.slug,
+      "extension-manifest-read-failed",
+      "a mid-stream read failure must not be reported as an empty JSONC manifest",
+    );
+    assertEquals(
+      state.closeCalls,
+      1,
+      "a failed JSONC read must still close the handle exactly once",
+    );
   });
 
   it("surfaces close failure as a contextual typed error", async () => {

@@ -627,5 +627,31 @@ describe("security/input-validation/limits", () => {
       );
       assertEquals(getterCalls, 0);
     });
+
+    it("rejects an invalid byte limit before reading the body", async () => {
+      for (
+        const limit of [
+          -1,
+          Number.NaN,
+          1.5,
+          Number.POSITIVE_INFINITY,
+          null as unknown as number,
+        ]
+      ) {
+        const req = new Request("http://localhost/", { method: "POST", body: "abc" });
+
+        await assertRejects(
+          () => readBodyBytesWithLimit(req, limit),
+          RangeError,
+          "must be a non-negative safe integer",
+          `${String(limit)} is not a usable byte limit and must be rejected outright`,
+        );
+        assertEquals(
+          req.bodyUsed,
+          false,
+          "an invalid limit must be rejected before the body is consumed",
+        );
+      }
+    });
   });
 });

@@ -5,6 +5,7 @@ import {
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS } from "../../agent/hosted/child-fork-execution-runner.ts";
 import { parseProviderError } from "../../chat/provider-errors.ts";
 import { MAX_TIMER_DELAY_MS } from "../../utils/timer.ts";
@@ -704,6 +705,38 @@ describe("provider-http", () => {
       assertEquals(receivedSignal?.aborted, true);
       assertStrictEquals(receivedSignal?.reason, reason);
     });
+
+    it("cancels a response that arrives after the deadline elapsed", async () => {
+      const late = Promise.withResolvers<Response>();
+      let bodyCancelled = false;
+      const body = new ReadableStream<Uint8Array>({
+        cancel() {
+          bodyCancelled = true;
+        },
+      });
+
+      await assertRejects(
+        () =>
+          requestJson({
+            url: "https://provider.test/generate",
+            fetchImpl: () => late.promise,
+            init: { method: "POST" },
+            providerLabel: "Test provider",
+            providerKind: "openai",
+            timeoutMs: 5,
+          }),
+        ProviderRequestError,
+        "request timed out",
+      );
+
+      late.resolve(new Response(body));
+      await waitFor(() => bodyCancelled);
+      assertEquals(
+        bodyCancelled,
+        true,
+        "a response arriving after the deadline must have its body cancelled",
+      );
+    });
   });
 
   describe("requestStream", () => {
@@ -971,6 +1004,68 @@ describe("provider-http", () => {
         await new Response(stream).text(),
         "chunk",
         "the successful retry must supply the returned stream",
+      );
+    });
+
+    it("applies the default backoff when a provider names no retry delay", async () => {
+      let attempts = 0;
+      const error = await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return Promise.resolve(
+                jsonResponse(503, { error: { message: "overloaded" } }),
+              );
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+            headersTimeoutMs: 50,
+          }),
+        ProviderOverloadedError,
+        "status 503",
+      ) as ProviderOverloadedError;
+
+      assertEquals(
+        attempts,
+        1,
+        "a 1s default backoff cannot fit a 50ms deadline, so no replay may be issued",
+      );
+      assertEquals(error.status, 503, "the provider failure must be reported unchanged");
+      assertEquals(error.retryable, true, "an overload stays retryable upstream");
+    });
+
+    it("cancels a stream response that arrives after the header deadline elapsed", async () => {
+      const late = Promise.withResolvers<Response>();
+      let bodyCancelled = false;
+      const body = new ReadableStream<Uint8Array>({
+        cancel() {
+          bodyCancelled = true;
+        },
+      });
+
+      await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => late.promise,
+            init: { method: "POST" },
+            providerLabel: "Test provider",
+            providerKind: "openai",
+            headersTimeoutMs: 5,
+          }),
+        ProviderRequestError,
+        "request timed out",
+      );
+
+      late.resolve(new Response(body));
+      await waitFor(() => bodyCancelled);
+      assertEquals(
+        bodyCancelled,
+        true,
+        "a stream response arriving after the deadline must have its body cancelled",
       );
     });
 

@@ -5,14 +5,70 @@ import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
-import type { Workflow, WorkflowDefinition, WorkflowNode } from "./types.ts";
+import type { StepBuilderContext, Workflow, WorkflowDefinition, WorkflowNode } from "./types.ts";
 import {
   captureWorkflowDefinition,
   captureWorkflowNodes,
   captureWorkflowStaticValue,
 } from "./executor/workflow-definition-snapshot.ts";
 
+const arrayIsArray = Array.isArray;
+const dateToISOString = Date.prototype.toISOString;
+const mapForEach = Map.prototype.forEach;
+const NativeDate = Date;
+const NativeProxy = Proxy;
+const NativeSet = Set;
+const objectDefineProperty = Object.defineProperty;
 const objectFreeze = Object.freeze;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwn = Object.hasOwn;
+const reflectApply = Reflect.apply;
+const setAdd = Set.prototype.add;
+const setForEach = Set.prototype.forEach;
+
+function setOwnDataProperty(
+  target: NodeInfo | Record<string, number> | unknown[],
+  key: PropertyKey,
+  value: unknown,
+): void {
+  objectDefineProperty(target, key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
+
+function appendArrayValue<T>(values: T[], value: T): void {
+  setOwnDataProperty(values, values.length, value);
+}
+
+function appendArrayValues<T>(target: T[], values: readonly T[]): void {
+  for (let index = 0; index < values.length; index++) {
+    appendArrayValue(target, values[index]);
+  }
+}
+
+function copyArray<T>(values: readonly T[]): T[] {
+  const copy: T[] = [];
+  appendArrayValues(copy, values);
+  return copy;
+}
+
+function getOwnDataProperty<T>(value: unknown, key: PropertyKey): T | undefined {
+  if (
+    (typeof value !== "object" && typeof value !== "function") ||
+    value === null
+  ) return undefined;
+  const descriptor = objectGetOwnPropertyDescriptor(value, key);
+  return descriptor && objectHasOwn(descriptor, "value") ? descriptor.value as T : undefined;
+}
+
+function setToArray<T>(values: ReadonlySet<T>): T[] {
+  const entries: T[] = [];
+  reflectApply(setForEach, values, [(value: T) => appendArrayValue(entries, value)]);
+  return entries;
+}
 
 /** Metadata for one node in a registered workflow graph. */
 export interface NodeInfo {
@@ -64,7 +120,7 @@ export interface WorkflowMetadata {
 }
 
 function createProxy(): unknown {
-  return new Proxy(
+  return new NativeProxy(
     {},
     {
       get: (_target, prop) => (typeof prop === "string" ? createProxy() : undefined),
@@ -78,8 +134,8 @@ function getWorkflowDefinition(workflow: Workflow | WorkflowDefinition): Workflo
     workflow !== null && !isProxyWithoutHooks(workflow)
   ) {
     try {
-      const descriptor = Object.getOwnPropertyDescriptor(workflow, "definition");
-      if (descriptor && "value" in descriptor) {
+      const descriptor = objectGetOwnPropertyDescriptor(workflow, "definition");
+      if (descriptor && objectHasOwn(descriptor, "value")) {
         return descriptor.value as WorkflowDefinition;
       }
     } catch {
@@ -98,8 +154,9 @@ function getCollaboratorId(value: unknown): string | undefined {
   }
 
   try {
-    const descriptor = Object.getOwnPropertyDescriptor(value, "id");
-    return descriptor && "value" in descriptor && typeof descriptor.value === "string"
+    const descriptor = objectGetOwnPropertyDescriptor(value, "id");
+    return descriptor && objectHasOwn(descriptor, "value") &&
+        typeof descriptor.value === "string"
       ? descriptor.value
       : undefined;
   } catch {
@@ -112,16 +169,18 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
   let dynamicSteps = false;
   let introspectionSkipped = false;
   let introspectionError: string | undefined;
+  const id = getOwnDataProperty<string>(definition, "id") as string;
+  const steps = getOwnDataProperty<WorkflowDefinition["steps"]>(definition, "steps");
 
-  if (Array.isArray(definition.steps)) {
-    workflowNodes = definition.steps;
-  } else if (typeof definition.steps === "function") {
+  if (arrayIsArray(steps)) {
+    workflowNodes = steps;
+  } else if (typeof steps === "function") {
     dynamicSteps = true;
 
-    if (!definition.introspect) {
+    if (!getOwnDataProperty<boolean>(definition, "introspect")) {
       introspectionSkipped = true;
       logger.debug(
-        `[WorkflowRegistry] Skipping dynamic steps introspection for "${definition.id}" (introspect=false)`,
+        `[WorkflowRegistry] Skipping dynamic steps introspection for "${id}" (introspect=false)`,
       );
     } else {
       try {
@@ -129,43 +188,35 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
         const dummyContext: Record<string, unknown> = { input: createProxy() };
 
         workflowNodes = captureWorkflowNodes(
-          definition.steps(
+          reflectApply(steps, definition, [
             {
               input: dummyInput,
               context: dummyContext,
-            } as Parameters<typeof definition.steps>[0],
-          ),
-          `Workflow "${definition.id}" introspection`,
+            } as StepBuilderContext,
+          ]),
+          `Workflow "${id}" introspection`,
         );
       } catch (error) {
         introspectionError = snapshotThrowableDiagnostic(error);
         logger.warn(
-          `[WorkflowRegistry] Failed to introspect steps for "${definition.id}": ${introspectionError}`,
+          `[WorkflowRegistry] Failed to introspect steps for "${id}": ${introspectionError}`,
         );
       }
     }
   }
 
-  const nodeTypes = new Set<string>();
+  const nodeTypes = new NativeSet<string>();
   const nodeInfoList: NodeInfo[] = [];
-  const agentRefs = new Set<string>();
-  const toolRefs = new Set<string>();
+  const agentRefs = new NativeSet<string>();
+  const toolRefs = new NativeSet<string>();
 
   function extractNodeInfo(nodeList: WorkflowNode[]): string[] {
     const ids: string[] = [];
 
-    for (const node of nodeList) {
-      const type = node.config.type;
-      nodeTypes.add(type);
-      ids.push(node.id);
-
-      const nodeInfo: NodeInfo = {
-        id: node.id,
-        type,
-        dependsOn: node.dependsOn === undefined ? undefined : objectFreeze([...node.dependsOn]),
-      };
-
-      const config = node.config as {
+    for (let index = 0; index < nodeList.length; index++) {
+      const node = nodeList[index]!;
+      const config = getOwnDataProperty<WorkflowNode["config"]>(node, "config") as {
+        type: string;
         agent?: unknown;
         tool?: unknown;
         message?: unknown;
@@ -175,51 +226,70 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
         else?: unknown;
         steps?: unknown;
       };
+      const type = getOwnDataProperty<string>(config, "type") as string;
+      const nodeId = getOwnDataProperty<string>(node, "id") as string;
+      reflectApply(setAdd, nodeTypes, [type]);
+      appendArrayValue(ids, nodeId);
 
-      if (typeof config.description === "string") {
-        nodeInfo.description = config.description;
+      const dependencies = getOwnDataProperty<readonly string[]>(node, "dependsOn");
+
+      const nodeInfo: NodeInfo = {
+        id: nodeId,
+        type,
+        dependsOn: dependencies === undefined ? undefined : objectFreeze(copyArray(dependencies)),
+      };
+
+      const description = getOwnDataProperty<unknown>(config, "description");
+      if (typeof description === "string") {
+        setOwnDataProperty(nodeInfo, "description", description);
       }
 
       if (type === "step") {
-        const agentValue = config.agent;
+        const agentValue = getOwnDataProperty<unknown>(config, "agent");
         const agentRef = getCollaboratorId(agentValue);
 
         if (agentRef) {
-          nodeInfo.agent = agentRef;
-          agentRefs.add(agentRef);
+          setOwnDataProperty(nodeInfo, "agent", agentRef);
+          reflectApply(setAdd, agentRefs, [agentRef]);
         }
 
-        const toolValue = config.tool;
+        const toolValue = getOwnDataProperty<unknown>(config, "tool");
         const toolRef = getCollaboratorId(toolValue);
 
         if (toolRef) {
-          nodeInfo.tool = toolRef;
-          toolRefs.add(toolRef);
+          setOwnDataProperty(nodeInfo, "tool", toolRef);
+          reflectApply(setAdd, toolRefs, [toolRef]);
         }
       }
 
-      if (type === "wait" && "message" in config) {
-        nodeInfo.message = config.message as string;
+      if (type === "wait" && objectHasOwn(config, "message")) {
+        setOwnDataProperty(nodeInfo, "message", getOwnDataProperty(config, "message"));
       }
 
       const children: string[] = [];
 
-      if (Array.isArray(config.nodes)) {
-        children.push(...extractNodeInfo(config.nodes as WorkflowNode[]));
+      const nodes = getOwnDataProperty<unknown>(config, "nodes");
+      if (arrayIsArray(nodes)) {
+        appendArrayValues(children, extractNodeInfo(nodes as WorkflowNode[]));
       }
-      if (Array.isArray(config.then)) {
-        children.push(...extractNodeInfo(config.then as WorkflowNode[]));
+      const thenNodes = getOwnDataProperty<unknown>(config, "then");
+      if (arrayIsArray(thenNodes)) {
+        appendArrayValues(children, extractNodeInfo(thenNodes as WorkflowNode[]));
       }
-      if (Array.isArray(config.else)) {
-        children.push(...extractNodeInfo(config.else as WorkflowNode[]));
+      const elseNodes = getOwnDataProperty<unknown>(config, "else");
+      if (arrayIsArray(elseNodes)) {
+        appendArrayValues(children, extractNodeInfo(elseNodes as WorkflowNode[]));
       }
-      if (Array.isArray(config.steps)) {
-        children.push(...extractNodeInfo(config.steps as WorkflowNode[]));
+      const loopSteps = getOwnDataProperty<unknown>(config, "steps");
+      if (arrayIsArray(loopSteps)) {
+        appendArrayValues(children, extractNodeInfo(loopSteps as WorkflowNode[]));
       }
 
-      if (children.length) nodeInfo.children = objectFreeze(children);
+      if (children.length) {
+        setOwnDataProperty(nodeInfo, "children", objectFreeze(children));
+      }
 
-      nodeInfoList.push(objectFreeze(nodeInfo));
+      appendArrayValue(nodeInfoList, objectFreeze(nodeInfo));
     }
 
     return ids;
@@ -229,39 +299,50 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
 
   let inputSchemaJson: Record<string, unknown> | undefined;
   let inputSchemaError: string | undefined;
-  if (definition.inputSchema) {
+  const inputSchema = getOwnDataProperty<WorkflowDefinition["inputSchema"]>(
+    definition,
+    "inputSchema",
+  );
+  const outputSchema = getOwnDataProperty<WorkflowDefinition["outputSchema"]>(
+    definition,
+    "outputSchema",
+  );
+  if (inputSchema) {
     try {
       inputSchemaJson = captureWorkflowStaticValue(
-        zodToJsonSchema(definition.inputSchema) as Record<string, unknown>,
-        `Workflow "${definition.id}" input schema metadata`,
+        zodToJsonSchema(inputSchema) as Record<string, unknown>,
+        `Workflow "${id}" input schema metadata`,
       );
     } catch (error) {
       inputSchemaError = snapshotThrowableDiagnostic(error);
       logger.warn(
-        `[WorkflowRegistry] Failed to convert input schema for "${definition.id}": ${inputSchemaError}`,
+        `[WorkflowRegistry] Failed to convert input schema for "${id}": ${inputSchemaError}`,
       );
     }
   }
 
   return objectFreeze({
-    id: definition.id,
-    description: definition.description,
-    version: definition.version,
-    timeout: definition.timeout,
-    integrationRequirements: definition.integrationRequirements,
+    id,
+    description: getOwnDataProperty<WorkflowMetadata["description"]>(definition, "description"),
+    version: getOwnDataProperty<WorkflowMetadata["version"]>(definition, "version"),
+    timeout: getOwnDataProperty<WorkflowMetadata["timeout"]>(definition, "timeout"),
+    integrationRequirements: getOwnDataProperty<WorkflowMetadata["integrationRequirements"]>(
+      definition,
+      "integrationRequirements",
+    ),
     dynamicSteps,
     introspectionSkipped,
     introspectionError,
     nodeCount: workflowNodes.length,
-    nodeTypes: objectFreeze(Array.from(nodeTypes)),
+    nodeTypes: objectFreeze(setToArray(nodeTypes)),
     nodes: objectFreeze(nodeInfoList),
-    agentRefs: objectFreeze(Array.from(agentRefs)),
-    toolRefs: objectFreeze(Array.from(toolRefs)),
-    hasInputSchema: !!definition.inputSchema,
-    hasOutputSchema: !!definition.outputSchema,
+    agentRefs: objectFreeze(setToArray(agentRefs)),
+    toolRefs: objectFreeze(setToArray(toolRefs)),
+    hasInputSchema: !!inputSchema,
+    hasOutputSchema: !!outputSchema,
     inputSchemaJson,
     inputSchemaError,
-    registeredAt: new Date().toISOString(),
+    registeredAt: reflectApply(dateToISOString, new NativeDate(), []),
   });
 }
 
@@ -319,7 +400,11 @@ class WorkflowRegistryInternal {
   }
 
   getAllAsArray(): WorkflowMetadata[] {
-    return Array.from(this.getAll().values());
+    const metadata: WorkflowMetadata[] = [];
+    reflectApply(mapForEach, this.getAll(), [
+      (value: WorkflowMetadata) => appendArrayValue(metadata, value),
+    ]);
+    return metadata;
   }
 
   getStats(): {
@@ -332,16 +417,20 @@ class WorkflowRegistryInternal {
     let withInputSchema = 0;
     let withOutputSchema = 0;
 
-    for (const metadata of this.getAll().values()) {
-      for (const nodeType of metadata.nodeTypes) {
-        byNodeType[nodeType] = (byNodeType[nodeType] ?? 0) + 1;
+    const all = this.getAllAsArray();
+    for (let index = 0; index < all.length; index++) {
+      const metadata = all[index]!;
+      for (let nodeIndex = 0; nodeIndex < metadata.nodeTypes.length; nodeIndex++) {
+        const nodeType = metadata.nodeTypes[nodeIndex]!;
+        const existing = getOwnDataProperty<number>(byNodeType, nodeType) ?? 0;
+        setOwnDataProperty(byNodeType, nodeType, existing + 1);
       }
       if (metadata.hasInputSchema) withInputSchema++;
       if (metadata.hasOutputSchema) withOutputSchema++;
     }
 
     return {
-      total: this.getAll().size,
+      total: all.length,
       byNodeType,
       withInputSchema,
       withOutputSchema,

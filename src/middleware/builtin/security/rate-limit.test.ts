@@ -10,6 +10,7 @@ import { delay } from "#std/async.ts";
 import { scaleMs } from "#veryfront/testing/timing.ts";
 import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
+import { MS_PER_MINUTE } from "#veryfront/utils/constants/http.ts";
 import { MiddlewareContext } from "../../core/context.ts";
 import { MAX_RATE_LIMIT_KEY_LENGTH } from "./rate-limit-validation.ts";
 import {
@@ -61,10 +62,24 @@ describe("MemoryRateLimitStore", () => {
       const entry1 = await store.increment("test-key", shortWindow);
       assertEquals(entry1.count, 1);
 
-      await delay(120);
+      await delay(scaleMs(120));
 
       const entry2 = await store.increment("test-key", shortWindow);
-      assertEquals(entry2.count, 1);
+      assertEquals(entry2.count, 1, "an entry past its window must start a fresh count");
+    });
+
+    it("should not treat an entry inside its window as expired", async () => {
+      const entry1 = await store.increment("boundary-key", 5_000);
+      assertEquals(entry1.count, 1);
+
+      await delay(scaleMs(20));
+
+      const entry2 = await store.increment("boundary-key", 5_000);
+      assertEquals(
+        entry2.count,
+        2,
+        "an entry still inside its window must not be treated as expired",
+      );
     });
   });
 
@@ -275,6 +290,25 @@ describe("rateLimit middleware", () => {
       TypeError,
       "maxEntries",
     );
+
+    // A non-boolean trustProxy must not be coerced: a truthy string would
+    // silently enable proxy trust and let a rotating X-Forwarded-For header
+    // mint a fresh bucket per request.
+    assertThrows(
+      () => rateLimit({ trustProxy: "false" as never }),
+      TypeError,
+      "trustProxy",
+    );
+    assertThrows(
+      () => rateLimit({ keyGenerator: {} as never }),
+      TypeError,
+      "keyGenerator",
+    );
+    assertThrows(
+      () => rateLimit("5" as never),
+      TypeError,
+      "number or options object",
+    );
   });
 
   it("keeps active identities available and fails closed for overflow identities", async () => {
@@ -329,6 +363,7 @@ describe("rateLimit middleware", () => {
 
   it("should throttle repeated rate-limit store failure logs", async () => {
     const originalConsoleError = console.error;
+    const realNow = performance.now.bind(performance);
     let loggedFailures = 0;
     console.error = () => {
       loggedFailures++;
@@ -354,7 +389,22 @@ describe("rateLimit middleware", () => {
       assertEquals(first?.status, 503);
       assertEquals(second?.status, 503);
       assertEquals(loggedFailures, 1);
+
+      // Throttled, not silenced: once the interval elapses the same middleware
+      // must log the recurring outage again.
+      performance.now = () => realNow() + MS_PER_MINUTE + 1_000;
+      const third = await middleware(
+        createContext(),
+        () => Promise.resolve(new Response("OK")),
+      );
+      assertEquals(third?.status, 503);
+      assertEquals(
+        loggedFailures,
+        2,
+        "store-failure logging must resume after the throttle interval",
+      );
     } finally {
+      performance.now = realNow;
       console.error = originalConsoleError;
     }
   });

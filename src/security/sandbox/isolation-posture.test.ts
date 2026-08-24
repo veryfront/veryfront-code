@@ -66,6 +66,37 @@ describe("security/sandbox isolation posture reporting", () => {
     assertEquals(warning?.context?.effectiveSurfaces, 0);
   });
 
+  it("warns when a surface flag is set without the master switch", async () => {
+    await __resetPoolForTests();
+    setEnv("WORKER_ISOLATION_SSR", "1");
+    const entries = captureLogs();
+
+    assertEquals(
+      isWorkerIsolationEnabled(),
+      false,
+      "a surface flag alone must not enable isolation",
+    );
+
+    const warning = entries.find((entry) =>
+      entry.level === "warn" &&
+      entry.message.includes("WORKER_ISOLATION_ENABLED is not")
+    );
+    assertExists(
+      warning,
+      "expected a warning that surface flags are inert without the master switch",
+    );
+    assertEquals(
+      warning?.context?.effectiveSurfaces,
+      0,
+      "the warning must report that no surface resolved on",
+    );
+    assertEquals(
+      warning?.context?.workerIsolationSsr,
+      true,
+      "the warning must name the flag the operator actually set",
+    );
+  });
+
   it("reports requested and effective state for every surface", async () => {
     await __resetPoolForTests();
     setEnv("WORKER_ISOLATION_ENABLED", "1");

@@ -86,5 +86,42 @@ describe("extension property inspection", () => {
     assertEquals(isStableExtensionCacheIdentity("engine-\uD800", 64), false);
     assertEquals(isStableExtensionCacheIdentity("engine-\uDC00", 64), false);
     assertEquals(isStableExtensionCacheIdentity("engine-\uD800x", 64), false);
+    assertEquals(
+      isStableExtensionCacheIdentity("x".repeat(64), 64),
+      true,
+      "an identity of exactly maxCharacters must be accepted",
+    );
+    assertEquals(
+      isStableExtensionCacheIdentity("x".repeat(65), 64),
+      false,
+      "an identity one character over maxCharacters must be rejected",
+    );
+    // An identity becomes a cache key and a log line, so an interior control
+    // character or line separator must be rejected rather than trimmed away.
+    assertEquals(
+      isStableExtensionCacheIdentity("engine\u0000v1", 64),
+      false,
+      "an interior NUL must be rejected",
+    );
+    assertEquals(
+      isStableExtensionCacheIdentity("engine\nv1", 64),
+      false,
+      "an interior newline must be rejected",
+    );
+    assertEquals(
+      isStableExtensionCacheIdentity("engine\u2028v1", 64),
+      false,
+      "an interior line separator must be rejected",
+    );
+    assertEquals(
+      isStableExtensionCacheIdentity("engine-e\u0301", 64),
+      false,
+      "a decomposed identity must be rejected so one engine cannot own two keys",
+    );
+    assertEquals(
+      isStableExtensionCacheIdentity("engine-\u00e9", 64),
+      true,
+      "the composed NFC form of the same identity must be accepted",
+    );
   });
 });

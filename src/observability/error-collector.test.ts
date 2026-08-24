@@ -120,6 +120,11 @@ describe("cli/mc./error-collector", () => {
       ec.add({ type: "compile", category: "BUILD", message: "3" });
 
       assertEquals(ec.count, 2);
+      assertEquals(
+        ec.getAll().map((error) => error.message),
+        ["2", "3"],
+        "maxErrors must evict the oldest entry, not the newest",
+      );
     });
 
     it("should filter by type", () => {
@@ -159,6 +164,67 @@ describe("cli/mc./error-collector", () => {
 
       assertEquals(ec.getAll({ file: pattern }).length, 2);
       assertEquals(ec.getAll({ file: pattern }).length, 2);
+    });
+
+    it("should filter by since timestamp", () => {
+      const ec = new ErrorCollector();
+      const first = ec.addCompileError("a");
+      const second = ec.addCompileError("b");
+
+      assertEquals(
+        ec.getAll({ since: first.timestamp }).length,
+        2,
+        "since is inclusive of the cutoff timestamp",
+      );
+      assertEquals(
+        ec.getAll({ since: second.timestamp + 1 }).length,
+        0,
+        "since drops every error recorded before the cutoff",
+      );
+      assertEquals(
+        ec.getAll({ since: first.timestamp, type: "runtime" }).length,
+        0,
+        "since composes with the type filter instead of replacing it",
+      );
+    });
+
+    it("should filter by an array of types", () => {
+      const ec = new ErrorCollector();
+      ec.addCompileError("a");
+      ec.addRuntimeError("b");
+      ec.addHMRError("c");
+
+      assertEquals(
+        ec.getAll({ type: ["compile", "runtime"] }).map((error) => error.message),
+        ["a", "b"],
+        "an array type filter matches every listed type",
+      );
+    });
+
+    it("should filter by an array of categories", () => {
+      const ec = new ErrorCollector();
+      ec.addCompileError("a");
+      ec.addRuntimeError("b");
+      ec.addHMRError("c");
+
+      assertEquals(
+        ec.getAll({ category: ["BUILD", "RUNTIME"] }).map((error) => error.message),
+        ["a", "b"],
+        "an array category filter matches every listed category",
+      );
+    });
+
+    it("should filter by an array of slugs", () => {
+      const ec = new ErrorCollector();
+      ec.addCompileError("a", "src/a.ts", 1, 1, "slug-a");
+      ec.addRuntimeError("b", undefined, undefined, "slug-b");
+      ec.addRuntimeError("c", undefined, undefined, "slug-c");
+
+      assertEquals(
+        ec.getAll({ slug: ["slug-a", "slug-b"] }).map((error) => error.message),
+        ["a", "b"],
+        "an array slug filter matches every listed slug",
+      );
     });
 
     it("should redact retained error details without mutating caller context", () => {
@@ -411,6 +477,11 @@ describe("cli/mc./error-collector", () => {
       assertEquals(result?.file, "src/app.ts");
       assertEquals(result?.line, 10);
       assertEquals(result?.column, 5);
+      assertEquals(
+        result?.message,
+        "Cannot find name",
+        "TypeScript branch must extract the diagnostic text, not the file path",
+      );
     });
 
     it("should parse esbuild error format", () => {
@@ -420,6 +491,12 @@ describe("cli/mc./error-collector", () => {
       assertEquals(result?.category, "BUILD");
       assertEquals(result?.file, "mod.js");
       assertEquals(result?.line, 5);
+      assertEquals(result?.column, 12, "esbuild branch must extract the column");
+      assertEquals(
+        result?.message,
+        "Unexpected token",
+        "esbuild branch must extract the diagnostic text",
+      );
     });
 
     it("should parse generic error messages", () => {

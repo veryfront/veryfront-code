@@ -19,6 +19,14 @@ describe("sanitizeData compatibility", () => {
     });
   });
 
+  it("HTML-encodes quotes that would break out of an attribute", () => {
+    assertEquals(
+      sanitizeData({ v: `<a href="x" onclick='y'>` }),
+      { v: "&lt;a href=&quot;x&quot; onclick=&#x27;y&#x27;&gt;" },
+      "double and single quotes must be encoded so sanitized values cannot break out of an HTML attribute",
+    );
+  });
+
   it("uses null-prototype objects and rejects prototype-chain keys", () => {
     const value = sanitizeData(
       JSON.parse('{"safe":"ok","__proto__":{"polluted":true},"constructor":"bad"}'),

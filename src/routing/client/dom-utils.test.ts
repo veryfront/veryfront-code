@@ -554,6 +554,52 @@ describe("DOM Utils", () => {
       }
     });
 
+    it("reapplies the document nonce and drops the payload nonce", () => {
+      const dom = new JSDOM(
+        `<!doctype html><html><head><style nonce="doc-nonce"></style></head><body>
+          <div id="container"><script nonce="payload-nonce">globalThis.x=1</script></div>
+        </body></html>`,
+      );
+      try {
+        const container = dom.window.document.getElementById("container") as HTMLElement;
+
+        executeScripts(container);
+
+        const replaced = container.querySelector("script");
+        assertExists(replaced, "the script must still be present after cloning");
+        assertEquals(
+          replaced.getAttribute("nonce"),
+          "doc-nonce",
+          "the clone must carry the document's active nonce",
+        );
+      } finally {
+        dom.window.close();
+      }
+    });
+
+    it("adds no nonce when the document has none", () => {
+      const dom = new JSDOM(
+        `<!doctype html><html><head></head><body>
+          <div id="container"><script>globalThis.x=1</script></div>
+        </body></html>`,
+      );
+      try {
+        const container = dom.window.document.getElementById("container") as HTMLElement;
+
+        executeScripts(container);
+
+        const replaced = container.querySelector("script");
+        assertExists(replaced, "the script must still be present after cloning");
+        assertEquals(
+          replaced.hasAttribute("nonce"),
+          false,
+          "no active nonce means no nonce attribute",
+        );
+      } finally {
+        dom.window.close();
+      }
+    });
+
     it("should handle multiple scripts", () => {
       const originalDocument = (globalThis as GlobalWithDOM).document;
       let scriptCount = 0;
@@ -1028,6 +1074,126 @@ describe("DOM Utils", () => {
       }
     });
 
+    it("skips wrappers that React Head still owns", () => {
+      const mocks = setupMockDocument();
+      try {
+        const reactOwnedMeta = new MockElement("META");
+        reactOwnedMeta.setAttribute("name", "react-owned");
+        const legacyMeta = new MockElement("META");
+        legacyMeta.setAttribute("name", "legacy");
+
+        let reactWrapperRemoved = false;
+        const reactWrapper = {
+          childNodes: [reactOwnedMeta],
+          getAttribute: (name: string) => name === "data-vf-react-head-owner" ? "1" : null,
+          parentElement: {
+            removeChild: () => {
+              reactWrapperRemoved = true;
+            },
+          },
+        };
+        const legacyWrapper = {
+          childNodes: [legacyMeta],
+          getAttribute: () => null,
+          parentElement: { removeChild: () => {} },
+        };
+
+        const container = {
+          querySelectorAll: () => [reactWrapper, legacyWrapper],
+        } as unknown as HTMLElement;
+
+        applyHeadDirectives(container);
+
+        assertEquals(mocks.headElements.length, 1, "React-owned head wrappers are skipped");
+        assertEquals(
+          mocks.headElements[0]?.getAttribute?.("name"),
+          "legacy",
+          "only the legacy directive wrapper reaches the head",
+        );
+        assertEquals(
+          reactWrapperRemoved,
+          false,
+          "a React-owned wrapper must stay in the container",
+        );
+      } finally {
+        mocks.cleanup();
+      }
+    });
+
+    it("leaves React head ownership intact when every wrapper is React owned", () => {
+      const mocks = setupMockDocument();
+      try {
+        const reactManaged = {
+          tagName: "META",
+          getAttribute: (name: string) => {
+            if (name === "data-veryfront-managed") return "1";
+            if (name === "data-vf-react-head") return "true";
+            return null;
+          },
+          parentElement: {
+            removeChild: (child: MockHeadElement) => {
+              const index = mocks.headElements.indexOf(child);
+              if (index !== -1) mocks.headElements.splice(index, 1);
+            },
+          },
+        };
+        mocks.headElements.push(reactManaged);
+
+        const reactOwnedMeta = new MockElement("META");
+        reactOwnedMeta.setAttribute("name", "react-owned");
+        const reactWrapper = {
+          childNodes: [reactOwnedMeta],
+          getAttribute: (name: string) => name === "data-vf-react-head-owner" ? "1" : null,
+          parentElement: { removeChild: () => {} },
+        };
+
+        const container = {
+          querySelectorAll: () => [reactWrapper],
+        } as unknown as HTMLElement;
+
+        applyHeadDirectives(container);
+
+        assertEquals(
+          mocks.headElements.includes(reactManaged),
+          true,
+          "retireClientHeadOwnership must not run when there is nothing to apply",
+        );
+        assertEquals(
+          mocks.headElements.length,
+          1,
+          "a React-owned wrapper must not clone anything into the head",
+        );
+      } finally {
+        mocks.cleanup();
+      }
+    });
+
+    it("reapplies the document nonce to cloned head directives", () => {
+      const dom = new JSDOM(
+        `<!doctype html><html><head><style nonce="doc-nonce"></style></head><body>
+          <main id="root">
+            <div data-veryfront-head="1"><style nonce="payload-nonce">.a{}</style></div>
+          </main>
+        </body></html>`,
+      );
+      try {
+        const targetDocument = dom.window.document;
+        const container = targetDocument.getElementById("root") as HTMLElement;
+
+        applyHeadDirectives(container);
+
+        const clone = targetDocument.head.querySelector('style[data-vf-route-head="true"]');
+        assertExists(clone, "the head directive must be cloned into the document head");
+        assertEquals(
+          clone.getAttribute("nonce"),
+          "doc-nonce",
+          "the head clone must carry the document's active nonce",
+        );
+      } finally {
+        dom.window.close();
+      }
+    });
+
     it("applies directives only to the container owner document", () => {
       const primary = new JSDOM(
         `<!doctype html><html><head>
@@ -1371,6 +1537,55 @@ describe("DOM Utils", () => {
         },
       };
     }
+
+    function installJSDOMParser(): () => void {
+      const globalWithDOMParser = globalThis as GlobalWithDOMParser;
+      const originalDOMParser = globalWithDOMParser.DOMParser;
+      const owner = new JSDOM("");
+      globalWithDOMParser.DOMParser = owner.window.DOMParser as unknown as typeof DOMParser;
+      return () => {
+        globalWithDOMParser.DOMParser = originalDOMParser;
+        owner.window.close();
+      };
+    }
+
+    it("forces a document navigation when the app root contains an inline script", () => {
+      const restoreDOMParser = installJSDOMParser();
+      try {
+        const result = parsePageDataFromHTML(
+          `<!doctype html><html><head></head><body>
+            <div id="root"><main>Hi</main><script>window.x=1</script></div>
+          </body></html>`,
+        );
+
+        assertEquals(
+          result.pageData.requiresFullDocumentNavigation,
+          true,
+          "an inline script in the app root must force a document navigation",
+        );
+      } finally {
+        restoreDOMParser();
+      }
+    });
+
+    it("keeps a script-free app root on the soft transition path", () => {
+      const restoreDOMParser = installJSDOMParser();
+      try {
+        const result = parsePageDataFromHTML(
+          `<!doctype html><html><head></head><body>
+            <div id="root"><main>Hi</main></div>
+          </body></html>`,
+        );
+
+        assertEquals(
+          result.pageData.requiresFullDocumentNavigation,
+          undefined,
+          "script-free roots stay on the soft transition path",
+        );
+      } finally {
+        restoreDOMParser();
+      }
+    });
 
     it("should extract content from root element", () => {
       const mocks = setupMockDOMParser();

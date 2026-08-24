@@ -245,6 +245,59 @@ describe("parseFormData", () => {
     );
   });
 
+  it("rejects a form body that fails its schema", async () => {
+    const request = new Request("http://localhost/form", {
+      method: "POST",
+      body: "age=30",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+    });
+
+    const error = await assertRejects(
+      () => parseFormData(request, schema),
+      VeryfrontError,
+      "Form validation failed",
+      "a form body that fails its schema must be rejected, never returned to the caller",
+    ) as VeryfrontError;
+
+    const details = error.context as { details?: { errors?: unknown[] } } | undefined;
+    assertEquals(
+      Array.isArray(details?.details?.errors),
+      true,
+      "the rejection must carry the schema issues",
+    );
+    assertEquals(
+      (details!.details!.errors as unknown[]).length > 0,
+      true,
+      "the schema issue list must not be empty",
+    );
+  });
+
+  it("rejects an uploaded file above the configured per-file limit", async () => {
+    const body = new FormData();
+    body.append("name", "Alice");
+    body.append("avatar", new File(["0123456789"], "avatar.bin"));
+    const request = new Request("http://localhost/form", { method: "POST", body });
+
+    const error = await assertRejects(
+      () => parseFormData(request, schema, { limits: { maxFileSize: 4 } }),
+      VeryfrontError,
+      "File avatar too large",
+      "an upload above maxFileSize must be rejected before the schema sees it",
+    ) as VeryfrontError;
+
+    const details = error.context as { details: { maxSize: number; actualSize: number } };
+    assertEquals(
+      details.details.maxSize,
+      4,
+      "the rejection must report the configured per-file limit",
+    );
+    assertEquals(
+      details.details.actualSize,
+      10,
+      "the rejection must report the actual file size",
+    );
+  });
+
   it("collects special form field names without changing the input prototype", async () => {
     let captured: Record<string, unknown> | undefined;
     const captureSchema = {

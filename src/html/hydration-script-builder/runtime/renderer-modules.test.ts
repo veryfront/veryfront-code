@@ -316,6 +316,30 @@ describe("hydration-script-builder/runtime/renderer", () => {
       assertEquals(requested, ["http://modules/pages/index.js"]);
     });
 
+    it("does not retry for a nested index slug", async () => {
+      const requested: string[] = [];
+      const original = notFound("http://modules/pages/docs/index.js");
+
+      const thrown = await captureRejection(
+        loadPageModuleWithIndexFallback(
+          "http://modules/pages/docs/index",
+          "docs/index",
+          null,
+          (url) => {
+            requested.push(url);
+            return Promise.reject(original);
+          },
+        ),
+      );
+
+      assertEquals(thrown, original, "a nested index slug must surface the original error");
+      assertEquals(
+        requested,
+        ["http://modules/pages/docs/index.js"],
+        "a nested index slug must not probe <route>/index/index.js",
+      );
+    });
+
     it("prefers a link error over a stale hydration-data fetch failure", async () => {
       // Hydration data can carry a pagePath that no longer resolves. That 404
       // must never outrank an error proving the fallback reached a module.

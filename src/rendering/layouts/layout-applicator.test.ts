@@ -1,80 +1,82 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { flattenRouteParams } from "#veryfront/routing";
 import { type LayoutApplicationOptions, LayoutApplicator } from "./layout-applicator.ts";
 import * as React from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { EntityInfo, LayoutItem, MdxBundle } from "#veryfront/types";
+import type { VeryfrontConfig } from "#veryfront/config";
+import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import { createLayoutComponentCache } from "./utils/component-loader.ts";
 import {
   __setServerModuleLoaderForTests,
   resetReactCache,
 } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 
-function buildSSRRouter(
-  requestUrl: URL | undefined,
-  pageFilePath: string,
-  pageSlug: string,
-  params?: Record<string, string | string[]>,
-): {
-  domain: string;
-  path: string;
-  pathname: string;
-  params: Record<string, string>;
-  query: Record<string, string>;
-  isPreview: false;
-  isMounted: false;
-  navigate: () => void;
-  push: () => void;
-  replace: () => void;
-  reload: () => void;
-} {
-  // Mirror production: reuse the shared helper so this test can't drift back
-  // to the old first-segment-only contract (issue #2742).
-  const flatParams = flattenRouteParams(params);
+/** Passthrough stand-ins for the framework providers, so the tree stays readable. */
+const Pass = ({ children }: { children?: React.ReactNode }) => children;
 
+type ProviderModules = {
+  PageContextProvider: React.ComponentType<Record<string, unknown>>;
+  RouterProvider: React.ComponentType<Record<string, unknown>>;
+};
+
+function createAdapter(files: Record<string, string> = {}): RuntimeAdapter {
   return {
-    domain: requestUrl?.origin ?? "",
-    path: requestUrl?.pathname ?? pageFilePath,
-    pathname: requestUrl?.pathname ?? `/${pageSlug}`,
-    params: flatParams,
-    query: requestUrl ? Object.fromEntries(requestUrl.searchParams) : {},
-    isPreview: false,
-    isMounted: false,
-    navigate: () => {},
-    push: () => {},
-    replace: () => {},
-    reload: () => {},
-  };
+    fs: {
+      exists: (path: string) => Promise.resolve(path in files),
+      readFile: (path: string) => {
+        const content = files[path];
+        if (content === undefined) return Promise.reject(new Error(`not found: ${path}`));
+        return Promise.resolve(content);
+      },
+      readDir: async function* () {},
+      writeFile: () => Promise.resolve(),
+      mkdir: () => Promise.resolve(),
+    },
+    env: { get: () => undefined },
+  } as unknown as RuntimeAdapter;
 }
 
-type Heading = { id: string; text: string; level: number };
-
-function buildPageContext(
-  slug: string,
+function createPageInfo(
   path: string,
-  params: Record<string, string>,
-  query: Record<string, string>,
-  frontmatter: Record<string, unknown>,
-  headings: Heading[],
-): {
-  slug: string;
-  path: string;
-  params: Record<string, string>;
-  query: Record<string, string>;
-  frontmatter: Record<string, unknown>;
-  headings: Heading[];
-  mdxHeadings: Heading[];
-} {
+  slug: string,
+  frontmatter: Record<string, unknown> = {},
+): EntityInfo {
   return {
-    slug,
-    path,
-    params,
-    query,
-    frontmatter,
-    headings,
-    mdxHeadings: headings,
-  };
+    entity: { id: path, path, slug, type: "page", content: "", frontmatter },
+  } as unknown as EntityInfo;
+}
+
+/**
+ * Builds an applicator whose framework providers are pre-seeded, so applyLayouts
+ * can be driven end to end without compiling the real context/router modules.
+ */
+function createApplicator(
+  overrides: Partial<LayoutApplicationOptions> = {},
+): LayoutApplicator {
+  const applicator = new LayoutApplicator({
+    projectDir: "/project",
+    projectId: "project",
+    projectSlug: "project",
+    contentSourceId: "preview-main",
+    adapter: createAdapter(),
+    config: {} as VeryfrontConfig,
+    layoutCache: createLayoutComponentCache(),
+    mergedComponents: {},
+    mode: "production",
+    environment: "production",
+    reactVersion: "19.1.1",
+    ...overrides,
+  });
+
+  (applicator as unknown as { frameworkProviderModulesPromise: Promise<ProviderModules> })
+    .frameworkProviderModulesPromise = Promise.resolve({
+      PageContextProvider: Pass as React.ComponentType<Record<string, unknown>>,
+      RouterProvider: Pass as React.ComponentType<Record<string, unknown>>,
+    });
+
+  return applicator;
 }
 
 describe("LayoutApplicator helpers", () => {
@@ -83,88 +85,104 @@ describe("LayoutApplicator helpers", () => {
     __setServerModuleLoaderForTests(null);
   });
 
-  describe("buildSSRRouter", () => {
-    it("should build router from URL", () => {
-      const url = new URL("https://example.com/about?foo=bar");
-      const router = buildSSRRouter(url, "/pages/about.tsx", "about");
-      assertEquals(router.domain, "https://example.com");
-      assertEquals(router.pathname, "/about");
-      assertEquals(router.query, { foo: "bar" });
-      assertEquals(router.isPreview, false);
-      assertEquals(router.isMounted, false);
-    });
-
-    it("should use fallback values when URL is undefined", () => {
-      const router = buildSSRRouter(undefined, "/pages/about.tsx", "about");
-      assertEquals(router.domain, "");
-      assertEquals(router.path, "/pages/about.tsx");
-      assertEquals(router.pathname, "/about");
-      assertEquals(router.query, {});
-    });
-
-    it("should join catch-all params instead of dropping segments", () => {
-      const url = new URL("https://example.com/blog/123/extra");
-      const router = buildSSRRouter(url, "/pages/blog/[...id].tsx", "blog/123/extra", {
-        id: ["123", "extra"],
+  describe("applyLayouts SSR router", () => {
+    it("builds the router from the request URL and route params", async () => {
+      __setServerModuleLoaderForTests(() => Promise.resolve({ default: React }));
+      const applicator = createApplicator({
+        requestUrl: new URL("https://example.com/about?foo=bar"),
+        params: { id: ["123", "extra"] },
       });
-      assertEquals(router.params, { id: "123/extra" });
+
+      const result = await applicator.applyLayouts(
+        React.createElement("main"),
+        createPageInfo("/project/pages/about.tsx", "about"),
+        undefined,
+        [],
+      );
+
+      const router = (result.props as { router: Record<string, unknown> }).router;
+      assertEquals(
+        router.params,
+        { id: "123/extra" },
+        "catch-all params must reach the SSR router joined, not first-segment-only",
+      );
+      assertEquals(
+        router.pathname,
+        "/about",
+        "SSR router pathname must come from the request URL",
+      );
+      assertEquals(
+        router.domain,
+        "https://example.com",
+        "SSR router domain must be the request origin",
+      );
+      assertEquals(
+        router.query,
+        { foo: "bar" },
+        "SSR router query must come from the request search params",
+      );
     });
 
-    it("should handle URL with multiple search params", () => {
-      const url = new URL("https://example.com/search?q=test&page=2&lang=en");
-      const router = buildSSRRouter(url, "/pages/search.tsx", "search");
-      assertEquals(router.query, { q: "test", page: "2", lang: "en" });
-    });
+    it("falls back to the page file path and slug without a request URL", async () => {
+      __setServerModuleLoaderForTests(() => Promise.resolve({ default: React }));
+      const applicator = createApplicator();
 
-    it("should provide async navigate/push/replace/reload methods", async () => {
-      const router = buildSSRRouter(undefined, "/page.tsx", "page");
-      await router.navigate();
-      await router.push();
-      await router.replace();
-      await router.reload();
+      const result = await applicator.applyLayouts(
+        React.createElement("main"),
+        createPageInfo("/project/pages/about.tsx", "about"),
+        undefined,
+        [],
+      );
+
+      const router = (result.props as { router: Record<string, unknown> }).router;
+      assertEquals(
+        router.domain,
+        "",
+        "the SSR router domain is empty without a request URL",
+      );
+      assertEquals(
+        router.path,
+        "/project/pages/about.tsx",
+        "path falls back to the page file path",
+      );
+      assertEquals(router.pathname, "/about", "pathname falls back to the entity slug");
+      assertEquals(router.query, {}, "query is empty without a request URL");
     });
   });
 
-  describe("buildPageContext", () => {
-    it("should build context with all fields", () => {
-      const headings = [{ id: "intro", text: "Introduction", level: 1 }];
-      const ctx = buildPageContext(
-        "about",
-        "/pages/about.tsx",
-        { id: "123" },
-        { tab: "details" },
-        { title: "About" },
-        headings,
+  describe("applyLayouts page context", () => {
+    it("exposes getServerData props and the entity frontmatter", async () => {
+      __setServerModuleLoaderForTests(() => Promise.resolve({ default: React }));
+      const applicator = createApplicator({
+        config: { react: { version: "19.1.1" } } as VeryfrontConfig,
+        pageProps: { user: "kim" },
+      });
+
+      const result = await applicator.applyLayouts(
+        React.createElement("main"),
+        createPageInfo("/project/pages/about.tsx", "about", { title: "About" }),
+        undefined,
+        [],
       );
-      assertEquals(ctx.slug, "about");
-      assertEquals(ctx.path, "/pages/about.tsx");
-      assertEquals(ctx.params, { id: "123" });
-      assertEquals(ctx.query, { tab: "details" });
-      assertEquals(ctx.frontmatter, { title: "About" });
-      assertEquals(ctx.headings, headings);
-      assertEquals(ctx.mdxHeadings, headings);
-    });
 
-    it("should preserve empty params and query", () => {
-      const ctx = buildPageContext("home", "/pages/index.tsx", {}, {}, {}, []);
-      assertEquals(ctx.params, {});
-      assertEquals(ctx.query, {});
-    });
-
-    it("should handle empty frontmatter", () => {
-      const ctx = buildPageContext("test", "/test.tsx", {}, {}, {}, []);
-      assertEquals(ctx.frontmatter, {});
-    });
-
-    it("should handle multiple headings", () => {
-      const headings = [
-        { id: "h1", text: "Title", level: 1 },
-        { id: "h2", text: "Subtitle", level: 2 },
-        { id: "h3", text: "Section", level: 3 },
-      ];
-      const ctx = buildPageContext("docs", "/docs.tsx", {}, {}, {}, headings);
-      assertEquals(ctx.headings.length, 3);
-      assertEquals(ctx.mdxHeadings.length, 3);
+      const contextElement = (result.props as { children: React.ReactElement }).children;
+      const ctx = (contextElement.props as { pageContext: Record<string, unknown> }).pageContext;
+      assertEquals(
+        ctx.data,
+        { user: "kim" },
+        "getServerData props must reach the page context as `data`",
+      );
+      assertEquals(
+        ctx.frontmatter,
+        { title: "About" },
+        "frontmatter must fall back to pageInfo.entity.frontmatter when options.frontmatter is absent",
+      );
+      assertEquals(ctx.slug, "about", "the page context carries the entity slug");
+      assertEquals(
+        ctx.path,
+        "/project/pages/about.tsx",
+        "the page context carries the page file path",
+      );
     });
   });
 
@@ -215,29 +233,89 @@ describe("LayoutApplicator helpers", () => {
     });
   });
 
-  describe("ESM vs function-body layout mode detection", () => {
-    it("should detect ESM mode from config", () => {
-      const config: { experimental?: { esmLayouts?: boolean } } = {
-        experimental: { esmLayouts: true },
+  describe("ESM vs function-body layout routing", () => {
+    /**
+     * The two paths differ on how they render an MDX layout: applyLayoutsESM
+     * goes through applyMDXLayout -> mdxRenderer.loadModuleESM, while
+     * applyLayoutsFunctionBody calls mdxRenderer.render directly.
+     */
+    const recordLayoutPath = async (config: VeryfrontConfig): Promise<string[]> => {
+      __setServerModuleLoaderForTests(() => Promise.resolve({ default: React }));
+      const calls: string[] = [];
+      const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+      const originalRender = mdxRenderer.render;
+      const mutableRenderer = mdxRenderer as unknown as {
+        loadModuleESM: typeof mdxRenderer.loadModuleESM;
+        render: typeof mdxRenderer.render;
       };
-      assertEquals(Boolean(config.experimental?.esmLayouts), true);
-    });
 
-    it("should default to function-body mode when not set", () => {
-      const config: { experimental?: { esmLayouts?: boolean } } = {};
-      assertEquals(Boolean(config.experimental?.esmLayouts), false);
-    });
-
-    it("should default to function-body mode when experimental is undefined", () => {
-      const config: { experimental?: { esmLayouts?: boolean } } = { experimental: undefined };
-      assertEquals(Boolean(config.experimental?.esmLayouts), false);
-    });
-
-    it("should default to function-body mode when esmLayouts is false", () => {
-      const config: { experimental?: { esmLayouts?: boolean } } = {
-        experimental: { esmLayouts: false },
+      mutableRenderer.loadModuleESM = () => {
+        calls.push("loadModuleESM");
+        return Promise.resolve({ default: () => null });
       };
-      assertEquals(Boolean(config.experimental?.esmLayouts), false);
+      mutableRenderer.render = () => {
+        calls.push("render");
+        return React.createElement("div");
+      };
+
+      try {
+        await (applicator(config) as unknown as {
+          applyLayoutsOnly(
+            pageElement: React.ReactElement,
+            layoutBundle: MdxBundle | undefined,
+            nestedLayouts: LayoutItem[],
+            layoutDataMap?: Map<string, Record<string, unknown>>,
+            reactVersion?: string,
+          ): Promise<React.ReactElement>;
+        }).applyLayoutsOnly(
+          React.createElement("main"),
+          undefined,
+          [{
+            kind: "mdx",
+            path: "/project/app/layout.mdx",
+            bundle: {
+              compiledCode: "export default function NestedLayout() { return null; }",
+            },
+          }] as LayoutItem[],
+          undefined,
+          "19.1.1",
+        );
+      } finally {
+        mutableRenderer.loadModuleESM = originalLoadModuleESM;
+        mutableRenderer.render = originalRender;
+      }
+
+      return calls;
+    };
+
+    const applicator = (config: VeryfrontConfig) => createApplicator({ config });
+
+    it("routes to applyLayoutsESM when experimental.esmLayouts is set", async () => {
+      assertEquals(
+        await recordLayoutPath(
+          { experimental: { esmLayouts: true } } as unknown as VeryfrontConfig,
+        ),
+        ["loadModuleESM"],
+        "experimental.esmLayouts: true must route to applyLayoutsESM",
+      );
+    });
+
+    it("routes to applyLayoutsFunctionBody without the flag", async () => {
+      assertEquals(
+        await recordLayoutPath({} as VeryfrontConfig),
+        ["render"],
+        "an absent esmLayouts flag must route to applyLayoutsFunctionBody",
+      );
+    });
+
+    it("routes to applyLayoutsFunctionBody when esmLayouts is false", async () => {
+      assertEquals(
+        await recordLayoutPath(
+          { experimental: { esmLayouts: false } } as unknown as VeryfrontConfig,
+        ),
+        ["render"],
+        "experimental.esmLayouts: false must route to applyLayoutsFunctionBody",
+      );
     });
   });
 
@@ -335,5 +413,68 @@ describe("LayoutApplicator helpers", () => {
       true,
     );
     assertEquals(reads.some((path) => path.startsWith("/project/app/")), false);
+  });
+
+  it("wraps the page in the discovered loading and error boundaries", async () => {
+    const Loading = () => React.createElement("p", null, "Loading");
+    const ErrorPage = () => React.createElement("p", null, "Error");
+    const adapter = createAdapter({
+      "/project/src/site/loading.tsx": "export default function Loading() {}",
+      "/project/src/site/error.tsx": "export default function ErrorPage() {}",
+    });
+    __setServerModuleLoaderForTests(() => Promise.resolve({ default: React }));
+
+    const applicator = new LayoutApplicator(
+      {
+        projectDir: "/project",
+        projectId: "project",
+        projectSlug: "project",
+        contentSourceId: "preview-main",
+        adapter,
+        config: {
+          directories: { app: "src/site" },
+          react: { version: "19.1.1" },
+        } as VeryfrontConfig,
+        layoutCache: createLayoutComponentCache(),
+        mergedComponents: {},
+        mode: "production",
+        environment: "production",
+        reactVersion: "19.1.1",
+      },
+      {
+        loadComponentFromSource: (_source, path) =>
+          Promise.resolve(
+            (path.endsWith("loading.tsx") ? Loading : ErrorPage) as React.ComponentType<
+              Record<string, unknown>
+            >,
+          ),
+      },
+    );
+
+    const page = React.createElement("main");
+    const result = await (applicator as unknown as {
+      wrapWithReservedComponents(
+        element: React.ReactElement,
+        path: string,
+      ): Promise<React.ReactElement>;
+    }).wrapWithReservedComponents(page, "/project/src/site/blog/page.tsx");
+
+    assertEquals(
+      typeof result.type,
+      "function",
+      "error.tsx must wrap the page in an error boundary",
+    );
+    const inner = (result.props as { children: React.ReactElement }).children;
+    assertEquals(inner.type, React.Suspense, "loading.tsx must wrap the page in Suspense");
+    assertEquals(
+      (inner.props as { fallback: React.ReactElement }).fallback.type,
+      Loading,
+      "Suspense fallback must be the loading component",
+    );
+    assertEquals(
+      (inner.props as { children: React.ReactElement }).children,
+      page,
+      "the page element must stay inside both boundaries",
+    );
   });
 });
