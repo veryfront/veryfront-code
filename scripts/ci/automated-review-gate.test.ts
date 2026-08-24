@@ -557,7 +557,12 @@ describe("automated review publication", () => {
         pullUrl: "https://example.test/pr/1",
       });
       assertEquals(result.state, "failure");
+      assertEquals(result.review, undefined);
       assertEquals(fixture.published[0]?.state, "failure");
+      assertEquals(
+        fixture.published[0]?.target_url,
+        "https://example.test/pr/1",
+      );
     }
   });
 

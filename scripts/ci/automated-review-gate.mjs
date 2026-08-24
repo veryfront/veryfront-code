@@ -271,6 +271,7 @@ export async function publishAutomatedReviewStatus({
         throw new Error("No automated review proof for captured head");
       }
     } catch (error) {
+      review = undefined;
       failure = error instanceof Error ? error : new Error(String(error));
     }
   }
