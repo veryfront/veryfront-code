@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { dag, dependsOn, sequence, workflow } from "./workflow.ts";
@@ -60,7 +61,7 @@ describe("workflow()", () => {
     assertThrows(
       // @ts-expect-error Testing invalid input
       () => workflow({ steps: [] }),
-      Error,
+      VeryfrontError,
       "id",
     );
   });
@@ -69,7 +70,7 @@ describe("workflow()", () => {
     assertThrows(
       // @ts-expect-error Testing invalid input
       () => workflow({ id: "test" }),
-      Error,
+      VeryfrontError,
       "steps",
     );
   });
@@ -99,6 +100,15 @@ describe("sequence()", () => {
   it("should handle empty array", () => {
     assertEquals(sequence().length, 0);
   });
+
+  it("preserves dependencies already declared on a sequenced node", () => {
+    const nodes = sequence(
+      step("prepare", { agent: "planner" }),
+      dependsOn(step("publish", { tool: "publisher" }), "approval"),
+    );
+
+    assertEquals(nodes[1]?.dependsOn, ["approval", "prepare"]);
+  });
 });
 
 describe("dag()", () => {
@@ -124,6 +134,18 @@ describe("dag()", () => {
 
     assertEquals(nodes.length, 2);
     assertEquals(nodes[1]?.dependsOn, ["fetch"]);
+  });
+
+  it("rejects duplicate node ids", () => {
+    assertThrows(
+      () =>
+        dag({
+          first: step("duplicate", { tool: "first" }),
+          second: step("duplicate", { tool: "second" }),
+        }),
+      VeryfrontError,
+      "Duplicate node ID",
+    );
   });
 });
 

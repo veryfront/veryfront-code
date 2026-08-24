@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { map } from "./map.ts";
@@ -16,13 +17,13 @@ describe("workflow/dsl/map", () => {
     });
 
     it("should throw for empty id", () => {
-      assertThrows(() => map("", { items: [], processor }), Error, "non-empty");
+      assertThrows(() => map("", { items: [], processor }), VeryfrontError, "non-empty");
     });
 
     it("should throw for missing items", () => {
       assertThrows(
         () => map("test", { items: undefined as unknown as unknown[], processor }),
-        Error,
+        VeryfrontError,
         "items",
       );
     });
@@ -30,7 +31,7 @@ describe("workflow/dsl/map", () => {
     it("should throw for missing processor", () => {
       assertThrows(
         () => map("test", { items: [1], processor: undefined as unknown as WorkflowNode }),
-        Error,
+        VeryfrontError,
         "processor",
       );
     });
@@ -43,6 +44,16 @@ describe("workflow/dsl/map", () => {
     it("should accept concurrency option", () => {
       const node = map("conc-map", { items: [1], processor, concurrency: 5 });
       assertEquals((node.config as { concurrency: number }).concurrency, 5);
+    });
+
+    it("rejects invalid concurrency", () => {
+      for (const concurrency of [0, -1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1]) {
+        assertThrows(
+          () => map("invalid-concurrency", { items: [1], processor, concurrency }),
+          VeryfrontError,
+          "positive safe integer",
+        );
+      }
     });
   });
 });

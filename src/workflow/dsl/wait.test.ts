@@ -3,7 +3,8 @@ import "#veryfront/schemas/_test-setup.ts";
  * Wait DSL Tests
  */
 
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { delay, waitForApproval, waitForEvent } from "./wait.ts";
 import type { WaitNodeConfig, WorkflowNode } from "../types.ts";
@@ -64,13 +65,14 @@ describe("waitForEvent()", () => {
     assertEquals(config.timeout, "1h");
   });
 
-  it("should require eventName", () => {
-    const node = waitForEvent("specific-event", {
-      eventName: "order.updated",
-    });
-
-    const config = expectWaitConfig(node);
-    assertEquals(config.eventName, "order.updated");
+  it("requires a canonical non-empty eventName", () => {
+    for (const eventName of ["", "   ", " order.updated "]) {
+      assertThrows(
+        () => waitForEvent("specific-event", { eventName }),
+        VeryfrontError,
+        "eventName",
+      );
+    }
   });
 });
 
