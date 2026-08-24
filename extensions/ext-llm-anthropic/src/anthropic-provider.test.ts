@@ -4684,5 +4684,155 @@ describe("anthropic-provider", () => {
       );
       assertEquals(attemptCount(), 3);
     });
+
+    // A paused response split around its last visible part: the trailer that
+    // carries `pause_turn` is gated so a test can spend the idle window
+    // between the last yielded part and the continuation.
+    const PAUSE_HEAD = sse(
+      { type: "message_start", message: { usage: { input_tokens: 3 } } },
+      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "first" } },
+      { type: "content_block_stop", index: 0 },
+    );
+    const PAUSE_TAIL = sse(
+      {
+        type: "message_delta",
+        delta: { stop_reason: "pause_turn" },
+        usage: { output_tokens: 1 },
+      },
+      { type: "message_stop" },
+    );
+
+    function gatedPauseResponse(tailGate: Promise<void>): Response {
+      return new Response(
+        ReadableStream.from((async function* () {
+          for (const chunk of PAUSE_HEAD) yield encoder.encode(chunk);
+          await tailGate;
+          for (const chunk of PAUSE_TAIL) yield encoder.encode(chunk);
+        })()),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    }
+
+    // Pull parts until a pull stays pending. With the trailer gated that can
+    // only mean every visible part of the paused response was yielded, so the
+    // idle window is anchored at the mocked clock's current value. The still
+    // pending pull comes back wrapped in an object: returning it bare from an
+    // async function would make the returned promise adopt it, and awaiting
+    // the drain would then deadlock on the very pull it reports.
+    async function drainUntilPending(
+      iterator: AsyncIterator<unknown>,
+    ): Promise<{ pendingNext: Promise<IteratorResult<unknown>> }> {
+      let pendingNext = iterator.next();
+      while (true) {
+        const settled = await new Promise<boolean>((resolve) => {
+          const timer = setTimeout(() => resolve(false), 100);
+          const onSettled = () => {
+            clearTimeout(timer);
+            resolve(true);
+          };
+          pendingNext.then(onSettled, onSettled);
+        });
+        if (!settled) return { pendingNext };
+        const { done } = await pendingNext;
+        if (done) throw new Error("stream ended before the pause_turn trailer");
+        pendingNext = iterator.next();
+      }
+    }
+
+    it("carries the spent idle window into a pause_turn continuation", async () => {
+      const originalNow = performance.now;
+      let now = 0;
+      let attempts = 0;
+      let releaseTail!: () => void;
+      const tailGate = new Promise<void>((resolve) => {
+        releaseTail = resolve;
+      });
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () => {
+          attempts++;
+          if (attempts === 1) return Promise.resolve(gatedPauseResponse(tailGate));
+          return Promise.resolve(streamResponse(SUCCESS));
+        },
+      }, "claude-opus-4-6");
+
+      try {
+        performance.now = () => now;
+        const result = await runtime.doStream({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+          maxOutputTokens: 64,
+        });
+        const { pendingNext } = await drainUntilPending(result.stream[Symbol.asyncIterator]());
+        // The paused response spends the whole idle window finishing after
+        // its last visible part. The watchdog window that part opened is
+        // over, so the continuation must not be granted a fresh budget.
+        now = 41_000;
+        releaseTail();
+
+        await assertRejects(
+          () => pendingNext,
+          ProviderRequestError,
+          "header budget",
+        );
+        assertEquals(attempts, 1);
+      } finally {
+        performance.now = originalNow;
+      }
+    });
+
+    it("clamps a pause_turn continuation's header wait to the remaining idle window", async () => {
+      const originalNow = performance.now;
+      let now = 0;
+      let attempts = 0;
+      let releaseTail!: () => void;
+      const tailGate = new Promise<void>((resolve) => {
+        releaseTail = resolve;
+      });
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          attempts++;
+          if (attempts === 1) return Promise.resolve(gatedPauseResponse(tailGate));
+          // The continuation's headers never arrive; only its deadline can
+          // end the wait. Reject on abort the way a real fetch does.
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              now = 40_000;
+              reject(new DOMException("Aborted", "AbortError"));
+            }, { once: true });
+          });
+        },
+      }, "claude-opus-4-6");
+
+      try {
+        performance.now = () => now;
+        const result = await runtime.doStream({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+          maxOutputTokens: 64,
+        });
+        const { pendingNext } = await drainUntilPending(result.stream[Symbol.asyncIterator]());
+        // Most of the idle window is gone by the time the turn pauses. The
+        // continuation may only wait out the remainder, not the 30-second
+        // per-attempt default.
+        now = 39_000;
+        releaseTail();
+
+        const startedAt = Date.now();
+        await assertRejects(
+          () => pendingNext,
+          ProviderRequestError,
+          "request timed out",
+        );
+        const elapsedMs = Date.now() - startedAt;
+
+        assertEquals(elapsedMs < 25_000, true, `continuation waited ${elapsedMs}ms for headers`);
+        assertEquals(attempts, 2);
+      } finally {
+        performance.now = originalNow;
+      }
+    });
   });
 });

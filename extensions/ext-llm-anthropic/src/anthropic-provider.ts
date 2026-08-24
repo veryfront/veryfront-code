@@ -15,6 +15,7 @@ import {
   buildProviderError,
   createAnthropicRequestInit,
   createWarningCollector,
+  DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS,
   DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS,
   getAnthropicMessagesUrl,
   isNumberArray,
@@ -634,10 +635,14 @@ export function createAnthropicModelRuntime(
       // child-fork watchdog is counting. Replays stay inside the window they
       // failed in, because a replay only happens when nothing was yielded.
       //
-      // It must be re-anchored before a pause_turn continuation. That request
-      // opens a new idle window (the previous one ended when its parts were
-      // yielded), and carrying the spent budget into it strips the
-      // continuation of the pre-header retry veryfront-code#3993 added.
+      // It is re-anchored when a part is yielded, because that is when the
+      // watchdog window restarts: the watchdog wraps each pending pull, so a
+      // delivered part ends one window and the consumer's next pull opens the
+      // next. A pause_turn continuation deliberately does NOT re-anchor. The
+      // stream may spend most of a window finishing the paused response after
+      // its last visible part, and handing the continuation a fresh budget
+      // there would let it wait for headers past the window the watchdog is
+      // still timing (veryfront-code#4085 review).
       let streamHeadersBudgetStartedAt = Math.floor(performance.now());
       const remainingStreamHeadersBudgetMs = () =>
         Math.max(
@@ -668,11 +673,14 @@ export function createAnthropicModelRuntime(
             signal: providerAbortScope.controller.signal,
           }),
           // `requestStream` never shortens a request's *first* attempt to fit
-          // the total budget, so capping a replay's header wait takes both:
-          // the per-attempt deadline and the budget its own retries draw on.
-          ...(headersBudgetCeilingMs === undefined
-            ? {}
-            : { headersTimeoutMs: totalHeadersBudgetMs }),
+          // the total budget, so the attempt deadline is clamped here as
+          // well: to the replay ceiling when one is given, and always to what
+          // is left of the idle window, so a request issued late in a window
+          // cannot wait for headers beyond it.
+          headersTimeoutMs: Math.min(
+            headersBudgetCeilingMs ?? DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS,
+            totalHeadersBudgetMs,
+          ),
           totalHeadersBudgetMs,
         });
       };
@@ -721,6 +729,12 @@ export function createAnthropicModelRuntime(
               }
               yieldedThisAttempt = true;
               yield part;
+              // Resuming after a yield means the consumer received that part
+              // and pulled the next one: a new idle window just opened, so
+              // the header budget and the replay bound restart with it. This
+              // is the only place either resets.
+              streamHeadersBudgetStartedAt = Math.floor(performance.now());
+              streamReplayCount = 0;
             }
           } catch (error) {
             if (
@@ -784,16 +798,21 @@ export function createAnthropicModelRuntime(
           continuationCount++;
           requestBody = createPauseTurnContinuationBody(requestBody, continuationContent);
           throwIfAnthropicRequestAborted(providerAbortScope.controller.signal);
-          // A continuation opens a new idle window, so both budgets it draws
-          // on reset here: the header deadline and the replay count. Resetting
-          // one without the other is incoherent, and starving a healthy
-          // continuation of replays because an earlier request spent them
-          // fails a run the replay exists to save
-          // (veryfront-code#4085 review). Deliberately NOT reset on the replay
-          // path above: resetting per attempt rather than per window makes the
-          // replay unbounded.
-          streamHeadersBudgetStartedAt = Math.floor(performance.now());
-          streamReplayCount = 0;
+          // The idle window open here began at the last yielded part, and the
+          // watchdog timing it does not restart for a continuation. Draw on
+          // what remains of that window instead of resetting it; when the
+          // paused response already spent the whole window after its last
+          // visible part, report the exhaustion rather than issuing a request
+          // with no time to succeed in.
+          if (remainingStreamHeadersBudgetMs() <= 0) {
+            throw new ProviderRequestError({
+              provider: "anthropic",
+              status: 0,
+              message: `${providerName} request failed: the stream header budget ` +
+                `was exhausted before the pause_turn continuation was issued`,
+              retryable: true,
+            });
+          }
           responseStream = await issueStream(requestBody);
         }
       };

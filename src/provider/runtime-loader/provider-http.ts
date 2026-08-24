@@ -13,16 +13,20 @@ export type ProviderKind = "anthropic" | "openai" | "google" | "mistral" | "moon
 /** Bytes inspected for structured provider error classification. */
 const MAX_ERROR_BODY_BYTES = 8_000;
 const DEFAULT_PROVIDER_JSON_TIMEOUT_MS = 5 * 60_000;
-const DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS = 30_000;
+/** Default deadline for one stream attempt to return response headers. */
+export const DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS = 30_000;
 const MAX_PROVIDER_STREAM_RETRIES = 2;
+// Not JSDoc: this paragraph names hosted-infrastructure internals and must
+// stay out of the generated public API reference. The default below is
+// deliberately under the 45s `generic_idle` deadline the hosted child-fork
+// watchdog applies to the first stream part
+// (`DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS`): that watchdog arms its
+// timer around the first pull of `fullStream`, which is what drives the
+// provider call, so replays outliving this budget would be cut off mid-attempt
+// and reported as a fork stall instead of the provider timeout they are.
 /**
  * Ceiling on the wall time replays may spend waiting for stream response
- * headers. Deliberately below the 45s `generic_idle` deadline the hosted
- * child-fork watchdog applies to the first stream part
- * (`DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS`): that watchdog arms its
- * timer around the first pull of `fullStream`, which is what drives the
- * provider call, so replays outliving this budget would be cut off mid-attempt
- * and reported as a fork stall instead of the provider timeout they are.
+ * headers.
  *
  * The budget bounds the total only when it is at least as large as the
  * per-attempt deadline, which the defaults guarantee (40s against 30s). The
@@ -840,8 +844,8 @@ export async function requestJson(options: {
  * Request a streaming response. When the request body is replayable,
  * typed retryable failures are retried up to two times before provider output
  * is exposed. Each attempt gets a fresh stream header deadline, and replays are
- * capped so the default total header wait stays under the hosted fork idle
- * watchdog. ReadableStream request bodies are not retried because fetch can
+ * capped so the whole header wait stays inside one shared budget.
+ * ReadableStream request bodies are not retried because fetch can
  * consume them on the first attempt.
  *
  * Response headers and error bodies have a 30-second default per-attempt
