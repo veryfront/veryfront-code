@@ -463,6 +463,12 @@ A requested schema is never dropped silently. A model runtime that does not
 support structured output rejects the request, and output that does not parse or
 does not validate raises rather than returning a partial object.
 
+A run that stops at the step limit still returns its partial result instead of
+raising. On that path the final assistant text is parsed best effort: a
+successful parse sets `response.object`, and a parse or validation failure sets
+`response.metadata.outputSchemaError` next to the max-steps warning so the
+failure stays visible.
+
 ## Runtime UTC context
 
 Veryfront captures UTC once at the start of every `generate()`, `stream()`, and

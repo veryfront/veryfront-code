@@ -2100,17 +2100,20 @@ export class AgentRuntime {
       addSpanEvent(loopSpan, "max_steps_reached", { maxSteps });
       setSpanAttributes(loopSpan, buildRuntimeUsageTraceAttributes(totalUsage));
 
-      const lastMsg = currentMessages[currentMessages.length - 1];
-      const finalText = lastMsg ? getTextFromParts(lastMsg.parts) : "";
+      // The last message on this exit is a tool result, so the response text
+      // and the structured-output candidate come from the final assistant turn.
+      const finalText = getFinalAssistantText(currentMessages);
+      const { object, outputSchemaError } = await tryParseMaxStepsOutput(finalText, outputSchema);
       return attachOutputSchemaParser({
         text: finalText,
-        ...await tryParseMaxStepsOutput(finalText, outputSchema),
+        ...(object !== undefined ? { object } : {}),
         messages: currentMessages,
         toolCalls,
         status: this.status,
         usage: totalUsage,
         metadata: withAgentRunRuntimeContextMetadata(runRuntimeContext, {
           warning: `Max steps (${maxSteps}) reached`,
+          ...(outputSchemaError !== undefined ? { outputSchemaError } : {}),
         }),
       }, outputSchema);
     });
@@ -2163,6 +2166,7 @@ export class AgentRuntime {
     const skillState = AgentLoopSkillState.hydrate(currentMessages, runtimeContext);
     let finalFinishReason: string | undefined;
     let latestAssistantText = "";
+    let completedWithinStepBudget = false;
     const initialToolExposureCheckpoint = getRuntimeToolExposureCheckpoint(this.config);
     const toolExposureState = createToolExposureState();
     const persistToolExposureCheckpoint = getRuntimeToolExposureCheckpointPersister(this.config);
@@ -2741,6 +2745,7 @@ export class AgentRuntime {
           await recordIncompleteLocalToolError(toolCall, { announceInput: true });
         }
         sendSSE(controller, encoder, { type: "step-end" });
+        completedWithinStepBudget = true;
         break;
       }
 
@@ -3113,6 +3118,29 @@ export class AgentRuntime {
       this.status = "thinking";
     }
 
+    if (!completedWithinStepBudget) {
+      // Step-budget exhaustion mirrors the generate loop's max-steps exit: the
+      // partial result is still returned, so the structured-output parse is
+      // best effort and a failure is surfaced in metadata instead of thrown.
+      const { object, outputSchemaError } = await tryParseMaxStepsOutput(
+        latestAssistantText,
+        outputSchema,
+      );
+      return attachOutputSchemaParser({
+        text: latestAssistantText,
+        ...(object !== undefined ? { object } : {}),
+        messages: currentMessages,
+        toolCalls,
+        status: "completed",
+        usage: totalUsage,
+        metadata: withAgentRunRuntimeContextMetadata(runRuntimeContext, {
+          warning: `Max steps (${maxSteps}) reached`,
+          ...(finalFinishReason ? { finishReason: finalFinishReason } : {}),
+          ...(outputSchemaError !== undefined ? { outputSchemaError } : {}),
+        }),
+      }, outputSchema);
+    }
+
     return attachOutputSchemaParser({
       text: latestAssistantText,
       ...(outputSchema ? { object: await outputSchema.parseOutput(latestAssistantText) } : {}),
@@ -3244,16 +3272,42 @@ type ProviderMetadataReconciler = (input: {
   suppressedToolCalls: readonly { id: string; name: string }[];
 }) => Record<string, unknown> | undefined;
 
+/**
+ * Best-effort structured-output parse for the max-steps exit.
+ *
+ * The normal completion path is fail-loud, but a run cut off by the step limit
+ * still returns its partial result. A parse or validation failure here must not
+ * throw that result away, so the failure is captured as `outputSchemaError` for
+ * the response metadata instead of being swallowed.
+ */
+interface MaxStepsOutputParse {
+  /** Parsed structured output when the final text satisfied the schema. */
+  object?: unknown;
+  /** Parse or validation failure message when the final text did not. */
+  outputSchemaError?: string;
+}
+
 async function tryParseMaxStepsOutput(
   finalText: string,
   outputSchema: ResolvedAgentOutputSchema | undefined,
-): Promise<{ object: unknown } | Record<string, never>> {
+): Promise<MaxStepsOutputParse> {
   if (!outputSchema || finalText.trim().length === 0) return {};
   try {
     return { object: await outputSchema.parseOutput(finalText) };
-  } catch {
-    return {};
+  } catch (error) {
+    return { outputSchemaError: error instanceof Error ? error.message : String(error) };
   }
+}
+
+/** Text of the latest assistant message, or empty when no assistant turn exists. */
+function getFinalAssistantText(messages: Message[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message?.role === "assistant") {
+      return getTextFromParts(message.parts);
+    }
+  }
+  return "";
 }
 
 function reconcileSuppressedProviderMetadata(
