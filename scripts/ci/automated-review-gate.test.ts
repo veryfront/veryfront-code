@@ -2210,19 +2210,43 @@ describe("automated review gate", () => {
 
   it("accepts matching tied successes and rejects conflicting outcomes", async () => {
     const timestamp = "2026-08-22T12:00:00Z";
+    const successfulSummary = codeRabbitSummary({
+      created_at: timestamp,
+      updated_at: timestamp,
+    });
+    const failedSummary = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        codeRabbitReviewRange(),
+        "<!-- recent_review_end -->",
+        `Review skipped for current commit ${HEAD_SHA}.`,
+      ].join("\n"),
+      created_at: timestamp,
+      updated_at: timestamp,
+    });
     assertEquals(
       (await findAutomatedReview(
         {
           reviews: [review({ submitted_at: timestamp })],
-          comments: [codeRabbitSummary({
-            created_at: timestamp,
-            updated_at: timestamp,
-          })],
+          comments: [successfulSummary],
         },
         HEAD_SHA,
       ))?.reviewer,
       "coderabbitai[bot]",
     );
+
+    for (
+      const comments of [
+        [failedSummary, successfulSummary],
+        [successfulSummary, failedSummary],
+      ]
+    ) {
+      assertEquals(
+        await findAutomatedReview({ reviews: [], comments }, HEAD_SHA),
+        undefined,
+      );
+    }
 
     assertEquals(
       await findAutomatedReview(

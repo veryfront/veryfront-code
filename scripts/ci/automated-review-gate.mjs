@@ -93,7 +93,6 @@ export async function findAutomatedReview(
     (event) => event.time,
   );
   for (const tiedEvents of timedEvents.values()) {
-    if (new Set(tiedEvents.map((event) => event.kind)).size < 2) continue;
     const exactHeadOutcomes = (await Promise.all(
       tiedEvents.map(outcomeFor),
     )).filter(
