@@ -1724,6 +1724,24 @@ describe("RedisBackend", () => {
       assertEquals(stored.comment, "looks good");
     });
 
+    it("updateApproval omits absent comments at the serialized boundary", async () => {
+      await backend.createRun(createTestRun("run-ap-no-comment"));
+      await backend.savePendingApproval("run-ap-no-comment", makeApproval("ap-no-comment"));
+
+      assertEquals(
+        await backend.updateApproval("run-ap-no-comment", "ap-no-comment", {
+          approved: true,
+          approver: "admin",
+        }),
+        true,
+      );
+
+      const stored = JSON.parse(
+        mockRedis.lists.get("test:schema-v1:approvals:run-ap-no-comment")![0]!,
+      );
+      assertEquals(Object.hasOwn(stored, "comment"), false);
+    });
+
     it("updateApproval returns false (no-op) once the approval is already decided", async () => {
       await backend.createRun(createTestRun("run-ap-decided"));
       await backend.savePendingApproval("run-ap-decided", makeApproval("ap-decided"));
