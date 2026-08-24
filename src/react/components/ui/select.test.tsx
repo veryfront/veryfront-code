@@ -6,6 +6,7 @@ import { JSDOM } from "npm:jsdom@28.0.0";
 import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { type ComponentDomOptions, installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import {
   Select,
   SelectContent,
@@ -16,48 +17,17 @@ import {
   SelectValue,
 } from "./select.tsx";
 
-function installDom(dom: JSDOM): () => void {
-  const window = dom.window;
-  const replacements: Record<string, unknown> = {
-    window,
-    document: window.document,
-    navigator: window.navigator,
-    self: window,
-    Node: window.Node,
-    Element: window.Element,
-    HTMLElement: window.HTMLElement,
-    HTMLButtonElement: window.HTMLButtonElement,
-    MouseEvent: window.MouseEvent,
-    KeyboardEvent: window.KeyboardEvent,
-    FocusEvent: window.FocusEvent,
-    innerWidth: window.innerWidth,
-    innerHeight: window.innerHeight,
-    addEventListener: window.addEventListener.bind(window),
-    removeEventListener: window.removeEventListener.bind(window),
-    requestAnimationFrame: window.requestAnimationFrame.bind(window),
-    cancelAnimationFrame: window.cancelAnimationFrame.bind(window),
-  };
-  const previous = new Map<string, PropertyDescriptor | undefined>();
-
-  for (const [key, value] of Object.entries(replacements)) {
-    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
-    Object.defineProperty(globalThis, key, {
-      configurable: true,
-      enumerable: true,
-      value,
-      writable: true,
-    });
-  }
-
-  return () => {
-    for (const key of Object.keys(replacements)) {
-      const descriptor = previous.get(key);
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-      else delete (globalThis as Record<string, unknown>)[key];
-    }
-    dom.window.close();
-  };
-}
+const DOM_OPTIONS: ComponentDomOptions = {
+  windowGlobals: [
+    "self",
+    "HTMLButtonElement",
+    "KeyboardEvent",
+    "FocusEvent",
+    "innerWidth",
+    "innerHeight",
+  ],
+  windowBound: ["addEventListener", "removeEventListener"],
+};
 
 function createDom(): JSDOM {
   return new JSDOM(
@@ -113,7 +83,7 @@ function selectedText(trigger: HTMLElement): string | undefined {
 describe("Select", () => {
   it("links the combobox and listbox and supports the complete keyboard lifecycle", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const values: string[] = [];
     const openChanges: boolean[] = [];
@@ -197,7 +167,7 @@ describe("Select", () => {
 
   it("composes caller handlers while protecting required semantics", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const calls: string[] = [];
     const triggerRef = { current: null } as React.RefObject<HTMLButtonElement | null>;
@@ -333,7 +303,7 @@ describe("Select", () => {
 
   it("retains combobox focus through primary-pointer selection", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const values: string[] = [];
     let mouseDownCalls = 0;
@@ -396,7 +366,7 @@ describe("Select", () => {
 
   it("skips disabled options and honors composition, typeahead, Escape, and Tab", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const openChanges: boolean[] = [];
     let disabledClicks = 0;
@@ -463,7 +433,7 @@ describe("Select", () => {
 
   it("suppresses controlled content and requests closure when root disabled", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const valueChanges: string[] = [];
     const openChanges: boolean[] = [];
@@ -524,7 +494,7 @@ describe("Select", () => {
 
   it("commits an uncontrolled close when root transitions to disabled", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const openChanges: boolean[] = [];
     const renderSelect = (disabled: boolean) => (
@@ -585,7 +555,7 @@ describe("Select", () => {
     assertEquals(disabledServerMarkup.includes(" disabled"), true);
 
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const openChanges: boolean[] = [];
     const renderSelect = (triggerDisabled: boolean) => (
@@ -641,7 +611,7 @@ describe("Select", () => {
 
   it("reconciles keyed DOM reordering and active-option removal", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
 
     const renderItems = (items: Array<{ value: string; disabled?: boolean }>) => (
@@ -698,7 +668,7 @@ describe("Select", () => {
 
   it("coalesces 100-item DOM order reconciliation to one sort per commit", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const nodePrototype = dom.window.Node.prototype;
     const compareDocumentPosition = nodePrototype.compareDocumentPosition;
@@ -759,7 +729,7 @@ describe("Select", () => {
 
   it("keeps controlled state owned by the caller while reporting each request", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const openChanges: boolean[] = [];
     const valueChanges: string[] = [];
@@ -836,7 +806,7 @@ describe("Select", () => {
 
   it("closes on focus departure without stealing the new focus target", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const rootElement = document.getElementById("root")!;
     const outside = document.createElement("button");
     outside.textContent = "Outside";
@@ -899,7 +869,7 @@ describe("Select", () => {
         url: "https://example.com/",
       },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const recoverableErrors: unknown[] = [];
     let root: ReturnType<typeof hydrateRoot> | undefined;
 
@@ -1010,7 +980,7 @@ describe("Select", () => {
 
   it("fails dynamic closed duplicates without tearing down the root", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const rootElement = document.getElementById("root")!;
     const root = createRoot(rootElement);
     const openChanges: boolean[] = [];
@@ -1064,7 +1034,7 @@ describe("Select", () => {
 
   it("fails default-open dynamic duplicates before user interaction", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const rootElement = document.getElementById("root")!;
     const root = createRoot(rootElement);
     const openChanges: boolean[] = [];
@@ -1205,7 +1175,7 @@ describe("Select", () => {
 
   it("runs React 19 callback-ref cleanup for trigger and item refs", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const calls: string[] = [];
 

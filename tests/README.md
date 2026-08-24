@@ -141,6 +141,36 @@ entry points.
 - React SSR/streaming tests
 - Example: API endpoints, page rendering, build processes
 
+## Where test primitives live
+
+Every shared test capability has exactly one home. Reach for the shared
+helper instead of writing a local copy; the `lint:testing-front-door` ratchet
+(`scripts/lint/check-testing-front-door.ts`) counts the remaining bypasses
+per file in `scripts/lint/testing-front-door-baseline.json` and fails CI when
+any file grows a new one.
+
+| Capability | Home | Use |
+| ---------- | ---- | --- |
+| Temp dirs and files | `src/testing/deno-compat.ts` | `makeTempDir`, `withTempDir`, `makeTempFile`, `withTempFile` |
+| Env vars (async scope) | `src/testing/deno-compat.ts` | `withEnv(vars, fn)` sets, runs `fn`, restores |
+| Env vars (sync restore) | `tests/_helpers/utils.ts` | `withEnvSync(vars)` returns the restore callback |
+| Polling for a condition | `src/testing/deno-compat.ts` | `waitFor(condition, options)`, time-scaled |
+| Time scaling | `src/testing/timing.ts` | `scaleMs`, `testDelay` |
+| JSDOM browser globals | `src/testing/dom-globals.ts` | `installComponentDom(dom, options)` installs, drains animation frames, restores |
+| Fetch stubbing | `src/testing/mock-fetch.ts` | `withMockFetch` (scoped) or `installMockFetch`/`restoreMockFetch` (hook style) |
+| Cache backend fakes | `src/cache/testing/` | `MockCacheBackend` (pass `{ type: "redis", ignoreTtl: true }` for a distributed fake) |
+| HTTP server lifecycle | `tests/_helpers/server.ts` | `waitForServerReady`, `waitForServerStopped`, `pollUrlReady`, `fetchWithTimeout` |
+
+Two of these are correctness rules, not just deduplication:
+
+- Assigning `globalThis.fetch =` directly does not control the outbound
+  transport behind `guardedOutboundFetch`, so code under test that goes
+  through the transport still reaches the real network. `withMockFetch` and
+  `installMockFetch` move the global and the transport together.
+- Hand-stubbing `requestAnimationFrame` with `setTimeout` leaks any frame
+  still queued at teardown, which the op sanitizer reports as a suite-level
+  timer leak. `installComponentDom` drains pending frames before restoring.
+
 ## Test Structure
 
 ### Use BDD Style

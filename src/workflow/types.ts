@@ -401,16 +401,50 @@ export interface WorkflowRun<TInput = unknown, TOutput = unknown> {
 
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
+const arrayIsArray = Array.isArray;
+const cryptoObject = crypto;
+const cryptoRandomUUID = crypto.randomUUID;
+const DURATION_PATTERN = /^(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)$/;
+const GENERATED_ID_SUFFIX_CODE_UNITS = 13;
+const numberIsSafeInteger = Number.isSafeInteger;
+const objectDefineProperty = Object.defineProperty;
+const objectFreeze = Object.freeze;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectGetPrototypeOf = Object.getPrototypeOf;
+const objectHasOwn = Object.hasOwn;
+const objectPrototype = Object.prototype;
+const reflectApply = Reflect.apply;
+const reflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+const reflectOwnKeys = Reflect.ownKeys;
+const regExpExec = RegExp.prototype.exec;
+const SetConstructor = Set;
+const setAdd = Set.prototype.add;
+const setHas = Set.prototype.has;
+const stringCharCodeAt = String.prototype.charCodeAt;
+const stringSlice = String.prototype.slice;
+const stringTrim = String.prototype.trim;
+const StringConstructor = String;
+
+function defineArrayElement<T>(values: T[], index: number, value: T): void {
+  objectDefineProperty(values, index, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+}
+
 /** Whether a value is a non-empty approval identity without surrounding whitespace. */
 export function isCanonicalApprovalIdentity(value: unknown): value is string {
   if (
     typeof value !== "string" || value.length === 0 ||
-    value.length > MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS || value.trim() !== value
+    value.length > MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS ||
+    reflectApply(stringTrim, value, []) !== value
   ) {
     return false;
   }
   for (let index = 0; index < value.length; index++) {
-    const code = value.charCodeAt(index);
+    const code = reflectApply(stringCharCodeAt, value, [index]) as number;
     if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return false;
   }
   return true;
@@ -422,19 +456,19 @@ export function captureApprovalApprovers(
   label = "Approval approvers",
 ): string[] | undefined {
   if (value === undefined) return undefined;
-  if (isProxyWithoutHooks(value) || !Array.isArray(value)) {
+  if (isProxyWithoutHooks(value) || !arrayIsArray(value)) {
     throw INVALID_ARGUMENT.create({
       detail: `${label} must be a non-empty array of canonical strings`,
     });
   }
 
-  const keys = Reflect.ownKeys(value);
-  const lengthDescriptor = Reflect.getOwnPropertyDescriptor(value, "length");
-  const length = lengthDescriptor && "value" in lengthDescriptor
+  const keys = reflectOwnKeys(value);
+  const lengthDescriptor = reflectGetOwnPropertyDescriptor(value, "length");
+  const length = lengthDescriptor && objectHasOwn(lengthDescriptor, "value")
     ? lengthDescriptor.value
     : undefined;
   if (
-    !Number.isSafeInteger(length) || (length as number) < 1 ||
+    !numberIsSafeInteger(length) || (length as number) < 1 ||
     (length as number) > MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES ||
     keys.length !== (length as number) + 1
   ) {
@@ -445,10 +479,13 @@ export function captureApprovalApprovers(
   }
 
   const captured: string[] = [];
-  const seen = new Set<string>();
+  const seen = new SetConstructor<string>();
   for (let index = 0; index < (length as number); index++) {
-    const descriptor = Reflect.getOwnPropertyDescriptor(value, String(index));
-    if (descriptor?.enumerable !== true || !("value" in descriptor)) {
+    const descriptor = reflectGetOwnPropertyDescriptor(value, StringConstructor(index));
+    if (
+      descriptor?.enumerable !== true ||
+      !objectHasOwn(descriptor, "value")
+    ) {
       throw INVALID_ARGUMENT.create({
         detail:
           `${label} must be a dense non-empty array with at most ${MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES} canonical strings`,
@@ -461,15 +498,15 @@ export function captureApprovalApprovers(
           `${label} must contain canonical strings of at most ${MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS} code units without control characters`,
       });
     }
-    if (seen.has(approver)) {
+    if (reflectApply(setHas, seen, [approver])) {
       throw INVALID_ARGUMENT.create({
         detail: `${label} must not contain duplicate identities`,
       });
     }
-    seen.add(approver);
-    captured.push(approver);
+    reflectApply(setAdd, seen, [approver]);
+    defineArrayElement(captured, captured.length, approver);
   }
-  return Object.freeze(captured) as string[];
+  return objectFreeze(captured) as string[];
 }
 
 /**
@@ -512,7 +549,7 @@ export function parseDurationWithLabel(
     if (duration < 0) {
       throw INVALID_ARGUMENT.create({ detail: `${label} cannot be negative: ${duration}` });
     }
-    if (!Number.isSafeInteger(duration)) {
+    if (!numberIsSafeInteger(duration)) {
       throw INVALID_ARGUMENT.create({
         detail: `${label} must be a safe integer number of milliseconds, got: ${duration}`,
       });
@@ -524,8 +561,15 @@ export function parseDurationWithLabel(
     }
     return duration === 0 ? 0 : duration;
   }
+  if (typeof duration !== "string") {
+    throw INVALID_ARGUMENT.create({
+      detail: `${label} has invalid duration type: ${typeof duration}`,
+    });
+  }
 
-  const match = duration.match(/^(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)$/);
+  const match = reflectApply(regExpExec, DURATION_PATTERN, [duration]) as
+    | RegExpExecArray
+    | null;
   if (!match || !match[1] || !match[2]) {
     throw INVALID_ARGUMENT.create({
       detail: label === "Duration"
@@ -534,7 +578,7 @@ export function parseDurationWithLabel(
     });
   }
 
-  const value = Number(match[1]);
+  const value = +match[1];
   if (value <= 0) {
     throw INVALID_ARGUMENT.create({ detail: `${label} must be positive: ${duration}` });
   }
@@ -542,7 +586,7 @@ export function parseDurationWithLabel(
   const milliseconds = value *
     DURATION_UNIT_MILLISECONDS[match[2] as keyof typeof DURATION_UNIT_MILLISECONDS];
 
-  if (!Number.isSafeInteger(milliseconds)) {
+  if (!numberIsSafeInteger(milliseconds)) {
     throw INVALID_ARGUMENT.create({
       detail: `${label} must resolve to a safe integer number of milliseconds, got: ${duration}`,
     });
@@ -577,21 +621,24 @@ export function parsePositiveDurationWithLabel(
  * Validate retry configuration
  */
 export function validateRetryConfig(config: RetryConfig, label = "Retry"): void {
-  if (!isPlainRecord(config)) {
+  const fields = inspectRetryConfig(config, label);
+  const { maxAttempts, initialDelay, maxDelay, backoff, retryIf } = fields;
+
+  if (
+    maxAttempts !== undefined &&
+    (typeof maxAttempts !== "number" || !numberIsSafeInteger(maxAttempts) || maxAttempts < 1)
+  ) {
     throw INVALID_ARGUMENT.create({
-      detail: `${label} must be a plain record`,
+      detail: `${label} maxAttempts must be a positive integer, got: ${
+        typeof maxAttempts === "number" ? maxAttempts : typeof maxAttempts
+      }`,
     });
   }
 
-  const { maxAttempts, initialDelay, maxDelay, backoff } = config;
-
-  if (maxAttempts !== undefined && (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1)) {
-    throw INVALID_ARGUMENT.create({
-      detail: `${label} maxAttempts must be a positive integer, got: ${maxAttempts}`,
-    });
-  }
-
-  if (maxAttempts !== undefined && maxAttempts > MAX_WORKFLOW_RETRY_ATTEMPTS) {
+  if (
+    typeof maxAttempts === "number" &&
+    maxAttempts > MAX_WORKFLOW_RETRY_ATTEMPTS
+  ) {
     throw INVALID_ARGUMENT.create({
       detail:
         `${label} maxAttempts cannot exceed ${MAX_WORKFLOW_RETRY_ATTEMPTS}, got: ${maxAttempts}`,
@@ -601,40 +648,97 @@ export function validateRetryConfig(config: RetryConfig, label = "Retry"): void 
   validateRetryDelay(initialDelay, "initialDelay", label);
   validateRetryDelay(maxDelay, "maxDelay", label);
 
-  if (initialDelay !== undefined && maxDelay !== undefined && initialDelay > maxDelay) {
+  if (
+    typeof initialDelay === "number" && typeof maxDelay === "number" &&
+    initialDelay > maxDelay
+  ) {
     throw INVALID_ARGUMENT.create({
       detail: `initialDelay (${initialDelay}) cannot be greater than maxDelay (${maxDelay})`,
     });
   }
 
+  if (retryIf !== undefined && typeof retryIf !== "function") {
+    throw INVALID_ARGUMENT.create({
+      detail: `${label} retryIf must be a function`,
+    });
+  }
+
   if (backoff === undefined) return;
 
-  if (VALID_BACKOFF_SET.has(backoff)) return;
+  if (typeof backoff === "string" && reflectApply(setHas, VALID_BACKOFF_SET, [backoff])) return;
 
   throw INVALID_ARGUMENT.create({
-    detail: `Invalid backoff strategy: ${backoff}. Must be one of: ${
-      VALID_BACKOFF_STRATEGIES.join(", ")
-    }`,
+    detail: `Invalid backoff strategy. Must be one of: fixed, linear, exponential`,
   });
 }
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== "object" || value === null) return false;
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
+interface InspectedRetryConfig {
+  readonly maxAttempts?: unknown;
+  readonly initialDelay?: unknown;
+  readonly maxDelay?: unknown;
+  readonly backoff?: unknown;
+  readonly retryIf?: unknown;
+}
+
+function inspectRetryConfig(value: unknown, label: string): InspectedRetryConfig {
+  if (
+    typeof value !== "object" || value === null || arrayIsArray(value) ||
+    isProxyWithoutHooks(value)
+  ) {
+    throw INVALID_ARGUMENT.create({ detail: `${label} must be a plain record` });
+  }
+
+  let prototype: object | null;
+  try {
+    prototype = objectGetPrototypeOf(value);
+  } catch {
+    throw INVALID_ARGUMENT.create({ detail: `${label} must be a plain record` });
+  }
+  if (prototype !== objectPrototype && prototype !== null) {
+    throw INVALID_ARGUMENT.create({ detail: `${label} must be a plain record` });
+  }
+
+  const read = (key: keyof InspectedRetryConfig): unknown => {
+    const descriptor = objectGetOwnPropertyDescriptor(value, key);
+    if (!descriptor && key in value) {
+      throw INVALID_ARGUMENT.create({
+        detail: `${label} must contain only own data properties`,
+      });
+    }
+    if (!descriptor) return undefined;
+    if (!objectHasOwn(descriptor, "value")) {
+      throw INVALID_ARGUMENT.create({
+        detail: `${label} must contain only own data properties`,
+      });
+    }
+    return descriptor.value;
+  };
+
+  return {
+    maxAttempts: read("maxAttempts"),
+    initialDelay: read("initialDelay"),
+    maxDelay: read("maxDelay"),
+    backoff: read("backoff"),
+    retryIf: read("retryIf"),
+  };
 }
 
 function validateRetryDelay(
-  delay: number | undefined,
+  delay: unknown,
   field: "initialDelay" | "maxDelay",
   label: string,
 ): void {
   if (delay === undefined) return;
 
+  if (typeof delay !== "number") {
+    throw INVALID_ARGUMENT.create({
+      detail: `${label} ${field} must be a non-negative safe integer`,
+    });
+  }
   if (delay < 0) {
     throw INVALID_ARGUMENT.create({ detail: `${field} cannot be negative: ${delay}` });
   }
-  if (!Number.isSafeInteger(delay)) {
+  if (!numberIsSafeInteger(delay)) {
     throw INVALID_ARGUMENT.create({
       detail: `${label} ${field} must be a non-negative safe integer, got: ${delay}`,
     });
@@ -650,5 +754,14 @@ function validateRetryDelay(
  * Generate a unique workflow ID
  */
 export function generateId(prefix: string = "wf"): string {
-  return `${prefix}_${crypto.randomUUID().slice(0, 12)}`;
+  if (
+    !isCanonicalApprovalIdentity(prefix) ||
+    prefix.length > MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS - GENERATED_ID_SUFFIX_CODE_UNITS
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Workflow ID prefix must be a canonical string",
+    });
+  }
+  const uuid = reflectApply(cryptoRandomUUID, cryptoObject, []) as string;
+  return `${prefix}_${reflectApply(stringSlice, uuid, [0, 12])}`;
 }

@@ -8,13 +8,19 @@ const TEST_TIME_SCALE_ENV = "VF_TEST_TIME_SCALE";
 describe("testing/timing", () => {
   afterEach(() => deleteEnv(TEST_TIME_SCALE_ENV));
 
+  it("keeps getTestTimeScale on the public testing barrel", async () => {
+    const testing = await import("./index.ts");
+
+    assertEquals(testing.getTestTimeScale, getTestTimeScale);
+  });
+
   it("uses the default scale when the environment value is absent or invalid", () => {
     deleteEnv(TEST_TIME_SCALE_ENV);
-    assertEquals(getTestTimeScale(), 1, "missing scale should use the default");
+    assertEquals(scaleMs(100), 100, "missing scale should use the default");
 
     for (const value of ["", "0", "-1", "NaN", "Infinity"]) {
       setEnv(TEST_TIME_SCALE_ENV, value);
-      assertEquals(getTestTimeScale(), 1, `${value || "empty"} should use the default`);
+      assertEquals(scaleMs(100), 100, `${value || "empty"} should use the default`);
     }
   });
 

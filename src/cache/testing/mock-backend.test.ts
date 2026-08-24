@@ -197,6 +197,33 @@ describe("cache/testing/mock-backend", () => {
     });
   });
 
+  describe("type and ignoreTtl options", () => {
+    it("defaults to the memory discriminant", () => {
+      assertEquals(new MockCacheBackend().type, "memory");
+    });
+
+    it("reports the configured type so distributed-only gates accept it", () => {
+      const mock = new MockCacheBackend({ type: "redis" });
+      assertEquals(mock.type, "redis");
+    });
+
+    it("never expires entries when ignoreTtl is set", async () => {
+      const mock = new MockCacheBackend({ ignoreTtl: true });
+      // A negative TTL is already expired for a TTL-honoring backend.
+      await mock.set("key", "value", -1);
+      await mock.setBatch([{ key: "batch", value: "batched", ttl: -1 }]);
+
+      assertEquals(await mock.get("key"), "value");
+      assertEquals(await mock.get("batch"), "batched");
+    });
+
+    it("honors TTL when ignoreTtl is not set", async () => {
+      const mock = new MockCacheBackend();
+      await mock.set("key", "value", -1);
+      assertEquals(await mock.get("key"), null);
+    });
+  });
+
   describe("createSlowMock", () => {
     it("adds latency to operations", async () => {
       const mock = createSlowMock(50); // 50ms latency

@@ -44,7 +44,7 @@ import {
   writeTextFile,
 } from "#veryfront/testing/deno-compat.ts";
 import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-positions.ts";
-import type { CacheBackend } from "#veryfront/cache/types.ts";
+import { MockCacheBackend } from "#veryfront/cache/testing/index.ts";
 import { __injectCachesForTests } from "#veryfront/transforms/esm/transform-cache.ts";
 import { tokenizeAllVeryFrontPaths } from "#veryfront/cache";
 import {
@@ -71,25 +71,6 @@ function hashAsLoader(source: string, filePath: string, projectDir: string): str
     ? filePath.slice(projectDir.length).replace(/^\/+/, "")
     : filePath;
   return hashCodeHex(injectNodePositions(source, { filePath: rel }));
-}
-
-class FakeDistributedCache implements CacheBackend {
-  readonly type = "redis" as const;
-  private values = new Map<string, string>();
-
-  get(key: string): Promise<string | null> {
-    return Promise.resolve(this.values.get(key) ?? null);
-  }
-
-  set(key: string, value: string): Promise<void> {
-    this.values.set(key, value);
-    return Promise.resolve();
-  }
-
-  del(key: string): Promise<void> {
-    this.values.delete(key);
-    return Promise.resolve();
-  }
 }
 
 function createProxyProjectAdapter(files: Record<string, string>): RuntimeAdapter {
@@ -910,7 +891,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     const filePath = join(componentsDir, "RecoveredViaCache.tsx");
     const projectId = "project-recover-vfmod";
     const contentSourceId = "preview-main";
-    const distributedCache = new FakeDistributedCache();
+    const distributedCache = new MockCacheBackend({ type: "redis", ignoreTtl: true });
 
     try {
       __injectCachesForTests({ cacheBackend: distributedCache });

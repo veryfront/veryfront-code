@@ -17,6 +17,10 @@ export {
   validateToken,
   whoami,
 } from "./login.ts";
-export { type CallbackServer, getCallbackUrl, startCallbackServer } from "./callback-server.ts";
+export {
+  type CallbackServer,
+  getCallbackUrl,
+  startCallbackServer,
+} from "#cli/auth/callback-server";
 export { getTokenLocation } from "./token-store.ts";
 export { canOpenBrowser, openBrowser } from "./browser.ts";

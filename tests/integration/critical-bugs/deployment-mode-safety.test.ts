@@ -24,7 +24,7 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { join } from "#veryfront/compat/path";
 import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
 import { withTestContext } from "../../_helpers/context.ts";
-import { withEnv } from "../../_helpers/utils.ts";
+import { withEnvSync } from "../../_helpers/utils.ts";
 import { clearLayoutDiscoveryCache } from "../../../src/rendering/layouts/utils/discovery.ts";
 
 async function clearRendererState(renderer: unknown): Promise<void> {
@@ -59,7 +59,7 @@ describe(
        * if production code runs in a less secure development mode.
        */
       it("defaults to production when NODE_ENV is not set", () => {
-        const restore = withEnv({ NODE_ENV: "" });
+        const restore = withEnvSync({ NODE_ENV: "" });
 
         try {
           const nodeEnv = process.env.NODE_ENV || "production";
@@ -76,7 +76,7 @@ describe(
         const validModes = ["development", "production", "test"];
 
         for (const mode of validModes) {
-          const restore = withEnv({ NODE_ENV: mode });
+          const restore = withEnvSync({ NODE_ENV: mode });
 
           try {
             assertEquals(process.env.NODE_ENV, mode, `NODE_ENV should be ${mode}`);
@@ -87,7 +87,7 @@ describe(
       });
 
       it("handles invalid NODE_ENV gracefully", () => {
-        const restore = withEnv({ NODE_ENV: "invalid-mode" });
+        const restore = withEnvSync({ NODE_ENV: "invalid-mode" });
 
         try {
           const nodeEnv = process.env.NODE_ENV;
@@ -110,7 +110,7 @@ describe(
        * (like releaseId) that causes crashes if missing.
        */
       it("handles missing VERYFRONT_API_TOKEN gracefully", async () => {
-        const restore = withEnv({
+        const restore = withEnvSync({
           VERYFRONT_API_TOKEN: "",
           PROXY_MODE: "0",
         });
@@ -162,7 +162,7 @@ describe(
       // This test documents a potential future enhancement.
       it.ignore("does not expose API tokens in rendered output", async () => {
         const sensitiveToken = "vf_secret_token_12345";
-        const restore = withEnv({
+        const restore = withEnvSync({
           VERYFRONT_API_TOKEN: sensitiveToken,
           SECRET_KEY: "super_secret_key",
           DATABASE_URL: "postgres://user:password@host/db",
@@ -338,7 +338,7 @@ describe(
         ];
 
         for (const { value, expected } of testCases) {
-          const restore = withEnv({ TEST_BOOL: value });
+          const restore = withEnvSync({ TEST_BOOL: value });
 
           try {
             const envValue = process.env.TEST_BOOL;
@@ -362,7 +362,7 @@ describe(
         ];
 
         for (const { value, expected } of testCases) {
-          const restore = withEnv({ TEST_PORT: value });
+          const restore = withEnvSync({ TEST_PORT: value });
 
           try {
             const asNum = parseInt(process.env.TEST_PORT || "", 10);
@@ -380,7 +380,7 @@ describe(
       });
 
       it("provides safe defaults when env vars are missing", () => {
-        const restore = withEnv({
+        const restore = withEnvSync({
           PORT: "",
           HOST: "",
           PRODUCTION_MODE: "",
@@ -499,7 +499,7 @@ describe(
        * Test PROXY_MODE environment variable handling.
        */
       it("handles PROXY_MODE=0 for direct mode", () => {
-        const restore = withEnv({ PROXY_MODE: "0" });
+        const restore = withEnvSync({ PROXY_MODE: "0" });
 
         try {
           const proxyMode = process.env.PROXY_MODE === "1";
@@ -510,7 +510,7 @@ describe(
       });
 
       it("handles PROXY_MODE=1 for proxy mode", () => {
-        const restore = withEnv({ PROXY_MODE: "1" });
+        const restore = withEnvSync({ PROXY_MODE: "1" });
 
         try {
           const proxyMode = process.env.PROXY_MODE === "1";
@@ -521,7 +521,7 @@ describe(
       });
 
       it("defaults to direct mode when PROXY_MODE is not set", () => {
-        const restore = withEnv({ PROXY_MODE: "" });
+        const restore = withEnvSync({ PROXY_MODE: "" });
 
         try {
           const proxyMode = process.env.PROXY_MODE === "1";
