@@ -34,6 +34,20 @@ function createContext(code: string): TransformContext {
   } as TransformContext;
 }
 
+/**
+ * SSR stubs are linked as real ES modules, so the only assertion that catches a
+ * syntactically invalid stub is asking a JS engine to parse it.
+ */
+async function assertParsesAsModule(source: string, message: string): Promise<void> {
+  let parseError: string | undefined;
+  try {
+    await import(`data:text/javascript,${encodeURIComponent(source)}`);
+  } catch (error) {
+    parseError = error instanceof Error ? error.message : String(error);
+  }
+  assertEquals(parseError, undefined, `${message} (got: ${parseError})`);
+}
+
 describe("css-strip plugin", () => {
   it("rewrites dynamic css imports to a valid expression stub", async () => {
     const ctx = createContext(
@@ -112,6 +126,62 @@ describe("css-strip plugin", () => {
       result.includes(`.module.css"`),
       false,
       "no live .module.css specifier may survive",
+    );
+    assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
+  });
+
+  it("exports a reserved-word css re-export name without declaring it", async () => {
+    const ctx = createContext(
+      `export { container as class } from "./Button.module.css";`,
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+
+    assertEquals(
+      /\bconst\s+class\b/.test(result),
+      false,
+      "a reserved export name must never become a const binding, which cannot parse",
+    );
+    assertStringIncludes(
+      result,
+      `const __vfCssExport_class = "${toScopedCssModuleClass(MODULE_KEY, "container")}";`,
+      "the reserved export name must be backed by a safe local binding",
+    );
+    assertStringIncludes(
+      result,
+      "export { __vfCssExport_class as class };",
+      "the safe local binding must still be exported under the original export name",
+    );
+    await assertParsesAsModule(
+      result,
+      "a reserved-word css re-export must still produce a parseable SSR module",
+    );
+    assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
+  });
+
+  it("exports a reserved-word css namespace re-export without declaring it", async () => {
+    const ctx = createContext(`export * as class from "./Button.module.css";`);
+
+    const result = await cssStripPlugin.transform(ctx);
+
+    assertEquals(
+      /\bconst\s+class\b/.test(result),
+      false,
+      "a reserved namespace export name must never become a const binding",
+    );
+    assertStringIncludes(
+      result,
+      "const __vfCssExport_class = new Proxy({},",
+      "the reserved namespace export must be backed by a safe local proxy stub",
+    );
+    assertStringIncludes(
+      result,
+      "export { __vfCssExport_class as class };",
+      "the safe local proxy stub must be exported under the original export name",
+    );
+    await assertParsesAsModule(
+      result,
+      "a reserved-word css namespace re-export must still produce a parseable SSR module",
     );
     assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
   });

@@ -75,6 +75,75 @@ function cssBindingValue(imported: string, cssModuleKey: string | undefined): st
 }
 
 /**
+ * Names that are legal as an ES export name but illegal as a `const` binding.
+ * `export { container as class } from "./x.module.css"` is valid input, so the
+ * stub must not turn it into `export const class = ...`.
+ */
+const RESERVED_BINDING_NAMES = new Set([
+  "arguments",
+  "await",
+  "break",
+  "case",
+  "catch",
+  "class",
+  "const",
+  "continue",
+  "debugger",
+  "default",
+  "delete",
+  "do",
+  "else",
+  "enum",
+  "eval",
+  "export",
+  "extends",
+  "false",
+  "finally",
+  "for",
+  "function",
+  "if",
+  "implements",
+  "import",
+  "in",
+  "instanceof",
+  "interface",
+  "let",
+  "new",
+  "null",
+  "package",
+  "private",
+  "protected",
+  "public",
+  "return",
+  "static",
+  "super",
+  "switch",
+  "this",
+  "throw",
+  "true",
+  "try",
+  "typeof",
+  "var",
+  "void",
+  "while",
+  "with",
+  "yield",
+]);
+
+/**
+ * Export `value` under `exportName`, declaring a safe local binding first when
+ * `exportName` is a reserved word that cannot be a `const` declaration.
+ */
+function exportBindingStatement(exportName: string, value: string): string {
+  if (exportName === "default") return `export default ${value};`;
+  if (!RESERVED_BINDING_NAMES.has(exportName)) {
+    return `export const ${exportName} = ${value};`;
+  }
+  const localName = `__vfCssExport_${exportName}`;
+  return `const ${localName} = ${value}; export { ${localName} as ${exportName} };`;
+}
+
+/**
  * Generate a replacement for a CSS re-export statement.
  *
  * SSR modules are linked as real ES modules, so a re-export that is stripped
@@ -94,9 +163,9 @@ function generateCSSReExportStub(trimmed: string, specifier: string): string {
   // Namespace re-export: export * as styles from "./X.module.css"
   const nsMatch = clause.match(/^\*\s+as\s+([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
   if (nsMatch?.[1]) {
-    return `export const ${nsMatch[1]} = ${
-      cssBindingValue("default", cssModuleKey)
-    }; /* css re-export: ${specifier} */`;
+    return `${
+      exportBindingStatement(nsMatch[1], cssBindingValue("default", cssModuleKey))
+    } /* css re-export: ${specifier} */`;
   }
 
   // Named re-export: export { default as styles, container as c } from "./X.module.css"
@@ -106,12 +175,9 @@ function generateCSSReExportStub(trimmed: string, specifier: string): string {
   const bindings = parseNamedImportBindings(namedMatch[1]);
   if (bindings.length === 0) return stripped;
 
-  const statements = bindings.map((binding) => {
-    const value = cssBindingValue(binding.imported, cssModuleKey);
-    return binding.local === "default"
-      ? `export default ${value};`
-      : `export const ${binding.local} = ${value};`;
-  });
+  const statements = bindings.map((binding) =>
+    exportBindingStatement(binding.local, cssBindingValue(binding.imported, cssModuleKey))
+  );
 
   return `${statements.join(" ")} /* css re-export: ${specifier} */`;
 }
