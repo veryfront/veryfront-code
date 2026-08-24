@@ -10,12 +10,14 @@ import { RSCRenderer } from "./rsc-renderer.ts";
 import * as React from "react";
 import * as ReactDOMServer from "react-dom/server";
 
+const PROJECT_DIR = "test-project";
+
 describe("rendering/rsc/server-renderer/rsc-renderer", () => {
   describe("RSCRenderer constructor", () => {
     it("should create renderer with empty client manifest", () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
       assertEquals(renderer instanceof RSCRenderer, true);
     });
@@ -23,7 +25,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
     it("should create renderer with production mode", () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
         mode: "production",
       });
       assertEquals(renderer instanceof RSCRenderer, true);
@@ -32,7 +34,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
     it("should create renderer with development mode", () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
         mode: "development",
       });
       assertEquals(renderer instanceof RSCRenderer, true);
@@ -41,7 +43,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
     it("defaults an omitted mode to production", () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
 
       assertEquals(
@@ -65,7 +67,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
       try {
         const renderer = new RSCRenderer({
           clientManifest: new Map(),
-          projectDir: "/tmp/test-project",
+          projectDir: PROJECT_DIR,
           reactVersion: "18.3.1",
         });
 
@@ -92,7 +94,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
       try {
         const renderer = new RSCRenderer({
           clientManifest: new Map(),
-          projectDir: "/tmp/test-project",
+          projectDir: PROJECT_DIR,
           reactVersion: "18.3.1",
         });
 
@@ -117,7 +119,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
     it("rethrows render failures instead of returning empty html", async () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
 
       function Boom(): never {
@@ -135,7 +137,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
     it("should render a simple HTML element", async () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
 
       function SimpleComponent() {
@@ -151,7 +153,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
     it("should render a React element directly", async () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
 
       const element = React.createElement("p", null, "direct element") as React.ReactElement;
@@ -162,7 +164,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
     it("should return empty clientRefs for server-only components", async () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
 
       function ServerOnly() {
@@ -190,7 +192,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
             },
           ],
         ]),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
 
       const payload = await renderer.renderToPayload(ClientComponent, { label: "Save" });
@@ -250,7 +252,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
             },
           ],
         ]),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
         // The tree assertions below describe the development payload. Say so:
         // the payload carries `tree` only in development mode.
         mode: "development",
@@ -290,7 +292,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
             },
           ],
         ]),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
         mode: "production",
       });
 
@@ -302,7 +304,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
       );
       assertEquals(payload.html.includes("/_veryfront/fs/"), false);
       assertEquals(
-        payload.html.includes(btoa("/tmp/test-project/app/ClientComponent.tsx")),
+        payload.html.includes(btoa(`${PROJECT_DIR}/app/ClientComponent.tsx`)),
         false,
       );
       assertEquals(
@@ -329,7 +331,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
             },
           ],
         ]),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
         mode: "production",
       });
 
@@ -366,7 +368,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
             },
           ],
         ]),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
         mode: "production",
         clientModuleStrategy: "fs",
       });
@@ -399,7 +401,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
             },
           ],
         ]),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
         mode: "development",
         clientModuleStrategy: "rsc-module",
       });
@@ -434,7 +436,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
             },
           ],
         ]),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
 
       const payload = await renderer.renderToPayload(ServerParent);
@@ -467,7 +469,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
             },
           ],
         ]),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
         mode: "production",
       });
 
@@ -497,7 +499,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
             },
           ],
         ]),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
 
       const payload = await renderer.renderToPayload(NamedWidget);
@@ -526,7 +528,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
             },
           ],
         ]),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
 
       const payload = await renderer.renderToPayload(Widget);
@@ -540,7 +542,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
     it("should accept custom props", async () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
 
       function PropsComponent(props: { name: string }) {
@@ -554,7 +556,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
     it("should handle component returning null", async () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
 
       function NullComponent() {
@@ -610,7 +612,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
             },
           ],
         ]),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
 
       const firstRender = renderer.renderToPayload(DelayedFirst);
@@ -630,7 +632,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", () => {
     it("should clear client refs between renders", async () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
 
       function Comp1() {
