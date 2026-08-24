@@ -92,10 +92,6 @@ export class MemoryCacheBackend implements CacheBackend {
 
   async set(key: string, value: string, ttlSeconds = DEFAULT_TTL_SECONDS): Promise<void> {
     const resolvedTtlSeconds = resolveCacheTtlSeconds(ttlSeconds, DEFAULT_TTL_SECONDS);
-    const entrySize = this.estimateSize(key, value);
-
-    // Reject single entries that exceed the byte limit on their own
-    if (entrySize > this.maxSizeBytes) return;
 
     // Remove existing entry for clean size tracking
     const existing = this.store.get(key);
@@ -107,6 +103,11 @@ export class MemoryCacheBackend implements CacheBackend {
     // A non-positive TTL expires immediately: the existing entry is gone and
     // nothing replaces it, so the slot is not retained until the next read.
     if (expiresImmediately(resolvedTtlSeconds)) return;
+
+    const entrySize = this.estimateSize(key, value);
+
+    // Reject single entries that exceed the byte limit on their own
+    if (entrySize > this.maxSizeBytes) return;
 
     // Evict oldest entries while over count or size limits
     while (
@@ -131,9 +132,6 @@ export class MemoryCacheBackend implements CacheBackend {
 
     for (const { key, value, ttl } of entries) {
       const resolvedTtlSeconds = resolveCacheTtlSeconds(ttl, DEFAULT_TTL_SECONDS);
-      const entrySize = this.estimateSize(key, value);
-
-      if (entrySize > this.maxSizeBytes) continue;
 
       const existing = this.store.get(key);
       if (existing) {
@@ -142,6 +140,10 @@ export class MemoryCacheBackend implements CacheBackend {
       }
 
       if (expiresImmediately(resolvedTtlSeconds)) continue;
+
+      const entrySize = this.estimateSize(key, value);
+
+      if (entrySize > this.maxSizeBytes) continue;
 
       while (
         this.store.size > 0 && (

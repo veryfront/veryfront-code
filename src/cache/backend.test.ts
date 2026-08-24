@@ -256,6 +256,17 @@ Deno.test("MemoryCacheBackend expires a negative TTL immediately", async () => {
   assertEquals(await cache.get("k"), null, "a negative-TTL key must read as a miss");
 });
 
+Deno.test("MemoryCacheBackend expires oversized non-positive TTL overwrites immediately", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+
+  const cache = new MemoryCacheBackend(10, { maxSizeBytes: 8 });
+  await cache.set("k", "small", 60);
+  await cache.set("k", "value-too-large", 0);
+
+  assertEquals(cache.size, 0, "an oversized zero-TTL overwrite must remove the old entry");
+  assertEquals(await cache.get("k"), null, "the old value must not survive size admission");
+});
+
 Deno.test("MemoryCacheBackend setBatch expires a non-positive TTL immediately", async () => {
   const { MemoryCacheBackend } = await importBackend();
 
@@ -269,6 +280,17 @@ Deno.test("MemoryCacheBackend setBatch expires a non-positive TTL immediately", 
     "a batched zero TTL must remove the existing entry and store nothing",
   );
   assertEquals(await cache.get("k"), null, "a batched zero-TTL key must read as a miss");
+});
+
+Deno.test("MemoryCacheBackend setBatch expires oversized non-positive TTL overwrites immediately", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+
+  const cache = new MemoryCacheBackend(10, { maxSizeBytes: 8 });
+  await cache.set("k", "small", 60);
+  await cache.setBatch([{ key: "k", value: "value-too-large", ttl: 0 }]);
+
+  assertEquals(cache.size, 0, "a batched oversized zero-TTL overwrite must remove the old entry");
+  assertEquals(await cache.get("k"), null, "the old value must not survive batch size admission");
 });
 
 Deno.test("MemoryCacheBackend rejects a non-finite TTL", async () => {
