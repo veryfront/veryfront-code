@@ -1192,6 +1192,55 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     });
   });
 
+  describe("ChatInput.Field", () => {
+    it("shows the live transcript and disables the editor while listening", () => {
+      const html = renderToString(
+        <ChatInput.Root input="draft" onChange={() => {}} isListening transcript="live words">
+          <ChatInput.Field />
+        </ChatInput.Root>,
+      );
+      assertStringIncludes(html, "live words", "field shows the live transcript while listening");
+      assert(!html.includes(">draft<"), "field does not show the stale draft while listening");
+      assertStringIncludes(html, "disabled", "field is disabled while listening");
+    });
+
+    it("shows the input and stays enabled when not listening", () => {
+      const html = renderToString(
+        <ChatInput.Root input="draft" onChange={() => {}} transcript="live words">
+          <ChatInput.Field />
+        </ChatInput.Root>,
+      );
+      assertStringIncludes(html, ">draft<", "field shows the input when not listening");
+      assert(!html.includes("live words"), "field ignores the transcript when not listening");
+      assert(!html.includes("disabled"), "field is enabled when not listening");
+    });
+  });
+
+  describe("ChatInput.Model", () => {
+    const models = [{ value: "mistral-large", label: "Mistral Large" }];
+
+    it("renders nothing when no onModelChange is wired", () => {
+      const html = renderToString(
+        <ChatInput.Root input="" onChange={() => {}} models={models}>
+          <ChatInput.Model />
+        </ChatInput.Root>,
+      );
+      assert(
+        !html.includes("Mistral Large"),
+        "model selector must not render without onModelChange",
+      );
+    });
+
+    it("renders the selector when models and onModelChange are supplied", () => {
+      const html = renderToString(
+        <ChatInput.Root input="" onChange={() => {}} models={models} onModelChange={() => {}}>
+          <ChatInput.Model />
+        </ChatInput.Root>,
+      );
+      assertStringIncludes(html, "Mistral Large", "model selector renders the configured model");
+    });
+  });
+
   describe("ChatInput.Export", () => {
     it("renders by presence when the supplied conversation is non-empty", () => {
       const html = renderToString(

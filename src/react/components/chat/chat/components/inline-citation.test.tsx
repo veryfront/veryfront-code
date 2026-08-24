@@ -90,4 +90,104 @@ describe("InlineCitation", () => {
       restore();
     }
   });
+
+  it("reports the citation index on click unless the trigger prevented it", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installDomGlobals(dom);
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "Expected root element to exist");
+      const root = createRoot(rootElement);
+      const received: number[] = [];
+
+      flushSync(() => {
+        root.render(
+          <InlineCitation
+            index={2}
+            source={{ title: "Veryfront runs", url: "/runs" }}
+            onClick={(i) => received.push(i)}
+          >
+            <InlineCitation.Trigger />
+            <InlineCitation.Card>x</InlineCitation.Card>
+          </InlineCitation>,
+        );
+      });
+
+      let trigger = document.querySelector("button");
+      assert(trigger, "Expected citation trigger to render");
+      flushSync(() => trigger!.click());
+      assertEquals(
+        received,
+        [2],
+        "clicking the trigger reports the citation index to the root onClick",
+      );
+
+      flushSync(() => {
+        root.render(
+          <InlineCitation
+            index={2}
+            source={{ title: "Veryfront runs", url: "/runs" }}
+            onClick={(i) => received.push(i)}
+          >
+            <InlineCitation.Trigger onClick={(e) => e.preventDefault()} />
+            <InlineCitation.Card>x</InlineCitation.Card>
+          </InlineCitation>,
+        );
+      });
+
+      trigger = document.querySelector("button");
+      assert(trigger, "Expected citation trigger to re-render");
+      flushSync(() => trigger!.click());
+      assertEquals(received, [2], "a defaultPrevented trigger click suppresses onCitationClick");
+
+      await unmountReactRoot(root);
+    } finally {
+      restore();
+    }
+  });
+
+  it("hides the card again when the pointer leaves the trigger", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installDomGlobals(dom);
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "Expected root element to exist");
+      const root = createRoot(rootElement);
+
+      flushSync(() => {
+        root.render(
+          <InlineCitation index={0} source={{ title: "Veryfront runs", url: "/runs" }}>
+            <InlineCitation.Trigger />
+            <InlineCitation.Card className="vf-citation-card">card</InlineCitation.Card>
+          </InlineCitation>,
+        );
+      });
+
+      const trigger = document.querySelector("button");
+      assert(trigger, "Expected citation trigger to render");
+      trigger.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      await waitFor(
+        () => document.querySelector(".vf-citation-card") !== null,
+        { interval: 10, message: "Citation card did not render after hover" },
+      );
+
+      trigger.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }));
+      await waitFor(
+        () => document.querySelector(".vf-citation-card") === null,
+        { interval: 10, message: "Citation card did not hide after the pointer left" },
+      );
+
+      await unmountReactRoot(root);
+    } finally {
+      restore();
+    }
+  });
 });

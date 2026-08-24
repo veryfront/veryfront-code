@@ -191,6 +191,124 @@ describe("ChatSidebar.Item — menu compound (E4 acid test)", () => {
     assert(html.includes("Row title"), "the row renders from the composed Item");
   });
 
+  it("honors composed Menu children once the row menu opens", async () => {
+    const restoreDom = installDom();
+    try {
+      const root = createRoot(document.getElementById("root")!);
+      flushSync(() => {
+        root.render(
+          <ChatSidebar.Root
+            conversations={[summary("x", "Row title", 5000)]}
+            activeId="x"
+            onSelect={() => {}}
+            onDelete={() => {}}
+            onRename={() => {}}
+          >
+            <ChatSidebar.List>
+              <ChatSidebar.Item conversation={summary("x", "Row title", 5000)}>
+                <ChatSidebar.Item.Menu>
+                  <ChatSidebar.Item.Rename />
+                  <ChatSidebar.Item.Delete />
+                  <div data-archive="">Archive</div>
+                </ChatSidebar.Item.Menu>
+              </ChatSidebar.Item>
+            </ChatSidebar.List>
+          </ChatSidebar.Root>,
+        );
+      });
+      flushSync(() => {
+        document.querySelector<HTMLButtonElement>(
+          'button[aria-label="More actions for Row title"]',
+        )?.click();
+      });
+      await settle();
+
+      assert(
+        document.querySelector("[data-archive]"),
+        "custom Archive entry renders inside the composed menu",
+      );
+      const entries = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+        .map((el) => el.textContent);
+      assert(
+        entries.includes("Rename") && entries.includes("Delete"),
+        "built-in entries still render when composed explicitly",
+      );
+
+      await unmountReactRoot(root);
+      await settle();
+    } finally {
+      restoreDom();
+    }
+  });
+
+  it("commits a trimmed title through onRename and skips blank or unchanged titles", async () => {
+    const restoreDom = installDom();
+    const calls: Array<[string, string]> = [];
+    function StartRename(): React.ReactElement {
+      const { startRename } = useChatSidebarItem();
+      return <button type="button" data-start-rename="" onClick={startRename}>Rename</button>;
+    }
+    const typeAndEnter = async (value: string): Promise<void> => {
+      flushSync(() => {
+        document.querySelector<HTMLButtonElement>("[data-start-rename]")?.click();
+      });
+      await settle();
+      const input = document.querySelector<HTMLInputElement>("input");
+      assert(input, "starting a rename mounts the inline editor");
+      const setValue = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      assert(setValue, "JSDOM exposes the native input value setter");
+      input.focus();
+      // React DOM booted without a document, so its text-input change adapter
+      // polls the value on key events instead of listening for `input`; a keyup
+      // after setting the native value is what surfaces `onChange` here.
+      flushSync(() => {
+        setValue.call(input, value);
+        input.dispatchEvent(new KeyboardEvent("keyup", { key: "e", bubbles: true }));
+      });
+      flushSync(() => {
+        input.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+        );
+      });
+    };
+
+    try {
+      const root = createRoot(document.getElementById("root")!);
+      flushSync(() => {
+        root.render(
+          <ChatSidebar.Root
+            conversations={[summary("x", "Old", 5000)]}
+            activeId="x"
+            onSelect={() => {}}
+            onDelete={() => {}}
+            onRename={(id, title) => calls.push([id, title])}
+          >
+            <ChatSidebar.List>
+              <ChatSidebar.Item conversation={summary("x", "Old", 5000)}>
+                <StartRename />
+              </ChatSidebar.Item>
+            </ChatSidebar.List>
+          </ChatSidebar.Root>,
+        );
+      });
+
+      await typeAndEnter("   ");
+      await typeAndEnter("Old");
+      assertEquals(calls, [], "blank or unchanged titles do not call onRename");
+
+      await typeAndEnter("  New title  ");
+      assertEquals(calls, [["x", "New title"]], "commit passes the trimmed title");
+
+      await unmountReactRoot(root);
+      await settle();
+    } finally {
+      restoreDom();
+    }
+  });
+
   it("keeps the row ref attached while inline rename is active", async () => {
     const restoreDom = installDom();
     const itemRef = React.createRef<HTMLDivElement>();

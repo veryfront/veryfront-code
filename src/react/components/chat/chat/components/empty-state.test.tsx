@@ -57,11 +57,13 @@ describe("Suggestion", () => {
     );
     assertStringIncludes(html, "Summarize this thread");
     assertStringIncludes(html, "icon");
+    assertStringIncludes(html, "shrink-0", "icon renders inside the wrapper span");
   });
 
   it("omits the icon wrapper when no icon is provided", () => {
     const html = renderToString(<Suggestion suggestion="Summarize this thread" />);
     assertStringIncludes(html, "Summarize this thread");
+    assertEquals(html.includes("shrink-0"), false, "no icon wrapper span renders without an icon");
   });
 });
 

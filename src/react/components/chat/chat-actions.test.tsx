@@ -105,6 +105,75 @@ describe("ChatActions — render-or-compose", () => {
     assertStringIncludes(html, "Add attachments and settings");
   });
 
+  it("preset renders the attach row and data-driven actions and wires their handlers", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { pretendToBeVisual: true, url: "https://example.com/" },
+    );
+    const restore = installDom(dom);
+    const rootElement = document.getElementById("root");
+    assert(rootElement);
+    const root = createRoot(rootElement);
+    let attachCalls = 0;
+    let addUrlCalls = 0;
+
+    try {
+      flushSync(() =>
+        root.render(
+          <div data-vf-chat="">
+            <ChatActions
+              defaultOpen
+              onAttachFiles={() => attachCalls += 1}
+              actions={[{ label: "Add from URL", onSelect: () => addUrlCalls += 1 }]}
+            />
+          </div>,
+        )
+      );
+      await waitFor(
+        () => document.querySelectorAll('[role="menu"]').length === 1,
+        "actions menu did not portal",
+      );
+      const labels = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+        .map((el) => el.textContent);
+      assertEquals(
+        labels.slice(0, 2),
+        ["Attach Files or Photos", "Add from URL"],
+        "preset renders attach row before data-driven actions",
+      );
+
+      const select = (label: string) => {
+        const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+          .find((el) => el.textContent === label);
+        assert(item, `menu item ${label} is missing`);
+        flushSync(() => {
+          item.dispatchEvent(
+            new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true }),
+          );
+          item.click();
+        });
+      };
+      select("Attach Files or Photos");
+      assertEquals(attachCalls, 1, "attach row invokes onAttachFiles");
+      await waitFor(
+        () => document.querySelectorAll('[role="menu"]').length === 0,
+        "selecting a row did not close the menu",
+      );
+      flushSync(() => {
+        document.querySelector<HTMLElement>('[aria-label="Add attachments and settings"]')!
+          .click();
+      });
+      await waitFor(
+        () => document.querySelectorAll('[role="menu"]').length === 1,
+        "actions menu did not reopen",
+      );
+      select("Add from URL");
+      assertEquals(addUrlCalls, 1, "action row invokes its onSelect");
+    } finally {
+      await unmount(root);
+      restore();
+    }
+  });
+
   it("recompose: a custom Trigger renders in place of the default", () => {
     const html = renderToString(
       <ChatActions.Root>

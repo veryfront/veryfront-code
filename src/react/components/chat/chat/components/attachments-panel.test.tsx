@@ -71,6 +71,48 @@ describe("AttachmentsPanel", () => {
     const html = renderToString(<AttachmentsPanel uploads={uploads} />);
     assert(!html.includes('aria-label="Close attachments"'));
   });
+
+  it("renders the file input + empty-state upload action when onAttach is set", () => {
+    const html = renderToString(<AttachmentsPanel uploads={[]} onAttach={() => undefined} />);
+    assertStringIncludes(
+      html,
+      'aria-label="Upload file"',
+      "hidden file input renders when onAttach is set",
+    );
+    assertStringIncludes(html, ">Upload files<", "empty state offers the upload action");
+  });
+
+  it("omits the file input + upload action when onAttach is absent", () => {
+    const html = renderToString(<AttachmentsPanel uploads={[]} />);
+    assertEquals(
+      html.includes('aria-label="Upload file"'),
+      false,
+      "no file input without onAttach",
+    );
+    assertEquals(html.includes(">Upload files<"), false, "no upload action without onAttach");
+  });
+
+  it("renders the trailing upload action under a non-empty list when onAttach is set", () => {
+    const html = renderToString(
+      <AttachmentsPanel uploads={uploads} onAttach={() => undefined} />,
+    );
+    assertStringIncludes(html, "run-analysis.csv");
+    assertStringIncludes(
+      html,
+      ">Upload files<",
+      "the list offers the trailing upload action when onAttach is set",
+    );
+    assertStringIncludes(
+      html,
+      "flex justify-center pt-2",
+      "the trailing action uses the list (more) variant wrapper",
+    );
+    const withoutAttach = renderToString(<AttachmentsPanel uploads={uploads} />);
+    assert(
+      !withoutAttach.includes(">Upload files<"),
+      "no trailing upload action without onAttach",
+    );
+  });
 });
 
 // The composability contract: a consuming developer must be able to recompose

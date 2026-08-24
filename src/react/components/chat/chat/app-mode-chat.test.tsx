@@ -67,7 +67,11 @@ describe("ConversationBoundChat — app mode, no ConversationsProvider", () => {
 
   it("renders without throwing when agentId is omitted entirely", () => {
     const html = renderToString(<ConversationBoundChat api="/api/ag-ui" />);
-    assertStringIncludes(html, "<");
+    assertStringIncludes(html, "Type a message...", "composer renders when agentId is omitted");
+    assert(
+      !html.includes('aria-busy="true"'),
+      "no initializing skeleton without an agentId to resolve",
+    );
   });
 
   it("renders a composer even while agent metadata is still resolving", () => {

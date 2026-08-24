@@ -236,6 +236,47 @@ describe("AgentPicker — composability contract", () => {
     }
   });
 
+  it("selecting an Item reports its id and closes the popover", async () => {
+    const dom = installDom();
+    const selected: string[] = [];
+    const opens: boolean[] = [];
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "root element exists");
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(
+          <AgentPicker
+            agents={agents}
+            value="inbox"
+            onValueChange={(id) => selected.push(id)}
+            onOpenChange={(open) => opens.push(open)}
+          />,
+        );
+      });
+
+      const trigger = rootElement.querySelector("button");
+      assert(trigger, "trigger renders");
+      flushSync(() => trigger.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+      await settle();
+      assertEquals(opens.at(-1), true, "clicking the trigger opens the popover");
+
+      const lawyer = Array.from(document.querySelectorAll<HTMLElement>("[data-command-item]"))
+        .find((item) => item.textContent?.includes("Lawyer Agent"));
+      assert(lawyer, "the Lawyer Agent item renders in the open list");
+      flushSync(() => lawyer.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+      await settle();
+
+      assertEquals(selected, ["lawyer"], "selecting an item reports its id");
+      assertEquals(opens.at(-1), false, "selection closes the popover");
+
+      await unmountReactRoot(root);
+      await settle();
+    } finally {
+      dom.restore();
+    }
+  });
+
   it("useAgentPicker throws outside an AgentPicker", () => {
     function Orphan() {
       useAgentPicker();

@@ -6,7 +6,7 @@ import type { ChatMessage } from "#veryfront/agent/react";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ConversationsContextProvider } from "../contexts/conversations-context.tsx";
-import type { UseConversationsResult } from "./use-conversations.ts";
+import { DEFAULT_CONVERSATION_TITLE, type UseConversationsResult } from "./use-conversations.ts";
 import { useConversationChat, type UseConversationChatResult } from "./use-conversation-chat.ts";
 import type { Conversation } from "../persistence/conversation-store.ts";
 
@@ -294,6 +294,127 @@ describe("react/components/chat/hooks/useConversationChat", () => {
 
       assertEquals(saved.at(-1)?.id, bound.id);
       assertEquals(saved.at(-1)?.agentId, "agent-b");
+      assertEquals(
+        saved.at(-1)?.title,
+        "bound",
+        "a user-set title must not be overwritten by deriveTitle",
+      );
+    } finally {
+      await unmountReactRoot(root);
+      await settle();
+      restoreDom();
+    }
+  });
+
+  it("derives a title only while the bound conversation still has the default title", async () => {
+    const restoreDom = installDom();
+    const bound = { ...conversation("bound", []), title: DEFAULT_CONVERSATION_TITLE };
+    const saved: Conversation[] = [];
+    let latest: UseConversationChatResult | null = null;
+
+    function Capture(): null {
+      latest = useConversationChat();
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => {
+        root.render(
+          <ConversationsContextProvider
+            value={contextValue(bound, (conversation) => saved.push(conversation))}
+          >
+            <Capture />
+          </ConversationsContextProvider>,
+        );
+      });
+      await settle();
+
+      flushSync(() => latest!.chat.setMessages([userMessage("m", "Hello there")]));
+      await settle();
+
+      assertEquals(
+        saved.at(-1)?.title,
+        "Hello there",
+        "a default title is replaced by the derived title",
+      );
+    } finally {
+      await unmountReactRoot(root);
+      await settle();
+      restoreDom();
+    }
+  });
+
+  it("prefers an explicit onUpdate sink over the provider save", async () => {
+    const restoreDom = installDom();
+    const bound = conversation("bound", [userMessage("first-message", "First message")]);
+    const saved: Conversation[] = [];
+    const updated: Conversation[] = [];
+    let latest: UseConversationChatResult | null = null;
+
+    function Capture(): null {
+      latest = useConversationChat({ onUpdate: (conversation) => updated.push(conversation) });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => {
+        root.render(
+          <ConversationsContextProvider
+            value={contextValue(bound, (conversation) => saved.push(conversation))}
+          >
+            <Capture />
+          </ConversationsContextProvider>,
+        );
+      });
+      await settle();
+
+      const nextMessage = userMessage("next-message", "Next message");
+      flushSync(() => latest!.chat.setMessages([...bound.messages, nextMessage]));
+      await settle();
+
+      assertEquals(saved, [], "explicit onUpdate wins over provider.save");
+      assertEquals(updated.length, 1, "onUpdate receives the conversation");
+      assertEquals(updated[0]?.messages, [...bound.messages, nextMessage]);
+    } finally {
+      await unmountReactRoot(root);
+      await settle();
+      restoreDom();
+    }
+  });
+
+  it("runs standalone from initialMessages with an onUpdate sink and no provider", async () => {
+    const restoreDom = installDom();
+    const seed = userMessage("seed", "Seed message");
+    const updated: Conversation[] = [];
+    let latest: UseConversationChatResult | null = null;
+
+    function Capture(): null {
+      latest = useConversationChat({
+        initialMessages: [seed],
+        onUpdate: (conversation) => updated.push(conversation),
+      });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+      await settle();
+      assertEquals(latest!.chat.messages, [seed], "standalone mode seeds from initialMessages");
+      assertEquals(updated, [], "opening a standalone session does not re-save the seed");
+
+      const reply = userMessage("reply", "Reply");
+      flushSync(() => latest!.chat.setMessages([seed, reply]));
+      await settle();
+
+      assertEquals(updated.at(-1)?.messages, [seed, reply], "onUpdate receives the new messages");
+      assertEquals(
+        typeof updated.at(-1)?.id === "string" && updated.at(-1)!.id.length > 0,
+        true,
+        "a standalone session mints a conversation id",
+      );
     } finally {
       await unmountReactRoot(root);
       await settle();

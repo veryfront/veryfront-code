@@ -130,5 +130,9 @@ describe("Chat (god file) — controlled render characterization", () => {
     );
     assert(html.includes("totally custom layout"), "custom children render");
     assert(html.includes('data-custom-body=""'), "custom structure preserved");
+    assert(
+      !html.includes("ignored by custom body"),
+      "default message list must not render when children are supplied",
+    );
   });
 });

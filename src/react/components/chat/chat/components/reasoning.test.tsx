@@ -35,6 +35,13 @@ describe("Reasoning — default anatomy", () => {
       />,
     );
     assertStringIncludes(html, "Pondering...");
+
+    const idle = renderToString(<Reasoning text="Body" labels={{ thought: "Pondered" }} />);
+    assertStringIncludes(idle, "Pondered", "thought label override renders when idle");
+    assert(
+      !idle.includes("Thought process"),
+      "the default thought label must not render when overridden",
+    );
   });
 });
 

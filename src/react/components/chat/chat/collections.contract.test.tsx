@@ -33,6 +33,8 @@ interface CollectionSpec {
   expectedText: [string, string];
   /** Render the composed form with a custom leaf that outputs `marker`. */
   renderComposedCustom: (marker: string) => React.ReactElement;
+  /** The default item label that must NOT appear once children are composed. */
+  composedDefaultText: string;
 }
 
 const COLLECTIONS: CollectionSpec[] = [
@@ -50,6 +52,7 @@ const COLLECTIONS: CollectionSpec[] = [
         </Sources.List>
       </Sources.Root>
     ),
+    composedDefaultText: "Alpha",
   },
   {
     name: "AttachmentsPanel",
@@ -72,6 +75,7 @@ const COLLECTIONS: CollectionSpec[] = [
         </AttachmentsPanel.List>
       </AttachmentsPanel.Root>
     ),
+    composedDefaultText: "alpha.pdf",
   },
 ];
 
@@ -114,6 +118,10 @@ describe("chat collections — 4-tier conformance", () => {
       assert(
         html.includes(marker),
         `${spec.name}.List must render composed children`,
+      );
+      assert(
+        !html.includes(spec.composedDefaultText),
+        `${spec.name}.List must not also render the default items when children are composed`,
       );
     });
   }

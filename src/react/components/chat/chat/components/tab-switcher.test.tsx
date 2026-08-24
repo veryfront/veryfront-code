@@ -1,5 +1,5 @@
 import { renderToString } from "react-dom/server";
-import { assert, assertStringIncludes } from "#veryfront/testing/assert";
+import { assert, assertMatch, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { TabSwitcher } from "./tab-switcher.tsx";
 
@@ -25,6 +25,32 @@ describe("TabSwitcher", () => {
     // inactive one carries aria-selected="false" and tabIndex -1.
     assertStringIncludes(html, 'aria-selected="true"');
     assertStringIncludes(html, 'aria-selected="false"');
+    assertMatch(
+      html,
+      /<button[^>]*aria-selected="true"[^>]*tabindex="0"[^>]*>Attachments<\/button>/,
+      "Attachments is the selected, focusable tab",
+    );
+    assertMatch(
+      html,
+      /<button[^>]*aria-selected="false"[^>]*tabindex="-1"[^>]*>Chat<\/button>/,
+      "Chat is unselected and out of the tab order",
+    );
+  });
+
+  it("moves selection and focusability to Chat when it is active", () => {
+    const html = renderToString(
+      <TabSwitcher activeTab="chat" onTabChange={() => undefined} />,
+    );
+    assertMatch(
+      html,
+      /<button[^>]*aria-selected="true"[^>]*tabindex="0"[^>]*>Chat<\/button>/,
+      "Chat is the selected, focusable tab",
+    );
+    assertMatch(
+      html,
+      /<button[^>]*aria-selected="false"[^>]*tabindex="-1"[^>]*>Attachments<\/button>/,
+      "Attachments is unselected and out of the tab order",
+    );
   });
 
   it("renders exactly one selected tab for a given activeTab", () => {

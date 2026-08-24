@@ -130,6 +130,31 @@ describe("react/components/chat/hooks/useConversation", () => {
     }
   });
 
+  it("never touches the store for a nullish id", async () => {
+    const restoreDom = installDom();
+    let loads = 0;
+    const store: ConversationStore = {
+      list: () => Promise.resolve([]),
+      load: () => {
+        loads++;
+        return Promise.resolve(null);
+      },
+      save: () => Promise.resolve(),
+      delete: () => Promise.resolve(),
+    };
+    try {
+      const view = mount(store, null);
+      await settle();
+      assertEquals(loads, 0, "a nullish id never hits the store");
+      assertEquals(view.get().conversation, null, "nullish id resolves to null");
+      assertEquals(view.get().isLoading, false, "nullish id is not loading");
+      await unmountReactRoot(view.root);
+      await settle();
+    } finally {
+      restoreDom();
+    }
+  });
+
   it("keeps a provider-owned active id isolated from default local storage while loading", async () => {
     const restoreDom = installDom();
     const storageKey = "provider-owned-active-id";
