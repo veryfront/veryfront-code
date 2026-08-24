@@ -25,7 +25,7 @@ const MARKDOWN_FENCE_LINE_PATTERN =
 const MARKDOWN_HTML_COMMENT_BLOCK_START_PATTERN =
   /^( {0,3}(?:(?:>[ \t]*)|(?:(?:[-*+]|\d{1,9}[.)])[ \t]+))*)<!--/;
 const MARKDOWN_LIST_PREFIX_PATTERN = /([-*+]|\d{1,9}[.)])([ \t]+)/g;
-const MARKDOWN_PARAGRAPH_LIST_PREFIX_PATTERN = /^(?:[-*+]|\d{1,9}[.)])[ \t]+/;
+const MARKDOWN_LIST_MARKER_PATTERN = /^(?:[-*+]|\d{1,9}[.)])/;
 const MARKDOWN_RAW_HTML_BLOCK_START_PATTERN =
   /^<(script|pre|style|textarea)(?:[ \t]|>|$)/i;
 const MARKDOWN_PARAGRAPH_INTERRUPTING_HTML_TAG_PATTERN =
@@ -862,9 +862,10 @@ function markdownParagraphLineContext(line) {
   const structuralPrefix = codeRabbitMarkdownPrefixSignature(containerPrefix);
   const indentation = markdownContainerIndentColumns(containerPrefix);
   const remainingLine = line.slice(containerPrefix.length);
-  const listPrefix = remainingLine.match(
-    MARKDOWN_PARAGRAPH_LIST_PREFIX_PATTERN,
-  )?.[0];
+  const listPrefix = markdownListItemPrefix(
+    remainingLine,
+    markdownColumns(containerPrefix),
+  );
   return {
     blockquoteDepth:
       [...containerPrefix].filter((character) => character === ">").length,
@@ -947,6 +948,27 @@ function markdownListMarkerInterruptsParagraph(listPrefix) {
   return Number(marker.slice(0, -1)) === 1;
 }
 
+function markdownListItemPrefix(line, initialColumn = 0) {
+  const marker = line.match(MARKDOWN_LIST_MARKER_PATTERN)?.[0];
+  if (marker === undefined) return undefined;
+  let whitespaceEnd = marker.length;
+  while (line[whitespaceEnd] === " " || line[whitespaceEnd] === "\t") {
+    whitespaceEnd += 1;
+  }
+  if (whitespaceEnd === marker.length) return undefined;
+
+  const markerEndColumn = markdownColumns(marker, initialColumn);
+  const paddingColumns = markdownColumns(
+    line.slice(marker.length, whitespaceEnd),
+    markerEndColumn,
+  ) - markerEndColumn;
+  const contentFollowsPadding = whitespaceEnd < line.length;
+  const prefixEnd = contentFollowsPadding && paddingColumns <= 4
+    ? whitespaceEnd
+    : marker.length + 1;
+  return line.slice(0, prefixEnd);
+}
+
 function isMarkdownNonInterruptingHtmlLine(line) {
   // GitHub Flavored Markdown HTML block types 1–6 interrupt paragraphs;
   // type 7 does not.
@@ -985,9 +1007,10 @@ function markdownHtmlBlockStart(line, indentedCodeLine) {
   )?.[0] ?? "";
   if (!hasValidMarkdownBlockquoteSpacing(containerPrefix)) return undefined;
   const remainingLine = line.slice(containerPrefix.length);
-  const listPrefix = remainingLine.match(
-    MARKDOWN_PARAGRAPH_LIST_PREFIX_PATTERN,
-  )?.[0] ?? "";
+  const listPrefix = markdownListItemPrefix(
+    remainingLine,
+    markdownColumns(containerPrefix),
+  ) ?? "";
   const blockContent = remainingLine.slice(listPrefix.length);
   const tag = blockContent.match(
     MARKDOWN_RAW_HTML_BLOCK_START_PATTERN,

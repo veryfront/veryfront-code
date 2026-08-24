@@ -2704,6 +2704,64 @@ describe("automated review gate", () => {
     }
   });
 
+  it("uses CommonMark list-marker padding when classifying indented evidence", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    for (
+      const visibleListEvidence of [
+        ["-     item", "", `    ${MALFORMED_CURRENT_RANGE}`],
+        ["1.     item", "", `     ${MALFORMED_CURRENT_RANGE}`],
+        ["-     [ ] item", "", `    ${MALFORMED_CURRENT_RANGE}`],
+        ["", "9.    item", "", `      ${MALFORMED_CURRENT_RANGE}`],
+        ["", "123.     item", "", `     ${MALFORMED_CURRENT_RANGE}`],
+      ]
+    ) {
+      const newerVisibleCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...visibleListEvidence,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerVisibleCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+        visibleListEvidence.join("\n"),
+      );
+    }
+
+    const newerIndentedCodeCurrentRange = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "- item",
+        "",
+        `      ${MALFORMED_CURRENT_RANGE}`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:42Z",
+      updated_at: "2026-08-22T12:03:42Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerIndentedCodeCurrentRange],
+        },
+        HEAD_SHA,
+      ))?.url,
+      olderSuccess.html_url,
+    );
+  });
+
   it("pairs multiline inline code across blockquote paragraph lines", async () => {
     const olderSuccess = olderCodeRabbitSuccess();
 
