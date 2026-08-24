@@ -11,6 +11,16 @@ import {
 import { prompt } from "./factory.ts";
 import type { PromptConfig, PromptMCPConfig } from "./types.ts";
 
+function withTestTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`${label} did not settle`)), 250);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  });
+}
+
 describe("prompt factory", () => {
   describe("prompt()", () => {
     it("should create a prompt with explicit id", () => {
@@ -233,8 +243,9 @@ describe("prompt factory", () => {
       });
 
       const pending = p.getContent({}, { abortSignal: controller.signal });
-      await generateCalled;
+      await withTestTimeout(generateCalled, "prompt generator start signal");
       controller.abort();
+      releaseGenerator?.();
 
       const error = await assertRejects(() => pending, DOMException);
       assertEquals(
@@ -243,7 +254,6 @@ describe("prompt factory", () => {
         "an abort during generation rejects with an AbortError",
       );
 
-      releaseGenerator?.();
       assertEquals(
         await generatorRun,
         "late",

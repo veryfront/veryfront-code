@@ -6,6 +6,16 @@ import type { SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { createSleepTool, DEFAULT_SLEEP_TOOL_MAX_SECONDS, sleepTool } from "./sleep.ts";
 import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
 
+function withTestTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`${label} did not settle`)), 250);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  });
+}
+
 describe("tool/sleep", () => {
   afterEach(() => {
     reset();
@@ -47,7 +57,7 @@ describe("tool/sleep", () => {
       return value;
     });
 
-    await waitCalled;
+    await withTestTimeout(waitCalled, "sleep wait signal");
     assertEquals(waits, [5000]);
     // Drain the microtask queue: execute must still be suspended on wait.
     for (let turn = 0; turn < 20; turn++) await Promise.resolve();

@@ -1085,8 +1085,6 @@ describe("eval/agent-service hardening", () => {
       projectId: null,
       requestTimeoutMs,
     }, apiClient);
-    const startedAt = Date.now();
-
     const result = await runner.runCase({
       id: "deadline",
       label: "Deadline",
@@ -1102,16 +1100,15 @@ describe("eval/agent-service hardening", () => {
     assertEquals(result.status, "fail");
     assertStringIncludes(result.details, "terminal state");
     assertEquals(result.runId.startsWith("run_"), true);
-    const elapsed = Date.now() - startedAt;
     assertEquals(
-      elapsed >= requestTimeoutMs,
-      true,
-      "the canary waits out the configured terminal-poll deadline",
+      summaryCalls,
+      2,
+      "the canary polls once for running state and once for the deadline-bounded pending request",
     );
     assertEquals(
-      elapsed < requestTimeoutMs * 3,
+      result.durationMs >= requestTimeoutMs,
       true,
-      "the canary does not exceed the configured terminal-poll deadline",
+      "the canary waits out the configured terminal-poll deadline",
     );
   });
 
