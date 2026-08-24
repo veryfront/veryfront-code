@@ -7,6 +7,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { dynamicTool } from "#veryfront/tool";
+import { resource } from "#veryfront/resource";
 import "#veryfront/schemas/_test-setup.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 
@@ -1110,7 +1111,7 @@ describe("mcp/server", () => {
     });
   });
 
-  describe("resources/templates/list", () => {
+  describe("resource endpoints", () => {
     it("returns array without error", async () => {
       const server = createMCPServer({
         enabled: true,
@@ -1155,6 +1156,127 @@ describe("mcp/server", () => {
       assertExists(tmpl);
       assertEquals(tmpl.uriTemplate, "/users/{id}");
       assertEquals(tmpl.description, "Get user by id");
+
+      const resourcesResponse = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "resources/list",
+      });
+      const resources = (resourcesResponse.result as {
+        resources: Array<Record<string, unknown>>;
+      }).resources;
+      assertEquals(resources.some((entry) => entry.name === "test:users"), false);
+    });
+
+    it("preserves parameters embedded within template path segments", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerResource("test:files", {
+        id: "test:files",
+        pattern: "/files/file-:base.:ext",
+        description: "File by name",
+        paramsSchema: defineSchema((v) => v.object({ base: v.string(), ext: v.string() }))(),
+        load: async () => ({}),
+      });
+      registerResource("test:search", {
+        id: "test:search",
+        pattern: "/search?q=prefix-:term",
+        description: "Search by term",
+        paramsSchema: defineSchema((v) => v.object({ term: v.string() }))(),
+        load: async () => ({}),
+      });
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/templates/list",
+      });
+      const templates = (response.result as {
+        resourceTemplates: Array<Record<string, unknown>>;
+      }).resourceTemplates;
+
+      assertEquals(
+        templates.find((entry) => entry.name === "test:files")?.uriTemplate,
+        "/files/file-{base}.{ext}",
+      );
+      assertEquals(
+        templates.find((entry) => entry.name === "test:search")?.uriTemplate,
+        "/search?q=prefix-{term}",
+      );
+    });
+
+    it("preserves parameters in rootless hierarchical URI paths", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerResource("test:collection", {
+        id: "test:collection",
+        pattern: "custom:collection/:id",
+        description: "Collection item",
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+        load: async () => ({}),
+      });
+      registerResource("test:dynamic-collection", {
+        id: "test:dynamic-collection",
+        pattern: "custom::collection/items",
+        description: "Dynamic collection",
+        paramsSchema: defineSchema((v) => v.object({ collection: v.string() }))(),
+        load: async () => ({}),
+      });
+      registerResource("test:prefixed-collection", {
+        id: "test:prefixed-collection",
+        pattern: "custom:collection-:id/items",
+        description: "Prefixed dynamic collection",
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+        load: async () => ({}),
+      });
+      registerResource("test:hosted-file", {
+        id: "test:hosted-file",
+        pattern: "custom://host/files/file-:id",
+        description: "Hosted file",
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+        load: async () => ({}),
+      });
+      registerResource("test:nested-file", {
+        id: "test:nested-file",
+        pattern: "custom:collections/:collection/file-:id",
+        description: "Collection file",
+        paramsSchema: defineSchema((v) => v.object({ collection: v.string(), id: v.string() }))(),
+        load: async () => ({}),
+      });
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/templates/list",
+      });
+      const templates = (response.result as {
+        resourceTemplates: Array<Record<string, unknown>>;
+      }).resourceTemplates;
+
+      assertEquals(
+        templates.find((entry) => entry.name === "test:collection")?.uriTemplate,
+        "custom:collection/{id}",
+      );
+      assertEquals(
+        templates.find((entry) => entry.name === "test:dynamic-collection")?.uriTemplate,
+        "custom:{collection}/items",
+      );
+      assertEquals(
+        templates.find((entry) => entry.name === "test:prefixed-collection")?.uriTemplate,
+        "custom:collection-{id}/items",
+      );
+      assertEquals(
+        templates.find((entry) => entry.name === "test:hosted-file")?.uriTemplate,
+        "custom://host/files/file-{id}",
+      );
+      assertEquals(
+        templates.find((entry) => entry.name === "test:nested-file")?.uriTemplate,
+        "custom:collections/{collection}/file-{id}",
+      );
     });
 
     it("excludes scheme-only colons like openapi://spec", async () => {
@@ -1181,6 +1303,100 @@ describe("mcp/server", () => {
       };
       const tmpl = result.resourceTemplates.find((t) => t.name === "test:openapi");
       assertEquals(tmpl, undefined);
+    });
+
+    it("treats opaque URI scheme values as fixed resources", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerResource("test:isbn", {
+        id: "test:isbn",
+        pattern: "urn:isbn",
+        description: "ISBN namespace",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
+      registerResource("test:ietf", {
+        id: "test:ietf",
+        pattern: "urn:ietf:params",
+        description: "IETF parameters namespace",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
+      registerResource("test:punctuated-opaque", {
+        id: "test:punctuated-opaque",
+        pattern: "urn:ietf_:xml",
+        description: "Punctuated opaque namespace",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
+      registerResource("test:slash-delimited-urn", {
+        id: "test:slash-delimited-urn",
+        pattern: "urn:example:path/:literal",
+        description: "Slash-delimited URN",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
+      registerResource("test:custom-opaque", {
+        id: "test:custom-opaque",
+        pattern: "custom:namespace/path:literal",
+        description: "Opaque custom namespace",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
+      registerResource("test:punctuated-path-opaque", {
+        id: "test:punctuated-path-opaque",
+        pattern: "custom:namespace/path-:literal",
+        description: "Punctuated opaque path",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
+
+      const templatesResponse = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/templates/list",
+      });
+      const templates = (templatesResponse.result as {
+        resourceTemplates: Array<Record<string, unknown>>;
+      }).resourceTemplates;
+      assertEquals(templates.some((entry) => entry.name === "test:isbn"), false);
+      assertEquals(templates.some((entry) => entry.name === "test:ietf"), false);
+      assertEquals(
+        templates.some((entry) => entry.name === "test:punctuated-opaque"),
+        false,
+      );
+      assertEquals(
+        templates.some((entry) => entry.name === "test:slash-delimited-urn"),
+        false,
+      );
+      assertEquals(templates.some((entry) => entry.name === "test:custom-opaque"), false);
+      assertEquals(
+        templates.some((entry) => entry.name === "test:punctuated-path-opaque"),
+        false,
+      );
+
+      const resourcesResponse = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "resources/list",
+      });
+      const resources = (resourcesResponse.result as {
+        resources: Array<Record<string, unknown>>;
+      }).resources;
+      assertEquals(resources.some((entry) => entry.name === "test:isbn"), true);
+      assertEquals(resources.some((entry) => entry.name === "test:ietf"), true);
+      assertEquals(resources.some((entry) => entry.name === "test:punctuated-opaque"), true);
+      assertEquals(
+        resources.some((entry) => entry.name === "test:slash-delimited-urn"),
+        true,
+      );
+      assertEquals(resources.some((entry) => entry.name === "test:custom-opaque"), true);
+      assertEquals(
+        resources.some((entry) => entry.name === "test:punctuated-path-opaque"),
+        true,
+      );
     });
 
     it("includes title when set on resource", async () => {
@@ -1210,6 +1426,172 @@ describe("mcp/server", () => {
       assertExists(tmpl);
       assertEquals(tmpl.title, "Blog Post");
       assertEquals(tmpl.uriTemplate, "/posts/{slug}");
+    });
+
+    it("hides disabled resources from lists and direct reads", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerResource("test:private", {
+        id: "test:private",
+        pattern: "/private/:id",
+        description: "Private resource",
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+        load: async ({ id }) => ({ id }),
+        mcp: { enabled: false },
+      });
+      registerResource("test:private-fixed", {
+        id: "test:private-fixed",
+        pattern: "private://config",
+        description: "Private fixed resource",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+        mcp: { enabled: false },
+      });
+
+      const resourcesResponse = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/list",
+      });
+      const resources = (resourcesResponse.result as {
+        resources: Array<Record<string, unknown>>;
+      }).resources;
+      assertEquals(
+        resources.some((entry) => entry.name === "test:private-fixed"),
+        false,
+      );
+
+      const templatesResponse = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "resources/templates/list",
+      });
+      const templates = (templatesResponse.result as {
+        resourceTemplates: Array<Record<string, unknown>>;
+      }).resourceTemplates;
+      assertEquals(templates.some((entry) => entry.name === "test:private"), false);
+
+      const readResponse = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "resources/read",
+        params: { uri: "/private/42" },
+      });
+      assertStringIncludes(readResponse.error?.message ?? "", "Resource not found");
+    });
+
+    it("reads parameterized resources with parsed schema values", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerResource(
+        "test:articles",
+        resource({
+          pattern: "/articles/:tag",
+          description: "Articles by tag",
+          paramsSchema: defineSchema((v) =>
+            v.object({
+              limit: v.number().default(10),
+              tag: v.string().transform((value) => `tag:${value}`),
+            })
+          )(),
+          load: (params) => params,
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/read",
+        params: { uri: "/articles/news" },
+      });
+
+      assertEquals(response.error, undefined);
+      const result = response.result as { contents: Array<{ text: string }> };
+      assertEquals(JSON.parse(result.contents[0].text), {
+        limit: 10,
+        tag: "tag:news",
+      });
+    });
+
+    it("decodes encoded path and query parameters once before loading", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerResource(
+        "test:encoded",
+        resource({
+          pattern: "/encoded/:path?filter=:filter",
+          description: "Encoded resource",
+          paramsSchema: defineSchema((v) => v.object({ path: v.string(), filter: v.string() }))(),
+          load: (params) => params,
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/read",
+        params: { uri: "/encoded/a%20b%2Fc+plus?filter=x+y%26z" },
+      });
+
+      assertEquals(response.error, undefined);
+      const result = response.result as { contents: Array<{ text: string }> };
+      assertEquals(JSON.parse(result.contents[0]!.text), {
+        path: "a b/c+plus",
+        filter: "x+y&z",
+      });
+    });
+
+    it("treats malformed encoded parameters as not found without loading", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      let loadCalls = 0;
+      registerResource(
+        "test:malformed",
+        resource({
+          pattern: "/malformed/:value",
+          description: "Malformed resource",
+          paramsSchema: defineSchema((v) => v.object({ value: v.string() }))(),
+          load: () => {
+            loadCalls += 1;
+            return {};
+          },
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/read",
+        params: { uri: "/malformed/%E0%A4%A" },
+      });
+
+      assertStringIncludes(response.error?.message ?? "", "Resource not found");
+      assertEquals(loadCalls, 0);
+    });
+
+    it("rejects duplicate resource parameter names before MCP registration", () => {
+      assertThrows(
+        () =>
+          registerResource(
+            "test:duplicate",
+            resource({
+              pattern: "/duplicate/:id/:id",
+              description: "Duplicate resource",
+              paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+              load: async () => ({}),
+            }),
+          ),
+        TypeError,
+        'Resource pattern contains duplicate parameter name "id"',
+      );
     });
   });
 
