@@ -697,6 +697,35 @@ describe("automated review gate", () => {
   it("keeps markers inside invalid reference definitions visible", async () => {
     const olderSuccess = olderCodeRabbitSuccess();
     for (
+      const marker of [
+        `Requested commit: ${HEAD_SHA}`,
+        `Review skipped for current commit ${HEAD_SHA}.`,
+      ]
+    ) {
+      const markerBeforeReviewEnd = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          "",
+          `[${marker}]:`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:05:00Z",
+        html_url:
+          "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-invalid-reference-before-end",
+        updated_at: "2026-08-22T12:05:00Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          { reviews: [], comments: [olderSuccess, markerBeforeReviewEnd] },
+          HEAD_SHA,
+        ),
+        undefined,
+        marker,
+      );
+    }
+
+    for (
       const visibleDefinitionLookalike of [
         ["", `[Requested commit: ${HEAD_SHA}]:`],
         [
@@ -743,6 +772,12 @@ describe("automated review gate", () => {
 
     for (
       const malformedCurrentRange of [
+        "`Reviewing files that changed from the base of the PR and between " +
+        `not-a-sha and ${HEAD_SHA}.`,
+        "`Reviewing files that changed from the base of the PR and between " +
+        `not-a-sha\nand ${HEAD_SHA}.`,
+        "`Reviewing files that changed from the base of the PR and between " +
+        `${STALE_SHA}\nand ${HEAD_SHA}.`,
         `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
         `Reviewing files that changed from the base of the PR and between ${
           STALE_SHA.slice(0, 12)
@@ -2724,6 +2759,14 @@ describe("automated review gate", () => {
           "  | --- |",
           `  | ${MALFORMED_CURRENT_RANGE} |`,
           "  | ` |",
+        ],
+        [
+          "-   item",
+          "",
+          "    | header ` |",
+          "    | --- |",
+          `    | ${MALFORMED_CURRENT_RANGE} |`,
+          "    | ` |",
         ],
         [
           "- | header ` |",

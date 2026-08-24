@@ -10,7 +10,7 @@ const CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER =
 const CODERABBIT_REVIEW_RANGE_PATTERN =
   /(?:^|\r\n|[\r\n])Reviewing files that changed from the base of the PR and between ([0-9a-f]{40}) and ([0-9a-f]{40})\.(?=\r\n|[\r\n]|$)/;
 const CODERABBIT_REVIEW_RANGE_STATEMENT_START_PATTERN =
-  /(?:^|\r\n|[\r\n])([ \t]*(?:(?:>[ \t]*)|(?:\|[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*(?:Reviewing[ \t]+(?:files(?:[ \t]+that[ \t]+changed[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?|changed[ \t]+files(?:[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?)[ \t]+(?:and[ \t]+)?between))([^\r\n]*)/gi;
+  /(?:^|\r\n|[\r\n])([ \t]*(?:(?:>[ \t]*)|(?:\|[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*(?:`+)?(?:Reviewing[ \t]+(?:files(?:[ \t]+that[ \t]+changed[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?|changed[ \t]+files(?:[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?)[ \t]+(?:and[ \t]+)?between))([^\r\n]*)/gi;
 const CODERABBIT_REVIEW_RANGE_CONTINUATION_PREFIX_PATTERN =
   /^[ \t]*(?:(?:>[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*/;
 const CODERABBIT_REVIEW_RANGE_SEPARATOR_PATTERN =
@@ -921,9 +921,13 @@ function isMarkdownNonInterruptingHtmlLine(line) {
   // GitHub Flavored Markdown HTML block types 1–6 interrupt paragraphs;
   // type 7 does not.
   return /^ {0,3}<(?:[A-Za-z!?/])/.test(line) &&
-    !MARKDOWN_PARAGRAPH_INTERRUPTING_HTML_TAG_PATTERN.test(line) &&
-    !MARKDOWN_PARAGRAPH_INTERRUPTING_RAW_HTML_PATTERN.test(line) &&
-    !MARKDOWN_PARAGRAPH_INTERRUPTING_HTML_SYNTAX_PATTERN.test(line);
+    !isMarkdownParagraphInterruptingHtmlLine(line);
+}
+
+function isMarkdownParagraphInterruptingHtmlLine(line) {
+  return MARKDOWN_PARAGRAPH_INTERRUPTING_HTML_TAG_PATTERN.test(line) ||
+    MARKDOWN_PARAGRAPH_INTERRUPTING_RAW_HTML_PATTERN.test(line) ||
+    MARKDOWN_PARAGRAPH_INTERRUPTING_HTML_SYNTAX_PATTERN.test(line);
 }
 
 function markdownParagraphAfterLine(
@@ -1225,6 +1229,7 @@ function markdownInlineStructureRanges(content, excludedRanges = []) {
 function markdownTableInlineStructure(content, lines, excludedRanges) {
   const ranges = [];
   const cellRanges = [];
+  const listContinuationIndents = markdownListContinuationIndents(lines);
   let excludedRangeIndex = 0;
   const lineIsExcluded = (line) => {
     while (excludedRanges[excludedRangeIndex]?.[1] <= line.start) {
@@ -1243,8 +1248,16 @@ function markdownTableInlineStructure(content, lines, excludedRanges) {
       delimiterLine.content,
     );
     if (
-      isMarkdownIndentedCodeLine(headerLine.content) ||
-      isMarkdownIndentedCodeLine(delimiterLine.content) ||
+      isMarkdownIndentedCodeLine(
+        headerLine.content,
+        headerContext,
+        listContinuationIndents[lineIndex - 1],
+      ) ||
+      isMarkdownIndentedCodeLine(
+        delimiterLine.content,
+        delimiterContext,
+        listContinuationIndents[lineIndex],
+      ) ||
       isMarkdownInlineCodeBarrier(headerContext.content) ||
       !markdownTableContextsMatch(headerContext, delimiterContext)
     ) continue;
@@ -1276,7 +1289,11 @@ function markdownTableInlineStructure(content, lines, excludedRanges) {
       }
       const bodyContext = markdownParagraphLineContext(bodyLine.content);
       if (
-        isMarkdownIndentedCodeLine(bodyLine.content) ||
+        isMarkdownIndentedCodeLine(
+          bodyLine.content,
+          bodyContext,
+          listContinuationIndents[bodyLineIndex],
+        ) ||
         !markdownTableContextsMatch(headerContext, bodyContext) ||
         isMarkdownInlineCodeBarrier(bodyContext.content)
       ) break;
@@ -1294,6 +1311,44 @@ function markdownTableInlineStructure(content, lines, excludedRanges) {
     cellRanges,
     splitRanges: mergeMarkdownRanges(ranges, []),
   };
+}
+
+function markdownListContinuationIndents(lines) {
+  const continuationIndents = [];
+  let openListContexts = [];
+  let openParagraph;
+  for (const line of lines) {
+    const paragraphLine = markdownParagraphLineContext(line.content);
+    const continuesParagraph = markdownLineContinuesParagraph(
+      paragraphLine,
+      openParagraph,
+    );
+    const listContextsForLine = markdownListContextsForLine(
+      paragraphLine,
+      openListContexts,
+      continuesParagraph,
+    );
+    const continuationIndent = listContextsForLine.at(-1)?.continuationIndent ??
+      0;
+    const indentedCodeLine = isMarkdownIndentedCodeLine(
+      line.content,
+      paragraphLine,
+      continuationIndent,
+    ) && !continuesParagraph;
+    continuationIndents.push(continuationIndent);
+    openListContexts = markdownListContextsAfterLine(
+      paragraphLine,
+      listContextsForLine,
+      continuesParagraph,
+    );
+    openParagraph = markdownParagraphAfterLine(
+      paragraphLine,
+      openParagraph,
+      continuesParagraph,
+      indentedCodeLine,
+    );
+  }
+  return continuationIndents;
 }
 
 function markdownTableContextsMatch(header, row) {
@@ -1494,6 +1549,7 @@ function markdownReferenceContinuationLine(lines, lineIndex, firstLine) {
   if (line === undefined || line.content.trim().length === 0) return undefined;
   const continuation = markdownParagraphLineContext(line.content);
   if (
+    isMarkdownParagraphInterruptingHtmlLine(continuation.content) ||
     continuation.structuralPrefix !== firstLine.structuralPrefix ||
     continuation.listContinuationIndent !== undefined ||
     (firstLine.listContinuationIndent !== undefined &&
@@ -2310,7 +2366,7 @@ function parseCodeRabbitRangeStatement(content, match, continuationEnd) {
     statementStart.slice(
       0,
       statementStart.toLowerCase().lastIndexOf("reviewing"),
-    ),
+    ).replace(/`+$/, ""),
   );
   const sameLineSeparator = firstLineTail.match(
     CODERABBIT_REVIEW_RANGE_SEPARATOR_PATTERN,
