@@ -219,9 +219,15 @@ describe("methodNotAllowed", () => {
 });
 
 describe("ok", () => {
-  it("should return 200 with no body when data is undefined", () => {
+  it("should return 200 with no body when data is undefined", async () => {
     const res = ok();
     assertEquals(res.status, 200);
+    assertEquals(await res.text(), "", "ok() with no data must send an empty body");
+    assertEquals(
+      res.headers.get("Content-Type"),
+      null,
+      "an empty 200 must not advertise a content type",
+    );
   });
 
   it("should return JSON when data is provided", async () => {
@@ -245,9 +251,15 @@ describe("ok", () => {
 });
 
 describe("created", () => {
-  it("should return 201 with no body when data is undefined", () => {
+  it("should return 201 with no body when data is undefined", async () => {
     const res = created();
     assertEquals(res.status, 201);
+    assertEquals(await res.text(), "", "created() with no data must send an empty body");
+    assertEquals(
+      res.headers.get("Content-Type"),
+      null,
+      "an empty 201 must not advertise a content type",
+    );
   });
 
   it("should return 201 with JSON body", async () => {

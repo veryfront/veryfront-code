@@ -81,6 +81,63 @@ describe("MemoryKv", () => {
       assertEquals(entries.length, 2);
     });
 
+    it("yields entries in ascending serialized-key order regardless of insert order", async () => {
+      const kv = new MemoryKv();
+      await kv.set(["c"], 3);
+      await kv.set(["a"], 1);
+      await kv.set(["b"], 2);
+
+      assertEquals(
+        (await collectEntries(kv.list())).map((entry) => entry.key.join("/")),
+        ["a", "b", "c"],
+        "list yields ascending serialized-key order regardless of insert order",
+      );
+    });
+
+    it("yields entries in descending order with reverse", async () => {
+      const kv = new MemoryKv();
+      await kv.set(["c"], 3);
+      await kv.set(["a"], 1);
+      await kv.set(["b"], 2);
+
+      assertEquals(
+        (await collectEntries(kv.list({ reverse: true }))).map((entry) => entry.key.join("/")),
+        ["c", "b", "a"],
+        "reverse yields descending serialized-key order",
+      );
+    });
+
+    it("applies an inclusive start and an exclusive end bound", async () => {
+      const kv = new MemoryKv();
+      await kv.set(["c"], 3);
+      await kv.set(["a"], 1);
+      await kv.set(["b"], 2);
+
+      assertEquals(
+        (await collectEntries(kv.list({ start: ["b"] }))).map((entry) => entry.key.join("/")),
+        ["b", "c"],
+        "start is an inclusive lower bound",
+      );
+      assertEquals(
+        (await collectEntries(kv.list({ end: ["c"] }))).map((entry) => entry.key.join("/")),
+        ["a", "b"],
+        "end is an exclusive upper bound",
+      );
+    });
+
+    it("orders mixed-case keys by code unit like SqliteKv's ORDER BY key", async () => {
+      const kv = new MemoryKv();
+      await kv.set(["a"], 1);
+      await kv.set(["B"], 2);
+      await kv.set(["b"], 3);
+
+      assertEquals(
+        (await collectEntries(kv.list())).map((entry) => entry.key.join("/")),
+        ["B", "a", "b"],
+        "list must sort on code units so MemoryKv matches SQLite's binary ORDER BY key",
+      );
+    });
+
     it("matches prefixes by complete key parts", async () => {
       const kv = new MemoryKv();
       await kv.set(["a"], "exact");

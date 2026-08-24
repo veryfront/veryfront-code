@@ -5,9 +5,16 @@ import "#veryfront/schemas/_test-setup.ts";
  * These tests verify the cross-runtime process abstractions work correctly.
  */
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { withCwd } from "#veryfront/testing/cwd.ts";
+import { isDeno } from "./runtime.ts";
 import { runWithProjectEnv } from "../../server/project-env/storage.ts";
 import {
   chdir,
@@ -531,29 +538,37 @@ describe("Process Compat", () => {
   });
 
   describe("onSignal", () => {
-    it("should accept SIGINT handler without throwing", {
-      sanitizeResources: false,
-      sanitizeOps: false,
-    }, () => {
-      const handler = () => {};
-      onSignal("SIGINT", handler);
-
-      // Clean up to avoid Deno leak detection
-      if (typeof Deno !== "undefined") {
-        Deno.removeSignalListener("SIGINT", handler);
-      }
-    });
-
-    it("should accept SIGTERM handler without throwing", {
-      sanitizeResources: false,
-      sanitizeOps: false,
-    }, () => {
-      const handler = () => {};
-      onSignal("SIGTERM", handler);
-
-      // Clean up to avoid Deno leak detection
-      if (typeof Deno !== "undefined") {
-        Deno.removeSignalListener("SIGTERM", handler);
+    it("installs the handler and the disposer removes it exactly once", () => {
+      if (!isDeno) return;
+      const added: Array<[string, () => void]> = [];
+      const removed: Array<[string, () => void]> = [];
+      const originalAdd = Deno.addSignalListener;
+      const originalRemove = Deno.removeSignalListener;
+      Deno.addSignalListener = ((signal: Deno.Signal, handler: () => void) => {
+        added.push([signal, handler]);
+      }) as typeof Deno.addSignalListener;
+      Deno.removeSignalListener = ((signal: Deno.Signal, handler: () => void) => {
+        removed.push([signal, handler]);
+      }) as typeof Deno.removeSignalListener;
+      try {
+        const handler = () => {};
+        const dispose = onSignal("SIGINT", handler);
+        assertEquals(
+          added,
+          [["SIGINT", handler]],
+          "onSignal installs the handler for the requested signal",
+        );
+        assertEquals(typeof dispose, "function", "onSignal returns a disposer");
+        dispose();
+        dispose();
+        assertEquals(
+          removed,
+          [["SIGINT", handler]],
+          "the disposer removes the exact registration exactly once",
+        );
+      } finally {
+        Deno.addSignalListener = originalAdd;
+        Deno.removeSignalListener = originalRemove;
       }
     });
   });
@@ -565,16 +580,67 @@ describe("Process Compat", () => {
       clearInterval(timer);
     });
 
-    it("ignores timer-like objects without a callable unref", () => {
-      const timerLike = { unref: undefined };
+    it("invokes unref on timer-like objects", () => {
+      let calls = 0;
+      const timerLike = {
+        unref: () => {
+          calls++;
+        },
+      };
       unrefTimer(timerLike as unknown as ReturnType<typeof setInterval>);
+      assertEquals(calls, 1, "unrefTimer must invoke unref on timer-like objects");
+
+      unrefTimer({ unref: undefined } as unknown as ReturnType<typeof setInterval>);
+      assertEquals(calls, 1, "a timer without a callable unref must be ignored, not re-invoked");
     });
   });
 
   describe("getEnvOverlayStorage", () => {
+    const withOverlayGlobals = (fn: () => void): void => {
+      const g = globalThis as Record<string, unknown>;
+      const savedDeno = g["__vfTestDenoEnvOverlay"];
+      const savedNode = g["__vfTestEnvOverlay"];
+      try {
+        delete g["__vfTestDenoEnvOverlay"];
+        delete g["__vfTestEnvOverlay"];
+        fn();
+      } finally {
+        if (savedDeno === undefined) delete g["__vfTestDenoEnvOverlay"];
+        else g["__vfTestDenoEnvOverlay"] = savedDeno;
+        if (savedNode === undefined) delete g["__vfTestEnvOverlay"];
+        else g["__vfTestEnvOverlay"] = savedNode;
+      }
+    };
+
     it("should return null when no overlay is installed", () => {
-      const storage = getEnvOverlayStorage();
-      assertEquals(storage === null || typeof storage === "object", true);
+      withOverlayGlobals(() => {
+        assertEquals(getEnvOverlayStorage(), null, "absent overlay must yield null");
+      });
+    });
+
+    it("returns the storage of a well-formed overlay", () => {
+      withOverlayGlobals(() => {
+        const storage = { getStore: () => new Map<string, string>() };
+        (globalThis as Record<string, unknown>)["__vfTestDenoEnvOverlay"] = { storage };
+        assertStrictEquals(
+          getEnvOverlayStorage(),
+          storage,
+          "a well-formed overlay returns its storage object",
+        );
+      });
+    });
+
+    it("rejects an overlay without a callable getStore", () => {
+      withOverlayGlobals(() => {
+        (globalThis as Record<string, unknown>)["__vfTestDenoEnvOverlay"] = {
+          storage: { getStore: "not-callable" },
+        };
+        assertEquals(
+          getEnvOverlayStorage(),
+          null,
+          "an overlay without a callable getStore must be rejected, not returned",
+        );
+      });
     });
   });
 
@@ -592,12 +658,23 @@ describe("Process Compat", () => {
       assertEquals(result.stdout?.trim(), "hello");
     });
 
-    it("should return failure for non-existent command", async () => {
-      try {
+    it("surfaces a missing executable instead of reporting success", async () => {
+      if (isDeno) {
+        await assertRejects(
+          () => runCommand("__nonexistent_command_12345__", { capture: true }),
+          Deno.errors.NotFound,
+          undefined,
+          "a missing executable must reject with NotFound, not report success",
+        );
+      } else {
         const result = await runCommand("__nonexistent_command_12345__", { capture: true });
-        assertEquals(result.success, false);
-      } catch {
-        // In Deno, non-existent commands throw NotFound rather than returning failure
+        assertEquals(result.success, false, "a missing executable must report failure");
+        assertEquals(result.code !== 0, true, "a missing executable must not report exit code 0");
+        assertStringIncludes(
+          result.stderr ?? "",
+          "Spawn error",
+          "the spawn failure must reach the caller in stderr",
+        );
       }
     });
 

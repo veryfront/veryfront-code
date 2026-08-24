@@ -90,19 +90,28 @@ describe("platform/compat/std/front-matter-yaml", () => {
         body: "Body",
         frontMatter: "- one\n- two",
       });
+      assertEquals(
+        extract("---\n!!timestamp 2001-12-14\n---\nBody").attrs instanceof Date,
+        true,
+        "extract passes object-like roots through unchanged; only extractMapping rejects them",
+      );
     });
 
-    it("should reject scalar and sequence roots at mapping boundaries", () => {
+    it("should reject scalar, sequence and non-plain object roots at mapping boundaries", () => {
       for (
         const input of [
           "---\nscalar\n---\nBody",
           "---\n- one\n- two\n---\nBody",
+          "---\n!!timestamp 2001-12-14\n---\nBody",
+          "---\n!!set\n? a\n? b\n---\nBody",
+          "---\n!!binary R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\n---\nBody",
         ]
       ) {
         assertThrows(
           () => extractMapping(input),
           TypeError,
           "must be a mapping",
+          `root ${JSON.stringify(input.split("\n")[1])} must be rejected as a mapping`,
         );
       }
     });

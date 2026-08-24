@@ -98,7 +98,18 @@ describe("createHostAddressResolver", () => {
     await resolve("esm.sh", { recordTypes: ["A", "AAAA"] });
     await resolve("esm.sh", { recordTypes: ["A"] });
 
-    assertEquals(seen.length, 2);
+    assertEquals(
+      seen,
+      [["A"], ["A", "AAAA"]],
+      "the resolver must receive the caller's record types",
+    );
+
+    await resolve("esm.sh");
+    assertEquals(
+      seen.at(-1),
+      ["A", "AAAA"],
+      "an unspecified record type forwards the default pair",
+    );
   });
 
   it("does not cache an empty result", async () => {

@@ -41,6 +41,7 @@ describe("platform/compat/dynamic-import", () => {
     const CLIENT_ENTRIES = [
       "react/runtime/core.ts",
       "react/fonts/index.ts",
+      "react/components/ui/index.ts",
       "chat/index.ts",
       "markdown/index.ts",
       "mdx/index.ts",
@@ -104,6 +105,22 @@ describe("platform/compat/dynamic-import", () => {
     }
 
     const TARGET = "platform/compat/dynamic-import.ts";
+
+    it("guards every distinct PLATFORM_UTILITY_PATHS client entry", () => {
+      const utilsSource = read("html/utils.ts");
+      if (utilsSource === null) throw new Error("src/html/utils.ts must exist");
+      const guarded = new Set<string>();
+      const re = /"\/_vf_modules\/_veryfront\/([^"]+)\.js"/g;
+      let match: RegExpExecArray | null;
+      while ((match = re.exec(utilsSource)) !== null) {
+        guarded.add(`${match[1]}.ts`);
+      }
+      assertEquals(
+        [...guarded].sort(),
+        [...CLIENT_ENTRIES].sort(),
+        "every distinct PLATFORM_UTILITY_PATHS target needs a CLIENT_ENTRIES reachability guard",
+      );
+    });
 
     for (const entry of CLIENT_ENTRIES) {
       it(`should not be reachable from ${entry}`, () => {

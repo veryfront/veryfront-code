@@ -19,7 +19,7 @@
 
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
-import { exists, makeTempDir, mkdir, remove, writeTextFile } from "./fs.ts";
+import { exists, isNotFoundError, makeTempDir, mkdir, remove, writeTextFile } from "./fs.ts";
 import { join } from "./path/index.ts";
 
 let testDir: string;
@@ -50,5 +50,17 @@ describe("remove, across runtimes", () => {
     await assertRejects(() => remove(dirPath), Error);
 
     assertEquals(await exists(dirPath), true, "the directory must survive the refusal");
+  });
+
+  it("rejects a missing path on every runtime", async () => {
+    const missing = join(testDir, "absent");
+
+    const error = await assertRejects(() => remove(missing), Error);
+
+    assertEquals(
+      isNotFoundError(error),
+      true,
+      "removing a missing path must reject as not-found on every runtime",
+    );
   });
 });

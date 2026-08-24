@@ -19,6 +19,17 @@ export function convertNodeRequestToWebRequest(
   req: NodeIncomingMessage,
   url: string,
 ): Request {
+  return new Request(url, buildNodeRequestInit(req));
+}
+
+/**
+ * Build the `RequestInit` for a Node request. Exposed so tests can observe the
+ * `duplex` option, which the constructed `Request` does not reveal.
+ * @internal
+ */
+export function buildNodeRequestInit(
+  req: NodeIncomingMessage,
+): RequestInit & { duplex?: "half" } {
   const method = req.method ?? "GET";
   const hasBody = requestCanCarryBody(method) && requestDeclaresBody(req.headers);
 
@@ -34,7 +45,7 @@ export function convertNodeRequestToWebRequest(
     init.duplex = "half";
   }
 
-  return new Request(url, init);
+  return init;
 }
 
 function requestCanCarryBody(method: string): boolean {

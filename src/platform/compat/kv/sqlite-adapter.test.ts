@@ -6,13 +6,16 @@ import type { SqliteDatabase } from "./types.ts";
 
 function createMockDb(): SqliteDatabase & {
   store: Map<string, { value: string; versionstamp?: string }>;
+  execCalls: string[];
 } {
   const store = new Map<string, { value: string; versionstamp?: string }>();
+  const execCalls: string[] = [];
 
   return {
     store,
-    exec(_sql: string) {
-      // No-op for CREATE TABLE
+    execCalls,
+    exec(sql: string) {
+      execCalls.push(sql);
     },
     prepare(sql: string) {
       return {
@@ -78,10 +81,14 @@ async function collectEntries<T>(iterable: AsyncIterable<T>): Promise<T[]> {
 
 describe("platform/compat/kv/sqlite-adapter", () => {
   describe("SqliteKv", () => {
-    it("should construct and initialize", () => {
+    it("creates the kv_store table on construction", () => {
       const db = createMockDb();
-      const kv = new SqliteKv(db);
-      assertEquals(typeof kv, "object");
+      new SqliteKv(db);
+      assertEquals(
+        db.execCalls.some((sql) => sql.includes("CREATE TABLE IF NOT EXISTS kv_store")),
+        true,
+        "the SqliteKv constructor must create the kv_store table",
+      );
     });
 
     describe("get", () => {
@@ -158,7 +165,49 @@ describe("platform/compat/kv/sqlite-adapter", () => {
         for await (const entry of kv.list()) {
           entries.push(entry);
         }
-        assertEquals(entries.length, 2);
+        assertEquals(
+          entries.map((entry) => [entry.key.join("/"), entry.value]),
+          [["a", "1"], ["b", "2"]],
+          "list must deserialize stored values, not yield raw JSON",
+        );
+      });
+
+      it("deserializes object values when listing", async () => {
+        const db = createMockDb();
+        const kv = new SqliteKv(db);
+        await kv.set(["obj"], { nested: { n: 1 } });
+
+        const entries = await collectEntries(kv.list());
+        assertEquals(entries.length, 1, "one entry was stored");
+        assertEquals(
+          entries[0]?.value,
+          { nested: { n: 1 } },
+          "list must yield the stored object rather than its JSON string",
+        );
+      });
+
+      it("honours start, end and reverse options", async () => {
+        const db = createMockDb();
+        const kv = new SqliteKv(db);
+        await kv.set(["a"], 1);
+        await kv.set(["b"], 2);
+        await kv.set(["c"], 3);
+
+        assertEquals(
+          (await collectEntries(kv.list({ start: ["b"] }))).map((e) => e.key[0]),
+          ["b", "c"],
+          "start is an inclusive lower bound",
+        );
+        assertEquals(
+          (await collectEntries(kv.list({ end: ["b"] }))).map((e) => e.key[0]),
+          ["a"],
+          "end is an exclusive upper bound",
+        );
+        assertEquals(
+          (await collectEntries(kv.list({ reverse: true }))).map((e) => e.key[0]),
+          ["c", "b", "a"],
+          "reverse yields descending key order",
+        );
       });
 
       it("should list with prefix filter", async () => {

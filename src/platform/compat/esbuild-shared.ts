@@ -1,13 +1,16 @@
 export const ESBUILD_VERSION = "0.28.1";
 export const ESBUILD_WASM_URL = `https://deno.land/x/esbuild@v${ESBUILD_VERSION}/esbuild.wasm`;
 
-export function getEsbuildBinaryName(): string {
+export function mapEsbuildArch(arch: string): string {
   const archMap: Record<string, string> = {
     x86_64: "x64",
     aarch64: "arm64",
   };
-  const esbuildArch = archMap[Deno.build.arch] ?? Deno.build.arch;
-  return `@esbuild/${Deno.build.os}-${esbuildArch}`;
+  return archMap[arch] ?? arch;
+}
+
+export function getEsbuildBinaryName(): string {
+  return `@esbuild/${Deno.build.os}-${mapEsbuildArch(Deno.build.arch)}`;
 }
 
 export function getVFSBasePath(filePath: string, tempDir: string): string {

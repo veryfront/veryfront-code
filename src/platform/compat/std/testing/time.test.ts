@@ -63,6 +63,36 @@ describe("platform/compat/std/testing/time", () => {
     assertEquals(ticks, 3);
   });
 
+  it("floors a zero-delay interval to a 1ms period", () => {
+    using time = new FakeTime();
+    let ticks = 0;
+
+    const id = setInterval(() => {
+      ticks += 1;
+    }, 0);
+
+    time.tick(1);
+    assertEquals(ticks, 1, "a zero-delay interval is floored to a 1ms period");
+
+    clearInterval(id);
+  });
+
+  it("caps a self-rescheduling timer instead of hanging the suite", () => {
+    using time = new FakeTime();
+
+    assertThrows(
+      () => {
+        setTimeout(function again() {
+          setTimeout(again, 0);
+        }, 0);
+        time.tick(1);
+      },
+      Error,
+      "fired more than",
+      "a self-rescheduling timer must be capped instead of hanging the suite",
+    );
+  });
+
   it("does not run a timeout that was cleared before it came due", () => {
     using time = new FakeTime();
     let fired = false;

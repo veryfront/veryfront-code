@@ -121,6 +121,12 @@ describe("platform/compat/path/portable", () => {
         joined: portableJoin(["/workspace", "src", "..", "test"], false),
         relative: portableRelative("/workspace/src", "/workspace/test", false),
         resolved: portableResolve(["/workspace/src", "..", "test"], false),
+        basename: portableBasename("D:\\workspace\\file.test.ts", ".ts", true),
+        extname: portableExtname("/workspace/file.test.ts", false),
+        dirname: portableDirname("D:\\file.ts", true),
+        absolute: portableIsAbsolute("//server/share", true),
+        parsed: portableParse("D:\\workspace\\src\\file.ts", true),
+        formatted: portableFormat(portableParse("D:\\workspace\\src\\file.ts", true), true),
       };
     } finally {
       Object.defineProperty(String.prototype, "includes", includes);
@@ -145,7 +151,13 @@ describe("platform/compat/path/portable", () => {
       joined: "/workspace/test",
       relative: "../test",
       resolved: "/workspace/test",
-    });
+      basename: "file.test",
+      extname: ".ts",
+      dirname: "D:/",
+      absolute: true,
+      parsed: { root: "D:/", dir: "D:/workspace/src", base: "file.ts", ext: ".ts", name: "file" },
+      formatted: "D:/workspace/src/file.ts",
+    }, "every portable path helper must survive poisoned intrinsics");
   });
 
   it("recognizes portable absolute paths", () => {

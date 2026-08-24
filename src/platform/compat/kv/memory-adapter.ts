@@ -43,8 +43,10 @@ export class MemoryKv implements Kv {
       entries = entries.filter(([key]) => isKvKeyPrefix(prefix, deserializeKvKey(key)));
     }
 
+    // Sort on code units so ordering matches SqliteKv's binary `ORDER BY key`
+    // and the code-unit `start`/`end` bounds applied below.
     entries.sort((a, b) => {
-      const result = a[0].localeCompare(b[0]);
+      const result = a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;
       return options?.reverse ? -result : result;
     });
 

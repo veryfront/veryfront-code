@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createKVStore, openKv, polyfillDenoKv } from "./factory.ts";
 
@@ -51,8 +56,15 @@ describe("kv/factory", () => {
       assertEquals(typeof polyfillDenoKv, "function");
     });
 
-    it("should be callable without error", () => {
+    it("leaves the native Deno namespace untouched on the Deno lane", () => {
+      const g = globalThis as { Deno?: { openKv?: unknown } };
+      const originalDeno = g.Deno;
       polyfillDenoKv();
+      assertStrictEquals(
+        g.Deno,
+        originalDeno,
+        "the Deno lane leaves the native namespace untouched",
+      );
     });
   });
 

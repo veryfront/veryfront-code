@@ -7,10 +7,11 @@ import "#veryfront/schemas/_test-setup.ts";
  * (files exist on disk) but fails in production (compiled binary
  * doesn't have the file in VFS).
  */
-import { assertEquals } from "#std/assert";
+import { assertEquals, assertStringIncludes } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import { getRequiredPolyfillPaths } from "#veryfront/transforms/import-rewriter/strategies/node-builtin-strategy.ts";
 import { EMBEDDED_POLYFILLS } from "#veryfront/modules/server/module-server.ts";
+import { VERSION } from "#veryfront/utils";
 
 describe("Embedded Polyfills", () => {
   it("all import-rewritten polyfill paths have embedded content", () => {
@@ -67,9 +68,24 @@ describe("Embedded Polyfills", () => {
   });
 
   it("dnt shims polyfill exports fetch with bind to avoid illegal invocation", () => {
-    const content = EMBEDDED_POLYFILLS["_veryfront/_dnt.shims"] ?? "";
-    assertEquals(content.includes("fetch"), true);
-    assertEquals(content.includes(".bind(globalThis)"), true);
+    for (const key of ["_veryfront/_dnt.shims", "_dnt.shims"]) {
+      const content = EMBEDDED_POLYFILLS[key] ?? "";
+      assertStringIncludes(
+        content,
+        "export const fetch = globalThis.fetch.bind(globalThis);",
+        `${key}: fetch must be exported bound to globalThis`,
+      );
+      assertStringIncludes(
+        content,
+        "export const setTimeout = globalThis.setTimeout.bind(globalThis);",
+        `${key}: setTimeout must be exported bound to globalThis`,
+      );
+      assertStringIncludes(
+        content,
+        "export const setInterval = globalThis.setInterval.bind(globalThis);",
+        `${key}: setInterval must be exported bound to globalThis`,
+      );
+    }
   });
 
   it("prefixed and unprefixed dnt shim entries have identical content", () => {
@@ -84,9 +100,26 @@ describe("Embedded Polyfills", () => {
   });
 
   it("dnt-relative deno.js uses the #deno-config browser module", () => {
+    const keys = Object.keys(EMBEDDED_POLYFILLS);
+    assertEquals(
+      keys.includes("deno"),
+      true,
+      "compiled binaries must embed the dnt-relative deno.js stub",
+    );
+    assertEquals(
+      keys.includes("_veryfront/_deno-config"),
+      true,
+      "compiled binaries must embed the #deno-config stub",
+    );
     assertEquals(
       EMBEDDED_POLYFILLS["deno"],
       EMBEDDED_POLYFILLS["_veryfront/_deno-config"],
+      "the dnt-relative stub must match the #deno-config stub",
+    );
+    assertEquals(
+      EMBEDDED_POLYFILLS["deno"],
+      `export default ${JSON.stringify({ version: VERSION })};\n`,
+      "the deno-config stub must be a JS module exporting { version }",
     );
   });
 });
