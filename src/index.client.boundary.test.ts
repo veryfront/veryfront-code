@@ -181,4 +181,28 @@ describe("index.client static import boundary", () => {
 
     assertEquals(leaks, []);
   });
+
+  // The patterns above are only ever applied as a filter over the reached
+  // graph, so a rename of any adapter file would turn the guard vacuously
+  // green. Pin the canonical modules each pattern is meant to catch.
+  it("server-only patterns still name real modules", async () => {
+    const canonical = [
+      "src/platform/adapters/runtime/deno/adapter.ts",
+      "src/platform/adapters/runtime/deno/filesystem-adapter.ts",
+      "src/platform/adapters/runtime/node/filesystem-adapter.ts",
+      "src/platform/adapters/runtime/shared/node-filesystem-adapter.ts",
+    ];
+    for (const path of canonical) {
+      assert(
+        (await readModule(path)) !== null,
+        `${path} no longer exists; update SERVER_ONLY_PATTERNS or the guard goes stale`,
+      );
+    }
+    for (const pattern of SERVER_ONLY_PATTERNS) {
+      assert(
+        canonical.some((p) => pattern.test("/" + p)),
+        `pattern ${pattern} matches no known server-only module; the guard has gone stale`,
+      );
+    }
+  });
 });
