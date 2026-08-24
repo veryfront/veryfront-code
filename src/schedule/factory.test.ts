@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { schedule } from "./factory.ts";
@@ -317,6 +317,11 @@ describe("schedule/factory", () => {
         VeryfrontError,
         message,
         `health ${JSON.stringify(health)} must be rejected with the expected message`,
+      );
+      assertInstanceOf(
+        error,
+        VeryfrontError,
+        `health ${JSON.stringify(health)} must be rejected with a VeryfrontError`,
       );
       assertEquals(
         error.slug,
