@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { ComponentRegistry } from "./index.ts";
@@ -69,6 +74,23 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       await registry.discover();
 
       assertEquals(registry.has("PrimaryButton"), true);
+    });
+
+    it("should propagate operational directory read errors", async () => {
+      const adapter = createMockAdapter();
+      const failure = new Error("Directory backend unavailable");
+      adapter.fs.readDir = () => {
+        throw failure;
+      };
+      const registry = new ComponentRegistry({
+        projectDir: "/test/read-dir-error",
+        componentDirs: ["components"],
+        adapter,
+      });
+
+      const error = await assertRejects(() => registry.discover());
+
+      assertEquals(error, failure);
     });
   });
 
@@ -140,7 +162,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       assertEquals(registry.has("index"), false);
     });
 
-    it("should handle files with same name in different directories", async () => {
+    it("should reject files with the same component name", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/duplicate-names";
 
@@ -159,19 +181,12 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
         componentDirs: ["components", "islands"],
       });
 
-      await registry.discover();
-
-      assertEquals(registry.has("Button"), true);
-      assertEquals(
-        registry.getAll().size,
-        1,
-        "same-named components in different dirs collapse to one entry",
+      await assertRejects(
+        () => registry.discover(),
+        Error,
+        "Component name 'Button' is already registered",
       );
-      assertEquals(
-        registry.get("Button")?.path,
-        `${projectDir}/islands/Button.tsx`,
-        "the later entry in componentDirs wins a name collision",
-      );
+      assertEquals(registry.getAll().size, 0);
     });
 
     it("should only match tsx and jsx extensions", async () => {
@@ -221,16 +236,20 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       assertEquals(component, null);
     });
 
-    it("should handle file read errors", async () => {
+    it("should propagate operational file read errors", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/read-error";
 
       adapter.fs.files.set(`${projectDir}/components/Error.tsx`, "content");
+      const failure = {
+        code: "ENOENT",
+        message: "Storage backend unavailable",
+      };
 
       const originalReadFile = adapter.fs.readFile.bind(adapter.fs);
       adapter.fs.readFile = async (path: string) => {
         if (path.includes("Error.tsx")) {
-          throw new Error("Permission denied");
+          throw failure;
         }
         return await originalReadFile(path);
       };
@@ -239,8 +258,8 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
 
       await registry.discover();
 
-      const component = await registry.loadComponent("Error");
-      assertEquals(component, null);
+      const error = await assertRejects(() => registry.loadComponent("Error"));
+      assertEquals(error, failure);
     });
 
     it("should cache loaded components", async () => {
@@ -294,6 +313,19 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       assertEquals(registry.get("Input")?.isLoaded, true);
     });
 
+    it("should wait for in-flight discovery before loading all components", async () => {
+      const adapter = createMockAdapter();
+      const projectDir = "/test/load-all-during-discovery";
+      adapter.fs.files.set(`${projectDir}/components/Button.tsx`, "button");
+      const registry = new ComponentRegistry({ projectDir, adapter });
+
+      const discovery = registry.discover();
+      const loading = registry.loadAll();
+      await Promise.all([discovery, loading]);
+
+      assertEquals(registry.get("Button")?.isLoaded, true);
+    });
+
     it("should handle concurrent component loads", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/concurrent-load";
@@ -336,6 +368,21 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       const component = registry.get("VirtualButton");
       assertEquals(component?.isLoaded, true);
       assertEquals(component?.path, "virtual:VirtualButton");
+    });
+
+    it("should load path-only manual components from the adapter", async () => {
+      const adapter = createMockAdapter();
+      const projectDir = "/test/manual-path";
+      const componentPath = `${projectDir}/external/Button.tsx`;
+      adapter.fs.files.set(componentPath, "export default function Button() {}");
+      const registry = new ComponentRegistry({ projectDir, adapter });
+
+      registry.add("Button", { path: componentPath });
+
+      assertEquals(registry.get("Button")?.isLoaded, false);
+      const component = await registry.loadComponent("Button");
+      assertEquals(component?.content, "export default function Button() {}");
+      assertEquals(component?.isLoaded, true);
     });
 
     it("should remove components", async () => {
@@ -386,9 +433,59 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       await registry.discover();
       assertEquals(registry.getAll().size, 1);
     });
+
+    it("should reconcile discovered files while preserving manual components", async () => {
+      const adapter = createMockAdapter();
+      const projectDir = "/test/reconcile";
+      const buttonPath = `${projectDir}/components/Button.tsx`;
+      adapter.fs.files.set(buttonPath, "button");
+
+      const registry = new ComponentRegistry({ projectDir, adapter });
+      registry.add("Manual", { content: "manual" });
+      await registry.discover();
+
+      adapter.fs.files.delete(buttonPath);
+      adapter.fs.files.set(`${projectDir}/components/Card.tsx`, "card");
+      await registry.discover();
+
+      assertEquals(registry.has("Button"), false);
+      assertEquals(registry.has("Card"), true);
+      assertEquals(registry.has("Manual"), true);
+    });
+
+    it("should reload changed component source after discovery", async () => {
+      const adapter = createMockAdapter();
+      const projectDir = "/test/reload-discovered";
+      const componentPath = `${projectDir}/components/Button.tsx`;
+      adapter.fs.files.set(componentPath, "version one");
+      const registry = new ComponentRegistry({ projectDir, adapter });
+      await registry.discover();
+      assertEquals((await registry.loadComponent("Button"))?.content, "version one");
+
+      adapter.fs.files.set(componentPath, "version two");
+      await registry.discover();
+
+      assertEquals((await registry.loadComponent("Button"))?.content, "version two");
+    });
   });
 
   describe("Component metadata", () => {
+    it("should keep discovered component metadata immutable", async () => {
+      const adapter = createMockAdapter();
+      const projectDir = "/test/immutable-metadata";
+      adapter.fs.files.set(`${projectDir}/components/Button.tsx`, "inside");
+      adapter.fs.files.set("/outside/Button.tsx", "outside");
+      const registry = new ComponentRegistry({ projectDir, adapter });
+      await registry.discover();
+
+      const component = registry.get("Button");
+      assertExists(component);
+      assertEquals(Reflect.set(component, "path", "/outside/Button.tsx"), false);
+
+      const loaded = await registry.loadComponent("Button");
+      assertEquals(loaded?.content, "inside");
+    });
+
     it("should list components with metadata", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/metadata";
@@ -568,14 +665,22 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
     it("should handle concurrent discover calls", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/concurrent-discover";
+      const componentsDir = `${projectDir}/components`;
 
-      adapter.fs.files.set(`${projectDir}/components/Button.tsx`, "button");
+      adapter.fs.files.set(`${componentsDir}/Button.tsx`, "button");
+      const originalReadDir = adapter.fs.readDir.bind(adapter.fs);
+      let componentDirectoryReads = 0;
+      adapter.fs.readDir = (path: string) => {
+        if (path === componentsDir) componentDirectoryReads++;
+        return originalReadDir(path);
+      };
 
       const registry = new ComponentRegistry({ projectDir, adapter });
 
       await Promise.all([registry.discover(), registry.discover(), registry.discover()]);
 
       assertEquals(registry.has("Button"), true);
+      assertEquals(componentDirectoryReads, 1);
     });
   });
 });
