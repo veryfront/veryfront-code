@@ -120,6 +120,30 @@ describe("hash-utils", () => {
       );
     });
 
+    it("frames bundle fields without ambient array serialization methods", async () => {
+      const originalJoin = Array.prototype.join;
+      const originalMap = Array.prototype.map;
+      const poison = () => {
+        throw new Error("ambient bundle hash framing method must not run");
+      };
+
+      let hash: string | undefined;
+      try {
+        Array.prototype.join = poison as typeof Array.prototype.join;
+        Array.prototype.map = poison as typeof Array.prototype.map;
+        hash = await computeCodeHash({
+          code: "const x = 1;",
+          css: ".x { color: red; }",
+          sourceMap: "{}",
+        });
+      } finally {
+        Array.prototype.join = originalJoin;
+        Array.prototype.map = originalMap;
+      }
+
+      assertEquals(hash?.length, 64);
+    });
+
     it("should produce consistent hash for same bundle", async () => {
       const bundle = {
         code: "const x = 1;",
