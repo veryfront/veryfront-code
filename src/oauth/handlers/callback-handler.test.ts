@@ -417,35 +417,59 @@ Deno.test("callback-handler: stores tokens keyed by (serviceId, userId) — bob'
     createdAt: Date.now(),
   });
 
-  await withTokenExchange(
-    () =>
-      Response.json({
-        access_token: "alice-access-token",
-        refresh_token: "alice-refresh-token",
-        expires_in: 3600,
-        token_type: "Bearer",
-        scope: "read",
-      }),
-    async () => {
-      const handler = createOAuthCallbackHandler(TEST_CONFIG, {
-        tokenStore,
-        baseUrl: "http://localhost:3000",
-        envReader: (key) => ENV[key],
-      });
+  // Captured inside the mock but asserted after it resolves: a throw inside the
+  // fetch mock is swallowed by the handler and surfaces as a callback_error redirect.
+  const exchange: { url?: string; method?: string; body?: URLSearchParams } = {};
 
-      const response = await handler(
-        makeRequest({ code: "auth-code-abc", state: "alice-state" }),
-      );
-      assertEquals(response.status, 302);
+  await withMockFetch(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    exchange.url = request.url;
+    exchange.method = request.method;
+    exchange.body = new URLSearchParams(await request.text());
+    return Response.json({
+      access_token: "alice-access-token",
+      refresh_token: "alice-refresh-token",
+      expires_in: 3600,
+      token_type: "Bearer",
+      scope: "read",
+    });
+  }, async () => {
+    const handler = createOAuthCallbackHandler(TEST_CONFIG, {
+      tokenStore,
+      baseUrl: "http://localhost:3000",
+      envReader: (key) => ENV[key],
+    });
 
-      // Alice's tokens stored under her userId
-      const aliceTokens = await tokenStore.getTokens(TEST_CONFIG.serviceId, "alice");
-      assertEquals(aliceTokens?.accessToken, "alice-access-token");
+    const response = await handler(
+      makeRequest({ code: "auth-code-abc", state: "alice-state" }),
+    );
+    assertEquals(response.status, 302);
 
-      // Bob's slot untouched
-      const bobTokens = await tokenStore.getTokens(TEST_CONFIG.serviceId, "bob");
-      assertEquals(bobTokens?.accessToken, "bob-existing-token");
-    },
+    // Alice's tokens stored under her userId
+    const aliceTokens = await tokenStore.getTokens(TEST_CONFIG.serviceId, "alice");
+    assertEquals(aliceTokens?.accessToken, "alice-access-token");
+
+    // Bob's slot untouched
+    const bobTokens = await tokenStore.getTokens(TEST_CONFIG.serviceId, "bob");
+    assertEquals(bobTokens?.accessToken, "bob-existing-token");
+  });
+
+  assertEquals(exchange.url, TEST_CONFIG.tokenUrl, "the exchange must target the token URL");
+  assertEquals(exchange.method, "POST", "the exchange must be a POST");
+  assertEquals(
+    exchange.body?.get("code_verifier"),
+    CODE_VERIFIER,
+    "exchange must carry the consumed state's PKCE verifier",
+  );
+  assertEquals(
+    exchange.body?.get("code"),
+    "auth-code-abc",
+    "exchange must redeem the callback code",
+  );
+  assertEquals(
+    exchange.body?.get("redirect_uri"),
+    "http://localhost:3000/api/auth/test-provider/callback",
+    "exchange must reuse the state's redirect URI",
   );
 });
 
@@ -663,6 +687,47 @@ Deno.test("callback-handler: redirect responses prevent caching and referrer lea
   const response = await handler(makeRequest({ code: "code" }));
   assertEquals(response.headers.get("cache-control"), "no-store");
   assertEquals(response.headers.get("referrer-policy"), "no-referrer");
+});
+
+Deno.test("callback-handler: success redirects prevent caching and referrer leakage", async () => {
+  const storedState: StoredOAuthState = {
+    userId: "alice",
+    serviceId: TEST_CONFIG.serviceId,
+    codeVerifier: CODE_VERIFIER,
+    redirectUri: "http://localhost:3000/api/auth/test-provider/callback",
+    scopes: ["read"],
+    createdAt: Date.now(),
+  };
+  const tokenStore = createConsumedStateStore(storedState);
+
+  await withTokenExchange(
+    () => Response.json({ access_token: "provider-token" }),
+    async () => {
+      const handler = createOAuthCallbackHandler(TEST_CONFIG, {
+        tokenStore,
+        baseUrl: "http://localhost:3000",
+        envReader: (key) => ENV[key],
+      });
+      const response = await handler(makeRequest({ code: "code", state: "state" }));
+
+      assertEquals(response.status, 302, "a completed connection must redirect");
+      assertEquals(
+        new URL(response.headers.get("location")!).searchParams.get("connected"),
+        TEST_CONFIG.serviceId,
+        "the success redirect must report the connected service",
+      );
+      assertEquals(
+        response.headers.get("cache-control"),
+        "no-store",
+        "the success redirect must not be cached",
+      );
+      assertEquals(
+        response.headers.get("referrer-policy"),
+        "no-referrer",
+        "the success redirect must not leak the authorization code through the referrer",
+      );
+    },
+  );
 });
 
 Deno.test("callback-handler: detaches persisted tokens from post-commit hooks", async () => {

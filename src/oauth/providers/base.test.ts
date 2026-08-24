@@ -8,6 +8,7 @@ import type {
   OAuthTokens,
   StoredOAuthState,
   TokenExchangeOptions,
+  TokenExchangeResult,
   TokenStore,
 } from "../types.ts";
 import { MemoryTokenStore } from "../token-store/memory.ts";
@@ -24,6 +25,9 @@ const TEST_CONFIG: OAuthServiceConfig = {
   defaultScopes: ["read"],
   apiBaseUrl: "https://93.184.216.34",
 };
+
+/** Public IP literal so redirect hops never need DNS resolution. */
+const REDIRECT_TARGET_ORIGIN = "https://93.184.216.35";
 
 const ENV: Record<string, string> = {
   TEST_CLIENT_ID: "test-id",
@@ -1295,20 +1299,60 @@ Deno.test("OAuthProvider rejects cross-origin HTTP redirects for secret-bearing 
     (key) => ENV[key],
   );
   const redirects: Array<RequestRedirect | undefined> = [];
+  let fetchCalls = 0;
   installMockFetch(
-    ((_input: string | URL | Request, init?: RequestInit) => {
+    ((input: string | URL | Request, init?: RequestInit) => {
+      fetchCalls++;
       redirects.push(init?.redirect);
-      return Promise.resolve(Response.json({ access_token: "token" }));
+      const url = String(input instanceof Request ? input.url : input);
+      // Anything reached past the first hop is the redirect target, and it
+      // answers with a usable token so a followed hop would look successful.
+      if (url.startsWith(REDIRECT_TARGET_ORIGIN)) {
+        return Promise.resolve(Response.json({ access_token: "followed-token" }));
+      }
+      return Promise.resolve(
+        new Response(null, {
+          status: 302,
+          headers: { location: `${REDIRECT_TARGET_ORIGIN}/steal` },
+        }),
+      );
     }) as typeof fetch,
   );
 
+  let exchange: TokenExchangeResult;
+  let revoked: boolean;
   try {
-    await provider.exchangeCode({ code: "code", redirectUri: "https://app.test/callback" });
-    await provider.revokeToken("token");
+    exchange = await provider.exchangeCode({
+      code: "code",
+      redirectUri: "https://app.test/callback",
+    });
+    const callsAfterExchange = fetchCalls;
+    revoked = await provider.revokeToken("token");
+    assertEquals(
+      callsAfterExchange,
+      1,
+      "a 302 from the token endpoint must not be followed to a second host",
+    );
+    assertEquals(
+      fetchCalls,
+      2,
+      "a 302 from the revocation endpoint must not be followed to a second host",
+    );
   } finally {
     restoreMockFetch();
   }
 
+  assertEquals(
+    exchange.success,
+    false,
+    "a redirected token exchange must not report success",
+  );
+  assertEquals(
+    exchange.error,
+    "network_error",
+    "a redirected token exchange must fail as a network error",
+  );
+  assertEquals(revoked, false, "a redirected revocation must not report success");
   assertEquals(redirects, ["manual", "manual"]);
 });
 
@@ -1455,15 +1499,32 @@ Deno.test("OAuthProvider revocation logging does not coerce hostile thrown value
 Deno.test("OAuthService.fetch cannot be configured to follow redirects", async () => {
   const service = new OAuthService(TEST_CONFIG, makeAuthedTokenStore(), (key) => ENV[key]);
   let redirect: RequestRedirect | undefined;
+  let fetchCalls = 0;
   installMockFetch(
-    ((_input: string | URL | Request, init?: RequestInit) => {
+    ((input: string | URL | Request, init?: RequestInit) => {
+      fetchCalls++;
       redirect = init?.redirect;
-      return Promise.resolve(Response.json({ ok: true }));
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.startsWith(REDIRECT_TARGET_ORIGIN)) {
+        return Promise.resolve(Response.json({ ok: true }));
+      }
+      return Promise.resolve(
+        new Response(null, {
+          status: 302,
+          headers: { location: `${REDIRECT_TARGET_ORIGIN}/attacker` },
+        }),
+      );
     }) as typeof fetch,
   );
 
   try {
-    await service.fetch("alice", "/me", { redirect: "follow" });
+    await assertRejects(
+      () => service.fetch("alice", "/me", { redirect: "follow" }),
+      Error,
+      "API request failed",
+      "a provider redirect must be refused even when the caller asks to follow",
+    );
+    assertEquals(fetchCalls, 1, "the redirect target must never be fetched");
   } finally {
     restoreMockFetch();
   }
@@ -1676,6 +1737,76 @@ Deno.test(
     try {
       await assertRejects(() => service.getAccessToken("alice"), Error, "atomic token refresh");
       assertEquals(fetchCalls, 0);
+    } finally {
+      restoreMockFetch();
+    }
+  },
+);
+
+Deno.test(
+  "OAuthService.getAccessToken proactively refreshes inside the expiry buffer",
+  async () => {
+    const store = new MemoryTokenStore();
+    await store.setTokens(TEST_CONFIG.serviceId, "alice", {
+      accessToken: "near-expiry",
+      refreshToken: "refresh",
+      expiresAt: Date.now() + 60_000,
+    });
+    const service = new OAuthService(TEST_CONFIG, store, (key) => ENV[key]);
+    let tokenEndpointCalls = 0;
+    installMockFetch(
+      ((): Promise<Response> => {
+        tokenEndpointCalls++;
+        return Promise.resolve(Response.json({ access_token: "refreshed", expires_in: 3_600 }));
+      }) as typeof fetch,
+    );
+
+    try {
+      assertEquals(
+        await service.getAccessToken("alice"),
+        "refreshed",
+        "a token expiring inside the 5-minute buffer must be refreshed proactively",
+      );
+      assertEquals(
+        tokenEndpointCalls,
+        1,
+        "proactive refresh must hit the token endpoint exactly once",
+      );
+    } finally {
+      restoreMockFetch();
+    }
+  },
+);
+
+Deno.test(
+  "OAuthService.getAccessToken keeps a token that expires past the refresh buffer",
+  async () => {
+    const store = new MemoryTokenStore();
+    await store.setTokens(TEST_CONFIG.serviceId, "alice", {
+      accessToken: "long-lived",
+      refreshToken: "refresh",
+      expiresAt: Date.now() + 3_600_000,
+    });
+    const service = new OAuthService(TEST_CONFIG, store, (key) => ENV[key]);
+    let tokenEndpointCalls = 0;
+    installMockFetch(
+      ((): Promise<Response> => {
+        tokenEndpointCalls++;
+        return Promise.resolve(Response.json({ access_token: "refreshed", expires_in: 3_600 }));
+      }) as typeof fetch,
+    );
+
+    try {
+      assertEquals(
+        await service.getAccessToken("alice"),
+        "long-lived",
+        "a token expiring past the 5-minute buffer must be returned unchanged",
+      );
+      assertEquals(
+        tokenEndpointCalls,
+        0,
+        "a token outside the refresh buffer must not hit the token endpoint",
+      );
     } finally {
       restoreMockFetch();
     }

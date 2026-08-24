@@ -140,11 +140,43 @@ Deno.test("MemoryTokenStore warns once when persisting tokens in production (#19
 
     const matched = warnings.filter((w) => w.includes("MemoryTokenStore"));
     // Warned exactly once despite two writes.
-    assertEquals(matched.length, 1);
+    assertEquals(matched.length, 1, "two production token writes must warn exactly once");
   } finally {
     console.warn = originalWarn;
     if (prevNodeEnv === undefined) Deno.env.delete("NODE_ENV");
     else Deno.env.set("NODE_ENV", prevNodeEnv);
+  }
+});
+
+Deno.test("MemoryTokenStore stays silent outside production", async () => {
+  const previous = new Map(
+    (["VERYFRONT_ENV", "NODE_ENV", "DENO_ENV"] as const).map((
+      name,
+    ) => [name, Deno.env.get(name)]),
+  );
+  const originalWarn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(" "));
+  };
+  try {
+    // resolveEnvironment prefers VERYFRONT_ENV, then NODE_ENV, then DENO_ENV.
+    Deno.env.delete("VERYFRONT_ENV");
+    Deno.env.delete("DENO_ENV");
+    Deno.env.set("NODE_ENV", "development");
+    await new MemoryTokenStore().setTokens("svc", "alice", tokens("a-token"));
+
+    assertEquals(
+      warnings.filter((w) => w.includes("MemoryTokenStore")).length,
+      0,
+      "development token writes must not warn",
+    );
+  } finally {
+    console.warn = originalWarn;
+    for (const [name, value] of previous) {
+      if (value === undefined) Deno.env.delete(name);
+      else Deno.env.set(name, value);
+    }
   }
 });
 

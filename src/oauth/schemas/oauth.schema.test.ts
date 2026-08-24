@@ -183,6 +183,41 @@ Deno.test("OAuth request schemas bound state and validate redirects and PKCE", (
     getAuthorizationUrlOptionsSchema().safeParse({ redirectUri: "javascript:alert(1)" }).success,
     false,
   );
+  for (
+    const [schemaName, accepts] of [
+      [
+        "the OAuth state schema",
+        (redirectUri: string) =>
+          getOAuthStateSchema().safeParse({
+            state: "state",
+            redirectUri,
+            scopes: ["read"],
+            createdAt: Date.now(),
+          }).success,
+      ],
+      [
+        "the authorization URL options schema",
+        (redirectUri: string) =>
+          getAuthorizationUrlOptionsSchema().safeParse({ redirectUri }).success,
+      ],
+      [
+        "the token exchange options schema",
+        (redirectUri: string) =>
+          getTokenExchangeOptionsSchema().safeParse({ code: "code", redirectUri }).success,
+      ],
+    ] as const
+  ) {
+    assertEquals(
+      accepts("http://attacker.test/callback"),
+      false,
+      `${schemaName} must reject plain HTTP on a non-loopback host`,
+    );
+    assertEquals(
+      accepts("http://127.0.0.1:8787/callback"),
+      true,
+      `${schemaName} must accept explicit loopback HTTP`,
+    );
+  }
   assertEquals(
     getAuthorizationUrlOptionsSchema().safeParse({
       additionalParams: { STATE: "attacker-controlled" },

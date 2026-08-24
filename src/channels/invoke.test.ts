@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { createEmptyDiscoveryResult } from "#veryfront/discovery";
 import type { Agent, AgentMessage as Message, AgentResponse } from "#veryfront/agent";
+import { VeryfrontError } from "#veryfront/errors";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -199,18 +200,47 @@ describe("channels/invoke", () => {
       const payload = createPayload();
       const body = JSON.stringify(payload);
       const now = Math.floor(Date.now() / 1000);
+      // Issued now so only the exp check can reject: a stale iat would also
+      // trip the replay window and hide a missing expiry check.
       const { jws, publicKeyPem } = await createDispatchSignature(body, {
-        iat: now - 120,
-        exp: now - 60,
+        iat: now,
+        exp: now - 1,
       });
 
-      await assertRejects(() =>
-        verifyDispatchJws(jws, body, {
-          audience: "demo-project",
-          publicKeyPem,
-          maxAgeSeconds: 60,
-          expectedProjectId: "proj-1",
-        })
+      await assertRejects(
+        () =>
+          verifyDispatchJws(jws, body, {
+            audience: "demo-project",
+            publicKeyPem,
+            maxAgeSeconds: 60,
+            expectedProjectId: "proj-1",
+          }),
+        VeryfrontError,
+        "expired",
+        "a freshly issued signature whose exp has passed must be rejected as expired",
+      );
+    });
+
+    it("rejects a stale but unexpired dispatch signature", async () => {
+      const payload = createPayload();
+      const body = JSON.stringify(payload);
+      const now = Math.floor(Date.now() / 1000);
+      const { jws, publicKeyPem } = await createDispatchSignature(body, {
+        iat: now - 600,
+        exp: now + 600,
+      });
+
+      await assertRejects(
+        () =>
+          verifyDispatchJws(jws, body, {
+            audience: "demo-project",
+            publicKeyPem,
+            maxAgeSeconds: 60,
+            expectedProjectId: "proj-1",
+          }),
+        VeryfrontError,
+        "too old",
+        "a signature minted outside the replay window must be rejected even while unexpired",
       );
     });
 
@@ -445,6 +475,59 @@ describe("channels/invoke", () => {
       ]);
     });
 
+    it("reports a failed tool call as an errored tool result", () => {
+      const response = createAgentResponse("Done", {
+        toolCalls: [{
+          id: "tool-1",
+          name: "search",
+          args: { query: "docs" },
+          status: "error",
+          error: "boom",
+        }],
+      });
+
+      assertEquals(
+        buildChannelResponseParts(response),
+        [
+          {
+            type: "tool_call",
+            id: "tool-1",
+            name: "search",
+            input: { query: "docs" },
+            state: "error",
+          },
+          {
+            type: "tool_result",
+            tool_call_id: "tool-1",
+            output: { error: "boom" },
+            is_error: true,
+          },
+          { type: "text", text: "Done" },
+        ],
+        "a failed tool call must be flagged as an errored tool result",
+      );
+
+      const withoutMessage = createAgentResponse("Done", {
+        toolCalls: [{
+          id: "tool-2",
+          name: "search",
+          args: { query: "docs" },
+          status: "error",
+        }],
+      });
+
+      assertEquals(
+        buildChannelResponseParts(withoutMessage)[1],
+        {
+          type: "tool_result",
+          tool_call_id: "tool-2",
+          output: { error: "Tool execution failed" },
+          is_error: true,
+        },
+        "a failed tool call without an error message must carry the default failure text",
+      );
+    });
+
     it("falls back to response text when no assistant message is present", () => {
       const response = createAgentResponse("Fallback answer", {
         messages: [{
@@ -521,8 +604,9 @@ describe("channels/invoke", () => {
         getAllAgentIds: () => ["agent-1"],
       };
 
+      const payload = createPayload({ generation: { maxResponseTokens: 321 } });
       const response = await executeChannelInvoke(
-        createPayload({ generation: { maxResponseTokens: 321 } }),
+        payload,
         createHandlerContext(),
         deps,
       );
@@ -531,6 +615,33 @@ describe("channels/invoke", () => {
       assertEquals(clearMemoryCalls, 1);
       assertExists(capturedGenerateInput);
       assertEquals(capturedGenerateInput.maxOutputTokens, 321);
+      assertEquals(
+        capturedGenerateInput.input,
+        [{
+          id: "msg-user-1",
+          role: "user",
+          parts: [{ type: "text", text: "Hello from Slack" }],
+          timestamp: Date.parse("2026-03-13T10:00:00.000Z"),
+        }],
+        "runtime agent must receive the normalized conversation history",
+      );
+      assertEquals(
+        capturedGenerateInput.context,
+        {
+          requestId: "dispatch-1",
+          dispatchId: "dispatch-1",
+          conversationId: "conversation-1",
+          projectId: "proj-1",
+          assistantId: "agent-1",
+          channel: {
+            text: "Hello from Slack",
+            userId: "U123",
+            userName: "Alice",
+            isDirectMessage: false,
+          },
+        },
+        "runtime agent must receive the dispatch context and inbound channel message",
+      );
       assertEquals(response, {
         ignored: false,
         responseParts: [{ type: "text", text: "Runtime answer" }],
@@ -561,6 +672,41 @@ describe("channels/invoke", () => {
         ignored: false,
         error: { code: "provider_error", retryable: false },
       });
+    });
+
+    it("classifies upstream provider failures as provider_error", async () => {
+      async function invokeWith(thrown: Error) {
+        return await executeChannelInvoke(
+          createPayload(),
+          createHandlerContext(),
+          {
+            ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+            getAgent: () =>
+              createAgent({
+                generate: () => {
+                  throw thrown;
+                },
+              }),
+            getAllAgentIds: () => ["agent-1"],
+          },
+        );
+      }
+
+      assertEquals(
+        await invokeWith(toError(createError({ type: "api", message: "provider 503" }))),
+        { ignored: false, error: { code: "provider_error", retryable: true } },
+        "api provider failures must keep the provider_error taxonomy",
+      );
+      assertEquals(
+        await invokeWith(toError(createError({ type: "network", message: "connect timeout" }))),
+        { ignored: false, error: { code: "provider_error", retryable: true } },
+        "network provider failures must keep the provider_error taxonomy",
+      );
+      assertEquals(
+        await invokeWith(new Error("boom")),
+        { ignored: false, error: { code: "internal_error", retryable: true } },
+        "unclassified runtime failures must stay internal_error",
+      );
     });
 
     it("fails closed when the requested assistant is not registered on the runtime", async () => {

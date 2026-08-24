@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#std/assert";
+import { assertEquals, assertMatch, assertThrows } from "#std/assert";
 import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import {
@@ -234,6 +234,13 @@ Deno.test("init handler: stores state with userId and redirects to the provider"
   assertEquals(location.searchParams.get("scope"), "read");
   assertEquals(location.searchParams.get("code_challenge_method"), "S256");
 
+  const codeChallenge = location.searchParams.get("code_challenge");
+  assertMatch(
+    codeChallenge ?? "",
+    /^[A-Za-z0-9_-]{43}$/,
+    "an S256 authorization redirect must carry a 43-char base64url code_challenge",
+  );
+
   const state = location.searchParams.get("state");
   if (!state) {
     throw new Error("expected redirect state parameter to be present");
@@ -245,6 +252,25 @@ Deno.test("init handler: stores state with userId and redirects to the provider"
   assertEquals(storedState?.serviceId, "test-provider");
   assertEquals(storedState?.redirectUri, `${appUrl}/api/auth/test-provider/callback`);
   assertEquals(storedState?.scopes, ["read"]);
+
+  assertMatch(
+    storedState?.codeVerifier ?? "",
+    /^[A-Za-z0-9._~-]{43,128}$/,
+    "the persisted PKCE verifier must be a canonical code verifier",
+  );
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(storedState?.codeVerifier ?? ""),
+  );
+  const expectedChallenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+  assertEquals(
+    codeChallenge,
+    expectedChallenge,
+    "the redirect code_challenge must be S256 of the persisted code verifier",
+  );
 });
 
 Deno.test("init handler binds provider state to an explicit shared callback route", async () => {
