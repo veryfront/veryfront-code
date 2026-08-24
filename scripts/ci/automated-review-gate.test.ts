@@ -1206,6 +1206,92 @@ describe("automated review gate", () => {
     );
   });
 
+  it("keeps unmatched inline Markdown punctuation visible", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    const newerSummary = (range: string) =>
+      codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          range,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:05:00Z",
+        updated_at: "2026-08-22T12:05:00Z",
+      });
+
+    for (
+      const literalPunctuationRange of [
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review*ing"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review_ing"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review~ing"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review~~~ing~~~"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review***ing**"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review**ing***"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review[ing"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review]ing"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review`ing"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review_ing_"),
+        MALFORMED_CURRENT_RANGE.replace("base", "ba*se"),
+        MALFORMED_CURRENT_RANGE.replace("between", "betwe*en"),
+        MALFORMED_CURRENT_RANGE.replace(
+          " and " + HEAD_SHA,
+          " a*nd " + HEAD_SHA,
+        ),
+        MALFORMED_CURRENT_RANGE.replace(
+          HEAD_SHA,
+          HEAD_SHA.slice(0, 20) + "*" + HEAD_SHA.slice(20),
+        ),
+        "Review*ing files that changed from the base of the PR and between " +
+        `not-a-sha\nand ${HEAD_SHA}.`,
+      ]
+    ) {
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerSummary(literalPunctuationRange)],
+          },
+          HEAD_SHA,
+        ))?.url,
+        olderSuccess.html_url,
+      );
+    }
+
+    for (
+      const decoratedCurrentRange of [
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "**Reviewing**"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review*ing*"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "_Reviewing_"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review~ing~"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review~~ing~~"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review***ing***"),
+        "Review*ing files that changed from the base of the PR and between " +
+        `not-a-sha\nand ${HEAD_SHA}.*`,
+        MALFORMED_CURRENT_RANGE.replace(
+          "Reviewing",
+          "[Reviewing](https://example.com)",
+        ),
+        MALFORMED_CURRENT_RANGE.replace(
+          "Reviewing",
+          "Review[ing](https://example.com)",
+        ),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "`Reviewing`"),
+      ]
+    ) {
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerSummary(decoratedCurrentRange)],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+  });
+
   it("rejects unterminated and Markdown-prefixed current-head ranges", async () => {
     const olderSuccess = olderCodeRabbitSuccess();
     const escapedVisibleMalformedBodies = ["\\", "\\\\", "\\\\\\"].map(
@@ -4133,6 +4219,64 @@ describe("automated review gate", () => {
     assert(
       performance.now() - startedAt < 1_000,
       "dense malformed range parsing must stay linear",
+    );
+
+    const newerDenseLiteralDelimiterRanges = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        Array.from(
+          { length: 2_000 },
+          () => MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review_ing"),
+        ).join(" "),
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:00Z",
+      updated_at: "2026-08-22T12:02:00Z",
+    });
+    const literalDelimiterStartedAt = performance.now();
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerDenseLiteralDelimiterRanges],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+    assert(
+      performance.now() - literalDelimiterStartedAt < 1_000,
+      "dense unmatched inline delimiters must stay linear",
+    );
+
+    const newerDenseDecoratedRanges = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        Array.from(
+          { length: 1_000 },
+          () => MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review*ing*"),
+        ).join(" "),
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:00Z",
+      updated_at: "2026-08-22T12:02:00Z",
+    });
+    const decoratedStartedAt = performance.now();
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerDenseDecoratedRanges],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+    assert(
+      performance.now() - decoratedStartedAt < 1_000,
+      "dense matched inline delimiters must stay linear",
     );
 
     const newerDenseSameLineCurrentRanges = codeRabbitSummary({

@@ -415,6 +415,9 @@ function codeRabbitRangeEvidenceStatements(content) {
   const inlineLinkRanges = markdownStructure.inlineLinkRanges;
   const paragraphContinuationLineStarts =
     markdownStructure.paragraphContinuationLineStarts;
+  const inlineDecorationTokenIndexes = markdownInlineDecorationTokenIndexes(
+    content,
+  );
   const matches = mergeCodeRabbitRangeMatches(
     [...content.matchAll(CODERABBIT_REVIEW_RANGE_STATEMENT_START_PATTERN)],
     markdownTableRangeEvidenceMatches(
@@ -424,11 +427,8 @@ function codeRabbitRangeEvidenceStatements(content) {
   );
   assignCodeRabbitMatchLineBounds(content, matches);
   const normalizationContexts = new Map();
-  const reviewingMatches = matches.filter((match) => {
-    const rangeStart = match.tableLocal
-      ? match.tableCell.start
-      : match.lineStart;
-    const rangeEnd = match.tableLocal ? match.tableCell.end : match.lineEnd;
+  const nextRawStatementAfterLine = new Map();
+  const normalizationContextFor = (rangeStart, rangeEnd) => {
     const contextKey = `${rangeStart}:${rangeEnd}`;
     let normalizationContext = normalizationContexts.get(contextKey);
     if (normalizationContext === undefined) {
@@ -439,13 +439,73 @@ function codeRabbitRangeEvidenceStatements(content) {
       );
       normalizationContexts.set(contextKey, normalizationContext);
     }
-    const phraseEnd = markdownVisibleAsciiWordEnd(
+    return normalizationContext;
+  };
+  const reviewingMatches = matches.filter((match, matchIndex) => {
+    const rangeStart = match.tableLocal
+      ? match.tableCell.start
+      : match.lineStart;
+    const rangeEnd = match.tableLocal ? match.tableCell.end : match.lineEnd;
+    const lineNormalizationContext = normalizationContextFor(
+      rangeStart,
+      rangeEnd,
+    );
+    let phraseNormalizationContext = lineNormalizationContext;
+    let phraseNormalizationEnd = rangeEnd;
+    let phraseEnd = markdownVisibleAsciiWordEnd(
       content,
       match.index,
       rangeEnd,
       "Reviewing",
-      normalizationContext,
+      phraseNormalizationContext,
     );
+    if (
+      phraseEnd === undefined && !match.tableLocal &&
+      markdownIndexesIntersectRange(
+        inlineDecorationTokenIndexes,
+        match.index,
+        rangeEnd,
+      )
+    ) {
+      let nextRawStatementIndex = nextRawStatementAfterLine.get(rangeEnd);
+      if (nextRawStatementIndex === undefined) {
+        let nextMatchIndex = matchIndex + 1;
+        while (
+          matches[nextMatchIndex] !== undefined &&
+          codeRabbitStatementIndex(matches[nextMatchIndex]) < rangeEnd
+        ) {
+          nextMatchIndex += 1;
+        }
+        nextRawStatementIndex = matches[nextMatchIndex] === undefined
+          ? content.length
+          : codeRabbitStatementIndex(matches[nextMatchIndex]);
+        nextRawStatementAfterLine.set(rangeEnd, nextRawStatementIndex);
+      }
+      const nextBarrier = continuationBarrierRanges[
+        firstMarkdownRangeEndingAfter(
+          continuationBarrierRanges,
+          match.index,
+        )
+      ];
+      const extendedEnd = Math.min(
+        nextRawStatementIndex,
+        nextBarrier?.[0] ?? content.length,
+      );
+      if (extendedEnd > rangeEnd) {
+        phraseNormalizationContext = normalizationContextFor(
+          match.lineStart,
+          extendedEnd,
+        );
+        phraseNormalizationEnd = extendedEnd;
+        phraseEnd = markdownVisibleAsciiWordEnd(
+          content,
+          match.index,
+          extendedEnd,
+          "Reviewing",
+          phraseNormalizationContext,
+        );
+      }
+    }
     if (
       phraseEnd === undefined ||
       markdownRangesIntersect(
@@ -455,9 +515,11 @@ function codeRabbitRangeEvidenceStatements(content) {
       ) ||
       codeRabbitPreviousVisibleCharacterIsWord(
         match.index,
-        normalizationContext,
+        lineNormalizationContext,
       )
     ) return false;
+    match.normalizationContext = phraseNormalizationContext;
+    match.normalizationContextEnd = phraseNormalizationEnd;
     match.statementPhraseEnd = phraseEnd;
     return true;
   });
@@ -1997,6 +2059,7 @@ function appendMarkdownInlineCodeRangesInSegment(
   inlineCodeRanges,
   inlineHtmlRanges,
   inlineLinkRanges,
+  inlineDelimiterEnds,
 ) {
   const delimiterRuns = [];
   for (let index = start; index < end;) {
@@ -2044,6 +2107,7 @@ function appendMarkdownInlineCodeRangesInSegment(
     nextRunWithLength,
     findHtmlTerminator,
     findInlineLinkTailEnd,
+    inlineDelimiterEnds,
   );
   inlineLinkRanges.push(...segmentInlineLinkRanges);
   let inlineLinkRangeIndex = 0;
@@ -2124,6 +2188,11 @@ function appendMarkdownInlineCodeRangesInSegment(
       delimiter.start,
       delimiterRuns[closingIndex].end,
     ]);
+    inlineDelimiterEnds?.set(delimiter.start, delimiter.end);
+    inlineDelimiterEnds?.set(
+      delimiterRuns[closingIndex].start,
+      delimiterRuns[closingIndex].end,
+    );
     cursor = delimiterRuns[closingIndex].end;
     delimiterIndex = closingIndex + 1;
   }
@@ -2137,6 +2206,7 @@ function markdownInlineLinkRanges(
   nextRunWithLength,
   findHtmlTerminator,
   findInlineLinkTailEnd,
+  inlineDelimiterEnds,
 ) {
   const ranges = [];
   const labelOpeners = [];
@@ -2212,6 +2282,8 @@ function markdownInlineLinkRanges(
     }
 
     ranges.push([tailStart, tailEnd]);
+    inlineDelimiterEnds?.set(labelOpener.start, labelOpener.start + 1);
+    inlineDelimiterEnds?.set(cursor, tailEnd);
     if (!labelOpener.image) labelOpeners.length = 0;
     cursor = tailEnd;
   }
@@ -2633,8 +2705,10 @@ function markdownInlineDecorationEnd(
   end,
   normalizationContext,
 ) {
+  const character = content[index];
+  if (character !== "<" && !"*_~[]`".includes(character)) return undefined;
   if (isEscapedMarkdownToken(content, index)) return undefined;
-  if (content[index] === "<") {
+  if (character === "<") {
     return markdownInlineHtmlEnd(
       content,
       index,
@@ -2642,16 +2716,11 @@ function markdownInlineDecorationEnd(
       normalizationContext.findHtmlTerminator,
     );
   }
-  if (content[index] === "]" && content[index + 1] === "(") {
-    return normalizationContext.findInlineLinkTailEnd(index + 2);
-  }
-  if (!"*_~[]`".includes(content[index])) return undefined;
-  let runEnd = index + 1;
-  while (runEnd < end && content[runEnd] === content[index]) runEnd += 1;
-  return runEnd;
+  return normalizationContext.findDelimiterEnd(index);
 }
 
 function markdownInlineNormalizationContext(content, start, end) {
+  let delimiterEnds;
   let inlineLinkTailEndFinder;
   let previousVisibleCharacters;
   const context = {
@@ -2664,6 +2733,14 @@ function markdownInlineNormalizationContext(content, start, end) {
       );
       return inlineLinkTailEndFinder(tailStart);
     },
+    findDelimiterEnd: (index) => {
+      delimiterEnds ??= markdownInlineDelimiterEnds(
+        content,
+        start,
+        end,
+      );
+      return delimiterEnds.get(index);
+    },
     previousVisibleCharacter: (index) => {
       previousVisibleCharacters ??= markdownVisiblePreviousCharacters(
         content,
@@ -2675,6 +2752,160 @@ function markdownInlineNormalizationContext(content, start, end) {
     },
   };
   return context;
+}
+
+function markdownInlineDelimiterEnds(content, start, end) {
+  const delimiterEnds = new Map();
+  const inlineCodeRanges = [];
+  const inlineHtmlRanges = [];
+  const inlineLinkTailRanges = [];
+  appendMarkdownInlineCodeRangesInSegment(
+    content,
+    start,
+    end,
+    inlineCodeRanges,
+    inlineHtmlRanges,
+    inlineLinkTailRanges,
+    delimiterEnds,
+  );
+
+  const hiddenRanges = mergeMarkdownRanges(
+    mergeMarkdownRanges(inlineCodeRanges, inlineHtmlRanges),
+    inlineLinkTailRanges,
+  );
+  const emphasisRuns = markdownInlineEmphasisRuns(
+    content,
+    start,
+    end,
+    hiddenRanges,
+  );
+  const openerStacks = new Map();
+  for (const run of emphasisRuns) {
+    const key = run.character;
+    const openers = openerStacks.get(key) ?? [];
+    let closerConsumed = 0;
+    if (run.canClose) {
+      while (closerConsumed < run.length) {
+        const closerRemaining = run.length - closerConsumed;
+        let openerIndex = openers.length - 1;
+        while (
+          openerIndex >= 0 &&
+          !markdownInlineEmphasisRunsMayPair(
+            openers[openerIndex],
+            run,
+            closerRemaining,
+          )
+        ) {
+          openerIndex -= 1;
+        }
+        if (openerIndex < 0) break;
+        const opener = openers[openerIndex];
+        const delimiterLength = run.character === "~"
+          ? closerRemaining
+          : opener.remaining >= 2 && closerRemaining >= 2
+          ? 2
+          : 1;
+        const openerDelimiterStart = opener.start + opener.remaining -
+          delimiterLength;
+        delimiterEnds.set(
+          openerDelimiterStart,
+          openerDelimiterStart + delimiterLength,
+        );
+        delimiterEnds.set(
+          run.start + closerConsumed,
+          run.start + closerConsumed + delimiterLength,
+        );
+        opener.remaining -= delimiterLength;
+        closerConsumed += delimiterLength;
+        if (opener.remaining === 0) openers.splice(openerIndex, 1);
+      }
+    }
+    if (run.canOpen && closerConsumed < run.length) {
+      openers.push({
+        ...run,
+        remaining: run.length - closerConsumed,
+        start: run.start + closerConsumed,
+      });
+    }
+    openerStacks.set(key, openers);
+  }
+  return delimiterEnds;
+}
+
+function markdownInlineEmphasisRuns(content, start, end, hiddenRanges) {
+  const runs = [];
+  let hiddenRangeIndex = 0;
+  for (let cursor = start; cursor < end;) {
+    while (hiddenRanges[hiddenRangeIndex]?.[1] <= cursor) {
+      hiddenRangeIndex += 1;
+    }
+    const hiddenRange = hiddenRanges[hiddenRangeIndex];
+    if (hiddenRange?.[0] <= cursor && cursor < hiddenRange[1]) {
+      cursor = hiddenRange[1];
+      continue;
+    }
+    if (content[cursor] === "\\" && cursor + 1 < end) {
+      cursor += 2;
+      continue;
+    }
+    const character = content[cursor];
+    if (character !== "*" && character !== "_" && character !== "~") {
+      cursor += 1;
+      continue;
+    }
+    let runEnd = cursor + 1;
+    while (runEnd < end && content[runEnd] === character) runEnd += 1;
+    const length = runEnd - cursor;
+    if (character !== "~" || length <= 2) {
+      const previous = cursor > start ? content[cursor - 1] : undefined;
+      const next = runEnd < end ? content[runEnd] : undefined;
+      const previousWhitespace = markdownCharacterIsWhitespace(previous);
+      const nextWhitespace = markdownCharacterIsWhitespace(next);
+      const previousPunctuation = markdownCharacterIsPunctuation(previous);
+      const nextPunctuation = markdownCharacterIsPunctuation(next);
+      const leftFlanking = !nextWhitespace &&
+        (!nextPunctuation || previousWhitespace || previousPunctuation);
+      const rightFlanking = !previousWhitespace &&
+        (!previousPunctuation || nextWhitespace || nextPunctuation);
+      runs.push({
+        canClose: character === "_"
+          ? rightFlanking && (!leftFlanking || nextPunctuation)
+          : rightFlanking,
+        canOpen: character === "_"
+          ? leftFlanking && (!rightFlanking || previousPunctuation)
+          : leftFlanking,
+        character,
+        end: runEnd,
+        length,
+        start: cursor,
+      });
+    }
+    cursor = runEnd;
+  }
+  return runs;
+}
+
+function markdownInlineEmphasisRunsMayPair(
+  opener,
+  closer,
+  closerRemaining,
+) {
+  if (opener.end >= closer.start) return false;
+  if (
+    opener.character === "~" && opener.remaining !== closerRemaining
+  ) return false;
+  if (!(opener.canClose || closer.canOpen)) return true;
+  const lengthSum = opener.remaining + closerRemaining;
+  return lengthSum % 3 !== 0 ||
+    (opener.remaining % 3 === 0 && closerRemaining % 3 === 0);
+}
+
+function markdownCharacterIsWhitespace(character) {
+  return character === undefined || /\s/u.test(character);
+}
+
+function markdownCharacterIsPunctuation(character) {
+  return character !== undefined && /[\p{P}\p{S}]/u.test(character);
 }
 
 function markdownVisiblePreviousCharacters(content, start, end, context) {
@@ -2751,21 +2982,6 @@ function markdownVisibleAsciiWordEnd(
     if (!matched) return undefined;
   }
   return cursor;
-}
-
-function normalizeMarkdownInlineRangeText(value) {
-  const normalizationContext = markdownInlineNormalizationContext(
-    value,
-    0,
-    value.length,
-  );
-  return normalizeMarkdownInlineContentRange(
-    value,
-    0,
-    value.length,
-    normalizationContext,
-    [],
-  );
 }
 
 function firstMarkdownRangeEndingAfter(ranges, index) {
@@ -2878,11 +3094,14 @@ function parseCodeRabbitRangeStatement(
     match.index,
     match.statementPhraseEnd,
   );
-  if (
-    normalizeMarkdownInlineRangeText(rawStatementPhrase).toLowerCase() !==
-      "reviewing"
-  ) return undefined;
   const statementEnd = match.statementPhraseEnd;
+  if (
+    !markdownRangeMayContainCommitToken(
+      content,
+      statementEnd,
+      continuationEnd,
+    )
+  ) return undefined;
   const statementDecoration = match.index === match.lineStart ? "" : " ";
   const statementStart = statementDecoration + rawStatementPhrase;
   const firstLineEnd = Math.min(
@@ -2890,17 +3109,35 @@ function parseCodeRabbitRangeStatement(
     nextStatementIndex,
     continuationEnd,
   );
-  const normalizationContext = markdownInlineNormalizationContext(
-    content,
-    match.tableLocal ? match.tableCell.start : match.lineStart,
-    continuationEnd,
-  );
+  let continuationNormalizationContext;
+  const extendedNormalizationContext = () => {
+    if (match.normalizationContextEnd >= continuationEnd) {
+      return match.normalizationContext;
+    }
+    continuationNormalizationContext ??= markdownInlineNormalizationContext(
+      content,
+      match.tableLocal ? match.tableCell.start : match.lineStart,
+      continuationEnd,
+    );
+    return continuationNormalizationContext;
+  };
+  const firstLineContextEnd = match.normalizationContextEnd;
+  const firstLineNormalizationContext = match.tableLocal &&
+        nextStatementIndex > match.tableCell.end ||
+      continuationEnd > firstLineContextEnd &&
+        markdownRangeHasInlineDecorationToken(
+          content,
+          statementEnd,
+          firstLineEnd,
+        )
+    ? extendedNormalizationContext()
+    : match.normalizationContext;
   let rawFirstLineTail = content.slice(statementEnd, firstLineEnd);
   let firstLineTail = normalizeMarkdownRangeLineContent(
     content,
     statementEnd,
     firstLineEnd,
-    normalizationContext,
+    firstLineNormalizationContext,
     inlineLinkRanges,
   );
   if (match.tableLocal && nextStatementIndex > match.tableCell.end) {
@@ -2910,7 +3147,7 @@ function parseCodeRabbitRangeStatement(
       content,
       match.tableCell.end,
       rowTailEnd,
-      normalizationContext,
+      firstLineNormalizationContext,
       inlineLinkRanges,
     );
   }
@@ -2962,7 +3199,7 @@ function parseCodeRabbitRangeStatement(
       content,
       continuationContentStart,
       nextLine.lineEnd,
-      normalizationContext,
+      extendedNormalizationContext(),
       inlineLinkRanges,
     );
     const hiddenLinkContinuation = continuationContent.trim().length === 0 &&
@@ -3052,6 +3289,47 @@ function codeRabbitRangeContainerSignature(prefix) {
       "",
     ),
   );
+}
+
+function markdownRangeHasInlineDecorationToken(content, start, end) {
+  for (let index = start; index < end; index += 1) {
+    if ("<*_~[]`".includes(content[index])) return true;
+  }
+  return false;
+}
+
+function markdownInlineDecorationTokenIndexes(content) {
+  const indexes = [];
+  for (let index = 0; index < content.length; index += 1) {
+    if ("<*_~[]`".includes(content[index])) indexes.push(index);
+  }
+  return indexes;
+}
+
+function markdownIndexesIntersectRange(indexes, start, end) {
+  let lower = 0;
+  let upper = indexes.length;
+  while (lower < upper) {
+    const middle = lower + Math.floor((upper - lower) / 2);
+    if (indexes[middle] < start) lower = middle + 1;
+    else upper = middle;
+  }
+  return indexes[lower] < end;
+}
+
+function markdownRangeMayContainCommitToken(content, start, end) {
+  let hexadecimalRunLength = 0;
+  for (let index = start; index < end; index += 1) {
+    const character = content[index];
+    if (/[0-9a-f]/i.test(character)) {
+      hexadecimalRunLength += 1;
+      if (hexadecimalRunLength === 40) return true;
+      continue;
+    }
+    hexadecimalRunLength = 0;
+    if ("&<\\*_~[]`".includes(character)) return true;
+  }
+  return false;
 }
 
 function codeRabbitBaseSegment(lines, finalLine) {
