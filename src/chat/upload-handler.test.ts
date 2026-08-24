@@ -1,7 +1,6 @@
 import {
   assert,
   assertEquals,
-  assertStrictEquals,
   assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
