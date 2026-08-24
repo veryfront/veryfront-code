@@ -254,16 +254,9 @@ function runEventStream(
 
   const failStream = (
     controller: ReadableStreamDefaultController<Uint8Array>,
-    error: unknown,
+    frame: { code: string; message: string; retryable: boolean },
   ): void => {
-    logger.error("Workflow event observation failed", {
-      runId: observation.initial.id,
-    }, error);
-    controller.enqueue(encode("error", {
-      code: "workflow_observation_failed",
-      message: "Workflow event observation failed",
-      retryable: true,
-    }));
+    controller.enqueue(encode("error", frame));
     close();
   };
 
@@ -285,7 +278,19 @@ function runEventStream(
           controller.enqueue(encode("snapshot", projectRun(observation.initial)));
           if (isTerminalRunStatus(observation.initial.status)) close();
         } catch (error) {
-          failStream(controller, error);
+          // A snapshot failure raises the run's own data (a getter or `toJSON`
+          // can throw with customer content), so log a classification rather
+          // than the error itself. Reconnecting re-reads the same stored run
+          // and fails the same way, so the failure is not retryable.
+          logger.error("Workflow run snapshot serialization failed", {
+            runId: observation.initial.id,
+            errorName: error instanceof Error ? error.name : typeof error,
+          });
+          failStream(controller, {
+            code: "workflow_snapshot_serialization_failed",
+            message: "Workflow run snapshot could not be serialized",
+            retryable: false,
+          });
         }
         return;
       }
@@ -304,7 +309,14 @@ function runEventStream(
         ) close();
       } catch (error) {
         if (closed) return;
-        failStream(controller, error);
+        logger.error("Workflow event observation failed", {
+          runId: observation.initial.id,
+        }, error);
+        failStream(controller, {
+          code: "workflow_observation_failed",
+          message: "Workflow event observation failed",
+          retryable: true,
+        });
       }
     },
     cancel() {
@@ -336,6 +348,8 @@ function runEventStream(
  * run-status events, and closes on a terminal run. Missing runs return 404.
  * Custom backends without atomic run observation return 501. Observation
  * failures send one sanitized `error` event with `retryable: true`, then close.
+ * A snapshot that cannot be serialized fails the same way on every reconnect,
+ * so that error event carries `retryable: false` instead.
  */
 export function createWorkflowHandler(
   client: WorkflowClient,

@@ -9,6 +9,7 @@ import type { PendingApproval, RunFilter, WorkflowRun } from "../types.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import { createWorkflowClient, type WorkflowClient } from "../api/workflow-client.ts";
 import { sequence, step, waitForApproval, workflow } from "../dsl/index.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
 import { createWorkflowHandler } from "./handler.ts";
 
 class CountingMemoryBackend extends MemoryBackend {
@@ -966,14 +967,63 @@ describe("createWorkflowHandler", () => {
       const response = await handlers.GET(get(`/api/workflows/runs/${runId}/events`));
       const frames = await readStream(response);
 
+      // Reconnecting re-reads the same stored run, so the client must not retry.
       expect(frames).toEqual([["error", {
-        code: "workflow_observation_failed",
-        message: "Workflow event observation failed",
-        retryable: true,
+        code: "workflow_snapshot_serialization_failed",
+        message: "Workflow run snapshot could not be serialized",
+        retryable: false,
       }]]);
       expect(nextCalls).toBe(0);
       expect(returnCalls).toBe(1);
       expect(closeCalls).toBe(1);
+    });
+
+    it("logs only a classification when the snapshot raises run content", async () => {
+      const runId = await startRun();
+      const persisted = await client.getRun(runId);
+      if (!persisted) throw new Error("expected the run to exist");
+      replaceObservation({
+        supported: true,
+        initial: {
+          ...persisted,
+          status: "running",
+          input: {
+            toJSON: () => {
+              throw new Error("sensitive customer detail");
+            },
+          },
+        },
+        events: {
+          [Symbol.asyncIterator]: () => ({
+            next: () => Promise.resolve({ value: undefined, done: true as const }),
+            return: () => Promise.resolve({ value: undefined, done: true as const }),
+          }),
+        },
+        close: () => Promise.resolve(),
+      });
+
+      const entries: LogEntry[] = [];
+      const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+        if (entry.level === "error" && entry.component === "workflow-http") {
+          entries.push(entry);
+        }
+      });
+      let frames: Array<[string, Record<string, unknown>]>;
+      try {
+        const response = await handlers.GET(get(`/api/workflows/runs/${runId}/events`));
+        frames = await readStream(response);
+      } finally {
+        unsubscribe();
+      }
+
+      expect(frames.map(([name]) => name)).toEqual(["error"]);
+      expect(entries.length).toBe(1);
+      // The logger hoists the `runId` context key to the `run_id` entry field.
+      expect(entries[0]?.run_id).toBe(runId);
+      expect(entries[0]?.context).toEqual({ errorName: "Error" });
+      expect(entries[0]?.error).toBeUndefined();
+      expect(JSON.stringify(entries)).not.toContain("sensitive customer detail");
+      expect(JSON.stringify(frames)).not.toContain("sensitive customer detail");
     });
 
     it("pulls at most one backend event while the consumer is backpressured", async () => {
