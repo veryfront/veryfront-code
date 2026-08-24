@@ -33,5 +33,21 @@ describe("studio/hash-utils", () => {
     it("should produce different hashes for whitespace differences", () => {
       assertNotEquals(computeSourceHash("a b"), computeSourceHash("a  b"));
     });
+
+    it("should match the FNV-1a 32-bit reference vectors", () => {
+      // The algorithm is the contract, not an implementation detail: these
+      // hashes name cache entries and hydration fingerprints, so drifting to
+      // another deterministic hash silently changes every stored identity.
+      assertEquals(
+        computeSourceHash("hello world"),
+        "d58b3fa7",
+        "computeSourceHash must stay FNV-1a 32-bit",
+      );
+      assertEquals(
+        computeSourceHash(""),
+        "811c9dc5",
+        "the empty string must hash to the FNV-1a offset basis",
+      );
+    });
   });
 });
