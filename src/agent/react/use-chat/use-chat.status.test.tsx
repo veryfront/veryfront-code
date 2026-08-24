@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   decodeConversationRecord,
   encodeConversationRecord,
@@ -90,11 +91,9 @@ function persistMessages(messages: UseChatResult["messages"]): UseChatResult["me
 describe("react/agent/useChat status lifecycle", () => {
   it("transitions submitted -> streaming -> ready and publishes the streaming id", async () => {
     const restoreDom = installDom();
-    const originalFetch = globalThis.fetch;
     // A small network gap lets the `submitted` render commit before the stream
     // opens — mirroring a real request rather than an instantaneous one.
-    globalThis.fetch = () => new Promise((resolve) => setTimeout(() => resolve(sseResponse()), 5));
-
+    installMockFetch(() => new Promise((resolve) => setTimeout(() => resolve(sseResponse()), 5)));
     const statuses: UseChatResult["status"][] = [];
     const loadingFlags: boolean[] = [];
     const streamingIds: (string | null)[] = [];
@@ -145,16 +144,14 @@ describe("react/agent/useChat status lifecycle", () => {
     } finally {
       flushSync(() => root.unmount());
       await settle();
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
 
   it("moves to error when the request fails", async () => {
     const restoreDom = installDom();
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = () => Promise.resolve(new Response('{"error":"boom"}', { status: 500 }));
-
+    installMockFetch(() => Promise.resolve(new Response('{"error":"boom"}', { status: 500 })));
     let latest: UseChatResult | null = null;
     function Capture(): null {
       latest = useChat({ api: "/api/ag-ui" });
@@ -178,17 +175,16 @@ describe("react/agent/useChat status lifecycle", () => {
     } finally {
       flushSync(() => root.unmount());
       await settle();
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
 
   it("falls back to the status code when the error body is not JSON", async () => {
     const restoreDom = installDom();
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = () =>
-      Promise.resolve(new Response("<html>gateway timeout</html>", { status: 500 }));
-
+    installMockFetch(() =>
+      Promise.resolve(new Response("<html>gateway timeout</html>", { status: 500 }))
+    );
     let latest: UseChatResult | null = null;
     function Capture(): null {
       latest = useChat({ api: "/api/ag-ui" });
@@ -214,15 +210,14 @@ describe("react/agent/useChat status lifecycle", () => {
     } finally {
       flushSync(() => root.unmount());
       await settle();
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
 
   it("keeps a default-model assistant response persistable", async () => {
     const restoreDom = installDom();
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = () => Promise.resolve(sseResponse());
+    installMockFetch(() => Promise.resolve(sseResponse()));
     let latest: UseChatResult | null = null;
 
     function Capture(): null {
@@ -243,19 +238,18 @@ describe("react/agent/useChat status lifecycle", () => {
     } finally {
       flushSync(() => root.unmount());
       await settle();
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
 
   it("uses a per-message model override for the request and response metadata", async () => {
     const restoreDom = installDom();
-    const originalFetch = globalThis.fetch;
     let requestBody: { model?: string } | undefined;
-    globalThis.fetch = (_input, init) => {
+    installMockFetch((_input, init) => {
       requestBody = JSON.parse(String((init as { body?: unknown } | undefined)?.body));
       return Promise.resolve(sseResponse());
-    };
+    });
     let latest: UseChatResult | null = null;
 
     function Capture(): null {
@@ -276,7 +270,7 @@ describe("react/agent/useChat status lifecycle", () => {
     } finally {
       flushSync(() => root.unmount());
       await settle();
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
