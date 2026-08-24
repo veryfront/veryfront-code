@@ -26,6 +26,11 @@ const IGNORED_ELEMENTS = new Set([
   "!doctype",
 ]);
 
+// `html` wraps the whole document, so it must never be annotated itself while
+// still letting its contents be annotated. Studio always receives a full
+// document, and suppressing the subtree here would annotate nothing at all.
+const NON_SUPPRESSING_ELEMENTS = new Set(["html"]);
+
 interface InjectorOptions {
   /** Prefix for generated selectors */
   prefix?: string;
@@ -62,15 +67,17 @@ export function injectElementSelectors(
       const isVoid = VOID_ELEMENTS.has(tag);
       const isSelfClosing = match.endsWith("/>");
 
+      const suppressesContent = !isVoid && !NON_SUPPRESSING_ELEMENTS.has(tag);
+
       if (isClosing) {
-        if (skipSet.has(tag) && !isVoid) {
+        if (skipSet.has(tag) && suppressesContent) {
           inIgnoredElement = Math.max(0, inIgnoredElement - 1);
         }
         return match;
       }
 
       if (skipSet.has(tag)) {
-        if (!isVoid) inIgnoredElement++;
+        if (suppressesContent) inIgnoredElement++;
         return match;
       }
 

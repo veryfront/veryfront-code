@@ -343,18 +343,32 @@ describe("client/spa/component-loader", () => {
 
   it("accepts React exotic component types", async () => {
     await withTempDir(async (tempDir) => {
-      await writeModule(
-        tempDir,
-        "components/Memo.js",
-        `import React from ${JSON.stringify(import.meta.resolve("react"))};
-         function Component() { return React.createElement("span", null, "memo"); }
-         export default React.memo(Component);`,
-      );
+      const react = JSON.stringify(import.meta.resolve("react"));
+      // One case per accepted exotic marker: a page whose default export is a
+      // forwardRef or a lazy component must hydrate just like a memo one.
+      const wrappers = {
+        Memo: "React.memo(Component)",
+        ForwardRef: "React.forwardRef(function Wrapped(props, ref) { return Component(props); })",
+        Lazy: "React.lazy(() => Promise.resolve({ default: Component }))",
+      };
+
+      for (const [name, wrapper] of Object.entries(wrappers)) {
+        await writeModule(
+          tempDir,
+          `components/${name}.js`,
+          `import React from ${react};
+         function Component() { return React.createElement("span", null, ${JSON.stringify(name)}); }
+         export default ${wrapper};`,
+        );
+      }
 
       await withModuleServerUrl(tempDir, async () => {
-        const component = await loadComponent("components/Memo.tsx");
-        assertEquals(component !== null, true);
-        assertStrictEquals(getCachedComponent("components/Memo.tsx"), component);
+        for (const name of Object.keys(wrappers)) {
+          const path = `components/${name}.tsx`;
+          const component = await loadComponent(path);
+          assertEquals(component !== null, true, `${path} must be accepted as a React component`);
+          assertStrictEquals(getCachedComponent(path), component);
+        }
       });
     }, { prefix: "vf-client-loader-exotic-" });
   });

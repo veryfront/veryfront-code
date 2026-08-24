@@ -40,6 +40,74 @@ describe("internal-agents/session-manager", () => {
     );
   });
 
+  it("treats key-reordered tool results as the same result", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+
+    const pending = sessionManager.waitForToolResult("run_1", "tool_1");
+
+    assertEquals(
+      sessionManager.submitToolResult("run_1", {
+        toolCallId: "tool_1",
+        result: { a: 1, b: 2, nested: { x: 1, y: 2 } },
+      }),
+      { accepted: true },
+    );
+    await pending;
+
+    assertEquals(
+      sessionManager.submitToolResult("run_1", {
+        toolCallId: "tool_1",
+        result: { nested: { y: 2, x: 1 }, b: 2, a: 1 },
+      }),
+      { accepted: true, duplicate: true },
+      "a retry with reordered JSON keys is the same result, not a conflict",
+    );
+
+    await assertRejects(
+      async () => {
+        sessionManager.submitToolResult("run_1", {
+          toolCallId: "tool_1",
+          result: { a: 1, b: 3, nested: { x: 1, y: 2 } },
+        });
+      },
+      ToolResultConflictError,
+    );
+    sessionManager.completeRun("run_1");
+  });
+
+  it("hands a client-reported tool failure to the agent as an error", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+
+    const pending = sessionManager.waitForToolResult("run_1", "tool_1");
+
+    assertEquals(
+      sessionManager.submitToolResult("run_1", {
+        toolCallId: "tool_1",
+        result: { message: "permission denied" },
+        isError: true,
+      }),
+      { accepted: true },
+    );
+    assertEquals(
+      await pending,
+      { result: { message: "permission denied" }, isError: true },
+      "a failed client tool call must reach the agent flagged as an error",
+    );
+
+    await assertRejects(
+      async () => {
+        sessionManager.submitToolResult("run_1", {
+          toolCallId: "tool_1",
+          result: { message: "permission denied" },
+        });
+      },
+      ToolResultConflictError,
+    );
+    sessionManager.completeRun("run_1");
+  });
+
   it("buffers submissions that arrive before the tool call starts waiting", async () => {
     const sessionManager = new AgentRunSessionManager();
     sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
