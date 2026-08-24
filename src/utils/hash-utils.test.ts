@@ -1,7 +1,52 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { spawnSync } from "node:child_process";
+import process from "node:process";
+import { isNode } from "#veryfront/platform/compat/runtime.ts";
 import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { computeCodeHash, computeHash, fnv1aHash, shortHash, simpleHash } from "./hash-utils.ts";
+
+const POISONED_DIGEST_SCRIPT = String.raw`
+import { computeHash } from "./src/utils/hash-utils.ts";
+
+const lengthDescriptor = Object.getOwnPropertyDescriptor(
+  Uint8Array.prototype,
+  "length",
+);
+const byteLengthDescriptor = Object.getOwnPropertyDescriptor(
+  Uint8Array.prototype,
+  "byteLength",
+);
+
+try {
+  Object.defineProperty(Uint8Array.prototype, "length", {
+    configurable: true,
+    get: () => 0,
+  });
+  Object.defineProperty(Uint8Array.prototype, "byteLength", {
+    configurable: true,
+    get: () => 0,
+  });
+
+  const hash = await computeHash("typed-array-accessor-regression");
+  const expected =
+    "e6f350a0d3a7ab1460425109d5aef847b5fcda425a8b45af135af8dff19b5154";
+  if (hash !== expected) {
+    throw new Error("expected " + expected + ", received " + hash);
+  }
+} finally {
+  restoreDescriptor("length", lengthDescriptor);
+  restoreDescriptor("byteLength", byteLengthDescriptor);
+}
+
+function restoreDescriptor(name, descriptor) {
+  if (descriptor) {
+    Object.defineProperty(Uint8Array.prototype, name, descriptor);
+  } else {
+    Reflect.deleteProperty(Uint8Array.prototype, name);
+  }
+}
+`;
 
 describe("hash-utils", () => {
   describe("computeHash", () => {
@@ -34,50 +79,27 @@ describe("hash-utils", () => {
       assertEquals(hash.length, 64);
     });
 
-    it("uses captured typed-array accessors after prototype poisoning", async () => {
-      const lengthDescriptor = Object.getOwnPropertyDescriptor(
-        Uint8Array.prototype,
-        "length",
-      );
-      const byteLengthDescriptor = Object.getOwnPropertyDescriptor(
-        Uint8Array.prototype,
-        "byteLength",
-      );
-      // sha256("typed-array-accessor-regression"), computed independently of this module.
-      const expected = "e6f350a0d3a7ab1460425109d5aef847b5fcda425a8b45af135af8dff19b5154";
-      let hash: string | undefined;
-      try {
-        Object.defineProperty(Uint8Array.prototype, "length", {
-          configurable: true,
-          get: () => 0,
-        });
-        Object.defineProperty(Uint8Array.prototype, "byteLength", {
-          configurable: true,
-          get: () => 0,
-        });
-        hash = await computeHash("typed-array-accessor-regression");
-      } finally {
-        if (lengthDescriptor) {
-          Object.defineProperty(Uint8Array.prototype, "length", lengthDescriptor);
-        } else {
-          Reflect.deleteProperty(Uint8Array.prototype, "length");
-        }
-        if (byteLengthDescriptor) {
-          Object.defineProperty(
-            Uint8Array.prototype,
-            "byteLength",
-            byteLengthDescriptor,
-          );
-        } else {
-          Reflect.deleteProperty(Uint8Array.prototype, "byteLength");
-        }
-      }
+    it("keeps typed-array poisoning active through the complete async digest", () => {
+      if (!isNode) return;
 
-      assertEquals(
-        hash,
-        expected,
-        "toHex must use the captured %TypedArray%.prototype length getter",
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "./tests/node/resolver.mjs",
+          "--input-type=module",
+          "--eval",
+          POISONED_DIGEST_SCRIPT,
+        ],
+        {
+          encoding: "utf8",
+          timeout: 10_000,
+        },
       );
+
+      assertEquals(result.error, undefined);
+      assertEquals(result.signal, null, result.stderr);
+      assertEquals(result.status, 0, result.stderr);
     });
   });
 
