@@ -263,11 +263,24 @@ describe("upstream WebSocket client", () => {
         "an awaited Blob conversion must not reorder later frames",
       );
 
-      const closed = new Promise<void>((resolve) => {
-        socket.onclose = () => resolve();
-      });
-      socket.close(1000, "done");
-      await closed;
+      // Bound the teardown wait the same way as the waits above: a close
+      // handshake that never completes would wedge the worker after the
+      // assertions already passed.
+      let closeTimer: number | undefined;
+      try {
+        const closed = new Promise<void>((resolve, reject) => {
+          socket.onclose = () => resolve();
+          socket.onerror = () => reject(new Error("the upstream socket errored during teardown"));
+          closeTimer = setTimeout(
+            () => reject(new Error("timed out waiting for the upstream socket to close")),
+            5_000,
+          );
+        });
+        socket.close(1000, "done");
+        await closed;
+      } finally {
+        if (closeTimer !== undefined) clearTimeout(closeTimer);
+      }
     } finally {
       await server.close();
     }
