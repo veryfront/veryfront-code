@@ -206,6 +206,88 @@ describe("agent max steps output schema", () => {
     assertEquals(finished?.text, "Twelve degrees in Berlin.");
   });
 
+  it("streams outputSchemaError when interrupted local tool recovery runs out of steps", async () => {
+    let call = 0;
+    const model: ModelRuntime<ModelRuntimeCallOptions> = {
+      provider: "test",
+      modelId: "test/max-steps-interrupted-local-tool",
+      executionMode: "remote",
+      runtimeCapabilities: { structuredOutput: true },
+      doGenerate() {
+        throw new Error("stream test must not call doGenerate");
+      },
+      doStream() {
+        call++;
+        const parts: unknown[] = call === 1
+          ? [
+            {
+              type: "tool-call",
+              toolCallId: "committed-call",
+              toolName: "max_steps_noop_tool",
+              input: {},
+            },
+            {
+              type: "finish",
+              finishReason: "tool-calls",
+              totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            },
+          ]
+          : [
+            {
+              type: "tool-input-start",
+              id: "interrupted-call",
+              toolName: "max_steps_noop_tool",
+            },
+            {
+              type: "tool-input-delta",
+              id: "interrupted-call",
+              delta: '{"revision":"trunc',
+            },
+            {
+              type: "finish",
+              finishReason: "tool-calls",
+              totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            },
+          ];
+        return Promise.resolve({
+          stream: new ReadableStream<unknown>({
+            start(controller) {
+              for (const part of parts) controller.enqueue(part);
+              controller.close();
+            },
+          }),
+        });
+      },
+    };
+    const assistant = agent({
+      id: "max-steps-stream-interrupted-local-tool",
+      system: "You report weather.",
+      tools: { max_steps_noop_tool: noopTool },
+      maxSteps: 2,
+      outputSchema: getReportSchema(),
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+
+    let finished: Record<string, unknown> | undefined;
+    const result = await assistant.stream({
+      input: "Berlin?",
+      onFinish: (response) => {
+        finished = response as unknown as Record<string, unknown>;
+      },
+    });
+    const body = await result.toDataStreamResponse().text();
+
+    assertEquals(call, 2);
+    assertEquals(body.includes('"type":"error"'), false);
+    const metadata = finished?.metadata as Record<string, unknown> | undefined;
+    assertEquals(metadata?.warning, "Max steps (2) reached");
+    assertStringIncludes(
+      String(metadata?.outputSchemaError),
+      "is not valid JSON for its outputSchema",
+    );
+    assertEquals(finished?.object, undefined);
+  });
+
   it("streams the parsed object when the final text satisfies the schema at the step budget", async () => {
     const model = createMaxStepsModel('{"city":"Berlin","tempC":12}');
     const assistant = agent({

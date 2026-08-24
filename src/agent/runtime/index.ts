@@ -2556,6 +2556,12 @@ export class AgentRuntime {
       const shouldRecoverInterruptedLocalToolBatch = canRecoverInterruptedLocalToolBatch &&
         shouldContinue &&
         streamedToolCalls.some(isInterruptedClientToolCall);
+      const exhaustedStepBudgetDuringInterruptedLocalToolRecovery =
+        !recoveredInterruptedLocalToolBatch &&
+        step + 1 >= maxSteps &&
+        !hasExposedReasoning &&
+        streamedToolCalls.some(isInterruptedClientToolCall) &&
+        shouldContinueAfterStreamStep(state, { recoverInterruptedToolCalls: true });
       // Exactly `shouldRecoverInterruptedLocalToolBatch` with the reasoning
       // gate lifted: the batch this step would have replayed had it not
       // already exposed reasoning. Re-asking is what separates "recovery was
@@ -2747,7 +2753,7 @@ export class AgentRuntime {
           await recordIncompleteLocalToolError(toolCall, { announceInput: true });
         }
         sendSSE(controller, encoder, { type: "step-end" });
-        completedWithinStepBudget = true;
+        completedWithinStepBudget = !exhaustedStepBudgetDuringInterruptedLocalToolRecovery;
         break;
       }
 
