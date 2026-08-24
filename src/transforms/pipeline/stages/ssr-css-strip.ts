@@ -45,14 +45,16 @@ type NamedImportBinding = { imported: string; local: string };
 function parseNamedImportBindings(namedClause: string): NamedImportBinding[] {
   const bindings: NamedImportBinding[] = [];
 
-  for (const rawPart of namedClause.split(",")) {
+  for (const rawPart of splitNamedImportBindings(namedClause)) {
     const part = rawPart.trim();
     if (!part) continue;
 
-    const aliasMatch = part.match(/^([_$a-zA-Z][\w$-]*)\s+as\s+([_$a-zA-Z][\w$]*)$/);
+    const aliasMatch = part.match(
+      /^(?:([_$a-zA-Z][\w$-]*)|("(?:[^"\\]|\\.)*"))\s+as\s+([_$a-zA-Z][\w$]*)$/,
+    );
     if (aliasMatch) {
-      const imported = aliasMatch[1];
-      const local = aliasMatch[2];
+      const imported = aliasMatch[1] ?? parseQuotedExportName(aliasMatch[2]);
+      const local = aliasMatch[3];
       if (!imported || !local) continue;
       bindings.push({ imported, local });
       continue;
@@ -64,6 +66,47 @@ function parseNamedImportBindings(namedClause: string): NamedImportBinding[] {
   }
 
   return bindings;
+}
+
+function splitNamedImportBindings(namedClause: string): string[] {
+  const bindings: string[] = [];
+  let start = 0;
+  let quoted = false;
+  let escaped = false;
+
+  for (let index = 0; index < namedClause.length; index++) {
+    const char = namedClause[index];
+    if (quoted) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        quoted = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      quoted = true;
+    } else if (char === ",") {
+      bindings.push(namedClause.slice(start, index));
+      start = index + 1;
+    }
+  }
+
+  bindings.push(namedClause.slice(start));
+  return bindings;
+}
+
+function parseQuotedExportName(token: string | undefined): string | undefined {
+  if (!token) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(token);
+    return typeof parsed === "string" ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function cssBindingValue(imported: string, cssModuleKey: string | undefined): string {
@@ -137,16 +180,11 @@ function exportBindingStatement(
  * `" from "` misses every one of those, strips the statement to a bare comment
  * and leaves the module's own `export {...}` clause referencing bindings that
  * no longer exist, which fails to link. The keyword is therefore matched on its
- * identifier boundary; the last match wins so an import-attribute clause after
- * the specifier cannot shift the split point.
+ * identifier boundary. The first match is the module-introducing keyword; a
+ * later match may be text inside the quoted CSS specifier.
  */
 function findFromKeywordIndex(statement: string): number {
-  const pattern = /\bfrom\s*['"`]/g;
-  let index = -1;
-  for (let match = pattern.exec(statement); match; match = pattern.exec(statement)) {
-    index = match.index;
-  }
-  return index;
+  return statement.match(/\bfrom\s*['"`]/)?.index ?? -1;
 }
 
 /**

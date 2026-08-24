@@ -292,6 +292,43 @@ describe("css-strip plugin", () => {
     assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
   });
 
+  it("does not treat `from` inside a quoted css specifier as the import keyword", async () => {
+    const ctx = createContext(
+      `import styles from "./from'button.module.css"; export const cls = styles.container;`,
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+    const namespace = await evaluateModule(result);
+    const moduleKey = resolveCssModuleKey(
+      "./from'button.module.css",
+      "/project/pages/index.tsx",
+      "/project",
+    );
+
+    assertEquals(
+      namespace.cls,
+      toScopedCssModuleClass(moduleKey, "container"),
+      "a quoted specifier containing `from` must keep the default css module binding",
+    );
+    assertEquals(ctx.metadata.get("cssImports"), ["./from'button.module.css"]);
+  });
+
+  it("preserves quoted css export names", async () => {
+    const ctx = createContext(
+      `export { "foo-bar" as fooBar } from "./Button.module.css";`,
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+    const namespace = await evaluateModule(result);
+
+    assertEquals(
+      namespace.fooBar,
+      toScopedCssModuleClass(MODULE_KEY, "foo-bar"),
+      "a quoted css export name must remain available through its local alias",
+    );
+    assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
+  });
+
   it("resolves a named `default` css import to the class map, not the literal name", async () => {
     const ctx = createContext(
       `import { default as styles } from "./Button.module.css"; export const cls = styles.container;`,
