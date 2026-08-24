@@ -82,6 +82,8 @@ type GraphState = {
   artifacts: Map<string, string>;
   /** Any rejected nested fetch makes the graph unsafe to publish as a cache hit. */
   hadFailure: boolean;
+  /** Artifacts that depend on a failed subtree or provisional cycle member. */
+  poisoned: Set<string>;
 };
 
 export async function fetchEsmModule(
@@ -95,6 +97,7 @@ export async function fetchEsmModule(
     provisional: new Set(),
     artifacts: new Map(),
     hadFailure: false,
+    poisoned: new Set(),
   };
   try {
     const result = await fetchEsmModuleWithin(
@@ -105,8 +108,12 @@ export async function fetchEsmModule(
       new Set(),
       graph,
     );
-    if (!graph.hadFailure || graph.provisional.size === 0) {
-      for (const [key, value] of graph.artifacts) esmCache.set(key, value);
+    for (const [key, value] of graph.artifacts) {
+      if (
+        !graph.hadFailure || (!graph.provisional.has(key) && !graph.poisoned.has(key))
+      ) {
+        esmCache.set(key, value);
+      }
     }
     return result;
   } catch (error) {
@@ -191,6 +198,7 @@ async function fetchEsmModuleWithin(
   // written yet, either because this module closed a cycle itself or because a
   // descendant did.
   const unwritten = new Set<string>();
+  let poisonedByDependency = false;
 
   if (urlArray.length) {
     const replacementMap = new Map<string, string>();
@@ -202,6 +210,7 @@ async function fetchEsmModuleWithin(
         replacementMap.set(url, `file://${result.value}`);
         if (nested.has(url)) unwritten.add(url);
         else for (const dep of graph.unwritten.get(url) ?? []) unwritten.add(dep);
+        if (graph.provisional.has(url) || graph.poisoned.has(url)) poisonedByDependency = true;
         continue;
       }
 
@@ -238,6 +247,7 @@ async function fetchEsmModuleWithin(
   unwritten.delete(url);
   graph.unwritten.set(url, unwritten);
   graph.artifacts.set(url, tempFilePath);
+  if (poisonedByDependency) graph.poisoned.add(url);
   if (unwritten.size) graph.provisional.add(url);
   return tempFilePath;
 }
