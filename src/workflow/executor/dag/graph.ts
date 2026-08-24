@@ -17,13 +17,25 @@ export function buildGraph(nodes: WorkflowNode[]): DAGGraph {
   const nodeMap = new Map<string, WorkflowNode>();
 
   for (const node of nodes) {
+    if (nodeMap.has(node.id)) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Workflow graph has duplicate node ID "${node.id}"`,
+      });
+    }
     adjList.set(node.id, []);
     inDegree.set(node.id, 0);
     nodeMap.set(node.id, node);
   }
 
   for (const node of nodes) {
+    const dependencies = new Set<string>();
     for (const dep of node.dependsOn ?? []) {
+      if (dependencies.has(dep)) {
+        throw INVALID_ARGUMENT.create({
+          detail: `Workflow graph node "${node.id}" contains duplicate dependency "${dep}"`,
+        });
+      }
+      dependencies.add(dep);
       const dependents = adjList.get(dep);
       if (!dependents) {
         throw INVALID_ARGUMENT.create({
