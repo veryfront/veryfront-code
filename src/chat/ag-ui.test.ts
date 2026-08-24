@@ -1,6 +1,7 @@
-import "#veryfront/schemas/_test-setup.ts";
+import { ensureTestSchemaValidator } from "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { unregister } from "#veryfront/extensions/contracts.ts";
 import {
   createAgUiChatEventDecoderState,
   decodeAgUiSseChunk,
@@ -8,7 +9,6 @@ import {
   mapAgUiRuntimeMessagesToChatUiMessages,
   parseSseEvent,
 } from "./ag-ui.ts";
-import type { ChatUiMessageChunk } from "./protocol.ts";
 
 describe("chat/ag-ui", () => {
   it("keeps the public browser entrypoint off server-side data stream imports", async () => {
@@ -217,16 +217,22 @@ describe("chat/ag-ui", () => {
   });
 
   it("exposes file metadata on the canonical UI chunk type", () => {
-    const chunk = {
-      type: "file",
-      url: "https://cdn.example.com/report.pdf",
-      mediaType: "application/pdf",
-      filename: "report.pdf",
-      size: 42,
-    } satisfies ChatUiMessageChunk;
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      'event: Custom\ndata: {"name":"attachment","value":{"type":"file","url":"https://cdn.example.com/report.pdf","mediaType":"application/pdf","filename":"report.pdf"}}\n\n',
+    );
 
-    assertEquals(chunk.filename, "report.pdf");
-    assertEquals(chunk.size, 42);
+    assertEquals(
+      result.events[0]?.chatEvents,
+      [{
+        type: "file",
+        url: "https://cdn.example.com/report.pdf",
+        mediaType: "application/pdf",
+        filename: "report.pdf",
+      }],
+      "a Custom file event must decode to a file chat event with its filename",
+    );
   });
 
   it("preserves AG-UI text content ids when decoding chat stream events", () => {
@@ -257,13 +263,18 @@ describe("chat/ag-ui", () => {
 
   it("ignores duplicate and malformed frames while advancing the SSE cursor", () => {
     const state = createAgUiChatEventDecoderState({ lastEventId: 2 });
+    // The id: 2 frame is a fully valid TextMessageContent payload, so only the
+    // replay guard can stop it from being emitted.
+    const replayFrame = [
+      "event: TextMessageContent",
+      'data: {"messageId":"msg-1","contentId":"block-1","delta":"old"}',
+      "",
+    ];
     const result = decodeAgUiSseChunk(
       state,
       [
         "id: 2",
-        "event: TextMessageContent",
-        'data: {"messageId":"msg-1","delta":"old"}',
-        "",
+        ...replayFrame,
         "id: 3",
         "event: ToolCallStart",
         "data: not-json",
@@ -276,8 +287,20 @@ describe("chat/ag-ui", () => {
       ].join("\n"),
     );
 
-    assertEquals(result.events, []);
+    assertEquals(
+      result.events,
+      [],
+      "a frame at or below lastEventId must not be re-emitted",
+    );
     assertEquals(state.lastEventId, 4);
+
+    const replayed = decodeAgUiSseChunk(state, ["id: 5", ...replayFrame, ""].join("\n"));
+
+    assertEquals(
+      replayed.events[0]?.chatEvents,
+      [{ type: "text-delta", id: "msg-1", contentId: "block-1", delta: "old" }],
+      "the byte-identical frame above lastEventId must be emitted",
+    );
   });
 
   it("reports invalid JSON frames in strict mode without throwing", () => {
@@ -623,5 +646,82 @@ describe("chat/ag-ui", () => {
         ],
       },
     ]);
+  });
+});
+
+describe("chat/ag-ui without a registered SchemaValidator", () => {
+  // The browser chat client decodes AG-UI frames before any schema adapter is
+  // registered, so the hand-rolled validator has to reach the same canonical
+  // events the zod-backed schema produces.
+  it("decodes the same canonical events through the hand-rolled validator", () => {
+    unregister("SchemaValidator");
+    try {
+      const state = createAgUiChatEventDecoderState();
+      const result = decodeAgUiSseChunk(
+        state,
+        [
+          "event: RunStarted",
+          'data: {"runId":"run-1","threadId":"thread-1","agentId":"veryfront","agentName":"Veryfront","agent_avatar_url":"https://cdn.example.com/agents/veryfront.svg"}',
+          "",
+          "event: TextMessageStart",
+          'data: {"messageId":"msg-1","contentId":"text:0","role":"assistant"}',
+          "",
+          "event: TextMessageContent",
+          'data: {"messageId":"msg-1","contentId":"text:0","delta":"Hello"}',
+          "",
+          "event: ToolCallStart",
+          'data: {"toolCallId":"tool-1","toolCallName":"load_skill"}',
+          "",
+          "event: ToolCallArgs",
+          'data: {"toolCallId":"tool-1","delta":"{}"}',
+          "",
+          "",
+        ].join("\n"),
+      );
+
+      assertEquals(
+        result.events.flatMap((entry) => entry.chatEvents),
+        [
+          {
+            type: "start",
+            messageMetadata: {
+              agentId: "veryfront",
+              agentName: "Veryfront",
+              agent_avatar_url: "https://cdn.example.com/agents/veryfront.svg",
+              runId: "run-1",
+              threadId: "thread-1",
+            },
+          },
+          { type: "text-start", id: "msg-1", contentId: "text:0" },
+          { type: "text-delta", id: "msg-1", contentId: "text:0", delta: "Hello" },
+          {
+            type: "tool-input-start",
+            toolCallId: "tool-1",
+            toolName: "load_skill",
+            providerExecuted: true,
+          },
+          { type: "tool-input-delta", toolCallId: "tool-1", inputTextDelta: "{}" },
+        ],
+        "schemaless decoding must produce the same canonical events",
+      );
+    } finally {
+      ensureTestSchemaValidator();
+    }
+  });
+
+  it("rejects a Custom frame that carries no value", () => {
+    unregister("SchemaValidator");
+    try {
+      const state = createAgUiChatEventDecoderState();
+      const result = decodeAgUiSseChunk(state, 'event: Custom\ndata: {"name":"progress"}\n\n');
+
+      assertEquals(
+        result.events,
+        [],
+        "Custom without value must be rejected by the hand-rolled validator",
+      );
+    } finally {
+      ensureTestSchemaValidator();
+    }
   });
 });

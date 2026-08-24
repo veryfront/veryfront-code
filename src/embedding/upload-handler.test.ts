@@ -1,9 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
-import { createUploadHandler } from "./upload-handler.ts";
+import { createUploadHandler, type UploadHandlerConfig } from "./upload-handler.ts";
 import type { RagSearchOptions, RagSearchResult, RagStore } from "./types.ts";
 
 const CLOUD_ENV_KEYS = [
@@ -122,6 +122,28 @@ describe("createUploadHandler", () => {
       })(),
       "handler construction must fail closed when auth is omitted",
     );
+
+    assertThrows(
+      () =>
+        createUploadHandler(
+          createStubStore(),
+          { auth: { type: "none" } } as unknown as UploadHandlerConfig,
+        ),
+      Error,
+      "requires allowUnauthenticated: true",
+      "auth type 'none' must fail closed without allowUnauthenticated",
+    );
+
+    assertThrows(
+      () =>
+        createUploadHandler(
+          createStubStore(),
+          { auth: {} } as unknown as UploadHandlerConfig,
+        ),
+      Error,
+      "auth must be { authorize }",
+      "an auth object without authorize must fail closed",
+    );
   });
 
   it("allows unauthenticated routes only when explicitly requested", () => {
@@ -148,6 +170,37 @@ describe("createUploadHandler", () => {
     const response = await handlers.GET(new Request("http://test/uploads"));
     assertEquals(response.status, 401);
     assertEquals(listCalls, 0);
+  });
+
+  it("fails closed when an authenticated route is invoked without a Request", async () => {
+    let listCalls = 0;
+    let authorizeCalls = 0;
+    const handlers = createUploadHandler(
+      createStubStore({
+        async listDocuments() {
+          listCalls++;
+          return [];
+        },
+      }),
+      {
+        auth: {
+          authorize: () => {
+            authorizeCalls++;
+            return true;
+          },
+        },
+      },
+    );
+
+    const response = await handlers.GET();
+
+    assertEquals(
+      response.status,
+      401,
+      "a missing Request must be denied, not treated as authorized",
+    );
+    assertEquals(authorizeCalls, 0, "authorize cannot run without a Request");
+    assertEquals(listCalls, 0, "the store must not be read when the request is missing");
   });
 
   it("rejects upload routes before store access when auth denies", async () => {
@@ -570,6 +623,103 @@ describe("createUploadHandler", () => {
     });
   });
 
+  it("returns the upload list when one source URL lookup fails", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_uploads");
+    setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
+    setEnv("VERYFRONT_API_BASE_URL", TEST_PUBLIC_API_ORIGIN);
+
+    const store = createStubStore({
+      async listDocuments() {
+        return [
+          {
+            id: "doc-123",
+            title: "guide.txt",
+            source: "upload:guide.txt",
+            type: "txt",
+            createdAt: 1,
+          },
+          {
+            id: "doc-456",
+            title: "handbook.txt",
+            source: "upload:handbook.txt",
+            type: "txt",
+            createdAt: 2,
+          },
+        ];
+      },
+    });
+    const { GET } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
+
+    await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const url = request.url;
+
+      if (url.includes("doc-456")) {
+        return new Response(null, { status: 500 });
+      }
+
+      if (
+        url ===
+          `${TEST_PUBLIC_API_ORIGIN}/projects/demo-project/uploads/.veryfront%2Frag%2Fuploads%2Fdoc-123.meta.json/url`
+      ) {
+        return Response.json({
+          signed_url:
+            `${TEST_PUBLIC_STORAGE_ORIGIN}/demo-project/.veryfront%2Frag%2Fuploads%2Fdoc-123.meta.json`,
+          expires_at: "2026-03-09T12:30:00.000Z",
+        });
+      }
+
+      if (
+        url ===
+          `${TEST_PUBLIC_STORAGE_ORIGIN}/demo-project/.veryfront%2Frag%2Fuploads%2Fdoc-123.meta.json`
+      ) {
+        return Response.json({
+          version: 1,
+          id: "doc-123",
+          size: 11,
+          mimeType: "text/plain",
+          createdAt: "2026-03-09T12:00:00.000Z",
+          metadata: { title: "guide.txt" },
+        });
+      }
+
+      if (
+        url ===
+          `${TEST_PUBLIC_API_ORIGIN}/projects/demo-project/uploads/.veryfront%2Frag%2Fuploads%2Fdoc-123.blob/url`
+      ) {
+        return Response.json({
+          signed_url:
+            `${TEST_PUBLIC_STORAGE_ORIGIN}/demo-project/.veryfront%2Frag%2Fuploads%2Fdoc-123.blob`,
+          expires_at: "2026-03-09T12:30:00.000Z",
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${request.method} ${url}`);
+    }, async () => {
+      const response = await GET();
+
+      assertEquals(
+        response.status,
+        200,
+        "one failing source URL lookup must not fail the whole list",
+      );
+      const payload = await response.json();
+      const items = payload.items as Array<Record<string, unknown>>;
+      assertEquals(items.length, 2, "every listed upload must survive a failed lookup");
+      assertEquals(
+        items[0]?.url,
+        `${TEST_PUBLIC_STORAGE_ORIGIN}/demo-project/.veryfront%2Frag%2Fuploads%2Fdoc-123.blob`,
+        "the upload whose lookup succeeded must carry its signed blob url",
+      );
+      assertEquals(items[1]?.id, "doc-456", "the failed upload must still be listed");
+      assertEquals(
+        items[1]?.url,
+        undefined,
+        "the upload whose lookup failed must be listed without a url",
+      );
+    });
+  });
+
   it("removes the document even when blob cleanup fails", async () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_uploads");
     setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
@@ -837,6 +987,94 @@ describe("createUploadHandler", () => {
     );
   });
 
+  it("rejects a file larger than the configured maxFileSize before ingesting", async () => {
+    let ingestCalls = 0;
+    const store = createStubStore({
+      async ingest(): Promise<string> {
+        ingestCalls++;
+        return "doc-oversize";
+      },
+    });
+    const { POST } = createUploadHandler(store, {
+      ...EXPLICIT_UNAUTHENTICATED,
+      maxFileSize: 8,
+    });
+
+    const formData = new FormData();
+    formData.append(
+      "file",
+      new File(["hello world"], "guide.txt", { type: "text/plain" }),
+    );
+
+    const response = await POST(
+      new Request("http://test/uploads", { method: "POST", body: formData }),
+    );
+
+    assertEquals(response.status, 400, "an oversize upload must be a client error");
+    assertEquals(
+      (await response.json()).error,
+      "File exceeds 0 MB limit",
+      "the rejection must name the configured limit",
+    );
+    assertEquals(ingestCalls, 0, "an oversize file must never reach the store");
+  });
+
+  it("rejects an unsupported file type before ingesting", async () => {
+    let ingestCalls = 0;
+    const store = createStubStore({
+      async ingest(): Promise<string> {
+        ingestCalls++;
+        return "doc-binary";
+      },
+    });
+    const { POST } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
+
+    const formData = new FormData();
+    formData.append(
+      "file",
+      new File([new Uint8Array([0, 1, 2])], "payload.bin", {
+        type: "application/octet-stream",
+      }),
+    );
+
+    const response = await POST(
+      new Request("http://test/uploads", { method: "POST", body: formData }),
+    );
+
+    assertEquals(response.status, 400, "an unsupported binary must be a client error");
+    assertEquals(
+      String((await response.json()).error).startsWith("Unsupported file type"),
+      true,
+      "the rejection must name the unsupported type",
+    );
+    assertEquals(ingestCalls, 0, "an unsupported binary must never reach the RAG store");
+  });
+
+  it("falls back to the file extension when the browser sends no MIME type", async () => {
+    let ingestCalls = 0;
+    const store = createStubStore({
+      async ingest(): Promise<string> {
+        ingestCalls++;
+        return "doc-md";
+      },
+    });
+    const { POST } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
+
+    const formData = new FormData();
+    formData.append("file", new File(["# doc"], "notes.md", { type: "" }));
+
+    const response = await POST(
+      new Request("http://test/uploads", { method: "POST", body: formData }),
+    );
+
+    assertEquals(response.status, 200, "a markdown upload must be accepted");
+    assertEquals(
+      ingestCalls,
+      1,
+      "an empty browser MIME type must fall back to the file extension",
+    );
+  });
+
   it("truncates filenames exceeding max length", async () => {
     let ingestedTitle = "";
     const store = createStubStore({
@@ -860,9 +1098,9 @@ describe("createUploadHandler", () => {
 
     assertEquals(response.status, 200);
     assertEquals(
-      ingestedTitle.length <= 200,
-      true,
-      "filename must be truncated to max length",
+      ingestedTitle,
+      "a".repeat(200),
+      "filename must be truncated to exactly MAX_FILE_NAME_LENGTH (200) characters",
     );
   });
 });
