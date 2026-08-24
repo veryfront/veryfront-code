@@ -71,10 +71,27 @@ describe("websocket-message-size", () => {
     });
 
     it("validates the admission boundary", () => {
-      assertThrows(
-        () => getWebSocketMessageAdmission("value", -1),
-        RangeError,
-        "maximumBytes",
+      const invalidLimits = [
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        1.5,
+        Number.MAX_SAFE_INTEGER + 1,
+        -1,
+      ];
+
+      for (const invalid of invalidLimits) {
+        assertThrows(
+          () => getWebSocketMessageAdmission("value", invalid),
+          RangeError,
+          "maximumBytes",
+          `a limit of ${invalid} must fail loudly instead of silently changing the cap`,
+        );
+      }
+
+      assertEquals(
+        getWebSocketMessageAdmission("x".repeat(16), Number.MAX_SAFE_INTEGER),
+        { accepted: true, sizeBytes: 16 },
+        "a MAX_SAFE_INTEGER limit must still admit ordinary payloads",
       );
     });
   });

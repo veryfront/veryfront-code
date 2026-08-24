@@ -3,6 +3,19 @@ import { FakeTime } from "#std/testing/time";
 import { join } from "#veryfront/compat/path/index.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  isNotFoundError,
+  makeTempDir,
+  mkdir,
+  readDir,
+  readFile,
+  readTextFile,
+  remove,
+  stat,
+  symlink,
+  writeFile,
+  writeTextFile,
+} from "#veryfront/platform/compat/fs.ts";
 import type { ImageOptimizationEngine } from "#veryfront/extensions/image/index.ts";
 import { MAX_IMAGE_PROVIDER_DURATION_MS } from "./constants.ts";
 import { chunkArray, ImageOptimizer } from "./optimizer-core.ts";
@@ -75,13 +88,13 @@ function createImageEngine(
 async function withTempProject(
   callback: (projectDir: string, inputDir: string) => Promise<void>,
 ): Promise<void> {
-  const projectDir = await Deno.makeTempDir();
+  const projectDir = await makeTempDir();
   const inputDir = join(projectDir, "public");
   try {
-    await Deno.mkdir(inputDir, { recursive: true });
+    await mkdir(inputDir, { recursive: true });
     await callback(projectDir, inputDir);
   } finally {
-    await Deno.remove(projectDir, { recursive: true });
+    await remove(projectDir, { recursive: true });
   }
 }
 
@@ -313,7 +326,7 @@ describe("build/asset-pipeline/image-optimizer/optimizer-core", () => {
       it("publishes a complete manifest, variants, and preserved original", async () => {
         await withTempProject(async (projectDir, inputDir) => {
           const source = new Uint8Array([9, 8, 7]);
-          await Deno.writeFile(join(inputDir, "photo.jpg"), source);
+          await writeFile(join(inputDir, "photo.jpg"), source);
           const optimizer = new ImageOptimizer(
             {
               projectDir,
@@ -331,12 +344,12 @@ describe("build/asset-pipeline/image-optimizer/optimizer-core", () => {
           assertEquals(metadata?.originalSize, source.length);
           assertEquals(metadata?.variants.length, 2);
           assertEquals(
-            await Deno.readFile(join(projectDir, ".veryfront/images/photo.jpg")),
+            await readFile(join(projectDir, ".veryfront/images/photo.jpg")),
             source,
           );
           assertEquals(
             JSON.parse(
-              await Deno.readTextFile(
+              await readTextFile(
                 join(projectDir, ".veryfront/images/image-manifest.json"),
               ),
             )["photo.jpg"].variants.length,
@@ -356,12 +369,120 @@ describe("build/asset-pipeline/image-optimizer/optimizer-core", () => {
         });
       });
 
+      it("rejects sources whose variants collide", async () => {
+        await withTempProject(async (projectDir, inputDir) => {
+          await writeFile(join(inputDir, "photo.jpg"), new Uint8Array([9, 8, 7]));
+          await writeFile(join(inputDir, "photo.png"), new Uint8Array([6, 5, 4]));
+          const optimizer = new ImageOptimizer(
+            {
+              projectDir,
+              inputDir: "public",
+              outputDir: ".veryfront/images",
+              formats: ["webp"],
+              sizes: [320],
+              preserveOriginal: false,
+            },
+            { engine: createImageEngine() },
+          );
+
+          await assertRejects(
+            () => optimizer.optimize(),
+            TypeError,
+            "Image output collision",
+          );
+          try {
+            await stat(join(projectDir, ".veryfront/images/image-manifest.json"));
+            throw new Error("a colliding build must publish nothing");
+          } catch (error) {
+            assertEquals(
+              isNotFoundError(error),
+              true,
+              "a colliding build publishes nothing",
+            );
+          }
+        });
+      });
+
+      it("rejects symlinked or physically escaping image directories", async () => {
+        await withTempProject(async (projectDir) => {
+          const outside = await makeTempDir();
+          try {
+            await mkdir(join(projectDir, "public/src-images"), { recursive: true });
+            await symlink(outside, join(projectDir, "public/images"));
+
+            await assertRejects(
+              () =>
+                new ImageOptimizer(
+                  {
+                    projectDir,
+                    inputDir: "public/src-images",
+                    outputDir: "public/images",
+                  },
+                  { engine: createImageEngine() },
+                ).optimize(),
+              TypeError,
+              "Image output path must be a real directory",
+            );
+          } finally {
+            await remove(outside, { recursive: true });
+          }
+        });
+
+        await withTempProject(async (projectDir) => {
+          const outside = await makeTempDir();
+          try {
+            await symlink(outside, join(projectDir, "public/src-images"));
+
+            await assertRejects(
+              () =>
+                new ImageOptimizer(
+                  {
+                    projectDir,
+                    inputDir: "public/src-images",
+                    outputDir: "public/images",
+                  },
+                  { engine: createImageEngine() },
+                ).optimize(),
+              TypeError,
+              "Image input directory must be a real directory",
+            );
+          } finally {
+            await remove(outside, { recursive: true });
+          }
+        });
+
+        await withTempProject(async (projectDir) => {
+          const outside = await makeTempDir();
+          try {
+            await mkdir(join(projectDir, "public/src-images"), { recursive: true });
+            await mkdir(join(outside, "images"), { recursive: true });
+            await symlink(outside, join(projectDir, "escape"));
+
+            await assertRejects(
+              () =>
+                new ImageOptimizer(
+                  {
+                    projectDir,
+                    inputDir: "public/src-images",
+                    outputDir: "escape/images",
+                  },
+                  { engine: createImageEngine() },
+                ).optimize(),
+              TypeError,
+              "must remain inside the physical project",
+            );
+          } finally {
+            await remove(outside, { recursive: true });
+          }
+        });
+      });
+
       it("preserves the last known-good output when encoding fails", async () => {
         await withTempProject(async (projectDir, inputDir) => {
-          await Deno.writeFile(join(inputDir, "photo.jpg"), new Uint8Array([9]));
+          await writeFile(join(inputDir, "photo.jpg"), new Uint8Array([9]));
           const outputDir = join(projectDir, ".veryfront/images");
-          await Deno.mkdir(outputDir, { recursive: true });
-          await Deno.writeTextFile(join(outputDir, "sentinel.txt"), "known good");
+          await mkdir(outputDir, { recursive: true });
+          await writeTextFile(join(outputDir, "sentinel.txt"), "known good");
           const optimizer = new ImageOptimizer(
             {
               projectDir,
@@ -381,13 +502,13 @@ describe("build/asset-pipeline/image-optimizer/optimizer-core", () => {
             "mock encoding failed",
           );
           assertEquals(
-            await Deno.readTextFile(join(outputDir, "sentinel.txt")),
+            await readTextFile(join(outputDir, "sentinel.txt")),
             "known good",
           );
           assertEquals(optimizer.getStats().totalImages, 0);
 
           const parentEntries = [];
-          for await (const entry of Deno.readDir(join(projectDir, ".veryfront"))) {
+          for await (const entry of readDir(join(projectDir, ".veryfront"))) {
             parentEntries.push(entry.name);
           }
           assertEquals(
@@ -403,10 +524,10 @@ describe("build/asset-pipeline/image-optimizer/optimizer-core", () => {
       it("never publishes a provider result that arrives after its deadline", async () => {
         using time = new FakeTime();
         await withTempProject(async (projectDir, inputDir) => {
-          await Deno.writeFile(join(inputDir, "photo.jpg"), new Uint8Array([9]));
+          await writeFile(join(inputDir, "photo.jpg"), new Uint8Array([9]));
           const outputDir = join(projectDir, ".veryfront/images");
-          await Deno.mkdir(outputDir, { recursive: true });
-          await Deno.writeTextFile(join(outputDir, "sentinel.txt"), "known good");
+          await mkdir(outputDir, { recursive: true });
+          await writeTextFile(join(outputDir, "sentinel.txt"), "known good");
 
           const started = Promise.withResolvers<void>();
           const lateResult = Promise.withResolvers<
@@ -461,13 +582,13 @@ describe("build/asset-pipeline/image-optimizer/optimizer-core", () => {
           await time.tickAsync(0);
 
           const outputEntries: string[] = [];
-          for await (const entry of Deno.readDir(outputDir)) {
+          for await (const entry of readDir(outputDir)) {
             outputEntries.push(entry.name);
           }
           outputEntries.sort();
           assertEquals(outputEntries, ["sentinel.txt"]);
           assertEquals(
-            await Deno.readTextFile(join(outputDir, "sentinel.txt")),
+            await readTextFile(join(outputDir, "sentinel.txt")),
             "known good",
           );
           assertEquals(optimizer.getStats().totalImages, 0);
@@ -477,8 +598,8 @@ describe("build/asset-pipeline/image-optimizer/optimizer-core", () => {
       it("rejects an empty enabled input without replacing existing output", async () => {
         await withTempProject(async (projectDir) => {
           const outputDir = join(projectDir, ".veryfront/images");
-          await Deno.mkdir(outputDir, { recursive: true });
-          await Deno.writeTextFile(join(outputDir, "sentinel.txt"), "known good");
+          await mkdir(outputDir, { recursive: true });
+          await writeTextFile(join(outputDir, "sentinel.txt"), "known good");
           const optimizer = new ImageOptimizer(
             {
               projectDir,
@@ -496,7 +617,7 @@ describe("build/asset-pipeline/image-optimizer/optimizer-core", () => {
             "found no supported images",
           );
           assertEquals(
-            await Deno.readTextFile(join(outputDir, "sentinel.txt")),
+            await readTextFile(join(outputDir, "sentinel.txt")),
             "known good",
           );
         });

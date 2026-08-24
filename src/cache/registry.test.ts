@@ -459,6 +459,30 @@ describe("CacheRegistry", () => {
     assertEquals(m.size, 1);
   });
 
+  it("should delete file, layout, and render keys for a branch content source", () => {
+    const m = new Map<string, unknown>([
+      ["file:branch:proj1:main:a", 1],
+      ["stat:branch:proj1:main:a", 2],
+      ["files:env:proj1:preview:main:a", 3],
+      ["proj1:preview:preview-main:v1", 4],
+      ["layout:proj1:main:comp", 5],
+      ["file:release:proj1:rel-1:a", 6],
+      ["layout:proj1:release-abc:comp", 7],
+    ]);
+    registerMapCache("cs-shapes-store", m);
+
+    assertEquals(
+      cacheRegistry.deleteKeysForContentSource("proj1", "main"),
+      5,
+      "branch invalidation must evict file, stat, files, render, and layout keys for that source",
+    );
+    assertEquals(
+      [...m.keys()],
+      ["file:release:proj1:rel-1:a", "layout:proj1:release-abc:comp"],
+      "keys from other content sources must survive branch invalidation",
+    );
+  });
+
   it("should get stats with sample keys", () => {
     const m = new Map<string, unknown>();
     for (let i = 0; i < 10; i++) m.set(`key-${i}:proj:data`, i);

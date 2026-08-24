@@ -218,6 +218,42 @@ Deno.test("repairToolPairs never steals a matching result from a later user turn
   ]);
 });
 
+Deno.test("sanitizeProviderModelMessages drops inline preview screenshots but keeps other data-URL images", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "file",
+          mediaType: "image/png",
+          filename: "preview-screenshot.png",
+          url: "data:image/png;base64,AAAA",
+        },
+        {
+          type: "file",
+          mediaType: "image/png",
+          filename: "diagram.png",
+          url: "data:image/png;base64,AAAA",
+        },
+      ],
+    },
+  ] as unknown as ProviderModelMessage[];
+
+  assertEquals(
+    sanitizeProviderModelMessages(messages),
+    [{
+      role: "assistant",
+      content: [{
+        type: "file",
+        mediaType: "image/png",
+        filename: "diagram.png",
+        url: "data:image/png;base64,AAAA",
+      }],
+    }],
+    "inline preview screenshots must be dropped from provider history while other data-URL images survive",
+  );
+});
+
 Deno.test("sanitizeProviderModelMessages drops malformed and role-incompatible parts", () => {
   const malformed = [
     {
@@ -292,6 +328,127 @@ Deno.test("maskOldToolOutputs masks large historical tool outputs and removes st
   });
   assertStringIncludes(JSON.stringify(masked[2]), "[Command: npm test — exit 0, output omitted");
   assertEquals(masked[3], messages[3]);
+});
+
+Deno.test("maskOldToolOutputs masks historical web_search, readFile, web_fetch and task results per tool", () => {
+  const messages = [
+    { role: "user", content: "gather context" },
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "call-search",
+          toolName: "web_search",
+          input: { query: "veryfront" },
+        },
+        {
+          type: "tool-call",
+          toolCallId: "call-read",
+          toolName: "readFile",
+          input: { path: "src/app.ts" },
+        },
+        {
+          type: "tool-call",
+          toolCallId: "call-fetch",
+          toolName: "web_fetch",
+          input: { url: "https://example.com/doc" },
+        },
+        {
+          type: "tool-call",
+          toolCallId: "call-task",
+          toolName: "task",
+          input: { description: "summarize" },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "call-search",
+          toolName: "web_search",
+          output: {
+            type: "json",
+            value: [{
+              title: "Veryfront docs",
+              url: "https://veryfront.com/docs",
+              snippet: "s".repeat(400),
+              encryptedContent: "e".repeat(400),
+            }],
+          },
+        },
+        {
+          type: "tool-result",
+          toolCallId: "call-read",
+          toolName: "readFile",
+          output: { type: "json", value: "f".repeat(600) },
+        },
+        {
+          type: "tool-result",
+          toolCallId: "call-fetch",
+          toolName: "web_fetch",
+          output: { type: "json", value: "p".repeat(600) },
+        },
+        {
+          type: "tool-result",
+          toolCallId: "call-task",
+          toolName: "task",
+          output: {
+            type: "json",
+            value: {
+              success: true,
+              description: "summarize",
+              result: "r".repeat(600),
+              noise: "n".repeat(200),
+            },
+          },
+        },
+      ],
+    },
+    { role: "user", content: "now answer" },
+  ] satisfies ProviderModelMessage[];
+
+  const masked = maskOldToolOutputs(messages);
+  const maskedContent = masked[2]?.content;
+  if (!Array.isArray(maskedContent)) throw new Error("expected a masked tool content array");
+  const outputValue = (index: number): string =>
+    String((maskedContent[index] as { output: { value: unknown } }).output.value);
+
+  assertEquals(
+    outputValue(0).includes("encryptedContent"),
+    false,
+    "provider encryptedContent must be stripped from replayed web_search results",
+  );
+  assertEquals(
+    JSON.parse(outputValue(0)),
+    [{
+      snippet: "s".repeat(400),
+      title: "Veryfront docs",
+      url: "https://veryfront.com/docs",
+    }],
+    "web_search masking must keep the per-item title, url and snippet",
+  );
+  assertEquals(
+    outputValue(1),
+    "[File read: src/app.ts — content omitted (602 chars)]",
+    "readFile results must collapse to a path-only placeholder",
+  );
+  assertEquals(
+    outputValue(2),
+    "[Fetched: https://example.com/doc — content omitted (602 chars)]",
+    "web_fetch results must collapse to a url-only placeholder",
+  );
+  assertEquals(
+    JSON.parse(outputValue(3)),
+    {
+      description: "summarize",
+      result: `${"r".repeat(500)}…`,
+      success: true,
+    },
+    "task results must keep success, description and a truncated result and drop everything else",
+  );
 });
 
 Deno.test("maskOldToolOutputs keeps compact email metadata for historical email list results", () => {
@@ -913,9 +1070,10 @@ Deno.test("compressTurn emits a two-message summary shell", () => {
   ];
 
   const compressed = compressTurn(messages, 0, 1);
-  assertStringIncludes(
+  assertEquals(
     String(compressed[0]!.content),
-    "[Compressed: please do something important",
+    "[Compressed: please do something important → used web_search → Here is the final answer.]",
+    "the compressed turn must retain the tools used and the assistant conclusion",
   );
   assertEquals(compressed[1], {
     role: "assistant",
@@ -1539,19 +1697,80 @@ Deno.test("rewriteUnsupportedFilePartsAsAnnotations converts non-model-native fi
           uploadPath: "uploads/archive.zip",
           url: "https://files.example.com/archive.zip",
         },
+        {
+          type: "file" as const,
+          mediaType: "image/jpeg",
+          filename: "shot.jpg",
+          url: "https://files.example.com/shot.jpg",
+        },
+        {
+          type: "file" as const,
+          mediaType: "application/pdf",
+          filename: "report.pdf",
+          url: "https://files.example.com/report.pdf",
+        },
       ],
     },
   ];
 
-  assertEquals(rewriteUnsupportedFilePartsAsAnnotations(messages)[0]!.parts, [
+  assertEquals(
+    rewriteUnsupportedFilePartsAsAnnotations(messages)[0]!.parts,
+    [
+      {
+        type: "text",
+        text: "Read this data.\n\n<uploaded_files>\n" +
+          '<file name="archive.zip" upload_id="upload-zip" path="uploads/archive.zip" ' +
+          'url="https://files.example.com/archive.zip" type="application/zip" />\n' +
+          "</uploaded_files>",
+      },
+      {
+        type: "file",
+        mediaType: "image/jpeg",
+        filename: "shot.jpg",
+        url: "https://files.example.com/shot.jpg",
+      },
+      {
+        type: "file",
+        mediaType: "application/pdf",
+        filename: "report.pdf",
+        url: "https://files.example.com/report.pdf",
+      },
+    ],
+    "model-native attachments must stay inline while only unsupported files become annotations",
+  );
+});
+
+Deno.test("rewriteUnsupportedFilePartsAsAnnotations annotates a message that carries no text part", () => {
+  const messages = [
     {
-      type: "text",
-      text: "Read this data.\n\n<uploaded_files>\n" +
-        '<file name="archive.zip" upload_id="upload-zip" path="uploads/archive.zip" ' +
-        'url="https://files.example.com/archive.zip" type="application/zip" />\n' +
-        "</uploaded_files>",
+      id: "user-1",
+      role: "user" as const,
+      parts: [
+        {
+          type: "file" as const,
+          mediaType: "application/zip",
+          filename: "archive.zip",
+          uploadId: "upload-zip",
+          uploadPath: "uploads/archive.zip",
+          url: "https://files.example.com/archive.zip",
+        },
+      ],
     },
-  ]);
+  ];
+
+  assertEquals(
+    rewriteUnsupportedFilePartsAsAnnotations(messages)[0]!.parts,
+    [
+      {
+        type: "text",
+        text: "<uploaded_files>\n" +
+          '<file name="archive.zip" upload_id="upload-zip" path="uploads/archive.zip" ' +
+          'url="https://files.example.com/archive.zip" type="application/zip" />\n' +
+          "</uploaded_files>",
+      },
+    ],
+    "a file-only message must still reference its attachment in a new text part",
+  );
 });
 
 Deno.test("prepareProviderModelMessagesFromUiMessages normalizes UI history into provider-safe tool order", () => {

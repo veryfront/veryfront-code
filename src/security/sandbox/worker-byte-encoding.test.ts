@@ -76,6 +76,33 @@ describe("sandbox worker byte encoding", () => {
     }
   });
 
+  it("round-trips a payload that crosses a base64 chunk boundary", () => {
+    const source = new Uint8Array(BASE64_CHUNK_BYTES + 5);
+    for (let index = 0; index < source.length; index++) {
+      source[index] = index % 256;
+    }
+
+    const encoded = encodeSandboxBytesAsBase64(source);
+
+    assertEquals(
+      /=/.test(encoded.slice(0, -4)),
+      false,
+      "padding may appear only in the final base64 quantum, never at a chunk seam",
+    );
+
+    const decoded = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
+    assertEquals(
+      decoded.length,
+      source.length,
+      "decoded length must match the source",
+    );
+    assertEquals(
+      decoded.every((byte, index) => byte === source[index]),
+      true,
+      "atob must reproduce the exact source bytes across the chunk boundary",
+    );
+  });
+
   it("encodes tenant bytes when project code hooks species and length", () => {
     const source = new Uint8Array(BASE64_CHUNK_BYTES + 5);
     for (let index = 0; index < source.length; index++) {

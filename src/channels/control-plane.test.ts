@@ -189,6 +189,34 @@ describe("channels/control-plane", () => {
       assertEquals(claims.request_hash, await sha256Base64url(body));
     });
 
+    it("rejects a control-plane signature minted for another surface", async () => {
+      const body = JSON.stringify({
+        requestId: "agents-1",
+        projectId: "proj-1",
+        surface: "channels",
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        surface: "channels",
+      });
+
+      await assertRejects(
+        () =>
+          verifyControlPlaneJws(jws, body, {
+            audience: "demo-project",
+            expectedProjectId: "proj-1",
+            expectedSubject: "agents-1",
+            expectedSurface: "studio",
+            publicKeyPem,
+            maxAgeSeconds: 60,
+            requestMethod: "POST",
+            requestPath: CONTROL_PLANE_AGENTS_LIST_PATH,
+          }),
+        Error,
+        "surface mismatch",
+        "an envelope minted for another surface must not satisfy a studio-scoped verification",
+      );
+    });
+
     it("rejects a control-plane signature when the body hash does not match", async () => {
       const body = JSON.stringify({
         requestId: "agents-1",
@@ -284,6 +312,42 @@ describe("channels/control-plane", () => {
           requestMethod: "POST",
           requestPath: "/api/control-plane/./agents/list",
         })
+      );
+
+      const nonCanonicalMethod = await createControlPlaneSignature(body, {
+        requestMethod: "post",
+      });
+      await assertRejects(
+        () =>
+          verifyControlPlaneJws(nonCanonicalMethod.jws, body, {
+            audience: "demo-project",
+            expectedProjectId: "proj-1",
+            publicKeyPem: nonCanonicalMethod.publicKeyPem,
+            maxAgeSeconds: 60,
+            requestMethod: "post",
+            requestPath: CONTROL_PLANE_AGENTS_LIST_PATH,
+          }),
+        Error,
+        "canonical HTTP method",
+        "a lowercase signed method must be rejected as non-canonical, not merely mismatched",
+      );
+
+      const nonCanonicalPath = await createControlPlaneSignature(body, {
+        requestPath: "/api/control-plane/./agents/list",
+      });
+      await assertRejects(
+        () =>
+          verifyControlPlaneJws(nonCanonicalPath.jws, body, {
+            audience: "demo-project",
+            expectedProjectId: "proj-1",
+            publicKeyPem: nonCanonicalPath.publicKeyPem,
+            maxAgeSeconds: 60,
+            requestMethod: "POST",
+            requestPath: "/api/control-plane/./agents/list",
+          }),
+        Error,
+        "canonical URL pathname",
+        "a dot-segment signed path must be rejected as non-canonical",
       );
 
       let bindingGetterCalls = 0;
@@ -844,7 +908,7 @@ describe("channels/control-plane", () => {
   });
 });
 
-Deno.test("resolveAgentSkills includes the agent's own skills and excludes others'", () => {
+it("resolveAgentSkills includes the agent's own skills and excludes others'", () => {
   skillRegistryInternal.clearAll();
   try {
     registerSkill("global-howto", {
@@ -872,7 +936,10 @@ Deno.test("resolveAgentSkills includes the agent's own skills and excludes other
     assertEquals(resolveAgentSkills(defaultWriter).map((skill) => skill.id), ["global-howto"]);
 
     const emptyWriter = { id: "writer", config: { skills: [] } } as unknown as Agent;
-    assertEquals(resolveAgentSkills(emptyWriter), []);
+    assertEquals(resolveAgentSkills(emptyWriter), [], "skills: [] advertises no skills");
+
+    const disabledWriter = { id: "writer", config: { skills: false } } as unknown as Agent;
+    assertEquals(resolveAgentSkills(disabledWriter), [], "skills: false advertises no skills");
   } finally {
     skillRegistryInternal.clearAll();
   }

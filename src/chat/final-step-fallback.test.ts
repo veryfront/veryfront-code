@@ -52,6 +52,29 @@ describe("chat/final-step-fallback", () => {
     }
   });
 
+  it("degrades to the fallback when the steps promise hangs or rejects", async () => {
+    assertEquals(
+      await getLastStreamStep({ steps: new Promise<readonly unknown[]>(() => {}) }, 5),
+      null,
+      "a never-settling steps promise must time out to null, not hang the request",
+    );
+    assertEquals(
+      await getStreamSteps({ steps: new Promise<readonly unknown[]>(() => {}) }, 5),
+      { steps: [], lastStep: null },
+      "a never-settling steps promise must time out to the empty step fallback",
+    );
+    assertEquals(
+      await getLastStreamStep({ steps: Promise.reject(new Error("boom")) }, 5),
+      null,
+      "a rejected steps promise must be swallowed into the fallback",
+    );
+    assertEquals(
+      await getStreamSteps({ steps: Promise.reject(new Error("boom")) }, 5),
+      { steps: [], lastStep: null },
+      "a rejected steps promise must be swallowed into the empty step fallback",
+    );
+  });
+
   it("extracts finish reason, text, tool calls, and tool results", () => {
     const step = {
       finishReason: "stop",
@@ -207,6 +230,53 @@ describe("chat/final-step-fallback", () => {
       { type: "text-delta", id: "assistant-1", delta: "Draft is ready." },
       { type: "text-end", id: "assistant-1" },
     ]);
+  });
+
+  it("disambiguates chunk ids across repeated text and reasoning parts", () => {
+    const step = {
+      response: {
+        messages: [
+          {
+            role: "assistant",
+            content: [
+              { type: "reasoning", text: "First thought." },
+              { type: "text", text: "First answer." },
+              { type: "reasoning", text: "Second thought." },
+              { type: "text", text: "Second answer." },
+            ],
+          },
+        ],
+      },
+    };
+
+    const chunks = buildFallbackUiMessageChunks(step, "assistant-1");
+
+    assertEquals(
+      chunks,
+      [
+        { type: "reasoning-start", id: "assistant-1:reasoning" },
+        { type: "reasoning-delta", id: "assistant-1:reasoning", delta: "First thought." },
+        { type: "reasoning-end", id: "assistant-1:reasoning" },
+        { type: "text-start", id: "assistant-1" },
+        { type: "text-delta", id: "assistant-1", delta: "First answer." },
+        { type: "text-end", id: "assistant-1" },
+        { type: "reasoning-start", id: "assistant-1:reasoning:2" },
+        { type: "reasoning-delta", id: "assistant-1:reasoning:2", delta: "Second thought." },
+        { type: "reasoning-end", id: "assistant-1:reasoning:2" },
+        { type: "text-start", id: "assistant-1:text:2" },
+        { type: "text-delta", id: "assistant-1:text:2", delta: "Second answer." },
+        { type: "text-end", id: "assistant-1:text:2" },
+      ],
+      "each text and reasoning block must get a distinct chunk id so deltas do not merge",
+    );
+
+    assertEquals(
+      new Set(
+        chunks.filter((c) => c.type === "text-start").map((c) => (c as { id: string }).id),
+      ).size,
+      2,
+      "two text blocks must emit two distinct text-start ids",
+    );
   });
 
   it("preserves ordered text and tool parts from UI response messages", () => {
@@ -365,6 +435,74 @@ describe("chat/final-step-fallback", () => {
         },
         { type: "tool-output-available", toolCallId: "tool-1", output: { submitted: true } },
       ],
+    );
+
+    assertEquals(
+      buildMissingFallbackToolChunksFromParts([{
+        type: "dynamic-tool",
+        toolName: "form_input",
+        toolCallId: "tool-denied",
+        input: {},
+        state: "output-denied",
+      }]),
+      [
+        { type: "tool-input-start", toolCallId: "tool-denied", toolName: "form_input" },
+        {
+          type: "tool-input-available",
+          toolCallId: "tool-denied",
+          toolName: "form_input",
+          input: {},
+        },
+        { type: "tool-output-denied", toolCallId: "tool-denied" },
+      ],
+      "a denied tool part must terminate the replayed fallback stream",
+    );
+
+    assertEquals(
+      buildMissingFallbackToolChunksFromParts([{
+        type: "dynamic-tool",
+        toolName: "form_input",
+        toolCallId: "tool-error",
+        input: {},
+        state: "output-error",
+        errorText: "boom",
+      }]),
+      [
+        { type: "tool-input-start", toolCallId: "tool-error", toolName: "form_input" },
+        {
+          type: "tool-input-available",
+          toolCallId: "tool-error",
+          toolName: "form_input",
+          input: {},
+        },
+        { type: "tool-output-error", toolCallId: "tool-error", errorText: "boom" },
+      ],
+      "a failed tool part must terminate the replayed fallback stream with its error text",
+    );
+
+    assertEquals(
+      buildMissingFallbackToolChunksFromParts([{
+        type: "dynamic-tool",
+        toolName: "form_input",
+        toolCallId: "tool-error-default",
+        input: {},
+        state: "output-error",
+      }]),
+      [
+        { type: "tool-input-start", toolCallId: "tool-error-default", toolName: "form_input" },
+        {
+          type: "tool-input-available",
+          toolCallId: "tool-error-default",
+          toolName: "form_input",
+          input: {},
+        },
+        {
+          type: "tool-output-error",
+          toolCallId: "tool-error-default",
+          errorText: "Tool execution failed",
+        },
+      ],
+      "a failed tool part without errorText must fall back to the default error text",
     );
   });
 

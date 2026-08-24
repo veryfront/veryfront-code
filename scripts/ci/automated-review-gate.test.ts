@@ -1,13 +1,22 @@
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
 import {
-  findAutomatedReview,
+  findAutomatedReview as findAutomatedReviewDecision,
   publishAutomatedReviewStatus,
+  requestAutomatedReview,
 } from "./automated-review-gate.mjs";
 
 const HEAD_SHA = "a".repeat(40);
 const STALE_SHA = "b".repeat(40);
+const MALFORMED_CURRENT_RANGE =
+  "Reviewing files that changed from the base of the PR and between " +
+  `not-a-sha and ${HEAD_SHA}.`;
 const CODEX_BOT_ID = 199175422;
 const WORKFLOW_PATH = new URL(
   "../../.github/workflows/automated-review-gate.yml",
@@ -28,6 +37,14 @@ function review(
   };
 }
 
+function codeRabbitReviewRange(
+  baseSha = STALE_SHA,
+  headSha = HEAD_SHA,
+): string {
+  return "Reviewing files that changed from the base of the PR and between " +
+    `${baseSha} and ${headSha}.`;
+}
+
 function codeRabbitSummary(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
@@ -36,7 +53,7 @@ function codeRabbitSummary(
     body: [
       "<!-- recent_review_start -->",
       "No actionable comments were generated in the recent review.",
-      `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+      codeRabbitReviewRange(),
       "<!-- recent_review_end -->",
     ].join("\n"),
     html_url:
@@ -45,6 +62,40 @@ function codeRabbitSummary(
     updated_at: "2026-08-22T12:00:00Z",
     ...overrides,
   };
+}
+
+function codeRabbitRecentReviewSummary(
+  reviewContent: string[],
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return codeRabbitSummary({
+    body: [
+      "<!-- recent_review_start -->",
+      ...reviewContent,
+      "<!-- recent_review_end -->",
+    ].join("\n"),
+    ...overrides,
+  });
+}
+
+function olderCodeRabbitSuccess(): Record<string, unknown> {
+  return codeRabbitSummary({
+    created_at: "2026-08-22T12:01:00Z",
+    updated_at: "2026-08-22T12:01:00Z",
+  });
+}
+
+function findCodeRabbitComments(...comments: Record<string, unknown>[]) {
+  return findAutomatedReview({ reviews: [], comments }, HEAD_SHA);
+}
+
+async function assertCodeRabbitSummaryRejected(
+  ...reviewContent: string[]
+): Promise<void> {
+  assertEquals(
+    await findCodeRabbitComments(codeRabbitRecentReviewSummary(reviewContent)),
+    undefined,
+  );
 }
 
 function codexNoFindingComment(
@@ -75,7 +126,43 @@ function record(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+async function findAutomatedReview(
+  options: {
+    reviews: Array<Record<string, unknown>>;
+    comments: Array<Record<string, unknown>>;
+    resolveCommit?: (ref: string) => Promise<string | undefined>;
+  },
+  headSha: string,
+) {
+  const decision = await findAutomatedReviewDecision(options, headSha);
+  return decision.kind === "success" ? decision.review : undefined;
+}
+
 describe("automated review gate", () => {
+  it("keeps success, failure, and waiting decisions distinct", async () => {
+    assertEquals(
+      (await findAutomatedReviewDecision(
+        { reviews: [review()], comments: [] },
+        HEAD_SHA,
+      )).kind,
+      "success",
+    );
+    assertEquals(
+      (await findAutomatedReviewDecision(
+        { reviews: [review({ state: "CHANGES_REQUESTED" })], comments: [] },
+        HEAD_SHA,
+      )).kind,
+      "failure",
+    );
+    assertEquals(
+      (await findAutomatedReviewDecision(
+        { reviews: [], comments: [] },
+        HEAD_SHA,
+      )).kind,
+      "waiting",
+    );
+  });
+
   it("accepts submitted CodeRabbit and Codex reviews for the current head", async () => {
     assertEquals(
       (await findAutomatedReview(
@@ -100,6 +187,190 @@ describe("automated review gate", () => {
         HEAD_SHA,
       ))
         ?.source,
+      "summary",
+    );
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [
+            codeRabbitSummary({
+              body: [
+                "<!-- recent_review_start -->",
+                "No actionable comments were generated in the recent review.",
+                codeRabbitReviewRange(),
+                "<!-- recent_review_end -->",
+              ].join("\r"),
+            }),
+          ],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+  });
+
+  it("requires CodeRabbit's exact current base-change review sentence", async () => {
+    const currentSummary = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        codeRabbitReviewRange(),
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+    });
+
+    assertEquals(
+      (await findAutomatedReview(
+        { reviews: [], comments: [currentSummary] },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+    assertEquals(
+      await findAutomatedReview(
+        { reviews: [], comments: [currentSummary] },
+        STALE_SHA,
+      ),
+      undefined,
+    );
+
+    for (
+      const invalidRange of [
+        `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+        codeRabbitReviewRange() + " but this is not the final review.",
+        codeRabbitReviewRange().replace("Reviewing", "reviewing"),
+        codeRabbitReviewRange().replace("files that", "files  that"),
+        codeRabbitReviewRange().replace(HEAD_SHA, HEAD_SHA.toUpperCase()),
+      ]
+    ) {
+      const invalidSummary = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          invalidRange,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+      });
+      assertEquals(
+        await findAutomatedReview(
+          { reviews: [], comments: [invalidSummary] },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+  });
+
+  it("rejects an HTML-commented CodeRabbit no-actionable verdict", async () => {
+    await assertCodeRabbitSummaryRejected(
+      "<!--",
+      "No actionable comments were generated in the recent review.",
+      "-->",
+      codeRabbitReviewRange(),
+    );
+  });
+
+  it("rejects a fenced CodeRabbit no-actionable verdict", async () => {
+    await assertCodeRabbitSummaryRejected(
+      "```text",
+      "No actionable comments were generated in the recent review.",
+      "```",
+      codeRabbitReviewRange(),
+    );
+  });
+
+  it("rejects an inline-code CodeRabbit no-actionable verdict", async () => {
+    await assertCodeRabbitSummaryRejected(
+      "`inline code starts",
+      "No actionable comments were generated in the recent review.",
+      "inline code closes`",
+      codeRabbitReviewRange(),
+    );
+  });
+
+  it("rejects a structurally nested CodeRabbit no-actionable verdict", async () => {
+    await assertCodeRabbitSummaryRejected(
+      "",
+      "[",
+      "No actionable comments were generated in the recent review.",
+      "]: /target",
+      codeRabbitReviewRange(),
+    );
+    await assertCodeRabbitSummaryRejected(
+      "| verdict |",
+      "| --- |",
+      "No actionable comments were generated in the recent review.",
+      "",
+      codeRabbitReviewRange(),
+    );
+  });
+
+  it("requires CodeRabbit's exact no-actionable verdict line", async () => {
+    for (
+      const alteredVerdict of [
+        " No actionable comments were generated in the recent review.",
+        "No actionable comments were generated in the recent review. ",
+        "> No actionable comments were generated in the recent review.",
+        "No actionable comments were generated in the recent review. Example.",
+      ]
+    ) {
+      await assertCodeRabbitSummaryRejected(
+        alteredVerdict,
+        codeRabbitReviewRange(),
+      );
+    }
+  });
+
+  it("requires one unambiguous range in the selected recent review", async () => {
+    for (
+      const ranges of [
+        [codeRabbitReviewRange(), codeRabbitReviewRange(HEAD_SHA, STALE_SHA)],
+        [codeRabbitReviewRange(HEAD_SHA, STALE_SHA), codeRabbitReviewRange()],
+        [codeRabbitReviewRange(), codeRabbitReviewRange()],
+        [
+          codeRabbitReviewRange(),
+          codeRabbitReviewRange() + " but this is not the final review.",
+        ],
+        [
+          codeRabbitReviewRange(),
+          codeRabbitReviewRange().replace("Reviewing", "reviewing"),
+        ],
+      ]
+    ) {
+      const ambiguousSummary = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...ranges,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+      });
+
+      assertEquals(
+        await findAutomatedReview(
+          { reviews: [], comments: [ambiguousSummary] },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+
+    const scopedSummary = codeRabbitSummary({
+      body: [
+        codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        codeRabbitReviewRange(),
+        "<!-- recent_review_end -->",
+        codeRabbitReviewRange() + " but this is not the final review.",
+      ].join("\n"),
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        { reviews: [], comments: [scopedSummary] },
+        HEAD_SHA,
+      ))?.source,
       "summary",
     );
   });
@@ -233,7 +504,7 @@ describe("automated review gate", () => {
             body: [
               "<!-- recent_review_start -->",
               "No actionable comments were generated in the recent review.",
-              `Reviewing files between ${HEAD_SHA} and ${STALE_SHA}.`,
+              codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
               "<!-- recent_review_end -->",
             ].join("\n"),
           }),
@@ -311,7 +582,7 @@ describe("automated review gate", () => {
       body: [
         "<!-- recent_review_start -->",
         "No actionable comments were generated in the recent review.",
-        `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+        codeRabbitReviewRange(),
         "<!-- recent_review_end -->",
         `Review skipped for current commit ${HEAD_SHA}.`,
       ].join("\n"),
@@ -330,6 +601,4147 @@ describe("automated review gate", () => {
       ),
       undefined,
     );
+  });
+
+  it("ignores skip and request markers inside non-rendered Markdown", async () => {
+    for (
+      const [staleMarker, hiddenCurrentMarker] of [
+        [
+          `Review skipped for current commit ${STALE_SHA}.`,
+          [
+            "```text",
+            `Review skipped for current commit ${HEAD_SHA}.`,
+            "```",
+          ],
+        ],
+        [
+          `Requested commit: ${STALE_SHA}.`,
+          ["<!--", `Requested commit: ${HEAD_SHA}.`, "-->"],
+        ],
+        [
+          `Review skipped for current commit ${STALE_SHA}.`,
+          [`\`Requested commit: ${HEAD_SHA}.\``],
+        ],
+        [
+          `Requested commit: ${STALE_SHA}.`,
+          [`<span title="Review skipped for current commit ${HEAD_SHA}.">`],
+        ],
+        [
+          `Review skipped for current commit ${STALE_SHA}.`,
+          [`<? Requested commit: ${HEAD_SHA}. ?>`],
+        ],
+        [
+          `Requested commit: ${STALE_SHA}.`,
+          [`<!DECL Review skipped for current commit ${HEAD_SHA}.>`],
+        ],
+        [
+          `Review skipped for current commit ${STALE_SHA}.`,
+          [`<![CDATA[Requested commit: ${HEAD_SHA}.]]>`],
+        ],
+        [
+          `Review skipped for current commit ${STALE_SHA}.`,
+          ["Requested commit:", "", `    ${HEAD_SHA}.`],
+        ],
+        [
+          `Requested commit: ${STALE_SHA}.`,
+          ["Review skipped for current commit", "", `    ${HEAD_SHA}.`],
+        ],
+        [
+          `Review skipped for current commit ${STALE_SHA}.`,
+          ["", `[Requested commit: ${HEAD_SHA}]: https://example.com`],
+        ],
+        [
+          `Requested commit: ${STALE_SHA}.`,
+          [
+            "",
+            `[Review skipped for current commit ${HEAD_SHA}.]: /target`,
+          ],
+        ],
+        [
+          `Review skipped for current commit ${STALE_SHA}.`,
+          ["", `[marker]: /target \"Requested commit: ${HEAD_SHA}.\"`],
+        ],
+        [
+          `Requested commit: ${STALE_SHA}.`,
+          [
+            "",
+            `[marker]: /target \"Review skipped for current commit ${HEAD_SHA}.\"`,
+          ],
+        ],
+      ] as const
+    ) {
+      const newerSuccessfulSummary = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          codeRabbitReviewRange(),
+          "<!-- recent_review_end -->",
+          staleMarker,
+          ...hiddenCurrentMarker,
+        ].join("\n"),
+        created_at: "2026-08-22T12:05:00Z",
+        html_url:
+          "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-visible-review",
+        updated_at: "2026-08-22T12:05:00Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          { reviews: [], comments: [newerSuccessfulSummary] },
+          HEAD_SHA,
+        ))?.url,
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-visible-review",
+      );
+    }
+  });
+
+  it("keeps markers inside invalid reference definitions visible", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    for (
+      const marker of [
+        `Requested commit: ${HEAD_SHA}`,
+        `Review skipped for current commit ${HEAD_SHA}.`,
+      ]
+    ) {
+      const markerBeforeReviewEnd = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          "",
+          `[${marker}]:`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:05:00Z",
+        html_url:
+          "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-invalid-reference-before-end",
+        updated_at: "2026-08-22T12:05:00Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          { reviews: [], comments: [olderSuccess, markerBeforeReviewEnd] },
+          HEAD_SHA,
+        ),
+        undefined,
+        marker,
+      );
+    }
+
+    for (
+      const visibleDefinitionLookalike of [
+        ["", `[Requested commit: ${HEAD_SHA}]:`],
+        [
+          "paragraph",
+          `[Requested commit: ${HEAD_SHA}]: https://example.com`,
+        ],
+        [
+          "",
+          '[marker]: /target "title',
+          "",
+          `Requested commit: ${HEAD_SHA}.\"`,
+        ],
+        [
+          "",
+          "| marker |",
+          "| --- |",
+          `[Requested commit: ${HEAD_SHA}]: /target`,
+        ],
+      ]
+    ) {
+      const newerVisibleCurrentMarker = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          codeRabbitReviewRange(),
+          "<!-- recent_review_end -->",
+          ...visibleDefinitionLookalike,
+        ].join("\n"),
+        created_at: "2026-08-22T12:05:00Z",
+        updated_at: "2026-08-22T12:05:00Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          { reviews: [], comments: [olderSuccess, newerVisibleCurrentMarker] },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+  });
+
+  it("classifies malformed and wrapped current-head ranges fail closed", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    const encodedHeadSha = Array.from(
+      HEAD_SHA,
+      (character) => `&#${character.charCodeAt(0)};`,
+    ).join("");
+    const rangeWords = [
+      "Reviewing",
+      "files",
+      "that",
+      "changed",
+      "from",
+      "the",
+      "base",
+      "of",
+      "the",
+      "PR",
+      "and",
+      "between",
+      "not-a-sha",
+      "and",
+      `${HEAD_SHA}.`,
+    ];
+    const softWrappedIntroRanges = Array.from(
+      { length: 11 },
+      (_, index) =>
+        [
+          rangeWords.slice(0, index + 1).join(" "),
+          rangeWords.slice(index + 1).join(" "),
+        ].join("\n"),
+    );
+
+    for (
+      const malformedCurrentRange of [
+        "Review<strong>ing</strong> files that changed from the base of the " +
+        `PR and betw<em>ee</em>n not-a-sha and ${HEAD_SHA}.`,
+        "Review<strong>ing</strong> files that changed from the base\n" +
+        `of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base\\\n" +
+        `of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "Rev<!-- hidden -->iewing files that changed from the base\n" +
+        `of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "> Review<strong>ing</strong> files that changed from the base\n" +
+        `> of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "> Review<strong>ing</strong> files that changed from the base\n" +
+        `of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "| review |\n| --- |\n" +
+        "| Review<strong>ing</strong> files that changed from the base |\n" +
+        `| of the PR and betw<em>ee</em>n not-a-sha and ${HEAD_SHA}. |`,
+        "Rev**iew**ing files that changed from the base of the PR and " +
+        `betw[ee](https://example.com)n not-a-sha and ${HEAD_SHA}.`,
+        "Rev**iew**ing files that changed from the base of the PR and " +
+        "betw[ee](https://example.com)n not-a-sha\n" +
+        `and ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
+        `not-a-sha [and](https://example.com \"\nhidden title\n\") ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
+        `not-a-sha [x](https://example.com \"\nhidden title\n\") and ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and " +
+        `betw&#101;en not-a-sha and ${HEAD_SHA}.`,
+        "&#82;eviewing files that changed from the base of the PR and " +
+        `between not-a-sha and ${HEAD_SHA}.`,
+        "&#0000082;eviewing files that changed from the base of the PR and " +
+        `between not-a-sha and ${HEAD_SHA}.`,
+        "&#x000052;eviewing files that changed from the base of the PR and " +
+        `between not-a-sha and ${HEAD_SHA}.`,
+        "Review&#105;ng files that changed from the base of the PR and " +
+        `between not-a-sha and ${HEAD_SHA}.`,
+        "Reviewing&#32;files that changed from the base of the PR and " +
+        `between not-a-sha and ${HEAD_SHA}.`,
+        "Reviewing&nbsp;files that changed from the base of the PR and " +
+        `between not-a-sha and ${HEAD_SHA}.`,
+        "Reviewing&#160;files that changed from the base of the PR and " +
+        `between not-a-sha and ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and " +
+        `betw&ZeroWidthSpace;een not-a-sha and ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and " +
+        `betw&#8203;een not-a-sha and ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and " +
+        `between not-a-sha a&#x6e;d ${encodedHeadSha}.`,
+        ...softWrappedIntroRanges,
+        "> Reviewing files that changed from the base\n" +
+        `> of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "> Reviewing files that changed from the base\n" +
+        `of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "> > Reviewing files that changed from the base\n" +
+        `> of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "> > Reviewing files that changed from the base\n" +
+        `of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "> Reviewing files that changed from the base of the PR and between " +
+        `${STALE_SHA} and\n${HEAD_SHA}.`,
+        "- Reviewing files that changed from the base\n" +
+        `  of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "`Reviewing files that changed from the base of the PR and between " +
+        `not-a-sha and ${HEAD_SHA}.`,
+        "`Reviewing files that changed from the base of the PR and between " +
+        `not-a-sha\nand ${HEAD_SHA}.`,
+        "`Reviewing files that changed from the base of the PR and between " +
+        `${STALE_SHA}\nand ${HEAD_SHA}.`,
+        `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+        `Reviewing files that changed from the base of the PR and between ${
+          STALE_SHA.slice(0, 12)
+        } and ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
+        `not-a-sha and ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
+        `not a sha and ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
+        `not-a-sha\nand ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
+        `not-a-sha\rand ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
+        `not-a-sha and\r${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between\n" +
+        `${STALE_SHA}\nand ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between\n" +
+        `${STALE_SHA}\nand\n${HEAD_SHA}.`,
+        "> Reviewing files that changed from the base of the PR and between " +
+        `${STALE_SHA} and\n> ${HEAD_SHA}.`,
+        "> Reviewing files that changed from the base of the PR and between " +
+        `${STALE_SHA}\n> and ${HEAD_SHA}.`,
+        "> Reviewing files that changed from the base of the PR and between\n" +
+        `> ${STALE_SHA}\n> and\n> ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between\n" +
+        `${STALE_SHA}\nmalformed continuation\nanother continuation\nand\n` +
+        `${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
+        `and ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
+        `\nand ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
+        `${"not and ".repeat(1_000)}base and ${HEAD_SHA}.`,
+        codeRabbitReviewRange() + " but this is not the final review.",
+        codeRabbitReviewRange() + ` Later requested ${STALE_SHA}.`,
+        codeRabbitReviewRange().replace("Reviewing", "reviewing"),
+        codeRabbitReviewRange().replace("files that", "files  that"),
+        codeRabbitReviewRange().replace(HEAD_SHA, HEAD_SHA.toUpperCase()),
+      ]
+    ) {
+      const newerMalformedCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          malformedCurrentRange,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:02:00Z",
+        updated_at: "2026-08-22T12:02:00Z",
+      });
+
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerMalformedCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+        `Expected the current-head range to fail closed: ${malformedCurrentRange}`,
+      );
+    }
+
+    const newerUnrelatedReviewingText = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        `Reviewing bananas and ${HEAD_SHA}.`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:00Z",
+      updated_at: "2026-08-22T12:02:00Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerUnrelatedReviewingText],
+        },
+        HEAD_SHA,
+      ))?.url,
+      olderSuccess.html_url,
+    );
+
+    for (
+      const nonRangeEncodedReviewingText of [
+        `x&#82;eviewing files between not-a-sha and ${HEAD_SHA}.`,
+        `x<strong>Reviewing</strong> files between not-a-sha and ${HEAD_SHA}.`,
+        `&#120;<strong>Reviewing</strong> files between not-a-sha and ${HEAD_SHA}.`,
+        `&#00000082;eviewing files between not-a-sha and ${HEAD_SHA}.`,
+        "`&#82;eviewing files that changed from the base of the PR and " +
+        `between not-a-sha and ${HEAD_SHA}.\``,
+      ]
+    ) {
+      const newerNonRangeEncodedReviewingText = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          nonRangeEncodedReviewingText,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:02:00Z",
+        updated_at: "2026-08-22T12:02:00Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerNonRangeEncodedReviewingText],
+          },
+          HEAD_SHA,
+        ))?.url,
+        olderSuccess.html_url,
+        nonRangeEncodedReviewingText,
+      );
+    }
+
+    const newerBareCarriageReturnCurrentRange = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "Reviewing files that changed from the base of the PR and between " +
+        `not-a-sha and ${HEAD_SHA}.`,
+        "<!-- recent_review_end -->",
+      ].join("\r"),
+      created_at: "2026-08-22T12:02:00Z",
+      updated_at: "2026-08-22T12:02:00Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerBareCarriageReturnCurrentRange],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+
+    const newerBareCarriageReturnStaleRange = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
+        "<!-- recent_review_end -->",
+      ].join("\r"),
+      created_at: "2026-08-22T12:02:00Z",
+      updated_at: "2026-08-22T12:02:00Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerBareCarriageReturnStaleRange],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+
+    for (
+      const wrappedListCurrentRange of [
+        "- Reviewing files that changed from the base of the PR and between not-a-sha and\n" +
+        `  ${HEAD_SHA}.`,
+        "1. Reviewing files that changed from the base of the PR and between not-a-sha and\n" +
+        `   ${HEAD_SHA}.`,
+        "- [ ] Reviewing files that changed from the base of the PR and between not-a-sha and\n" +
+        `      ${HEAD_SHA}.`,
+        "> - Reviewing files that changed from the base of the PR and between not-a-sha and\n" +
+        `>   ${HEAD_SHA}.`,
+        "- 1. Reviewing files that changed from the base of the PR and between not-a-sha and\n" +
+        `     ${HEAD_SHA}.`,
+        "- Reviewing files that changed from the base of the PR and between not-a-sha and\n" +
+        `- ${HEAD_SHA}.`,
+      ]
+    ) {
+      const newerWrappedListCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          wrappedListCurrentRange,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:02:00Z",
+        updated_at: "2026-08-22T12:02:00Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerWrappedListCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+        wrappedListCurrentRange,
+      );
+    }
+
+    for (const prefix of ["> ", "1. ", "- [x] ", "> 1. - [ ] "]) {
+      for (
+        const compatibleCurrentRange of [
+          `${prefix}Reviewing files that changed from the base of the PR and between ` +
+          `${STALE_SHA} and\n${prefix}${HEAD_SHA}.`,
+          `${prefix}Reviewing files that changed from the base of the PR and between ` +
+          `${STALE_SHA}\n${prefix}and ${HEAD_SHA}.`,
+        ]
+      ) {
+        const newerCompatibleCurrentRange = codeRabbitSummary({
+          body: [
+            "<!-- recent_review_start -->",
+            "No actionable comments were generated in the recent review.",
+            compatibleCurrentRange,
+            "<!-- recent_review_end -->",
+          ].join("\n"),
+          created_at: "2026-08-22T12:02:00Z",
+          updated_at: "2026-08-22T12:02:00Z",
+        });
+        assertEquals(
+          await findAutomatedReview(
+            {
+              reviews: [],
+              comments: [olderSuccess, newerCompatibleCurrentRange],
+            },
+            HEAD_SHA,
+          ),
+          undefined,
+        );
+      }
+
+      const newerCompatibleStaleRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          `${prefix}Reviewing files that changed from the base of the PR and between ` +
+          `${HEAD_SHA} and\n${prefix}${STALE_SHA}.`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:02:00Z",
+        updated_at: "2026-08-22T12:02:00Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerCompatibleStaleRange],
+          },
+          HEAD_SHA,
+        ))?.source,
+        "summary",
+      );
+    }
+
+    for (
+      const separatedCurrentRange of [
+        "Reviewing files that changed from the base of the PR and between " +
+        `${STALE_SHA} and\n> ${HEAD_SHA}.`,
+        "1. Reviewing files that changed from the base of the PR and between " +
+        `${STALE_SHA}\n> and ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
+        `not-a-sha\n<!-- evidence boundary -->\nand ${HEAD_SHA}.`,
+        "- Reviewing files that changed from the base of the PR and between " +
+        `not-a-sha and\n\n      ${HEAD_SHA}.`,
+        "> Reviewing files that changed from the base\n\n" +
+        `of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "> Reviewing files that changed from the base\n- " +
+        `of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "> Reviewing files that changed from the base\n---\n" +
+        `of the PR and between not-a-sha and ${HEAD_SHA}.`,
+      ]
+    ) {
+      const newerSeparatedCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          separatedCurrentRange,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:02:00Z",
+        updated_at: "2026-08-22T12:02:00Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerSeparatedCurrentRange],
+          },
+          HEAD_SHA,
+        ))?.source,
+        "summary",
+      );
+    }
+
+    const newerMalformedStaleRange = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        [
+          codeRabbitReviewRange(HEAD_SHA, STALE_SHA) +
+          ` but this is not the final review. Later requested ${STALE_SHA}.`,
+          "Reviewing files that changed from the base of the PR and between " +
+          `not-a-sha and ${STALE_SHA}.`,
+          "Reviewing files that changed from the base of the PR and between " +
+          `not a sha and ${STALE_SHA}.`,
+          "Reviewing files that changed from the base of the PR and between " +
+          `not-a-sha\nand ${STALE_SHA}.`,
+          "Reviewing files that changed from the base of the PR and between\n" +
+          `${HEAD_SHA}\nand ${STALE_SHA}.`,
+          "Reviewing files that changed from the base of the PR and between\n" +
+          `${HEAD_SHA}\nand\n${STALE_SHA}.`,
+          "> Reviewing files that changed from the base of the PR and between " +
+          `${HEAD_SHA} and\n> ${STALE_SHA}.`,
+          "> Reviewing files that changed from the base of the PR and between " +
+          `${HEAD_SHA}\n> and ${STALE_SHA}.`,
+          "> Reviewing files that changed from the base of the PR and between\n" +
+          `> ${HEAD_SHA}\n> and\n> ${STALE_SHA}.`,
+          "Reviewing files that changed from the base of the PR and between\n" +
+          `${HEAD_SHA}\nmalformed continuation\nanother continuation\nand\n` +
+          `${STALE_SHA}.`,
+          "Reviewing files that changed from the base of the PR and between " +
+          `and ${STALE_SHA}.`,
+        ].join("\n"),
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:00Z",
+      updated_at: "2026-08-22T12:03:00Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerMalformedStaleRange],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+  });
+
+  it("keeps unmatched inline Markdown punctuation visible", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    const newerSummary = (range: string) =>
+      codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          range,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:05:00Z",
+        updated_at: "2026-08-22T12:05:00Z",
+      });
+
+    for (
+      const literalPunctuationRange of [
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review*ing"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review_ing"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review~ing"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review~~~ing~~~"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review***ing**"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review**ing***"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review[ing"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review]ing"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review`ing"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review_ing_"),
+        MALFORMED_CURRENT_RANGE.replace("base", "ba*se"),
+        MALFORMED_CURRENT_RANGE.replace("between", "betwe*en"),
+        MALFORMED_CURRENT_RANGE.replace(
+          " and " + HEAD_SHA,
+          " a*nd " + HEAD_SHA,
+        ),
+        MALFORMED_CURRENT_RANGE.replace(
+          HEAD_SHA,
+          HEAD_SHA.slice(0, 20) + "*" + HEAD_SHA.slice(20),
+        ),
+        "Review*ing files that changed from the base of the PR and between " +
+        `not-a-sha\nand ${HEAD_SHA}.`,
+      ]
+    ) {
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerSummary(literalPunctuationRange)],
+          },
+          HEAD_SHA,
+        ))?.url,
+        olderSuccess.html_url,
+      );
+    }
+
+    for (
+      const decoratedCurrentRange of [
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "**Reviewing**"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review*ing*"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "_Reviewing_"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review~ing~"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review~~ing~~"),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review***ing***"),
+        "Review*ing files that changed from the base of the PR and between " +
+        `not-a-sha\nand ${HEAD_SHA}.*`,
+        MALFORMED_CURRENT_RANGE.replace(
+          "Reviewing",
+          "[Reviewing](https://example.com)",
+        ),
+        MALFORMED_CURRENT_RANGE.replace(
+          "Reviewing",
+          "Review[ing](https://example.com)",
+        ),
+        MALFORMED_CURRENT_RANGE.replace("Reviewing", "`Reviewing`"),
+      ]
+    ) {
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerSummary(decoratedCurrentRange)],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+  });
+
+  it("preserves rendered HTML breaks while normalizing review ranges", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    const newerSummary = (range: string) =>
+      codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          range,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:05:00Z",
+        updated_at: "2026-08-22T12:05:00Z",
+      });
+
+    for (
+      const renderedBreak of [
+        "<br>",
+        "<BR>",
+        "<br/>",
+        "<br />",
+        '<br class="markdown-break">',
+        "</br>",
+        "<hr>",
+      ]
+    ) {
+      const brokenCurrentRange = MALFORMED_CURRENT_RANGE.replace(
+        "base of",
+        `base${renderedBreak}of`,
+      );
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerSummary(brokenCurrentRange)],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+        renderedBreak,
+      );
+    }
+
+    assertEquals(
+      (
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [
+              olderSuccess,
+              newerSummary(
+                MALFORMED_CURRENT_RANGE.replace(
+                  "Reviewing",
+                  "Review<br>ing",
+                ),
+              ),
+            ],
+          },
+          HEAD_SHA,
+        )
+      )?.url,
+      olderSuccess.html_url,
+    );
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [
+            olderSuccess,
+            newerSummary(
+              MALFORMED_CURRENT_RANGE.replace(
+                "Reviewing",
+                "<strong>Reviewing</strong>",
+              ),
+            ),
+          ],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+
+    for (
+      const zeroWidthHtml of [
+        "</hr>",
+        "<wbr>",
+        "\\<br>",
+        "`<br>`",
+      ]
+    ) {
+      const visibleMalformedRange = MALFORMED_CURRENT_RANGE.replace(
+        "base of",
+        `base${zeroWidthHtml}of`,
+      );
+      assertEquals(
+        (
+          await findAutomatedReview(
+            {
+              reviews: [],
+              comments: [olderSuccess, newerSummary(visibleMalformedRange)],
+            },
+            HEAD_SHA,
+          )
+        )?.url,
+        olderSuccess.html_url,
+        zeroWidthHtml,
+      );
+    }
+  });
+
+  it("rejects unterminated and Markdown-prefixed current-head ranges", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    const escapedVisibleMalformedBodies = ["\\", "\\\\", "\\\\\\"].map(
+      (slashes) =>
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          slashes + "`" + MALFORMED_CURRENT_RANGE,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+    );
+    const decoratedVisibleMalformedBodies = [
+      ["**", "**"],
+      ["_", "_"],
+      ["~~", "~~"],
+      ["[", "](https://example.com)"],
+      ["<strong>", "</strong>"],
+      ['<span title="x > y">', "</span>"],
+      ["ordinary <!--hidden-->", ""],
+      ["ordinary <?pi?>", ""],
+      ["ordinary <!DECL>", ""],
+      ["ordinary <![CDATA[x]]>", ""],
+    ].map(([prefix, suffix]) =>
+      [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        prefix + MALFORMED_CURRENT_RANGE + suffix,
+        "<!-- recent_review_end -->",
+      ].join("\n")
+    );
+
+    for (
+      const unterminatedCurrentRange of [
+        codeRabbitReviewRange(),
+        `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+      ]
+    ) {
+      const newerUnterminatedCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          unterminatedCurrentRange,
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:30Z",
+        updated_at: "2026-08-22T12:03:30Z",
+      });
+
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerUnterminatedCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+
+    for (
+      const newerMalformedBody of [
+        ...escapedVisibleMalformedBodies,
+        ...decoratedVisibleMalformedBodies,
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          `<strong>${codeRabbitReviewRange()}</strong>`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          `<span title="${MALFORMED_CURRENT_RANGE}">${MALFORMED_CURRENT_RANGE}</span>`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          `- [ ] ${codeRabbitReviewRange()}`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          `## ${codeRabbitReviewRange()}`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          `${"- [ ] ".repeat(1_000)}${codeRabbitReviewRange()}`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          `${"###### ".repeat(1_000)}${codeRabbitReviewRange()}`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          `- ${codeRabbitReviewRange()}`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          `    ${codeRabbitReviewRange()}`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          `> ${codeRabbitReviewRange()}`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          `1. ${codeRabbitReviewRange()}`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          `> 1. ${codeRabbitReviewRange()}`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          `${"> ".repeat(2_000)}${codeRabbitReviewRange()}`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          "Reviewing changed files from the base of the PR and between " +
+          `${STALE_SHA} and ${HEAD_SHA}.`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          "Reviewing files that changed from the base of the PR and between " +
+          `${STALE_SHA} and`,
+          `${HEAD_SHA}.`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          "Reviewing files that changed from the base of the PR and between " +
+          `${STALE_SHA} and ${STALE_SHA}. Later requested ${HEAD_SHA}.`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          "Reviewing changed files from the base of the PR and between " +
+          `${STALE_SHA} and ${STALE_SHA}. Later requested ${HEAD_SHA}.`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          codeRabbitReviewRange(),
+          "<!-- recent_review_end -->",
+          "<!-- recent_review_start -->",
+        ].join("\n"),
+      ]
+    ) {
+      const newerMalformedCurrentRange = codeRabbitSummary({
+        body: newerMalformedBody,
+        created_at: "2026-08-22T12:03:40Z",
+        updated_at: "2026-08-22T12:03:40Z",
+      });
+
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerMalformedCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+        newerMalformedBody,
+      );
+    }
+    const newerExactCurrentWithMalformedBaseDuplicates = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        codeRabbitReviewRange(),
+        "Reviewing files that changed from the base of the PR and between " +
+        `and ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
+        `not a sha and ${HEAD_SHA}.`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [
+            olderSuccess,
+            newerExactCurrentWithMalformedBaseDuplicates,
+          ],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+  });
+
+  it("scopes range evidence outside inline code and fenced blocks", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+
+    const newerFencedCurrentRangeExample = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "```",
+        codeRabbitReviewRange(),
+        "```",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:42Z",
+      updated_at: "2026-08-22T12:03:42Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [newerFencedCurrentRangeExample],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerFencedCurrentRangeExample],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+
+    const newerInlineCodeCurrentRangeExample = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "`multiline inline code starts",
+        codeRabbitReviewRange(),
+        "multiline inline code closes`",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:42Z",
+      updated_at: "2026-08-22T12:03:42Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerInlineCodeCurrentRangeExample],
+        },
+        HEAD_SHA,
+      ))?.url,
+      "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+    );
+
+    for (
+      const partiallyCodeStyledRange of [
+        `Re\`view\`ing files that changed from the base of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        `\`Re\`viewing files that changed from the base of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        `\`Review\`ing files that changed from the base of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        `\`Reviewing\` files that changed from the base of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
+        `not-a-sha \`and ${HEAD_SHA}.\``,
+      ]
+    ) {
+      const newerPartiallyCodeStyledCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          partiallyCodeStyledRange,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:42Z",
+        updated_at: "2026-08-22T12:03:42Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerPartiallyCodeStyledCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+
+    const newerEscapedInlineCodeCurrentRangeExample = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "\\\\" + "`" + MALFORMED_CURRENT_RANGE + "`",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:42Z",
+      updated_at: "2026-08-22T12:03:42Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [
+            olderSuccess,
+            newerEscapedInlineCodeCurrentRangeExample,
+          ],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+
+    for (
+      const paragraphBoundary of [
+        "> quoted block",
+        "- list item",
+        "--",
+        "---",
+        "===",
+        "# heading",
+        "<?processing instruction?>",
+        "<!DECLARATION>",
+      ]
+    ) {
+      const newerVisibleRangeAfterParagraphBoundary = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          "`inline code starts",
+          paragraphBoundary,
+          MALFORMED_CURRENT_RANGE,
+          "inline code closes`",
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:42Z",
+        updated_at: "2026-08-22T12:03:42Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerVisibleRangeAfterParagraphBoundary],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+
+    for (
+      const escapedContainerFence of [
+        ["> ```text", MALFORMED_CURRENT_RANGE, "```"],
+        [">     ```text", `> ${MALFORMED_CURRENT_RANGE}`, "> ```"],
+        ["- ```text", MALFORMED_CURRENT_RANGE, "```"],
+        ["   - ```text", `  ${MALFORMED_CURRENT_RANGE}`, "  ```"],
+        ["> - ```text", `>  ${MALFORMED_CURRENT_RANGE}`, ">  ```"],
+      ]
+    ) {
+      const newerCurrentRangeOutsideFenceContainer = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...escapedContainerFence,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerCurrentRangeOutsideFenceContainer],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+
+    for (
+      const containedFence of [
+        ["> ```text", `> ${MALFORMED_CURRENT_RANGE}`, "> ```"],
+        [">    ```text", `> ${MALFORMED_CURRENT_RANGE}`, "> ```"],
+        ["- ```text", `  ${MALFORMED_CURRENT_RANGE}`, "  ```"],
+        ["   - ```text", `     ${MALFORMED_CURRENT_RANGE}`, "     ```"],
+        ["- [ ] ```text", `      ${MALFORMED_CURRENT_RANGE}`, "      ```"],
+        ["> - ```text", `>   ${MALFORMED_CURRENT_RANGE}`, ">   ```"],
+      ]
+    ) {
+      const newerCurrentRangeInsideFenceContainer = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...containedFence,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerCurrentRangeInsideFenceContainer],
+          },
+          HEAD_SHA,
+        ))?.source,
+        "summary",
+      );
+    }
+
+    for (
+      const fenceWithMarkdownLookingCode of [
+        [
+          "- ```md",
+          "  # example",
+          `  ${MALFORMED_CURRENT_RANGE}`,
+          "  ```",
+        ],
+        [
+          "> ```md",
+          "> - example",
+          `> ${MALFORMED_CURRENT_RANGE}`,
+          "> ```",
+        ],
+        [
+          "> - ```md",
+          ">   # example",
+          `>   ${MALFORMED_CURRENT_RANGE}`,
+          ">   ```",
+        ],
+        [
+          "- ```md",
+          "  - ```",
+          `  ${MALFORMED_CURRENT_RANGE}`,
+          "  ```",
+        ],
+        [
+          "- ```md",
+          "",
+          `  ${MALFORMED_CURRENT_RANGE}`,
+          "  ```",
+        ],
+        [
+          "> - ```md",
+          ">",
+          `>   ${MALFORMED_CURRENT_RANGE}`,
+          ">   ```",
+        ],
+      ]
+    ) {
+      const newerMarkdownLookingCodeInsideFence = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...fenceWithMarkdownLookingCode,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerMarkdownLookingCodeInsideFence],
+          },
+          HEAD_SHA,
+        ))?.source,
+        "summary",
+      );
+    }
+
+    for (
+      const closedContainerFence of [
+        ["- ```text", "  example", "  ```", MALFORMED_CURRENT_RANGE],
+        [
+          "> - ```text",
+          ">   example",
+          ">   ```",
+          MALFORMED_CURRENT_RANGE,
+        ],
+      ]
+    ) {
+      const newerCurrentRangeAfterClosedFence = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...closedContainerFence,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerCurrentRangeAfterClosedFence],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+
+    for (
+      const tabSensitiveFence of [
+        ["- ```text", "\t```", MALFORMED_CURRENT_RANGE],
+        ["\t```text", MALFORMED_CURRENT_RANGE],
+      ]
+    ) {
+      const newerVisibleCurrentRangeAroundTabFence = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...tabSensitiveFence,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerVisibleCurrentRangeAroundTabFence],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+
+    for (
+      const nonStructuralMarkerExample of [
+        [
+          "```md",
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
+          "<!-- recent_review_end -->",
+          "```",
+        ],
+        [
+          "`<!-- recent_review_start -->`",
+          "No actionable comments were generated in the recent review.",
+          codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
+          "`<!-- recent_review_end -->`",
+        ],
+        [
+          "    <!-- recent_review_start -->",
+          "    No actionable comments were generated in the recent review.",
+          `    ${codeRabbitReviewRange(HEAD_SHA, STALE_SHA)}`,
+          "    <!-- recent_review_end -->",
+        ],
+      ]
+    ) {
+      const newerLiveCurrentRangeBeforeMarkerExample = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          MALFORMED_CURRENT_RANGE,
+          "<!-- recent_review_end -->",
+          ...nonStructuralMarkerExample,
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerLiveCurrentRangeBeforeMarkerExample],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+
+    const newerCurrentRangeInsideThreeSpaceFence = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "   ```text",
+        MALFORMED_CURRENT_RANGE,
+        "   ```",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerCurrentRangeInsideThreeSpaceFence],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+  });
+
+  it("excludes indented code from range evidence", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    for (
+      const { beforeRange, visibleIndent, hiddenIndent } of [
+        { beforeRange: [""], hiddenIndent: "    " },
+        {
+          beforeRange: ["- list item", ""],
+          hiddenIndent: " ".repeat(6),
+          visibleIndent: " ".repeat(5),
+        },
+        {
+          beforeRange: ["", "9. list item", ""],
+          hiddenIndent: " ".repeat(7),
+          visibleIndent: " ".repeat(6),
+        },
+        {
+          beforeRange: ["", "123. list item", ""],
+          hiddenIndent: " ".repeat(9),
+          visibleIndent: " ".repeat(8),
+        },
+        {
+          beforeRange: ["", "123456789. list item", ""],
+          hiddenIndent: " ".repeat(15),
+          visibleIndent: " ".repeat(14),
+        },
+        {
+          beforeRange: ["- outer", "  - inner", ""],
+          hiddenIndent: " ".repeat(8),
+          visibleIndent: " ".repeat(7),
+        },
+        {
+          beforeRange: ["> - list item", ">"],
+          hiddenIndent: `>${" ".repeat(7)}`,
+          visibleIndent: `>${" ".repeat(6)}`,
+        },
+        {
+          beforeRange: ["- list item", "", "outside paragraph", ""],
+          hiddenIndent: "    ",
+        },
+        {
+          beforeRange: ["ordinary paragraph", "123. not a list", ""],
+          hiddenIndent: "    ",
+        },
+      ]
+    ) {
+      if (visibleIndent !== undefined) {
+        const newerVisibleListContinuation = codeRabbitSummary({
+          body: [
+            "<!-- recent_review_start -->",
+            "No actionable comments were generated in the recent review.",
+            ...beforeRange,
+            `${visibleIndent}${MALFORMED_CURRENT_RANGE}`,
+            "<!-- recent_review_end -->",
+          ].join("\n"),
+          created_at: "2026-08-22T12:03:44Z",
+          updated_at: "2026-08-22T12:03:44Z",
+        });
+        assertEquals(
+          await findAutomatedReview(
+            {
+              reviews: [],
+              comments: [olderSuccess, newerVisibleListContinuation],
+            },
+            HEAD_SHA,
+          ),
+          undefined,
+          JSON.stringify({ beforeRange, visibleIndent }),
+        );
+      }
+
+      const newerIndentedCode = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...beforeRange,
+          `${hiddenIndent}${MALFORMED_CURRENT_RANGE}`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:45Z",
+        updated_at: "2026-08-22T12:03:45Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerIndentedCode],
+          },
+          HEAD_SHA,
+        ))?.url,
+        olderSuccess.html_url,
+        JSON.stringify({ beforeRange, hiddenIndent }),
+      );
+    }
+  });
+
+  it("scopes HTML comments and validates fence openers", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+
+    const newerHtmlCommentedCurrentRange = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "<!--",
+        codeRabbitReviewRange(),
+        "-->",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      html_url:
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-hidden",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        { reviews: [], comments: [newerHtmlCommentedCurrentRange] },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerHtmlCommentedCurrentRange],
+        },
+        HEAD_SHA,
+      ))?.url,
+      "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+    );
+
+    const newerVisibleRangeAfterBlockquotedComment = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "> <!--",
+        MALFORMED_CURRENT_RANGE,
+        "-->",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerVisibleRangeAfterBlockquotedComment],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+
+    const newerBlockquotedCommentedCurrentRange = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "> <!--",
+        `> ${codeRabbitReviewRange()}`,
+        "> -->",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerBlockquotedCommentedCurrentRange],
+        },
+        HEAD_SHA,
+      ))?.url,
+      "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+    );
+
+    const newerTabbedBlockquotedCommentedCurrentRange = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        ">\t<!--",
+        `> ${codeRabbitReviewRange()}`,
+        "> -->",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [
+            olderSuccess,
+            newerTabbedBlockquotedCommentedCurrentRange,
+          ],
+        },
+        HEAD_SHA,
+      ))?.url,
+      "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+    );
+
+    const newerVisibleRangeAfterCommentedFence = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "<!--",
+        "```text",
+        "-->",
+        MALFORMED_CURRENT_RANGE,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerVisibleRangeAfterCommentedFence],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+
+    const newerVisibleRangeAfterTaskCheckboxText = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "- [ ] ~~~text",
+        `      ${MALFORMED_CURRENT_RANGE}`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerVisibleRangeAfterTaskCheckboxText],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+
+    const newerRangeInsideInlineHtmlAttribute = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        `<span title="${MALFORMED_CURRENT_RANGE}">ordinary text</span>`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerRangeInsideInlineHtmlAttribute],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+
+    const newerRangeInsideCommentAfterEscapedTag = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        '\\<span title="<!--">',
+        MALFORMED_CURRENT_RANGE,
+        "-->",
+        "</span>",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerRangeInsideCommentAfterEscapedTag],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+
+    for (
+      const visibleRangeAfterCommentLookalike of [
+        ["\\<!--", MALFORMED_CURRENT_RANGE, "-->"],
+        [
+          '<span title="<!--">',
+          MALFORMED_CURRENT_RANGE,
+          "-->",
+          "</span>",
+        ],
+        [
+          '\\<span title="\\<!--">',
+          MALFORMED_CURRENT_RANGE,
+          "-->",
+          "</span>",
+        ],
+        ["", "    <!--", MALFORMED_CURRENT_RANGE, "-->"],
+        ["", "    example <!--", MALFORMED_CURRENT_RANGE, "-->"],
+        ["", "\t<!--", MALFORMED_CURRENT_RANGE, "-->"],
+        [">     <!--", `> ${MALFORMED_CURRENT_RANGE}`, "> -->"],
+        [">     example <!--", `> ${MALFORMED_CURRENT_RANGE}`, "> -->"],
+        ["`<!--`", MALFORMED_CURRENT_RANGE, "-->"],
+        ["``<!--``", MALFORMED_CURRENT_RANGE, "-->"],
+        ["inline code ```<!--```", MALFORMED_CURRENT_RANGE, "-->"],
+        [
+          "`multiline inline code starts",
+          "text <!--",
+          "multiline inline code closes`",
+          MALFORMED_CURRENT_RANGE,
+          "-->",
+        ],
+        ["```", "<!--", "```", MALFORMED_CURRENT_RANGE, "-->"],
+      ]
+    ) {
+      const newerVisibleCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...visibleRangeAfterCommentLookalike,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerVisibleCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+
+    for (const activeCommentAfterLiteralBacktick of ["`<!--", "\\`<!--`"]) {
+      const newerHiddenCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          activeCommentAfterLiteralBacktick,
+          MALFORMED_CURRENT_RANGE,
+          "-->",
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerHiddenCurrentRange],
+          },
+          HEAD_SHA,
+        ))?.url,
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+      );
+    }
+
+    const newerInvalidBacktickFence = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "```js`oops",
+        MALFORMED_CURRENT_RANGE,
+        "```",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerInvalidBacktickFence],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+
+    const newerValidTildeFenceWithBacktickInfo = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "~~~js`allowed",
+        MALFORMED_CURRENT_RANGE,
+        "~~~",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerValidTildeFenceWithBacktickInfo],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+  });
+
+  it("preserves paragraph context before classifying indented code", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+
+    for (
+      const paragraphContinuation of [
+        ["    <!--", MALFORMED_CURRENT_RANGE, "-->"],
+        ["    example <!--", MALFORMED_CURRENT_RANGE, "-->"],
+        ["\t<!--", MALFORMED_CURRENT_RANGE, "-->"],
+        [
+          "> paragraph text",
+          ">     <!--",
+          `> ${MALFORMED_CURRENT_RANGE}`,
+          "> -->",
+        ],
+        [
+          "> ordinary text <!--",
+          `> ${MALFORMED_CURRENT_RANGE}`,
+          "> -->",
+        ],
+        [
+          "- paragraph text",
+          "      <!--",
+          `  ${MALFORMED_CURRENT_RANGE}`,
+          "  -->",
+        ],
+      ]
+    ) {
+      const newerHiddenCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...paragraphContinuation,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerHiddenCurrentRange],
+          },
+          HEAD_SHA,
+        ))?.url,
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+      );
+    }
+  });
+
+  it("does not let incomplete inline comments cross Markdown blocks", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+
+    for (
+      const visibleRangeAfterIncompleteInlineComment of [
+        ["ordinary text <!--", MALFORMED_CURRENT_RANGE],
+        ["ordinary text <!--", "", MALFORMED_CURRENT_RANGE, "-->"],
+        ["ordinary text <!--", "# next block", MALFORMED_CURRENT_RANGE, "-->"],
+        [
+          "ordinary text <!--",
+          "<!doctype html>",
+          MALFORMED_CURRENT_RANGE,
+          "-->",
+        ],
+        ["ordinary text <!--", "<!xml>", MALFORMED_CURRENT_RANGE, "-->"],
+        ["ordinary text <!--", MALFORMED_CURRENT_RANGE, "--->"],
+        [
+          "ordinary text <!--",
+          '<source src="movie.mp4">',
+          MALFORMED_CURRENT_RANGE,
+          "-->",
+        ],
+        [
+          "ordinary text <!--",
+          "<!DoCtYpE html>",
+          MALFORMED_CURRENT_RANGE,
+          "-->",
+        ],
+        ["- ordinary <!--", "<!doctype html>", MALFORMED_CURRENT_RANGE, "-->"],
+        [
+          "> ordinary <!--",
+          "> <!doctype html>",
+          `> ${MALFORMED_CURRENT_RANGE}`,
+          "> -->",
+        ],
+      ]
+    ) {
+      const newerVisibleCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...visibleRangeAfterIncompleteInlineComment,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerVisibleCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+
+    const newerHiddenCurrentRange = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "ordinary text <!--",
+        codeRabbitReviewRange(),
+        "-->",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      html_url:
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-valid-inline-comment",
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerHiddenCurrentRange],
+        },
+        HEAD_SHA,
+      ))?.url,
+      "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+    );
+
+    const currentHeadOnlyInsideMultilineComment = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "Reviewing files that changed from the base of the PR and between " +
+        `${STALE_SHA} <!--`,
+        `and ${HEAD_SHA}.`,
+        "-->",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, currentHeadOnlyInsideMultilineComment],
+        },
+        HEAD_SHA,
+      ))?.url,
+      olderSuccess.html_url,
+    );
+
+    const currentHeadOnlyInsideMultilineLinkTitle = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "Reviewing files that changed from the base of the PR and between " +
+        `${STALE_SHA} [x](https://example.com \"`,
+        `and ${HEAD_SHA}.`,
+        `\")`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:42Z",
+      updated_at: "2026-08-22T12:03:42Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, currentHeadOnlyInsideMultilineLinkTitle],
+        },
+        HEAD_SHA,
+      ))?.url,
+      olderSuccess.html_url,
+    );
+
+    const codeStyledCurrentHeadAfterMultilineLink = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        'Reviewing[](https://example.com "',
+        "title",
+        `\") files that changed from the base of the PR and between ${STALE_SHA} \`and ${HEAD_SHA}.\``,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:43Z",
+      updated_at: "2026-08-22T12:03:43Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, codeStyledCurrentHeadAfterMultilineLink],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+
+    for (
+      const hiddenInlineComment of [
+        [
+          "ordinary text <!--",
+          "2. lazy continuation",
+          MALFORMED_CURRENT_RANGE,
+          "-->",
+        ],
+        [
+          "ordinary text <!-- invalid -- text",
+          MALFORMED_CURRENT_RANGE,
+          "-->",
+        ],
+        [
+          "ordinary text <!--",
+          "<plaintext>",
+          MALFORMED_CURRENT_RANGE,
+          "-->",
+        ],
+      ]
+    ) {
+      const newerHiddenCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...hiddenInlineComment,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerHiddenCurrentRange],
+          },
+          HEAD_SHA,
+        ))?.url,
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+      );
+    }
+  });
+
+  it("does not extend short inline HTML comments across later evidence", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+
+    for (const shortComment of ["<!-->", "<!--->"]) {
+      const newerVisibleCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          `ordinary ${shortComment}`,
+          MALFORMED_CURRENT_RANGE,
+          "-->",
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerVisibleCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+  });
+
+  it("keeps raw-block backticks from masking later comments", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    for (
+      const [index, earlierComment] of [
+        "<!-- ` -->",
+        "ordinary text <!-- ` -->",
+      ].entries()
+    ) {
+      const newerHiddenCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          earlierComment,
+          "<!--",
+          codeRabbitReviewRange(),
+          "-->",
+          "`",
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        html_url:
+          `https://github.com/veryfront/veryfront-code/pull/1#issuecomment-raw-backtick-${index}`,
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerHiddenCurrentRange],
+          },
+          HEAD_SHA,
+        ))?.url,
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+      );
+    }
+  });
+
+  it("excludes raw HTML block bodies from review evidence", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+
+    for (
+      const [openingTag, closingTag] of [
+        ["<script>", "</script>"],
+        ['<SCRIPT type="application/json">', "</SCRIPT>"],
+        ["<style>", "</style>"],
+        ["<textarea>", "</textarea>"],
+        ["<pre>", "</pre>"],
+      ]
+    ) {
+      const newerHiddenExactRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          openingTag,
+          codeRabbitReviewRange(),
+          closingTag,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          { reviews: [], comments: [newerHiddenExactRange] },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+
+      const newerHiddenMalformedRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          openingTag,
+          MALFORMED_CURRENT_RANGE,
+          closingTag,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerHiddenMalformedRange],
+          },
+          HEAD_SHA,
+        ))?.url,
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+      );
+    }
+
+    const decoratedRangeBeforeTypeSixHtmlBlock = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "Review<strong>ing</strong> files that changed from the base",
+        "<div>",
+        `of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "</div>",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, decoratedRangeBeforeTypeSixHtmlBlock],
+        },
+        HEAD_SHA,
+      ))?.url,
+      olderSuccess.html_url,
+    );
+
+    const currentSummaryWithHiddenMarkers = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        codeRabbitReviewRange(),
+        "<!-- recent_review_end -->",
+        "<script>",
+        `Requested commit: ${HEAD_SHA}.`,
+        `Review skipped for current commit ${HEAD_SHA}.`,
+        "</script>",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        { reviews: [], comments: [currentSummaryWithHiddenMarkers] },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+
+    const blockquotedRawHtml = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "> <style>",
+        `> ${MALFORMED_CURRENT_RANGE}`,
+        "> </style>",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        { reviews: [], comments: [olderSuccess, blockquotedRawHtml] },
+        HEAD_SHA,
+      ))?.url,
+      "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+    );
+
+    for (
+      const visibleRangeAfterRawBacktick of [
+        [
+          "<script>",
+          "`raw code-like text </script>",
+          MALFORMED_CURRENT_RANGE,
+          "visible text closes`",
+        ],
+        [
+          "> <script>",
+          "> `raw code-like text </script>",
+          `> ${MALFORMED_CURRENT_RANGE}`,
+          "> visible text closes`",
+        ],
+      ]
+    ) {
+      const newerVisibleCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...visibleRangeAfterRawBacktick,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerVisibleCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+  });
+
+  it("excludes multiline delimited HTML block bodies from review evidence", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+
+    for (
+      const hiddenHtmlBlock of [
+        ["<!DECL", MALFORMED_CURRENT_RANGE, ">"],
+        ["<!decl", MALFORMED_CURRENT_RANGE, ">"],
+        ["<!Decl", MALFORMED_CURRENT_RANGE, ">"],
+        ["- <!DECL", `  ${MALFORMED_CURRENT_RANGE}`, "  >"],
+        ["> <!DECL", `> ${MALFORMED_CURRENT_RANGE}`, "> >"],
+        ["<?process", MALFORMED_CURRENT_RANGE, "?>"],
+        ["> <?process", `> ${MALFORMED_CURRENT_RANGE}`, "> ?>"],
+        ["<![CDATA[", MALFORMED_CURRENT_RANGE, "]]>"],
+        ["- <![CDATA[", `  ${MALFORMED_CURRENT_RANGE}`, "  ]]>"],
+      ]
+    ) {
+      const newerHiddenCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...hiddenHtmlBlock,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerHiddenCurrentRange],
+          },
+          HEAD_SHA,
+        ))?.url,
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+        hiddenHtmlBlock.join("\n"),
+      );
+    }
+
+    for (
+      const visibleRangeOutsideContainer of [
+        ["- <!DECL", MALFORMED_CURRENT_RANGE, "  >"],
+        ["> <![CDATA[", MALFORMED_CURRENT_RANGE, "> ]]>"],
+      ]
+    ) {
+      const newerVisibleCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...visibleRangeOutsideContainer,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerVisibleCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+        visibleRangeOutsideContainer.join("\n"),
+      );
+    }
+  });
+
+  it("preserves lazy blockquote paragraphs for inline HTML comments", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+
+    for (
+      const hiddenRange of [
+        ["> quoted paragraph <!--", MALFORMED_CURRENT_RANGE, "-->"],
+        [
+          "> quoted paragraph",
+          "> continues <!--",
+          MALFORMED_CURRENT_RANGE,
+          "-->",
+        ],
+      ]
+    ) {
+      const newerHiddenCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...hiddenRange,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerHiddenCurrentRange],
+          },
+          HEAD_SHA,
+        ))?.url,
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+      );
+    }
+
+    const newerVisibleRangeAfterBlankLine = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "> quoted paragraph <!--",
+        "",
+        MALFORMED_CURRENT_RANGE,
+        "-->",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerVisibleRangeAfterBlankLine],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+  });
+
+  it("preserves lazy list-item paragraphs for inline HTML comments", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+
+    for (
+      const hiddenRange of [
+        ["- ordinary <!--", codeRabbitReviewRange(), "-->"],
+        [
+          "- ordinary <!--",
+          "<span>continuation",
+          codeRabbitReviewRange(),
+          "-->",
+        ],
+        [
+          "- ordinary <!--",
+          "<span>",
+          codeRabbitReviewRange(),
+          "-->",
+        ],
+        [
+          "- ordinary <!--",
+          "</span>",
+          codeRabbitReviewRange(),
+          "-->",
+        ],
+        [
+          "> - ordinary <!--",
+          "<span>continuation",
+          codeRabbitReviewRange(),
+          "> -->",
+        ],
+        [
+          "- ordinary <!--",
+          "  2. lazy continuation",
+          codeRabbitReviewRange(),
+          "-->",
+        ],
+        [
+          "- ordinary <!--",
+          "  2) lazy continuation",
+          codeRabbitReviewRange(),
+          "-->",
+        ],
+        [
+          "- ordinary <!--",
+          "0000000001. lazy continuation",
+          codeRabbitReviewRange(),
+          "-->",
+        ],
+      ]
+    ) {
+      const newerHiddenExactRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...hiddenRange,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          { reviews: [], comments: [newerHiddenExactRange] },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerHiddenExactRange],
+          },
+          HEAD_SHA,
+        ))?.url,
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+      );
+    }
+
+    for (
+      const paragraphBreak of [
+        "",
+        "# next block",
+        "- next item",
+        "2. next item",
+        "2) next item",
+        "000000001. next item",
+        "<div>",
+        "<script></script>",
+      ]
+    ) {
+      const newerVisibleRangeAfterBreak = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          "- ordinary <!--",
+          paragraphBreak,
+          MALFORMED_CURRENT_RANGE,
+          "-->",
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerVisibleRangeAfterBreak],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+  });
+
+  it("uses CommonMark list-marker padding when classifying indented evidence", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    for (
+      const visibleListEvidence of [
+        ["-     item", "", `    ${MALFORMED_CURRENT_RANGE}`],
+        ["1.     item", "", `     ${MALFORMED_CURRENT_RANGE}`],
+        ["-     [ ] item", "", `    ${MALFORMED_CURRENT_RANGE}`],
+        ["", "9.    item", "", `      ${MALFORMED_CURRENT_RANGE}`],
+        ["", "123.     item", "", `     ${MALFORMED_CURRENT_RANGE}`],
+      ]
+    ) {
+      const newerVisibleCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...visibleListEvidence,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerVisibleCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+        visibleListEvidence.join("\n"),
+      );
+    }
+
+    const newerIndentedCodeCurrentRange = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "- item",
+        "",
+        `      ${MALFORMED_CURRENT_RANGE}`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:42Z",
+      updated_at: "2026-08-22T12:03:42Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerIndentedCodeCurrentRange],
+        },
+        HEAD_SHA,
+      ))?.url,
+      olderSuccess.html_url,
+    );
+  });
+
+  it("pairs multiline inline code across blockquote paragraph lines", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+
+    for (
+      const hiddenRange of [
+        [
+          "> `code starts",
+          `> ${MALFORMED_CURRENT_RANGE}`,
+          "> code closes`",
+        ],
+        [
+          ">`code starts",
+          `>${MALFORMED_CURRENT_RANGE}`,
+          ">code closes`",
+        ],
+      ]
+    ) {
+      const newerHiddenCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...hiddenRange,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerHiddenCurrentRange],
+          },
+          HEAD_SHA,
+        ))?.url,
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+      );
+    }
+
+    const newerVisibleRangeAfterBlankLine = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "> `code starts",
+        "",
+        `> ${MALFORMED_CURRENT_RANGE}`,
+        "> code closes`",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerVisibleRangeAfterBlankLine],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+  });
+
+  it("keeps inline HTML backticks from masking visible evidence", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    for (
+      const inlineHtml of [
+        "ordinary text <!-- ` -->",
+        'ordinary text <span title="`">',
+      ]
+    ) {
+      const newerVisibleCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          inlineHtml,
+          MALFORMED_CURRENT_RANGE,
+          "`",
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerVisibleCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+
+    const newerCurrentRangeInsideCode = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "`code <!--",
+        MALFORMED_CURRENT_RANGE,
+        "-->`",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerCurrentRangeInsideCode],
+        },
+        HEAD_SHA,
+      ))?.url,
+      "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+    );
+  });
+
+  it("keeps HTML terminator searches start-aware across scanner passes", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    for (
+      const htmlAroundVisibleEvidence of [
+        [
+          '<a title="one">',
+          MALFORMED_CURRENT_RANGE,
+          '<b title="two">',
+        ],
+        [
+          '<a title="`">',
+          MALFORMED_CURRENT_RANGE,
+          '<b title="unterminated`',
+        ],
+      ]
+    ) {
+      const newerVisibleCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...htmlAroundVisibleEvidence,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerVisibleCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+  });
+
+  it("lets escaped multi-backtick runs close matching code spans", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    const newerHiddenCurrentRange = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "``unclosed code span",
+        MALFORMED_CURRENT_RANGE,
+        "\\``",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerHiddenCurrentRange],
+        },
+        HEAD_SHA,
+      ))?.url,
+      "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+    );
+  });
+
+  it("keeps non-code backticks from masking visible evidence", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+
+    for (
+      const nonCodeBacktick of [
+        ["`inline code starts", "\\` closes inline code"],
+        ["ordinary <https://example.com/`>"],
+        ["ordinary <foo`bar@example.com>"],
+        ["ordinary [link](https://example.com/`)"],
+        ["ordinary ![image](https://example.com/`)"],
+        ["ordinary [link](https://example.com/ 'title `')"],
+        ["ordinary [link](`)"],
+        ["ordinary ![image](`)"],
+        ["ordinary [link](`a)"],
+        ["`[link](https://example.com/`)"],
+        ["", "[reference]: https://example.com/`"],
+        ["", "[reference]:", "  https://example.com/`"],
+        ["", "[reference]: https://example.com/", '  "title `"'],
+        ["", "[", "reference", "]: https://example.com/`"],
+        [
+          "",
+          '[reference]: https://example.com/ "title',
+          'continued `"',
+        ],
+      ]
+    ) {
+      const newerVisibleCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...nonCodeBacktick,
+          MALFORMED_CURRENT_RANGE,
+          "`",
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerVisibleCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+  });
+
+  it("bounds inline code to GFM table cells", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    for (
+      const visibleTableEvidence of [
+        [
+          "| first | second |",
+          "| --- | --- |",
+          `| Reviewing files that changed from the base of the PR and between not-a-sha | and ${HEAD_SHA}. |`,
+        ],
+        [
+          "| first | second |",
+          "| --- | --- |",
+          `| Reviewing files that changed from the base of the PR and between ${STALE_SHA} | and ${HEAD_SHA}. |`,
+        ],
+        [
+          "| header ` | other |",
+          "| --- | --- |",
+          `| ${MALFORMED_CURRENT_RANGE} | \` |`,
+        ],
+        [
+          "| first | second | third |",
+          "| --- | --- | --- |",
+          `| \` | ${MALFORMED_CURRENT_RANGE} | \` |`,
+        ],
+        [
+          "| header ` |",
+          "| --- |",
+          MALFORMED_CURRENT_RANGE,
+          "`",
+        ],
+        [
+          "prefix `",
+          "| header |",
+          "| --- |",
+          `| ${MALFORMED_CURRENT_RANGE} |`,
+          "`",
+        ],
+        [
+          "> | header ` |",
+          "> | --- |",
+          `> | ${MALFORMED_CURRENT_RANGE} |`,
+          "> | ` |",
+        ],
+        [
+          "- | header ` |",
+          "  | --- |",
+          `  | ${MALFORMED_CURRENT_RANGE} |`,
+          "  | ` |",
+        ],
+        [
+          "-   item",
+          "",
+          "    | header ` |",
+          "    | --- |",
+          `    | ${MALFORMED_CURRENT_RANGE} |`,
+          "    | ` |",
+        ],
+        [
+          "- | header ` |",
+          "  | --- |",
+          `| ${MALFORMED_CURRENT_RANGE} |`,
+          "| ` |",
+        ],
+        [
+          "- | header ` |",
+          "  | --- |",
+          MALFORMED_CURRENT_RANGE,
+          "`",
+        ],
+        [
+          "> | header ` |",
+          "> | --- |",
+          `| ${MALFORMED_CURRENT_RANGE} |`,
+          "| ` |",
+        ],
+        [
+          "> | header ` |",
+          "> | --- |",
+          MALFORMED_CURRENT_RANGE,
+          "`",
+        ],
+        [
+          "- | header ` |",
+          "  | --- |",
+          "",
+          `| ${MALFORMED_CURRENT_RANGE} |`,
+          "| ` |",
+        ],
+      ]
+    ) {
+      const newerVisibleCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...visibleTableEvidence,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          { reviews: [], comments: [olderSuccess, newerVisibleCurrentRange] },
+          HEAD_SHA,
+        ),
+        undefined,
+        JSON.stringify(visibleTableEvidence),
+      );
+    }
+
+    const newerHiddenRangeWithEscapedPipe = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "| header |",
+        "| --- |",
+        `| \`code \\| ${MALFORMED_CURRENT_RANGE} closes\` |`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerHiddenRangeWithEscapedPipe],
+        },
+        HEAD_SHA,
+      ))?.url,
+      olderSuccess.html_url,
+    );
+
+    for (
+      const visibleTableRows of [
+        [
+          `| Reviewing files that changed from the base of the PR and between not-a-sha | x |`,
+          `| and ${HEAD_SHA}. | y |`,
+        ],
+        [
+          `| Reviewing files that changed from the base of the PR and between not-a-sha | x |`,
+          "| and | y |",
+          `| ${HEAD_SHA}. | z |`,
+        ],
+        [
+          `| Reviewing files that changed from the base of the PR and between not-a-sha | x |`,
+          `| y | and ${HEAD_SHA}. |`,
+        ],
+      ]
+    ) {
+      const newerMalformedRangeAcrossTableRows = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          "| first | second |",
+          "| --- | --- |",
+          ...visibleTableRows,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerMalformedRangeAcrossTableRows],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+        JSON.stringify(visibleTableRows),
+      );
+    }
+
+    const newerExactRangeInsideTable = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "| evidence |",
+        "| --- |",
+        `|${codeRabbitReviewRange()}|`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerExactRangeInsideTable],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+
+    for (
+      const invalidTableLookalike of [
+        [
+          "| header ` | other |",
+          "| --- |",
+          MALFORMED_CURRENT_RANGE,
+          "| ` |",
+        ],
+        [
+          "| header ` |",
+          "| === |",
+          MALFORMED_CURRENT_RANGE,
+          "| ` |",
+        ],
+      ]
+    ) {
+      const newerHiddenCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...invalidTableLookalike,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          { reviews: [], comments: [olderSuccess, newerHiddenCurrentRange] },
+          HEAD_SHA,
+        ))?.url,
+        olderSuccess.html_url,
+      );
+    }
+  });
+
+  it("keeps link destinations and titles out of review evidence", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    const newerRangeInsideLinkTitle = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        '[link](https://example.com/ "title',
+        codeRabbitReviewRange(),
+        'continued")',
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerRangeInsideLinkTitle],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+
+    const newerRangeInsideInvalidLinkTitle = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        '[link](https://example.com/ "title',
+        "",
+        MALFORMED_CURRENT_RANGE,
+        'continued")',
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerRangeInsideInvalidLinkTitle],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+  });
+
+  it("keeps invalid link tails inside inline code", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    for (
+      const invalidLinkTail of [
+        'ordinary [link](https://example.com/ "title `)',
+        "ordinary [link](https://example.com/`",
+        "ordinary \\[link](https://example.com/`)",
+        "ordinary ![image](https://example.com/`",
+      ]
+    ) {
+      const newerHiddenCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          invalidLinkTail,
+          MALFORMED_CURRENT_RANGE,
+          "`",
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerHiddenCurrentRange],
+          },
+          HEAD_SHA,
+        ))?.source,
+        "summary",
+      );
+    }
+  });
+
+  it("keeps reference-definition lookalikes inside inline code", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+
+    for (
+      const lookalike of [
+        "[reference]:",
+        "[reference]:   ",
+      ]
+    ) {
+      const newerHiddenCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          "`inline code starts",
+          lookalike,
+          MALFORMED_CURRENT_RANGE,
+          "inline code closes`",
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerHiddenCurrentRange],
+          },
+          HEAD_SHA,
+        ))?.url,
+        olderSuccess.html_url,
+      );
+    }
+
+    const newerParagraphLookalike = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "[reference]: https://example.com/`",
+        MALFORMED_CURRENT_RANGE,
+        "`",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerParagraphLookalike],
+        },
+        HEAD_SHA,
+      ))?.url,
+      olderSuccess.html_url,
+    );
+
+    const newerUnseparatedTitleLookalike = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "",
+        "[reference]: <https://example.com>(title `)",
+        MALFORMED_CURRENT_RANGE,
+        "`",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerUnseparatedTitleLookalike],
+        },
+        HEAD_SHA,
+      ))?.url,
+      olderSuccess.html_url,
+    );
+  });
+
+  it("keeps structural review markers outside unmatched inline code", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    const newerMalformedCurrentRange = codeRabbitSummary({
+      body: [
+        "`possible inline code",
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        MALFORMED_CURRENT_RANGE,
+        "<!-- recent_review_end -->",
+        "possible inline code closes`",
+      ].join("\n"),
+      html_url:
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-structural-marker",
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerMalformedCurrentRange],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+  });
+
+  it("keeps fence continuation examples excluded", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+
+    for (
+      const fencedContinuation of [
+        [
+          "Reviewing files that changed from the base of the PR and between " +
+          "not-a-sha",
+          "```text",
+          `and ${HEAD_SHA}.`,
+          "```",
+        ],
+        [
+          "> Reviewing files that changed from the base of the PR and between " +
+          "not-a-sha",
+          "> ```text",
+          `> and ${HEAD_SHA}.`,
+          "> ```",
+        ],
+      ]
+    ) {
+      const newerRangeEndingInFencedExample = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...fencedContinuation,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:42Z",
+        updated_at: "2026-08-22T12:03:42Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerRangeEndingInFencedExample],
+          },
+          HEAD_SHA,
+        ))?.source,
+        "summary",
+      );
+    }
+
+    const newerManyFencedCurrentRangeExamples = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        ...Array.from({ length: 250 }, () =>
+          [
+            "```",
+            codeRabbitReviewRange(),
+            "```",
+          ].join("\n")),
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:43Z",
+      updated_at: "2026-08-22T12:03:43Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerManyFencedCurrentRangeExamples],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+
+    const newerMismatchedFenceDelimiterCurrentRangeExample = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "```",
+        "~~~",
+        codeRabbitReviewRange(),
+        "```",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:44Z",
+      updated_at: "2026-08-22T12:03:44Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [
+            olderSuccess,
+            newerMismatchedFenceDelimiterCurrentRangeExample,
+          ],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+
+    const newerNonClosingFenceLineCurrentRangeExample = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "```",
+        "```not-a-close",
+        codeRabbitReviewRange(),
+        "```",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:44Z",
+      updated_at: "2026-08-22T12:03:44Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [newerNonClosingFenceLineCurrentRangeExample],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [
+            olderSuccess,
+            newerNonClosingFenceLineCurrentRangeExample,
+          ],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+  });
+
+  it("handles unterminated and nested recent-review groups", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+
+    const newerUnterminatedStaleRange = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:45Z",
+      updated_at: "2026-08-22T12:03:45Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerUnterminatedStaleRange],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+
+    const newerCompleteCurrentThenUnterminatedStale = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        codeRabbitReviewRange(),
+        "<!-- recent_review_end -->",
+        "<!-- recent_review_start -->",
+        codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:50Z",
+      updated_at: "2026-08-22T12:03:50Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerCompleteCurrentThenUnterminatedStale],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+
+    for (
+      const newerNestedMarkerBody of [
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          codeRabbitReviewRange(),
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          codeRabbitReviewRange(),
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+      ]
+    ) {
+      const newerNestedMarkers = codeRabbitSummary({
+        body: newerNestedMarkerBody,
+        created_at: "2026-08-22T12:03:55Z",
+        updated_at: "2026-08-22T12:03:55Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerNestedMarkers],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+
+    const newerInvalidCurrentThenEmptyTail = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        codeRabbitReviewRange(),
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
+        "<!-- recent_review_end -->",
+        "<!-- recent_review_start -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:57Z",
+      updated_at: "2026-08-22T12:03:57Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerInvalidCurrentThenEmptyTail],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+  });
+
+  it("ignores out-of-scope and diagnostic commit text", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+
+    const newerOutOfScopeCurrentRange = codeRabbitSummary({
+      body: [
+        `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:04:00Z",
+      updated_at: "2026-08-22T12:04:00Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerOutOfScopeCurrentRange],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+
+    const newerUnrelatedCurrentText = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        `Diagnostic commit: ${HEAD_SHA}.`,
+        codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:04:15Z",
+      updated_at: "2026-08-22T12:04:15Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerUnrelatedCurrentText],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+
+    const newerStaleRangeThenDiagnostic = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
+        `Diagnostic commit: ${HEAD_SHA}.`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:04:30Z",
+      updated_at: "2026-08-22T12:04:30Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerStaleRangeThenDiagnostic],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+
+    const newerUnrelatedBetweenText = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        `Reviewing files between jobs for ${STALE_SHA}; diagnostic ${HEAD_SHA}.`,
+        codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:04:45Z",
+      updated_at: "2026-08-22T12:04:45Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerUnrelatedBetweenText],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+  });
+
+  it("keeps whitespace-only malformed range parsing linear", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+
+    const newerWhitespaceOnlyRangeStart = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "Reviewing files that changed from the base of the PR and between" +
+        " ".repeat(2_000),
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:04:50Z",
+      updated_at: "2026-08-22T12:04:50Z",
+    });
+    const whitespaceOnlyStartedAt = performance.now();
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerWhitespaceOnlyRangeStart],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+    assert(
+      performance.now() - whitespaceOnlyStartedAt < 1_000,
+      "whitespace-only malformed range parsing must stay linear",
+    );
+  });
+
+  it("accepts an exact range with unrelated diagnostic text", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+
+    const newerExactCurrentWithDiagnostic = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        codeRabbitReviewRange(),
+        `Diagnostic commit: ${HEAD_SHA}.`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:05:00Z",
+      updated_at: "2026-08-22T12:05:00Z",
+      html_url:
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-5",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerExactCurrentWithDiagnostic],
+        },
+        HEAD_SHA,
+      ))?.url,
+      "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-5",
+    );
+  });
+
+  it("scans dense malformed range candidates in linear time", async () => {
+    const olderSuccess = codeRabbitSummary({
+      created_at: "2026-08-22T12:01:00Z",
+      updated_at: "2026-08-22T12:01:00Z",
+    });
+    const denseMalformedRanges = Array.from(
+      { length: 5_000 },
+      (_, index) =>
+        "Reviewing files that changed from the base of the PR and between " +
+        `malformed-base-${index}`,
+    );
+    const newerDenseMalformedRanges = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        ...denseMalformedRanges,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:00Z",
+      updated_at: "2026-08-22T12:02:00Z",
+    });
+
+    const startedAt = performance.now();
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerDenseMalformedRanges],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+    assert(
+      performance.now() - startedAt < 1_000,
+      "dense malformed range parsing must stay linear",
+    );
+
+    const newerDenseLiteralDelimiterRanges = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        Array.from(
+          { length: 2_000 },
+          () => MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review_ing"),
+        ).join(" "),
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:00Z",
+      updated_at: "2026-08-22T12:02:00Z",
+    });
+    const literalDelimiterStartedAt = performance.now();
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerDenseLiteralDelimiterRanges],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+    assert(
+      performance.now() - literalDelimiterStartedAt < 1_000,
+      "dense unmatched inline delimiters must stay linear",
+    );
+
+    const newerDenseDecoratedRanges = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        Array.from(
+          { length: 1_000 },
+          () => MALFORMED_CURRENT_RANGE.replace("Reviewing", "Review*ing*"),
+        ).join(" "),
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:00Z",
+      updated_at: "2026-08-22T12:02:00Z",
+    });
+    const decoratedStartedAt = performance.now();
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerDenseDecoratedRanges],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+    assert(
+      performance.now() - decoratedStartedAt < 1_000,
+      "dense matched inline delimiters must stay linear",
+    );
+
+    const newerDenseSameLineCurrentRanges = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        Array.from(
+          { length: 3_000 },
+          () => MALFORMED_CURRENT_RANGE,
+        ).join(" "),
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:00Z",
+      updated_at: "2026-08-22T12:02:00Z",
+    });
+    const denseSameLineStartedAt = performance.now();
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerDenseSameLineCurrentRanges],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+    assert(
+      performance.now() - denseSameLineStartedAt < 1_000,
+      "dense same-line range parsing must stay linear",
+    );
+
+    const newerDenseBareCarriageReturnRanges = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        ...denseMalformedRanges,
+        "<!-- recent_review_end -->",
+      ].join("\r"),
+      created_at: "2026-08-22T12:02:00Z",
+      updated_at: "2026-08-22T12:02:00Z",
+    });
+    const denseBareCarriageReturnStartedAt = performance.now();
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerDenseBareCarriageReturnRanges],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+    assert(
+      performance.now() - denseBareCarriageReturnStartedAt < 1_000,
+      "dense bare carriage-return range parsing must stay linear",
+    );
+
+    const newerBareCarriageReturnLine = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        `${"x".repeat(40_000)}\rplain`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:01Z",
+      updated_at: "2026-08-22T12:02:01Z",
+    });
+    const bareCarriageReturnStartedAt = performance.now();
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerBareCarriageReturnLine],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+    assert(
+      performance.now() - bareCarriageReturnStartedAt < 1_000,
+      "bare carriage-return line scanning must stay linear",
+    );
+
+    const newerDenseInlineCommentLookalikes = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        ...Array.from(
+          { length: 5_000 },
+          (_, index) => `inline-${index} \`<!--\``,
+        ),
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:02Z",
+      updated_at: "2026-08-22T12:02:02Z",
+    });
+    const denseInlineStartedAt = performance.now();
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerDenseInlineCommentLookalikes],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+    assert(
+      performance.now() - denseInlineStartedAt < 1_000,
+      "dense inline-code scanning must stay linear",
+    );
+
+    const newerDenseUnmatchedProcessingInstructions = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        `ordinary ${"<?".repeat(32_000)}`,
+        MALFORMED_CURRENT_RANGE,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:02Z",
+      updated_at: "2026-08-22T12:02:02Z",
+    });
+    const denseProcessingInstructionsStartedAt = performance.now();
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [
+            olderSuccess,
+            newerDenseUnmatchedProcessingInstructions,
+          ],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+    assert(
+      performance.now() - denseProcessingInstructionsStartedAt < 1_000,
+      "dense unmatched processing-instruction scanning must stay linear",
+    );
+
+    const newerDenseReferenceDefinitions = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "",
+        ...Array.from(
+          { length: 4_000 },
+          (_, index) => `[reference-${index}]: /target-${index}`,
+        ),
+        MALFORMED_CURRENT_RANGE,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:02Z",
+      updated_at: "2026-08-22T12:02:02Z",
+    });
+    const denseReferenceDefinitionsStartedAt = performance.now();
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerDenseReferenceDefinitions],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+    assert(
+      performance.now() - denseReferenceDefinitionsStartedAt < 1_000,
+      "dense reference-definition scanning must stay linear",
+    );
+
+    const newerDenseTables = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        ...Array.from(
+          { length: 500 },
+          (_, index) =>
+            `| header-${index} \` | value |\n| --- | --- |\n| body | \` |\n`,
+        ),
+        MALFORMED_CURRENT_RANGE,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:02Z",
+      updated_at: "2026-08-22T12:02:02Z",
+    });
+    const denseTablesStartedAt = performance.now();
+    assertEquals(
+      await findAutomatedReview(
+        { reviews: [], comments: [olderSuccess, newerDenseTables] },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+    assert(
+      performance.now() - denseTablesStartedAt < 1_000,
+      "dense GFM table scanning must stay linear",
+    );
+
+    const wideTableCells = Array.from({ length: 4_000 }, () => "cell");
+    const newerWideTable = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        `| ${wideTableCells.join(" | ")} |`,
+        `| ${wideTableCells.map(() => "-").join(" | ")} |`,
+        `| ${wideTableCells.join(" | ")} |`,
+        "",
+        MALFORMED_CURRENT_RANGE,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:02Z",
+      updated_at: "2026-08-22T12:02:02Z",
+    });
+    const wideTableStartedAt = performance.now();
+    assertEquals(
+      await findAutomatedReview(
+        { reviews: [], comments: [olderSuccess, newerWideTable] },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+    assert(
+      performance.now() - wideTableStartedAt < 1_000,
+      "wide GFM table scanning must stay linear",
+    );
+
+    const newerDenseUnclosedInlineLinks = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        `[link](`.repeat(8_000),
+        MALFORMED_CURRENT_RANGE,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:02Z",
+      updated_at: "2026-08-22T12:02:02Z",
+    });
+    const denseUnclosedInlineLinksStartedAt = performance.now();
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerDenseUnclosedInlineLinks],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+    assert(
+      performance.now() - denseUnclosedInlineLinksStartedAt < 1_000,
+      "dense unclosed inline-link scanning must stay linear",
+    );
+
+    const newerDenseValidInlineLinks = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        Array.from(
+          { length: 4_000 },
+          (_, index) => `[link-${index}](https://example.com/${index}\`)`,
+        ).join(" "),
+        MALFORMED_CURRENT_RANGE,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:02Z",
+      updated_at: "2026-08-22T12:02:02Z",
+    });
+    const denseValidInlineLinksStartedAt = performance.now();
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerDenseValidInlineLinks],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+    assert(
+      performance.now() - denseValidInlineLinksStartedAt < 1_000,
+      "dense valid inline-link scanning must stay linear",
+    );
+
+    const newerDenseRawHtmlBlocks = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        ...Array.from(
+          { length: 5_000 },
+          (_, index) =>
+            `<script>\n\`raw-${index}</script>\n> paragraph-${index}`,
+        ),
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:03Z",
+      updated_at: "2026-08-22T12:02:03Z",
+    });
+    const denseRawHtmlStartedAt = performance.now();
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerDenseRawHtmlBlocks],
+        },
+        HEAD_SHA,
+      ))?.url,
+      olderSuccess.html_url,
+    );
+    assert(
+      performance.now() - denseRawHtmlStartedAt < 1_000,
+      "dense raw-HTML exclusion scanning must stay linear",
+    );
+  });
+
+  it("rejects any current-head skip or request marker in a summary", async () => {
+    for (
+      const markers of [
+        [
+          `Review skipped for current commit ${STALE_SHA}.`,
+          `Review skipped for current commit ${HEAD_SHA}.`,
+        ],
+        [
+          `Review skipped for current commit ${HEAD_SHA}.`,
+          `Review skipped for current commit ${STALE_SHA}.`,
+        ],
+        [
+          `Requested commit: ${STALE_SHA}.`,
+          `Requested commit: ${HEAD_SHA}.`,
+        ],
+        [
+          `Requested commit: ${HEAD_SHA}.`,
+          `Requested commit: ${STALE_SHA}.`,
+        ],
+      ]
+    ) {
+      const summary = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          codeRabbitReviewRange(),
+          "<!-- recent_review_end -->",
+          ...markers,
+        ].join("\n"),
+      });
+
+      assertEquals(
+        await findAutomatedReview(
+          { reviews: [], comments: [summary] },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
   });
 
   it("fails closed when exact-head event chronology is indeterminate", async () => {
@@ -411,7 +4823,7 @@ describe("automated review gate", () => {
       body: [
         "<!-- recent_review_start -->",
         "No actionable comments were generated in the recent review.",
-        `Reviewing files between ${HEAD_SHA} and ${STALE_SHA}.`,
+        codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
         "<!-- recent_review_end -->",
       ].join("\n"),
       created_at: "2026-08-22T12:04:00Z",
@@ -433,7 +4845,7 @@ describe("automated review gate", () => {
       body: [
         "<!-- recent_review_start -->",
         "No actionable comments were generated in the recent review.",
-        `Reviewing files between ${HEAD_SHA} and ${STALE_SHA}.`,
+        codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
         "<!-- recent_review_end -->",
         `Review skipped for current commit ${HEAD_SHA}.`,
       ].join("\n"),
@@ -455,18 +4867,61 @@ describe("automated review gate", () => {
 
   it("accepts matching tied successes and rejects conflicting outcomes", async () => {
     const timestamp = "2026-08-22T12:00:00Z";
+    const successfulSummary = codeRabbitSummary({
+      created_at: timestamp,
+      updated_at: timestamp,
+    });
+    const failedSummary = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        codeRabbitReviewRange(),
+        "<!-- recent_review_end -->",
+        `Review skipped for current commit ${HEAD_SHA}.`,
+      ].join("\n"),
+      created_at: timestamp,
+      updated_at: timestamp,
+    });
     assertEquals(
       (await findAutomatedReview(
         {
           reviews: [review({ submitted_at: timestamp })],
-          comments: [codeRabbitSummary({
-            created_at: timestamp,
-            updated_at: timestamp,
-          })],
+          comments: [successfulSummary],
         },
         HEAD_SHA,
       ))?.reviewer,
       "coderabbitai[bot]",
+    );
+
+    for (
+      const comments of [
+        [failedSummary, successfulSummary],
+        [successfulSummary, failedSummary],
+      ]
+    ) {
+      assertEquals(
+        await findAutomatedReview({ reviews: [], comments }, HEAD_SHA),
+        undefined,
+      );
+    }
+
+    const newerSuccessfulSummary = codeRabbitSummary({
+      created_at: "2026-08-22T12:01:00Z",
+      updated_at: "2026-08-22T12:01:00Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [
+            failedSummary,
+            successfulSummary,
+            newerSuccessfulSummary,
+          ],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
     );
 
     assertEquals(
@@ -492,7 +4947,7 @@ describe("automated review gate", () => {
           body: [
             "<!-- recent_review_start -->",
             "No actionable comments were generated in the recent review.",
-            `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+            codeRabbitReviewRange(),
             "<!-- recent_review_end -->",
             `Review skipped for current commit ${HEAD_SHA}.`,
           ].join("\n"),
@@ -502,7 +4957,7 @@ describe("automated review gate", () => {
         codeRabbitSummary({
           body: [
             "<!-- recent_review_start -->",
-            `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+            codeRabbitReviewRange(),
             "<!-- recent_review_end -->",
           ].join("\n"),
           created_at: timestamp,
@@ -563,14 +5018,76 @@ describe("automated review gate", () => {
       headSha: STALE_SHA,
       pullUrl: "https://github.com/veryfront/veryfront-code/pull/1",
     });
-    assertEquals(missing.state, "failure");
-    assert(
-      missing.failure instanceof Error &&
-        missing.failure.message.includes(STALE_SHA.slice(0, 12)),
-      "the failure must name the unreviewed head commit",
-    );
+    assertEquals(missing.state, "pending");
+    assertEquals(missing.review, undefined);
+    assertEquals(missing.failure, undefined);
     assertEquals(statuses[1]?.sha, STALE_SHA);
-    assertEquals(statuses[1]?.state, "failure");
+    assertEquals(statuses[1]?.state, "pending");
+    assertEquals(
+      statuses[1]?.description,
+      `Waiting for an automated review of ${STALE_SHA.slice(0, 12)}`,
+    );
+  });
+
+  it("publishes failure for completed negative exact-head outcomes", async () => {
+    const negativeEvidence = [
+      { reviews: [review({ state: "CHANGES_REQUESTED" })], comments: [] },
+      {
+        reviews: [],
+        comments: [codexNoFindingComment({
+          body: [
+            "Codex Review: Found an actionable issue.",
+            `**Reviewed commit:** \`${HEAD_SHA.slice(0, 10)}\``,
+          ].join("\n\n"),
+        })],
+      },
+      {
+        reviews: [],
+        comments: [codeRabbitSummary({
+          body: [
+            "<!-- recent_review_start -->",
+            "Actionable comments were generated in the recent review.",
+            `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+            "<!-- recent_review_end -->",
+          ].join("\n"),
+        })],
+      },
+    ];
+
+    for (const evidence of negativeEvidence) {
+      const statuses: Array<Record<string, unknown>> = [];
+      const listReviews = () => Promise.resolve();
+      const listComments = () => Promise.resolve();
+      const github = {
+        paginate: (endpoint: unknown) =>
+          Promise.resolve(
+            endpoint === listReviews ? evidence.reviews : evidence.comments,
+          ),
+        rest: {
+          issues: { listComments },
+          pulls: { listReviews },
+          repos: {
+            createCommitStatus: (status: Record<string, unknown>) => {
+              statuses.push(status);
+              return Promise.resolve();
+            },
+            getCommit: () => Promise.resolve({ data: { sha: HEAD_SHA } }),
+          },
+        },
+      };
+
+      const result = await publishAutomatedReviewStatus({
+        github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        headSha: HEAD_SHA,
+        pullUrl: "https://github.com/veryfront/veryfront-code/pull/1",
+      });
+
+      assertEquals(result.state, "failure");
+      assertEquals(statuses[0]?.state, "failure");
+    }
   });
 
   it("resolves a Codex comment to the exact commit before publishing success", async () => {
@@ -617,44 +5134,48 @@ describe("automated review gate", () => {
     );
   });
 
-  it("publishes failure when a Codex commit cannot be resolved exactly", async () => {
-    const statuses: Array<Record<string, unknown>> = [];
-    const listReviews = () => Promise.resolve();
-    const listComments = () => Promise.resolve();
-    const github = {
-      paginate: (endpoint: unknown) =>
-        Promise.resolve(
-          endpoint === listComments ? [codexNoFindingComment()] : [],
-        ),
-      rest: {
-        issues: { listComments },
-        pulls: { listReviews },
-        repos: {
-          createCommitStatus: (status: Record<string, unknown>) => {
-            statuses.push(status);
-            return Promise.resolve();
+  it("fails closed when Codex commit resolution is rejected", async () => {
+    for (const status of [403, 429, 500]) {
+      const statuses: Array<Record<string, unknown>> = [];
+      const listReviews = () => Promise.resolve();
+      const listComments = () => Promise.resolve();
+      const github = {
+        paginate: (endpoint: unknown) =>
+          Promise.resolve(
+            endpoint === listComments ? [codexNoFindingComment()] : [],
+          ),
+        rest: {
+          issues: { listComments },
+          pulls: { listReviews },
+          repos: {
+            createCommitStatus: (commitStatus: Record<string, unknown>) => {
+              statuses.push(commitStatus);
+              return Promise.resolve();
+            },
+            getCommit: () =>
+              Promise.reject(Object.assign(new Error(`HTTP ${status}`), {
+                status,
+              })),
           },
-          getCommit: () =>
-            Promise.reject(Object.assign(new Error("ambiguous commit"), {
-              status: 422,
-            })),
         },
-      },
-    };
+      };
 
-    const result = await publishAutomatedReviewStatus({
-      github,
-      owner: "veryfront",
-      repo: "veryfront-code",
-      pullNumber: 1,
-      headSha: HEAD_SHA,
-      pullUrl: "https://github.com/veryfront/veryfront-code/pull/1",
-    });
+      const result = await publishAutomatedReviewStatus({
+        github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        headSha: HEAD_SHA,
+        pullUrl: "https://github.com/veryfront/veryfront-code/pull/1",
+      });
 
-    assertEquals(result.state, "failure");
-    assertEquals(result.review, undefined);
-    assertEquals(statuses[0]?.state, "failure");
-    assertEquals(statuses[0]?.sha, HEAD_SHA);
+      assertEquals(result.state, "failure");
+      assertEquals(statuses[0]?.state, "failure");
+      assert(
+        result.failure instanceof Error &&
+          result.failure.message.includes(String(status)),
+      );
+    }
   });
 
   it("fails closed when the review lookup throws", async () => {
@@ -728,6 +5249,145 @@ describe("automated review gate", () => {
     assertEquals(statuses[0]?.sha, HEAD_SHA);
   });
 
+  it("requests an automated review at most once per head commit", async () => {
+    const posted: Array<Record<string, unknown>> = [];
+    const existing: Array<Record<string, unknown>> = [];
+    const listComments = () => Promise.resolve();
+    const github = {
+      paginate: () => Promise.resolve(existing),
+      rest: {
+        issues: {
+          listComments,
+          createComment: (comment: Record<string, unknown>) => {
+            posted.push(comment);
+            return Promise.resolve();
+          },
+        },
+        pulls: {
+          get: () => Promise.resolve({ data: { head: { sha: HEAD_SHA } } }),
+        },
+      },
+    };
+    const request = (headSha: string) =>
+      requestAutomatedReview({
+        github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        headSha,
+      });
+
+    const first = await request(HEAD_SHA);
+    assertEquals(first.requested, true);
+    assertEquals(posted, [{
+      owner: "veryfront",
+      repo: "veryfront-code",
+      issue_number: 1,
+      body: `<!-- automated-review-request: ${HEAD_SHA} -->\n@codex review`,
+    }]);
+
+    // A participant pasting the marker text must not suppress the request:
+    // only a workflow-authored marker comment counts, pinned by login and
+    // account type the way the gate pins the Codex bot.
+    existing.push(
+      { user: { login: "maintainer", type: "User" }, body: posted[0]?.body },
+      {
+        user: { login: "github-actions[bot]", type: "User" },
+        body: posted[0]?.body,
+      },
+      { body: posted[0]?.body },
+    );
+    const impersonated = await request(HEAD_SHA);
+    assertEquals(impersonated.requested, true);
+    assertEquals(posted.length, 2);
+
+    // A rerun for the same head finds the workflow-authored marker and does
+    // not post again.
+    existing.push({
+      user: { login: "github-actions[bot]", type: "Bot" },
+      body: posted[0]?.body,
+    });
+    const second = await request(HEAD_SHA);
+    assertEquals(second.requested, false);
+    assertEquals(posted.length, 2);
+
+    // A new head commit carries a new marker and gets its own request.
+    github.rest.pulls.get = () =>
+      Promise.resolve({ data: { head: { sha: STALE_SHA } } });
+    const third = await request(STALE_SHA);
+    assertEquals(third.requested, true);
+    assertEquals(
+      posted[2]?.body,
+      `<!-- automated-review-request: ${STALE_SHA} -->\n@codex review`,
+    );
+  });
+
+  it("does not post from a stale queued synchronize event", async () => {
+    let posted = false;
+    const github = {
+      paginate: () => Promise.resolve([]),
+      rest: {
+        issues: {
+          listComments: () => Promise.resolve(),
+          createComment: () => {
+            posted = true;
+            return Promise.resolve();
+          },
+        },
+        pulls: {
+          get: () => Promise.resolve({ data: { head: { sha: STALE_SHA } } }),
+        },
+      },
+    };
+
+    const result = await requestAutomatedReview({
+      github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD_SHA,
+    });
+
+    assertEquals(result.requested, false);
+    assertEquals(result.reason, "stale-head");
+    assertEquals(posted, false);
+  });
+
+  it("refuses to request a review of a malformed head commit", async () => {
+    const github = {
+      paginate: () => Promise.resolve([]),
+      rest: {
+        issues: {
+          listComments: () => Promise.resolve(),
+          createComment: () => {
+            throw new Error("must not post for a malformed commit");
+          },
+        },
+        pulls: { get: () => Promise.resolve() },
+      },
+    };
+    for (
+      const malformed of [
+        HEAD_SHA.slice(0, 39),
+        `${HEAD_SHA} --><script>`,
+        "@codex review",
+      ]
+    ) {
+      await assertRejects(
+        () =>
+          requestAutomatedReview({
+            github,
+            owner: "veryfront",
+            repo: "veryfront-code",
+            pullNumber: 1,
+            headSha: malformed,
+          }),
+        Error,
+        "malformed head commit",
+      );
+    }
+  });
+
   it("uses trusted base code and reruns when a real review is submitted", async () => {
     const workflow = record(
       parse(await Deno.readTextFile(WORKFLOW_PATH)),
@@ -754,7 +5414,7 @@ describe("automated review gate", () => {
     assertEquals(permissions, {
       contents: "read",
       issues: "read",
-      "pull-requests": "read",
+      "pull-requests": "write",
       statuses: "write",
     });
 
@@ -827,6 +5487,49 @@ describe("automated review gate", () => {
       script.includes("Review gate is unavailable on the default branch") &&
         script.includes('state: "failure"'),
       "a gate that fails to load must publish a failure status, not no status",
+    );
+    assertEquals(
+      gate.id,
+      "publish",
+      "the request step reads the published state from this step's output",
+    );
+    assertEquals(
+      record(gate.with, "automated review gate inputs")["result-encoding"],
+      "string",
+      "the published state must land in the step output as a plain string",
+    );
+
+    const request = record(steps[2], "automated review request step");
+    assertEquals(
+      request.uses,
+      "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3",
+    );
+    const requestCondition = String(request.if);
+    for (
+      const guard of [
+        "github.event_name == 'pull_request_target'",
+        "github.event.pull_request.draft == false",
+        "github.event.action == 'synchronize'",
+        "steps.publish.outputs.result == 'pending'",
+      ]
+    ) {
+      assertStringIncludes(
+        requestCondition,
+        guard,
+        "a review request is posted only for a trusted non-draft push that left the status pending",
+      );
+    }
+    assert(
+      !requestCondition.includes("ready_for_review") &&
+        !requestCondition.includes("opened"),
+      "open and ready-for-review events are already handled by the connector",
+    );
+    const requestScript = String(
+      record(request.with, "automated review request inputs").script,
+    );
+    assert(
+      requestScript.includes("requestAutomatedReview"),
+      "the workflow must post review requests through the tested gate helper",
     );
   });
 });

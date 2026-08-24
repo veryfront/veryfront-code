@@ -116,7 +116,11 @@ describe("build/bundler/code-splitter/esbuild-plugin", () => {
 
       const result = mdxResolver({ path: "content/page.mdx" });
       assertEquals(result?.namespace, "mdx");
-      assertEquals(result?.path.includes("content/page.mdx"), true);
+      assertEquals(
+        result?.path,
+        join("/my-project", "content/page.mdx"),
+        "mdx imports resolve against projectDir",
+      );
     });
 
     it("should handle .md resolve with mdx namespace", () => {
@@ -140,7 +144,11 @@ describe("build/bundler/code-splitter/esbuild-plugin", () => {
 
       const result = mdxResolver({ path: "pages/testxxx.md" });
       assertEquals(result?.namespace, "mdx");
-      assertEquals(result?.path.includes("pages/testxxx.md"), true);
+      assertEquals(
+        result?.path,
+        join("/my-project", "pages/testxxx.md"),
+        "md imports resolve against projectDir",
+      );
     });
 
     it("should provide stub content for MDX files", () => {

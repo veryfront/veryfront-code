@@ -689,10 +689,39 @@ describe("logger", () => {
 
           assertEquals(typeof entry.timestamp, "string");
           assertEquals(entry.level, "info");
-          assertEquals(typeof entry.service, "string");
+          assertEquals(
+            entry.service,
+            "server",
+            "SERVER prefix must emit service=server for Loki queries",
+          );
           assertEquals(entry.veryfrontVersion, VERSION);
           assertEquals(entry.message, "Test message");
           assertEquals(entry.context?.extra, "data");
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("resolves a base logger prefix to its own service name", () => {
+      const { getOutput, reset, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          getBaseLogger("server").info("x");
+          assertEquals(
+            (JSON.parse(getOutput()) as LogEntry).service,
+            "server",
+            "a lowercase prefix must resolve to the SERVER base logger",
+          );
+
+          reset();
+          getBaseLogger("timer").info("x");
+          assertEquals(
+            (JSON.parse(getOutput()) as LogEntry).service,
+            "veryfront",
+            "an unknown prefix must fall back to the veryfront base logger",
+          );
         });
       } finally {
         restore();

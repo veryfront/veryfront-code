@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../../transforms/mdx/compiler/__tests__/content-processor-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { bundleMdx, bundleMDXWithOptions } from "./mdx-bundler.ts";
 import type { BundleResult, BundlerOptions } from "../types/bundler-types.ts";
 
@@ -126,6 +126,25 @@ describe("build/renderer/services/mdx-bundler", () => {
         "should produce output or capture error",
       );
     });
+
+    it("should report unresolvable local imports", async () => {
+      const source = {
+        path: "/tmp/test-project/pages/page.mdx",
+        content: 'import { A } from "./missing.tsx";\n\n# Hi\n',
+      };
+      const result = createBundleResult();
+      const options = createOptions();
+      const compileFn = async (src: string, _opts: BundlerOptions) => `compiled: ${src}`;
+
+      await bundleMdx(source, options, result, compileFn);
+
+      assertEquals(result.errors.length, 1, "unresolvable local import is reported once");
+      assertStringIncludes(
+        result.errors[0]!.message,
+        "Cannot find module '/tmp/test-project/pages/missing.tsx' from '/tmp/test-project/pages/page.mdx'",
+        "error names the resolved import and the source file",
+      );
+    });
   });
 
   describe("bundleMDXWithOptions", () => {
@@ -137,7 +156,21 @@ describe("build/renderer/services/mdx-bundler", () => {
         mode: "production",
       });
 
-      assertEquals(typeof result.code, "string", "should return code string");
+      assertStringIncludes(
+        result.code,
+        "function _createMdxContent(props)",
+        "compiled MDX body must be inlined into the emitted module",
+      );
+      assertStringIncludes(
+        result.code,
+        "return MDXContentWrapper({ ...props, components });",
+        "emitted module must call the compiled MDX wrapper",
+      );
+      assertStringIncludes(
+        result.code,
+        'from "#veryfront/mdx-components";',
+        "MDX components import must use matched double quotes",
+      );
       assertExists(result.frontmatter, "should return frontmatter object");
       assertExists(result.dependencies, "should return dependencies array");
     });

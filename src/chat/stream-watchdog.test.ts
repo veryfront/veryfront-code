@@ -5,6 +5,7 @@ import { FakeTime } from "#std/testing/time";
 import * as streamWatchdog from "./stream-watchdog.ts";
 import {
   createChatStreamWatchdog,
+  DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS,
   getNextChatStreamWatchdogState,
   isHeartbeatOnlyMetadataChunk,
 } from "./stream-watchdog.ts";
@@ -138,10 +139,20 @@ describe("chat/stream-watchdog", () => {
 
   it("accepts injected timer functions for host test instrumentation", () => {
     using time = new FakeTime();
+    let scheduled = 0;
+    let cleared = 0;
+    const setTimeoutFn = ((cb: () => void, ms?: number) => {
+      scheduled++;
+      return globalThis.setTimeout(cb, ms);
+    }) as typeof setTimeout;
+    const clearTimeoutFn = ((handle?: number) => {
+      cleared++;
+      globalThis.clearTimeout(handle);
+    }) as typeof clearTimeout;
     const watchdog = createChatStreamWatchdog({
       ...watchdogOptions,
-      setTimeoutFn: globalThis.setTimeout,
-      clearTimeoutFn: globalThis.clearTimeout,
+      setTimeoutFn,
+      clearTimeoutFn,
     });
     watchdog.observe({
       type: "tool-input-available",
@@ -153,7 +164,17 @@ describe("chat/stream-watchdog", () => {
     time.tick(301);
 
     assertEquals(watchdog.signal.aborted, true);
+    assertEquals(
+      scheduled >= 1,
+      true,
+      "the injected setTimeoutFn must schedule the watchdog deadline",
+    );
     watchdog.dispose();
+    assertEquals(
+      cleared >= 1,
+      true,
+      "the injected clearTimeoutFn must cancel the watchdog deadline",
+    );
   });
 
   it("keeps response pending watchdogs alive without requiring a stream chunk", () => {
@@ -176,9 +197,36 @@ describe("chat/stream-watchdog", () => {
   });
 
   it("creates a default watchdog with host timer bindings", () => {
+    using time = new FakeTime();
     const watchdog = createChatStreamWatchdog();
 
+    assertEquals(
+      DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS,
+      120_000,
+      "the documented default idle timeout must stay 120s",
+    );
     assertEquals(watchdog.signal.aborted, false);
+
+    time.tick(DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS - 1);
+
+    assertEquals(
+      watchdog.signal.aborted,
+      false,
+      "the default watchdog must not abort before its deadline",
+    );
+
+    time.tick(2);
+
+    assertEquals(
+      watchdog.signal.aborted,
+      true,
+      "an option-less watchdog must arm the default idle deadline",
+    );
+    assertEquals(
+      watchdog.lastTimeoutState,
+      { phase: "response_pending", timeoutMs: DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS },
+      "the default deadline must be recorded as a response pending timeout",
+    );
     watchdog.dispose();
   });
 

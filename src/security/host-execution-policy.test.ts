@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withEnv } from "#veryfront/testing";
+import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import {
   HOST_PROJECT_EXECUTION_OVERRIDE_ENV,
   isHostProjectExecutionOverrideEnabled,
@@ -69,13 +70,27 @@ describe("security/host-execution-policy operator override", () => {
 
   it("uses the host environment rather than project env", async () => {
     // getHostEnv deliberately bypasses the project env overlay, so a project
-    // environment variable of the same name cannot grant host execution.
+    // environment variable of the same name cannot grant host execution. A
+    // competing project scope has to be registered for that to mean anything.
     await withEnv({ [HOST_PROJECT_EXECUTION_OVERRIDE_ENV]: "0" }, () => {
-      assertEquals(
-        isHostProjectExecutionOverrideEnabled(),
-        false,
-        "only the host environment decides this grant",
-      );
+      runWithProjectEnv({ [HOST_PROJECT_EXECUTION_OVERRIDE_ENV]: "1" }, () => {
+        assertEquals(
+          isHostProjectExecutionOverrideEnabled(),
+          false,
+          "a project env value must never grant host-realm project execution",
+        );
+      });
+      return Promise.resolve();
+    });
+
+    await withEnv({ [HOST_PROJECT_EXECUTION_OVERRIDE_ENV]: "1" }, () => {
+      runWithProjectEnv({ [HOST_PROJECT_EXECUTION_OVERRIDE_ENV]: "0" }, () => {
+        assertEquals(
+          isHostProjectExecutionOverrideEnabled(),
+          true,
+          "the host grant must still win while a project overlay is active",
+        );
+      });
       return Promise.resolve();
     });
   });

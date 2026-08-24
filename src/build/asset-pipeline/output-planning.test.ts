@@ -1,6 +1,7 @@
 import { join } from "#veryfront/compat/path/index.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir, mkdir, realPath, remove, symlink } from "#veryfront/platform/compat/fs.ts";
 import {
   assertIndependentAssetStageOutputs,
   canonicalizePlannedAssetPath,
@@ -9,11 +10,11 @@ import {
 async function withDirectory(
   run: (directory: string) => Promise<void>,
 ): Promise<void> {
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   try {
     await run(directory);
   } finally {
-    await Deno.remove(directory, { recursive: true });
+    await remove(directory, { recursive: true });
   }
 }
 
@@ -23,7 +24,7 @@ describe("build/asset-pipeline output planning", () => {
       const target = join(projectDir, "missing", "nested", "assets");
       assertEquals(
         await canonicalizePlannedAssetPath(target),
-        join(await Deno.realPath(projectDir), "missing", "nested", "assets"),
+        join(await realPath(projectDir), "missing", "nested", "assets"),
       );
     });
   });
@@ -51,11 +52,35 @@ describe("build/asset-pipeline output planning", () => {
     });
   });
 
+  it("rejects outputs that differ only by case or Unicode normalization", async () => {
+    await withDirectory(async (projectDir) => {
+      await assertRejects(
+        () =>
+          assertIndependentAssetStageOutputs([
+            { stage: "images", projectDir, outputDir: ".veryfront/Assets" },
+            { stage: "css", projectDir, outputDir: ".veryfront/assets/css" },
+          ]),
+        TypeError,
+        "must not overlap physically",
+      );
+
+      await assertRejects(
+        () =>
+          assertIndependentAssetStageOutputs([
+            { stage: "images", projectDir, outputDir: ".veryfront/caf\u00e9" },
+            { stage: "css", projectDir, outputDir: ".veryfront/cafe\u0301/css" },
+          ]),
+        TypeError,
+        "must not overlap physically",
+      );
+    });
+  });
+
   it("rejects distinct configured paths that alias the same physical tree", async () => {
     await withDirectory(async (projectDir) => {
       const physicalOutput = join(projectDir, "generated");
-      await Deno.mkdir(physicalOutput);
-      await Deno.symlink(physicalOutput, join(projectDir, "output-alias"));
+      await mkdir(physicalOutput);
+      await symlink(physicalOutput, join(projectDir, "output-alias"));
 
       await assertRejects(
         () =>
@@ -73,8 +98,8 @@ describe("build/asset-pipeline output planning", () => {
     await withDirectory(async (rootDir) => {
       const projectDir = join(rootDir, "project");
       const outsideDir = join(rootDir, "outside");
-      await Promise.all([Deno.mkdir(projectDir), Deno.mkdir(outsideDir)]);
-      await Deno.symlink(outsideDir, join(projectDir, "escape"));
+      await Promise.all([mkdir(projectDir), mkdir(outsideDir)]);
+      await symlink(outsideDir, join(projectDir, "escape"));
 
       await assertRejects(
         () =>

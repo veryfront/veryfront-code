@@ -8,6 +8,7 @@ import type {
   DataResult,
   InferGetServerDataProps,
   PageWithData,
+  StaticDataResult,
   StaticPathsResult,
 } from "./types.ts";
 
@@ -125,17 +126,37 @@ describe("types.ts", () => {
     });
 
     it("supports metadata-free control helpers from getStaticData", () => {
+      const missing: StaticDataResult = notFound();
+      const moved: StaticDataResult = redirect("/next");
       const missingPage: PageWithData = {
         default: () => null,
-        getStaticData: () => notFound(),
+        getStaticData: () => missing,
       };
       const redirectingPage: PageWithData = {
         default: () => null,
-        getStaticData: () => redirect("/next"),
+        getStaticData: () => moved,
       };
 
-      assertExists(missingPage.getStaticData);
-      assertExists(redirectingPage.getStaticData);
+      assertEquals(
+        missing.notFound,
+        true,
+        "a zero-argument notFound() must be a metadata-free static result",
+      );
+      assertEquals(
+        moved.redirect?.permanent,
+        false,
+        "redirect() must default to a temporary metadata-free static result",
+      );
+      assertEquals(
+        missingPage.getStaticData?.({ params: {}, url: new URL("http://localhost/missing") }),
+        missing,
+        "getStaticData must accept a metadata-free control result",
+      );
+      assertEquals(
+        redirectingPage.getStaticData?.({ params: {}, url: new URL("http://localhost/here") }),
+        moved,
+        "getStaticData must accept a metadata-free control result",
+      );
     });
 
     it("keeps legacy DataResult annotations assignable to getStaticData", () => {

@@ -25,9 +25,11 @@ describe("trigger validation", () => {
     for (const id of ["daily-triage", "billing.sync/v2", "0_internal"]) {
       assertEquals(isTriggerId(id), true);
     }
+    assertEquals(isTriggerId("a".repeat(256)), true, "a 256-character id is accepted");
     for (
       const id of [
         "",
+        "Daily-Triage",
         "Daily Triage",
         " leading",
         "trailing ",
@@ -185,6 +187,8 @@ describe("trigger validation", () => {
       tooDeep.next = child;
       tooDeep = child;
     }
+    const tooManyNodes = new Array(100_001).fill(0);
+    const oversizedKey = { ["k".repeat(16 * 1024 + 1)]: true };
 
     for (
       const value of [
@@ -198,6 +202,8 @@ describe("trigger validation", () => {
         customArray,
         symbolProperty,
         deepRoot,
+        tooManyNodes,
+        oversizedKey,
       ]
     ) {
       assertThrows(

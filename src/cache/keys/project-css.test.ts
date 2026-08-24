@@ -117,9 +117,15 @@ describe("project CSS cache key codec", () => {
         `v5:s_0061_${suffix}`,
         `v5:s_002a_${suffix}:extra`,
         `v5:s_002a_:spreview_:short:${CANDIDATES_HASH}:${PROFILE_HASH}`,
+        `v5:s_002a_:spreview_:${STYLESHEET_HASH}:short:${PROFILE_HASH}`,
+        `v5:s_002a_:spreview_:${STYLESHEET_HASH}:${CANDIDATES_HASH}:${"A".repeat(64)}`,
       ]
     ) {
-      assertEquals(decodeProjectCSSCacheKey(malformed), null);
+      assertEquals(
+        decodeProjectCSSCacheKey(malformed),
+        null,
+        "decodeProjectCSSCacheKey must reject any key buildProjectCSSCacheKey could not have emitted",
+      );
     }
     assertEquals(
       Reflect.apply(decodeProjectCSSCacheKey, undefined, [undefined]),

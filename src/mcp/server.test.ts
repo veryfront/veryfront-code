@@ -249,6 +249,32 @@ describe("mcp/server", () => {
 
       assertEquals(response.status, 401);
     });
+
+    it("rejects Authorization headers that are not a well-formed Bearer credential", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "bearer", validate: async (token: string) => token === "valid-token" },
+      });
+
+      const handler = server.createHTTPHandler();
+      const cases: [string, string][] = [
+        ["valid-token", "a no-scheme credential is not a bearer token"],
+        ["Basic valid-token", "a non-Bearer scheme is rejected rather than passed through"],
+        ["Bearer   ", "an empty bearer token is rejected"],
+      ];
+
+      for (const [authorization, message] of cases) {
+        const response = await handler(
+          jsonRpcRequest(
+            { jsonrpc: "2.0", id: 1, method: "tools/list" },
+            { ...JSON_HEADERS, Authorization: authorization },
+          ),
+        );
+
+        assertEquals(response.status, 401, message);
+        await response.body?.cancel();
+      }
+    });
   });
 
   describe("request body size limit", () => {
@@ -603,6 +629,51 @@ describe("mcp/server", () => {
 
       assertEquals(response.status, 200);
     });
+
+    it("rejects non-loopback origins on a server with no configured origins", async () => {
+      // The default branch is the actual DNS-rebinding defense: an unconfigured
+      // local `auth: "none"` server must not be reachable from a remote page.
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+
+      const handler = server.createHTTPHandler();
+      const response = await handler(
+        jsonRpcRequest(
+          { jsonrpc: "2.0", id: 1, method: "tools/list" },
+          { ...JSON_HEADERS, Origin: "https://evil.example" },
+        ),
+      );
+
+      assertEquals(response.status, 403, "an unconfigured server rejects non-loopback origins");
+      const body = await response.json();
+      assertEquals(body.error.message, "Forbidden: Origin not allowed");
+    });
+
+    it("allows loopback origins on a server with no configured origins", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+
+      const handler = server.createHTTPHandler();
+      for (const origin of ["http://127.0.0.1:5173", "http://localhost:5173"]) {
+        const response = await handler(
+          jsonRpcRequest(
+            { jsonrpc: "2.0", id: 1, method: "tools/list" },
+            { ...JSON_HEADERS, Origin: origin },
+          ),
+        );
+
+        assertEquals(
+          response.status,
+          200,
+          `loopback origins remain allowed on an unconfigured server: ${origin}`,
+        );
+        await response.body?.cancel();
+      }
+    });
   });
 
   describe("notifications/initialized", () => {
@@ -678,6 +749,111 @@ describe("mcp/server", () => {
       idempotentHint: true,
       openWorldHint: false,
     });
+  });
+
+  it("hides agent-owned tools from tools/list", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+
+    registerTool("test:owned", {
+      ...dynamicTool({
+        id: "test:owned",
+        description: "Agent-owned",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => ({ ok: true }),
+      }),
+      ownerAgentId: "agent_1",
+    });
+    registerTool(
+      "test:unowned",
+      dynamicTool({
+        id: "test:unowned",
+        description: "Project-wide",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => ({ ok: true }),
+      }),
+    );
+
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+    });
+
+    const tools = (response.result as { tools: ToolListEntry[] }).tools;
+    assertEquals(
+      tools.some((t) => t.name === "test:owned"),
+      false,
+      "agent-owned tools must never be listed to MCP clients",
+    );
+    assertEquals(
+      tools.some((t) => t.name === "test:unowned"),
+      true,
+      "unowned tools stay listed",
+    );
+  });
+
+  it("hides and rejects tools disabled for MCP", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+
+    registerTool(
+      "test:mcp-disabled",
+      dynamicTool({
+        id: "test:mcp-disabled",
+        description: "Not offered over MCP",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => ({ ok: true }),
+        mcp: { enabled: false },
+      }),
+    );
+    registerTool(
+      "test:mcp-enabled",
+      dynamicTool({
+        id: "test:mcp-enabled",
+        description: "Offered over MCP",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => ({ ok: true }),
+        mcp: { enabled: true },
+      }),
+    );
+
+    const listed = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+    });
+
+    const tools = (listed.result as { tools: ToolListEntry[] }).tools;
+    assertEquals(
+      tools.some((t) => t.name === "test:mcp-disabled"),
+      false,
+      "MCP-disabled tools must not be listed",
+    );
+    assertEquals(
+      tools.some((t) => t.name === "test:mcp-enabled"),
+      true,
+      "MCP-enabled tools stay listed",
+    );
+
+    const called = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "test:mcp-disabled", arguments: {} },
+    });
+
+    assertExists(called.error);
+    assertEquals(
+      called.error.code,
+      -32601,
+      "MCP-disabled tools must be rejected at call time",
+    );
+    assertStringIncludes(called.error.message, "Unknown tool");
   });
 
   it("omits title and annotations from tools/list when not configured", async () => {

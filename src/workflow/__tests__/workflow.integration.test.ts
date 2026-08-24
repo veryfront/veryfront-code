@@ -60,7 +60,7 @@ async function waitForApprovals(
   );
 }
 
-describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false }, () => {
+describe("Workflow Integration", () => {
   let client: WorkflowClient;
   let backend: MemoryBackend;
 
@@ -161,12 +161,12 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
 
       const handle1 = await client.start("branch-test", { value: 15 });
       await handle1.result();
-      expect(executedBranch).toContain("then");
+      expect(executedBranch).toEqual(["then"]);
 
       executedBranch.length = 0;
       const handle2 = await client.start("branch-test", { value: 5 });
       await handle2.result();
-      expect(executedBranch).toContain("else");
+      expect(executedBranch).toEqual(["else"]);
     });
   });
 
@@ -226,7 +226,46 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
       await handle.result();
 
       expect(counter).toBe(5);
-      expect((await client.getRun(handle.runId))?.status).toBe("completed");
+      const run = await client.getRun(handle.runId);
+      expect(run?.status).toBe("completed");
+      expect(run?.context["infinite-loop"]).toMatchObject({
+        exitReason: "maxIterations",
+        hitMax: true,
+        iterations: 5,
+      });
+      expect(run?.context.hitMax).toBe(true);
+    });
+
+    it("should run onComplete when the loop exits via its condition", async () => {
+      const noopTool = createMockTool("noop", () => ({ ran: true }));
+
+      const loopWorkflow = workflow({
+        id: "on-complete-test",
+        steps: [
+          loop("cond-loop", {
+            maxIterations: 5,
+            while: (_ctx, loop) => loop.iteration < 2,
+            steps: [step("run", { tool: noopTool })],
+            onComplete: (_ctx, loop) => ({
+              finished: true,
+              ranFor: loop.totalIterations,
+            }),
+          }),
+        ],
+      });
+
+      client.register(loopWorkflow);
+      const handle = await client.start("on-complete-test", {});
+      await handle.result();
+
+      const run = await client.getRun(handle.runId);
+      expect(run?.status).toBe("completed");
+      expect(run?.context["cond-loop"]).toMatchObject({
+        exitReason: "condition",
+        finished: true,
+        ranFor: 2,
+      });
+      expect(run?.context.finished).toBe(true);
     });
 
     it("should pass loop context to steps", async () => {
@@ -429,7 +468,7 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
   });
 });
 
-describe("Cron Job Pattern", { sanitizeOps: false, sanitizeResources: false }, () => {
+describe("Cron Job Pattern", () => {
   it("should support infinite loop with delay (cron pattern)", async () => {
     let iterations = 0;
     const maxIterations = 3;

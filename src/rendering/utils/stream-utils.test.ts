@@ -24,6 +24,11 @@ describe("streamToString", () => {
 
     const result = await streamToString(stream);
     assertEquals(result, "Hello World");
+    assertEquals(
+      stream.locked,
+      false,
+      "streamToString must release the reader lock after a successful read",
+    );
   });
 
   it("handles empty stream", async () => {
@@ -64,10 +69,21 @@ describe("streamToString", () => {
 
   it("handles null values in stream", async () => {
     const encoder = new TextEncoder();
-    const stream = createStream([encoder.encode("Before"), null, encoder.encode("After")]);
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode("Before"));
+        controller.enqueue(undefined as unknown as Uint8Array);
+        controller.enqueue(encoder.encode("After"));
+        controller.close();
+      },
+    });
 
     const result = await streamToString(stream);
-    assertEquals(result, "BeforeAfter");
+    assertEquals(
+      result,
+      "BeforeAfter",
+      "a stream that yields an empty value must be skipped rather than dereferenced",
+    );
   });
 
   it("times out on slow streams", async () => {
@@ -119,6 +135,11 @@ describe("streamToString", () => {
       "timed out after 1ms",
     );
     assertStrictEquals(cancelReason, thrown);
+    assertEquals(
+      stream.locked,
+      false,
+      "streamToString must release the reader lock after a failed read",
+    );
   });
 
   it("cancels with the owned failure when buffered output exceeds its limit", async () => {
@@ -146,6 +167,11 @@ describe("streamToString", () => {
       "limit of 4 bytes",
     );
     assertStrictEquals(cancelReason, thrown);
+    assertEquals(
+      stream.locked,
+      false,
+      "streamToString must release the reader lock after a failed read",
+    );
   });
 
   it("rejects invalid timeout and byte limits before locking the stream", async () => {

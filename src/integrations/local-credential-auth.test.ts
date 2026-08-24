@@ -164,6 +164,35 @@ describe("local integration credential auth", () => {
     assertEquals(resolved.headers["X-Billbee-Api-Key"], "billbee-application-key");
   });
 
+  it("resolves Basic connectors whose catalog password is optional or defaulted", async () => {
+    const chargebeePlan = createLocalCredentialAuthPlan(connector("chargebee"));
+    assertEquals(chargebeePlan.requiredEnvironmentVariables, [
+      "CHARGEBEE_API_KEY",
+      "CHARGEBEE_API_PASSWORD",
+    ]);
+
+    const chargebee = await resolveLocalCredentialAuth(
+      chargebeePlan,
+      providerFrom({ CHARGEBEE_API_KEY: "cb-key" }),
+    );
+    assertEquals(
+      chargebee.headers.Authorization,
+      `Basic ${btoa("cb-key:")}`,
+      "an optional catalog password must resolve to an empty Basic password",
+    );
+
+    const freshdeskPlan = createLocalCredentialAuthPlan(connector("freshdesk"));
+    const freshdesk = await resolveLocalCredentialAuth(
+      freshdeskPlan,
+      providerFrom({ FRESHDESK_API_KEY: "fd-key" }),
+    );
+    assertEquals(
+      freshdesk.headers.Authorization,
+      `Basic ${btoa("fd-key:X")}`,
+      "the catalog-declared default password must be used",
+    );
+  });
+
   it("builds a PayPal client-credentials token request", async () => {
     const plan = createLocalCredentialAuthPlan(connector("paypal"));
     assertEquals(plan.requiredEnvironmentVariables, [
@@ -188,6 +217,42 @@ describe("local integration credential auth", () => {
       "Content-Type": "application/x-www-form-urlencoded",
     });
     assertEquals(resolved.body, "grant_type=client_credentials");
+  });
+
+  it("joins catalog-declared scopes into the client-credentials token body", async () => {
+    const plan = createLocalCredentialAuthPlan(connector("ramp"));
+    const resolved = await resolveLocalCredentialAuth(
+      plan,
+      providerFrom({
+        RAMP_CLIENT_ID: "ramp-client",
+        RAMP_CLIENT_SECRET: SECRET,
+      }),
+    );
+
+    assert(resolved.kind === "token-request");
+    assertEquals(
+      resolved.body,
+      "grant_type=client_credentials&scope=transactions%3Aread%20cards%3Aread%20users%3Aread%20reimbursements%3Aread",
+      "ramp token body must carry the declared scopes space-joined in catalog order",
+    );
+  });
+
+  it("places the scope entry ahead of request-body client credentials", async () => {
+    const plan = createLocalCredentialAuthPlan(connector("moss"));
+    const resolved = await resolveLocalCredentialAuth(
+      plan,
+      providerFrom({
+        MOSS_CLIENT_ID: "moss-client",
+        MOSS_CLIENT_SECRET: SECRET,
+      }),
+    );
+
+    assert(resolved.kind === "token-request");
+    assertEquals(
+      resolved.body,
+      `grant_type=client_credentials&scope=read&client_id=moss-client&client_secret=${SECRET}`,
+      "the scope entry must precede request-body client credentials",
+    );
   });
 
   it("form-encodes OAuth Basic client credentials before encoding the header", async () => {
@@ -241,6 +306,45 @@ describe("local integration credential auth", () => {
       resolved.body,
       `grant_type=client_credentials&client_id=trusted-shops-client&client_secret=${SECRET}&audience=https%3A%2F%2Fapi.etrusted.com`,
     );
+  });
+
+  it("rejects reserved and empty token parameter names", () => {
+    for (const parameterName of ["grant_type", "client_id", "client_secret", "scope", ""]) {
+      const invalidParams = {
+        name: "ramp",
+        auth: {
+          type: "oauth2",
+          grantType: "client_credentials",
+          tokenUrl: "https://oauth.example.test/token",
+          tokenAuthMethod: "basic",
+          additionalParams: { [parameterName]: "catalog-supplied" },
+        },
+        envVars: [{
+          name: "RAMP_CLIENT_ID",
+          description: "client id",
+          required: true,
+        }, {
+          name: "RAMP_CLIENT_SECRET",
+          description: "client secret",
+          required: true,
+        }],
+      } satisfies Pick<IntegrationConfig, "auth" | "envVars" | "name">;
+
+      const error = assertThrows(
+        () => createLocalCredentialAuthPlan(invalidParams),
+        VeryfrontError,
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(
+        error.slug,
+        "local-integration-config-invalid",
+        `token parameter "${parameterName}" must be rejected as invalid catalog metadata`,
+      );
+      assert(
+        error.message.includes("invalid token parameter"),
+        `token parameter "${parameterName}" must be reported as an invalid token parameter`,
+      );
+    }
   });
 
   it("builds a Salesforce service-account token request from its distinct vocabulary", async () => {

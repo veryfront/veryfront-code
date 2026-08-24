@@ -44,6 +44,21 @@ describe("abort utilities", () => {
     assertStrictEquals(error, reason);
   });
 
+  it("rejects immediately when the signal is already aborted", async () => {
+    const controller = new AbortController();
+    const reason = new Error("already cancelled");
+    controller.abort(reason);
+
+    const error = await assertRejects(() =>
+      awaitAbortable(new Promise<never>(() => {}), controller.signal)
+    );
+    assertStrictEquals(
+      error,
+      reason,
+      "an already-aborted signal must reject before awaiting a stalled producer",
+    );
+  });
+
   it("preserves successful values and producer failures", async () => {
     assertEquals(await awaitAbortable(Promise.resolve(42)), 42);
 

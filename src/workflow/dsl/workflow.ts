@@ -83,9 +83,24 @@ export function sequence(...nodes: WorkflowNode[]): WorkflowNode[] {
   return nodes.map((node, index) => {
     if (index === 0) return node;
 
+    const previousId = nodes[index - 1]!.id;
+    const existingDependencies = node.dependsOn ?? [];
+    const dependencies: string[] = [];
+    let includesPrevious = false;
+    for (
+      let dependencyIndex = 0;
+      dependencyIndex < existingDependencies.length;
+      dependencyIndex++
+    ) {
+      const dependency = existingDependencies[dependencyIndex]!;
+      dependencies[dependencyIndex] = dependency;
+      if (dependency === previousId) includesPrevious = true;
+    }
+    if (!includesPrevious) dependencies[dependencies.length] = previousId;
+
     return {
       ...node,
-      dependsOn: [nodes[index - 1]!.id],
+      dependsOn: dependencies,
     };
   });
 }

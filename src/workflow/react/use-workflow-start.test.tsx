@@ -1,7 +1,7 @@
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { useApproval, type UseApprovalResult } from "./use-approval.ts";
 import { useWorkflow, type UseWorkflowResult } from "./use-workflow.ts";
@@ -49,6 +49,8 @@ describe("useWorkflowStart", () => {
     let requestHeaders = new Headers();
     let hook: UseWorkflowStartResult<{ topic: string }> | null = null;
 
+    const startedRunIds: string[] = [];
+
     document.cookie = "__Host-vf_csrf=production-token; Path=/; Secure";
     globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
       requestHeaders = new Headers(init?.headers);
@@ -56,17 +58,22 @@ describe("useWorkflowStart", () => {
     }) as typeof fetch;
 
     function Capture(): null {
-      hook = useWorkflowStart<{ topic: string }>({ workflowId: "content-pipeline" });
+      hook = useWorkflowStart<{ topic: string }>({
+        workflowId: "content-pipeline",
+        onStart: (runId) => startedRunIds.push(runId),
+      });
       return null;
     }
 
     const root = createRoot(document.getElementById("root")!);
     try {
       flushSync(() => root.render(<Capture />));
-      await hook!.start({ topic: "Production journey" });
+      const runId = await hook!.start({ topic: "Production journey" });
 
       assertEquals(requestHeaders.get("content-type"), "application/json");
       assertEquals(requestHeaders.get("x-csrf-token"), "production-token");
+      assertEquals(runId, "run-1", "start resolves the run id returned by the API");
+      assertEquals(startedRunIds, ["run-1"], "onStart receives the started run id");
     } finally {
       flushSync(() => root.unmount());
       globalThis.fetch = originalFetch;
@@ -160,6 +167,70 @@ describe("useWorkflowStart", () => {
       await hook!.start({});
 
       assertEquals(requestHeaders.get("x-csrf-token"), null);
+    } finally {
+      flushSync(() => root.unmount());
+      globalThis.fetch = originalFetch;
+      restoreDom();
+    }
+  });
+  it("resolves the id field when the start response omits runId", async () => {
+    const restoreDom = installDom();
+    const originalFetch = globalThis.fetch;
+    let hook: UseWorkflowStartResult<Record<string, never>> | null = null;
+
+    globalThis.fetch = (() => Promise.resolve(Response.json({ id: "run-2" }))) as typeof fetch;
+
+    function Capture(): null {
+      hook = useWorkflowStart({ workflowId: "content-pipeline" });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+
+      assertEquals(
+        await hook!.start({}),
+        "run-2",
+        "start falls back to the id field when runId is absent",
+      );
+    } finally {
+      flushSync(() => root.unmount());
+      globalThis.fetch = originalFetch;
+      restoreDom();
+    }
+  });
+
+  it("rejects when the start endpoint fails", async () => {
+    const restoreDom = installDom();
+    const originalFetch = globalThis.fetch;
+    const reportedErrors: Error[] = [];
+    let hook: UseWorkflowStartResult<Record<string, never>> | null = null;
+
+    globalThis.fetch =
+      (() => Promise.resolve(Response.json({ message: "nope" }, { status: 500 }))) as typeof fetch;
+
+    function Capture(): null {
+      hook = useWorkflowStart({
+        workflowId: "content-pipeline",
+        onError: (startError) => reportedErrors.push(startError),
+      });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+
+      const error = await assertRejects(
+        () => hook!.start({}),
+        Error,
+        "nope",
+        "a failed start must reject instead of resolving an empty run id",
+      );
+
+      assertEquals(reportedErrors.length, 1, "onError receives the failure exactly once");
+      assertEquals(reportedErrors[0], error, "onError receives the rejected error");
     } finally {
       flushSync(() => root.unmount());
       globalThis.fetch = originalFetch;

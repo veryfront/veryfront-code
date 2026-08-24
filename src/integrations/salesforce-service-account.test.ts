@@ -17,12 +17,15 @@ import {
 import { VeryfrontError } from "#veryfront/errors";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import { HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV } from "./local-credential-host-policy.ts";
+import { MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES } from "./limits.ts";
 import {
   createSalesforceServiceAccountToolSourceWithTransport,
   SALESFORCE_SERVICE_ACCOUNT_ENV_VARS,
 } from "./salesforce-service-account.ts";
 
 const [CLIENT_ID_ENV, CLIENT_SECRET_ENV, LOGIN_URL_ENV] = SALESFORCE_SERVICE_ACCOUNT_ENV_VARS;
+/** Mirrors the module-private token response cap in salesforce-service-account.ts. */
+const TOKEN_RESPONSE_LIMIT_BYTES = 64 * 1024;
 const trackedEnv = [...SALESFORCE_SERVICE_ACCOUNT_ENV_VARS] as const;
 const originalEnv = new Map(trackedEnv.map((name) => [name, getEnv(name)]));
 
@@ -364,6 +367,232 @@ describe("Salesforce service-account integration source", () => {
     const query = new URL(providerRequests[0]!.request.url).searchParams.get("q");
     assertStringIncludes(query ?? "", "FROM Case");
     assertStringIncludes(query ?? "", "LIMIT 50");
+  });
+
+  it("mints a fresh token when a second credential set reuses the same source", async () => {
+    setCredentials();
+    let tokenRequests = 0;
+    const transport = createTransport(({ baseUrl, request }) => {
+      if (request.url.endsWith("/services/oauth2/token")) {
+        tokenRequests++;
+        return baseUrl === "https://a.my.salesforce.com"
+          ? Response.json({
+            access_token: "token-a",
+            instance_url: "https://na-a.salesforce.com",
+          })
+          : Response.json({
+            access_token: "token-b",
+            instance_url: "https://na-b.salesforce.com",
+          });
+      }
+      return Response.json({ totalSize: 0, records: [] });
+    });
+    const source = createSalesforceServiceAccountToolSourceWithTransport({
+      allowedTools: ["salesforce__list_cases"],
+      createOriginBoundFetch: transport.createOriginBoundFetch,
+    });
+
+    await runWithProjectEnv(
+      {
+        [CLIENT_ID_ENV]: "client-a",
+        [CLIENT_SECRET_ENV]: "secret-a",
+        [LOGIN_URL_ENV]: "https://a.my.salesforce.com",
+      },
+      () => source.executeTool("salesforce__list_cases", {}),
+    );
+    await runWithProjectEnv(
+      {
+        [CLIENT_ID_ENV]: "client-b",
+        [CLIENT_SECRET_ENV]: "secret-b",
+        [LOGIN_URL_ENV]: "https://b.my.salesforce.com",
+      },
+      () => source.executeTool("salesforce__list_cases", {}),
+    );
+
+    assertEquals(tokenRequests, 2, "a second credential set must mint its own token");
+    const providerRequests = transport.captures.filter((capture) =>
+      capture.request.url.includes("/services/data/")
+    );
+    assertEquals(
+      providerRequests.length,
+      2,
+      "each credential set must issue its own provider request",
+    );
+    assertEquals(
+      providerRequests[1]?.request.headers.get("authorization"),
+      "Bearer token-b",
+      "the second project must not reuse the first project's bearer token",
+    );
+    assertEquals(
+      new URL(providerRequests[1]!.request.url).origin,
+      "https://na-b.salesforce.com",
+      "the second project must not reuse the first project's instance origin",
+    );
+  });
+
+  async function assertCacheKeyDimensionMintsSeparately(
+    first: Record<string, string>,
+    second: Record<string, string>,
+    dimension: string,
+  ): Promise<void> {
+    setCredentials();
+    let tokenRequests = 0;
+    const transport = createTransport(({ body, request }) => {
+      if (request.url.endsWith("/services/oauth2/token")) {
+        tokenRequests++;
+        // Both credential sets share a login origin, so the minted identity is
+        // keyed off the posted client credentials rather than the request URL.
+        const form = new URLSearchParams(body);
+        const isFirst = form.get("client_id") === first[CLIENT_ID_ENV] &&
+          form.get("client_secret") === first[CLIENT_SECRET_ENV];
+        return Response.json({
+          access_token: isFirst ? "token-first" : "token-second",
+          instance_url: isFirst
+            ? "https://na-first.salesforce.com"
+            : "https://na-second.salesforce.com",
+        });
+      }
+      return Response.json({ totalSize: 0, records: [] });
+    });
+    const source = createSalesforceServiceAccountToolSourceWithTransport({
+      allowedTools: ["salesforce__list_cases"],
+      createOriginBoundFetch: transport.createOriginBoundFetch,
+    });
+
+    await runWithProjectEnv(first, () => source.executeTool("salesforce__list_cases", {}));
+    await runWithProjectEnv(second, () => source.executeTool("salesforce__list_cases", {}));
+
+    assertEquals(
+      tokenRequests,
+      2,
+      `a changed ${dimension} must mint its own token`,
+    );
+    const providerRequests = transport.captures.filter((capture) =>
+      capture.request.url.includes("/services/data/")
+    );
+    assertEquals(
+      providerRequests.length,
+      2,
+      `a changed ${dimension} must issue its own provider request`,
+    );
+    assertEquals(
+      providerRequests[1]?.request.headers.get("authorization"),
+      "Bearer token-second",
+      `a changed ${dimension} must not reuse the cached bearer token`,
+    );
+    assertEquals(
+      new URL(providerRequests[1]!.request.url).origin,
+      "https://na-second.salesforce.com",
+      `a changed ${dimension} must not reuse the cached instance origin`,
+    );
+  }
+
+  it("mints a fresh token when only the client id changes on one login origin", async () => {
+    await assertCacheKeyDimensionMintsSeparately(
+      {
+        [CLIENT_ID_ENV]: "client-a",
+        [CLIENT_SECRET_ENV]: "shared-secret",
+        [LOGIN_URL_ENV]: "https://shared.my.salesforce.com",
+      },
+      {
+        [CLIENT_ID_ENV]: "client-b",
+        [CLIENT_SECRET_ENV]: "shared-secret",
+        [LOGIN_URL_ENV]: "https://shared.my.salesforce.com",
+      },
+      "client id",
+    );
+  });
+
+  it("mints a fresh token when only the client secret changes on one login origin", async () => {
+    await assertCacheKeyDimensionMintsSeparately(
+      {
+        [CLIENT_ID_ENV]: "shared-client",
+        [CLIENT_SECRET_ENV]: "secret-a",
+        [LOGIN_URL_ENV]: "https://shared.my.salesforce.com",
+      },
+      {
+        [CLIENT_ID_ENV]: "shared-client",
+        [CLIENT_SECRET_ENV]: "secret-b",
+        [LOGIN_URL_ENV]: "https://shared.my.salesforce.com",
+      },
+      "client secret",
+    );
+  });
+
+  it("rejects oversized token and provider responses before buffering them", async () => {
+    setCredentials({
+      [CLIENT_ID_ENV]: "client-id",
+      [CLIENT_SECRET_ENV]: "client-secret",
+      [LOGIN_URL_ENV]: "https://acme.my.salesforce.com",
+    });
+    const oversizedTokenTransport = createTransport(({ request }) => {
+      if (!request.url.endsWith("/services/oauth2/token")) return Response.json({ Id: "leaked" });
+      return new Response(
+        JSON.stringify({
+          access_token: "access-token",
+          instance_url: "https://na123.salesforce.com",
+        }),
+        {
+          headers: {
+            "content-length": String(TOKEN_RESPONSE_LIMIT_BYTES + 1),
+            "content-type": "application/json",
+          },
+        },
+      );
+    });
+    const oversizedTokenSource = createSalesforceServiceAccountToolSourceWithTransport({
+      allowedTools: ["salesforce__get_case"],
+      createOriginBoundFetch: oversizedTokenTransport.createOriginBoundFetch,
+    });
+
+    const oversizedToken = await oversizedTokenSource.executeTool("salesforce__get_case", {
+      caseId: "500000000000001",
+    });
+
+    assertEquals(
+      oversizedToken,
+      {
+        error: "salesforce_api_error",
+        integration: "salesforce",
+        message: "Salesforce API request failed.",
+      },
+      "an over-length token response must fail before it is buffered",
+    );
+    assertEquals(
+      oversizedTokenTransport.captures.filter((capture) =>
+        capture.request.url.includes("/services/data/")
+      ).length,
+      0,
+      "the content-length pre-check must fire before any provider call",
+    );
+
+    const oversizedProviderTransport = createTransport(({ request }) => {
+      if (request.url.endsWith("/services/oauth2/token")) {
+        return Response.json({
+          access_token: "access-token",
+          instance_url: "https://na123.salesforce.com",
+        });
+      }
+      return new Response("x".repeat(MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES + 1));
+    });
+    const oversizedProviderSource = createSalesforceServiceAccountToolSourceWithTransport({
+      allowedTools: ["salesforce__get_case"],
+      createOriginBoundFetch: oversizedProviderTransport.createOriginBoundFetch,
+    });
+
+    const oversizedProvider = await oversizedProviderSource.executeTool("salesforce__get_case", {
+      caseId: "500000000000001",
+    });
+
+    assertEquals(
+      oversizedProvider,
+      {
+        error: "salesforce_api_error",
+        integration: "salesforce",
+        message: "Salesforce API request failed.",
+      },
+      "an over-length provider response must be rejected instead of returned",
+    );
   });
 
   it("refreshes once after a provider 401 and sends only declared write fields", async () => {

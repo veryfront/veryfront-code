@@ -162,6 +162,16 @@ describe("createWorkflowHandler", () => {
     // useWorkflowStart reads `runId` (falling back to `id`) off this body.
     const body = await response.json() as { runId?: string };
     expect(typeof body.runId).toBe("string");
+
+    // The route's whole job is forwarding the posted input into the run.
+    const runId = body.runId as string;
+    await until(
+      async () => (await client.getRun(runId))?.status === "completed",
+      `run ${runId} to finish`,
+    );
+    const run = await client.getRun(runId);
+    expect(run?.input).toEqual({ topic: "x" });
+    expect(run?.nodeStates.only?.output).toEqual({ ok: true, input: { topic: "x" } });
   });
 
   it("decodes an encoded workflow ID before lookup", async () => {
@@ -257,6 +267,29 @@ describe("createWorkflowHandler", () => {
     expect(listed?._traceContext).toBeUndefined();
     expect(listed?.workerId).toBeUndefined();
     expect(listed?.checkpoints).toBeUndefined();
+  });
+
+  it("pages runs with the cursor useWorkflowList round-trips", async () => {
+    const started = [await startRun(), await startRun(), await startRun()];
+
+    const first = await handlers.GET(get("/api/workflows/runs?limit=2"));
+    expect(first.status).toBe(200);
+    const firstPage = await first.json() as { runs: Array<{ id: string }>; cursor?: string };
+    expect(firstPage.runs.length).toBe(2);
+    expect(firstPage.cursor).toBe("2");
+
+    const second = await handlers.GET(
+      get(`/api/workflows/runs?limit=2&cursor=${firstPage.cursor}`),
+    );
+    expect(second.status).toBe(200);
+    const secondPage = await second.json() as { runs: Array<{ id: string }>; cursor?: string };
+    expect(secondPage.runs.length).toBe(1);
+
+    const firstPageIds = firstPage.runs.map((run) => run.id);
+    expect(firstPageIds.includes(secondPage.runs[0]?.id as string)).toBe(false);
+    // A short final page ends the round trip instead of re-serving page one.
+    expect(secondPage.cursor).toBeUndefined();
+    expect([...firstPageIds, secondPage.runs[0]?.id].sort()).toEqual([...started].sort());
   });
 
   /** Start a run that is still going, so there is something to act on. */
@@ -357,6 +390,52 @@ describe("createWorkflowHandler", () => {
       }),
     );
     expect(decided.status).toBe(200);
+
+    // A 200 alone cannot tell an approval from a rejection: the run has to
+    // leave the wait and run the step behind it.
+    await until(
+      async () => (await client.getRun(runId))?.status === "completed",
+      `run ${runId} to complete after approval`,
+    );
+    expect((await client.getRun(runId))?.context.after).toBeDefined();
+  });
+
+  it("fails the run when an approval is rejected", async () => {
+    client.register(
+      workflow({
+        id: "needs-approval",
+        steps: [
+          waitForApproval("sign-off", { message: "ok?" }),
+          step("after", { tool: passthroughTool("after") }),
+        ],
+      }),
+    );
+
+    const started = await handlers.POST(post("/api/workflows/needs-approval/start", { input: {} }));
+    const { runId } = await started.json() as { runId: string };
+
+    await until(
+      async () => (await client.getPendingApprovals(runId)).length > 0,
+      `run ${runId} to pause for approval`,
+    );
+    const approvalId = (await client.getPendingApprovals(runId))[0]?.id;
+
+    const decided = await handlers.POST(
+      post(`/api/workflows/runs/${runId}/approvals/${approvalId}`, {
+        approved: false,
+        approver: "tester",
+        comment: "nope",
+      }),
+    );
+    expect(decided.status).toBe(200);
+
+    await until(
+      async () => (await client.getRun(runId))?.status === "failed",
+      `run ${runId} to fail after rejection`,
+    );
+    const run = await client.getRun(runId);
+    expect(run?.error?.message).toContain("reject");
+    expect(run?.context.after).toBeUndefined();
   });
 
   it("rejects an approval decision that omits the approved flag", async () => {

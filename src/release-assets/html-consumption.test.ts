@@ -152,10 +152,16 @@ describe("manifest cache gating", () => {
     resetRequestProfiles();
   });
 
-  it("returns null when the flag is off (byte-identical fallback)", () => {
+  it("returns null when the flag is off (byte-identical fallback)", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "");
-    registerManifestFetcherForRelease("r", () => Promise.resolve(readyManifestResponse()));
+    let fetchCount = 0;
+    registerManifestFetcherForRelease("r", () => {
+      fetchCount++;
+      return Promise.resolve(readyManifestResponse());
+    });
     assertEquals(getReadyManifestForRender("r"), null);
+    await Promise.resolve();
+    assertEquals(fetchCount, 0, "a disabled flag must not reach the control plane");
   });
 
   it("returns null when no fetcher is registered", () => {

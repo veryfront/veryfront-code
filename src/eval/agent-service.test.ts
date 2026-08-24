@@ -415,6 +415,113 @@ describe("eval/agent-service", () => {
     assertStringIncludes(JSON.stringify(record.trace.events), "RUN_FINISHED");
   });
 
+  it("marks a non-ok AG-UI response as an incomplete run", async () => {
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () =>
+        new Response("", { status: 500, headers: { "content-type": "text/event-stream" } }),
+    });
+    const definition = evalAgent({
+      id: "eval:hosted-non-ok",
+      target: "agent:veryfront",
+      dataset: datasets.inline([{ id: "smoke", input: "List files" }]),
+    });
+
+    const result = await adapter({
+      definition,
+      example: { id: "smoke", input: "List files" },
+      repetition: 1,
+    }) as EvalAgentAdapterResult;
+
+    assertEquals(result.completed, false, "a non-ok AG-UI response is never a completed run");
+    assertEquals(result.error, "500", "a bodyless non-ok response records the status as the error");
+    assertEquals(result.output, {
+      text: "",
+      agUi: {
+        responseStatus: 500,
+        eventTypes: [],
+        runError: "500",
+      },
+    }, "the recorded output preserves the failed response status");
+  });
+
+  it("marks an AG-UI run error as an incomplete run", async () => {
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () =>
+        createSseResponse([
+          { event: "RunStarted", data: { runId: "run_123" } },
+          { event: "RunError", data: { message: "agent crashed" } },
+        ]),
+    });
+    const definition = evalAgent({
+      id: "eval:hosted-run-error",
+      target: "agent:veryfront",
+      dataset: datasets.inline([{ id: "smoke", input: "List files" }]),
+    });
+
+    const result = await adapter({
+      definition,
+      example: { id: "smoke", input: "List files" },
+      repetition: 1,
+    }) as EvalAgentAdapterResult;
+
+    assertEquals(result.completed, false, "a run that emits RunError is never a completed run");
+    assertEquals(result.error, "agent crashed", "the run error message becomes the record error");
+    assertEquals(result.output, {
+      text: "",
+      agUi: {
+        responseStatus: 200,
+        eventTypes: ["RUN_STARTED", "RUN_ERROR"],
+        runError: "agent crashed",
+      },
+    }, "the recorded output preserves the run error");
+  });
+
+  it("marks a stream that never finishes as an incomplete run", async () => {
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () =>
+        createSseResponse([
+          { event: "RunStarted", data: { runId: "run_123" } },
+          { event: "TextMessageContent", data: { delta: "Partial" } },
+        ]),
+    });
+    const definition = evalAgent({
+      id: "eval:hosted-unfinished",
+      target: "agent:veryfront",
+      dataset: datasets.inline([{ id: "smoke", input: "List files" }]),
+    });
+
+    const result = await adapter({
+      definition,
+      example: { id: "smoke", input: "List files" },
+      repetition: 1,
+    }) as EvalAgentAdapterResult;
+
+    assertEquals(
+      result.completed,
+      false,
+      "a stream without RunFinished is never a completed run",
+    );
+    assertEquals(
+      result.error,
+      "AG-UI response failed with status 200",
+      "a missing RunFinished falls back to the status-based error",
+    );
+    assertEquals(result.output, {
+      text: "Partial",
+      agUi: {
+        responseStatus: 200,
+        eventTypes: ["RUN_STARTED", "TEXT_MESSAGE_CONTENT"],
+        runError: null,
+      },
+    }, "the recorded output keeps the partial stream without RunFinished");
+  });
+
   it("rejects mockTools before fetching from the hosted agent service", async () => {
     let fetchCalled = false;
     const adapter = createAgentServiceEvalAdapter({
@@ -494,6 +601,59 @@ describe("eval/agent-service", () => {
     }]);
     assertEquals(record.metrics?.[0]?.pass, false);
     assertEquals(record.metrics?.[0]?.evidence, { failedTools: ["search"] });
+  });
+
+  it("classifies denied AG-UI tool results apart from tool errors", async () => {
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () =>
+        createSseResponse([
+          { event: "RunStarted", data: { runId: "run_123" } },
+          {
+            event: "ToolCallResult",
+            data: {
+              toolCallId: "tool_1",
+              toolCallName: "search",
+              isError: true,
+              status: "denied",
+              result: { message: "blocked" },
+            },
+          },
+          {
+            event: "ToolCallResult",
+            data: {
+              toolCallId: "tool_2",
+              toolCallName: "write",
+              isError: true,
+              result: { message: "Permission denied" },
+            },
+          },
+          { event: "RunFinished", data: {} },
+        ]),
+    });
+    const definition = evalAgent({
+      id: "eval:denied-tools",
+      target: "agent:veryfront",
+      dataset: datasets.inline([{ id: "smoke", input: "Search docs" }]),
+    });
+
+    const result = await adapter({
+      definition,
+      example: { id: "smoke", input: "Search docs" },
+      repetition: 1,
+    }) as EvalAgentAdapterResult;
+
+    assertEquals(
+      result.trace?.toolCalls?.[0]?.status,
+      "denied",
+      "explicit denied status is preserved",
+    );
+    assertEquals(
+      result.trace?.toolCalls?.[1]?.status,
+      "denied",
+      "a denied error message is classified as denied, not error",
+    );
   });
 
   it("normalizes AG-UI tool arguments and results into eval traces", async () => {

@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { normalizeBuildOptions } from "./build-initializer.ts";
 
 describe("build/production-build/build/build-initializer", () => {
@@ -12,7 +13,11 @@ describe("build/production-build/build/build-initializer", () => {
 
     it("should default outputDir to .veryfront/output", () => {
       const result = normalizeBuildOptions({ projectDir: "/my-project" });
-      assertEquals(result.outputDir?.includes(".veryfront/output"), true);
+      assertEquals(
+        result.outputDir,
+        join("/my-project", ".veryfront", "output"),
+        "default output dir must be rooted at projectDir",
+      );
     });
 
     it("should use provided outputDir", () => {

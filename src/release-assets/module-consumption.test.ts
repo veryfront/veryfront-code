@@ -330,15 +330,41 @@ describe("rewriteReleaseDependencyImportsForModule", () => {
   });
 
   it("does not rewrite when the dependency import-map flag is off", async () => {
+    // Everything the rewrite needs is in place except the flag: a ready
+    // manifest that maps the bundle's embedded source URL to an asset, so the
+    // kill switch is the only thing keeping the import untouched.
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    const sourceUrl = "https://esm.sh/react@19.2.4?deps=csstype%403.2.3&target=es2022";
+    registerManifestFetcherForRelease("release-id", () =>
+      Promise.resolve({
+        state: "ready",
+        manifest_version: 1,
+        manifest: manifest({
+          [sourceUrl]: {
+            contentHash: HASH_A,
+            size: 100,
+            contentType: "text/javascript",
+          },
+        }),
+      }));
     const code = 'import React from "file:///tmp/veryfront-http-bundle/http-123abc.mjs";';
 
     const result = await rewriteReleaseDependencyImportsForModule(code, {
       releaseId: "release-id",
       dependencyCacheRoot: "/tmp/veryfront-http-bundle",
-      readDependencySource: () => Promise.reject(new Error("unused")),
+      readDependencySource: () =>
+        Promise.resolve(`/*! @vf-source: ${sourceUrl} */\nexport default {};`),
     });
 
-    assertEquals(result, code);
+    assertEquals(
+      result,
+      code,
+      "the disabled dependency import-map flag must leave imports untouched",
+    );
+    assertEquals(
+      result.includes(HASH_A),
+      false,
+      "no asset URL may be substituted while the flag is off",
+    );
   });
 });

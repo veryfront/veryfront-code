@@ -82,11 +82,20 @@ describe("html-detection", () => {
         html: `<p>Learn about <html></html> tags</p>`,
         expected: false,
       },
+      {
+        name: "should return false when a doctype appears inside the content",
+        html: `<div>Example: <!DOCTYPE html></div><html>x</html>`,
+        expected: false,
+      },
     ];
 
     for (const testCase of cases) {
       it(testCase.name, () => {
-        assertEquals(isFullHTMLDocument(testCase.html), testCase.expected);
+        assertEquals(
+          isFullHTMLDocument(testCase.html),
+          testCase.expected,
+          testCase.name,
+        );
       });
     }
   });

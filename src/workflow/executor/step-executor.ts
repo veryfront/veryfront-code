@@ -32,7 +32,7 @@ import type {
   WorkflowContext,
   WorkflowNode,
 } from "../types.ts";
-import { parseDuration, validateRetryConfig } from "../types.ts";
+import { parsePositiveDurationWithLabel, validateRetryConfig } from "../types.ts";
 import {
   addActiveSpanEvent,
   setActiveSpanAttributes,
@@ -203,9 +203,24 @@ export class StepExecutor {
       });
     }
 
+    const hasAgent = config.agent != null;
+    const hasTool = config.tool != null;
+    if (hasAgent === hasTool) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Step "${node.id}" must configure exactly one of 'agent' or 'tool'`,
+      });
+    }
+
     if (config.retry) {
       validateRetryConfig(config.retry);
     }
+
+    const timeout = parsePositiveDurationWithLabel(
+      config.timeout === undefined
+        ? (this.config.defaultTimeout ?? DEFAULT_STEP_TIMEOUT_MS)
+        : config.timeout,
+      `Step "${node.id}" timeout`,
+    );
 
     const retryConfig = { ...DEFAULT_RETRY, ...config.retry };
     const maxAttempts = retryConfig.maxAttempts ?? 1;
@@ -215,16 +230,13 @@ export class StepExecutor {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       abortSignal?.throwIfAborted();
+      let operationCompleted = false;
 
       try {
         const output = await runWithWorkflowTenant(tenant, async () => {
           const resolvedInput = await this.resolveInput(config.input, context);
           abortSignal?.throwIfAborted();
           this.config.onStepStart?.(node.id, resolvedInput, runId);
-
-          const timeout = config.timeout
-            ? parseDuration(config.timeout)
-            : (this.config.defaultTimeout ?? DEFAULT_STEP_TIMEOUT_MS);
 
           return this.executeWithTimeout(
             (attemptSignal) => this.executeStep(config, resolvedInput, context, attemptSignal),
@@ -234,8 +246,7 @@ export class StepExecutor {
           );
         });
         abortSignal?.throwIfAborted();
-
-        abortSignal?.throwIfAborted();
+        operationCompleted = true;
         setActiveSpanAttributes({ "workflow.node.attempts": attempt });
         this.config.onStepComplete?.(node.id, output, runId);
 
@@ -248,7 +259,10 @@ export class StepExecutor {
         abortSignal?.throwIfAborted();
         lastError = ensureError(error);
 
-        if (attempt < maxAttempts && this.isRetryableError(lastError, retryConfig)) {
+        if (
+          !operationCompleted && attempt < maxAttempts &&
+          this.isRetryableError(lastError, retryConfig)
+        ) {
           const delay = calculateRetryDelay(attempt, retryConfig);
           addActiveSpanEvent("workflow.node.retry", {
             "workflow.node.attempt": attempt,
@@ -479,12 +493,18 @@ export class StepExecutor {
 
   createCompletedState(result: StepResult, previousState: NodeState): NodeState {
     const completedAt = new Date();
+    const {
+      completedAt: _previousCompletedAt,
+      error: _previousError,
+      output: _previousOutput,
+      ...activeState
+    } = previousState;
 
     if (result.success) {
-      return { ...previousState, status: "completed", output: result.output, completedAt };
+      return { ...activeState, status: "completed", output: result.output, completedAt };
     }
 
-    return { ...previousState, status: "failed", error: result.error, completedAt };
+    return { ...activeState, status: "failed", error: result.error, completedAt };
   }
 
   createSkippedState(nodeId: string): NodeState {

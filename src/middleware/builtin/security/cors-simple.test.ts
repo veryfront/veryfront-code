@@ -16,10 +16,19 @@ describe("corsSimple", () => {
     it("should respond to OPTIONS with 204", async () => {
       const middleware = corsSimple("*");
       const ctx = createContext("OPTIONS", "https://other.com");
+      let calledNext = false;
 
-      const response = await middleware(ctx, () => Promise.resolve(new Response("OK")));
+      const response = await middleware(ctx, () => {
+        calledNext = true;
+        return Promise.resolve(new Response("OK"));
+      });
 
       assertEquals(response?.status, 204);
+      assertEquals(
+        calledNext,
+        false,
+        "an allowed preflight must be answered by the middleware without reaching the downstream handler",
+      );
     });
 
     it("should include CORS headers in preflight response", async () => {
@@ -70,6 +79,37 @@ describe("corsSimple", () => {
       assertEquals(response?.headers.get("Access-Control-Allow-Origin"), "*");
     });
 
+    it("should not add a CORS header for a disallowed origin on a normal request", async () => {
+      const middleware = corsSimple("https://allowed.com");
+      const ctx = createContext("GET", "https://evil.com");
+
+      const response = await middleware(ctx, () => Promise.resolve(new Response("OK")));
+
+      assertEquals(
+        response?.headers.get("Access-Control-Allow-Origin"),
+        null,
+        "a rejected origin must never receive Access-Control-Allow-Origin",
+      );
+      assertEquals(
+        await response?.text(),
+        "OK",
+        "the downstream response must still pass through untouched",
+      );
+    });
+
+    it("should add the CORS header for an allowed origin on a normal request", async () => {
+      const middleware = corsSimple("https://allowed.com");
+      const ctx = createContext("GET", "https://allowed.com");
+
+      const response = await middleware(ctx, () => Promise.resolve(new Response("OK")));
+
+      assertEquals(
+        response?.headers.get("Access-Control-Allow-Origin"),
+        "https://allowed.com",
+        "an allowed origin must receive its own origin in Access-Control-Allow-Origin",
+      );
+    });
+
     it("should preserve original response body", async () => {
       const middleware = corsSimple("*");
       const ctx = createContext("GET", "https://other.com");
@@ -108,12 +148,21 @@ describe("corsSimple", () => {
     it("should accept string origin", async () => {
       const middleware = corsSimple("https://allowed.com");
       const ctx = createContext("OPTIONS", "https://allowed.com");
+      let calledNext = false;
 
-      const response = await middleware(ctx, () => Promise.resolve(new Response("OK")));
+      const response = await middleware(ctx, () => {
+        calledNext = true;
+        return Promise.resolve(new Response("OK"));
+      });
 
       assertEquals(
         response?.headers.get("Access-Control-Allow-Origin"),
         "https://allowed.com",
+      );
+      assertEquals(
+        calledNext,
+        false,
+        "an allowed preflight must be answered by the middleware without reaching the downstream handler",
       );
     });
 

@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { resetMetrics, state } from "./metrics-state.ts";
+import { getSSRBoundaries, resetMetrics, state } from "./metrics-state.ts";
 import {
   recordApiRequest,
   recordApiRetry,
@@ -160,9 +160,34 @@ describe("observability/simple-metrics/metrics-recorder", () => {
 
     it("should record duration in histogram bucket", () => {
       resetMetrics();
+      const boundaries = getSSRBoundaries();
+      const expectedIndex = boundaries.findIndex((boundary) => 50 <= boundary);
+
       recordSSR(50);
-      const bucket50 = state._ssrCounts.find((c) => c > 0);
-      assertEquals(bucket50 !== undefined, true);
+
+      assertEquals(boundaries[expectedIndex], 50, "50ms is the boundary of its own bucket");
+      assertEquals(
+        state._ssrCounts[expectedIndex],
+        1,
+        "50ms lands in the bucket its boundary selects",
+      );
+      assertEquals(
+        state._ssrCounts.filter((count) => count > 0).length,
+        1,
+        "exactly one bucket increments per recordSSR call",
+      );
+    });
+
+    it("records durations above the last boundary in the overflow bucket", () => {
+      resetMetrics();
+
+      recordSSR(20000);
+
+      assertEquals(
+        state._ssrCounts.at(-1),
+        1,
+        "durations above the last boundary land in the overflow bucket",
+      );
     });
 
     it("records non-finite durations as zero instead of corrupting state", () => {
@@ -256,6 +281,30 @@ describe("observability/simple-metrics/metrics-recorder", () => {
       assertEquals(state.contentNetworkFetchMsTotal, Number.MAX_SAFE_INTEGER);
       assertEquals(state.contentPreviewRequests, Number.MAX_SAFE_INTEGER);
       assertEquals(state._contentNetworkCounts[lastBucket], Number.MAX_SAFE_INTEGER);
+    });
+
+    it("counts preview and production fetches separately", () => {
+      resetMetrics();
+
+      recordContentNetworkFetch(10, true);
+      recordContentNetworkFetch(20, false);
+      recordContentNetworkFetch(30, false);
+
+      assertEquals(
+        state.contentPreviewRequests,
+        1,
+        "a preview fetch must increment the preview counter",
+      );
+      assertEquals(
+        state.contentProductionRequests,
+        2,
+        "a production fetch must increment the production counter",
+      );
+      assertEquals(
+        state.contentNetworkFetches,
+        3,
+        "every fetch must increment the total counter",
+      );
     });
   });
 });

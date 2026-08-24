@@ -16,11 +16,17 @@ describe("resource factory", () => {
       const r = resource({
         pattern: "/users/:userId",
         description: "Get user",
+        title: "Get user",
         paramsSchema: defineSchema((v) => v.object({ userId: v.string() }))(),
         load: async ({ userId }) => ({ id: userId }),
       });
       assertEquals(r.pattern, "/users/:userId");
       assertEquals(r.description, "Get user");
+      assertEquals(
+        r.title,
+        "Get user",
+        "resource() must preserve the authored title so MCP resources/list can surface it",
+      );
     });
 
     it("should derive id from pattern", () => {
@@ -31,6 +37,16 @@ describe("resource factory", () => {
         load: async () => ({}),
       });
       assertEquals(r.id, "users_userId_profile");
+    });
+
+    it("should leave title undefined when not authored", () => {
+      const r = resource({
+        pattern: "/users/:userId/profile",
+        description: "User profile",
+        paramsSchema: defineSchema((v) => v.object({ userId: v.string() }))(),
+        load: async () => ({}),
+      });
+      assertEquals(r.title, undefined, "resource() must not invent a title");
     });
 
     it("should generate distinct patterns with monotonic discriminators", () => {

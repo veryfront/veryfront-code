@@ -6,6 +6,16 @@ import type { SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { createSleepTool, DEFAULT_SLEEP_TOOL_MAX_SECONDS, sleepTool } from "./sleep.ts";
 import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
 
+function withTestTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`${label} did not settle`)), 250);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  });
+}
+
 describe("tool/sleep", () => {
   afterEach(() => {
     reset();
@@ -25,16 +35,37 @@ describe("tool/sleep", () => {
 
   it("waits for the requested number of seconds and returns a concise result", async () => {
     const waits: number[] = [];
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let signalWaitCalled: (() => void) | undefined;
+    const waitCalled = new Promise<void>((resolve) => {
+      signalWaitCalled = resolve;
+    });
     const testSleepTool = createSleepTool({
       wait: (milliseconds) => {
         waits.push(milliseconds);
+        signalWaitCalled?.();
+        return gate;
       },
     });
 
-    const result = await testSleepTool.execute({ seconds: 5 });
+    let settled = false;
+    const pending = testSleepTool.execute({ seconds: 5 }).then((value) => {
+      settled = true;
+      return value;
+    });
 
+    await withTestTimeout(waitCalled, "sleep wait signal");
     assertEquals(waits, [5000]);
-    assertEquals(result, {
+    // Drain the microtask queue: execute must still be suspended on wait.
+    for (let turn = 0; turn < 20; turn++) await Promise.resolve();
+    assertEquals(settled, false, "execute must not resolve before wait settles");
+
+    release?.();
+
+    assertEquals(await pending, {
       sleptFor: 5,
       message: "Waited for 5 seconds",
     });

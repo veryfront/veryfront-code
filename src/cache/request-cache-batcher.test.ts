@@ -202,13 +202,60 @@ describe("cache/request-cache-batcher", () => {
       const backend = createMockBackend({ dup: "dup-value" });
 
       await runWithCacheBatching(async () => {
-        const [r1, r2] = await Promise.all([
+        const reads = [
           getCachedWithBatching(backend, "dup"),
           getCachedWithBatching(backend, "dup"),
-        ]);
+        ];
+
+        const ctx = getRequestCacheContext();
+        assertExists(ctx);
+        assertEquals(
+          ctx.batchQueue.length,
+          1,
+          "a concurrent read of an in-flight key must reuse the pending request",
+        );
+
+        const [r1, r2] = await Promise.all(reads);
 
         assertEquals(r1, "dup-value");
         assertEquals(r2, "dup-value");
+        assertEquals(
+          backend.getCalls,
+          ["dup"],
+          "duplicate concurrent keys must collapse to a single backend read",
+        );
+        assertEquals(
+          backend.getBatchCalls.length,
+          0,
+          "a single unique key must not be flushed as a batch",
+        );
+      });
+    });
+
+    it("keeps a request-local set made while a backend read is in flight", async () => {
+      const deferred = Promise.withResolvers<string | null>();
+      const backend: CacheBackend = {
+        type: "memory",
+        get: () => deferred.promise,
+        set: () => Promise.resolve(),
+        del: () => Promise.resolve(),
+      };
+
+      await runWithCacheBatching(async () => {
+        const read = getCachedWithBatching(backend, "k");
+        setInRequestCache("k", "local");
+        deferred.resolve("remote");
+
+        assertEquals(
+          await read,
+          "local",
+          "an in-flight backend read must not clobber a later request-local set",
+        );
+        assertEquals(
+          await getCachedWithBatching(backend, "k"),
+          "local",
+          "the request cache must keep the local set for the rest of the request",
+        );
       });
     });
 

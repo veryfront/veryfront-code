@@ -20,22 +20,58 @@ describe("security/http/application-request", () => {
           "x-environment-id": "infrastructure-environment",
           "x-token": "host-secret",
           "x-veryfront-future-control-secret": "future-secret",
+          "cf-connecting-ip": "203.0.113.9",
+          "fastly-client-ip": "203.0.113.9",
+          "forwarded": "for=203.0.113.9",
+          "true-client-ip": "203.0.113.9",
+          "x-real-ip": "203.0.113.9",
+          "x-authoritative": "1",
+          "x-environment": "production",
         },
       }),
     );
 
-    assertEquals(application.headers.get("authorization"), "Bearer public-user");
-    assertEquals(application.headers.get("cookie"), "session=public");
-    assertEquals(application.headers.get("x-application-role"), "editor");
-    assertEquals(application.headers.get("proxy-authorization"), null);
-    assertEquals(application.headers.get("x-forwarded-host"), null);
-    assertEquals(application.headers.get("x-project-id"), null);
-    assertEquals(application.headers.get("x-branch-name"), null);
-    assertEquals(application.headers.get("x-release-id"), null);
-    assertEquals(application.headers.get("x-content-source-id"), null);
-    assertEquals(application.headers.get("x-environment-id"), null);
-    assertEquals(application.headers.get("x-token"), null);
-    assertEquals(application.headers.get("x-veryfront-future-control-secret"), null);
+    assertEquals(
+      application.headers.get("authorization"),
+      "Bearer public-user",
+      "the end-user credential is part of the application contract",
+    );
+    assertEquals(
+      application.headers.get("cookie"),
+      "session=public",
+      "the end-user session cookie is part of the application contract",
+    );
+    assertEquals(
+      application.headers.get("x-application-role"),
+      "editor",
+      "an application-owned header must cross the project boundary",
+    );
+    for (
+      const name of [
+        "proxy-authorization",
+        "x-forwarded-host",
+        "x-project-id",
+        "x-branch-name",
+        "x-release-id",
+        "x-content-source-id",
+        "x-environment-id",
+        "x-token",
+        "x-veryfront-future-control-secret",
+        "cf-connecting-ip",
+        "fastly-client-ip",
+        "forwarded",
+        "true-client-ip",
+        "x-real-ip",
+        "x-authoritative",
+        "x-environment",
+      ]
+    ) {
+      assertEquals(
+        application.headers.get(name),
+        null,
+        `${name} is infrastructure-only and must not cross the project boundary`,
+      );
+    }
   });
 
   it("detaches the request body and header list from the host request", async () => {

@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import type { RenderMetadata } from "#veryfront/types";
+import { deserializeManagedHeadPayload } from "./managed-head-protocol.ts";
 import { processMetadata } from "./metadata-builder.ts";
 
 describe("html-generation/metadata-builder", () => {
@@ -110,6 +111,37 @@ describe("html-generation/metadata-builder", () => {
       const result = processMetadata(meta);
 
       assertEquals(result.effectiveTitle, "Veryfront App");
+    });
+
+    it("carries the effective title and frontmatter-declared links and styles into the head output", () => {
+      const meta: RenderMetadata = {
+        title: "Doc Title",
+        slug: "doc",
+        // The head pipeline reads the richer MDX frontmatter shape, whose styles
+        // and links are objects. RenderMetadata still points at the narrow
+        // scalar-only declaration, so the cast bridges the two.
+        frontmatter: {
+          title: "Frontmatter Title",
+          styles: [{ content: ".x{}" }],
+          links: [{ rel: "canonical", href: "/x" }],
+        } as unknown as RenderMetadata["frontmatter"],
+      };
+
+      const result = processMetadata(meta);
+      const titleDescriptor = deserializeManagedHeadPayload(result.managedHeadPayload)
+        .find((descriptor) => descriptor.tagName === "title");
+
+      assertEquals(
+        titleDescriptor?.content,
+        "Frontmatter Title",
+        "the managed head payload must carry the effective title with frontmatter title precedence",
+      );
+      assertStringIncludes(result.styleTags, ".x{}", "frontmatter styles must reach styleTags");
+      assertStringIncludes(
+        result.linkTags,
+        'rel="canonical"',
+        "frontmatter links must reach linkTags",
+      );
     });
   });
 });

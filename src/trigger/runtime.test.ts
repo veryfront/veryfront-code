@@ -127,6 +127,23 @@ function isFixtureTrigger(value: unknown): value is FixtureTrigger {
   return typeof candidate.id === "string" && typeof candidate.marker === "string";
 }
 
+/**
+ * A trigger signal that carries its own abort hook. The hook rides on the
+ * signal object the runtime already hands to `generate()`, so a fixture agent
+ * can cancel its own run from the inside without any ambient global state and
+ * without waiting on a timer.
+ */
+interface AbortableTriggerSignal extends AbortSignal {
+  abortNow(): void;
+}
+
+function createAbortableTriggerSignal(reason: string): AbortableTriggerSignal {
+  const controller = new AbortController();
+  const signal = controller.signal as AbortableTriggerSignal;
+  signal.abortNow = () => controller.abort(new Error(reason));
+  return signal;
+}
+
 describe("trigger runtime", () => {
   afterEach(() => {
     clearTranspileCache();
@@ -139,9 +156,11 @@ describe("trigger runtime", () => {
   });
 
   it("discovers source triggers in deterministic id order", async () => {
+    // The file names deliberately disagree with the definition ids so the
+    // assertion can only be satisfied by id ordering, never by path ordering.
     const adapter = createRuntimeAdapter({
-      "/project/schedules/z-last.ts": 'export default { id: "z-last", marker: "last" };\n',
-      "/project/schedules/a-first.ts": 'export default { id: "a-first", marker: "first" };\n',
+      "/project/schedules/a-file.ts": 'export default { id: "z-id", marker: "first" };\n',
+      "/project/schedules/z-file.ts": 'export default { id: "a-id", marker: "last" };\n',
     });
 
     const result = await discoverSourceTriggers({
@@ -154,7 +173,11 @@ describe("trigger runtime", () => {
     });
 
     assertEquals(result.errors, []);
-    assertEquals(result.items.map((item) => item.id), ["a-first", "z-last"]);
+    assertEquals(
+      result.items.map((item) => item.id),
+      ["a-id", "z-id"],
+      "discovery output is sorted by definition id, not by source path",
+    );
   });
 
   it("treats multiple source directories as one duplicate-safe namespace", async () => {
@@ -537,6 +560,76 @@ describe("trigger runtime", () => {
     assertEquals(result.output, { nested: { value: "captured" } });
   });
 
+  it("propagates live cancellation into task execution", async () => {
+    const startupWatchdogMs = 30_000;
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/cancellable.ts": [
+        "export default {",
+        "  async run({ signal, config }) {",
+        '    if (!signal) throw new Error("task did not receive a cancellation signal");',
+        "    const channel = new BroadcastChannel(config.channelName);",
+        "    try {",
+        '      channel.postMessage("task-started");',
+        "      return await new Promise((resolve) => {",
+        "        signal.addEventListener(",
+        '          "abort",',
+        '          () => resolve("task observed cancellation"),',
+        "          { once: true },",
+        "        );",
+        "      });",
+        "    } finally {",
+        "      channel.close();",
+        "    }",
+        "  },",
+        "};",
+        "",
+      ].join("\n"),
+    });
+    const controller = new AbortController();
+    const channelName = `veryfront-trigger-cancellation-${crypto.randomUUID()}`;
+    const channel = new BroadcastChannel(channelName);
+    const taskStarted = Promise.withResolvers<void>();
+    channel.addEventListener("message", (event) => {
+      if (event.data === "task-started") taskStarted.resolve();
+    });
+    const run = runTriggerTarget({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } },
+      target: { kind: "task", id: "cancellable" },
+      input: { channelName },
+      signal: controller.signal,
+    });
+    let startupWatchdog: number | undefined;
+
+    try {
+      const startState = await Promise.race([
+        taskStarted.promise.then(() => "started" as const),
+        run.then(() => "finished" as const),
+        new Promise<never>((_, reject) => {
+          startupWatchdog = setTimeout(
+            () => reject(new Error("Task startup handshake exceeded its test safety watchdog")),
+            startupWatchdogMs,
+          );
+        }),
+      ]);
+      if (startState !== "started") {
+        throw new Error("Task execution finished before announcing its start");
+      }
+      controller.abort(new Error("task trigger cancelled"));
+      const result = await run;
+      assertEquals(result.output, "task observed cancellation");
+    } finally {
+      if (startupWatchdog !== undefined) {
+        clearTimeout(startupWatchdog);
+      }
+      if (!controller.signal.aborted) {
+        controller.abort(new Error("task cancellation test cleanup"));
+      }
+      channel.close();
+    }
+  });
+
   it("propagates cooperative cancellation into agent generation", async () => {
     const adapter = createRuntimeAdapter({
       "/project/agents/signal-aware.ts": [
@@ -577,6 +670,87 @@ describe("trigger runtime", () => {
     });
     assertEquals(Number.isInteger(result.durationMs), true);
     assertEquals(result.durationMs >= 0, true);
+  });
+
+  it("cancels agent generation when the trigger signal aborts", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/agents/cancellable.ts": [
+        "export default {",
+        '  id: "cancellable",',
+        '  config: { id: "cancellable", model: "auto" },',
+        "  async generate({ abortSignal }) {",
+        '    if (!abortSignal) throw new Error("agent generation did not receive a signal");',
+        "    return await new Promise((_, reject) => {",
+        "      abortSignal.addEventListener(",
+        '        "abort",',
+        "        () => reject(abortSignal.reason),",
+        "        { once: true },",
+        "      );",
+        "      abortSignal.abortNow();",
+        "    });",
+        "  },",
+        '  async stream() { throw new Error("not used"); },',
+        '  async respond() { throw new Error("not used"); },',
+        '  getMemory() { throw new Error("not used"); },',
+        '  async getMemoryStats() { return { totalMessages: 0, estimatedTokens: 0, type: "test" }; },',
+        "  async clearMemory() {},",
+        "};",
+        "",
+      ].join("\n"),
+    });
+    const signal = createAbortableTriggerSignal("agent trigger cancelled");
+
+    await assertRejects(
+      () =>
+        runTriggerTarget({
+          projectDir: "/project",
+          adapter,
+          config: { fs: { type: "veryfront-api" } },
+          target: { kind: "agent", id: "cancellable" },
+          agentInput: "Check the signal.",
+          signal,
+        }),
+      Error,
+      "agent trigger cancelled",
+      "an abort raised while generate() is pending surfaces as a rejected trigger run",
+    );
+  });
+
+  it("rejects a completed agent response produced after the trigger signal aborted", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/agents/ignores-signal.ts": [
+        "export default {",
+        '  id: "ignores-signal",',
+        '  config: { id: "ignores-signal", model: "auto" },',
+        "  async generate({ abortSignal }) {",
+        "    abortSignal.abortNow();",
+        '    return { text: "done", status: "completed", toolCalls: [] };',
+        "  },",
+        '  async stream() { throw new Error("not used"); },',
+        '  async respond() { throw new Error("not used"); },',
+        '  getMemory() { throw new Error("not used"); },',
+        '  async getMemoryStats() { return { totalMessages: 0, estimatedTokens: 0, type: "test" }; },',
+        "  async clearMemory() {},",
+        "};",
+        "",
+      ].join("\n"),
+    });
+    const signal = createAbortableTriggerSignal("late agent trigger cancelled");
+
+    await assertRejects(
+      () =>
+        runTriggerTarget({
+          projectDir: "/project",
+          adapter,
+          config: { fs: { type: "veryfront-api" } },
+          target: { kind: "agent", id: "ignores-signal" },
+          agentInput: "Run once.",
+          signal,
+        }),
+      Error,
+      "late agent trigger cancelled",
+      "a response completed after the signal aborted is rejected, not reported as success",
+    );
   });
 
   it("rejects malformed non-terminal agent responses", async () => {

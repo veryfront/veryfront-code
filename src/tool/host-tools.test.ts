@@ -22,6 +22,7 @@ describe("tool/host-tools", () => {
           receivedContextToolCallId = String(context?.toolCallId);
           return input;
         },
+        mcp: { title: "Search documentation", annotations: { readOnlyHint: true } },
       },
     }, {
       generateToolCallId: (toolName) => `${toolName}-generated`,
@@ -30,6 +31,11 @@ describe("tool/host-tools", () => {
     assertEquals(Object.keys(tools), ["search"]);
     assertEquals(tools.search?.id, "search");
     assertEquals(tools.search?.type, "function");
+    assertEquals(
+      tools.search?.mcp,
+      { title: "Search documentation", annotations: { readOnlyHint: true } },
+      "contract-schema host tools must forward MCP metadata",
+    );
     assertEquals(await tools.search?.execute({ query: "Veryfront" }), { query: "Veryfront" });
     assertEquals(receivedContextToolCallId, "search-generated");
   });

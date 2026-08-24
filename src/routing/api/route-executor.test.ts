@@ -499,6 +499,74 @@ describe("routing/api/route-executor", () => {
 
       assertEquals(capturedCtx?.params.slug, "guide/intro");
     });
+
+    it("fails closed when isolation is required but no prepared module exists", async () => {
+      let called = false;
+      const handler = {
+        GET: () => {
+          called = true;
+          return new Response("leaked");
+        },
+      };
+
+      const response = await executeAppRouteRaw(
+        handler,
+        new Request("http://localhost/api/test", { method: "GET" }),
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+        {
+          modulePath: "/test/project/handler.ts",
+          projectDir: "/test/project",
+          isLocalProject: false,
+        },
+      );
+
+      assertEquals(response.status, 500, "isolation-required routes must fail closed");
+      assertEquals(called, false, "the tenant handler must never run in the host realm");
+    });
+
+    it("names the missing prepared route source for a local isolation-required route", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+
+      let called = false;
+      const handler = {
+        GET: () => {
+          called = true;
+          return new Response("leaked");
+        },
+      };
+
+      try {
+        const response = await executeAppRouteRaw(
+          handler,
+          new Request("http://localhost/api/test", { method: "GET" }),
+          makeMatch(),
+          "/api/test",
+          makeAdapter(),
+          {
+            modulePath: "/test/project/handler.ts",
+            projectDir: "/test/project",
+            isLocalProject: true,
+          },
+        );
+
+        assertEquals(response.status, 500, "isolation-required routes must fail closed");
+        assertEquals(called, false, "the project handler must never run in the host realm");
+        const problem = await response.json() as { detail?: string };
+        assertStringIncludes(
+          problem.detail ?? "",
+          "requires prepared route source",
+          "the fail-closed response must name the missing prepared route source",
+        );
+      } finally {
+        Deno.env.delete("WORKER_ISOLATION_ENABLED");
+        Deno.env.delete("WORKER_ISOLATION_API");
+        await __resetPoolForTests();
+      }
+    });
   });
 
   describe("executePagesRoute()", () => {
@@ -588,6 +656,109 @@ describe("routing/api/route-executor", () => {
       );
 
       assertEquals(response.status, 500);
+    });
+
+    it("scopes ctx.fs relative paths to the project directory", async () => {
+      const seen: string[] = [];
+      const adapter = makeAdapter();
+      adapter.fs.readFile = (path: string) => {
+        seen.push(path);
+        return Promise.resolve("{}");
+      };
+
+      const handler = {
+        GET: async (ctx: { fs: { readFile: (path: string) => Promise<string> } }) => {
+          await ctx.fs.readFile("data.json");
+          await ctx.fs.readFile("/etc/hosts");
+          return new Response("ok");
+        },
+      };
+
+      const response = await executePagesRoute(
+        handler,
+        new Request("http://localhost/api/test", { method: "GET" }),
+        makeMatch(),
+        "/api/test",
+        adapter,
+        "/test/project",
+      );
+
+      assertEquals(response.status, 200, "the scoped handler still returns its response");
+      assertEquals(
+        seen,
+        ["/test/project/data.json", "/etc/hosts"],
+        "relative ctx.fs paths resolve under projectDir and absolute paths pass through",
+      );
+    });
+
+    it("fails closed when isolation is required but no prepared module exists", async () => {
+      let called = false;
+      const handler = {
+        GET: () => {
+          called = true;
+          return new Response("leaked");
+        },
+      };
+
+      const response = await executePagesRouteRaw(
+        handler,
+        new Request("http://localhost/api/test", { method: "GET" }),
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+        "/test/project",
+        {
+          modulePath: "/test/project/handler.ts",
+          projectDir: "/test/project",
+          isLocalProject: false,
+        },
+      );
+
+      assertEquals(response.status, 500, "isolation-required routes must fail closed");
+      assertEquals(called, false, "the tenant handler must never run in the host realm");
+    });
+
+    it("names the missing prepared route source for a local isolation-required route", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+
+      let called = false;
+      const handler = {
+        GET: () => {
+          called = true;
+          return new Response("leaked");
+        },
+      };
+
+      try {
+        const response = await executePagesRouteRaw(
+          handler,
+          new Request("http://localhost/api/test", { method: "GET" }),
+          makeMatch(),
+          "/api/test",
+          makeAdapter(),
+          "/test/project",
+          {
+            modulePath: "/test/project/handler.ts",
+            projectDir: "/test/project",
+            isLocalProject: true,
+          },
+        );
+
+        assertEquals(response.status, 500, "isolation-required routes must fail closed");
+        assertEquals(called, false, "the project handler must never run in the host realm");
+        const problem = await response.json() as { detail?: string };
+        assertStringIncludes(
+          problem.detail ?? "",
+          "requires prepared route source",
+          "the fail-closed response must name the missing prepared route source",
+        );
+      } finally {
+        Deno.env.delete("WORKER_ISOLATION_ENABLED");
+        Deno.env.delete("WORKER_ISOLATION_API");
+        await __resetPoolForTests();
+      }
     });
   });
 
@@ -860,7 +1031,47 @@ describe("routing/api/route-executor", () => {
           ),
       );
 
-      assertEquals(response.status, 500);
+      assertEquals(response.status, 500, "a malformed Content-Length must be rejected");
+    });
+
+    it("rejects a non-decimal Content-Length whose value matches the body", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+
+      const handler = {
+        POST: (_req: Request) => new Response("ok"),
+      };
+
+      // "+5" is not a decimal Content-Length, yet Number("+5") equals the five
+      // body bytes, so only the format guard can reject this request.
+      const request = new Request("http://localhost/api/test", {
+        method: "POST",
+        body: "small",
+        headers: { "content-length": "+5" },
+      });
+
+      const response = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        async () =>
+          await executeAppRoute(
+            handler,
+            request,
+            makeMatch(),
+            "/api/test",
+            makeAdapter(),
+            await isolatedRouteOptions(
+              "export function POST() { return new Response('ok'); }",
+              "body-non-decimal-content-length",
+            ),
+          ),
+      );
+
+      assertEquals(
+        response.status,
+        500,
+        "a non-decimal Content-Length must be rejected by the format guard, not merely by the body-length mismatch",
+      );
     });
   });
 

@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/transforms/mdx/compiler/__tests__/content-processor-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/platform/compat/fs.ts";
 import {
   buildEmbeddedPreset,
   isPageFile,
@@ -61,15 +62,15 @@ function observeEsbuildServices(): {
 
 describe("build/embedded/preset", () => {
   it("builds entries and routes from configured app and pages directories", async () => {
-    const root = await Deno.makeTempDir({ prefix: "vf-embedded-custom-routes-" });
+    const root = await makeTempDir({ prefix: "vf-embedded-custom-routes-" });
     const projectDir = join(root, "project");
     const outDir = join(root, "dist");
     try {
-      await Deno.mkdir(join(projectDir, "src/app/docs"), { recursive: true });
-      await Deno.mkdir(join(projectDir, "src/pages"), { recursive: true });
-      await Deno.writeTextFile(join(projectDir, "src/app/page.md"), "# Home");
-      await Deno.writeTextFile(join(projectDir, "src/app/docs/page.md"), "# Docs");
-      await Deno.writeTextFile(join(projectDir, "src/pages/about.md"), "# About");
+      await mkdir(join(projectDir, "src/app/docs"), { recursive: true });
+      await mkdir(join(projectDir, "src/pages"), { recursive: true });
+      await writeTextFile(join(projectDir, "src/app/page.md"), "# Home");
+      await writeTextFile(join(projectDir, "src/app/docs/page.md"), "# Docs");
+      await writeTextFile(join(projectDir, "src/pages/about.md"), "# About");
 
       const result = await buildEmbeddedPreset({
         projectDir,
@@ -82,13 +83,30 @@ describe("build/embedded/preset", () => {
 
       assertEquals(result.manifest.routes.some((route) => route.path === "/docs"), true);
       assertEquals(result.manifest.routes.some((route) => route.path === "/about"), true);
+
+      const routes = result.manifest.routes;
+      assertEquals(
+        new Set(routes.map((route) => route.path)).size,
+        routes.length,
+        "every manifest route path is published exactly once",
+      );
+      assertEquals(
+        routes.find((route) => route.path === "/")?.file,
+        "embedded/app.js",
+        "/ is served by the bundled shell entry, not a per-route artifact",
+      );
+      assertEquals(
+        routes.some((route) => route.file.split("/").some((segment) => segment.startsWith("."))),
+        false,
+        "no route compiles to a dotfile artifact",
+      );
     } finally {
-      await Deno.remove(root, { recursive: true });
+      await remove(root, { recursive: true });
     }
   });
 
   it("stops the bundler when the embedded app bundle fails", async () => {
-    const root = await Deno.makeTempDir({ prefix: "vf-embedded-failed-bundle-" });
+    const root = await makeTempDir({ prefix: "vf-embedded-failed-bundle-" });
     const projectDir = join(root, "project");
     const outDir = join(root, "dist");
     const observation = observeEsbuildServices();
@@ -96,9 +114,9 @@ describe("build/embedded/preset", () => {
     let buildError: unknown;
 
     try {
-      await Deno.mkdir(join(projectDir, "app"), { recursive: true });
-      await Deno.writeTextFile(join(projectDir, "app/page.md"), "# Home");
-      await Deno.mkdir(join(outDir, "embedded", "manifest.json"), { recursive: true });
+      await mkdir(join(projectDir, "app"), { recursive: true });
+      await writeTextFile(join(projectDir, "app/page.md"), "# Home");
+      await mkdir(join(outDir, "embedded", "manifest.json"), { recursive: true });
 
       try {
         await buildEmbeddedPreset({
@@ -123,13 +141,13 @@ describe("build/embedded/preset", () => {
       } finally {
         for (const service of services) service.child.unref();
         observation.restore();
-        await Deno.remove(root, { recursive: true });
+        await remove(root, { recursive: true });
       }
     }
   });
 
   it("stops an active bundler when config resolution fails", async () => {
-    const root = await Deno.makeTempDir({ prefix: "vf-embedded-invalid-config-" });
+    const root = await makeTempDir({ prefix: "vf-embedded-invalid-config-" });
     const projectDir = join(root, "project");
     const outDir = join(root, "dist");
     const observation = observeEsbuildServices();
@@ -137,8 +155,8 @@ describe("build/embedded/preset", () => {
     let buildError: unknown;
 
     try {
-      await Deno.mkdir(projectDir, { recursive: true });
-      await Deno.writeTextFile(
+      await mkdir(projectDir, { recursive: true });
+      await writeTextFile(
         join(projectDir, "veryfront.config.ts"),
         "export default { invalid: ; };",
       );
@@ -164,7 +182,7 @@ describe("build/embedded/preset", () => {
       } finally {
         for (const service of services) service.child.unref();
         observation.restore();
-        await Deno.remove(root, { recursive: true });
+        await remove(root, { recursive: true });
       }
     }
   });

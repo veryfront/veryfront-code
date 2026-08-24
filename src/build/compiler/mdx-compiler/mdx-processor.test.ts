@@ -6,7 +6,6 @@ import { compileMDX } from "./mdx-processor.ts";
 
 describe(
   "build/compiler/mdx-compiler/mdx-processor",
-  { sanitizeOps: false, sanitizeResources: false },
   () => {
     describe("compileMDX", () => {
       it("should compile simple MDX content", async () => {
@@ -22,14 +21,25 @@ describe(
       });
 
       it("should extract import statements from compiled code", async () => {
-        const content = `import React from 'react';\n\n# Hello`;
+        const content =
+          `import React from 'react';\nimport * as ns from "nsmod";\nimport "sideeffect";\n\n# Hello`;
         const result = await compileMDX(content, {
           projectDir: "/tmp",
           outputDir: "/tmp/out",
           mode: "production",
         });
         assertExists(result.imports);
-        assertEquals(result.imports.length > 0, true);
+        assertEquals(
+          result.imports.includes("react"),
+          true,
+          "extracts the author's default import",
+        );
+        assertEquals(result.imports.includes("nsmod"), true, "extracts namespace imports");
+        assertEquals(
+          result.imports.includes("sideeffect"),
+          true,
+          "extracts side-effect imports",
+        );
       });
 
       it("should handle empty content", async () => {

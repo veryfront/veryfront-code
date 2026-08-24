@@ -222,6 +222,30 @@ describe("eval/report", () => {
     assertEquals(summary.failed, 2);
     assertEquals(summary.skippedResults, 1);
     assertEquals(summary.passRate, 1 / 3);
+    assertEquals(
+      summary.metrics,
+      [
+        {
+          name: "answer.contains",
+          family: "answer",
+          severity: "gate",
+          passed: 1,
+          failed: 1,
+          skipped: 0,
+          passRate: 0.5,
+        },
+        {
+          name: "judge.rubric",
+          family: "judge",
+          severity: "soft",
+          passed: 0,
+          failed: 0,
+          skipped: 1,
+          passRate: 1,
+        },
+      ],
+      "metric rows must aggregate passed/failed/skipped and derive passRate",
+    );
     assertEquals(summary.duration, {
       totalMs: 600,
       minMs: 100,
@@ -297,6 +321,100 @@ describe("eval/report", () => {
       stableFailed: 1,
       flaky: 1,
     });
+  });
+
+  it("counts a completed record carrying an adapter error as failed", () => {
+    const summary = summarizeEvalRecords([
+      createRecord({
+        id: "q3:1",
+        exampleId: "q3",
+        repetition: 1,
+        completed: true,
+        error: "AG-UI stream aborted",
+        metrics: [],
+      }),
+    ]);
+
+    assertEquals(
+      summary.failed,
+      1,
+      "a completed record carrying an adapter error is counted as failed",
+    );
+    assertEquals(summary.passed, 0, "an errored record is never counted as passed");
+    assertEquals(
+      summary.gateFailures,
+      [{
+        recordId: "q3:1",
+        exampleId: "q3",
+        repetition: 1,
+        name: "record.error",
+        family: "check",
+        severity: "gate",
+        explanation: "AG-UI stream aborted",
+      }],
+      "the adapter message is preserved instead of the incomplete-record fallback",
+    );
+  });
+
+  it("treats a failing budget metric as a blocking failure", () => {
+    const summary = summarizeEvalRecords([
+      createRecord({
+        id: "q4:1",
+        exampleId: "q4",
+        repetition: 1,
+        metrics: [{
+          name: "ops.cost",
+          family: "ops",
+          severity: "budget",
+          score: 0,
+          pass: false,
+          explanation: "Eval cost exceeded the configured budget.",
+        }],
+      }),
+    ]);
+
+    assertEquals(summary.failed, 1, "a failing budget metric fails the record");
+    assertEquals(summary.passed, 0, "a record with a blown budget is never counted as passed");
+    assertEquals(
+      summary.gateFailures,
+      [{
+        recordId: "q4:1",
+        exampleId: "q4",
+        repetition: 1,
+        name: "ops.cost",
+        family: "ops",
+        severity: "budget",
+        explanation: "Eval cost exceeded the configured budget.",
+      }],
+      "a failing budget metric is reported as a budget gate failure",
+    );
+  });
+
+  it("reports direct billing and lets deferred billing win a mixed run", () => {
+    const direct = summarizeEvalRecords([
+      createRecord({ usage: { totalTokens: 5, billingMode: "direct" } }),
+    ]);
+
+    assertEquals(
+      direct.usage?.billingMode,
+      "direct",
+      "a direct-billed run reports direct billing",
+    );
+
+    const mixed = summarizeEvalRecords([
+      createRecord({ id: "q1:1", usage: { totalTokens: 5, billingMode: "direct" } }),
+      createRecord({
+        id: "q1:2",
+        repetition: 2,
+        usage: { totalTokens: 5, billingMode: "deferred" },
+      }),
+    ]);
+
+    assertEquals(
+      mixed.usage?.billingMode,
+      "deferred",
+      "deferred billing wins over direct billing in a mixed run",
+    );
   });
 
   it("carries a metric label into its summary row", () => {

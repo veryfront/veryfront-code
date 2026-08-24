@@ -41,6 +41,23 @@ describe("resource registry", () => {
       assertEquals(resourceRegistry.findByPattern("/users/42/comments/7"), undefined);
     });
 
+    it("should not match a uri whose param value spans path segments", () => {
+      const userPosts = resource({
+        pattern: "/users/:userId/posts/:postId",
+        description: "User post",
+        paramsSchema: defineSchema((v) => v.object({ userId: v.string(), postId: v.string() }))(),
+        load: async () => ({}),
+      });
+
+      resourceRegistry.register(userPosts.id, userPosts);
+
+      assertEquals(
+        resourceRegistry.findByPattern("/users/42/extra/posts/7"),
+        undefined,
+        "a :param must not match across path segments",
+      );
+    });
+
     it("should treat regex metacharacters in patterns as literals", () => {
       const docs = resource({
         pattern: "/docs/:version/page.html",
@@ -367,6 +384,14 @@ describe("resource registry", () => {
       assertEquals(
         resourceRegistry.extractParams("/users/42/comments/7", "/users/:userId/posts/:postId"),
         {},
+      );
+    });
+
+    it("should not capture a multi-segment value into a single param", () => {
+      assertEquals(
+        resourceRegistry.extractParams("/users/a/b/posts/7", "/users/:userId/posts/:postId"),
+        {},
+        "a multi-segment value must not be captured into a single :param",
       );
     });
   });

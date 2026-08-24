@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __resetLoggerConfigForTests,
@@ -108,15 +114,33 @@ describe("serializeWorkflowContext", () => {
     // These stay allowed: rejecting them would break workflows relying on the
     // current coercion. They are serialized, and reported, not thrown on.
     it("keeps serializing a Date, which comes back as a string", () => {
-      const serialized = serializeWorkflowContext(contextWith({ when: new Date(0) }));
+      let serialized = "";
+      const warnings = captureWorkflowWarnings(() => {
+        serialized = serializeWorkflowContext(contextWith({ when: new Date(0) }));
+      });
+      const paths = String(warnings[0]?.context?.paths);
 
       assertEquals(JSON.parse(serialized).step.when, "1970-01-01T00:00:00.000Z");
+      assertEquals(
+        paths.includes("context.step.when (Date)"),
+        true,
+        "a Date silently persisted as a string must be named in the lossy warning",
+      );
     });
 
     it("keeps serializing a Map, which comes back empty", () => {
-      const serialized = serializeWorkflowContext(contextWith({ tags: new Map([["a", 1]]) }));
+      let serialized = "";
+      const warnings = captureWorkflowWarnings(() => {
+        serialized = serializeWorkflowContext(contextWith({ tags: new Map([["a", 1]]) }));
+      });
+      const paths = String(warnings[0]?.context?.paths);
 
       assertEquals(JSON.parse(serialized).step.tags, {});
+      assertEquals(
+        paths.includes("context.step.tags (object)"),
+        true,
+        "a Map silently persisted as an empty object must be named in the lossy warning",
+      );
     });
 
     it("keeps serializing an undefined field, whose key disappears", () => {
@@ -305,6 +329,7 @@ describe("serializeWorkflowContext", () => {
   });
 
   it("keeps prototype diagnostics best-effort for proxies", () => {
+    let prototypeTrapCalls = 0;
     const output = new Proxy({ value: 7 }, {
       get: (target, key, receiver) => {
         if (key === Symbol.toStringTag || key === "constructor") {
@@ -313,6 +338,7 @@ describe("serializeWorkflowContext", () => {
         return Reflect.get(target, key, receiver);
       },
       getPrototypeOf: () => {
+        prototypeTrapCalls++;
         throw new Error("prototype metadata is unavailable");
       },
     });
@@ -320,6 +346,7 @@ describe("serializeWorkflowContext", () => {
     const serialized = serializeWorkflowContext(contextWith(output));
 
     assertEquals(JSON.parse(serialized).step, { value: 7 });
+    assertEquals(prototypeTrapCalls, 0);
   });
 
   it("captures an array's length before reading its elements", () => {
@@ -380,6 +407,18 @@ describe("serializeWorkflowContext", () => {
 
     assertEquals(JSON.parse(nested).step, 123);
     assertEquals(root, "456");
+  });
+
+  it("rejects root values that do not produce a JSON document", () => {
+    for (const value of [undefined, () => 1, Symbol("root")]) {
+      const error = assertThrows(
+        () => serializeWorkflowJson(value, "output"),
+        VeryfrontError,
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "output");
+      assertStringIncludes(error.message, "cannot be persisted");
+    }
   });
 
   describe("values larger than a diagnostic can describe", () => {
@@ -600,7 +639,7 @@ describe("serializeWorkflowContext", () => {
       const divergences: string[] = [];
       try {
         for (let seed = 0; seed < 3000; seed++) {
-          let expected: string;
+          let expected: string | undefined;
           try {
             expected = JSON.stringify(generateValue(seededRandom(seed), 4));
           } catch {
@@ -611,7 +650,13 @@ describe("serializeWorkflowContext", () => {
           try {
             actual = serializeWorkflowJson(generateValue(seededRandom(seed), 4), "root");
           } catch (error) {
-            divergences.push(`seed ${seed} threw ${(error as Error).message}`);
+            if (expected !== undefined) {
+              divergences.push(`seed ${seed} threw ${(error as Error).message}`);
+            }
+            continue;
+          }
+          if (expected === undefined) {
+            divergences.push(`seed ${seed}: returned ${actual} without a JSON document`);
             continue;
           }
           if (actual !== expected) {

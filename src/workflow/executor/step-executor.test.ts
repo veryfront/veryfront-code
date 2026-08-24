@@ -5,10 +5,11 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import { step } from "../dsl/step.ts";
-import type { RetryConfig, WorkflowContext, WorkflowNode } from "../types.ts";
+import type { NodeState, RetryConfig, WorkflowContext, WorkflowNode } from "../types.ts";
 import { runWithWorkflowTenant, StepExecutor } from "./step-executor.ts";
-import { TIMEOUT_ERROR } from "#veryfront/errors";
+import { TIMEOUT_ERROR, VeryfrontError } from "#veryfront/errors";
 import {
   runWithCacheKeyContext,
   tryGetCacheKeyContext,
@@ -92,6 +93,63 @@ describe("workflow tenant registry scoping", () => {
         }),
     );
   });
+
+  it("scopes the distributed cache to the release of a release-backed tenant", async () => {
+    const tenant: CapturedTenantContext = {
+      projectSlug: "workflow-release-project",
+      projectId: "workflow-release-project-id",
+      token: "<TOKEN>",
+      productionMode: true,
+      releaseId: "release-1",
+      environmentName: "production",
+    };
+
+    await runWithCacheKeyContext(
+      { projectId: "outer-project", mode: "production", versionId: "outer-release" },
+      () =>
+        runWithWorkflowTenant(tenant, () => {
+          assertEquals(
+            tryGetCacheKeyContext(),
+            {
+              projectId: "workflow-release-project-id",
+              mode: "production",
+              versionId: "release-1",
+            },
+            "a release-backed tenant must scope the distributed cache to its own release",
+          );
+          return Promise.resolve();
+        }),
+    );
+  });
+
+  it("scopes the distributed cache to the branch of a preview tenant", async () => {
+    const tenant: CapturedTenantContext = {
+      projectSlug: "workflow-preview-project",
+      projectId: "workflow-preview-project-id",
+      token: "<TOKEN>",
+      productionMode: false,
+      releaseId: null,
+      branch: "feature/x",
+      environmentName: "preview",
+    };
+
+    await runWithCacheKeyContext(
+      { projectId: "outer-project", mode: "production", versionId: "outer-release" },
+      () =>
+        runWithWorkflowTenant(tenant, () => {
+          assertEquals(
+            tryGetCacheKeyContext(),
+            {
+              projectId: "workflow-preview-project-id",
+              mode: "preview",
+              versionId: "feature/x",
+            },
+            "a preview tenant must scope the distributed cache to its own branch",
+          );
+          return Promise.resolve();
+        }),
+    );
+  });
 });
 
 describe("StepExecutor retry validation", () => {
@@ -101,7 +159,7 @@ describe("StepExecutor retry validation", () => {
 
     await assertRejects(
       () => executor.execute(node, makeContext()),
-      Error,
+      VeryfrontError,
       "maxAttempts",
     );
   });
@@ -116,7 +174,7 @@ describe("StepExecutor retry validation", () => {
 
     await assertRejects(
       () => executor.execute(node, makeContext()),
-      Error,
+      VeryfrontError,
       "initialDelay",
     );
   });
@@ -131,7 +189,7 @@ describe("StepExecutor retry validation", () => {
 
     await assertRejects(
       () => executor.execute(node, makeContext()),
-      Error,
+      VeryfrontError,
       "backoff",
     );
   });
@@ -191,11 +249,104 @@ describe("StepExecutor retry classification", () => {
     assertEquals(result.success, false);
     assertEquals(getCalls(), 3);
   });
+
+  it("does not re-execute a successful tool when the completion hook fails", async () => {
+    let toolCalls = 0;
+    let errorHooks = 0;
+    const executor = new StepExecutor({
+      onStepComplete: () => {
+        throw TIMEOUT_ERROR.create({ detail: "completion hook failed" });
+      },
+      onStepError: () => errorHooks++,
+    });
+    const node = step("successful-side-effect", {
+      tool: {
+        id: "side-effect",
+        description: "Counts successful side effects",
+        execute: () => {
+          toolCalls++;
+          return { ok: true };
+        },
+      } as never,
+      retry: {
+        maxAttempts: 3,
+        backoff: "fixed",
+        initialDelay: 0,
+        maxDelay: 0,
+      },
+    });
+
+    const result = await executor.execute(node, makeContext());
+
+    assertEquals(result.success, false);
+    assertEquals(result.error, "completion hook failed");
+    assertEquals(toolCalls, 1);
+    assertEquals(errorHooks, 1);
+  });
+});
+
+describe("StepExecutor admission", () => {
+  it("rejects a raw step with both an agent and a tool before either executes", async () => {
+    let agentCalls = 0;
+    let toolCalls = 0;
+    const node = {
+      id: "ambiguous-step",
+      config: {
+        type: "step",
+        agent: {
+          id: "agent",
+          generate: () => {
+            agentCalls++;
+            return Promise.resolve({ text: "agent", status: "completed" });
+          },
+        },
+        tool: {
+          id: "tool",
+          execute: () => {
+            toolCalls++;
+            return { source: "tool" };
+          },
+        },
+      },
+    } as unknown as WorkflowNode;
+
+    await assertRejects(
+      () => new StepExecutor({}).execute(node, makeContext()),
+      VeryfrontError,
+      "exactly one of 'agent' or 'tool'",
+    );
+    assertEquals(agentCalls, 0);
+    assertEquals(toolCalls, 0);
+  });
+
+  it("rejects a zero step timeout before executing the tool", async () => {
+    let toolCalls = 0;
+    const node = step("zero-timeout", {
+      tool: {
+        id: "tool",
+        description: "Must not execute",
+        execute: () => {
+          toolCalls++;
+          return { ok: true };
+        },
+      } as never,
+      timeout: 0,
+    });
+
+    await assertRejects(
+      () => new StepExecutor({}).execute(node, makeContext()),
+      VeryfrontError,
+      "timeout must be greater than zero",
+    );
+    assertEquals(toolCalls, 0);
+  });
 });
 
 describe("StepExecutor timeout isolation", () => {
   it("stops waiting after the cancellation grace when a timed-out tool never settles", async () => {
+    using time = new FakeTime();
     const operation = Promise.withResolvers<unknown>();
+    const started = Promise.withResolvers<void>();
     let receivedSignal: AbortSignal | undefined;
     let completions = 0;
     let attempts = 0;
@@ -210,6 +361,7 @@ describe("StepExecutor timeout isolation", () => {
         execute: (_input: unknown, context?: { abortSignal?: AbortSignal }) => {
           attempts++;
           receivedSignal = context?.abortSignal;
+          started.resolve();
           return operation.promise;
         },
         // deno-lint-ignore no-explicit-any
@@ -224,22 +376,16 @@ describe("StepExecutor timeout isolation", () => {
     });
 
     let result;
-    let watchdogId: ReturnType<typeof setTimeout> | undefined;
     try {
-      result = await Promise.race([
-        executor.execute(node, makeContext()),
-        new Promise<never>((_, reject) =>
-          watchdogId = setTimeout(
-            () => reject(new Error("Step execution did not stop after timeout")),
-            100,
-          )
-        ),
-      ]);
+      const execution = executor.execute(node, makeContext());
+      await started.promise;
+      await time.tickAsync(5);
+      await time.tickAsync(5);
+      result = await execution;
     } finally {
-      if (watchdogId !== undefined) clearTimeout(watchdogId);
       // A late rejection must remain observed after the public execution settles.
       operation.reject(new Error("late tool rejection"));
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await Promise.resolve();
     }
 
     assertEquals(result.success, false);
@@ -251,6 +397,10 @@ describe("StepExecutor timeout isolation", () => {
   });
 
   it("does not overlap retries when a timed-out tool ignores cancellation", async () => {
+    using time = new FakeTime();
+    const firstStarted = Promise.withResolvers<void>();
+    const secondStarted = Promise.withResolvers<void>();
+    const operations: Array<PromiseWithResolvers<void>> = [];
     let attempts = 0;
     let active = 0;
     let maxActive = 0;
@@ -264,9 +414,15 @@ describe("StepExecutor timeout isolation", () => {
           active++;
           maxActive = Math.max(maxActive, active);
           signals.push(context?.abortSignal);
-          await new Promise((resolve) => setTimeout(resolve, 20));
-          active--;
-          return { ok: true };
+          const operation = Promise.withResolvers<void>();
+          operations.push(operation);
+          (attempts === 1 ? firstStarted : secondStarted).resolve();
+          try {
+            await operation.promise;
+            return { ok: true };
+          } finally {
+            active--;
+          }
         },
         // deno-lint-ignore no-explicit-any
       } as any,
@@ -279,8 +435,17 @@ describe("StepExecutor timeout isolation", () => {
       },
     });
 
-    const result = await new StepExecutor({}).execute(node, makeContext());
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    const execution = new StepExecutor({}).execute(node, makeContext());
+    await firstStarted.promise;
+    await time.tickAsync(5);
+    assertEquals(attempts, 1);
+    assertEquals(active, 1);
+    operations[0]!.resolve();
+    await time.tickAsync(1);
+    await secondStarted.promise;
+    await time.tickAsync(5);
+    operations[1]!.resolve();
+    const result = await execution;
 
     assertEquals(result.success, false);
     assertEquals(attempts, 2);
@@ -426,5 +591,43 @@ describe("StepExecutor agent structured output", () => {
     // no key and the fields it did produce are untouched.
     assertEquals(Object.hasOwn(result.output as object, "object"), false);
     assertEquals((result.output as { usage?: unknown }).usage, { totalTokens: 3 });
+  });
+});
+
+describe("StepExecutor node states", () => {
+  it("removes stale terminal fields when a step changes outcome", () => {
+    const executor = new StepExecutor({});
+    const failed: NodeState = {
+      nodeId: "step",
+      status: "failed",
+      attempt: 1,
+      startedAt: new Date(0),
+      completedAt: new Date(1),
+      error: "old failure",
+    };
+    const completed: NodeState = {
+      nodeId: "step",
+      status: "completed",
+      attempt: 1,
+      startedAt: new Date(0),
+      completedAt: new Date(1),
+      output: { stale: true },
+    };
+
+    const success = executor.createCompletedState(
+      { success: true, output: { fresh: true }, executionTime: 1 },
+      failed,
+    );
+    const failure = executor.createCompletedState(
+      { success: false, error: "new failure", executionTime: 1 },
+      completed,
+    );
+
+    assertEquals(success.status, "completed");
+    assertEquals(success.output, { fresh: true });
+    assertEquals(Object.hasOwn(success, "error"), false);
+    assertEquals(failure.status, "failed");
+    assertEquals(failure.error, "new failure");
+    assertEquals(Object.hasOwn(failure, "output"), false);
   });
 });

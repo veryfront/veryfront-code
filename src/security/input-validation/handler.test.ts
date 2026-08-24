@@ -6,6 +6,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { createContext } from "#veryfront/routing";
 import { createValidatedHandler } from "./handler.ts";
@@ -421,6 +422,60 @@ describe("security/input-validation/handler", () => {
 
       assertEquals(response.status, 400);
       assertEquals(invoked, false);
+    });
+
+    it("should cancel a still-open chunked body it rejects for size", async () => {
+      let cancelled = false;
+      const handler = createValidatedHandler(
+        { limits: { maxBodySize: 10 } },
+        () => new Response("OK"),
+      );
+      const request = streamingRequest(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("x".repeat(6)));
+            controller.enqueue(new TextEncoder().encode("x".repeat(6)));
+            // Left open on purpose: a sender that keeps pushing must not be
+            // able to hold the stream after the request has been rejected.
+          },
+          cancel() {
+            cancelled = true;
+          },
+        }),
+      );
+
+      const response = await handler(request);
+
+      assertEquals(response.status, 400);
+      await waitFor(() => cancelled, {
+        message: "the rejected request body must be cancelled, not left open",
+      });
+    });
+
+    it("should cancel a still-open body that understates its Content-Length", async () => {
+      let cancelled = false;
+      const handler = createValidatedHandler(
+        { limits: { maxBodySize: 10 } },
+        () => new Response("OK"),
+      );
+      const request = streamingRequest(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("x".repeat(100)));
+          },
+          cancel() {
+            cancelled = true;
+          },
+        }),
+        { "content-length": "1" },
+      );
+
+      const response = await handler(request);
+
+      assertEquals(response.status, 400);
+      await waitFor(() => cancelled, {
+        message: "the rejected request body must be cancelled, not left open",
+      });
     });
 
     it("should leave an accepted unparsed body available to the handler", async () => {

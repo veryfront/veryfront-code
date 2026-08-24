@@ -1,5 +1,6 @@
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import {
+  MAX_ISOLATED_SSR_RENDERER_READ_ROOTS,
   snapshotIsolatedSsrRendererProvider,
   validateIsolatedSsrRendererModuleUrl,
 } from "./isolated-ssr-renderer.ts";
@@ -157,4 +158,65 @@ Deno.test("isolated SSR renderer provider inspection is independent of replaced 
     if (ownKeys) Object.defineProperty(Reflect, "ownKeys", ownKeys);
     if (isArray) Object.defineProperty(Array, "isArray", isArray);
   }
+});
+
+Deno.test("isolated SSR renderer provider rejects non-directory and non-local read roots", () => {
+  for (
+    const value of [
+      "ext-react-ssr/",
+      "https://cdn.example/",
+      "file:///opt/veryfront/?v=1",
+      "file:///opt/veryfront/#root",
+      "file://server/share/",
+      "file:///opt/veryfront/worker-renderer.ts",
+    ]
+  ) {
+    assertThrows(
+      () =>
+        snapshotIsolatedSsrRendererProvider({
+          moduleUrl: "file:///opt/veryfront/worker-renderer.ts",
+          readRootUrls: ["file:///opt/veryfront/", value],
+        }),
+      TypeError,
+      "readRootUrls[1] must be an absolute local file URL",
+      `read root ${value} must be rejected as a sandbox read root`,
+    );
+  }
+});
+
+Deno.test("isolated SSR renderer provider rejects empty and oversized read root arrays", () => {
+  assertThrows(
+    () =>
+      snapshotIsolatedSsrRendererProvider({
+        moduleUrl: "file:///opt/veryfront/worker-renderer.ts",
+        readRootUrls: [],
+      }),
+    TypeError,
+    "dense bounded array",
+    "a provider must declare at least one read root",
+  );
+  assertThrows(
+    () =>
+      snapshotIsolatedSsrRendererProvider({
+        moduleUrl: "file:///opt/veryfront/worker-renderer.ts",
+        readRootUrls: Array.from(
+          { length: MAX_ISOLATED_SSR_RENDERER_READ_ROOTS + 1 },
+          (_unused, index) => `file:///opt/veryfront/root-${index}/`,
+        ),
+      }),
+    TypeError,
+    "dense bounded array",
+    "read roots beyond the documented cap must be rejected",
+  );
+  assertEquals(
+    snapshotIsolatedSsrRendererProvider({
+      moduleUrl: "file:///opt/veryfront/worker-renderer.ts",
+      readRootUrls: Array.from(
+        { length: MAX_ISOLATED_SSR_RENDERER_READ_ROOTS },
+        (_unused, index) => `file:///opt/veryfront/root-${index}/`,
+      ),
+    }).readRootUrls.length,
+    MAX_ISOLATED_SSR_RENDERER_READ_ROOTS,
+    "read roots exactly at the cap must be accepted",
+  );
 });

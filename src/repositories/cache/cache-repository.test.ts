@@ -198,6 +198,38 @@ describe("repositories/cache/cache-repository", () => {
       assertEquals(await repo.get("k"), null);
     });
 
+    it("clear wipes L1 AFTER L3 so a racing backfill cannot re-poison it", async () => {
+      // Same shape as the deleteByPrefix race below: hold the L3 pattern delete
+      // open and read concurrently so the still-present L3 value backfills L1.
+      const inner = new MemoryCacheBackend();
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      const backend = {
+        type: "memory" as const,
+        get: (k: string) => inner.get(k),
+        set: (k: string, v: string, ttl?: number) => inner.set(k, v, ttl),
+        del: (k: string) => inner.del(k),
+        delByPattern: async (pattern: string) => {
+          await gate; // hold the L3 delete open
+          return inner.delByPattern(pattern);
+        },
+      };
+      const repo = new MultiTierCacheRepository({ context: CTX, backend });
+      await repo.set("k", "v");
+      await flush();
+      assertEquals(await repo.get("k"), "v");
+
+      const clearPromise = repo.clear(); // wipes L1, then awaits L3
+      // Concurrent read during the L3-delete window backfills "v" into L1.
+      assertEquals(await repo.get("k"), "v");
+      await flush();
+      release(); // let L3 delete complete; repo then wipes L1 again
+      await clearPromise;
+
+      // The racing backfill must have been cleared by the post-L3 L1 wipe.
+      assertEquals(await repo.get("k"), null);
+    });
+
     it("deleteByPrefix wipes L1 AFTER L3 so a racing backfill cannot re-poison it", async () => {
       // Wrap the backend so delByPattern blocks on a deferred. While it is
       // in flight we fire a concurrent get() that would (pre-fix) backfill the
@@ -243,15 +275,20 @@ describe("repositories/cache/cache-repository", () => {
     });
 
     it("getStats surfaces multi-tier hit/miss accounting", async () => {
-      const { repo } = makeRepo();
+      const { backend, repo } = makeRepo();
       await repo.set("k", "v");
-      await repo.get("k"); // hit (from whichever tier; total still one hit)
+      await repo.get("k"); // L1 hit (set writes L1 synchronously)
       await repo.get("missing"); // miss
+
+      // Seed the distributed tier directly so the next read can only be an L3 hit.
+      await backend.set("proj:production:v1:cold", "v");
+      assertEquals(await repo.get("cold"), "v", "a value present only in L3 is served");
+      await flush(); // let the L1 backfill settle before the test ends
 
       const stats = repo.getStats();
       assertEquals(stats.sets, 1);
-      assertEquals(stats.gets, 2);
-      assertEquals(stats.hits, 1);
+      assertEquals(stats.gets, 3);
+      assertEquals(stats.hits, 2, "getStats sums L1 and L3 hits");
       assertEquals(stats.misses, 1);
     });
   });

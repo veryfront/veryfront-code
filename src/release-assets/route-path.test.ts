@@ -41,4 +41,21 @@ describe("release-assets/route-path", () => {
     assertEquals(configuredRoutePath("src\\site\\page.tsx", directories, "app"), "app/page.tsx");
     assertEquals(routeForConfiguredPage("src\\pages\\about.tsx", directories), "/about");
   });
+
+  it("tries the pages root when the app root matches but the file is not an app route", () => {
+    // Nested roots: every pages file also lives below the app root, so the
+    // app lookup must fall through instead of deciding the answer.
+    const nested = { app: "src", pages: "src/pages" };
+
+    assertEquals(
+      routeForConfiguredPage("src/page.tsx", nested),
+      "/",
+      "the app root must still win when the file is an app route",
+    );
+    assertEquals(
+      routeForConfiguredPage("src/pages/about.tsx", nested),
+      "/about",
+      "a path below the app root that is not an app route must still resolve under the pages root",
+    );
+  });
 });

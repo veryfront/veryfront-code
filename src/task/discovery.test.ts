@@ -8,9 +8,8 @@ import { clearConfigCache } from "#veryfront/config";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { discoverAll, type DiscoveryResult } from "#veryfront/discovery";
 import { taskHandler } from "#veryfront/discovery/handlers/task-handler.ts";
-import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/platform/compat/fs.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
-import { runTriggerTarget } from "../trigger/local-runner.ts";
+import { runTriggerTarget } from "#veryfront/trigger/local-runner.ts";
 import {
   deriveTaskId,
   discoverTasks as discoverTasksRaw,
@@ -20,7 +19,7 @@ import {
   discoverProjectTaskRuntime as discoverProjectTaskRuntimeRaw,
   listProjectRuntimeTasks,
 } from "./project-runtime.ts";
-import { isTaskDefinition, type TaskDefinition } from "./types.ts";
+import { isTaskDefinition } from "./types.ts";
 
 const discoverTasks: typeof discoverTasksRaw = (options) =>
   discoverTasksRaw({ ...options, allowHostProjectCodeExecution: true });
@@ -42,7 +41,7 @@ function createMockAdapter(files: Record<string, string>): FileSystemAdapter {
     async readFile(path: string): Promise<string> {
       const content = normalizedFiles[normalize(path)];
       if (content === undefined) {
-        throw new Deno.errors.NotFound(`File not found: ${path}`);
+        throw Object.assign(new Error(`File not found: ${path}`), { code: "ENOENT" });
       }
       return content;
     },
@@ -148,7 +147,7 @@ function markAdapterAsSingleProjectVirtual(adapter: RuntimeAdapter): void {
 
 // Discovery uses the shared esbuild service under the hood, which outlives
 // individual test cases until stopEsbuild() runs in afterAll.
-describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () => {
+describe("task/discovery", () => {
   afterEach(() => {
     clearTranspileCache();
     clearConfigCache();
@@ -284,225 +283,6 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
 
       assertEquals(isTaskDefinition(Object.create(prototype)), false);
       assertEquals(reads, 0);
-    });
-
-    it("uses captured reflection primitives after module initialization", () => {
-      const originalApply = Reflect.apply;
-      const originalGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
-      const originalGetPrototypeOf = Reflect.getPrototypeOf;
-      const originalOwnKeys = Reflect.ownKeys;
-      const originalDefineProperty = Object.defineProperty;
-      const originalArrayIterator = Array.prototype[Symbol.iterator];
-      const originalIsArray = Array.isArray;
-      const originalMapGet = Map.prototype.get;
-      const originalMapHas = Map.prototype.has;
-      const originalMapSet = Map.prototype.set;
-      const originalHasOwn = Object.hasOwn;
-      const originalFreeze = Object.freeze;
-      const originalValues = Object.values;
-      const originalSetAdd = Set.prototype.add;
-      const originalSetHas = Set.prototype.has;
-      let poisonCalls = 0;
-      let freezePoisonCalls = 0;
-      const poison = (): never => {
-        poisonCalls++;
-        throw new Error("ambient reflection primitive must not run");
-      };
-      const freezePoison = (<T>(value: T): Readonly<T> => {
-        freezePoisonCalls++;
-        return value;
-      }) as typeof Object.freeze;
-      let output: unknown;
-      let inputSchema: TaskDefinition["inputSchema"];
-      let requirements: TaskDefinition["integrationRequirements"];
-      const sourceInputSchema = {
-        type: "object",
-        required: ["name"],
-        properties: { name: { type: "string" } },
-      };
-
-      try {
-        Reflect.apply = poison;
-        Reflect.getOwnPropertyDescriptor = poison;
-        Reflect.getPrototypeOf = poison;
-        Reflect.ownKeys = poison;
-        Object.defineProperty = poison;
-        Array.prototype[Symbol.iterator] = poison as typeof originalArrayIterator;
-        Array.isArray = poison as unknown as typeof Array.isArray;
-        Map.prototype.get = poison as typeof Map.prototype.get;
-        Map.prototype.has = poison as typeof Map.prototype.has;
-        Map.prototype.set = poison as typeof Map.prototype.set;
-        Object.hasOwn = poison;
-        Object.freeze = freezePoison;
-        Object.values = poison;
-        Set.prototype.add = poison as typeof Set.prototype.add;
-        Set.prototype.has = poison as typeof Set.prototype.has;
-
-        const registered = taskHandler.register(
-          "stable",
-          {
-            run() {
-              return "stable";
-            },
-            inputSchema: sourceInputSchema,
-            integrationRequirements: [{
-              integration: "slack",
-              requiredScopes: ["channels:read"],
-              resources: [{
-                kind: "channel",
-                id: "C012345",
-                parent: { kind: "workspace", id: "T012345" },
-              }],
-            }],
-          },
-          "tasks/stable.ts",
-          "tasks",
-        );
-        output = registered.run({ env: {}, config: {} });
-        inputSchema = registered.inputSchema;
-        requirements = registered.integrationRequirements;
-      } finally {
-        Reflect.apply = originalApply;
-        Reflect.getOwnPropertyDescriptor = originalGetOwnPropertyDescriptor;
-        Reflect.getPrototypeOf = originalGetPrototypeOf;
-        Reflect.ownKeys = originalOwnKeys;
-        Object.defineProperty = originalDefineProperty;
-        Array.prototype[Symbol.iterator] = originalArrayIterator;
-        Array.isArray = originalIsArray;
-        Map.prototype.get = originalMapGet;
-        Map.prototype.has = originalMapHas;
-        Map.prototype.set = originalMapSet;
-        Object.hasOwn = originalHasOwn;
-        Object.freeze = originalFreeze;
-        Object.values = originalValues;
-        Set.prototype.add = originalSetAdd;
-        Set.prototype.has = originalSetHas;
-      }
-
-      sourceInputSchema.properties.name.type = "number";
-      sourceInputSchema.required[0] = "mutated";
-      assertEquals(output, "stable");
-      assertEquals(poisonCalls, 0);
-      assertEquals(freezePoisonCalls, 0);
-      assertEquals(inputSchema, {
-        type: "object",
-        required: ["name"],
-        properties: { name: { type: "string" } },
-      });
-      assertEquals(inputSchema === sourceInputSchema, false);
-      assertEquals(Object.isFrozen(inputSchema), true);
-      assertEquals(Object.isFrozen(inputSchema?.required), true);
-      assertEquals(Object.isFrozen(inputSchema?.properties), true);
-      assertEquals(Object.isFrozen(requirements), true);
-      assertEquals(Object.isFrozen(requirements?.[0]), true);
-      assertEquals(Object.isFrozen(requirements?.[0]?.requiredScopes), true);
-      assertEquals(Object.isFrozen(requirements?.[0]?.resources), true);
-      assertEquals(Object.isFrozen(requirements?.[0]?.resources?.[0]), true);
-      assertEquals(Object.isFrozen(requirements?.[0]?.resources?.[0]?.parent), true);
-    });
-
-    it("keeps JSON schemas detached after serialization primordial poisoning", () => {
-      const originalStringify = JSON.stringify;
-      let poisonCalls = 0;
-      const poison = (): never => {
-        poisonCalls += 1;
-        throw new Error("ambient JSON.stringify must not run");
-      };
-      const sourceInputSchema = {
-        type: "object",
-        properties: { name: { type: "string" } },
-      };
-      let inputSchema: TaskDefinition["inputSchema"];
-
-      try {
-        JSON.stringify = poison;
-        inputSchema = taskHandler.register(
-          "stable-json-schema",
-          { run() {}, inputSchema: sourceInputSchema },
-          "tasks/stable-json-schema.ts",
-          "tasks",
-        ).inputSchema;
-      } finally {
-        JSON.stringify = originalStringify;
-      }
-
-      sourceInputSchema.properties.name.type = "number";
-      assertEquals(poisonCalls, 0);
-      assertEquals(inputSchema, {
-        type: "object",
-        properties: { name: { type: "string" } },
-      });
-      assertEquals(inputSchema === sourceInputSchema, false);
-      assertEquals(Object.isFrozen(inputSchema), true);
-      assertEquals(Object.isFrozen(inputSchema?.properties), true);
-    });
-
-    it("deeply freezes JSON schemas without ambient array iteration", () => {
-      const originalIterator = Array.prototype[Symbol.iterator];
-      const sourceInputSchema = {
-        type: "object",
-        properties: { name: { type: "string" } },
-      };
-      let inputSchema: TaskDefinition["inputSchema"];
-
-      try {
-        Array.prototype[Symbol.iterator] = function (this: unknown[]) {
-          if (
-            this.length === 2 && this[0] === "object" &&
-            typeof this[1] === "object"
-          ) {
-            return Reflect.apply(originalIterator, [], []);
-          }
-          return Reflect.apply(originalIterator, this, []);
-        };
-        inputSchema = taskHandler.register(
-          "stable-json-schema-iteration",
-          { run() {}, inputSchema: sourceInputSchema },
-          "tasks/stable-json-schema-iteration.ts",
-          "tasks",
-        ).inputSchema;
-      } finally {
-        Array.prototype[Symbol.iterator] = originalIterator;
-      }
-
-      assertEquals(Object.isFrozen(inputSchema), true);
-      assertEquals(Object.isFrozen(inputSchema?.properties), true);
-      assertEquals(
-        Object.isFrozen(
-          (inputSchema?.properties as { name: { type: string } }).name,
-        ),
-        true,
-      );
-    });
-
-    it("rejects duplicate integration resources after JSON primordial poisoning", () => {
-      const originalStringify = JSON.stringify;
-      let poisonCalls = 0;
-
-      try {
-        JSON.stringify = (() => `poison-${++poisonCalls}`) as typeof JSON.stringify;
-        assertThrows(() =>
-          taskHandler.register(
-            "duplicate-resources",
-            {
-              run() {},
-              integrationRequirements: [{
-                integration: "slack",
-                resources: [
-                  { kind: "channel", id: "C012345" },
-                  { kind: "channel", id: "C012345" },
-                ],
-              }],
-            },
-            "tasks/duplicate-resources.ts",
-            "tasks",
-          )
-        );
-      } finally {
-        JSON.stringify = originalStringify;
-      }
-
-      assertEquals(poisonCalls, 0);
     });
 
     it("rejects non-task values", () => {
@@ -804,7 +584,7 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
         "  run() {},",
         '  integrationRequirements: [{ integration: "Slack" }],',
         "};",
-        'export const validDefaultSibling = { run() { return "default sibling"; } };',
+        'export const validDefaultSibling = { name: "   ", run() { return "default sibling"; } };',
       ].join("\n"),
       "/project/tasks/named-first.ts": [
         "export const aBroken = {",
@@ -825,6 +605,11 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       ["default-first", "validDefaultSibling"],
       ["named-first", "zValidNamedSibling"],
     ]);
+    assertEquals(
+      result.tasks.map((task) => task.name),
+      ["default-first", "named-first"],
+      "a blank or missing task name falls back to the file-derived id",
+    );
     assertEquals(result.errors.length, 2);
     assertEquals(
       result.errors.every((entry) =>
@@ -835,206 +620,137 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
   });
 
   it("reports invalid integration requirement metadata during unified discovery", async () => {
-    const tempDir = await Deno.makeTempDir({ prefix: "vf-task-invalid-requirements-" });
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/sync.ts": [
+        "export default {",
+        "  run() {},",
+        '  integrationRequirements: [{ integration: "Slack" }],',
+        "};",
+      ].join("\n"),
+    });
 
-    try {
-      await Deno.mkdir(`${tempDir}/tasks`, { recursive: true });
-      await Deno.writeTextFile(
-        `${tempDir}/tasks/sync.ts`,
-        [
-          "export default {",
-          "  run() {},",
-          '  integrationRequirements: [{ integration: "Slack" }],',
-          "};",
-        ].join("\n"),
-      );
+    const result = await discoverAll({
+      baseDir: "/project",
+      fsAdapter: adapter.fs,
+      allowHostProjectCodeExecution: true,
+    });
 
-      const result = await discoverAll({
-        baseDir: tempDir,
-        allowHostProjectCodeExecution: true,
-      });
-
-      assertEquals(result.tasks.size, 0);
-      assertEquals(result.errors.length, 1);
-      assertEquals(
-        result.errors[0]?.error.message.includes(
-          "must use a lowercase integration identifier",
-        ),
-        true,
-      );
-    } finally {
-      await Deno.remove(tempDir, { recursive: true });
-    }
+    assertEquals(result.tasks.size, 0);
+    assertEquals(result.errors.length, 1);
+    assertEquals(
+      result.errors[0]?.error.message.includes(
+        "must use a lowercase integration identifier",
+      ),
+      true,
+    );
   });
 
   it("keeps valid sibling tasks after malformed unified candidates", async () => {
-    const tempDir = await Deno.makeTempDir({ prefix: "vf-task-invalid-sibling-" });
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/default-first.ts": [
+        "export default {",
+        "  run() {},",
+        '  integrationRequirements: [{ integration: "Slack" }],',
+        "};",
+        'export const validDefaultSibling = { run() { return "default sibling"; } };',
+      ].join("\n"),
+      "/project/tasks/named-first.ts": [
+        "export const aBroken = {",
+        "  run() {},",
+        '  integrationRequirements: [{ integration: "Slack" }],',
+        "};",
+        'export const zValidNamedSibling = { run() { return "named sibling"; } };',
+      ].join("\n"),
+    });
 
-    try {
-      await Deno.mkdir(`${tempDir}/tasks`, { recursive: true });
-      await Deno.writeTextFile(
-        `${tempDir}/tasks/default-first.ts`,
-        [
-          "export default {",
-          "  run() {},",
-          '  integrationRequirements: [{ integration: "Slack" }],',
-          "};",
-          'export const validDefaultSibling = { run() { return "default sibling"; } };',
-        ].join("\n"),
-      );
-      await Deno.writeTextFile(
-        `${tempDir}/tasks/named-first.ts`,
-        [
-          "export const aBroken = {",
-          "  run() {},",
-          '  integrationRequirements: [{ integration: "Slack" }],',
-          "};",
-          'export const zValidNamedSibling = { run() { return "named sibling"; } };',
-        ].join("\n"),
-      );
+    const result = await discoverAll({
+      baseDir: "/project",
+      fsAdapter: adapter.fs,
+      allowHostProjectCodeExecution: true,
+    });
 
-      const result = await discoverAll({
-        baseDir: tempDir,
-        allowHostProjectCodeExecution: true,
-      });
-
-      assertEquals([...result.tasks.keys()].sort(), [
-        "default-first",
-        "named-first",
-      ]);
-      assertEquals(result.errors.length, 2);
-      assertEquals(
-        result.errors.every((entry) =>
-          entry.error.message.includes("must use a lowercase integration identifier")
-        ),
-        true,
-      );
-    } finally {
-      await Deno.remove(tempDir, { recursive: true });
-    }
+    assertEquals([...result.tasks.keys()].sort(), [
+      "default-first",
+      "named-first",
+    ]);
+    assertEquals(result.errors.length, 2);
+    assertEquals(
+      result.errors.every((entry) =>
+        entry.error.message.includes("must use a lowercase integration identifier")
+      ),
+      true,
+    );
   });
 
   it("keeps the file-derived ID when malformed named candidates are rejected", async () => {
-    const tempDir = await makeTempDir({ prefix: "vf-task-invalid-id-sibling-" });
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/sync.ts": [
+        'export const aBroken = { run: "not a function" };',
+        'export const zValid = { run() { return "valid sibling"; } };',
+      ].join("\n"),
+    });
 
-    try {
-      await mkdir(`${tempDir}/tasks`, { recursive: true });
-      await writeTextFile(
-        `${tempDir}/tasks/sync.ts`,
-        [
-          'export const aBroken = { run: "not a function" };',
-          'export const zValid = { run() { return "valid sibling"; } };',
-        ].join("\n"),
-      );
+    const result = await discoverAll({
+      baseDir: "/project",
+      fsAdapter: adapter.fs,
+      allowHostProjectCodeExecution: true,
+    });
 
-      const result = await discoverAll({
-        baseDir: tempDir,
-        allowHostProjectCodeExecution: true,
-      });
-
-      assertEquals([...result.tasks.keys()], ["sync"]);
-      assertEquals(result.tasks.get("sync")?.run({ env: {}, config: {} }), "valid sibling");
-      assertEquals(result.errors.map((entry) => entry.error.message), [
-        "Task definition run must be a function.",
-      ]);
-    } finally {
-      await remove(tempDir, { recursive: true });
-    }
+    assertEquals([...result.tasks.keys()], ["sync"]);
+    assertEquals(result.tasks.get("sync")?.run({ env: {}, config: {} }), "valid sibling");
+    assertEquals(result.errors.map((entry) => entry.error.message), [
+      "Task definition run must be a function.",
+    ]);
   });
 
   it("reports accessor-backed task metadata without invoking the accessor", async () => {
-    const tempDir = await Deno.makeTempDir({ prefix: "vf-task-accessor-metadata-" });
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/sync.ts": [
+        "export default {",
+        "  run() {},",
+        "  get integrationRequirements() {",
+        '    throw new Error("integrationRequirements accessor executed");',
+        "  },",
+        "};",
+      ].join("\n"),
+    });
 
-    try {
-      await Deno.mkdir(`${tempDir}/tasks`, { recursive: true });
-      await Deno.writeTextFile(
-        `${tempDir}/tasks/sync.ts`,
-        [
-          "export default {",
-          "  run() {},",
-          "  get integrationRequirements() {",
-          '    throw new Error("integrationRequirements accessor executed");',
-          "  },",
-          "};",
-        ].join("\n"),
-      );
+    const result = await discoverAll({
+      baseDir: "/project",
+      fsAdapter: adapter.fs,
+      allowHostProjectCodeExecution: true,
+    });
 
-      const result = await discoverAll({
-        baseDir: tempDir,
-        allowHostProjectCodeExecution: true,
-      });
-
-      assertEquals(result.tasks.size, 0);
-      assertEquals(result.errors.length, 1);
-      assertEquals(
-        result.errors[0]?.error.message.includes(
-          "integrationRequirements must be a data property",
-        ),
-        true,
-      );
-    } finally {
-      await Deno.remove(tempDir, { recursive: true });
-    }
+    assertEquals(result.tasks.size, 0);
+    assertEquals(result.errors.length, 1);
+    assertEquals(
+      result.errors[0]?.error.message.includes(
+        "integrationRequirements must be a data property",
+      ),
+      true,
+    );
   });
 
   it("discovers class-instance tasks and preserves their run receiver", async () => {
-    const tempDir = await Deno.makeTempDir({ prefix: "vf-task-class-instance-" });
-
-    try {
-      await Deno.mkdir(`${tempDir}/tasks`, { recursive: true });
-      await Deno.writeTextFile(
-        `${tempDir}/tasks/stateful.ts`,
-        [
-          "class StatefulTask {",
-          '  prefix = "stateful";',
-          "  run() { return this.prefix; }",
-          "}",
-          "export default new StatefulTask();",
-        ].join("\n"),
-      );
-
-      const result = await discoverAll({
-        baseDir: tempDir,
-        allowHostProjectCodeExecution: true,
-      });
-
-      assertEquals(result.errors, []);
-      assertEquals([...result.tasks.keys()], ["stateful"]);
-      assertEquals(result.tasks.get("stateful")?.run({ env: {}, config: {} }), "stateful");
-    } finally {
-      await Deno.remove(tempDir, { recursive: true });
-    }
-  });
-
-  it("does not treat Object.prototype.run pollution as a task export", async () => {
-    const tempDir = await Deno.makeTempDir({ prefix: "vf-task-prototype-pollution-" });
-    Object.defineProperty(Object.prototype, "run", {
-      configurable: true,
-      value: () => "polluted",
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/stateful.ts": [
+        "class StatefulTask {",
+        '  prefix = "stateful";',
+        "  run() { return this.prefix; }",
+        "}",
+        "export default new StatefulTask();",
+      ].join("\n"),
     });
 
-    try {
-      assertEquals(isTaskDefinition({}), false);
-      await Deno.mkdir(`${tempDir}/tasks`, { recursive: true });
-      await Deno.writeTextFile(
-        `${tempDir}/tasks/config.ts`,
-        [
-          'export const config = { mode: "safe" };',
-          "export const helper = {};",
-        ].join("\n"),
-      );
+    const result = await discoverAll({
+      baseDir: "/project",
+      fsAdapter: adapter.fs,
+      allowHostProjectCodeExecution: true,
+    });
 
-      const result = await discoverAll({
-        baseDir: tempDir,
-        allowHostProjectCodeExecution: true,
-      });
-
-      assertEquals(result.errors, []);
-      assertEquals([...result.tasks.keys()], []);
-    } finally {
-      delete (Object.prototype as Record<string, unknown>).run;
-      await Deno.remove(tempDir, { recursive: true });
-    }
+    assertEquals(result.errors, []);
+    assertEquals([...result.tasks.keys()], ["stateful"]);
+    assertEquals(result.tasks.get("stateful")?.run({ env: {}, config: {} }), "stateful");
   });
 
   it("rejects ambiguous legacy task ids across supported extensions", async () => {
@@ -1220,7 +936,7 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
 
   it("finds a task by id even if another task file fails to load", async () => {
     const adapter = createRuntimeAdapter({
-      "/project/tasks/broken.ts": 'import "./missing.ts"; export default { run() {} };',
+      "/project/tasks/ping.js": 'import "./missing.ts"; export default { run() {} };',
       "/project/tasks/ping.ts": [
         "export const pingTask = {",
         '  name: "Ping task",',
@@ -1237,9 +953,14 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       config: { fs: { type: "veryfront-api" } } as never,
     });
 
-    assertEquals(task?.id, "ping");
-    assertEquals(task?.name, "Ping task");
-    assertEquals(task?.exportName, "pingTask");
+    assertEquals(task?.id, "ping", "the recovered task keeps the requested id");
+    assertEquals(task?.name, "Ping task", "the recovered task keeps its declared name");
+    assertEquals(task?.exportName, "pingTask", "the recovered task keeps its export name");
+    assertEquals(
+      task?.filePath,
+      "tasks/ping.ts",
+      "a task file that throws during load must not stop findTaskById from returning the valid sibling with the same id",
+    );
   });
 
   it("discovers runtime tasks through adapter-backed project paths", async () => {

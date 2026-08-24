@@ -1,4 +1,5 @@
 import { walk } from "#std/fs/walk";
+import { DENO_TEST_ENV, PROVIDER_EGRESS_DENY_NET } from "./suites.ts";
 
 export interface ShardSpec {
   index: number;
@@ -15,16 +16,7 @@ interface LcovLineRecord {
   line: number;
 }
 
-const PROVIDER_EGRESS_DENY_NET =
-  "--deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai";
-const UNIT_COVERAGE_ENV = {
-  DENO_TESTING: "1",
-  VF_DISABLE_LRU_INTERVAL: "1",
-  SSR_TRANSFORM_PER_PROJECT_LIMIT: "0",
-  REVALIDATION_PER_PROJECT_LIMIT: "0",
-  NODE_ENV: "production",
-  LOG_FORMAT: "text",
-};
+const UNIT_COVERAGE_ENV = DENO_TEST_ENV;
 
 export function parseShardSpec(value: string): ShardSpec {
   const match = /^(\d+)\/(\d+)$/.exec(value);
@@ -155,7 +147,7 @@ async function runShard(args: string[]): Promise<void> {
 
   await runDeno(
     buildDenoTestCommandArgs({ coverageDir, files }),
-    UNIT_COVERAGE_ENV,
+    { ...UNIT_COVERAGE_ENV },
   );
 
   await clearEmptyCoverageProfileJson(coverageDir);

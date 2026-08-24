@@ -1,5 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { CHUNK_SIZE_ESTIMATES } from "./limits.ts";
 import { generateChunkSuggestions } from "./suggestions.ts";
 
 describe("generateChunkSuggestions", () => {
@@ -21,8 +22,14 @@ describe("generateChunkSuggestions", () => {
     );
 
     assertEquals(
-      suggestions.find((suggestion) => suggestion.name === "react-vendor")?.deps,
-      [dependency],
+      suggestions.find((suggestion) => suggestion.name === "react-vendor"),
+      {
+        name: "react-vendor",
+        deps: [dependency],
+        pages: ["/app/page.tsx"],
+        benefit: CHUNK_SIZE_ESTIMATES.reactRuntime,
+      },
+      "react vendor chunk must list its deps, the pages that import them, and its benefit",
     );
   });
 
@@ -82,8 +89,98 @@ describe("generateChunkSuggestions", () => {
     );
 
     assertEquals(
-      suggestions.find((suggestion) => suggestion.name === "ui-vendor")?.deps,
-      ["framer-motion/motion", "https://esm.sh/framer-motion/motion"],
+      suggestions.find((suggestion) => suggestion.name === "ui-vendor"),
+      {
+        name: "ui-vendor",
+        deps: ["framer-motion/motion", "https://esm.sh/framer-motion/motion"],
+        pages: ["/app/page.tsx", "/app/remote.tsx"],
+        benefit: 2 * CHUNK_SIZE_ESTIMATES.uiLibrary,
+      },
+      "ui vendor chunk must list its deps, the union of the pages that import them, and its benefit",
+    );
+  });
+
+  it("ranks suggestions by benefit descending", () => {
+    const suggestions = generateChunkSuggestions(
+      new Map([
+        [
+          "/a",
+          {
+            path: "/a",
+            local: [],
+            remote: [],
+            shared: ["react", "framer-motion", "lodash"],
+          },
+        ],
+        [
+          "/b",
+          {
+            path: "/b",
+            local: [],
+            remote: [],
+            shared: ["lodash"],
+          },
+        ],
+      ]),
+      new Map([
+        ["react", 2],
+        ["framer-motion", 1],
+        ["lodash", 2],
+      ]),
+    );
+
+    assertEquals(
+      suggestions.map((suggestion) => suggestion.name),
+      ["react-vendor", "ui-vendor", "common"],
+      "suggestions must be ranked by benefit descending",
+    );
+    assertEquals(
+      suggestions.map((suggestion) => suggestion.benefit),
+      [200_000, 150_000, 50_000],
+      "benefit must be reactRuntime, uiLibrary per ui dep, and dependency estimate times deps times pages",
+    );
+  });
+
+  it("breaks a benefit tie by chunk name", () => {
+    const shared = ["axios", "lodash", "zod"];
+    const suggestions = generateChunkSuggestions(
+      new Map([
+        [
+          "/a",
+          {
+            path: "/a",
+            local: [],
+            remote: [],
+            shared: [...shared, "framer-motion"],
+          },
+        ],
+        [
+          "/b",
+          {
+            path: "/b",
+            local: [],
+            remote: [],
+            shared,
+          },
+        ],
+      ]),
+      new Map([
+        ["axios", 2],
+        ["lodash", 2],
+        ["zod", 2],
+        ["framer-motion", 1],
+      ]),
+    );
+
+    assertEquals(
+      suggestions.map((suggestion) => suggestion.benefit),
+      [150_000, 150_000],
+      "this fixture must produce two chunks of equal benefit so the name tiebreak is observable",
+    );
+    assertEquals(
+      suggestions.map((suggestion) => suggestion.name),
+      ["common", "ui-vendor"],
+      "chunks of equal benefit must be ordered by name ascending",
     );
   });
 });

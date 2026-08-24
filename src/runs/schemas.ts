@@ -56,11 +56,11 @@ export const getRunSchema = defineSchema((v) =>
     error: getRunExecutionErrorSchema().nullable(),
     logs: v.string().nullable(),
     artifacts: v.array(v.unknown()),
-    duration_ms: v.number().int().nullable(),
+    duration_ms: v.number().int().nonnegative().nullable(),
     exit_code: v.number().int().nullable(),
     start_mode: v.string().nullable(),
-    timeout_seconds: v.number().int().nullable(),
-    backoff_limit: v.number().int().nullable(),
+    timeout_seconds: v.number().int().positive().nullable(),
+    backoff_limit: v.number().int().nonnegative().nullable(),
     trigger_kind: getRunTriggerKindSchema().nullable(),
     trigger_id: v.string().nullable(),
     created_by: v.string().nullable(),
@@ -130,7 +130,7 @@ export const getScheduleReferenceListSchema = defineSchema((v) =>
         }),
         definition_source: v.enum(["manual", "source"] as const),
         source_trigger_id: v.string().nullable(),
-        timeout_seconds: v.number().int(),
+        timeout_seconds: v.number().int().positive(),
       }),
     ),
   })
@@ -145,7 +145,7 @@ export const getCancelRunResponseSchema = defineSchema((v) =>
 
 export const getRunEventSchema = defineSchema((v) =>
   v.object({
-    event_id: v.number(),
+    event_id: v.number().int().nonnegative(),
     event_type: v.string(),
     payload: v.unknown(),
     created_at: v.string(),
@@ -175,17 +175,24 @@ export const getRunListSchema = defineSchema((v) =>
   })
 );
 
-/** Zod schema for a canonical durable run. */
+/**
+ * Zod schema for a canonical durable run whose `duration_ms` and
+ * `backoff_limit` are non-negative integers and whose `timeout_seconds` is a
+ * positive integer when present.
+ */
 export const RunSchema = lazySchema(getRunSchema);
 /** Zod schema for a create-run response. */
 export const CreateRunResponseSchema = lazySchema(getCreateRunResponseSchema);
 /** Zod schema for a schedule-triggered create-run response. */
 export const ScheduleRunCreateResponseSchema = lazySchema(getScheduleRunCreateResponseSchema);
-/** Zod schema for the schedule references needed to trigger source schedules. */
+/**
+ * Zod schema for the schedule references needed to trigger source schedules.
+ * Each source-schedule `timeout_seconds` value is a positive integer.
+ */
 export const ScheduleReferenceListSchema = lazySchema(getScheduleReferenceListSchema);
 /** Zod schema for a cancel-run response. */
 export const CancelRunResponseSchema = lazySchema(getCancelRunResponseSchema);
-/** Zod schema for a run event. */
+/** Zod schema for a run event whose `event_id` is a non-negative integer. */
 export const RunEventSchema = lazySchema(getRunEventSchema);
 /** Zod schema for a paginated run-event response. */
 export const RunEventListSchema = lazySchema(getRunEventListSchema);

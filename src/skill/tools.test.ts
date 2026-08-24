@@ -19,6 +19,11 @@ import { LOAD_SKILL_OVERRIDE_FORWARDING, LOAD_SKILL_POLICY_CLAUSES } from "./loa
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createSkillTestAdapter } from "./testing.ts";
 import { LocalScriptExecutor } from "./executor.ts";
+import {
+  SKILL_SCRIPT_MAX_ARG_LENGTH,
+  SKILL_SCRIPT_MAX_ARGS,
+  SKILL_SCRIPT_MAX_ENV_ENTRIES,
+} from "#veryfront/skill/limits.ts";
 
 function createTestSkill(fsAdapter: FileSystemAdapter): Skill {
   return {
@@ -408,6 +413,7 @@ Do work.`,
     });
     const otherAdapter = createSkillTestAdapter({
       "/project/skills/other-skill/references/secret.md": "Secret",
+      "/project/skills/other-skill/references/guide.md": "Secret",
     });
     registerSkill("my-skill", createNamedTestSkill("my-skill", activeAdapter));
     registerSkill("other-skill", createNamedTestSkill("other-skill", otherAdapter));
@@ -428,7 +434,73 @@ Do work.`,
           },
         }),
       Error,
+      'can only access the active loaded skill "my-skill"',
     );
+
+    // The other skill's path is advertised by the active skill, so only the
+    // skillId equality check can reject this read.
+    await assertRejects(
+      () =>
+        tool.execute({
+          skillId: "other-skill",
+          reference: "references/guide.md",
+        }, {
+          activeSkillId: "my-skill",
+          activeSkillToolAvailability: {
+            hasActiveSkill: true,
+            references: ["references/guide.md"],
+            scripts: [],
+          },
+        }),
+      Error,
+      'can only access the active loaded skill "my-skill"',
+    );
+  });
+
+  it("load_skill_reference should reject a stale availability record without an active skill", async () => {
+    let readCount = 0;
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/references/guide.md": "Guide",
+    });
+    const countingAdapter: FileSystemAdapter = {
+      ...fsAdapter,
+      async readFile(path) {
+        readCount++;
+        return await fsAdapter.readFile(path);
+      },
+    };
+    registerSkill("my-skill", createNamedTestSkill("my-skill", countingAdapter));
+
+    const tool = createLoadSkillReferenceTool();
+
+    await assertRejects(
+      () =>
+        tool.execute({
+          skillId: "my-skill",
+          reference: "references/guide.md",
+        }, {
+          activeSkillId: "my-skill",
+          activeSkillToolAvailability: {
+            hasActiveSkill: false,
+            references: ["references/guide.md"],
+            scripts: [],
+          },
+        }),
+      Error,
+      "load_skill_reference requires an active loaded skill.",
+    );
+    assertEquals(readCount, 0);
+
+    await assertRejects(
+      () =>
+        tool.execute({
+          skillId: "my-skill",
+          reference: "references/guide.md",
+        }, { activeSkillId: "my-skill" }),
+      Error,
+      "load_skill_reference requires an active loaded skill.",
+    );
+    assertEquals(readCount, 0);
   });
 
   it("load_skill_reference should reject files not advertised by the active skill", async () => {
@@ -492,6 +564,58 @@ Do work.`,
       "not available to this agent",
     );
     assertEquals(readCount, 0);
+  });
+
+  it("execute_skill_script should reject argument and environment inputs above their limits", async () => {
+    const tool = createExecuteSkillScriptTool({ executor: new LocalScriptExecutor() });
+
+    await assertRejects(
+      () =>
+        tool.execute({
+          skillId: "my-skill",
+          script: "scripts/run.sh",
+          args: new Array(SKILL_SCRIPT_MAX_ARGS + 1).fill("a"),
+        }),
+      RangeError,
+      `Skill scripts accept at most ${SKILL_SCRIPT_MAX_ARGS} arguments`,
+    );
+
+    await assertRejects(
+      () =>
+        tool.execute({
+          skillId: "my-skill",
+          script: "scripts/run.sh",
+          args: ["a".repeat(SKILL_SCRIPT_MAX_ARG_LENGTH + 1)],
+        }),
+      RangeError,
+      `Skill script arguments may contain at most ${SKILL_SCRIPT_MAX_ARG_LENGTH} characters`,
+    );
+
+    await assertRejects(
+      () =>
+        tool.execute({
+          skillId: "my-skill",
+          script: "scripts/run.sh",
+          env: Object.fromEntries(
+            new Array(SKILL_SCRIPT_MAX_ENV_ENTRIES + 1)
+              .fill(null)
+              .map((_unused, index) => [`KEY_${index}`, "x"]),
+          ),
+        }),
+      RangeError,
+      `Skill script environments may contain at most ${SKILL_SCRIPT_MAX_ENV_ENTRIES} entries`,
+    );
+
+    await assertRejects(
+      () =>
+        tool.execute({
+          skillId: "my-skill",
+          script: "scripts/run.sh",
+          env: { "1BAD-KEY": "x" },
+        }),
+      TypeError,
+      "Invalid skill script environment key: 1BAD-KEY",
+    );
   });
 
   it("execute_skill_script should run a local script from the skill directory", async () => {

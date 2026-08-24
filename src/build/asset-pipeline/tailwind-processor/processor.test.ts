@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { TailwindProcessor } from "./processor.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -96,7 +96,16 @@ describe("build/asset-pipeline/tailwind-processor/processor", () => {
 
         // Verify file was written
         const written = await Deno.readTextFile(outputFile);
-        assertExists(written);
+        assertEquals(
+          written,
+          result.css,
+          "the optimized CSS returned by process() is what lands in outputFile",
+        );
+        assertStringIncludes(
+          written,
+          "color: blue",
+          "written stylesheet retains the input rule",
+        );
       } finally {
         await Deno.remove(tmpDir, { recursive: true });
       }

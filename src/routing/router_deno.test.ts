@@ -8,6 +8,11 @@ import {
   expectRouteMatch,
 } from "./router_deno.test-helpers.ts";
 
+// Mirrors ROUTE_CACHE_MAX_ENTRIES in ./matchers/pattern-route-matcher.ts: the
+// match cache is a bounded LRU because every pathname, 404s included, is
+// cached and an unbounded map would grow without limit under unique-URL traffic.
+const ROUTE_CACHE_MAX_ENTRIES = 500;
+
 describe("PageRouteMatcher", () => {
   describe("Static routes", () => {
     it("matches exact static routes", () => {
@@ -651,11 +656,39 @@ describe("PageRouteMatcher", () => {
       assertEquals(match1.route.page, "pages/dynamic.tsx");
 
       router.addRoute("/blog/featured", "pages/featured.tsx");
-      router.clearCache();
 
       const match2 = router.match("/blog/featured");
       assertExists(match2);
-      assertEquals(match2.route.page, "pages/featured.tsx");
+      assertEquals(
+        match2.route.page,
+        "pages/featured.tsx",
+        "addRoute must invalidate the cached match for an already-resolved path",
+      );
+    });
+
+    it("evicts the oldest pathname once the match cache is full", () => {
+      const router = new PageRouteMatcher();
+      router.addRoute("/blog/[slug]", "pages/blog.tsx");
+
+      const first = router.match("/blog/p0");
+      assertExists(first);
+
+      let last = router.match("/blog/p1");
+      for (let i = 2; i <= ROUTE_CACHE_MAX_ENTRIES; i++) {
+        last = router.match(`/blog/p${i}`);
+      }
+      assertExists(last);
+
+      assertEquals(
+        router.match(`/blog/p${ROUTE_CACHE_MAX_ENTRIES}`) === last,
+        true,
+        "the most recently matched pathname stays cached",
+      );
+      assertEquals(
+        router.match("/blog/p0") === first,
+        false,
+        "the route-match cache is bounded and evicts the oldest pathname",
+      );
     });
 
     it("caches complex route matches", () => {

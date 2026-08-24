@@ -2,11 +2,20 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { PageRouteMatcher } from "./matchers/index.ts";
+import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 
 describe("PageRouteMatcher", () => {
   it("does not create a periodic cleanup timer", () => {
+    // The test runner sets VF_DISABLE_LRU_INTERVAL=1, which short-circuits the
+    // LRU cleanup timer regardless of the matcher's own options. Neutralize it
+    // so this assertion observes what PageRouteMatcher actually configures.
+    const globals = globalThis as Record<string, unknown>;
+    const previousGlobalFlag = globals.__vfDisableLruInterval;
+    const previousHostFlag = getHostEnv("VF_DISABLE_LRU_INTERVAL");
     const originalSetInterval = globalThis.setInterval;
     let intervalCalls = 0;
+    globals.__vfDisableLruInterval = false;
+    deleteEnv("VF_DISABLE_LRU_INTERVAL");
     globalThis.setInterval = (() => {
       intervalCalls++;
       return 0 as unknown as ReturnType<typeof setInterval>;
@@ -16,9 +25,23 @@ describe("PageRouteMatcher", () => {
       new PageRouteMatcher();
     } finally {
       globalThis.setInterval = originalSetInterval;
+      if (previousGlobalFlag === undefined) {
+        delete globals.__vfDisableLruInterval;
+      } else {
+        globals.__vfDisableLruInterval = previousGlobalFlag;
+      }
+      if (previousHostFlag === undefined) {
+        deleteEnv("VF_DISABLE_LRU_INTERVAL");
+      } else {
+        setEnv("VF_DISABLE_LRU_INTERVAL", previousHostFlag);
+      }
     }
 
-    assertEquals(intervalCalls, 0);
+    assertEquals(
+      intervalCalls,
+      0,
+      "PageRouteMatcher must not configure a TTL that starts a periodic cleanup timer",
+    );
   });
 
   describe("Static routes", () => {
@@ -349,6 +372,25 @@ describe("PageRouteMatcher", () => {
 
       assertEquals(router.match("/not-found"), null);
       assertEquals(router.match("/not-found"), null);
+    });
+
+    it("invalidates a negatively cached path when its route is registered later", () => {
+      const router = new PageRouteMatcher();
+      router.addRoute("/blog/[slug]", "pages/blog.tsx");
+
+      assertEquals(
+        router.match("/nope/featured"),
+        null,
+        "unmatched path is negatively cached",
+      );
+
+      router.addRoute("/nope/featured", "pages/featured.tsx");
+
+      assertEquals(
+        router.match("/nope/featured")?.route.page,
+        "pages/featured.tsx",
+        "addRoute must invalidate the negative cache so late-registered routes become visible",
+      );
     });
 
     it("clears cache correctly", () => {

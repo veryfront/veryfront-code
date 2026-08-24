@@ -22,6 +22,7 @@ import {
 import {
   executeRemoteIntegrationTool,
   getRemoteIntegrationToolDefinitions,
+  getRemoteIntegrationToolDiscovery,
 } from "./remote-tools.ts";
 
 const ENV_KEYS = [
@@ -184,8 +185,10 @@ describe("integrations/remote-tools hardening", () => {
         listener: EventListenerOrEventListenerObject,
         options?: boolean | AddEventListenerOptions,
       ) => {
-        originalAdd(type, listener, options);
+        // Abort inside the window the source re-checks: the {once:true}
+        // listener is registered after the event has already fired.
         if (type === "abort") caller.abort(reason);
+        originalAdd(type, listener, options);
       }) as AbortSignal["addEventListener"],
     });
     let fetchCalls = 0;
@@ -358,11 +361,47 @@ describe("integrations/remote-tools hardening", () => {
       () => getRemoteIntegrationToolDefinitions(),
     );
 
-    assertEquals(definitions, []);
+    assertEquals(definitions, [], "a body that is not valid UTF-8 must admit no tools");
+
+    // Valid JSON only after lenient U+FFFD replacement, so a repaired decode
+    // would admit the tool with corrupted metadata instead of failing closed.
+    const prefix = encoder.encode('{"tools":[{"name":"github__ok_tool","description":"a');
+    const suffix = encoder.encode('b","inputSchema":{}}]}');
+    const repairableBody = new Uint8Array(prefix.length + 1 + suffix.length);
+    repairableBody.set(prefix, 0);
+    repairableBody[prefix.length] = 0xff;
+    repairableBody.set(suffix, prefix.length + 1);
+
+    const discovery = await withMockFetch(
+      async () => new Response(repairableBody),
+      () => getRemoteIntegrationToolDiscovery(),
+    );
+
+    assertEquals(
+      discovery,
+      { status: "unavailable", reason: "request_failed" },
+      "malformed UTF-8 in the discovery body must fail closed rather than be repaired",
+    );
   });
 
   it("admits remote tool definitions atomically within count limits", async () => {
     configureRemoteTools();
+    const atLimitTools = Array.from(
+      { length: MAX_REMOTE_INTEGRATION_TOOL_DEFINITIONS },
+      (_, index) => createToolDefinition({ name: `github__tool_${index}` }),
+    );
+
+    const atLimitDefinitions = await withMockFetch(
+      async () => Response.json({ tools: atLimitTools }),
+      () => getRemoteIntegrationToolDefinitions(),
+    );
+
+    assertEquals(
+      atLimitDefinitions.length,
+      MAX_REMOTE_INTEGRATION_TOOL_DEFINITIONS,
+      "a catalog at exactly the definition ceiling must be admitted in full",
+    );
+
     const tools = Array.from(
       { length: MAX_REMOTE_INTEGRATION_TOOL_DEFINITIONS + 1 },
       (_, index) => createToolDefinition({ name: `github__tool_${index}` }),
@@ -373,7 +412,7 @@ describe("integrations/remote-tools hardening", () => {
       () => getRemoteIntegrationToolDefinitions(),
     );
 
-    assertEquals(definitions, []);
+    assertEquals(definitions, [], "a catalog past the definition ceiling must be rejected whole");
   });
 
   it("rejects duplicate remote tool names atomically", async () => {

@@ -3,6 +3,7 @@ import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { rewriteNpmImports } from "#veryfront/transforms/npm-import-rewrites.ts";
+import { resolveContainedPackagePath } from "#veryfront/transforms/import-rewriter/package-resolution.ts";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 import {
   getNodeExternalPackagesToResolveForRoute,
@@ -25,6 +26,21 @@ type SourceReader = Pick<FileSystem, "readTextFile">;
 
 /** Node.js built-in module names — shared across the CJS shim, esbuild externals, and Deno rewrites. */
 export const NODE_BUILTINS = ROUTE_NODE_BUILTINS;
+
+function splitImportSuffix(specifier: string): { path: string; suffix: string } {
+  const queryIndex = specifier.indexOf("?");
+  const hashIndex = specifier.indexOf("#");
+  const suffixIndex = queryIndex === -1
+    ? hashIndex
+    : hashIndex === -1
+    ? queryIndex
+    : Math.min(queryIndex, hashIndex);
+  if (suffixIndex === -1) return { path: specifier, suffix: "" };
+  return {
+    path: specifier.slice(0, suffixIndex),
+    suffix: specifier.slice(suffixIndex),
+  };
+}
 
 export async function readProjectDependencies(
   projectDir: string,
@@ -89,12 +105,15 @@ function __vf_loadCjs(id, parentDir) {
   // then re-canonicalize via realPathSync to resist symlinked node_modules
   // entries that could point outside the project root.
   __vf_assertContained(resolved);
+  var real;
   try {
-    var real = Deno.realPathSync(resolved);
-    __vf_assertContained(real);
-    resolved = real;
+    real = Deno.realPathSync(resolved);
   } catch (_) {
     /* expected: realPathSync fails for non-existent paths — assertContained above already held */
+  }
+  if (real !== undefined) {
+    __vf_assertContained(real);
+    resolved = real;
   }
   if (resolved in __vf_cache) return __vf_cache[resolved];
   var code = Deno.readTextFileSync(resolved);
@@ -214,10 +233,20 @@ export async function rewriteNodeExternalImports(
     const pkg = packages.find((name) => specifier === name || specifier.startsWith(`${name}/`));
     if (!pkg) continue;
 
-    const subpath = specifier.slice(pkg.length);
+    const { path: specifierPath, suffix } = splitImportSuffix(specifier);
+    const subpath = specifierPath.slice(pkg.length);
     if (subpath) {
-      const packageDir = pathToFileURL(pathHelper.join(projectDir, "node_modules", pkg)).href;
-      const resolvedSubpath = `${packageDir}${subpath}`;
+      // The subpath comes from the handler source; reject any that escape the
+      // package directory (e.g. "pkg/../../secret") by leaving the import
+      // untouched so it fails to resolve rather than reading outside
+      // node_modules.
+      const packageDir = pathHelper.resolve(projectDir, "node_modules", pkg);
+      const target = resolveContainedPackagePath(packageDir, `.${subpath}`);
+      if (!target) {
+        logger.warn(`Skipping subpath import that escapes package directory: ${specifier}`);
+        continue;
+      }
+      const resolvedSubpath = `${pathToFileURL(target).href}${suffix}`;
       logger.debug(`Resolved ${specifier} -> ${resolvedSubpath}`);
       replacements.set(specifier, resolvedSubpath);
       continue;

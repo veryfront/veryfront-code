@@ -69,6 +69,23 @@ describe("redirect policy", () => {
     ) {
       assertEquals(isRedirectDestinationAllowed(destination, requestUrl, policy), false);
     }
+
+    // URL parsing silently strips tabs and newlines, so a destination carrying
+    // them parses back to the request origin and would be reported as allowed.
+    for (
+      const destination of [
+        "/login\r\nSet-Cookie: a=b",
+        "https://app.example.com/lo\nlogin",
+        "https://app.example.com/\u0000",
+        "https://app.example.com/\u007f",
+      ]
+    ) {
+      assertEquals(
+        isRedirectDestinationAllowed(destination, requestUrl, policy),
+        false,
+        "control characters in a redirect destination must be rejected before URL parsing normalizes them away",
+      );
+    }
   });
 
   it("preserves unrestricted redirects only when the policy is omitted", () => {

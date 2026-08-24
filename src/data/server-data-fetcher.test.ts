@@ -8,6 +8,9 @@ import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts"
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { join } from "node:path";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
+import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
+import { TimeoutError } from "#veryfront/rendering/utils/stream-utils.ts";
+import { FakeTime } from "#std/testing/time";
 
 describe("ServerDataFetcher", () => {
   function createContext(overrides: Partial<DataContext> = {}): DataContext {
@@ -116,6 +119,14 @@ describe("ServerDataFetcher", () => {
       const changedEnv = await identity("tenant-a", "release-a", unrestricted, {
         TENANT_SECRET: "two",
       });
+      const allowStripe = {
+        schemaVersion: 1,
+        mode: "allowlist",
+        integrations: { stripe: { allowedToolIds: null } },
+      } as const;
+      const changedAllowlist = await identity("tenant-a", "release-a", allowStripe, {
+        TENANT_SECRET: "one",
+      });
 
       assertEquals(baseline.reusable, true);
       assertEquals(same.workerId, baseline.workerId);
@@ -123,6 +134,24 @@ describe("ServerDataFetcher", () => {
       assertEquals(changedSource.workerId === baseline.workerId, false);
       assertEquals(changedPolicy.workerId === baseline.workerId, false);
       assertEquals(changedEnv.workerId === baseline.workerId, false);
+      assertEquals(
+        changedAllowlist.workerId === changedPolicy.workerId,
+        false,
+        "two allowlist policies with different integrations must not share a reusable worker",
+      );
+    });
+
+    it("does not reuse a data worker without a host-owned scope and generation", async () => {
+      const unscoped = await runWithExactSourceIntegrationPolicy(
+        { schemaVersion: 1, mode: "unrestricted" },
+        () => __resolveDataWorkerIdentityForTests({}),
+      );
+
+      assertEquals(
+        unscoped.reusable,
+        false,
+        "an admission without a host-owned scope must stay single-use so its worker is evicted",
+      );
     });
 
     it("should return empty props when getServerData is not defined", async () => {
@@ -315,6 +344,30 @@ describe("ServerDataFetcher", () => {
       );
     });
 
+    it("fails a getServerData that never settles after the data fetch timeout", async () => {
+      using time = new FakeTime();
+      const fetcher = new ServerDataFetcher();
+      const pageModule: PageWithData = {
+        default: () => null,
+        getServerData: () => new Promise<never>(() => {}),
+      };
+      // An isolated breaker namespace keeps this deliberate failure from
+      // counting against the shared "default" project breaker.
+      const request = new Request("http://localhost/test", {
+        headers: { "x-project-id": "data-fetch-timeout-test" },
+      });
+
+      const rejected = assertRejects(
+        () => fetcher.fetch(pageModule, createContext({ request })),
+        TimeoutError,
+        "getServerData for /test",
+        "a hung loader must fail after the data fetch timeout instead of hanging the request",
+      );
+
+      await time.tickAsync(DATA_FETCH_TIMEOUT_MS + 1);
+      await rejected;
+    });
+
     it("should support synchronous getServerData", async () => {
       const fetcher = new ServerDataFetcher();
       const pageModule: PageWithData<{ sync: boolean }> = {
@@ -480,7 +533,7 @@ describe("ServerDataFetcher", () => {
       assertEquals(cancelled, true);
     });
 
-    it("should skip body size guard when request has no body", async () => {
+    it("requires an exact source integration policy even for a bodyless isolated fetch", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_DATA", "1");
       __resetPoolForTests();
@@ -496,7 +549,7 @@ describe("ServerDataFetcher", () => {
 
       // The worker boundary is strict: isolated project code cannot run without
       // the exact source policy established by request middleware.
-      await assertRejects(
+      const error = (await assertRejects(
         () =>
           fetcher.fetch(
             pageModule,
@@ -505,6 +558,11 @@ describe("ServerDataFetcher", () => {
           ),
         Error,
         "requires an exact source integration policy",
+      )) as Error;
+      assertEquals(
+        error.message.includes("exceeds size limit"),
+        false,
+        "a bodyless request must never engage the worker body size guard",
       );
     });
   });

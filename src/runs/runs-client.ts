@@ -474,9 +474,10 @@ export class VeryfrontRunsClient {
     } = {},
   ): Promise<T> {
     const { apiUrl, authToken } = this.resolveConnection();
-    const apiOrigin = new URL(apiUrl).origin;
+    const normalizedApiUrl = apiUrl.replace(/\/+$/, "");
+    const apiOrigin = new URL(normalizedApiUrl).origin;
     const raw = await requestWithRetry(
-      `${apiUrl}${path}`,
+      `${normalizedApiUrl}${path}`,
       authToken,
       this.retryConfig,
       {
