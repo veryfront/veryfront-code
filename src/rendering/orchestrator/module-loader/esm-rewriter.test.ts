@@ -338,6 +338,11 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
         false,
         "no remote esm.sh reference survives in either side of the cycle",
       );
+      assertEquals(
+        esmCache.get("https://esm.sh/cycle-b"),
+        bPath,
+        "a cycle member stays cached once the graph that owns its back edge succeeds",
+      );
     });
 
     it("terminates on a self-referencing module", async () => {
@@ -362,6 +367,96 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
         files.get(result)?.includes(`file://${result}`),
         true,
         "the self edge resolves to the module's own local path",
+      );
+    });
+
+    it("rewrites a URL that another URL starts with to its own local path", async () => {
+      // "https://esm.sh/react" is a prefix of "https://esm.sh/react-dom", and
+      // regex alternation commits to the first branch that matches. Without
+      // longest-first ordering the second import becomes the first
+      // dependency's path with a dangling "-dom" glued on.
+      const esmCache = new Map<string, string>();
+      globalThis.fetch = ((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "https://esm.sh/react") {
+          return Promise.resolve(jsonResponse(`export const react = 1;`));
+        }
+        if (url === "https://esm.sh/react-dom") {
+          return Promise.resolve(jsonResponse(`export const reactDom = 2;`));
+        }
+        if (url === "https://esm.sh/root") {
+          return Promise.resolve(jsonResponse(
+            `import { react } from "https://esm.sh/react";\n` +
+              `import { reactDom } from "https://esm.sh/react-dom";`,
+          ));
+        }
+        return Promise.resolve(new Response("not found", { status: 404 }));
+      }) as typeof fetch;
+
+      const result = await fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache);
+      const rootContent = files.get(result) ?? "";
+
+      const reactPath = esmCache.get("https://esm.sh/react") ?? "";
+      const domPath = esmCache.get("https://esm.sh/react-dom") ?? "";
+      assertEquals(
+        files.get(domPath),
+        `export const reactDom = 2;`,
+        "the longer URL must be fetched and written as its own module",
+      );
+
+      assertEquals(
+        rootContent,
+        `import { react } from "file://${reactPath}";\n` +
+          `import { reactDom } from "file://${domPath}";`,
+        "each import must point at the file fetched for that exact URL",
+      );
+      assertEquals(
+        rootContent.includes(`file://${reactPath}-dom`),
+        false,
+        "a prefix URL must not swallow the head of the longer URL",
+      );
+    });
+
+    it("does not cache a cycle member when an ancestor of the cycle fails", async () => {
+      // The back edge points at the entry module's predicted path, which the
+      // entry module only writes on its way out. A static dependency failing
+      // first means that file never appears, so keeping the cycle member
+      // cached would hand every later fetch an artifact importing a path that
+      // does not exist.
+      const esmCache = new Map<string, string>();
+      globalThis.fetch = ((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "https://esm.sh/root") {
+          return Promise.resolve(jsonResponse(
+            `import { b } from "https://esm.sh/cycle-b";\n` +
+              `import { x } from "https://esm.sh/broken";`,
+          ));
+        }
+        if (url === "https://esm.sh/cycle-b") {
+          return Promise.resolve(jsonResponse(
+            `import { r } from "https://esm.sh/root";\nexport const b = 2;`,
+          ));
+        }
+        if (url === "https://esm.sh/broken") {
+          return Promise.resolve(new Response("upstream broken", { status: 500 }));
+        }
+        return Promise.resolve(new Response("not found", { status: 404 }));
+      }) as typeof fetch;
+
+      await assertRejects(
+        () => fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache),
+        Error,
+      );
+
+      assertEquals(
+        esmCache.has("https://esm.sh/cycle-b"),
+        false,
+        "a cycle member written against an unwritten ancestor must not survive the failure",
+      );
+      assertEquals(
+        [...esmCache.keys()],
+        [],
+        "no entry from a failed graph may be handed to a later fetch",
       );
     });
 

@@ -69,13 +69,41 @@ async function esmTempFilePath(url: string, tmpDir: string): Promise<string> {
   return `${tmpDir}/esm-${await generateHash(url)}.js`;
 }
 
+/**
+ * Bookkeeping for one top-level fetch, so that artifacts written against a
+ * predicted cyclic path are not published to `esmCache` unless the graph that
+ * owns that prediction actually finishes.
+ */
+type GraphState = {
+  /**
+   * Per-URL set of ancestor URLs whose files an artifact already points at but
+   * which have not been written yet. Empty once the owning ancestor writes.
+   */
+  unwritten: Map<string, Set<string>>;
+  /** Cache entries that are only sound if this whole graph succeeds. */
+  provisional: Set<string>;
+};
+
 export async function fetchEsmModule(
   url: string,
   tmpDir: string,
   localAdapter: RuntimeAdapter,
   esmCache: Map<string, string>,
 ): Promise<string> {
-  return await fetchEsmModuleWithin(url, tmpDir, localAdapter, esmCache, new Set());
+  const graph: GraphState = { unwritten: new Map(), provisional: new Set() };
+  try {
+    return await fetchEsmModuleWithin(url, tmpDir, localAdapter, esmCache, new Set(), graph);
+  } catch (error) {
+    // A cycle member points at the predicted path of an ancestor that only
+    // writes that file on its way out. When an ancestor throws instead, the
+    // file never appears, so the member's cached artifact would import a
+    // missing path forever. Dropping the entry makes the next fetch redo the
+    // work; the stale temp file needs no cleanup because a redo rewrites the
+    // same deterministic path, and everything that referenced it was itself
+    // provisional and is dropped here too.
+    for (const key of graph.provisional) esmCache.delete(key);
+    throw error;
+  }
 }
 
 /**
@@ -89,6 +117,7 @@ async function fetchEsmModuleWithin(
   localAdapter: RuntimeAdapter,
   esmCache: Map<string, string>,
   pending: ReadonlySet<string>,
+  graph: GraphState,
 ): Promise<string> {
   const cached = esmCache.get(url);
   if (cached) return cached;
@@ -131,9 +160,14 @@ async function fetchEsmModuleWithin(
       // cyclic edge can point at that path without being fetched again.
       nested.has(esmUrl)
         ? esmTempFilePath(esmUrl, tmpDir)
-        : fetchEsmModuleWithin(esmUrl, tmpDir, localAdapter, esmCache, nested)
+        : fetchEsmModuleWithin(esmUrl, tmpDir, localAdapter, esmCache, nested, graph)
     ),
   );
+
+  // Ancestor files this module's emitted code depends on but which nobody has
+  // written yet, either because this module closed a cycle itself or because a
+  // descendant did.
+  const unwritten = new Set<string>();
 
   if (urlArray.length) {
     const replacementMap = new Map<string, string>();
@@ -143,6 +177,8 @@ async function fetchEsmModuleWithin(
       if (!url || !result) continue;
       if (result.status === "fulfilled") {
         replacementMap.set(url, `file://${result.value}`);
+        if (nested.has(url)) unwritten.add(url);
+        else for (const dep of graph.unwritten.get(url) ?? []) unwritten.add(dep);
         continue;
       }
 
@@ -157,8 +193,16 @@ async function fetchEsmModuleWithin(
     }
 
     if (replacementMap.size) {
+      // Regex alternation commits to the first branch that matches, so a URL
+      // that is a prefix of another one — `https://esm.sh/react` inside
+      // `https://esm.sh/react-dom` — would swallow the longer URL's head and
+      // leave its tail dangling off a foreign file path. Longest-first
+      // ordering makes every branch match the complete URL it stands for.
       const combinedPattern = new RegExp(
-        Array.from(replacementMap.keys()).map(escapeRegExp).join("|"),
+        Array.from(replacementMap.keys())
+          .sort((a, b) => b.length - a.length)
+          .map(escapeRegExp)
+          .join("|"),
         "g",
       );
       code = code.replace(combinedPattern, (m) => replacementMap.get(m) ?? m);
@@ -167,6 +211,11 @@ async function fetchEsmModuleWithin(
 
   await localAdapter.fs.writeFile(tempFilePath, code);
 
+  // This module's own file now exists, so a descendant that pointed at its
+  // predicted path is satisfied.
+  unwritten.delete(url);
+  graph.unwritten.set(url, unwritten);
   esmCache.set(url, tempFilePath);
+  if (unwritten.size) graph.provisional.add(url);
   return tempFilePath;
 }
