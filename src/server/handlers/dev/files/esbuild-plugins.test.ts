@@ -505,6 +505,46 @@ describe(
       });
     }
 
+    // The table above can only prove that "/etc/hostname" never leaks the host
+    // file; it cannot tell "resolved inside the project but the file is
+    // missing" apart from "refused as an escape". Seed the project-relative
+    // copy so the allowed branch has to actually resolve and bundle.
+    it("resolves a project-relative absolute import to the project copy", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/etc/hostname.ts",
+        "export const HOSTLEAK = 1; export default HOSTLEAK;",
+      );
+      adapter.fs.files.set(
+        "/project/etc/hostname.ts",
+        "export const PROJECTCOPY = 2; export default PROJECTCOPY;",
+      );
+
+      const { errors, output } = await bundleEntry(
+        'import x from "/etc/hostname"; console.log(x);',
+        "/project",
+        adapter,
+      );
+
+      assertEquals(
+        errors.length,
+        0,
+        `an absolute import that joins inside the project must resolve: errors=${
+          JSON.stringify(errors)
+        }`,
+      );
+      assertEquals(
+        output.includes("PROJECTCOPY"),
+        true,
+        "the project-relative copy must be the module that gets bundled",
+      );
+      assertEquals(
+        output.includes("HOSTLEAK"),
+        false,
+        "the host file must never be inlined into the bundle",
+      );
+    });
+
     it("refuses NUL byte in import path", async () => {
       const { errors } = await bundleEntry(
         // \0 in the source string will be passed through to onResolve.

@@ -168,6 +168,33 @@ describe("server/handlers/monitoring/health", () => {
       }
     });
 
+    it("fails /readyz closed when the project path is not a directory", async () => {
+      const handler = new HealthHandler();
+      setServerInitialized(true);
+      try {
+        // stat() resolving is not enough: checkReadiness requires an actual
+        // directory, so a plain file at the project path must stay not-ready.
+        const result = await handler.handle(
+          new Request("https://example.com/readyz"),
+          createReadinessCtx({ stat: async () => ({ isDirectory: false }) }),
+        );
+
+        assertExists(result.response);
+        assertEquals(
+          result.response.status,
+          503,
+          "a project path that is not a directory must not report ready",
+        );
+        assertEquals(
+          await result.response.text(),
+          "not-ready",
+          "readiness body must say not-ready when the project path is not a directory",
+        );
+      } finally {
+        setServerInitialized(false);
+      }
+    });
+
     it("skips the project directory check in proxy mode", async () => {
       const handler = new HealthHandler();
       setServerInitialized(true);

@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert";
-import { describe, it } from "#veryfront/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { CorsHandler } from "#veryfront/server/handlers/response/cors.ts";
 import type { HandlerContext } from "#veryfront/server/handlers/types.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";

@@ -151,8 +151,34 @@ describe("server/handlers/request/openapi.handler", () => {
       );
 
       const fallback = await handler.handle(new Request("https://example.com/_openapi.json"), ctx);
-      assertEquals(fallback.continue, true, "the default path must not be served once overridden");
-      assertEquals(fallback.response, undefined);
+      assertEquals(
+        fallback.continue,
+        true,
+        "the default json path must not be served once overridden",
+      );
+      assertEquals(
+        fallback.response,
+        undefined,
+        "the default json path must produce no response once overridden",
+      );
+
+      // The yaml default is a separate branch from the json default, so a
+      // regression that only re-enables /_openapi.yaml would slip past the
+      // json assertions above.
+      const fallbackYaml = await handler.handle(
+        new Request("https://example.com/_openapi.yaml"),
+        ctx,
+      );
+      assertEquals(
+        fallbackYaml.continue,
+        true,
+        "the default yaml path must not be served once overridden",
+      );
+      assertEquals(
+        fallbackYaml.response,
+        undefined,
+        "the default yaml path must produce no response once overridden",
+      );
     });
   });
 
