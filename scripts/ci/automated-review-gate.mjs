@@ -562,6 +562,16 @@ function hasValidMarkdownBlockquoteSpacing(prefix) {
   return true;
 }
 
+function isMarkdownIndentedCodeLine(line) {
+  const prefix = line.match(
+    MARKDOWN_FENCE_CONTAINER_CONTINUATION_PATTERN,
+  )?.[0] ?? "";
+  const firstBlockquote = prefix.indexOf(">");
+  if (firstBlockquote < 0) return markdownColumns(prefix) >= 4;
+  if (markdownColumns(prefix.slice(0, firstBlockquote)) >= 4) return true;
+  return !hasValidMarkdownBlockquoteSpacing(prefix);
+}
+
 function scanMarkdownHtmlComments(
   content,
   line,
@@ -575,17 +585,18 @@ function scanMarkdownHtmlComments(
     const relativeCommentStart = line.indexOf("<!--", searchStart);
     if (relativeCommentStart < 0) return undefined;
     const commentStart = lineStart + relativeCommentStart;
+    if (
+      isInsidePossibleInlineCode(commentStart) ||
+      isEscapedMarkdownToken(content, commentStart) ||
+      isMarkdownIndentedCodeLine(line)
+    ) {
+      searchStart = relativeCommentStart + 4;
+      continue;
+    }
     const reviewMarker = codeRabbitReviewMarkerAt(line, relativeCommentStart);
     if (reviewMarker) {
       reviewMarkers.push({ value: reviewMarker, index: commentStart });
       searchStart = relativeCommentStart + reviewMarker.length;
-      continue;
-    }
-    if (
-      isInsidePossibleInlineCode(commentStart) ||
-      isEscapedMarkdownToken(content, commentStart)
-    ) {
-      searchStart = relativeCommentStart + 4;
       continue;
     }
     const relativeCloseStart = line.indexOf("-->", relativeCommentStart + 4);
