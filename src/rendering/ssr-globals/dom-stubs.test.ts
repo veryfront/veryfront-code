@@ -22,6 +22,25 @@ describe("rendering/ssr-globals/dom-stubs", () => {
       assertEquals(el.querySelectorAll().length, 0);
     });
 
+    // Regression: libraries read `el.dataset.<key>`, attach listeners and measure
+    // rects during SSR (Floating UI, Radix, theme scripts); a missing member throws
+    // "Cannot read properties of undefined" or "is not a function" mid-render.
+    it("should expose dataset, event listeners and rect helpers", () => {
+      const el = createElementStub();
+      assertEquals(typeof el.dataset, "object", "libraries read el.dataset.<key> during SSR");
+      assertEquals(
+        el.getClientRects().length,
+        0,
+        "Floating UI calls el.getClientRects() during render",
+      );
+      assertEquals(typeof el.addEventListener, "function", "libraries subscribe during render");
+      assertEquals(typeof el.removeEventListener, "function", "libraries unsubscribe on teardown");
+      el.addEventListener();
+      el.removeEventListener();
+      assertEquals(typeof el.setAttributeNS, "function", "SVG helpers write namespaced attributes");
+      assertEquals(el.getAttributeNS(), null, "SVG helpers read namespaced attributes");
+    });
+
     it("should have zero dimensions", () => {
       const el = createElementStub();
       assertEquals(el.offsetWidth, 0);

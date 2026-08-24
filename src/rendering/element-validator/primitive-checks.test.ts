@@ -3,6 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import * as React from "react";
 import {
+  getElementDebugInfo,
   getElementTypeName,
   getObjectKeys,
   getObjectSample,
@@ -100,13 +101,22 @@ describe("primitive-checks", () => {
       expect(getElementTypeName(element)).toBe("MyComponent");
     });
 
-    it("should return displayName if available", () => {
+    it("should prefer the function name over displayName", () => {
       function Component() {
         return React.createElement("div", null, "test");
       }
       Component.displayName = "CustomDisplayName";
       const element = React.createElement(Component, null);
       expect(getElementTypeName(element)).toBe("Component");
+    });
+
+    it("should return displayName when the function name is empty", () => {
+      // An empty type.name is the only input that reaches the displayName fallback.
+      const Anon = () => React.createElement("div", null, "test");
+      Object.defineProperty(Anon, "name", { value: "" });
+      (Anon as { displayName?: string }).displayName = "CustomDisplayName";
+      const element = React.createElement(Anon, null);
+      expect(getElementTypeName(element)).toBe("CustomDisplayName");
     });
 
     it("should return <Anonymous> for anonymous function components", () => {
@@ -225,6 +235,57 @@ describe("primitive-checks", () => {
 
     it("should handle undefined", () => {
       expect(getObjectSample(undefined)).toBe("[Unable to stringify]");
+    });
+  });
+
+  describe("getElementDebugInfo", () => {
+    it("should report an empty shape for null", () => {
+      expect(getElementDebugInfo(null)).toEqual({
+        type: "undefined",
+        hasSymbol: false,
+        symbolValue: undefined,
+        typeValue: undefined,
+      });
+    });
+
+    it("should report an empty shape for non-objects", () => {
+      expect(getElementDebugInfo("div")).toEqual({
+        type: "undefined",
+        hasSymbol: false,
+        symbolValue: undefined,
+        typeValue: undefined,
+      });
+    });
+
+    it("should name a function type by its function name", () => {
+      expect(getElementDebugInfo({ type: function Foo() {} }).type).toBe("Foo");
+    });
+
+    it("should name an unnamed function type AnonymousFunction", () => {
+      // Built from a factory so the function does not inherit a property name.
+      expect(getElementDebugInfo({ type: (() => () => {})() }).type).toBe("AnonymousFunction");
+    });
+
+    it("should stringify a non-function type", () => {
+      expect(getElementDebugInfo({ type: "div" }).type).toBe("div");
+      expect(getElementDebugInfo({ type: "div" }).typeValue).toBe("div");
+    });
+
+    it("should report the React element marker the caller logs", () => {
+      const info = getElementDebugInfo({ $$typeof: "not-a-symbol", type: "div" });
+      expect(info.hasSymbol).toBe(true);
+    });
+
+    it("should report the React element marker value", () => {
+      const marker = Symbol.for("react.transitional.element");
+      const info = getElementDebugInfo({ $$typeof: marker, type: "div" });
+      expect(info.symbolValue).toBe(marker);
+    });
+
+    it("should report no marker for a plain object", () => {
+      const info = getElementDebugInfo({ foo: "bar" });
+      expect(info.hasSymbol).toBe(false);
+      expect(info.symbolValue).toBe(undefined);
     });
   });
 });

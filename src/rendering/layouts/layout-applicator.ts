@@ -564,6 +564,7 @@ export class LayoutApplicator {
             this.config?.directories?.app ?? "app",
           );
           const searchDirs = await collectAncestorDirs(segmentDir, appRootDir);
+          const reservedDeps = { loadComponentFromSource: await this.getComponentSourceLoader() };
 
           const [loadingComp, errorComp] = await Promise.all([
             tryLoadReservedInDirs(
@@ -581,6 +582,7 @@ export class LayoutApplicator {
               this.requestUrl?.origin,
               this.config?.build?.serverExternalPackages,
               this.signal,
+              reservedDeps,
             ),
             tryLoadReservedInDirs(
               searchDirs,
@@ -597,6 +599,7 @@ export class LayoutApplicator {
               this.requestUrl?.origin,
               this.config?.build?.serverExternalPackages,
               this.signal,
+              reservedDeps,
             ),
           ]);
 

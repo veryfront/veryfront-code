@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import * as React from "react";
 import { createDefaultMDXComponents, normalizeChild } from "./react-helpers.ts";
@@ -47,6 +47,15 @@ describe("normalizeChild", () => {
 
     assertEquals(result1, result2);
     assertEquals(result1, child);
+
+    // Mutating the object after the first call proves the cache is consulted:
+    // a recomputing implementation would now see two keys and return the wrapper.
+    (wrapped as Record<string, unknown>).other = "added";
+    assertStrictEquals(
+      normalizeChild(wrapped),
+      child,
+      "normalizeChild must serve the memoized unwrap for an object it has already seen instead of re-reading its keys",
+    );
   });
 
   it("handles arrays", () => {

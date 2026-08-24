@@ -86,7 +86,7 @@ export function getObjectSample(obj: unknown): string {
 }
 
 interface ReactElementInternal {
-  $typeof?: symbol;
+  $$typeof?: symbol;
   type?: unknown;
   props?: unknown;
 }
@@ -117,8 +117,8 @@ export function getElementDebugInfo(child: unknown): {
 
   return {
     type,
-    hasSymbol: "$typeof" in child,
-    symbolValue: internal.$typeof,
+    hasSymbol: "$$typeof" in child,
+    symbolValue: internal.$$typeof,
     typeValue: internal.type,
   };
 }
