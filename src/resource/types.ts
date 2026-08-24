@@ -25,6 +25,9 @@ export interface ResourceConfig<TParams = unknown, TData = unknown> {
    * query parameters (`/file-:base.:ext?lang=:lang`). Opaque identifiers such
    * as `urn:isbn` remain literal. Parameter names must be unique and separated
    * by literal text; the first following literal delimits an embedded value.
+   * A `:` directly following an alphanumeric character is always data, never a
+   * parameter — write `/files/file-:id`, not `/files/file:id` — so opaque
+   * colon identifiers stay literal under one uniform rule.
    */
   pattern?: string;
   description: string;
