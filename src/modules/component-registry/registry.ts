@@ -42,6 +42,8 @@ export class ComponentRegistry {
   private componentDirs: string[];
   private initializedPromise: Promise<void> | null = null;
   private discoveryInFlight: Promise<void> | null = null;
+  // Bumped by clear() so async work started before it discards its result.
+  private lifecycleGeneration = 0;
   private adapter: RuntimeAdapter;
 
   constructor(private options: ComponentRegistryOptions) {
@@ -57,10 +59,12 @@ export class ComponentRegistry {
   discover(): Promise<void> {
     if (this.discoveryInFlight) return this.discoveryInFlight;
 
+    const generation = this.lifecycleGeneration;
     const discovery = withSpan(
       "modules.componentRegistry.discover",
       async () => {
         const discovered = await this._discoverInternal();
+        if (generation !== this.lifecycleGeneration) return;
         const nextComponents = new Map<string, ComponentInfo>();
 
         for (const name of this.manualComponents) {
@@ -167,9 +171,15 @@ export class ComponentRegistry {
         if (component.isLoaded) return component;
 
         try {
+          const content = await this.adapter.fs.readFile(component.path);
+          if (this.components.get(name) !== component) {
+            // The entry changed while the source was being read; load the
+            // current entry instead of storing stale metadata.
+            return this.loadComponent(name);
+          }
           const loaded = immutableComponentInfo({
             ...component,
-            content: await this.adapter.fs.readFile(component.path),
+            content,
             isLoaded: true,
           });
           this.components.set(name, loaded);
@@ -242,9 +252,11 @@ export class ComponentRegistry {
   }
 
   clear(): void {
+    this.lifecycleGeneration++;
     this.components.clear();
     this.manualComponents.clear();
     this.initializedPromise = null;
+    this.discoveryInFlight = null;
   }
 
   getComponentNames(): string[] {

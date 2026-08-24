@@ -192,6 +192,35 @@ describe("modules/module-resolver", () => {
       assertEquals(error, failure);
     });
 
+    it("should propagate an operational canonicalization failure masked by a concurrent not-found", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set("/project/components/Button.tsx", "export default function Button() {}");
+      Reflect.deleteProperty(adapter.fs, "symlinkSemantics");
+      const failure = new Error("canonical path backend unavailable");
+      adapter.fs.realPath = (path: string) => {
+        if (path === "/project") {
+          return Promise.resolve().then(() => Promise.reject(failure));
+        }
+        return Promise.reject(
+          FILE_NOT_FOUND.create({
+            detail: "File not found during canonicalization",
+            context: { operation: "realPath" },
+          }),
+        );
+      };
+      const resolver = new ModuleResolver({ projectDir: "/project", adapter });
+
+      const error = await assertRejects(() =>
+        resolver.resolve("./components/Button.tsx", "/project/index.ts")
+      );
+
+      assertEquals(
+        error,
+        failure,
+        "an operational realPath failure must surface even when the other realPath call rejects with not-found first",
+      );
+    });
+
     it("should return null when a file disappears during canonicalization", async () => {
       const adapter = createMockAdapter();
       const componentPath = "/project/components/Button.tsx";

@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
+import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { join } from "#veryfront/compat/path";
 import { describe, it } from "#veryfront/testing/bdd";
 import { mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat";

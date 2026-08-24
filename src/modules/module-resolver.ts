@@ -66,17 +66,22 @@ export class ModuleResolver {
     const realPath = this.adapter.fs.realPath;
     if (!realPath) return true;
 
-    let canonicalProjectDir: string;
-    let canonicalCandidate: string;
-    try {
-      [canonicalProjectDir, canonicalCandidate] = await Promise.all([
-        realPath.call(this.adapter.fs, projectDir),
-        realPath.call(this.adapter.fs, normalizedCandidate),
-      ]);
-    } catch (error) {
-      if (isCanonicalNotFoundError(error)) return false;
-      throw error;
+    const [projectResult, candidateResult] = await Promise.allSettled([
+      realPath.call(this.adapter.fs, projectDir),
+      realPath.call(this.adapter.fs, normalizedCandidate),
+    ]);
+    // A canonical not-found from one path must not mask an operational
+    // failure from the other, regardless of which settles first.
+    for (const result of [projectResult, candidateResult]) {
+      if (result.status === "rejected" && !isCanonicalNotFoundError(result.reason)) {
+        throw result.reason;
+      }
     }
+    if (projectResult.status !== "fulfilled" || candidateResult.status !== "fulfilled") {
+      return false;
+    }
+    const canonicalProjectDir = projectResult.value;
+    const canonicalCandidate = candidateResult.value;
     if (!isPathContainedBy(canonicalCandidate, canonicalProjectDir)) {
       logger.warn(`Canonical path escape blocked: ${specifier}`);
       return false;

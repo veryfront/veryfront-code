@@ -662,6 +662,108 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       assertExists(componentAfter);
     });
 
+    it("should not repopulate components when clear() runs during discovery", async () => {
+      const adapter = createMockAdapter();
+      const projectDir = "/test/clear-during-discover";
+      adapter.fs.files.set(`${projectDir}/components/Button.tsx`, "button");
+
+      let releaseReadDir = () => {};
+      const gate = new Promise<void>((resolve) => {
+        releaseReadDir = resolve;
+      });
+      const originalReadDir = adapter.fs.readDir.bind(adapter.fs);
+      adapter.fs.readDir = async function* (path: string) {
+        await gate;
+        yield* originalReadDir(path);
+      };
+
+      const registry = new ComponentRegistry({ projectDir, adapter });
+      const discovery = registry.discover();
+      registry.clear();
+      releaseReadDir();
+      await discovery;
+
+      assertEquals(
+        registry.getAll().size,
+        0,
+        "discovery finishing after clear() must not restore cleared components",
+      );
+    });
+
+    it("should not overwrite an entry replaced while its source was being read", async () => {
+      const adapter = createMockAdapter();
+      const projectDir = "/test/replace-during-load";
+      adapter.fs.files.set(`${projectDir}/components/Button.tsx`, "discovered content");
+
+      let releaseRead = () => {};
+      const gate = new Promise<void>((resolve) => {
+        releaseRead = resolve;
+      });
+      let readStarted = () => {};
+      const readFileStarted = new Promise<void>((resolve) => {
+        readStarted = resolve;
+      });
+      const originalReadFile = adapter.fs.readFile.bind(adapter.fs);
+      adapter.fs.readFile = async (path: string) => {
+        readStarted();
+        await gate;
+        return await originalReadFile(path);
+      };
+
+      const registry = new ComponentRegistry({ projectDir, adapter });
+      await registry.discover();
+
+      const loading = registry.loadComponent("Button");
+      await readFileStarted;
+      registry.add("Button", { content: "manual content", exports: { default: () => {} } });
+      releaseRead();
+      const loaded = await loading;
+
+      assertEquals(
+        registry.get("Button")?.content,
+        "manual content",
+        "a manual entry added during load must not be overwritten by stale file content",
+      );
+      assertEquals(loaded?.content, "manual content");
+    });
+
+    it("should not restore a component removed while its source was being read", async () => {
+      const adapter = createMockAdapter();
+      const projectDir = "/test/remove-during-load";
+      adapter.fs.files.set(`${projectDir}/components/Button.tsx`, "button");
+
+      let releaseRead = () => {};
+      const gate = new Promise<void>((resolve) => {
+        releaseRead = resolve;
+      });
+      let readStarted = () => {};
+      const readFileStarted = new Promise<void>((resolve) => {
+        readStarted = resolve;
+      });
+      const originalReadFile = adapter.fs.readFile.bind(adapter.fs);
+      adapter.fs.readFile = async (path: string) => {
+        readStarted();
+        await gate;
+        return await originalReadFile(path);
+      };
+
+      const registry = new ComponentRegistry({ projectDir, adapter });
+      await registry.discover();
+
+      const loading = registry.loadComponent("Button");
+      await readFileStarted;
+      registry.remove("Button");
+      releaseRead();
+      const loaded = await loading;
+
+      assertEquals(loaded, null, "load finishing after remove() must not return the removed entry");
+      assertEquals(
+        registry.has("Button"),
+        false,
+        "load finishing after remove() must not restore the removed entry",
+      );
+    });
+
     it("should handle concurrent discover calls", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/concurrent-discover";
