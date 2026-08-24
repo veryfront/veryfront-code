@@ -75,70 +75,17 @@ function cssBindingValue(imported: string, cssModuleKey: string | undefined): st
 }
 
 /**
- * Names that are legal as an ES export name but illegal as a `const` binding.
- * `export { container as class } from "./x.module.css"` is valid input, so the
- * stub must not turn it into `export const class = ...`.
- */
-const RESERVED_BINDING_NAMES = new Set([
-  "arguments",
-  "await",
-  "break",
-  "case",
-  "catch",
-  "class",
-  "const",
-  "continue",
-  "debugger",
-  "default",
-  "delete",
-  "do",
-  "else",
-  "enum",
-  "eval",
-  "export",
-  "extends",
-  "false",
-  "finally",
-  "for",
-  "function",
-  "if",
-  "implements",
-  "import",
-  "in",
-  "instanceof",
-  "interface",
-  "let",
-  "new",
-  "null",
-  "package",
-  "private",
-  "protected",
-  "public",
-  "return",
-  "static",
-  "super",
-  "switch",
-  "this",
-  "throw",
-  "true",
-  "try",
-  "typeof",
-  "var",
-  "void",
-  "while",
-  "with",
-  "yield",
-]);
-
-/**
- * Export `value` under `exportName`, declaring a safe local binding first when
- * `exportName` is a reserved word that cannot be a `const` declaration.
+ * Export `value` under `exportName` without declaring `exportName` locally.
+ *
+ * A re-export never introduces a local binding, so the stub must not either:
+ * `const styles = fallback; export { default as styles } from "./x.module.css"`
+ * is a valid module, and emitting `export const styles` would redeclare it.
+ * Reserved words such as `class` are legal export names but illegal `const`
+ * names, so the same indirection keeps those parseable as well. Export names
+ * are unique per module, which makes the derived local name collision-free.
  */
 function exportBindingStatement(exportName: string, value: string): string {
   if (exportName === "default") return `export default ${value};`;
-  if (!RESERVED_BINDING_NAMES.has(exportName)) {
-    return `export const ${exportName} = ${value};`;
-  }
   const localName = `__vfCssExport_${exportName}`;
   return `const ${localName} = ${value}; export { ${localName} as ${exportName} };`;
 }

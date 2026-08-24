@@ -109,23 +109,61 @@ describe("css-strip plugin", () => {
 
     assertStringIncludes(
       result,
-      "export const styles = new Proxy({},",
-      "a re-exported css default must stay exported as a scoped proxy stub",
+      "const __vfCssExport_styles = new Proxy({},",
+      "a re-exported css default must be backed by a scoped proxy stub",
     );
     assertStringIncludes(
       result,
-      `export const root = "${toScopedCssModuleClass(MODULE_KEY, "container")}";`,
-      "a re-exported named css binding must stay exported as its scoped class",
+      "export { __vfCssExport_styles as styles };",
+      "a re-exported css default must stay exported under its original name",
+    );
+    assertStringIncludes(
+      result,
+      `const __vfCssExport_root = "${toScopedCssModuleClass(MODULE_KEY, "container")}";`,
+      "a re-exported named css binding must be backed by its scoped class",
+    );
+    assertStringIncludes(
+      result,
+      "export { __vfCssExport_root as root };",
+      "a re-exported named css binding must stay exported under its original name",
     );
     assertEquals(
-      /(?<!export\s)\bconst\s+styles\s*=/.test(result),
+      /\bconst\s+(styles|root)\s*=/.test(result),
       false,
-      "a css re-export must not degrade into a non-exported const binding",
+      "a css re-export must not declare the export name as a local binding",
+    );
+    await assertParsesAsModule(
+      result,
+      "a named css re-export must produce a parseable SSR module",
     );
     assertEquals(
       result.includes(`.module.css"`),
       false,
       "no live .module.css specifier may survive",
+    );
+    assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
+  });
+
+  it("does not redeclare a local that shares its name with a css re-export", async () => {
+    const ctx = createContext(
+      `const styles = { fallback: true }; export { default as styles } from "./Button.module.css"; export const used = styles.fallback;`,
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+
+    assertEquals(
+      (result.match(/\bconst\s+styles\s*=/g) ?? []).length,
+      1,
+      "the module's own `const styles` must remain the only `styles` declaration",
+    );
+    assertStringIncludes(
+      result,
+      "export { __vfCssExport_styles as styles };",
+      "the css re-export must still be exported as `styles` through a safe local",
+    );
+    await assertParsesAsModule(
+      result,
+      "a css re-export that shadows an existing local must not produce a duplicate declaration",
     );
     assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
   });
