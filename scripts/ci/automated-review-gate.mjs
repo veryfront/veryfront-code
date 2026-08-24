@@ -36,6 +36,8 @@ const MARKDOWN_PARAGRAPH_INTERRUPTING_RAW_HTML_PATTERN =
   /^ {0,3}<(?:script|pre|style|textarea)(?:[ \t]|>|$)/i;
 const MARKDOWN_PARAGRAPH_INTERRUPTING_HTML_SYNTAX_PATTERN =
   /^ {0,3}(?:<!--|<\?|<![A-Za-z]|<!\[CDATA\[)/;
+const MARKDOWN_RENDERED_BREAK_HTML_TAG_AT_START_PATTERN =
+  /^(?:<\/br|<(?:br|hr))(?:[ \t\r\n\f]|\/?>)/i;
 const MARKDOWN_FENCE_CONTAINER_CONTINUATION_PATTERN = /^[ \t]*(?:>[ \t]*)*/;
 const MARKDOWN_CHARACTER_REFERENCE_PATTERN =
   /&#(?:[xX][0-9A-Fa-f]{1,6}|[0-9]{1,7});|&[A-Za-z][A-Za-z0-9]{1,31};/g;
@@ -2060,6 +2062,7 @@ function appendMarkdownInlineCodeRangesInSegment(
   inlineHtmlRanges,
   inlineLinkRanges,
   inlineDelimiterEnds,
+  inlineCommentRanges,
 ) {
   const delimiterRuns = [];
   for (let index = start; index < end;) {
@@ -2167,7 +2170,9 @@ function appendMarkdownInlineCodeRangesInSegment(
       );
       cursor = htmlEnd ?? htmlStart + 1;
       if (htmlEnd !== undefined) {
-        if (!content.startsWith("<!--", htmlStart)) {
+        if (content.startsWith("<!--", htmlStart)) {
+          inlineCommentRanges?.push([htmlStart, htmlEnd]);
+        } else {
           inlineHtmlRanges.push([htmlStart, htmlEnd]);
         }
         while (delimiterRuns[delimiterIndex]?.start < htmlEnd) {
@@ -2702,29 +2707,39 @@ function markdownCharacterReferenceAt(content, index, end) {
 function markdownInlineDecorationEnd(
   content,
   index,
-  end,
   normalizationContext,
 ) {
   const character = content[index];
   if (character !== "<" && !"*_~[]`".includes(character)) return undefined;
   if (isEscapedMarkdownToken(content, index)) return undefined;
   if (character === "<") {
-    return markdownInlineHtmlEnd(
-      content,
-      index,
-      end,
-      normalizationContext.findHtmlTerminator,
-    );
+    return normalizationContext.findInlineHtmlEnd(index);
   }
   return normalizationContext.findDelimiterEnd(index);
 }
 
+function markdownInlineDecorationReplacement(content, start, end) {
+  return content[start] === "<" &&
+      MARKDOWN_RENDERED_BREAK_HTML_TAG_AT_START_PATTERN.test(
+        content.slice(start, Math.min(end, start + 6)),
+      )
+    ? " "
+    : "";
+}
+
 function markdownInlineNormalizationContext(content, start, end) {
-  let delimiterEnds;
+  let normalizationTokens;
   let inlineLinkTailEndFinder;
   let previousVisibleCharacters;
+  const tokens = () => {
+    normalizationTokens ??= markdownInlineNormalizationTokens(
+      content,
+      start,
+      end,
+    );
+    return normalizationTokens;
+  };
   const context = {
-    findHtmlTerminator: createMarkdownInlineTerminatorFinder(content, end),
     findInlineLinkTailEnd: (tailStart) => {
       inlineLinkTailEndFinder ??= createMarkdownInlineLinkTailEndFinder(
         content,
@@ -2733,14 +2748,8 @@ function markdownInlineNormalizationContext(content, start, end) {
       );
       return inlineLinkTailEndFinder(tailStart);
     },
-    findDelimiterEnd: (index) => {
-      delimiterEnds ??= markdownInlineDelimiterEnds(
-        content,
-        start,
-        end,
-      );
-      return delimiterEnds.get(index);
-    },
+    findDelimiterEnd: (index) => tokens().delimiterEnds.get(index),
+    findInlineHtmlEnd: (index) => tokens().inlineHtmlEnds.get(index),
     previousVisibleCharacter: (index) => {
       previousVisibleCharacters ??= markdownVisiblePreviousCharacters(
         content,
@@ -2754,9 +2763,10 @@ function markdownInlineNormalizationContext(content, start, end) {
   return context;
 }
 
-function markdownInlineDelimiterEnds(content, start, end) {
+function markdownInlineNormalizationTokens(content, start, end) {
   const delimiterEnds = new Map();
   const inlineCodeRanges = [];
+  const inlineCommentRanges = [];
   const inlineHtmlRanges = [];
   const inlineLinkTailRanges = [];
   appendMarkdownInlineCodeRangesInSegment(
@@ -2767,6 +2777,7 @@ function markdownInlineDelimiterEnds(content, start, end) {
     inlineHtmlRanges,
     inlineLinkTailRanges,
     delimiterEnds,
+    inlineCommentRanges,
   );
 
   const hiddenRanges = mergeMarkdownRanges(
@@ -2829,7 +2840,14 @@ function markdownInlineDelimiterEnds(content, start, end) {
     }
     openerStacks.set(key, openers);
   }
-  return delimiterEnds;
+  return {
+    delimiterEnds,
+    inlineHtmlEnds: new Map(
+      [...inlineCommentRanges, ...inlineHtmlRanges].sort((left, right) =>
+        left[0] - right[0]
+      ),
+    ),
+  };
 }
 
 function markdownInlineEmphasisRuns(content, start, end, hiddenRanges) {
@@ -2927,13 +2945,18 @@ function markdownVisiblePreviousCharacters(content, start, end, context) {
     const decorationEnd = markdownInlineDecorationEnd(
       content,
       cursor,
-      end,
       context,
     );
     if (decorationEnd !== undefined) {
       for (let index = cursor + 1; index < decorationEnd; index += 1) {
         previousCharacters[index - start] = previousCharacter;
       }
+      const replacement = markdownInlineDecorationReplacement(
+        content,
+        cursor,
+        decorationEnd,
+      );
+      if (replacement.length > 0) previousCharacter = replacement.at(-1);
       cursor = decorationEnd;
       continue;
     }
@@ -2973,10 +2996,13 @@ function markdownVisibleAsciiWordEnd(
       const decorationEnd = markdownInlineDecorationEnd(
         content,
         cursor,
-        end,
         normalizationContext,
       );
       if (decorationEnd === undefined) return undefined;
+      if (
+        markdownInlineDecorationReplacement(content, cursor, decorationEnd)
+          .length > 0
+      ) return undefined;
       cursor = decorationEnd;
     }
     if (!matched) return undefined;
@@ -3036,10 +3062,14 @@ function normalizeMarkdownInlineContentRange(
     const decorationEnd = markdownInlineDecorationEnd(
       content,
       cursor,
-      end,
       normalizationContext,
     );
     if (decorationEnd !== undefined) {
+      normalized += markdownInlineDecorationReplacement(
+        content,
+        cursor,
+        decorationEnd,
+      );
       cursor = decorationEnd;
       continue;
     }

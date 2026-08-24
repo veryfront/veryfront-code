@@ -1292,6 +1292,115 @@ describe("automated review gate", () => {
     }
   });
 
+  it("preserves rendered HTML breaks while normalizing review ranges", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    const newerSummary = (range: string) =>
+      codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          range,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:05:00Z",
+        updated_at: "2026-08-22T12:05:00Z",
+      });
+
+    for (
+      const renderedBreak of [
+        "<br>",
+        "<BR>",
+        "<br/>",
+        "<br />",
+        '<br class="markdown-break">',
+        "</br>",
+        "<hr>",
+      ]
+    ) {
+      const brokenCurrentRange = MALFORMED_CURRENT_RANGE.replace(
+        "base of",
+        `base${renderedBreak}of`,
+      );
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerSummary(brokenCurrentRange)],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+        renderedBreak,
+      );
+    }
+
+    assertEquals(
+      (
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [
+              olderSuccess,
+              newerSummary(
+                MALFORMED_CURRENT_RANGE.replace(
+                  "Reviewing",
+                  "Review<br>ing",
+                ),
+              ),
+            ],
+          },
+          HEAD_SHA,
+        )
+      )?.url,
+      olderSuccess.html_url,
+    );
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [
+            olderSuccess,
+            newerSummary(
+              MALFORMED_CURRENT_RANGE.replace(
+                "Reviewing",
+                "<strong>Reviewing</strong>",
+              ),
+            ),
+          ],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+
+    for (
+      const zeroWidthHtml of [
+        "</hr>",
+        "<wbr>",
+        "\\<br>",
+        "`<br>`",
+      ]
+    ) {
+      const visibleMalformedRange = MALFORMED_CURRENT_RANGE.replace(
+        "base of",
+        `base${zeroWidthHtml}of`,
+      );
+      assertEquals(
+        (
+          await findAutomatedReview(
+            {
+              reviews: [],
+              comments: [olderSuccess, newerSummary(visibleMalformedRange)],
+            },
+            HEAD_SHA,
+          )
+        )?.url,
+        olderSuccess.html_url,
+        zeroWidthHtml,
+      );
+    }
+  });
+
   it("rejects unterminated and Markdown-prefixed current-head ranges", async () => {
     const olderSuccess = olderCodeRabbitSuccess();
     const escapedVisibleMalformedBodies = ["\\", "\\\\", "\\\\\\"].map(
