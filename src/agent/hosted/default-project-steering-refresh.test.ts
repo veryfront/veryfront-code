@@ -225,6 +225,65 @@ describe("agent/default-hosted-project-steering-refresh", () => {
     ]);
   });
 
+  it("applies the source integration policy to the eager model-visible inventory", async () => {
+    const remoteToolSource: RemoteToolSource = {
+      id: "api",
+      listTools: () =>
+        Promise.resolve([
+          {
+            name: "confluence__search_content",
+            description: "Search Confluence",
+            parameters: { type: "object", properties: {} },
+          },
+          {
+            name: "gmail__list_emails",
+            description: "List Gmail emails",
+            parameters: { type: "object", properties: {} },
+          },
+        ]),
+      executeTool: () => Promise.resolve({ ok: true }),
+    };
+    const refresh = createDefaultHostedProjectSteeringRefresh({
+      fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),
+      fetchSkills: () => Promise.resolve([]),
+      buildInstructions: (input) => input.instructions,
+    });
+    const input = createRefreshInput({
+      toolAssembly: {
+        sourceIntegrationPolicy: normalizeSourceIntegrationPolicy({
+          allow: { confluence: {} },
+        }),
+        runtimeTools: {},
+        remoteToolSources: [remoteToolSource],
+        localToolNames: ["sleep"],
+        remoteToolNames: ["confluence__search_content"],
+        providerToolNames: [],
+        availableToolNames: ["confluence__search_content", "sleep"],
+        toolLoadingMode: "eager",
+        compatibleRemoteToolNames: ["confluence__search_content"],
+        systemInstructions: "",
+      },
+    });
+
+    const system = systemText(await refresh(input));
+
+    assertEquals(
+      input.taskContext.availableToolNames,
+      ["confluence__search_content", "sleep"],
+      "eager inventory must contain only source-allowed remote tools plus local tools",
+    );
+    assertEquals(
+      system.includes("gmail__list_emails"),
+      false,
+      "source-denied tools must not be advertised",
+    );
+    assertEquals(
+      system.includes("confluence__search_content"),
+      true,
+      "source-allowed tools must be advertised in eager mode",
+    );
+  });
+
   it("keeps an explicitly empty advertised skill catalog during refresh", async () => {
     const refresh = createDefaultHostedProjectSteeringRefresh({
       fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),

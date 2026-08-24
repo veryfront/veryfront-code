@@ -546,6 +546,7 @@ export async function prepareHostedChatExecution<
     fetchSteering: input.fetchSteering,
     buildInstructions: input.buildInstructions,
     serverResolvedToolExposureCheckpoint: input.serverResolvedToolExposureCheckpoint,
+    serverResolvedIntegrationToolNames: input.serverResolvedIntegrationToolNames,
     hostToolPolicy: input.hostToolPolicy,
   });
   const submittedFormInputResult = findSubmittedFormInputResult(normalized.effectiveMessages);

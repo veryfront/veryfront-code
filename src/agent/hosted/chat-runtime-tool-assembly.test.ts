@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type {
   RemoteMCPToolSourceConfig,
@@ -474,6 +479,76 @@ Deno.test("prepareHostedChatRuntimeToolAssembly removes source-denied integratio
   assertStringIncludes(toolAssembly.systemInstructions, "confluence__search_content");
   assertEquals(toolAssembly.systemInstructions.includes("confluence__create_page"), false);
   assertEquals(toolAssembly.systemInstructions.includes("gmail__list_emails"), false);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly widens the veryfront-api allowlist with server-resolved integration tools", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    mcpServers: [{ kind: "veryfront-api", toolPolicy: { allow: ["get_integration"] } }],
+    serverResolvedIntegrationToolNames: ["outlook__list_emails"],
+    allowedToolNames: ["get_integration", "outlook__list_emails", "outlook__send_email"],
+    createRemoteToolSource: (config) => ({
+      id: config.id ?? "api-mcp",
+      listTools: () =>
+        Promise.resolve([
+          remoteTool("outlook__list_emails", "List Outlook emails"),
+          remoteTool("outlook__send_email", "Send an Outlook email"),
+          remoteTool("get_integration", "Get an integration"),
+        ]),
+      executeTool: () => Promise.resolve({ ok: true }),
+    }),
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(
+    toolAssembly.remoteToolNames,
+    ["get_integration", "outlook__list_emails"],
+    "the integration grant must widen the veryfront-api allowlist for exactly the resolved names",
+  );
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly keeps the veryfront-api allowlist unchanged without an integration grant", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    mcpServers: [{ kind: "veryfront-api", toolPolicy: { allow: ["get_integration"] } }],
+    allowedToolNames: ["get_integration", "outlook__list_emails"],
+    createRemoteToolSource: (config) => ({
+      id: config.id ?? "api-mcp",
+      listTools: () =>
+        Promise.resolve([
+          remoteTool("outlook__list_emails", "List Outlook emails"),
+          remoteTool("get_integration", "Get an integration"),
+        ]),
+      executeTool: () => Promise.resolve({ ok: true }),
+    }),
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(
+    toolAssembly.remoteToolNames,
+    ["get_integration"],
+    "without a grant the static allowlist must keep denying integration tools",
+  );
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly honors explicit API-only MCP without granting Studio tools", async () => {
@@ -970,6 +1045,23 @@ describe("augmentVeryfrontApiMcpServerPolicy", () => {
       "get_integration",
       "outlook__list_emails",
     ]);
+  });
+
+  it("augmentVeryfrontApiMcpServerPolicy leaves unrestricted veryfront-api servers untouched", () => {
+    const servers = [
+      { kind: "veryfront-api" as const, toolPolicy: { deny: ["outlook__send_email"] } },
+      { kind: "veryfront-api" as const },
+    ];
+
+    const augmented = augmentVeryfrontApiMcpServerPolicy(servers, ["outlook__list_emails"]);
+
+    assertStrictEquals(augmented?.[0], servers[0], "a deny-only server has no allowlist to widen");
+    assertStrictEquals(
+      augmented?.[1],
+      servers[1],
+      "a server without toolPolicy already permits everything",
+    );
+    assertEquals(augmented?.[0]?.toolPolicy?.allow, undefined, "no allowlist must be synthesized");
   });
 
   it("augmentVeryfrontApiMcpServerPolicy leaves servers alone without a grant", () => {

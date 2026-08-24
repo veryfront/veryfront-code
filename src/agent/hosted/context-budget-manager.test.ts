@@ -149,6 +149,65 @@ Deno.test("applyContextBudget compacts oversized history into summary plus retai
   assertEquals(result.diagnostics.compacted, true);
 });
 
+Deno.test("applyContextBudget rejects generator summaries that exceed maxSummaryTokens", async () => {
+  await assertRejects(
+    () =>
+      applyContextBudget([
+        message("user-1", "user", "Older goal ".repeat(200)),
+        message("assistant-1", "assistant", "Recent answer"),
+        message("user-2", "user", "Latest user request"),
+      ], {
+        tokenBudget: 260,
+        reserveTokens: 20,
+        recentTailTokens: 20,
+        maxSummaryTokens: 5,
+        summaryGenerator: () => ({ text: "x ".repeat(500) }),
+      }),
+    ContextCompactionError,
+    "Context compaction summary exceeded maxSummaryTokens",
+    "oversized summaries must be rejected",
+  );
+});
+
+Deno.test("applyContextBudget keeps minimumRecentTurns user turns in the retained tail", async () => {
+  const messages = [
+    message("user-1", "user", "Older goal ".repeat(200)),
+    message("assistant-1", "assistant", "Older answer"),
+    message("user-2", "user", "Second request"),
+    message("assistant-2", "assistant", "Recent answer ".repeat(12)),
+    message("user-3", "user", "Latest user request"),
+  ];
+  const options = {
+    tokenBudget: 400,
+    reserveTokens: 20,
+    recentTailTokens: 20,
+    summaryGenerator: () => ({ text: "Earlier context summarized." }),
+  };
+
+  const singleTurn = await applyContextBudget(messages, { ...options, minimumRecentTurns: 1 });
+  assertExists(singleTurn.eventPayload);
+  assertEquals(
+    singleTurn.eventPayload.firstKeptEntryId,
+    "assistant-2",
+    "one recent turn keeps only the latest exchange",
+  );
+
+  const twoTurns = await applyContextBudget(messages, { ...options, minimumRecentTurns: 2 });
+  assertExists(twoTurns.eventPayload);
+  assertEquals(
+    twoTurns.eventPayload.firstKeptEntryId,
+    "assistant-1",
+    "two recent turns must move the retained tail back past the second-latest user message",
+  );
+
+  await assertRejects(
+    () => applyContextBudget(messages, { ...options, minimumRecentTurns: 0 }),
+    ContextCompactionError,
+    "Context compaction minimumRecentTurns must be a positive integer",
+    "minimumRecentTurns of zero must be rejected",
+  );
+});
+
 Deno.test("applyContextBudget retains the latest assistant and user exchange", async () => {
   const messages = [
     message("user-1", "user", "Older goal ".repeat(200)),

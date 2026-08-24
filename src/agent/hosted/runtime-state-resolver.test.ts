@@ -1,7 +1,10 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createHostedRuntimeStateResolver } from "./runtime-state-resolver.ts";
-import { FIRST_TURN_STARTER_INTENT_ROOT_OWNERSHIP_CONTEXT_KEY } from "../conversation/delegation-policy.ts";
+import {
+  FIRST_TURN_STARTER_INTENT_ROOT_OWNERSHIP_CONTEXT_KEY,
+  SLASH_COMMAND_ARTIFACT_REMINDER,
+} from "../conversation/delegation-policy.ts";
 
 function createUserMessage(text: string) {
   return {
@@ -158,6 +161,45 @@ describe("agent/hosted-runtime-state-resolver", () => {
     if (typeof result.system !== "string") {
       throw new Error("Expected string system instructions");
     }
-    assertEquals(result.system.includes("artifact"), true);
+    assertEquals(
+      result.system.includes(SLASH_COMMAND_ARTIFACT_REMINDER),
+      true,
+      "reminder must be kept while the artifact path is unseen",
+    );
+
+    const messagesWithoutExactPath = [
+      createUserMessage("/plan build a dashboard"),
+      createAssistantToolCall("load_skill"),
+    ];
+    const unseen = await resolver({
+      system: "system",
+      messages: messagesWithoutExactPath,
+      step: 1,
+    });
+    assertEquals(typeof unseen.system, "string");
+    if (typeof unseen.system !== "string") {
+      throw new Error("Expected string system instructions");
+    }
+    assertEquals(
+      unseen.system.includes(SLASH_COMMAND_ARTIFACT_REMINDER),
+      false,
+      "reminder must not be injected without an exact path when the host has not recorded one",
+    );
+
+    taskContext.slashCommandArtifactPathSeen = true;
+    const seen = await resolver({
+      system: "system",
+      messages: messagesWithoutExactPath,
+      step: 1,
+    });
+    assertEquals(typeof seen.system, "string");
+    if (typeof seen.system !== "string") {
+      throw new Error("Expected string system instructions");
+    }
+    assertEquals(
+      seen.system.includes(SLASH_COMMAND_ARTIFACT_REMINDER),
+      true,
+      "reminder must be kept once the host records the artifact path",
+    );
   });
 });

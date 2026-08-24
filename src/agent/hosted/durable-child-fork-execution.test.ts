@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildChildRunExecutionSnapshot,
@@ -113,6 +118,78 @@ function baseSuccessResult(): ChildRunExecutionResult & { success: true } {
     usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
     durationMs: 12,
   };
+}
+
+const INJECTED_CHILD_IDENTIFIERS = {
+  childConversationId: CHILD_CONVERSATION_ID,
+  childRunId: "run_child_1",
+  childMessageId: CHILD_MESSAGE_ID,
+  latestEventId: 7,
+  latestExternalEventSequence: 3,
+};
+
+type InjectedRunLifecycle = NonNullable<
+  NonNullable<
+    Parameters<
+      typeof executeHostedDurableChildFork<DurableChildResult, ChildRunExecutionResult>
+    >[0][
+      "runtime"
+    ]
+  >["runLifecycle"]
+>;
+
+function runForkWithInjectedLifecycle(input: {
+  runLifecycle: () => ReturnType<InjectedRunLifecycle>;
+  buildTerminalFailureResult: (failure: HostedDurableChildTerminalFailure) => DurableChildResult;
+  onLifecycleFinalized?: Parameters<
+    typeof executeHostedDurableChildFork<DurableChildResult, ChildRunExecutionResult>
+  >[0]["onLifecycleFinalized"];
+}): Promise<DurableChildResult> {
+  const capability = createHostedRunEventWriterCapability({
+    apiUrl: API_URL,
+    runId: "run_parent_1",
+    runEventAppendToken: PARENT_RUN_EVENT_TOKEN,
+    fetch: () =>
+      Promise.resolve(Response.json(
+        { run_event_token: CHILD_RUN_EVENT_TOKEN },
+        { headers: { "Cache-Control": "no-store" } },
+      )),
+  });
+
+  return runWithHostedRunEventWriterCapability(
+    capability,
+    () =>
+      executeHostedDurableChildFork<DurableChildResult, ChildRunExecutionResult>({
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        forkInput: { description: "Inspect logs", prompt: "Find logs", context: {} },
+        executionOptions: { toolCallId: "tool-call-1" },
+        childAgentId: "invoke-agent-child",
+        parentConversationId: PARENT_CONVERSATION_ID,
+        parentRunId: "run_parent_1",
+        parentMessageId: PARENT_MESSAGE_ID,
+        getProjectId: () => PROJECT_ID,
+        defaultModel: "opus",
+        resolveModelId: (model) => `resolved-${model}`,
+        resolveProvider: () => "anthropic",
+        contextUnavailableMessage: "missing context",
+        setupFailedCode: "SETUP_FAILED",
+        executionFailedCode: "INVOKE_AGENT_FAILED",
+        executeLocal: () => baseSuccessResult(),
+        getExecutionSnapshot: () => null,
+        buildContextUnavailableResult: (message) => ({ status: "missing_context", message }),
+        buildSetupFailureResult: (failure) => ({ status: "setup_failed", failure }),
+        buildTerminalFailureResult: input.buildTerminalFailureResult,
+        buildSuccessResult: (success) => ({ status: "completed", success }),
+        onLifecycleFinalized: input.onLifecycleFinalized,
+        runtime: {
+          bootstrapChildRun: () =>
+            Promise.resolve({ ...INJECTED_CHILD_IDENTIFIERS, status: "running" }),
+          createLifecycleAdapter: () => ({}),
+          runLifecycle: input.runLifecycle as InjectedRunLifecycle,
+        },
+      }),
+  );
 }
 
 describe("agent/hosted-durable-child-fork-execution", () => {
@@ -1427,6 +1504,112 @@ describe("agent/hosted-durable-child-fork-execution", () => {
     assertEquals(error.message.includes(callerAbort.message), false);
     assertEquals(executed, false);
     assertEquals(cancellationAttempts, 1);
+  });
+
+  it("maps null lifecycle terminal codes to executionFailedCode and Unknown error", async () => {
+    const recordedTerminalInputs: HostedDurableChildTerminalFailure[] = [];
+
+    const result = await runForkWithInjectedLifecycle({
+      runLifecycle: () =>
+        Promise.resolve({
+          status: "failed" as const,
+          error: new Error("child failed"),
+          terminalState: {
+            status: "failed" as const,
+            terminalErrorCode: null,
+            terminalErrorMessage: null,
+          },
+        }),
+      buildTerminalFailureResult: (failure) => {
+        recordedTerminalInputs.push(failure);
+        return { status: "terminal_failed", failure };
+      },
+    });
+
+    assertEquals(result.status, "terminal_failed");
+    assertEquals(
+      recordedTerminalInputs,
+      [{
+        status: "failed",
+        identifiers: INJECTED_CHILD_IDENTIFIERS,
+        targets: {
+          sourceTargetKind: "project",
+          runtimeTargetKind: "main_branch",
+          targetEnvironmentId: null,
+          targetBranchId: null,
+        },
+        terminalErrorCode: "INVOKE_AGENT_FAILED",
+        terminalErrorMessage: "Unknown error",
+      }],
+      "null terminal codes must fall back to executionFailedCode and Unknown error",
+    );
+  });
+
+  it("rethrows lifecycle cancellations that are not external terminal states", async () => {
+    const recordedTerminalInputs: HostedDurableChildTerminalFailure[] = [];
+
+    const thrown = await assertRejects(
+      () =>
+        runForkWithInjectedLifecycle({
+          runLifecycle: () =>
+            Promise.resolve({
+              status: "cancelled" as const,
+              error: new Error("caller abort"),
+              terminalState: {
+                status: "cancelled" as const,
+                terminalErrorCode: "CANCELLED",
+                terminalErrorMessage: "Child run cancelled",
+              },
+            }),
+          buildTerminalFailureResult: (failure) => {
+            recordedTerminalInputs.push(failure);
+            return { status: "terminal_failed", failure };
+          },
+        }),
+      Error,
+    );
+
+    assertInstanceOf(thrown, Error, "the rethrown cancellation must be an Error");
+    assertEquals(
+      thrown.message,
+      "caller abort",
+      "a non-terminal-state cancellation must be rethrown",
+    );
+    assertEquals(
+      recordedTerminalInputs.length,
+      0,
+      "a rethrown cancellation must not build a terminal failure result",
+    );
+  });
+
+  it("fires onLifecycleFinalized once with identifiers on completion", async () => {
+    const finalized: unknown[] = [];
+    const localResult = baseSuccessResult();
+
+    const result = await runForkWithInjectedLifecycle({
+      runLifecycle: () =>
+        Promise.resolve({
+          status: "completed" as const,
+          result: localResult,
+          snapshot: buildChildRunExecutionSnapshot(localResult),
+          terminalState: {
+            status: "completed" as const,
+            terminalErrorCode: null,
+            terminalErrorMessage: null,
+          },
+        }),
+      buildTerminalFailureResult: () => ({ status: "missing_context", message: "unexpected" }),
+      onLifecycleFinalized: (input) => {
+        finalized.push(input);
+      },
+    });
+
+    assertEquals(result.status, "completed");
+    assertEquals(
+      finalized,
+      [{ identifiers: INJECTED_CHILD_IDENTIFIERS, status: "completed" }],
+      "onLifecycleFinalized must fire once with identifiers on completion",
+    );
   });
 
   it("keeps a rejecting bootstrap observer from masking the bootstrap failure", async () => {

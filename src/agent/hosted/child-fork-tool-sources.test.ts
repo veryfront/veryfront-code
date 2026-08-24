@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "@std/assert";
+import { assertEquals, assertRejects, assertStrictEquals, assertThrows } from "@std/assert";
 import type {
   AgentServiceSandboxToolsOptions,
   AgentServiceSandboxToolsResult,
@@ -506,6 +506,64 @@ Deno.test("prepareDefaultHostedChildForkToolSources rethrows abort errors", asyn
   );
 });
 
+Deno.test("prepareDefaultHostedChildForkToolSources rethrows aborts raised during MCP setup", async () => {
+  const abortController = new AbortController();
+  const abortError = new DOMException("fork aborted", "AbortError");
+  const logged: Array<{ message: string; metadata?: Record<string, unknown> }> = [];
+
+  const rejection = await assertRejects(
+    () =>
+      prepareDefaultHostedChildForkToolSources({
+        authToken: "token-1",
+        apiMcpUrl: "https://api.example/mcp",
+        mcpServers: [{ kind: "veryfront-studio" }],
+        getProjectId: () => "project-1",
+        abortSignal: abortController.signal,
+        isAbortError: (error) => error === abortError,
+        createLiveStudioTools: () => {
+          throw abortError;
+        },
+        logger: {
+          error: (message, metadata) => {
+            logged.push({ message, metadata });
+          },
+        },
+      }),
+  );
+
+  assertStrictEquals(rejection, abortError, "abort raised during setup must propagate unchanged");
+  assertEquals(logged.length, 0, "aborts must not be logged as MCP setup failures");
+});
+
+Deno.test("prepareDefaultHostedChildForkToolSources rethrows setup errors once the signal is aborted", async () => {
+  const abortController = new AbortController();
+  const setupError = new Error("studio unavailable");
+  const logged: Array<{ message: string; metadata?: Record<string, unknown> }> = [];
+
+  const rejection = await assertRejects(
+    () =>
+      prepareDefaultHostedChildForkToolSources({
+        authToken: "token-1",
+        apiMcpUrl: "https://api.example/mcp",
+        mcpServers: [{ kind: "veryfront-studio" }],
+        getProjectId: () => "project-1",
+        abortSignal: abortController.signal,
+        createLiveStudioTools: () => {
+          abortController.abort(new Error("fork aborted"));
+          throw setupError;
+        },
+        logger: {
+          error: (message, metadata) => {
+            logged.push({ message, metadata });
+          },
+        },
+      }),
+  );
+
+  assertStrictEquals(rejection, setupError, "error raised after abort must propagate unchanged");
+  assertEquals(logged.length, 0, "aborted setups must not be logged as MCP setup failures");
+});
+
 Deno.test("prepareDefaultHostedChildForkSandboxToolSources merges sandbox tools and returns runtime cleanup", async () => {
   const fixtures = createRemoteSourceFixtures();
   const sandboxToolInputs: AgentServiceSandboxToolsOptions[] = [];
@@ -598,6 +656,40 @@ Deno.test("prepareDefaultHostedChildForkSandboxToolSources closes sandbox when s
     errorMessage: "MCP tool setup failed: studio unavailable",
   });
   assertEquals(sandboxClosed, true);
+});
+
+Deno.test("prepareDefaultHostedChildForkSandboxToolSources closes sandbox when source setup throws", async () => {
+  let closeCalls = 0;
+  const abortController = new AbortController();
+  abortController.abort(new Error("fork aborted"));
+  const createBashTool: CreateSandboxBashTool = () => Promise.resolve({ tools: {} });
+
+  await assertRejects(
+    () =>
+      prepareDefaultHostedChildForkSandboxToolSources({
+        authToken: "token-1",
+        apiUrl: "https://api.example",
+        apiMcpUrl: "https://api.example/mcp",
+        mcpServers: [],
+        getProjectId: () => "project-1",
+        abortSignal: abortController.signal,
+        createBashTool,
+        createAgentServiceSandboxTools: () =>
+          Promise.resolve(
+            createSandboxToolsResult({
+              closeSandbox: () => {
+                closeCalls++;
+                return Promise.resolve();
+              },
+            }),
+          ),
+      }),
+    Error,
+    "fork aborted",
+    "abort must propagate out of the sandbox wrapper",
+  );
+
+  assertEquals(closeCalls, 1, "sandbox must be closed exactly once when tool source setup throws");
 });
 
 Deno.test("prepareDefaultHostedChildForkSandboxToolSources sanitizes cleanup failures", async () => {

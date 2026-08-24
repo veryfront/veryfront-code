@@ -179,6 +179,52 @@ describe("agent/hosted-lifecycle", () => {
     assertEquals(calls, ["failed:STREAM_ERROR:stream exploded", "finalize:failed"]);
   });
 
+  it("maps execution errors on an aborted signal to the cancelled terminal state", async () => {
+    const calls: string[] = [];
+    const controller = new AbortController();
+    controller.abort();
+
+    await assertRejects(
+      () =>
+        runHostedLifecycle({
+          abortSignal: controller.signal,
+          execution: {
+            stream: {
+              [Symbol.asyncIterator]() {
+                return {
+                  next: async () => {
+                    throw new Error("stream aborted");
+                  },
+                };
+              },
+            },
+            waitForFinish: async () => {},
+          },
+          adapter: {
+            startRun: () => ({ runId: "run-1" }),
+            onTerminalState: (_run, state) => {
+              calls.push(`${state.status}:${state.terminalErrorCode}`);
+            },
+            cancelRun: (_run, state) => {
+              calls.push(`cancel:${state.status}`);
+            },
+            finalizeRun: (_run, state) => {
+              calls.push(`finalize:${state.status}`);
+            },
+          },
+          resolveTerminalState: () => ({ status: "completed" }),
+        }),
+      Error,
+      "stream aborted",
+    );
+
+    assertEquals(
+      calls,
+      ["cancelled:ABORTED", "cancel:cancelled"],
+      "an aborted execution error must be classified ABORTED and dispatched to cancelRun, never finalizeRun",
+    );
+  });
+
   it("supports custom error terminal state mapping", async () => {
     const calls: string[] = [];
 
