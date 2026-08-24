@@ -13,6 +13,74 @@ describe("routing/api/module-loader/http-validator", () => {
       );
     });
 
+    it("should block bare side-effect remote imports when allowedHosts is empty", () => {
+      assertThrows(
+        () => validateHTTPImports('import "https://evil.com/x.js";', []),
+        Error,
+        "Remote import blocked",
+        "a side-effect-only remote import must still be blocked by the allow-list",
+      );
+    });
+
+    it("should reject an http:// URL for an https-only allowed host", () => {
+      assertThrows(
+        () => {
+          validateHTTPImports('import x from "http://esm.sh/react";', [
+            "https://esm.sh",
+          ]);
+        },
+        Error,
+        "Remote import blocked",
+        "an http:// URL must not satisfy an https-only allowed host",
+      );
+    });
+
+    it("should reject an off-port URL for an allowed host", () => {
+      assertThrows(
+        () => {
+          validateHTTPImports('import x from "https://esm.sh:8443/react";', [
+            "https://esm.sh",
+          ]);
+        },
+        Error,
+        "Remote import blocked",
+        "a non-default port must not satisfy an allowed host pinned to the default port",
+      );
+    });
+
+    it("should block remote re-exports that are not allow-listed", () => {
+      assertThrows(
+        () => validateHTTPImports('export { pwn } from "https://evil.com/x.js";', []),
+        Error,
+        "Remote import blocked",
+        "a named re-export is a remote import and must be blocked",
+      );
+      assertThrows(
+        () => validateHTTPImports('export * from "https://evil.com/x.js";', []),
+        Error,
+        "Remote import blocked",
+        "a star re-export is a remote import and must be blocked",
+      );
+    });
+
+    it("should allow remote re-exports from allowed hosts", () => {
+      validateHTTPImports('export { a } from "https://esm.sh/x.js";', [
+        "https://esm.sh",
+      ]);
+      validateHTTPImports('export * from "https://esm.sh/x.js";', ["https://esm.sh"]);
+    });
+
+    it("should ignore remote re-export text inside strings and comments", () => {
+      validateHTTPImports(
+        [
+          `const example = 'export * from "https://evil.com/x.js";';`,
+          `// export { pwn } from "https://evil.com/y.js";`,
+          `export { ok } from "https://esm.sh/ok.js";`,
+        ].join("\n"),
+        ["https://esm.sh"],
+      );
+    });
+
     it("should allow imports from allowed hosts", () => {
       validateHTTPImports('import React from "https://esm.sh/react@18";', [
         "https://esm.sh",

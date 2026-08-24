@@ -132,6 +132,51 @@ describe("webhook/factory", () => {
     assertEquals(matchAll.eventFilter, { mode: "any", conditions: [] });
   });
 
+  it("rejects unsupported filter modes and operators", () => {
+    assertThrows(
+      () =>
+        webhook({
+          id: "ticket-created",
+          target: { kind: "task", id: "process-ticket" },
+          eventFilter: {
+            mode: "ANY",
+            conditions: [{ path: "action", operator: "exists" }],
+          },
+        } as never),
+      VeryfrontError,
+      "Webhook eventFilter mode must be all or any.",
+      "an unrecognized filter mode must be rejected instead of silently meaning all",
+    );
+    assertThrows(
+      () =>
+        webhook({
+          id: "ticket-created",
+          target: { kind: "task", id: "process-ticket" },
+          eventFilter: {
+            mode: "all",
+            conditions: [{ path: "count", operator: "gt", value: 1 }],
+          },
+        } as never),
+      VeryfrontError,
+      "Webhook eventFilter condition 0 operator is not supported.",
+      "an operator outside the hosted allowlist must be rejected at definition time",
+    );
+  });
+
+  it("accepts a multi-line webhook description", () => {
+    const definition = webhook({
+      id: "ticket-created",
+      description: "Line one.\nLine two.",
+      target: { kind: "task", id: "process-ticket" },
+    });
+
+    assertEquals(
+      definition.description,
+      "Line one.\nLine two.",
+      "a multi-line description must round-trip verbatim",
+    );
+  });
+
   it("trims filter paths before enforcing the hosted length bound", () => {
     const definition = webhook({
       id: "ticket-created",
@@ -404,6 +449,14 @@ describe("webhook/factory", () => {
             agentMessage: { promptTemplate: "p".repeat(20_001) },
           },
           "Webhook agentMessage.promptTemplate must be at most 20000 characters.",
+        ],
+        [
+          {
+            id: "ticket-created",
+            description: "d".repeat(4_097),
+            target: { kind: "task", id: "process-ticket" },
+          },
+          "Webhook description must be at most 4096 characters.",
         ],
       ] as const
     ) {

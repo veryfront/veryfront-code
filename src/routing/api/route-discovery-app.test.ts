@@ -322,10 +322,10 @@ describe("route-discovery.ts - App Router Discovery", () => {
 
       setReadDir(adapter, {
         "/project/app/api": [
+          file("route.ts"),
           file("routes.ts"),
           file("route-handler.ts"),
           file("route.backup.ts"),
-          file("route.ts"),
         ],
       });
 
@@ -334,6 +334,32 @@ describe("route-discovery.ts - App Router Discovery", () => {
       const routes = router.listRoutes();
       assertEquals(routes.length, 1, "Should only match exact route.ts name");
       assertEquals(routes[0]!.pattern, "/api");
+      assertEquals(
+        routes[0]!.page,
+        "/project/app/api/route.ts",
+        "only the exact route.ts file may back the registered handler",
+      );
+    });
+
+    it("should not register route-like file names", async () => {
+      const adapter = createMockAdapter();
+      const router = createRouter();
+
+      setReadDir(adapter, {
+        "/project/app/api": [
+          file("routes.ts"),
+          file("route-handler.ts"),
+          file("route.backup.ts"),
+        ],
+      });
+
+      await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
+
+      assertEquals(
+        router.listRoutes().length,
+        0,
+        "non-exact route file names must not register a handler",
+      );
     });
 
     it("should preserve full file paths correctly", async () => {

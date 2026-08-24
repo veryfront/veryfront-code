@@ -368,6 +368,12 @@ describe("BaseHandler.withProxyContext", () => {
   it("emits metrics with project and environment labels in multi-project request context", async () => {
     const handler = new TestHandler();
     const counterCalls: unknown[] = [];
+    let observedContext: {
+      slug: string;
+      token: string;
+      projectId?: string;
+      options?: Record<string, unknown>;
+    } | undefined;
 
     setGlobalMetricsAPI({
       getMeter() {
@@ -404,17 +410,18 @@ describe("BaseHandler.withProxyContext", () => {
           setRequestBranch() {},
           isMultiProjectMode: () => true,
           runWithContext: async (
-            _slug: string,
-            _token: string,
+            slug: string,
+            token: string,
             fn: () => Promise<unknown>,
-            _projectId?: string,
+            projectId?: string,
             options?: Record<string, unknown>,
           ) => {
+            observedContext = { slug, token, projectId, options };
             return await runWithRequestContext(
               {
-                projectSlug: "my-project",
-                token: "vf_proxy_token",
-                projectId: "project-123",
+                projectSlug: slug,
+                token,
+                projectId,
                 productionMode: options?.productionMode === true,
                 releaseId: options?.releaseId as string | undefined,
                 branch: options?.branch as string | undefined,
@@ -434,6 +441,22 @@ describe("BaseHandler.withProxyContext", () => {
       });
       return { continue: true };
     });
+
+    assertEquals(
+      observedContext,
+      {
+        slug: "my-project",
+        token: "vf_proxy_token",
+        projectId: "project-123",
+        options: {
+          productionMode: true,
+          releaseId: "release-123",
+          branch: null,
+          environmentName: "Staging",
+        },
+      },
+      "withProxyContext must hand the request tenant slug, request credential, project id and environment options to runWithContext",
+    );
 
     assertEquals(counterCalls, [
       {

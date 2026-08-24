@@ -160,6 +160,44 @@ describe("Dependency tracking cache invalidation", () => {
       expect(reads.get("/project/components/shared.js")).toBe(1);
     });
 
+    it("re-scans a dependency whose read failed transiently", async () => {
+      const files = new Map<string, string>([
+        [
+          "/project/pages/a.js",
+          `import { shared } from "../components/shared.ts";\nexport const a = shared;\n`,
+        ],
+        [
+          "/project/pages/b.js",
+          `import { shared } from "../components/shared.ts";\nexport const b = shared;\n`,
+        ],
+        ["/project/components/shared.js", "export const shared = 1;\n"],
+      ]);
+      const cache = createDependencyHashCache();
+      let sharedReadable = false;
+
+      const getContent = (path: string): Promise<string> => {
+        if (path === "/project/components/shared.js" && !sharedReadable) {
+          return Promise.reject(new Error("EBUSY mid-write"));
+        }
+        return createGetContent(files)(path);
+      };
+
+      // The shared module is unreadable while a.js is traversed. A transient read
+      // failure must not be cached as a completed module, otherwise b.js keeps an
+      // empty dependency hash for it until the process restarts.
+      await computeDepsHash("/project/pages/a.js", getContent, "/project", cache);
+      sharedReadable = true;
+
+      const hash = await computeDepsHash("/project/pages/b.js", getContent, "/project", cache);
+      const expected = await computeDepsHash(
+        "/project/pages/b.js",
+        createGetContent(files),
+        "/project",
+      );
+
+      expect(hash).toBe(expected);
+    });
+
     it("recomputes changed files and their dependents after explicit invalidation", async () => {
       const files = new Map<string, string>([
         [

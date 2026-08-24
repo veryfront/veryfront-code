@@ -507,6 +507,19 @@ describe("security/http/csrf/csrf-handler", () => {
       const result = await handler.handle(req, ctx);
       assertEquals(result.response?.status, 403);
     });
+
+    it("should not skip paths that merely start with an excludePath", async () => {
+      const ctx = createCtx({ excludePaths: ["/api/webhooks"] });
+      for (const path of ["/api/webhooks-admin/delete", "/api/webhooksevil"]) {
+        const req = new Request(`http://localhost${path}`, { method: "POST" });
+        const result = await handler.handle(req, ctx);
+        assertEquals(
+          result.response?.status,
+          403,
+          `${path} is a name collision, not a path-segment child, and must stay CSRF gated`,
+        );
+      }
+    });
   });
 
   describe("metadata", () => {

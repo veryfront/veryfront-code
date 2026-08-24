@@ -58,20 +58,39 @@ describe("cli/ui/box", () => {
     });
 
     it("should handle center-aligned title", () => {
+      const { topLeft, topRight, horizontal } = BORDER_STYLES.rounded;
+      const topBorder = stripAnsi(
+        box("content", { title: "C", titleAlign: "center", width: 20 }).split("\n")[0]!,
+      );
+
       assertEquals(
-        box("content", { title: "Center", titleAlign: "center" }).includes(
-          "Center",
-        ),
-        true,
+        topBorder,
+        `${topLeft}${horizontal.repeat(7)} C ${horizontal.repeat(8)}${topRight}`,
+        "a centered title splits the remaining border fill on both sides",
       );
     });
 
     it("should handle right-aligned title", () => {
+      const { topLeft, topRight, horizontal } = BORDER_STYLES.rounded;
+      const topBorder = stripAnsi(
+        box("content", { title: "C", titleAlign: "right", width: 20 }).split("\n")[0]!,
+      );
+
       assertEquals(
-        box("content", { title: "Right", titleAlign: "right" }).includes(
-          "Right",
-        ),
-        true,
+        topBorder,
+        `${topLeft}${horizontal.repeat(15)} C ${topRight}`,
+        "a right-aligned title puts the whole border fill on its left",
+      );
+    });
+
+    it("should left-align the title by default", () => {
+      const { topLeft, topRight, horizontal } = BORDER_STYLES.rounded;
+      const topBorder = stripAnsi(box("content", { title: "C", width: 20 }).split("\n")[0]!);
+
+      assertEquals(
+        topBorder,
+        `${topLeft} C ${horizontal.repeat(15)}${topRight}`,
+        "the default alignment puts the whole border fill on the title's right",
       );
     });
 
@@ -117,19 +136,36 @@ describe("cli/ui/box", () => {
       assertEquals(result.includes("B"), true);
     });
 
+    it("should insert exactly gap spaces between columns", () => {
+      assertEquals(
+        joinHorizontal("top", 3, "A", "B"),
+        "A   B",
+        "gap inserts exactly gap spaces between columns",
+      );
+    });
+
     it("should handle items with different heights (top align)", () => {
-      const lines = joinHorizontal("top", 1, "a\nb", "c").split("\n");
-      assertEquals(lines.length, 2);
+      assertEquals(
+        joinHorizontal("top", 1, "a\nb", "c"),
+        "a c\nb  ",
+        "top alignment pads the short column below",
+      );
     });
 
     it("should handle bottom alignment", () => {
-      const lines = joinHorizontal("bottom", 1, "a\nb", "c").split("\n");
-      assertEquals(lines.length, 2);
+      assertEquals(
+        joinHorizontal("bottom", 1, "a\nb", "c"),
+        "a  \nb c",
+        "bottom alignment pads the short column above",
+      );
     });
 
     it("should handle center alignment", () => {
-      const lines = joinHorizontal("center", 1, "a\nb\nc", "d").split("\n");
-      assertEquals(lines.length, 3);
+      assertEquals(
+        joinHorizontal("center", 1, "a\nb\nc", "d"),
+        "a  \nb d\nc  ",
+        "center alignment centers the short column",
+      );
     });
   });
 

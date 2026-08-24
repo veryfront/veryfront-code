@@ -101,6 +101,24 @@ describe("security/path-validation/normalization", () => {
       assertEquals(isWithinDirectory("/project-a", "/project-b"), false);
     });
 
+    it("should reject a sibling that shares the base prefix", () => {
+      assertEquals(
+        isWithinDirectory("/project", "/project-secrets/creds.env"),
+        false,
+        "a sibling sharing the base prefix must not be inside the base",
+      );
+      assertEquals(
+        isWithinDirectory("/project", "/projectevil"),
+        false,
+        "containment must require a separator after the base",
+      );
+      assertEquals(
+        isWithinDirectory("/project", "/project/secrets"),
+        true,
+        "a real child must still be inside the base",
+      );
+    });
+
     it("should handle trailing slashes", () => {
       assertEquals(isWithinDirectory("/project/", "/project/src"), true);
     });

@@ -98,6 +98,18 @@ describe("suite planning parity", () => {
     );
   });
 
+  it("runs the sandbox runtime guard in the Node and Bun suites", async () => {
+    const guardFile = "tests/integration/security/sandbox-runtime-guard.test.ts";
+
+    for (const suite of ["runtime:node", "runtime:bun"] as const) {
+      const plan = await planSuiteFiles({ suite });
+      assert(
+        plan.files.includes(guardFile),
+        `${suite} must select the sandbox runtime guard coverage`,
+      );
+    }
+  });
+
   it("keeps eight coverage shards complete, disjoint, and ordered", async () => {
     const paths = Array.from(
       { length: 27 },
@@ -493,12 +505,14 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "extensions/ext-bundler-esbuild/src/binary.test.ts",
       "tests/ensure-npm-links.test.mjs",
       "tests/test-file-utils.test.mjs",
+      "tests/integration/security/sandbox-runtime-guard.test.ts",
     ]
     : [
       "src/",
       "tests/bun/dynamic-alias-resolution.test.ts",
       "tests/bun/npm-protocol-resolution.test.ts",
       "tests/bun/workspace-resolution.test.ts",
+      "tests/integration/security/sandbox-runtime-guard.test.ts",
     ];
   const incompatible = runtime === "node"
     ? [

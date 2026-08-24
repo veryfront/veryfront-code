@@ -11,6 +11,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import {
   createValidator,
+  isWithinDirectory,
   PathValidationError,
   sanitizePathForDisplay,
   validateLexicalPath,
@@ -148,18 +149,43 @@ describe("Path Validation - OWASP Attack Vectors", () => {
 
   describe("Encoding attacks", () => {
     const testCases = [
-      { name: "URL encoded dots", path: "%2e%2e%2f%2e%2e%2fetc%2fpasswd" },
-      { name: "Mixed encoding", path: "..%2f..%2fetc%2fpasswd" },
-      { name: "Double encoded", path: "%252e%252e%252f" },
-      { name: "Unicode", path: "\u2024\u2024/etc/passwd" },
+      {
+        name: "URL encoded dots",
+        path: "%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+        expected: "/var/www/project/%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+      },
+      {
+        name: "Mixed encoding",
+        path: "..%2f..%2fetc%2fpasswd",
+        expected: "/var/www/project/..%2f..%2fetc%2fpasswd",
+      },
+      {
+        name: "Double encoded",
+        path: "%252e%252e%252f",
+        expected: "/var/www/project/%252e%252e%252f",
+      },
+      {
+        name: "Unicode",
+        path: "\u2024\u2024/etc/passwd",
+        expected: "/var/www/project/\u2024\u2024/etc/passwd",
+      },
     ];
 
-    for (const { name, path } of testCases) {
+    for (const { name, path, expected } of testCases) {
       it(`should handle: ${name}`, () => {
         const result = validateLexicalPath(path, { baseDir });
 
-        if (!result.valid) return;
-        assertExists(result.canonicalPath);
+        assertEquals(result.valid, true, `${name} must be admitted as a literal segment`);
+        assertEquals(
+          result.canonicalPath,
+          expected,
+          `${name}: percent and Unicode escapes must stay literal and never be decoded into a traversal`,
+        );
+        assertEquals(
+          isWithinDirectory(baseDir, result.canonicalPath!),
+          true,
+          `${name} must resolve inside the base directory`,
+        );
       });
     }
   });
@@ -183,22 +209,34 @@ describe("Path Validation - OWASP Attack Vectors", () => {
 
   describe("Windows-specific attacks", () => {
     const testCases = [
-      { name: "Backslash traversal", path: "..\\..\\..\\windows\\system32\\config" },
-      { name: "Mixed separators", path: "../\\../\\../etc/passwd" },
-      { name: "UNC path", path: "\\\\server\\share\\file" },
-      { name: "Drive letter", path: "C:\\windows\\system32\\config" },
+      {
+        name: "Backslash traversal",
+        path: "..\\..\\..\\windows\\system32\\config",
+        expected: PathValidationError.OUTSIDE_BASE,
+      },
+      {
+        name: "Mixed separators",
+        path: "../\\../\\../etc/passwd",
+        expected: PathValidationError.OUTSIDE_BASE,
+      },
+      {
+        name: "UNC path",
+        path: "\\\\server\\share\\file",
+        expected: PathValidationError.ABSOLUTE_PATH_DENIED,
+      },
+      {
+        name: "Drive letter",
+        path: "C:\\windows\\system32\\config",
+        expected: PathValidationError.ABSOLUTE_PATH_DENIED,
+      },
     ];
 
-    for (const { name, path } of testCases) {
+    for (const { name, path, expected } of testCases) {
       it(`should handle: ${name}`, () => {
         const result = validateLexicalPath(path, { baseDir });
 
-        if (result.valid) {
-          assertExists(result.canonicalPath);
-          return;
-        }
-
-        assertExists(result.code);
+        assertEquals(result.valid, false, `${name} must be denied`);
+        assertEquals(result.code, expected, `${name} must be denied as ${expected}`);
       });
     }
   });

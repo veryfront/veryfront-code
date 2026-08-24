@@ -100,12 +100,14 @@ const RUNTIME_PATTERNS = {
     "extensions/ext-bundler-esbuild/src/binary.test.ts",
     "tests/ensure-npm-links.test.mjs",
     "tests/test-file-utils.test.mjs",
+    "tests/integration/security/sandbox-runtime-guard.test.ts",
   ],
   bun: [
     "src/",
     "tests/bun/dynamic-alias-resolution.test.ts",
     "tests/bun/npm-protocol-resolution.test.ts",
     "tests/bun/workspace-resolution.test.ts",
+    "tests/integration/security/sandbox-runtime-guard.test.ts",
   ],
 } as const;
 const RUNTIME_EXCLUSIONS = {

@@ -400,6 +400,41 @@ describe("guardedOutboundFetch", () => {
     assertEquals(await captured?.text(), '{"message":"hello"}');
   });
 
+  it("blocks cross-origin provider requests before credentials leave the boundary", async () => {
+    let calls = 0;
+    const fetchImpl: typeof fetch = () => {
+      calls++;
+      return Promise.resolve(Response.json({ ok: true }));
+    };
+    const providerFetch = createTestBoundary(fetchImpl).createOriginBoundFetch(
+      "https://93.184.216.34/v1",
+    );
+
+    await assertRejects(
+      () =>
+        providerFetch("https://93.184.216.35/v1/messages", {
+          headers: { "x-api-key": "provider-secret" },
+        }),
+      OutboundRequestBlockedError,
+      "destination origin is not authorized",
+      "a string input pointing at another origin must not reach the transport",
+    );
+    assertEquals(calls, 0, "a cross-origin provider request must never reach the transport");
+
+    await assertRejects(
+      () =>
+        providerFetch(
+          new Request("https://93.184.216.35/v1/messages", {
+            headers: { "x-api-key": "provider-secret" },
+          }),
+        ),
+      OutboundRequestBlockedError,
+      "destination origin is not authorized",
+      "a Request input bypasses the base rewrite and must be authorized too",
+    );
+    assertEquals(calls, 0, "the Request branch must not reach the transport either");
+  });
+
   it("rejects provider redirects before API-key credentials can leave the origin", async () => {
     let calls = 0;
     const fetchImpl: typeof fetch = () => {

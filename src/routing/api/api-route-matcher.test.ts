@@ -206,6 +206,27 @@ describe("ApiRouteMatcher", () => {
       assertExists(match);
       assertEquals(match.route.page, "pages/api/users/index.tsx");
     });
+
+    it("prefers the deeper catch-all when two catch-alls overlap", () => {
+      const router = createRouter();
+      // Register the shallow catch-all first so insertion order cannot mask the
+      // depth tiebreak in the priority comparator.
+      router.addRoute("/api/[...path]", "pages/api/[...path].tsx");
+      router.addRoute("/api/v1/[...rest]", "pages/api/v1/[...rest].tsx");
+
+      const match = router.match("/api/v1/x");
+      assertExists(match);
+      assertEquals(
+        match.route.page,
+        "pages/api/v1/[...rest].tsx",
+        "deeper catch-all must win the depth tiebreak",
+      );
+      assertEquals(
+        match.params.rest,
+        ["x"],
+        "the deeper catch-all consumes only the trailing segment",
+      );
+    });
   });
 
   describe("Edge cases", () => {

@@ -128,4 +128,17 @@ describe("bounded cache reads", () => {
       CacheValueTooLargeError,
     );
   });
+
+  it("returns the value on a good read and null on a miss", async () => {
+    assertEquals(
+      await readCacheValueWithinLimit(backend(() => Promise.resolve("ok")), "key", 8),
+      "ok",
+      "a within-limit backend value must be returned unchanged",
+    );
+    assertEquals(
+      await readCacheValueWithinLimit(backend(() => Promise.resolve(null)), "key", 8),
+      null,
+      "a backend miss must surface as null",
+    );
+  });
 });
