@@ -169,6 +169,12 @@ describe("hydration-script-builder/prod-scripts", () => {
       const result = generateProdHydrationModule();
       assertEquals(result.includes("renderPage"), true);
       assertEquals(result.includes("createHydrationRenderer"), true);
+      // The identifiers survive any refactor; only the invocation hydrates a page.
+      assertEquals(
+        /createHydrationRenderer\(\{[\s\S]*?\}\)\.start\(\)/.test(result),
+        true,
+        "the runtime entry must invoke start() on the hydration renderer",
+      );
     });
 
     it("should not ship the type-only hydration data contract", () => {

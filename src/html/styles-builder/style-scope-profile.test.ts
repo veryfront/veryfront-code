@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createStyleScopeProfile,
@@ -75,6 +75,19 @@ describe("styles-builder/style-scope-profile", () => {
     assertEquals(
       shouldIncludeStylePath(profile, "/project/knowledge/theme/globals.css", "/project"),
       true,
+    );
+  });
+
+  it("derives a cache key from the scan scope", () => {
+    assertEquals(
+      createStyleScopeProfile().hash,
+      createStyleScopeProfile().hash,
+      "the profile hash must be deterministic for identical scan scopes",
+    );
+    assertNotEquals(
+      createStyleScopeProfile({ directories: { app: "knowledge/app" } }).hash,
+      createStyleScopeProfile().hash,
+      "a different scan scope must produce a different prepared-CSS cache key",
     );
   });
 });

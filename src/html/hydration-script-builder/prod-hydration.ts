@@ -21,23 +21,23 @@ export function generateProdHydrationScript(
     import { Page } from ${pageSpecifier};
 
     const root = document.getElementById('root');
-    if (!root) return;
-
-    const tree = React.createElement(
-      App,
-      {},
-      React.createElement(
-        Layout,
+    if (root) {
+      const tree = React.createElement(
+        App,
         {},
-        React.createElement(Page, ${pageProps})
-      )
-    );
+        React.createElement(
+          Layout,
+          {},
+          React.createElement(Page, ${pageProps})
+        )
+      );
 
-    // identifierPrefix must match SSR to prevent useId() mismatch
-    // Suppress recoverable hydration errors - common with animation libraries
-    ReactDOM.hydrateRoot(root, tree, {
-      identifierPrefix: 'vf',
-      onRecoverableError: () => {}, // Silently ignore hydration mismatches
-    });
+      // identifierPrefix must match SSR to prevent useId() mismatch
+      // Suppress recoverable hydration errors - common with animation libraries
+      ReactDOM.hydrateRoot(root, tree, {
+        identifierPrefix: 'vf',
+        onRecoverableError: () => {}, // Silently ignore hydration mismatches
+      });
+    }
   </script>`;
 }
