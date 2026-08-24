@@ -1726,6 +1726,26 @@ describe("automated review gate", () => {
         ["ordinary text <!--", MALFORMED_CURRENT_RANGE],
         ["ordinary text <!--", "", MALFORMED_CURRENT_RANGE, "-->"],
         ["ordinary text <!--", "# next block", MALFORMED_CURRENT_RANGE, "-->"],
+        [
+          "ordinary text <!--",
+          "<!doctype html>",
+          MALFORMED_CURRENT_RANGE,
+          "-->",
+        ],
+        ["ordinary text <!--", "<!xml>", MALFORMED_CURRENT_RANGE, "-->"],
+        [
+          "ordinary text <!--",
+          "<!DoCtYpE html>",
+          MALFORMED_CURRENT_RANGE,
+          "-->",
+        ],
+        ["- ordinary <!--", "<!doctype html>", MALFORMED_CURRENT_RANGE, "-->"],
+        [
+          "> ordinary <!--",
+          "> <!doctype html>",
+          `> ${MALFORMED_CURRENT_RANGE}`,
+          "> -->",
+        ],
       ]
     ) {
       const newerVisibleCurrentRange = codeRabbitSummary({

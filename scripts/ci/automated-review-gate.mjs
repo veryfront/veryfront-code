@@ -35,7 +35,7 @@ const MARKDOWN_PARAGRAPH_INTERRUPTING_HTML_TAG_PATTERN =
 const MARKDOWN_PARAGRAPH_INTERRUPTING_RAW_HTML_PATTERN =
   /^ {0,3}<(?:script|pre|style|textarea)(?:[ \t]|>|$)/i;
 const MARKDOWN_PARAGRAPH_INTERRUPTING_HTML_SYNTAX_PATTERN =
-  /^ {0,3}(?:<!--|<\?|<![A-Z]|<!\[CDATA\[)/;
+  /^ {0,3}(?:<!--|<\?|<![A-Za-z]|<!\[CDATA\[)/;
 const MARKDOWN_FENCE_CONTAINER_CONTINUATION_PATTERN = /^[ \t]*(?:>[ \t]*)*/;
 const CODERABBIT_REQUESTED_COMMIT_PATTERN =
   /Requested commit:\s*([0-9a-f]{40})/gi;
