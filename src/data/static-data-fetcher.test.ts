@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
+import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
+import { TimeoutError } from "#veryfront/rendering/utils/stream-utils.ts";
+import { CircuitBreakerOpen } from "#veryfront/utils/circuit-breaker.ts";
 import { CacheManager } from "./data-fetching-cache.ts";
 import { StaticDataFetcher } from "./static-data-fetcher.ts";
 import type { DataContext, PageWithData } from "./types.ts";
@@ -574,6 +578,77 @@ describe("StaticDataFetcher", () => {
 
         assertEquals(result.notFound, true, `call ${i + 1} should still reach getStaticData`);
       }
+    });
+
+    // The negative case above passes whether or not the breaker exists, so pin
+    // the positive one too: genuine failures must trip it and fail fast.
+    it("opens the circuit breaker after repeated genuine failures", async () => {
+      const { fetcher } = createFetcher();
+      let calls = 0;
+      const boom: PageWithData = {
+        default: () => null,
+        getStaticData: () => {
+          calls++;
+          throw new Error("intentional test error from getStaticData");
+        },
+      };
+      // The breaker registry is module-global, so use a project id unique to
+      // this test.
+      const projectId = "static-breaker-probe";
+
+      function contextFor(path: string): DataContext {
+        return createContext({
+          url: new URL(`http://localhost/${path}`),
+          request: new Request(`http://localhost/${path}`, {
+            headers: { "x-project-id": projectId },
+          }),
+        });
+      }
+
+      for (let i = 0; i < 5; i++) {
+        await assertRejects(
+          () => withProductionContext(() => fetcher.fetch(boom, contextFor(`breaker-${i}`))),
+          Error,
+          "intentional test error from getStaticData",
+        );
+      }
+
+      assertEquals(calls, 5, "five failures must reach the handler before the breaker opens");
+
+      await assertRejects(
+        () => withProductionContext(() => fetcher.fetch(boom, contextFor("breaker-open"))),
+        CircuitBreakerOpen,
+        undefined,
+        "the sixth call must fail fast once the breaker is open",
+      );
+
+      assertEquals(calls, 5, "the sixth call must not invoke getStaticData");
+    });
+
+    it("rejects with TimeoutError when getStaticData never settles", async () => {
+      using time = new FakeTime();
+      const { fetcher } = createFetcher();
+      const hanging: PageWithData = {
+        default: () => null,
+        getStaticData: () => new Promise<never>(() => {}),
+      };
+      const context = createContext({
+        url: new URL("http://localhost/hanging"),
+        request: new Request("http://localhost/hanging", {
+          headers: { "x-project-id": "static-timeout-probe" },
+        }),
+      });
+
+      const pending = withProductionContext(() => fetcher.fetch(hanging, context));
+      const assertion = assertRejects(
+        () => pending,
+        TimeoutError,
+        undefined,
+        "a getStaticData that never settles must reject with TimeoutError",
+      );
+
+      await time.tickAsync(DATA_FETCH_TIMEOUT_MS + 1);
+      await assertion;
     });
   });
 });

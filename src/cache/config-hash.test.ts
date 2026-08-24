@@ -94,6 +94,39 @@ describe("cache/config-hash", () => {
       assertNotEquals(firstPoisoned, secondPoisoned);
     });
 
+    it("keeps distinct hashes stable when Object.prototype.toJSON is poisoned", async () => {
+      const firstConfig = { reactVersion: "18.3.1" };
+      const secondConfig = { reactVersion: "19.2.4" };
+      const firstBaseline = await computeConfigHash(firstConfig);
+      const secondBaseline = await computeConfigHash(secondConfig);
+      let firstPoisoned: string | undefined;
+      let secondPoisoned: string | undefined;
+
+      try {
+        Reflect.set(Object.prototype, "toJSON", () => "x");
+        firstPoisoned = await computeConfigHash(firstConfig);
+        secondPoisoned = await computeConfigHash(secondConfig);
+      } finally {
+        Reflect.deleteProperty(Object.prototype, "toJSON");
+      }
+
+      assertEquals(
+        firstPoisoned,
+        firstBaseline,
+        "an inherited toJSON hook must not change the config hash",
+      );
+      assertEquals(
+        secondPoisoned,
+        secondBaseline,
+        "an inherited toJSON hook must not change the config hash",
+      );
+      assertNotEquals(
+        firstPoisoned,
+        secondPoisoned,
+        "distinct configs must keep distinct hashes under toJSON poisoning",
+      );
+    });
+
     it("should return a 64-char hex hash", async () => {
       const hash = await computeConfigHash({});
       assertEquals(hash.length, 64);

@@ -58,8 +58,8 @@ export async function runCacheInvariantTests<T = string>(
   const { createCache, createValue, isEqual, name = "cache", skipTtlTests = false } = options;
 
   const assertEqual = isEqual
-    ? (a: T, b: T) => assertEquals(isEqual(a, b), true, `Expected values to be equal`)
-    : (a: T, b: T) => assertEquals(a, b);
+    ? (a: T, b: T, message: string) => assertEquals(isEqual(a, b), true, message)
+    : (a: T, b: T, message: string) => assertEquals(a, b, message);
 
   await t.step(`${name}: get(missing-key) returns null`, async () => {
     const cache = await createCache();
@@ -76,7 +76,7 @@ export async function runCacheInvariantTests<T = string>(
     const result = await cache.get(key);
 
     assertExists(result);
-    assertEqual(result, value);
+    assertEqual(result, value, `${name}: get must return the value that was set`);
   });
 
   await t.step(`${name}: overwrite replaces previous value`, async () => {
@@ -90,7 +90,7 @@ export async function runCacheInvariantTests<T = string>(
     const result = await cache.get(key);
 
     assertExists(result);
-    assertEqual(result, value2);
+    assertEqual(result, value2, `${name}: overwrite must replace the previous value`);
   });
 
   await t.step(`${name}: delete removes entry`, async () => {
@@ -130,8 +130,8 @@ export async function runCacheInvariantTests<T = string>(
 
     assertExists(result1);
     assertExists(result2);
-    assertEqual(result1, value1);
-    assertEqual(result2, value2);
+    assertEqual(result1, value1, `${name}: key1 must return its own value`);
+    assertEqual(result2, value2, `${name}: key2 must return its own value`);
   });
 
   await t.step(`${name}: clear removes all entries`, async () => {
@@ -190,7 +190,7 @@ export async function testKeyCollisionResistance<T = string>(
   t: Deno.TestContext,
   options: CacheInvariantTestOptions<T>,
 ): Promise<void> {
-  const { createCache, createValue, name = "cache" } = options;
+  const { createCache, createValue, isEqual, name = "cache" } = options;
 
   await t.step(`${name}: similar keys are distinct`, async () => {
     const cache = await createCache();
@@ -215,6 +215,13 @@ export async function testKeyCollisionResistance<T = string>(
     for (const key of keys) {
       const result = await cache.get(key);
       assertExists(result, `Key ${key} should exist`);
+      const expected = values.get(key)!;
+      const message = `Key ${key} must return its own value`;
+      if (isEqual) {
+        assertEquals(isEqual(result as T, expected), true, message);
+      } else {
+        assertEquals(result, expected, message);
+      }
     }
   });
 }
@@ -240,8 +247,9 @@ export async function testConcurrentAccess<T = string>(
         (async () => {
           await cache.set(key, value);
           const result = await cache.get(key);
-          // Result should be either the value we set or another concurrent value
-          assertExists(result, `Key ${key} should have a value`);
+          // Each iteration owns its key, so the expected value is fully
+          // determined even under concurrency.
+          assertEquals(result, value, `concurrent write to ${key} must round-trip its own value`);
         })(),
       );
     }

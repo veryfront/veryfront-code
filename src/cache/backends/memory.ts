@@ -6,6 +6,7 @@ import type { CacheBackend } from "../types.ts";
 import { buildBatchResults } from "../batch-results.ts";
 import { type CacheGlob, compileCacheGlob } from "./glob.ts";
 import { assertCacheReadMaximumBytes, assertCacheValueWithinLimit } from "../bounded-read.ts";
+import { expiresImmediately, resolveCacheTtlSeconds } from "./ttl.ts";
 
 const DEFAULT_TTL_SECONDS = 300;
 const MAX_GLOB_CACHE_SIZE = 100;
@@ -89,11 +90,12 @@ export class MemoryCacheBackend implements CacheBackend {
     return Promise.resolve(results);
   }
 
-  set(key: string, value: string, ttlSeconds = DEFAULT_TTL_SECONDS): Promise<void> {
+  async set(key: string, value: string, ttlSeconds = DEFAULT_TTL_SECONDS): Promise<void> {
+    const resolvedTtlSeconds = resolveCacheTtlSeconds(ttlSeconds, DEFAULT_TTL_SECONDS);
     const entrySize = this.estimateSize(key, value);
 
     // Reject single entries that exceed the byte limit on their own
-    if (entrySize > this.maxSizeBytes) return Promise.resolve();
+    if (entrySize > this.maxSizeBytes) return;
 
     // Remove existing entry for clean size tracking
     const existing = this.store.get(key);
@@ -101,6 +103,10 @@ export class MemoryCacheBackend implements CacheBackend {
       this.currentSizeBytes -= existing.sizeBytes;
       this.store.delete(key);
     }
+
+    // A non-positive TTL expires immediately: the existing entry is gone and
+    // nothing replaces it, so the slot is not retained until the next read.
+    if (expiresImmediately(resolvedTtlSeconds)) return;
 
     // Evict oldest entries while over count or size limits
     while (
@@ -113,14 +119,18 @@ export class MemoryCacheBackend implements CacheBackend {
     }
 
     this.currentSizeBytes += entrySize;
-    this.store.set(key, { value, expiresAt: Date.now() + ttlSeconds * 1000, sizeBytes: entrySize });
-    return Promise.resolve();
+    this.store.set(key, {
+      value,
+      expiresAt: Date.now() + (resolvedTtlSeconds ?? DEFAULT_TTL_SECONDS) * 1000,
+      sizeBytes: entrySize,
+    });
   }
 
   setBatch(entries: Array<{ key: string; value: string; ttl?: number }>): Promise<void> {
     const now = Date.now();
 
     for (const { key, value, ttl } of entries) {
+      const resolvedTtlSeconds = resolveCacheTtlSeconds(ttl, DEFAULT_TTL_SECONDS);
       const entrySize = this.estimateSize(key, value);
 
       if (entrySize > this.maxSizeBytes) continue;
@@ -130,6 +140,8 @@ export class MemoryCacheBackend implements CacheBackend {
         this.currentSizeBytes -= existing.sizeBytes;
         this.store.delete(key);
       }
+
+      if (expiresImmediately(resolvedTtlSeconds)) continue;
 
       while (
         this.store.size > 0 && (
@@ -143,7 +155,7 @@ export class MemoryCacheBackend implements CacheBackend {
       this.currentSizeBytes += entrySize;
       this.store.set(key, {
         value,
-        expiresAt: now + (ttl ?? DEFAULT_TTL_SECONDS) * 1000,
+        expiresAt: now + (resolvedTtlSeconds ?? DEFAULT_TTL_SECONDS) * 1000,
         sizeBytes: entrySize,
       });
     }
