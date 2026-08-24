@@ -312,16 +312,6 @@ describe("LayoutApplicator helpers", () => {
         "an absent esmLayouts flag must not invoke the disabled synchronous renderer",
       );
     });
-
-    it("keeps MDX layouts on the secure ESM path when esmLayouts is false", async () => {
-      assertEquals(
-        await recordLayoutPath(
-          { experimental: { esmLayouts: false } } as unknown as VeryfrontConfig,
-        ),
-        ["loadModuleESM"],
-        "experimental.esmLayouts: false must not invoke the disabled synchronous renderer",
-      );
-    });
   });
 
   it("loads a hosted-preview App component with the preview environment", async () => {

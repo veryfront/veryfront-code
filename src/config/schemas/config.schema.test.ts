@@ -38,6 +38,14 @@ describe("configSchema", () => {
     assertEquals(cfg.router, "app");
   });
 
+  it("rejects opting out of ESM layouts", () => {
+    assertThrows(
+      () => validateVeryfrontConfig({ experimental: { esmLayouts: false } }),
+      Error,
+      "experimental.esmLayouts",
+    );
+  });
+
   it("keeps CSS asset-pipeline schema constraints aligned with runtime", () => {
     const projectDir = Deno.cwd();
     const css = {

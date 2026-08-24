@@ -346,7 +346,7 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
         .optional(),
       experimental: v
         .object({
-          esmLayouts: v.boolean().optional(),
+          esmLayouts: v.literal(true).optional(),
           precompileMDX: v.boolean().optional(),
           rsc: v.boolean().optional(),
         })
