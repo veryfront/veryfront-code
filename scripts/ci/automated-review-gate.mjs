@@ -22,6 +22,8 @@ const CODERABBIT_REVIEW_RANGE_WRAPPED_SEPARATOR_PATTERN =
 const FULL_COMMIT_TOKEN_PATTERN = /(^|[^0-9a-f])([0-9a-f]{40})(?![0-9a-f])/gi;
 const MARKDOWN_FENCE_LINE_PATTERN =
   /^( {0,3}(?:(?:>[ \t]*)|(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*)(`{3,}|~{3,})/;
+const MARKDOWN_HTML_COMMENT_BLOCK_START_PATTERN =
+  /^( {0,3}(?:(?:>[ \t]*)|(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*)<!--/;
 const MARKDOWN_LIST_PREFIX_PATTERN =
   /([-*+]|\d+[.)])([ \t]+)(?:\[[ xX]\][ \t]+)?/g;
 const MARKDOWN_FENCE_CONTAINER_CONTINUATION_PATTERN = /^[ \t]*(?:>[ \t]*)*/;
@@ -421,7 +423,7 @@ function scanMarkdownStructure(content) {
     return range?.[0] <= index && index < range[1];
   };
   let openFence;
-  let openHtmlCommentStart;
+  let openHtmlComment;
   let lineStart = 0;
   for (const lineMatch of content.matchAll(/[^\r\n]*(?:\r\n|[\r\n]|$)/g)) {
     const line = lineMatch[0];
@@ -429,15 +431,26 @@ function scanMarkdownStructure(content) {
     const lineEnd = lineStart + line.length;
     const lineWithoutEnding = line.replace(/(?:\r\n|[\r\n])$/, "");
 
-    if (openHtmlCommentStart !== undefined) {
+    if (
+      openHtmlComment?.container !== undefined &&
+      !continuesMarkdownFenceContainer(
+        lineWithoutEnding,
+        openHtmlComment.container,
+      )
+    ) {
+      ranges.push([openHtmlComment.start, lineStart]);
+      openHtmlComment = undefined;
+    }
+
+    if (openHtmlComment !== undefined) {
       const relativeCloseStart = lineWithoutEnding.indexOf("-->");
       if (relativeCloseStart < 0) {
         lineStart = lineEnd;
         continue;
       }
       const closeStart = lineStart + relativeCloseStart;
-      ranges.push([openHtmlCommentStart, closeStart + 3]);
-      openHtmlCommentStart = scanMarkdownHtmlComments(
+      ranges.push([openHtmlComment.start, closeStart + 3]);
+      openHtmlComment = scanMarkdownHtmlComments(
         content,
         lineWithoutEnding,
         lineStart,
@@ -489,7 +502,7 @@ function scanMarkdownStructure(content) {
       }
     }
 
-    openHtmlCommentStart = scanMarkdownHtmlComments(
+    openHtmlComment = scanMarkdownHtmlComments(
       content,
       lineWithoutEnding,
       lineStart,
@@ -500,8 +513,8 @@ function scanMarkdownStructure(content) {
     );
     lineStart = lineEnd;
   }
-  if (openHtmlCommentStart !== undefined) {
-    ranges.push([openHtmlCommentStart, content.length]);
+  if (openHtmlComment !== undefined) {
+    ranges.push([openHtmlComment.start, content.length]);
   } else if (openFence !== undefined) {
     ranges.push([openFence.start, content.length]);
   }
@@ -576,11 +589,28 @@ function scanMarkdownHtmlComments(
       continue;
     }
     const relativeCloseStart = line.indexOf("-->", relativeCommentStart + 4);
-    if (relativeCloseStart < 0) return commentStart;
+    if (relativeCloseStart < 0) {
+      return {
+        start: commentStart,
+        container: markdownHtmlCommentBlockContainer(
+          line,
+          relativeCommentStart,
+        ),
+      };
+    }
     ranges.push([commentStart, lineStart + relativeCloseStart + 3]);
     searchStart = relativeCloseStart + 3;
   }
   return undefined;
+}
+
+function markdownHtmlCommentBlockContainer(line, commentStart) {
+  const match = line.match(MARKDOWN_HTML_COMMENT_BLOCK_START_PATTERN);
+  if (
+    !match || match[1].length !== commentStart ||
+    !hasValidMarkdownBlockquoteSpacing(match[1])
+  ) return undefined;
+  return markdownFenceContainer(match[1]);
 }
 
 function markdownInlineCodeRanges(content) {
