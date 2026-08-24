@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 import { TimeoutError } from "#veryfront/rendering/utils/stream-utils.ts";
-import { FakeTime } from "@std/testing/time";
+import { FakeTime } from "#std/testing/time";
 
 describe("ServerDataFetcher", () => {
   function createContext(overrides: Partial<DataContext> = {}): DataContext {
