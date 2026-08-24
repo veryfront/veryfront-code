@@ -80,6 +80,8 @@ type GraphState = {
   provisional: Set<string>;
   /** Artifacts written by this graph, published only after the root succeeds. */
   artifacts: Map<string, string>;
+  /** Any rejected nested fetch makes the graph unsafe to publish as a cache hit. */
+  hadFailure: boolean;
 };
 
 export async function fetchEsmModule(
@@ -92,6 +94,7 @@ export async function fetchEsmModule(
     unwritten: new Map(),
     provisional: new Set(),
     artifacts: new Map(),
+    hadFailure: false,
   };
   try {
     const result = await fetchEsmModuleWithin(
@@ -102,7 +105,9 @@ export async function fetchEsmModule(
       new Set(),
       graph,
     );
-    for (const [key, value] of graph.artifacts) esmCache.set(key, value);
+    if (!graph.hadFailure || graph.provisional.size === 0) {
+      for (const [key, value] of graph.artifacts) esmCache.set(key, value);
+    }
     return result;
   } catch (error) {
     // A cycle member points at the predicted path of an ancestor that only
@@ -194,6 +199,8 @@ async function fetchEsmModuleWithin(
         else for (const dep of graph.unwritten.get(url) ?? []) unwritten.add(dep);
         continue;
       }
+
+      graph.hadFailure = true;
 
       // A statically imported dependency must be local before this module is
       // handed to the runtime loader, so its failure stays fatal.

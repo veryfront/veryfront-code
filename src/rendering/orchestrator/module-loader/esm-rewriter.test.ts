@@ -280,6 +280,36 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       assertMatch(rootContent, /esm\.sh\/broken/);
     });
 
+    it("does not publish a lazy-failure cycle artifact", async () => {
+      const esmCache = new Map<string, string>();
+      globalThis.fetch = ((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "https://esm.sh/root") {
+          return Promise.resolve(jsonResponse(`import("https://esm.sh/a");`));
+        }
+        if (url === "https://esm.sh/a") {
+          return Promise.resolve(jsonResponse(
+            `import { b } from "https://esm.sh/b";\n` +
+              `import("https://esm.sh/broken");\nexport const a = 1;`,
+          ));
+        }
+        if (url === "https://esm.sh/b") {
+          return Promise.resolve(jsonResponse(`import { r } from "https://esm.sh/root";`));
+        }
+        if (url === "https://esm.sh/broken") {
+          return Promise.resolve(new Response("upstream broken", { status: 500 }));
+        }
+        return Promise.resolve(new Response("not found", { status: 404 }));
+      }) as typeof fetch;
+
+      await fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache);
+      assertEquals(
+        esmCache.size,
+        0,
+        "a cycle containing a failed lazy subtree must not publish partial artifacts",
+      );
+    });
+
     it("still throws when a nested URL is imported statically", async () => {
       // The emitted module's own import graph must be local before the runtime
       // loader is handed it. Leaving a static dependency remote would change
