@@ -15,6 +15,7 @@ import {
 import type {
   BlobResolver,
   StepBuilderContext,
+  WaitNodeConfig,
   WorkflowContext,
   WorkflowDefinition,
   WorkflowNode,
@@ -95,7 +96,11 @@ export interface WorkflowExecutorConfig {
   /** Callback when workflow fails */
   onError?: (run: WorkflowRun, error: Error) => void;
   /** Callback when workflow is waiting */
-  onWaiting?: (run: WorkflowRun, nodeId: string) => void | Promise<void>;
+  onWaiting?: (
+    run: WorkflowRun,
+    nodeId: string,
+    waitConfig?: WaitNodeConfig,
+  ) => void | Promise<void>;
 }
 
 /** Controller for a running workflow. */
@@ -527,7 +532,8 @@ export class WorkflowExecutor {
           await workflow.onError?.(error, context);
           this.config.onError?.(errorRun, error);
         },
-        onWaiting: (waitingRun, nodeId) => this.config.onWaiting?.(waitingRun, nodeId),
+        onWaiting: (waitingRun, nodeId, waitConfig) =>
+          this.config.onWaiting?.(waitingRun, nodeId, waitConfig),
       });
     }, {
       "workflow.id": run.workflowId,

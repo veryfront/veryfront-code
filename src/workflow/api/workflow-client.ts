@@ -64,7 +64,7 @@ export class WorkflowClient {
       backend: this.backend,
       debug: this.debug,
       ...config.executor,
-      onWaiting: async (run, nodeId) => {
+      onWaiting: async (run, nodeId, activeWaitConfig) => {
         const input = run.nodeStates[nodeId]?.input as
           | { type?: string; message?: string; payload?: unknown }
           | undefined;
@@ -80,19 +80,23 @@ export class WorkflowClient {
           return;
         }
 
-        // Node state persists only the resolved message and payload. `timeout`
-        // and `approvers` never reach the run record, so resolve them from the
-        // registered definition; dropping them here would create approvals that
-        // never expire and that anyone can decide. `responseSchema` stays on
-        // the decision-time resolver below so a re-registration updates it.
+        // Node state persists only the resolved message and payload. Carry the
+        // exact runtime config across the pause boundary so nested nodes that
+        // reuse an id and function-generated nodes retain their own policy.
+        // The registered definition remains a compatibility fallback for an
+        // execution result produced without the runtime config.
         const registered = this.waitNodeConfigs.get(`${run.workflowId}::${nodeId}`);
+        const configured = activeWaitConfig ?? registered;
         const waitConfig: WaitNodeConfig = {
           type: "wait" as const,
           waitType: "approval" as const,
           message: input.message,
           payload: input.payload,
-          ...(registered?.timeout !== undefined ? { timeout: registered.timeout } : {}),
-          ...(registered?.approvers !== undefined ? { approvers: registered.approvers } : {}),
+          ...(configured?.timeout !== undefined ? { timeout: configured.timeout } : {}),
+          ...(configured?.approvers !== undefined ? { approvers: configured.approvers } : {}),
+          ...(configured?.responseSchema !== undefined
+            ? { responseSchema: configured.responseSchema }
+            : {}),
         };
 
         try {
@@ -132,20 +136,18 @@ export class WorkflowClient {
   /**
    * Record every wait node's config under "<workflowId>::<nodeId>".
    *
-   * `timeout`, `approvers`, and `responseSchema` never reach the run record
-   * (schemas are live objects, and node state persists only the resolved
-   * message and payload), so approval expiry, the approver allow-list, and
-   * decision validation all resolve against the registered definition. Node
-   * ids are already arm-qualified by the DSL, so they match what an approval
-   * is keyed by. A statically declared sub-workflow is walked too: its child
-   * node ids are not namespaced at runtime and its approvals are reported on
-   * the parent run, so its wait nodes are keyed under the registering
-   * workflow's id.
+   * `responseSchema` is a live object and cannot be persisted on an approval,
+   * so this index lets a later process recover decision validation from the
+   * currently registered definition. Node ids are already arm-qualified by
+   * the DSL, so they match what an approval is keyed by. A statically declared
+   * sub-workflow is walked too: its child node ids are not namespaced at
+   * runtime and its approvals are reported on the parent run, so its wait
+   * nodes are keyed under the registering workflow's id.
    *
    * A workflow or loop whose `steps` is a function is not walked: the node list
-   * depends on runtime input/iteration state, so no config can be resolved ahead
-   * of a decision. Approvals on such nodes never expire, accept any approver,
-   * and are accepted unvalidated.
+   * depends on runtime input/iteration state, so no schema can be recovered
+   * from the definition after a process restart. During execution, the exact
+   * runtime config supplies expiry, approvers, and response validation.
    */
   private indexWaitNodeConfigs(definition: WorkflowDefinition): void {
     const keyPrefix = `${definition.id}::`;

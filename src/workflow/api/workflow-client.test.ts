@@ -296,7 +296,7 @@ describe("WorkflowClient", () => {
       assertEquals(stillPending[0]?.status, "pending");
     });
 
-    it("leaves dynamically declared loop approval steps unvalidated", async () => {
+    it("cannot recover a function-generated response schema after a process restart", async () => {
       const dynamicLoopWorkflow = workflow({
         id: "dynamic-loop-approval-workflow",
         steps: [
@@ -537,6 +537,93 @@ describe("WorkflowClient", () => {
       assertEquals(await backend.getPendingApprovals(handle.runId), []);
       const run = await backend.getRun(handle.runId);
       assertEquals(run?.status, "completed");
+    });
+
+    it("uses the active wait config when nested node ids collide", async () => {
+      client.register(workflow({
+        id: "colliding-wait-config-workflow",
+        steps: [
+          waitForApproval("shared-review", {
+            message: "Parent review",
+            approvers: ["alice"],
+          }),
+          dependsOn(
+            subWorkflow("child-workflow", {
+              workflow: workflow({
+                id: "colliding-child-workflow",
+                steps: [
+                  waitForApproval("shared-review", {
+                    message: "Child review",
+                    approvers: ["bob"],
+                  }),
+                ],
+              }).definition,
+            }),
+            "shared-review",
+          ),
+        ],
+      }));
+
+      const handle = await client.start("colliding-wait-config-workflow", {});
+      await handle.settled();
+
+      const [approval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(approval);
+      assertEquals(approval.message, "Parent review");
+
+      await assertRejects(
+        () => client.approve(handle.runId, approval.id, "bob"),
+        VeryfrontError,
+        "Not authorized to approve this request",
+      );
+      assertEquals((await backend.getPendingApprovals(handle.runId))[0]?.status, "pending");
+    });
+
+    it("uses timeout, approvers, and response schema from a function-generated wait", async () => {
+      client.register(workflow({
+        id: "dynamic-wait-config-workflow",
+        steps: [
+          loop("review-loop", {
+            while: (_context, loopContext) => loopContext.isFirstIteration,
+            maxIterations: 1,
+            steps: () => [
+              waitForApproval("dynamic-review", {
+                message: "Dynamic review",
+                timeout: "1h",
+                approvers: ["alice"],
+                responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
+              }),
+            ],
+          }),
+        ],
+      }));
+
+      const before = Date.now();
+      const handle = await client.start("dynamic-wait-config-workflow", {});
+      await handle.settled();
+
+      const [approval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(approval);
+      assertEquals(approval.message, "Dynamic review");
+      assertExists(approval.expiresAt);
+      const hourMs = 60 * 60 * 1000;
+      const expiresAtMs = new Date(approval.expiresAt).getTime();
+      assert(
+        expiresAtMs >= before + hourMs && expiresAtMs <= Date.now() + hourMs,
+        `expiresAt must be roughly one hour out, got ${approval.expiresAt}`,
+      );
+
+      await assertRejects(
+        () => client.approve(handle.runId, approval.id, "bob"),
+        VeryfrontError,
+        "Not authorized to approve this request",
+      );
+      await assertRejects(() =>
+        client.approve(handle.runId, approval.id, "alice", undefined, {
+          confirmed: "yes",
+        })
+      );
+      assertEquals((await backend.getPendingApprovals(handle.runId))[0]?.status, "pending");
     });
   });
 
