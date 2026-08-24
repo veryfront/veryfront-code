@@ -35,6 +35,12 @@ export const PROVIDER_EGRESS_DENY_NET = `--deny-net=${
 
 /** Provider credentials and endpoint overrides ordinary test lanes must not inherit. */
 export const PROVIDER_ENV_KEYS: readonly string[] = Object.freeze([
+  "VERYFRONT_API_TOKEN",
+  "VERYFRONT_API_BASE_URL",
+  "VERYFRONT_API_URL",
+  "VERYFRONT_PROJECT_SLUG",
+  "AG_UI_EVAL_PROJECT_SLUG",
+  "TENANT_PROJECT_SLUG",
   "OPENAI_API_KEY",
   "OPENAI_BASE_URL",
   "ANTHROPIC_API_KEY",
