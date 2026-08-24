@@ -39,6 +39,7 @@ export type { RedisBackendConfig } from "./types.ts";
 import type { RedisBackendConfig, RedisBackendInternalConfig } from "./types.ts";
 
 const logger = agentLogger.component("redis-backend");
+const objectDefineProperty = Object.defineProperty;
 const REDIS_STORAGE_SCHEMA_VERSION = "schema-v1";
 const REDIS_STORAGE_SCHEMA_NAMESPACE = `${REDIS_STORAGE_SCHEMA_VERSION}:`;
 const RUN_OBSERVATION_REVISION_FIELD = "__runObservationRevision";
@@ -260,11 +261,16 @@ function parseRunObservedState(data: Record<string, string>): WorkflowRunObserve
     ) {
       throw new Error("Invalid workflow run observation record");
     }
-    nodes[nodeId] = {
-      status: node.status as WorkflowRunObservedState["nodes"][string]["status"],
-      attempt: node.attempt as number,
-      ...(node.error !== undefined ? { error: node.error } : {}),
-    };
+    objectDefineProperty(nodes, nodeId, {
+      value: {
+        status: node.status as WorkflowRunObservedState["nodes"][string]["status"],
+        attempt: node.attempt as number,
+        ...(node.error !== undefined ? { error: node.error } : {}),
+      },
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
   }
   if (data.runError !== undefined && typeof data.runError !== "string") {
     throw new Error("Invalid workflow run observation record");
