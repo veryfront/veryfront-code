@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { waitFor } from "#veryfront/testing";
 import { FakeTime } from "#std/testing/time";
@@ -426,6 +431,58 @@ describe("agent/agent-service-registration heartbeat retry", () => {
       `a tick must never start while one is still running (saw ${maxConcurrent} concurrent ` +
         `across ${heartbeatRequests} requests)`,
     );
+  });
+
+  it("shares a scheduled in-flight heartbeat with direct callers", async () => {
+    using time = new FakeTime();
+    const intervalMs = 100;
+    let heartbeatRequests = 0;
+    const activeSignals = new Set<AbortSignal>();
+
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      if (!input.toString().endsWith("/heartbeat")) {
+        return Promise.resolve(jsonResponse(serviceResponse));
+      }
+      heartbeatRequests++;
+      const signal = init?.signal;
+      assert(signal, "heartbeat requests must carry an abort signal");
+      activeSignals.add(signal);
+      return new Promise<Response>((_resolve, reject) => {
+        const abort = () => {
+          activeSignals.delete(signal);
+          reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+        };
+        if (signal.aborted) abort();
+        else signal.addEventListener("abort", abort, { once: true });
+      });
+    };
+
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(fetch, { heartbeatIntervalMs: intervalMs }),
+    );
+
+    await time.tickAsync(intervalMs);
+    assertEquals(heartbeatRequests, 1, "the scheduled heartbeat must be in flight");
+
+    const firstDirectCaller = lifecycle.heartbeat();
+    const secondDirectCaller = lifecycle.heartbeat();
+    assertStrictEquals(
+      firstDirectCaller,
+      secondDirectCaller,
+      "overlapping direct callers must receive the shared in-flight promise",
+    );
+    await time.tickAsync(0);
+    assertEquals(
+      heartbeatRequests,
+      1,
+      "direct callers must await the scheduled heartbeat instead of starting another request",
+    );
+    assertEquals(activeSignals.size, 1, "only one heartbeat request may be active");
+
+    lifecycle.stop();
+    await time.tickAsync(0);
+    await Promise.all([firstDirectCaller, secondDirectCaller]);
+    assertEquals(activeSignals.size, 0, "stop() must abort the shared heartbeat request");
   });
 
   it("still escalates when slow failures force ticks to be skipped", async () => {

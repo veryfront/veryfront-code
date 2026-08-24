@@ -525,35 +525,43 @@ export async function createAgentServiceRegistrationLifecycle(
   const service = await registerAgentPushRuntimeService(input, fetchImpl);
   let stopped = false;
   const teardown = new AbortController();
+  let heartbeatInFlight: Promise<void> | undefined;
+  let heartbeatSkipLogged = false;
 
-  const heartbeat = async () => {
-    if (stopped) {
-      return;
-    }
-    try {
-      await heartbeatAgentPushRuntimeService(
-        {
-          apiUrl: input.apiUrl,
-          authToken: input.authToken,
-          serviceId: service.id,
-          heartbeatIntervalMs: input.heartbeatIntervalMs,
-        },
-        fetchImpl,
-        { logger: options.logger, abortSignal: teardown.signal },
-      );
-    } catch (error) {
-      // stop() aborts the in-flight request and any pending backoff. That is a
-      // teardown, not a heartbeat failure, so it must not reach the counter.
+  const heartbeat = () => {
+    if (heartbeatInFlight) return heartbeatInFlight;
+
+    heartbeatSkipLogged = false;
+    heartbeatInFlight = (async () => {
       if (stopped) {
         return;
       }
-      throw error;
-    }
+      try {
+        await heartbeatAgentPushRuntimeService(
+          {
+            apiUrl: input.apiUrl,
+            authToken: input.authToken,
+            serviceId: service.id,
+            heartbeatIntervalMs: input.heartbeatIntervalMs,
+          },
+          fetchImpl,
+          { logger: options.logger, abortSignal: teardown.signal },
+        );
+      } catch (error) {
+        // stop() aborts the in-flight request and any pending backoff. That is a
+        // teardown, not a heartbeat failure, so it must not reach the counter.
+        if (stopped) {
+          return;
+        }
+        throw error;
+      }
+    })().finally(() => {
+      heartbeatInFlight = undefined;
+    });
+    return heartbeatInFlight;
   };
 
   let consecutiveHeartbeatFailures = 0;
-  let heartbeatInFlight = false;
-  let heartbeatSkipLogged = false;
 
   const interval = setInterval(() => {
     // Retries make a tick outlive its interval whenever the control plane is
@@ -570,8 +578,6 @@ export async function createAgentServiceRegistrationLifecycle(
       }
       return;
     }
-    heartbeatInFlight = true;
-    heartbeatSkipLogged = false;
     void heartbeat().then(() => {
       consecutiveHeartbeatFailures = 0;
     }).catch((error: unknown) => {
@@ -590,8 +596,6 @@ export async function createAgentServiceRegistrationLifecycle(
           error: getErrorMessage(error),
         });
       }
-    }).finally(() => {
-      heartbeatInFlight = false;
     });
   }, input.heartbeatIntervalMs);
 
