@@ -7,6 +7,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, mkdir, withTempDir, writeTextFile } from "#veryfront/testing/deno-compat.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { join } from "#veryfront/compat/path";
 import { clearEmbeddingProviders, registerEmbeddingProvider } from "#veryfront/embedding/index.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
@@ -16,8 +17,6 @@ import {
   projectKnowledge,
   searchProjectKnowledge,
 } from "./index.ts";
-
-const originalFetch = globalThis.fetch;
 
 function registerTestEmbeddingProvider(): void {
   registerEmbeddingProvider("test", () =>
@@ -46,7 +45,6 @@ function registerTestEmbeddingProvider(): void {
 describe("projectKnowledge", () => {
   afterEach(() => {
     clearEmbeddingProviders();
-    globalThis.fetch = originalFetch;
   });
 
   it("retrieves source-controlled project knowledge with default paths", async () => {
@@ -469,7 +467,7 @@ describe("projectKnowledge", () => {
 
   it("looks up hosted OKF knowledge from the request-scoped project context", async () => {
     const requestedUrls: string[] = [];
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const result = await withMockFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input instanceof Request ? input.url : String(input);
       requestedUrls.push(url);
       assertEquals(new Headers(init?.headers).get("Authorization"), "Bearer tenant-token");
@@ -528,19 +526,17 @@ describe("projectKnowledge", () => {
         status: 404,
         headers: { "Content-Type": "application/json" },
       });
-    }) as typeof fetch;
-
-    const searchKnowledge = createSearchKnowledgeTool();
-    const result = await runWithRequestContext(
-      {
-        projectSlug: "acme",
-        projectId: "project-1",
-        token: "tenant-token",
-        productionMode: true,
-        releaseId: "release-1",
-      },
-      () => searchKnowledge.execute({ query: "sso release" }),
-    );
+    }, () =>
+      runWithRequestContext(
+        {
+          projectSlug: "acme",
+          projectId: "project-1",
+          token: "tenant-token",
+          productionMode: true,
+          releaseId: "release-1",
+        },
+        () => createSearchKnowledgeTool().execute({ query: "sso release" }),
+      ));
 
     assertEquals(result.mode, "search");
     assertEquals(result.returned, 1);
@@ -556,7 +552,7 @@ describe("projectKnowledge", () => {
 
   it("looks up hosted OKF knowledge from the request-scoped environment context", async () => {
     const requestedUrls: string[] = [];
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const result = await withMockFetch(async (input: RequestInfo | URL) => {
       const url = input instanceof Request ? input.url : String(input);
       requestedUrls.push(url);
 
@@ -597,19 +593,17 @@ describe("projectKnowledge", () => {
         status: 404,
         headers: { "Content-Type": "application/json" },
       });
-    }) as typeof fetch;
-
-    const searchKnowledge = createSearchKnowledgeTool();
-    const result = await runWithRequestContext(
-      {
-        projectSlug: "acme",
-        projectId: "project-1",
-        token: "tenant-token",
-        productionMode: true,
-        environmentName: "Production",
-      },
-      () => searchKnowledge.execute({ query: "sso release" }),
-    );
+    }, () =>
+      runWithRequestContext(
+        {
+          projectSlug: "acme",
+          projectId: "project-1",
+          token: "tenant-token",
+          productionMode: true,
+          environmentName: "Production",
+        },
+        () => createSearchKnowledgeTool().execute({ query: "sso release" }),
+      ));
 
     assertEquals(result.returned, 1, "the environment manifest yields the matching document");
     assertEquals(requestedUrls.length, 1, "the environment context issues a single files request");
@@ -622,7 +616,7 @@ describe("projectKnowledge", () => {
 
   it("looks up hosted OKF knowledge from the request-scoped branch context", async () => {
     const requestedUrls: string[] = [];
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const result = await withMockFetch(async (input: RequestInfo | URL) => {
       const url = input instanceof Request ? input.url : String(input);
       requestedUrls.push(url);
 
@@ -659,19 +653,17 @@ describe("projectKnowledge", () => {
         status: 404,
         headers: { "Content-Type": "application/json" },
       });
-    }) as typeof fetch;
-
-    const searchKnowledge = createSearchKnowledgeTool();
-    const result = await runWithRequestContext(
-      {
-        projectSlug: "acme",
-        projectId: "project-1",
-        token: "tenant-token",
-        productionMode: false,
-        branch: "feature-x",
-      },
-      () => searchKnowledge.execute({ query: "sso release" }),
-    );
+    }, () =>
+      runWithRequestContext(
+        {
+          projectSlug: "acme",
+          projectId: "project-1",
+          token: "tenant-token",
+          productionMode: false,
+          branch: "feature-x",
+        },
+        () => createSearchKnowledgeTool().execute({ query: "sso release" }),
+      ));
 
     assertEquals(result.returned, 1, "the branch manifest yields the matching document");
     assertEquals(requestedUrls.length, 1, "the branch context issues a single files request");

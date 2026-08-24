@@ -8,9 +8,8 @@ import { clearConfigCache } from "#veryfront/config";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { discoverAll, type DiscoveryResult } from "#veryfront/discovery";
 import { taskHandler } from "#veryfront/discovery/handlers/task-handler.ts";
-import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/platform/compat/fs.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
-import { runTriggerTarget } from "../trigger/local-runner.ts";
+import { runTriggerTarget } from "#veryfront/trigger/local-runner.ts";
 import {
   deriveTaskId,
   discoverTasks as discoverTasksRaw,
@@ -42,7 +41,7 @@ function createMockAdapter(files: Record<string, string>): FileSystemAdapter {
     async readFile(path: string): Promise<string> {
       const content = normalizedFiles[normalize(path)];
       if (content === undefined) {
-        throw new Deno.errors.NotFound(`File not found: ${path}`);
+        throw Object.assign(new Error(`File not found: ${path}`), { code: "ENOENT" });
       }
       return content;
     },
@@ -844,179 +843,146 @@ describe("task/discovery", () => {
   });
 
   it("reports invalid integration requirement metadata during unified discovery", async () => {
-    const tempDir = await Deno.makeTempDir({ prefix: "vf-task-invalid-requirements-" });
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/sync.ts": [
+        "export default {",
+        "  run() {},",
+        '  integrationRequirements: [{ integration: "Slack" }],',
+        "};",
+      ].join("\n"),
+    });
 
-    try {
-      await Deno.mkdir(`${tempDir}/tasks`, { recursive: true });
-      await Deno.writeTextFile(
-        `${tempDir}/tasks/sync.ts`,
-        [
-          "export default {",
-          "  run() {},",
-          '  integrationRequirements: [{ integration: "Slack" }],',
-          "};",
-        ].join("\n"),
-      );
+    const result = await discoverAll({
+      baseDir: "/project",
+      fsAdapter: adapter.fs,
+      allowHostProjectCodeExecution: true,
+    });
 
-      const result = await discoverAll({
-        baseDir: tempDir,
-        allowHostProjectCodeExecution: true,
-      });
-
-      assertEquals(result.tasks.size, 0);
-      assertEquals(result.errors.length, 1);
-      assertEquals(
-        result.errors[0]?.error.message.includes(
-          "must use a lowercase integration identifier",
-        ),
-        true,
-      );
-    } finally {
-      await Deno.remove(tempDir, { recursive: true });
-    }
+    assertEquals(result.tasks.size, 0);
+    assertEquals(result.errors.length, 1);
+    assertEquals(
+      result.errors[0]?.error.message.includes(
+        "must use a lowercase integration identifier",
+      ),
+      true,
+    );
   });
 
   it("keeps valid sibling tasks after malformed unified candidates", async () => {
-    const tempDir = await Deno.makeTempDir({ prefix: "vf-task-invalid-sibling-" });
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/default-first.ts": [
+        "export default {",
+        "  run() {},",
+        '  integrationRequirements: [{ integration: "Slack" }],',
+        "};",
+        'export const validDefaultSibling = { run() { return "default sibling"; } };',
+      ].join("\n"),
+      "/project/tasks/named-first.ts": [
+        "export const aBroken = {",
+        "  run() {},",
+        '  integrationRequirements: [{ integration: "Slack" }],',
+        "};",
+        'export const zValidNamedSibling = { run() { return "named sibling"; } };',
+      ].join("\n"),
+    });
 
-    try {
-      await Deno.mkdir(`${tempDir}/tasks`, { recursive: true });
-      await Deno.writeTextFile(
-        `${tempDir}/tasks/default-first.ts`,
-        [
-          "export default {",
-          "  run() {},",
-          '  integrationRequirements: [{ integration: "Slack" }],',
-          "};",
-          'export const validDefaultSibling = { run() { return "default sibling"; } };',
-        ].join("\n"),
-      );
-      await Deno.writeTextFile(
-        `${tempDir}/tasks/named-first.ts`,
-        [
-          "export const aBroken = {",
-          "  run() {},",
-          '  integrationRequirements: [{ integration: "Slack" }],',
-          "};",
-          'export const zValidNamedSibling = { run() { return "named sibling"; } };',
-        ].join("\n"),
-      );
+    const result = await discoverAll({
+      baseDir: "/project",
+      fsAdapter: adapter.fs,
+      allowHostProjectCodeExecution: true,
+    });
 
-      const result = await discoverAll({
-        baseDir: tempDir,
-        allowHostProjectCodeExecution: true,
-      });
-
-      assertEquals([...result.tasks.keys()].sort(), [
-        "default-first",
-        "named-first",
-      ]);
-      assertEquals(result.errors.length, 2);
-      assertEquals(
-        result.errors.every((entry) =>
-          entry.error.message.includes("must use a lowercase integration identifier")
-        ),
-        true,
-      );
-    } finally {
-      await Deno.remove(tempDir, { recursive: true });
-    }
+    assertEquals([...result.tasks.keys()].sort(), [
+      "default-first",
+      "named-first",
+    ]);
+    assertEquals(result.errors.length, 2);
+    assertEquals(
+      result.errors.every((entry) =>
+        entry.error.message.includes("must use a lowercase integration identifier")
+      ),
+      true,
+    );
   });
 
   it("keeps the file-derived ID when malformed named candidates are rejected", async () => {
-    const tempDir = await makeTempDir({ prefix: "vf-task-invalid-id-sibling-" });
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/sync.ts": [
+        'export const aBroken = { run: "not a function" };',
+        'export const zValid = { run() { return "valid sibling"; } };',
+      ].join("\n"),
+    });
 
-    try {
-      await mkdir(`${tempDir}/tasks`, { recursive: true });
-      await writeTextFile(
-        `${tempDir}/tasks/sync.ts`,
-        [
-          'export const aBroken = { run: "not a function" };',
-          'export const zValid = { run() { return "valid sibling"; } };',
-        ].join("\n"),
-      );
+    const result = await discoverAll({
+      baseDir: "/project",
+      fsAdapter: adapter.fs,
+      allowHostProjectCodeExecution: true,
+    });
 
-      const result = await discoverAll({
-        baseDir: tempDir,
-        allowHostProjectCodeExecution: true,
-      });
-
-      assertEquals([...result.tasks.keys()], ["sync"]);
-      assertEquals(result.tasks.get("sync")?.run({ env: {}, config: {} }), "valid sibling");
-      assertEquals(result.errors.map((entry) => entry.error.message), [
-        "Task definition run must be a function.",
-      ]);
-    } finally {
-      await remove(tempDir, { recursive: true });
-    }
+    assertEquals([...result.tasks.keys()], ["sync"]);
+    assertEquals(result.tasks.get("sync")?.run({ env: {}, config: {} }), "valid sibling");
+    assertEquals(result.errors.map((entry) => entry.error.message), [
+      "Task definition run must be a function.",
+    ]);
   });
 
   it("reports accessor-backed task metadata without invoking the accessor", async () => {
-    const tempDir = await Deno.makeTempDir({ prefix: "vf-task-accessor-metadata-" });
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/sync.ts": [
+        "export default {",
+        "  run() {},",
+        "  get integrationRequirements() {",
+        '    throw new Error("integrationRequirements accessor executed");',
+        "  },",
+        "};",
+      ].join("\n"),
+    });
 
-    try {
-      await Deno.mkdir(`${tempDir}/tasks`, { recursive: true });
-      await Deno.writeTextFile(
-        `${tempDir}/tasks/sync.ts`,
-        [
-          "export default {",
-          "  run() {},",
-          "  get integrationRequirements() {",
-          '    throw new Error("integrationRequirements accessor executed");',
-          "  },",
-          "};",
-        ].join("\n"),
-      );
+    const result = await discoverAll({
+      baseDir: "/project",
+      fsAdapter: adapter.fs,
+      allowHostProjectCodeExecution: true,
+    });
 
-      const result = await discoverAll({
-        baseDir: tempDir,
-        allowHostProjectCodeExecution: true,
-      });
-
-      assertEquals(result.tasks.size, 0);
-      assertEquals(result.errors.length, 1);
-      assertEquals(
-        result.errors[0]?.error.message.includes(
-          "integrationRequirements must be a data property",
-        ),
-        true,
-      );
-    } finally {
-      await Deno.remove(tempDir, { recursive: true });
-    }
+    assertEquals(result.tasks.size, 0);
+    assertEquals(result.errors.length, 1);
+    assertEquals(
+      result.errors[0]?.error.message.includes(
+        "integrationRequirements must be a data property",
+      ),
+      true,
+    );
   });
 
   it("discovers class-instance tasks and preserves their run receiver", async () => {
-    const tempDir = await Deno.makeTempDir({ prefix: "vf-task-class-instance-" });
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/stateful.ts": [
+        "class StatefulTask {",
+        '  prefix = "stateful";',
+        "  run() { return this.prefix; }",
+        "}",
+        "export default new StatefulTask();",
+      ].join("\n"),
+    });
 
-    try {
-      await Deno.mkdir(`${tempDir}/tasks`, { recursive: true });
-      await Deno.writeTextFile(
-        `${tempDir}/tasks/stateful.ts`,
-        [
-          "class StatefulTask {",
-          '  prefix = "stateful";',
-          "  run() { return this.prefix; }",
-          "}",
-          "export default new StatefulTask();",
-        ].join("\n"),
-      );
+    const result = await discoverAll({
+      baseDir: "/project",
+      fsAdapter: adapter.fs,
+      allowHostProjectCodeExecution: true,
+    });
 
-      const result = await discoverAll({
-        baseDir: tempDir,
-        allowHostProjectCodeExecution: true,
-      });
-
-      assertEquals(result.errors, []);
-      assertEquals([...result.tasks.keys()], ["stateful"]);
-      assertEquals(result.tasks.get("stateful")?.run({ env: {}, config: {} }), "stateful");
-    } finally {
-      await Deno.remove(tempDir, { recursive: true });
-    }
+    assertEquals(result.errors, []);
+    assertEquals([...result.tasks.keys()], ["stateful"]);
+    assertEquals(result.tasks.get("stateful")?.run({ env: {}, config: {} }), "stateful");
   });
 
   it("does not treat Object.prototype.run pollution as a task export", async () => {
-    const tempDir = await Deno.makeTempDir({ prefix: "vf-task-prototype-pollution-" });
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/config.ts": [
+        'export const config = { mode: "safe" };',
+        "export const helper = {};",
+      ].join("\n"),
+    });
     Object.defineProperty(Object.prototype, "run", {
       configurable: true,
       value: () => "polluted",
@@ -1024,17 +990,9 @@ describe("task/discovery", () => {
 
     try {
       assertEquals(isTaskDefinition({}), false);
-      await Deno.mkdir(`${tempDir}/tasks`, { recursive: true });
-      await Deno.writeTextFile(
-        `${tempDir}/tasks/config.ts`,
-        [
-          'export const config = { mode: "safe" };',
-          "export const helper = {};",
-        ].join("\n"),
-      );
-
       const result = await discoverAll({
-        baseDir: tempDir,
+        baseDir: "/project",
+        fsAdapter: adapter.fs,
         allowHostProjectCodeExecution: true,
       });
 
@@ -1042,7 +1000,6 @@ describe("task/discovery", () => {
       assertEquals([...result.tasks.keys()], []);
     } finally {
       delete (Object.prototype as Record<string, unknown>).run;
-      await Deno.remove(tempDir, { recursive: true });
     }
   });
 
