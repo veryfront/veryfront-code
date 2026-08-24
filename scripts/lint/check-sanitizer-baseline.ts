@@ -23,9 +23,9 @@ import {
 
 // Lower this when you remove sanitizer opt-outs. Never raise it without a very
 // good reason — a new opt-out means a leak is being suppressed rather than fixed.
-// 378 after the transforms/esm audit dropped the remaining opt-outs from the
-// esm, md, and shared transform suites.
-export const SANITIZER_OPT_OUT_BASELINE = 378;
+// 376 after the transforms/esm audit and this module audit removed their
+// remaining sanitizer opt-outs.
+export const SANITIZER_OPT_OUT_BASELINE = 376;
 
 const OPT_OUT_PATTERN = /sanitize(?:Resources|Ops|Exit)\s*:\s*false/g;
 
