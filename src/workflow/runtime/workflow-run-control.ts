@@ -173,13 +173,15 @@ export async function claimWorkflowRunControl(
   let pendingLockToken: string | null = null;
   let runToProcess: WorkflowRun | null = run;
   let claimed = false;
+  let managerClaimWorkerId: string | undefined;
 
   try {
     if (run.status === "running") {
       if (!hasWorkerSupport(backend)) return { status: "skipped-stalled-claim-lost" };
+      managerClaimWorkerId = `mgr:${managerId}`;
       const stalledClaimed = await backend.claimStalledRun(
         runId,
-        `mgr:${managerId}`,
+        managerClaimWorkerId,
         stalledThreshold,
       );
       if (!stalledClaimed) return { status: "skipped-stalled-claim-lost" };
@@ -203,7 +205,7 @@ export async function claimWorkflowRunControl(
     requireWorkflowSourceIntegrationPolicy(runToProcess);
 
     const now = new Date();
-    const expectedWorkerId = run.status === "running" ? `mgr:${managerId}` : undefined;
+    const expectedWorkerId = managerClaimWorkerId;
     claimed = await updateRunIfStatus(
       backend,
       runId,
@@ -246,7 +248,14 @@ export async function claimWorkflowRunControl(
       },
     };
   } catch (error) {
-    return await failClaim(input, runToProcess ?? run, workerId, claimed, ensureError(error));
+    return await failClaim(
+      input,
+      runToProcess ?? run,
+      workerId,
+      claimed,
+      ensureError(error),
+      managerClaimWorkerId,
+    );
   } finally {
     if (pendingLockToken) {
       try {
@@ -267,7 +276,7 @@ async function reconcileApprovalDecision(
   const decisionContext = {
     approved: operation.decision.approved,
     approver: operation.decision.approver,
-    comment: operation.decision.comment,
+    ...(operation.decision.comment === undefined ? {} : { comment: operation.decision.comment }),
     ...(operation.decision.data === undefined ? {} : { data: operation.decision.data }),
     decidedAt: decidedAt.toISOString(),
   };
@@ -295,7 +304,9 @@ async function reconcileApprovalDecision(
           output: {
             approved: operation.decision.approved,
             approver: operation.decision.approver,
-            comment: operation.decision.comment,
+            ...(operation.decision.comment === undefined
+              ? {}
+              : { comment: operation.decision.comment }),
             ...(operation.decision.data === undefined ? {} : { data: operation.decision.data }),
           },
           attempt: 1,
@@ -377,8 +388,9 @@ async function reconcileHydrateEnv(
     },
     operation.expectedWorkerId,
   );
-  const latest = (await backend.getRun(run.id)) ?? run;
-  if (updated) return { status: "reconciled", run: latest };
+  const latest = await backend.getRun(run.id);
+  if (updated) return { status: "reconciled", run: latest ?? undefined };
+  if (!latest) return { status: "skipped-terminal" };
   if (!ACTIVE_RECONCILE_STATUSES.includes(latest.status)) {
     return { status: "skipped-terminal", run: latest };
   }
@@ -430,6 +442,7 @@ async function failClaim(
   workerId: string,
   claimed: boolean,
   error?: Error,
+  managerClaimWorkerId?: string,
 ): Promise<WorkflowRunControlClaimOutcome> {
   const message = `RUN_EXECUTION_CREATION_FAILED: Failed to create run execution: ${
     error?.message ?? "run ownership changed before execution creation"
@@ -450,6 +463,7 @@ async function failClaim(
     run.id,
     ["pending", "waiting", "running"],
     failure,
+    managerClaimWorkerId,
   );
   return { status: "failed-before-claim", error };
 }
