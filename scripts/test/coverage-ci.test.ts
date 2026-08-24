@@ -17,7 +17,7 @@ function coverageExcludePatterns(): RegExp[] {
 }
 
 const providerDenyNet =
-  "--deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai";
+  "--deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai,mcp.context7.com";
 
 describe("coverage CI command", () => {
   it("denies live provider egress while preserving allow-all for local test fixtures", () => {

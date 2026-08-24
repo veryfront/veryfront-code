@@ -27,6 +27,7 @@ export const PROVIDER_EGRESS_HOSTS: readonly string[] = Object.freeze([
   "api.groq.com",
   "api.deepseek.com",
   "openrouter.ai",
+  "mcp.context7.com",
 ]);
 
 export const PROVIDER_EGRESS_DENY_NET = `--deny-net=${
@@ -56,6 +57,7 @@ export const PROVIDER_ENV_KEYS: readonly string[] = Object.freeze([
   "DEEPSEEK_BASE_URL",
   "OPENROUTER_API_KEY",
   "OPENROUTER_BASE_URL",
+  "CONTEXT7_API_KEY",
 ]);
 
 export function buildTestProcessEnv(

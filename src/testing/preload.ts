@@ -33,6 +33,7 @@ for (
     "DEEPSEEK_BASE_URL",
     "OPENROUTER_API_KEY",
     "OPENROUTER_BASE_URL",
+    "CONTEXT7_API_KEY",
   ]
 ) Deno.env.delete(key);
 
