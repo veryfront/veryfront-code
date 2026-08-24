@@ -80,7 +80,11 @@ describe("workflow source integration policy snapshots", () => {
 
   it("requires an explicit snapshot without invoking run accessors", () => {
     assertThrows(
-      () => requireWorkflowSourceIntegrationPolicy({ id: "missing" }),
+      () =>
+        requireWorkflowSourceIntegrationPolicy({
+          id: "missing",
+          sourceIntegrationPolicy: undefined,
+        } as never),
       VeryfrontError,
       "missing its source integration policy snapshot",
     );
