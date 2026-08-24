@@ -4,6 +4,7 @@
   "exports": "./src/index.ts",
   "veryfront": {
     "extension": true,
+    "activation": "explicit",
     "npm": {
       "optionalPeers": ["@huggingface/transformers"]
     },

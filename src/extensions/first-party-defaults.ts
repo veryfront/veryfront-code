@@ -142,7 +142,7 @@ export const FIRST_PARTY_EXTENSION_POLICIES = Object.freeze(([
   {
     name: "ext-llm-onnx",
     sourceDirectory: "ext-llm-onnx",
-    selection: "builtin-direct",
+    selection: "explicit",
     rootNpm: false,
   },
   {

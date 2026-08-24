@@ -258,7 +258,9 @@ describe("local-engine (requires model download)", {
   it("generateStream produces tokens", {
     ignore: !RUN_LOCAL_AI_TESTS,
   }, async () => {
-    const { generateStream } = await import("./local-engine.ts");
+    const { generateStream } = await import(
+      "../../../../extensions/ext-llm-onnx/src/local-engine.ts"
+    );
     const tokens: string[] = [];
 
     for await (
@@ -277,7 +279,7 @@ describe("local-engine (requires model download)", {
   it("agent runtime emits server-local inference mode with real ONNX inference", {
     ignore: !RUN_LOCAL_AI_TESTS,
   }, async () => {
-    const { AgentRuntime } = await import("../../agent/runtime/index.ts");
+    const { AgentRuntime } = await import("../../../../src/agent/runtime/index.ts");
 
     const runtime = new AgentRuntime("test-real-local-runtime", {
       model: "local/qwen3.5-0.8b",

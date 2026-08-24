@@ -162,6 +162,24 @@ describe("createBuiltinExtensions", () => {
     }
   });
 
+  it("keeps optional ONNX out of default builtin LLM registration", () => {
+    const extensions = createBuiltinExtensions();
+
+    assertEquals(
+      extensions.some((entry) => entry.extension.name === "ext-llm-onnx"),
+      false,
+    );
+    assertEquals(
+      DEFERRED_BUILTIN_EXTENSIONS.some((entry) => entry.name === "ext-llm-onnx"),
+      false,
+    );
+    assertEquals(
+      FIRST_PARTY_EXTENSION_POLICIES.find((policy) => policy.name === "ext-llm-onnx")
+        ?.selection,
+      "explicit",
+    );
+  });
+
   it("keeps builtin package discovery metadata auto-activated", async () => {
     for (const definition of DEFERRED_BUILTIN_EXTENSIONS) {
       const manifest = JSON.parse(
