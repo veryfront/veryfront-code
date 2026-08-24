@@ -1,8 +1,21 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { subWorkflow } from "./sub-workflow.ts";
-import type { WorkflowDefinition } from "../types.ts";
+import type {
+  SubWorkflowNodeConfig,
+  WorkflowContext,
+  WorkflowDefinition,
+  WorkflowNode,
+} from "../types.ts";
+
+function expectSubWorkflowConfig(node: WorkflowNode): SubWorkflowNodeConfig {
+  if (node.config.type !== "subWorkflow") {
+    throw new Error(`Expected subWorkflow node, got ${node.config.type}`);
+  }
+  return node.config;
+}
 
 describe("workflow/dsl/sub-workflow", () => {
   describe("subWorkflow", () => {
@@ -17,7 +30,7 @@ describe("workflow/dsl/sub-workflow", () => {
     it("should throw for empty id", () => {
       assertThrows(
         () => subWorkflow("", { workflow: { id: "w", steps: [] } }),
-        Error,
+        VeryfrontError,
         "non-empty",
       );
     });
@@ -28,20 +41,30 @@ describe("workflow/dsl/sub-workflow", () => {
           subWorkflow("test", {
             workflow: undefined as unknown as WorkflowDefinition,
           }),
-        Error,
+        VeryfrontError,
         "workflow",
       );
     });
 
     it("should pass through optional config", () => {
+      const childWorkflow: WorkflowDefinition = { id: "w", steps: [] };
+      const input = (context: WorkflowContext) => context;
+      const output = (result: unknown) => result;
       const node = subWorkflow("nested", {
-        workflow: { id: "w", steps: [] },
+        workflow: childWorkflow,
         checkpoint: true,
         timeout: "30s",
+        input,
+        output,
       });
 
       assertEquals(node.config.checkpoint, true);
       assertEquals(node.config.timeout, "30s");
+
+      const config = expectSubWorkflowConfig(node);
+      assertEquals(config.workflow, childWorkflow, "subWorkflow must forward the child definition");
+      assertEquals(config.input, input, "subWorkflow must forward the input mapper");
+      assertEquals(config.output, output, "subWorkflow must forward the output transform");
     });
   });
 });

@@ -24,6 +24,7 @@ import {
   type WorkerPoolDependencies,
 } from "./worker-pool.ts";
 import type {
+  ExecuteAppRouteRequest,
   RenderSSRRequest,
   WorkerPoolConfig,
   WorkerRequest,
@@ -92,6 +93,25 @@ function makeRequest(
   };
 }
 
+/**
+ * Narrow a request the pool forwarded to its app-route member.
+ *
+ * `ControlledWorker.requests` is typed as the whole `WorkerRequest` union, so
+ * `projectDir` / `projectEnv` are only reachable once the discriminant is
+ * pinned. Failing here is itself part of the contract: the pool must hand the
+ * worker the exact request shape it was given.
+ */
+function appRouteRequest(request: WorkerRequest | undefined): ExecuteAppRouteRequest {
+  if (request?.type !== "execute-app-route") {
+    throw new Error(
+      `the pool must forward the execute-app-route request it was given; received ${
+        request?.type ?? "no request"
+      }`,
+    );
+  }
+  return request;
+}
+
 function makeSSRRequest(
   id: string,
   overrides: Partial<RenderSSRRequest> = {},
@@ -115,6 +135,7 @@ class ControlledWorker {
   readonly permissions: ProjectWorkerOptions["permissions"];
   readonly isolatedSsrRendererModuleUrl: string | undefined;
   status: "idle" | "busy" | "crashed" | "terminated" = "idle";
+  readonly requests: WorkerRequest[] = [];
   requestCount = 0;
   terminateCalls = 0;
   healthCheckCalls = 0;
@@ -160,6 +181,7 @@ class ControlledWorker {
   }
 
   execute(request: WorkerRequest): Promise<WorkerResponse> {
+    this.requests.push(request);
     this.requestCount++;
     this.status = "busy";
     return new Promise((resolve, reject) => {
@@ -168,6 +190,7 @@ class ControlledWorker {
   }
 
   executeStream(request: WorkerRequest): ReadableStream<Uint8Array> {
+    this.requests.push(request);
     this.requestCount++;
     this.status = "busy";
     return new ReadableStream<Uint8Array>({
@@ -384,6 +407,32 @@ testSuite("WorkerPool", () => {
     assertEquals(
       (worker as unknown as ControlledWorker).allowInternalEgress,
       true,
+    );
+  });
+
+  it("blocks internal egress for workers when the host decision is off", async () => {
+    const blocked = createControlledPool(
+      { allowInternalEgress: false } as Partial<WorkerPoolConfig>,
+    );
+    await pool.shutdown();
+    pool = blocked.pool;
+
+    const blockedWorker = pool.getOrCreateWorker("blocked-egress-project", []);
+    assertEquals(
+      (blockedWorker as unknown as ControlledWorker).allowInternalEgress,
+      false,
+      "a worker must inherit a blocked internal-egress decision from the pool config",
+    );
+
+    const defaulted = createControlledPool();
+    await pool.shutdown();
+    pool = defaulted.pool;
+
+    const defaultedWorker = pool.getOrCreateWorker("default-egress-project", []);
+    assertEquals(
+      (defaultedWorker as unknown as ControlledWorker).allowInternalEgress,
+      false,
+      "an omitted internal-egress decision must normalize to blocked",
     );
   });
 
@@ -611,34 +660,47 @@ testSuite("WorkerPool", () => {
   });
 });
 
-testSuite("WorkerPool - RFC 9457 error metadata", () => {
+testSuite("WorkerPool - worker request forwarding", () => {
   let pool: WorkerPool;
 
-  beforeEach(() => {
-    pool = new WorkerPool({
-      maxPoolSize: 3,
-      idleTimeoutMs: 1_000,
-      requestTimeoutMs: 5_000,
-      healthCheckIntervalMs: 60_000,
-      maxRequestsPerWorker: 100,
-    });
-  });
-
   afterEach(async () => {
-    await pool.shutdown();
+    await pool?.shutdown();
   });
 
-  it("execute-app-route request includes projectDir", () => {
-    // Verify the request type accepts projectDir
-    const worker = pool.getOrCreateWorker("test-proj", ["/tmp/test"]);
-    assertExists(worker);
-    assertEquals(worker.projectId, "test-proj");
+  it("execute-app-route request includes projectDir", async () => {
+    const controlled = createControlledPool();
+    pool = controlled.pool;
+
+    const pending = pool.execute("test-proj", ["/tmp"], makeRequest("dir-1"));
+    const worker = latestWorker(controlled.workers, "test-proj");
+    worker.complete("dir-1");
+    await pending;
+
+    assertEquals(
+      appRouteRequest(worker.requests[0]).projectDir,
+      "/tmp",
+      "the pool must forward projectDir to the worker request",
+    );
   });
 
-  it("execute-app-route request accepts projectEnv", () => {
-    // Verify the request type accepts projectEnv field
-    const worker = pool.getOrCreateWorker("test-proj", ["/tmp/test"]);
-    assertExists(worker);
+  it("execute-app-route request accepts projectEnv", async () => {
+    const controlled = createControlledPool();
+    pool = controlled.pool;
+
+    const pending = pool.execute(
+      "test-proj",
+      ["/tmp"],
+      makeRequest("env-1", { TENANT: "a" }),
+    );
+    const worker = latestWorker(controlled.workers, "test-proj");
+    worker.complete("env-1");
+    await pending;
+
+    assertEquals(
+      appRouteRequest(worker.requests[0]).projectEnv,
+      { TENANT: "a" },
+      "the pool must forward projectEnv to the worker request",
+    );
   });
 });
 
@@ -1273,6 +1335,45 @@ testSuite("WorkerPool - bounded admission and retirement", () => {
     assertEquals(controlled.workers.get("scope-a")?.length, 2);
   });
 
+  it("retires a live worker that fails its health ping", async () => {
+    const controlled = createControlledPool();
+    pool = controlled.pool;
+
+    pool.getOrCreateWorker("scope-a", []);
+    const workerA = latestWorker(controlled.workers, "scope-a");
+    workerA.healthCheckResult = false;
+
+    await runHealthCheck(pool);
+
+    assertEquals(workerA.healthCheckCalls, 1, "an idle worker must be pinged");
+    assertEquals(
+      workerA.terminateCalls,
+      1,
+      "a worker that fails its health ping must be terminated",
+    );
+    assertEquals(
+      pool.getStats().workers["scope-a"],
+      undefined,
+      "a worker that failed its health ping must not stay in the pool",
+    );
+
+    pool.getOrCreateWorker("scope-b", []);
+    const workerB = latestWorker(controlled.workers, "scope-b");
+    workerB.healthCheckResult = Promise.reject(new Error("health ping transport failed"));
+    await runHealthCheck(pool);
+
+    assertEquals(
+      workerB.terminateCalls,
+      1,
+      "a health ping that throws must retire the worker as well",
+    );
+    assertEquals(
+      pool.getStats().workers["scope-b"],
+      undefined,
+      "a worker whose health ping threw must not stay in the pool",
+    );
+  });
+
   it("defers explicit eviction and terminates exactly once after settlement", async () => {
     const controlled = createControlledPool();
     pool = controlled.pool;
@@ -1402,23 +1503,44 @@ testSuite("WorkerPool - bounded admission and retirement", () => {
 
   it("retires only idle workers when real host heap pressure is high", async () => {
     const controlled = createControlledPool(
-      { maxPoolSize: 4 },
+      { maxPoolSize: 5 },
       {},
       { getHeapUsedPercent: () => 75 },
     );
     pool = controlled.pool;
 
+    // The busy worker is created first so it is also the least recently used,
+    // which is exactly the entry the eviction sort would reach for first.
+    const active = pool.execute("scope-busy", ["/tmp"], makeRequest("busy-1"));
+    const busyWorker = latestWorker(controlled.workers, "scope-busy");
     for (const scope of ["scope-a", "scope-b", "scope-c", "scope-d"]) {
       pool.getOrCreateWorker(scope, ["/tmp"]);
     }
 
     await runHealthCheck(pool);
 
-    assertEquals(pool.getStats().poolSize, 3);
+    assertEquals(
+      busyWorker.terminateCalls,
+      0,
+      "host heap pressure must never terminate a worker with an in-flight tenant request",
+    );
+    assertEquals(
+      pool.getStats().workers["scope-busy"]?.retiring,
+      false,
+      "the busy least-recently-used worker must not be marked retiring under heap pressure",
+    );
+    assertEquals(
+      pool.getStats().poolSize,
+      4,
+      "only one of the four idle workers may be retired",
+    );
     const terminated = [...controlled.workers.values()]
       .flat()
       .filter((worker) => worker.terminateCalls === 1);
-    assertEquals(terminated.length, 1);
+    assertEquals(terminated.length, 1, "only idle workers may be retired");
+
+    busyWorker.complete("busy-1");
+    await active;
   });
 });
 

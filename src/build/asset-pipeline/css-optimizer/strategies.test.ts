@@ -6,6 +6,7 @@ import { remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { ensureDir } from "#veryfront/compat/std/fs.ts";
 import { MinificationStrategy, PurgeStrategy } from "./strategies/index.ts";
 import type { CSSOptimizationOptions } from "./types/index.ts";
+import type { CSSOptimizationRequest } from "#veryfront/extensions/css/index.ts";
 import { createTestCSSOptimizationEngine } from "../../../../tests/_helpers/css-optimization-engine.ts";
 import { createTestCSSPurgingEngine } from "../../../../tests/_helpers/css-purging-engine.ts";
 
@@ -49,14 +50,24 @@ describe("MinificationStrategy", () => {
     assertEquals(strategy.canProcess({ enabled: true, minify: false }), false);
   });
 
-  it("process removes comments", async () => {
-    const strategy = new MinificationStrategy(minificationEngine);
+  it("process asks the engine to minify the given file", async () => {
+    let received: CSSOptimizationRequest | undefined;
+    const engine = createTestCSSOptimizationEngine((request) => {
+      received = request;
+      return { css: ".captured{}" };
+    });
+    const strategy = new MinificationStrategy(engine);
     const options: CSSOptimizationOptions = { enabled: true, minify: true };
 
     const result = await strategy.process(TEST_CSS, "test.css", options);
 
-    assertEquals(result.code.includes("/*"), false);
-    assertEquals(result.sourceMap, undefined);
+    assertEquals(
+      received,
+      { css: TEST_CSS, sourcePath: "test.css", minify: true, sourceMap: false },
+      "strategy must ask the engine to minify the given file",
+    );
+    assertEquals(result.code, ".captured{}", "strategy returns the engine output verbatim");
+    assertEquals(result.sourceMap, undefined, "minification emits no source map");
   });
 
   it("process removes whitespace", async () => {

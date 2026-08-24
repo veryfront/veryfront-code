@@ -141,6 +141,26 @@ describe("hydration-data-generator", () => {
       assertEquals(parsed.appRouterRoot, "src/app");
     });
 
+    it("omits a traversal-relative App Router root", () => {
+      const parsed = parseHydrationData("page", {}, {}, {
+        ...baseOptions,
+        projectDir: "/project",
+        pagePath: "../outside/page.tsx",
+        config: { directories: { app: "../shared/app" } },
+      }) as { appRouterRoot?: string; pagePath?: string };
+
+      assertEquals(
+        parsed.appRouterRoot,
+        "",
+        "a traversal-relative app directory must not be published",
+      );
+      assertEquals(
+        parsed.pagePath,
+        undefined,
+        "a traversal-relative page path must be omitted from the payload",
+      );
+    });
+
     it("publishes isolated client-page ownership", () => {
       const parsed = parseHydrationData(
         "page",

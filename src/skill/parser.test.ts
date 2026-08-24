@@ -12,7 +12,12 @@ import {
   SKILL_ALLOWED_TOOL_MAX_PATTERNS,
   SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH,
 } from "./limits.ts";
-import { SKILL_METADATA_MAX_ENTRIES, SKILL_NAME_REGEX } from "./types.ts";
+import {
+  SKILL_COMPATIBILITY_MAX_LENGTH,
+  SKILL_LICENSE_MAX_LENGTH,
+  SKILL_METADATA_MAX_ENTRIES,
+  SKILL_NAME_REGEX,
+} from "./types.ts";
 
 describe("src/skill/parser", () => {
   describe("parseSkillFrontmatter", () => {
@@ -596,6 +601,56 @@ Body`),
         RangeError,
         "description exceeds",
       );
+      assertThrows(
+        () =>
+          validateSkillFileMetadata(
+            {
+              name: "test",
+              description: "desc",
+              compatibility: "x".repeat(SKILL_COMPATIBILITY_MAX_LENGTH + 1),
+            },
+            "test",
+          ),
+        RangeError,
+        "compatibility exceeds",
+      );
+      assertThrows(
+        () =>
+          validateSkillFileMetadata(
+            {
+              name: "test",
+              description: "desc",
+              license: "x".repeat(SKILL_LICENSE_MAX_LENGTH + 1),
+            },
+            "test",
+          ),
+        RangeError,
+        "license exceeds",
+      );
+      assertEquals(
+        validateSkillFileMetadata(
+          {
+            name: "test",
+            description: "desc",
+            compatibility: "x".repeat(SKILL_COMPATIBILITY_MAX_LENGTH),
+          },
+          "test",
+        ).compatibility,
+        "x".repeat(SKILL_COMPATIBILITY_MAX_LENGTH),
+        "compatibility at the bound is preserved",
+      );
+      assertEquals(
+        validateSkillFileMetadata(
+          {
+            name: "test",
+            description: "desc",
+            license: "x".repeat(SKILL_LICENSE_MAX_LENGTH),
+          },
+          "test",
+        ).license,
+        "x".repeat(SKILL_LICENSE_MAX_LENGTH),
+        "license at the bound is preserved",
+      );
       for (const name of ["trailing-", "double--hyphen"]) {
         assertThrows(
           () =>
@@ -625,6 +680,28 @@ Body`),
           "control characters",
         );
       }
+      assertThrows(
+        () =>
+          validateSkillFileMetadata(
+            { name: "safe", description: "trusted\u0000forged" },
+            "safe",
+          ),
+        TypeError,
+        "control characters",
+      );
+    });
+
+    it("preserves line feeds in authored Skill descriptions", () => {
+      const metadata = validateSkillFileMetadata(
+        { name: "safe", description: "First line\nSecond line" },
+        "safe",
+      );
+
+      assertEquals(
+        metadata.description,
+        "First line\nSecond line",
+        "line feeds are allowed in authored skill descriptions",
+      );
     });
 
     it("rejects accessor-backed allowed-tools without invoking getters", () => {

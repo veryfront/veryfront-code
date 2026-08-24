@@ -79,6 +79,31 @@ describe("AuthHandler realm sanitization", () => {
     expect(header).toBe('Basic realm="12345"');
   });
 
+  it("exempts CORS preflight from the credential gate", async () => {
+    // The preflight exemption must stay: a browser sends no credentials on an
+    // OPTIONS preflight, so gating it breaks CORS on every auth-protected site.
+    const handler = createHandler();
+    const result = await handler.handle(
+      new Request("http://localhost/test", { method: "OPTIONS" }),
+      createCtx(),
+    );
+
+    expect(result.continue).toBe(true);
+    expect(result.response).toBeUndefined();
+  });
+
+  it("does not widen the method exemption past OPTIONS", async () => {
+    const handler = createHandler();
+    const result = await handler.handle(
+      new Request("http://localhost/test", { method: "HEAD" }),
+      createCtx(),
+    );
+
+    expect(result.continue).not.toBe(true);
+    expect(result.response?.status).toBe(401);
+    expect(result.response?.headers.get("WWW-Authenticate")).toBe('Basic realm="Secure Area"');
+  });
+
   it("does not invoke conversion hooks on an invalid realm value", async () => {
     const handler = createHandler();
     let conversions = 0;

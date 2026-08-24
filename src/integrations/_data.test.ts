@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { airtableConfig } from "../oauth/providers/common.ts";
 import { connectors, icons } from "./_data.ts";
@@ -609,6 +614,9 @@ describe("integration endpoint specs", () => {
   });
 
   it("publishes all connector tool IDs with their integration namespace prefix", () => {
+    const seenToolIds = new Set<string>();
+    let toolCount = 0;
+
     for (const connector of connectors) {
       const prefix = `${connector.name}__`;
 
@@ -624,45 +632,68 @@ describe("integration endpoint specs", () => {
           tool.id.lastIndexOf("__"),
           `Expected ${connector.name}:${tool.id} to contain a single namespace separator`,
         );
+        assertEquals(
+          seenToolIds.has(tool.id),
+          false,
+          `Duplicate canonical tool ID ${tool.id} (second occurrence in ${connector.name})`,
+        );
+        seenToolIds.add(tool.id);
+        toolCount += 1;
       }
     }
 
+    assertEquals(
+      seenToolIds.size,
+      toolCount,
+      "every catalog tool ID must be unique across all connectors",
+    );
     assertExists(getTool("harvest", "harvest__list_accounts"));
   });
 
   it("keeps source connector template tool IDs prefixed before generation", async () => {
+    let inspectedTemplates = 0;
+    let checkedToolIds = 0;
+
     for await (const entry of Deno.readDir("templates/integrations")) {
       if (!entry.isDirectory || entry.name === "_base") continue;
 
+      let raw: string;
       try {
-        const raw = await Deno.readTextFile(
+        raw = await Deno.readTextFile(
           `templates/integrations/${entry.name}/connector.json`,
         );
-        const connector = JSON.parse(raw) as {
-          name?: string;
-          tools?: Array<{ id?: string }>;
-        };
-        const connectorName = connector.name ?? entry.name;
-        const prefix = `${connectorName}__`;
-
-        for (const tool of connector.tools ?? []) {
-          if (!tool.id) continue;
-          assertEquals(
-            tool.id.startsWith(prefix),
-            true,
-            `Expected ${entry.name}:${tool.id} to start with ${prefix}`,
-          );
-          assertEquals(
-            tool.id.indexOf("__"),
-            tool.id.lastIndexOf("__"),
-            `Expected ${entry.name}:${tool.id} to contain a single namespace separator`,
-          );
-        }
       } catch (error) {
-        if (error instanceof Deno.errors.NotFound) continue;
+        if (error instanceof Deno.errors.NotFound) {
+          throw new Error(`templates/integrations/${entry.name} has no connector.json`);
+        }
         throw error;
       }
+      const connector = JSON.parse(raw) as {
+        name?: string;
+        tools?: Array<{ id?: string }>;
+      };
+      inspectedTemplates += 1;
+      const connectorName = connector.name ?? entry.name;
+      const prefix = `${connectorName}__`;
+
+      for (const tool of connector.tools ?? []) {
+        if (!tool.id) continue;
+        assertEquals(
+          tool.id.startsWith(prefix),
+          true,
+          `Expected ${entry.name}:${tool.id} to start with ${prefix}`,
+        );
+        assertEquals(
+          tool.id.indexOf("__"),
+          tool.id.lastIndexOf("__"),
+          `Expected ${entry.name}:${tool.id} to contain a single namespace separator`,
+        );
+        checkedToolIds += 1;
+      }
     }
+
+    assert(inspectedTemplates > 0, "expected at least one connector template to be inspected");
+    assert(checkedToolIds > 0, "expected at least one template tool id to be checked");
   });
 
   it("uses the documented SAP supplier invoice release function import", () => {

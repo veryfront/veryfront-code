@@ -1,5 +1,7 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing";
 import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import {
   createLocalControlAccessDeniedResponse,
@@ -23,11 +25,56 @@ function requestFromPeer(hostname?: string, headers: HeadersInit = {}): Request 
 }
 
 describe("local control request admission", () => {
-  it("prevents content sniffing on access-denied responses", () => {
+  it("prevents content sniffing on access-denied responses", async () => {
     const response = createLocalControlAccessDeniedResponse(requestFromPeer("127.0.0.1"));
 
     assertEquals(response.status, 403);
     assertEquals(response.headers.get("X-Content-Type-Options"), "nosniff");
+    assertEquals(
+      response.headers.get("Cache-Control"),
+      "no-store",
+      "a privileged-control denial must never be cached",
+    );
+    assertEquals(
+      await response.text(),
+      "Local control access requires a direct loopback connection and a trusted local-development host",
+      "the denial body must stay the fixed uniform message",
+    );
+  });
+
+  it("omits the body and cancels the request stream on a rejected request", async () => {
+    const head = new Request("http://localhost/_dev", {
+      method: "HEAD",
+      headers: { host: "localhost" },
+    });
+    assertEquals(
+      createLocalControlAccessDeniedResponse(head).body,
+      null,
+      "a HEAD denial must carry no body",
+    );
+
+    let cancelReason: unknown;
+    const body = new ReadableStream<Uint8Array>({
+      cancel(reason) {
+        cancelReason = reason;
+      },
+    });
+    const post = new Request("http://localhost/_dev", {
+      method: "POST",
+      headers: { host: "localhost" },
+      body,
+      duplex: "half",
+    } as RequestInit);
+
+    assertEquals(createLocalControlAccessDeniedResponse(post).status, 403);
+    await waitFor(() => cancelReason !== undefined, {
+      message: "an unread body on a rejected local-control request must be cancelled",
+    });
+    assertEquals(
+      cancelReason instanceof Error,
+      true,
+      "the cancellation must carry the rejection detail",
+    );
   });
 
   it("requires transport-authenticated loopback provenance", () => {

@@ -10,6 +10,7 @@ import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { generateId, parseDuration } from "../types.ts";
 import { updateRunIfStatus, type WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
+import { ApprovalDecisionSchema } from "../schemas/workflow.schema.ts";
 import { reconcileWorkflowRunControl } from "./workflow-run-control.ts";
 import {
   INVALID_ARGUMENT,
@@ -24,6 +25,7 @@ const logger = baseLogger.component("approval-manager");
 const DEFAULT_EXPIRATION_CHECK_INTERVAL_MS = 60_000;
 const MAX_DECISION_RECONCILIATION_ATTEMPTS = 8;
 
+/** Receives detached approval and run snapshots. Mutating them does not change persisted state. */
 export type ApprovalNotifier = (
   approval: PendingApproval,
   run: WorkflowRun,
@@ -43,7 +45,7 @@ export interface ApprovalManagerConfig {
   backend: WorkflowBackend;
   /** Workflow executor for resuming after approval */
   executor?: WorkflowExecutor;
-  /** Notification callback */
+  /** Notification callback. Owner-bound approvals are persisted before this callback runs. */
   notifier?: ApprovalNotifier;
   /** Resolve a wait node response schema for persisted approvals. */
   responseSchemaResolver?: ApprovalResponseSchemaResolver;
@@ -101,13 +103,14 @@ export class ApprovalManager {
     waitConfig: WaitNodeConfig,
     context: WorkflowContext,
   ): Promise<ApprovalRequest> {
+    const runId = run.id;
+    const workerId = run.workerId;
+    const timeoutMs = waitConfig.timeout ? parseDuration(waitConfig.timeout) : undefined;
     const payload = typeof waitConfig.payload === "function"
       ? await waitConfig.payload(context)
       : waitConfig.payload;
 
-    const expiresAt = waitConfig.timeout
-      ? new Date(Date.now() + parseDuration(waitConfig.timeout))
-      : undefined;
+    const expiresAt = timeoutMs ? new Date(Date.now() + timeoutMs) : undefined;
 
     const approval: PendingApproval = {
       id: generateId("apr"),
@@ -122,11 +125,11 @@ export class ApprovalManager {
 
     logger.debug("Creating approval", {
       approvalId: approval.id,
-      runId: run.id,
+      runId,
     });
 
     const responseSchemaKey = waitConfig.responseSchema
-      ? this.responseSchemaKey(run.id, approval.id)
+      ? this.responseSchemaKey(runId, approval.id)
       : undefined;
     if (responseSchemaKey && waitConfig.responseSchema) {
       this.responseSchemas.set(responseSchemaKey, waitConfig.responseSchema);
@@ -135,7 +138,7 @@ export class ApprovalManager {
     // Worker-owned approvals are reserved atomically before notification. This
     // prevents a delayed onWaiting callback from notifying or appending after a
     // replacement worker has claimed the run.
-    const ownerBound = run.workerId !== undefined;
+    const ownerBound = workerId !== undefined;
     if (ownerBound) {
       const saveOwned = this.config.backend.savePendingApprovalIfStatusAndWorker;
       let saved: boolean;
@@ -143,9 +146,9 @@ export class ApprovalManager {
         saved = saveOwned
           ? await saveOwned.call(
             this.config.backend,
-            run.id,
+            runId,
             ["waiting"],
-            run.workerId!,
+            workerId,
             approval,
           )
           : false;
@@ -166,29 +169,40 @@ export class ApprovalManager {
     }
 
     try {
-      await this.config.notifier?.(approval, run);
+      await this.config.notifier?.(
+        structuredClone(approval),
+        structuredClone(run),
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       approval.notificationError = message;
       logger.error(
         "Failed to notify approvers; approval created but approvers were NOT informed",
-        { approvalId: approval.id, runId: run.id, error: message },
+        { approvalId: approval.id, runId, error: message },
       );
     }
 
     if (ownerBound) {
       if (approval.notificationError) {
-        await this.config.backend.updatePendingApproval?.(
-          run.id,
-          approval.id,
-          { notificationError: approval.notificationError },
-        );
+        try {
+          await this.config.backend.updatePendingApproval?.(
+            runId,
+            approval.id,
+            { notificationError: approval.notificationError },
+          );
+        } catch (error) {
+          logger.error(
+            "Failed to persist approval notification state",
+            { approvalId: approval.id, runId },
+            error,
+          );
+        }
       }
     } else {
       // Preserve direct/ownerless behavior: resolve notification first so its
       // delivery error is included in the initial append.
       try {
-        await this.config.backend.savePendingApproval(run.id, approval);
+        await this.config.backend.savePendingApproval(runId, approval);
       } catch (error) {
         if (responseSchemaKey) {
           this.responseSchemas.delete(responseSchemaKey);
@@ -199,7 +213,7 @@ export class ApprovalManager {
 
     return {
       approvalId: approval.id,
-      runId: run.id,
+      runId,
       nodeId,
       message: approval.message,
       payload: approval.payload,
@@ -269,6 +283,7 @@ export class ApprovalManager {
     approvalId: string,
     decision: ApprovalDecision,
   ): Promise<void> {
+    decision = ApprovalDecisionSchema.parse(decision);
     logger.debug("Processing decision", {
       approvalId,
       approved: decision.approved,

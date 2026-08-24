@@ -219,6 +219,50 @@ describe("security/csrf/helpers", () => {
       assertEquals(setCookie!.includes("Secure"), true);
     });
 
+    it("should not mark a non-__Host cookie Secure over plain http", () => {
+      const req = new Request("http://localhost/", {
+        headers: { accept: "text/html" },
+      });
+      const headers = new Headers();
+      applyCsrfCookie(req, headers, { cookieName: "vf_csrf" });
+
+      assertEquals(
+        headers.get("set-cookie")!.includes("Secure"),
+        false,
+        "a non-__Host cookie over plain http must not be marked Secure",
+      );
+    });
+
+    it("should mark a non-__Host cookie Secure on an https request URL", () => {
+      const req = new Request("https://example.com/", {
+        headers: { accept: "text/html" },
+      });
+      const headers = new Headers();
+      applyCsrfCookie(req, headers, { cookieName: "vf_csrf" });
+
+      assertEquals(
+        headers.get("set-cookie")!.includes("Secure"),
+        true,
+        "an https request URL must mark the CSRF cookie Secure",
+      );
+    });
+
+    // The trusted-topology arm of this branch needs a real process env mutation
+    // and lives in tests/integration/security/csrf-proxy-topology.test.ts.
+    it("should ignore x-forwarded-proto while the proxy topology is untrusted", () => {
+      const req = new Request("http://localhost/", {
+        headers: { "x-forwarded-proto": "https", accept: "text/html" },
+      });
+      const headers = new Headers();
+      applyCsrfCookie(req, headers, { cookieName: "vf_csrf" });
+
+      assertEquals(
+        headers.get("set-cookie")!.includes("Secure"),
+        false,
+        "a spoofable forwarded-proto header must not control the Secure flag while the proxy topology is untrusted",
+      );
+    });
+
     it("should set cookie on HEAD when absent", () => {
       const req = new Request("http://localhost/", {
         method: "HEAD",

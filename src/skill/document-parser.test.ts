@@ -1,3 +1,4 @@
+import { it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { register, tryResolve, unregister } from "../extensions/contracts.ts";
 import {
@@ -7,7 +8,7 @@ import {
 } from "../extensions/parser/skill-document-parser.ts";
 import { parseBoundedSkillDocument, snapshotSkillFrontmatterMapping } from "./document-parser.ts";
 
-Deno.test("bounded Skill document parsing owns the envelope and passes only YAML to the provider", () => {
+it("bounded Skill document parsing owns the envelope and passes only YAML to the provider", () => {
   let received = "";
   const provider = createSkillDocumentParserProvider((source) => {
     received = source;
@@ -24,7 +25,7 @@ Deno.test("bounded Skill document parsing owns the envelope and passes only YAML
   assertEquals(parsed.body, "# Body\r\n");
 });
 
-Deno.test("bounded Skill document parsing does not resolve or invoke a provider without YAML", () => {
+it("bounded Skill document parsing does not resolve or invoke a provider without YAML", () => {
   let calls = 0;
   const provider = createSkillDocumentParserProvider(() => {
     calls++;
@@ -42,7 +43,7 @@ Deno.test("bounded Skill document parsing does not resolve or invoke a provider 
   assertEquals(calls, 0);
 });
 
-Deno.test("Skill document parsing rejects an explicit null provider instead of resolving globally", () => {
+it("Skill document parsing rejects an explicit null provider instead of resolving globally", () => {
   const previous = tryResolve<SkillDocumentParserProvider>(
     SkillDocumentParserProviderName,
   );
@@ -69,7 +70,7 @@ Deno.test("Skill document parsing rejects an explicit null provider instead of r
   }
 });
 
-Deno.test("bounded Skill document parsing requires a closing delimiter on its own line", () => {
+it("bounded Skill document parsing requires a closing delimiter on its own line", () => {
   const provider = createSkillDocumentParserProvider(() => ({ name: "demo" }));
 
   assertThrows(
@@ -91,7 +92,7 @@ Deno.test("bounded Skill document parsing requires a closing delimiter on its ow
   assertEquals(parsed.body, "body");
 });
 
-Deno.test("Skill frontmatter mappings are detached from provider mutation", () => {
+it("Skill frontmatter mappings are detached from provider mutation", () => {
   const allowedTools = ["Read"];
   const metadata = { owner: "ops" };
   const source = {
@@ -118,7 +119,7 @@ Deno.test("Skill frontmatter mappings are detached from provider mutation", () =
   });
 });
 
-Deno.test("Skill frontmatter array snapshots do not invoke inherited indexed setters", () => {
+it("Skill frontmatter array snapshots do not invoke inherited indexed setters", () => {
   const inherited = Object.getOwnPropertyDescriptor(Array.prototype, "0");
   const provider = createSkillDocumentParserProvider(() => ({
     name: "demo",
@@ -158,7 +159,7 @@ Deno.test("Skill frontmatter array snapshots do not invoke inherited indexed set
   });
 });
 
-Deno.test("Skill frontmatter mapping snapshot rejects proxies and accessors without hooks", () => {
+it("Skill frontmatter mapping snapshot rejects proxies and accessors without hooks", () => {
   let proxyTrapCalls = 0;
   let accessorCalls = 0;
   const proxied = new Proxy(
@@ -192,7 +193,7 @@ Deno.test("Skill frontmatter mapping snapshot rejects proxies and accessors with
   assertEquals(accessorCalls, 0);
 });
 
-Deno.test("Skill frontmatter mapping snapshot rejects non-mappings, cycles, and unsupported values", () => {
+it("Skill frontmatter mapping snapshot rejects non-mappings, cycles, and unsupported values", () => {
   for (const value of [null, "scalar", ["sequence"], new Date(0)]) {
     assertThrows(
       () => snapshotSkillFrontmatterMapping(value),
@@ -215,7 +216,81 @@ Deno.test("Skill frontmatter mapping snapshot rejects non-mappings, cycles, and 
   );
 });
 
-Deno.test("Skill frontmatter mapping snapshot rejects decoder-created malformed Unicode", () => {
+it("Skill frontmatter mapping snapshot enforces its resource bounds", () => {
+  let deep: Record<string, unknown> = { leaf: "x" };
+  for (let index = 0; index < 40; index += 1) {
+    deep = { child: deep };
+  }
+  assertThrows(
+    () => snapshotSkillFrontmatterMapping(deep),
+    TypeError,
+    "data-only mapping",
+    "nesting past the depth bound is rejected instead of recursing",
+  );
+
+  let shallow: Record<string, unknown> = { leaf: "x" };
+  for (let index = 0; index < 10; index += 1) {
+    shallow = { child: shallow };
+  }
+  assertEquals(
+    snapshotSkillFrontmatterMapping(shallow),
+    shallow,
+    "nesting within the depth bound is still snapshotted",
+  );
+
+  const wideMapping: Record<string, unknown> = {};
+  for (let index = 0; index <= 2_048; index += 1) {
+    wideMapping[`key-${index}`] = "x";
+  }
+  assertThrows(
+    () => snapshotSkillFrontmatterMapping(wideMapping),
+    TypeError,
+    "data-only mapping",
+    "a mapping past the container-entry bound is rejected",
+  );
+
+  assertThrows(
+    () => snapshotSkillFrontmatterMapping({ list: new Array(2_049).fill("x") }),
+    TypeError,
+    "data-only mapping",
+    "a sequence past the container-entry bound is rejected",
+  );
+
+  const manyNodes: Record<string, unknown> = {};
+  for (let index = 0; index < 5; index += 1) {
+    manyNodes[`list-${index}`] = new Array(2_000).fill("x");
+  }
+  assertThrows(
+    () => snapshotSkillFrontmatterMapping(manyNodes),
+    TypeError,
+    "data-only mapping",
+    "a mapping past the node bound is rejected even when every container fits",
+  );
+});
+
+it("bounded Skill document parsing rejects malformed document content", () => {
+  let calls = 0;
+  const provider = createSkillDocumentParserProvider(() => {
+    calls += 1;
+    return { name: "demo" };
+  });
+
+  assertThrows(
+    () => parseBoundedSkillDocument("---\nname: demo\n---\nBody \uD800", provider),
+    TypeError,
+    "well-formed UTF-16",
+    "a lone surrogate in the document fails closed instead of reaching callers",
+  );
+  assertThrows(
+    () => parseBoundedSkillDocument(42 as unknown as string, provider),
+    TypeError,
+    "must be a string",
+    "non-string document content fails closed",
+  );
+  assertEquals(calls, 0, "the parser provider is never dispatched for malformed content");
+});
+
+it("Skill frontmatter mapping snapshot rejects decoder-created malformed Unicode", () => {
   for (
     const value of [
       { description: "\uD800" },
@@ -230,7 +305,7 @@ Deno.test("Skill frontmatter mapping snapshot rejects decoder-created malformed 
   }
 });
 
-Deno.test("bounded Skill document parsing detaches provider failures", () => {
+it("bounded Skill document parsing detaches provider failures", () => {
   const provider = createSkillDocumentParserProvider(() => {
     throw new SyntaxError(
       "bad token TOP_SECRET_42 \u001b[31m at https://user:secret@example.test/private",
@@ -251,7 +326,7 @@ Deno.test("bounded Skill document parsing detaches provider failures", () => {
   assertEquals(error?.message.includes("\u001b"), false);
 });
 
-Deno.test("Skill document parsing does not consult replaced global constructors", () => {
+it("Skill document parsing does not consult replaced global constructors", () => {
   const weakSetDescriptor = Object.getOwnPropertyDescriptor(globalThis, "WeakSet");
   const typeErrorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "TypeError");
   const syntaxErrorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "SyntaxError");

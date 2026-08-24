@@ -27,6 +27,21 @@ describe("security/http/studio-origin-policy", () => {
     assertEquals(resolveTrustedStudioOrigin("https://localhost:3443"), "https://localhost:3443");
     assertEquals(resolveTrustedStudioOrigin("ftp://localhost:3000"), null);
     assertEquals(resolveTrustedStudioOrigin("http://127.0.0.1:3000"), null);
+    assertEquals(
+      resolveTrustedStudioOrigin("https://localhost.attacker.com"),
+      null,
+      "a hostname that merely starts with localhost must not be trusted",
+    );
+    assertEquals(
+      resolveTrustedStudioOrigin("https://evil-localhost.com"),
+      null,
+      "a hostname that merely contains localhost must not be trusted",
+    );
+    assertEquals(
+      resolveTrustedStudioOrigin("https://attacker.localhost"),
+      null,
+      "localhost subdomains are not trusted Studio origins",
+    );
   });
 
   it("generates a helper from the exact hosted-origin policy", () => {
@@ -49,6 +64,11 @@ describe("security/http/studio-origin-policy", () => {
     assertEquals(
       resolveTarget({ referrer: "https://attacker.preview.veryfront.org/project" }, window),
       window.location.origin,
+    );
+    assertEquals(
+      resolveTarget({ referrer: "https://localhost.attacker.com/project" }, window),
+      window.location.origin,
+      "the generated helper must match the localhost hostname exactly, never by prefix",
     );
   });
 });

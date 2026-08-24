@@ -94,7 +94,6 @@ function stubReactDOMServer(marker = "test") {
 
 describe(
   "build/production-build/static-generation",
-  { sanitizeOps: false, sanitizeResources: false },
   () => {
     const originalFlag = getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG);
 
@@ -392,6 +391,80 @@ describe(
         );
         assertEquals(stats.pages, 1);
         assertEquals(stats.totalSize > 0, true);
+      });
+
+      it("writes the index slug to the output root", async () => {
+        const adapter = createMemoryAdapter();
+        await buildPagesRoutes(
+          [{ slug: "index", path: "/", file: "pages/index.mdx" }],
+          {
+            adapter,
+            projectDir: "/tmp/project",
+            outputDir: "/tmp/output",
+            renderer: createMockRenderer(),
+            config: createMockConfig(),
+            enablePrefetch: false,
+            chunkManifest: null,
+            dryRun: false,
+          },
+        );
+
+        assertEquals(
+          adapter.fs.files.has("/tmp/output/index.html"),
+          true,
+          "the index slug is written to the output root",
+        );
+        assertEquals(
+          adapter.fs.files.has("/tmp/output/index/index.html"),
+          false,
+          "the index slug must not be nested under an index/ directory",
+        );
+      });
+
+      it("injects preload links for split chunks when prefetch is enabled", async () => {
+        const adapter = createMemoryAdapter();
+        await buildPagesRoutes(
+          [{ slug: "about", path: "/about", file: "pages/about.mdx" }],
+          {
+            adapter,
+            projectDir: "/tmp/project",
+            outputDir: "/tmp/output",
+            renderer: createMockRenderer(),
+            config: createMockConfig(),
+            enablePrefetch: true,
+            chunkManifest: {
+              version: "1",
+              routes: {
+                "/about": {
+                  entry: "about.js",
+                  chunks: ["about.js"],
+                  preload: ["shared.js"],
+                  css: ["about.css"],
+                },
+              },
+              chunks: {},
+              shared: [],
+            },
+            dryRun: false,
+          },
+        );
+
+        const html = adapter.fs.files.get("/tmp/output/about/index.html") ?? "";
+        assertStringIncludes(
+          html,
+          '<link rel="modulepreload" href="/_veryfront/chunks/about.js">',
+          "the route entry chunk is preloaded",
+        );
+        assertStringIncludes(
+          html,
+          '<link rel="modulepreload" href="/_veryfront/chunks/shared.js">',
+          "chunks listed for preload are preloaded",
+        );
+        assertStringIncludes(
+          html,
+          '<link rel="preload" as="style" href="/_veryfront/chunks/about.css">',
+          "route stylesheets are preloaded",
+        );
       });
 
       it("writes transition data with root content instead of the full HTML document", async () => {

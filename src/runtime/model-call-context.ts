@@ -97,6 +97,10 @@ export interface AgentRunEventTimingOptions {
   startedMs?: number;
 }
 
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwn = Object.hasOwn;
+const reflectApply = Reflect.apply;
+
 /** Create one timing anchor for every event family belonging to a run. */
 export function createAgentRunEventTimingAnchor(
   options: Omit<AgentRunEventTimingOptions, "startedMs"> = {},
@@ -118,13 +122,15 @@ export function createTimedAgentRunEventSink(
   const epochMs = options.epochMs ?? (() => Date.now());
   const startedMs = options.startedMs ?? nowMs();
   return (event) => {
-    const hasElapsedMs = Object.hasOwn(event, "elapsedMs");
-    const hasEmittedAt = Object.hasOwn(event, "emittedAt");
-    if (hasElapsedMs) assertValidElapsedMs(event.elapsedMs);
-    if (hasEmittedAt) assertValidEmittedAt(event.emittedAt);
+    const elapsed = readOptionalTiming(event, "elapsedMs");
+    const emitted = readOptionalTiming(event, "emittedAt");
+    if (elapsed.present) assertValidElapsedMs(elapsed.value);
+    if (emitted.present) assertValidEmittedAt(emitted.value);
 
-    const elapsedMs = hasElapsedMs ? event.elapsedMs : Math.max(0, Math.round(nowMs() - startedMs));
-    const emittedAt = hasEmittedAt ? event.emittedAt : Math.round(epochMs());
+    const elapsedMs = elapsed.present
+      ? elapsed.value
+      : Math.max(0, Math.round(nowMs() - startedMs));
+    const emittedAt = emitted.present ? emitted.value : Math.round(epochMs());
     assertValidElapsedMs(elapsedMs);
     assertValidEmittedAt(emittedAt);
 
@@ -134,6 +140,26 @@ export function createTimedAgentRunEventSink(
       emittedAt,
     });
   };
+}
+
+function readOptionalTiming(
+  event: AgentRunEvent,
+  key: "elapsedMs" | "emittedAt",
+): { present: false } | { present: true; value: unknown } {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = reflectApply(objectGetOwnPropertyDescriptor, undefined, [
+      event,
+      key,
+    ]) as PropertyDescriptor | undefined;
+  } catch {
+    throw new TypeError(`${key} must be an own enumerable data property`);
+  }
+  if (descriptor === undefined) return { present: false };
+  if (descriptor.enumerable !== true || !objectHasOwn(descriptor, "value")) {
+    throw new TypeError(`${key} must be an own enumerable data property`);
+  }
+  return { present: true, value: descriptor.value };
 }
 
 function assertValidElapsedMs(value: unknown): asserts value is number {

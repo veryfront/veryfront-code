@@ -262,11 +262,12 @@ export class WorkflowWorker {
     this.stats.lastPollAt = new Date();
 
     try {
-      // Backend is validated in constructor to have worker support
-      const { findStalledRuns, claimStalledRun } = this.config.backend;
+      // Backend is validated in constructor to have worker support. Call the
+      // methods on the backend so implementations keep their receiver.
+      const backend = this.config.backend;
 
       // Find stalled runs
-      const stalledRuns = await findStalledRuns!(this.config.stalledThreshold);
+      const stalledRuns = await backend.findStalledRuns!(this.config.stalledThreshold);
 
       if (stalledRuns.length === 0) {
         return;
@@ -286,7 +287,7 @@ export class WorkflowWorker {
         }
 
         // Try to claim the run
-        const claimed = await claimStalledRun!(
+        const claimed = await backend.claimStalledRun!(
           run.id,
           this.config.workerId,
           this.config.stalledThreshold,

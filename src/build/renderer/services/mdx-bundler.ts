@@ -204,7 +204,7 @@ export function bundleMDXWithOptions(options: MDXBundleOptions): Promise<MDXBund
 
         const code = `
 import * as React from "react";
-import { useMDXComponents } from "#veryfront/mdx-components';
+import { useMDXComponents } from "#veryfront/mdx-components";
 ${globalsImport}
 
 ${compiledStr}

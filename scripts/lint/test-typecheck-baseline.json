@@ -20,7 +20,6 @@
   "src/agent/hosted/response-stream.test.ts",
   "src/agent/memory/memory.test.ts",
   "src/agent/middleware/cost-tracking/tracker.test.ts",
-  "src/build/bundler/code-splitter/manifest-builder.test.ts",
   "src/build/production-build/build/build-cleanup.test.ts",
   "src/build/production-build/manifest.test.ts",
   "src/build/renderer/services/css-bundler.test.ts",

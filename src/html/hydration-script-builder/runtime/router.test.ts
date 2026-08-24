@@ -591,6 +591,56 @@ describe("hydration-script-builder/runtime/router", () => {
     assertEquals(thirdParty.getAttribute("content"), "Third party");
   });
 
+  it("owns the SPA stylesheet lifecycle across navigations", async () => {
+    const harness = createRouterHarness();
+    // getDocumentNonce reads the nonce off whatever the shell already emitted.
+    const shellScript = harness.document.createElement("script");
+    shellScript.setAttribute("nonce", "n-1");
+    harness.document.head.appendChild(shellScript);
+    harness.window.__veryfrontHydrationComplete?.();
+
+    await harness.runtime.renderPageFromData(
+      { pagePath: "page-a", params: {}, css: ".a{}" },
+      "/page-a",
+    );
+
+    const styleEl = harness.document.getElementById("veryfront-spa-css");
+    if (!styleEl) throw new Error("the SPA stylesheet was never injected");
+    assertEquals(
+      styleEl.getAttribute("nonce"),
+      "n-1",
+      "the SPA stylesheet must carry the document nonce or CSP blocks it",
+    );
+    assertEquals(styleEl.textContent, ".a{}", "the injected stylesheet must carry the route CSS");
+
+    await harness.runtime.renderPageFromData(
+      { pagePath: "page-b", params: {}, css: ".b{}" },
+      "/page-b",
+    );
+
+    assertEquals(
+      harness.headElements.filter((element) => element.id === "veryfront-spa-css").length,
+      1,
+      "the SPA stylesheet must be updated in place, not duplicated",
+    );
+    assertEquals(
+      harness.document.getElementById("veryfront-spa-css")?.textContent,
+      ".b{}",
+      "the next route's CSS must replace the previous route's CSS",
+    );
+
+    await harness.runtime.renderPageFromData(
+      { pagePath: "page-c", params: {}, cssAction: "clear" },
+      "/page-c",
+    );
+
+    assertEquals(
+      harness.document.getElementById("veryfront-spa-css"),
+      null,
+      "a release-stylesheet route must drop the previous route's inline CSS",
+    );
+  });
+
   it("refreshes params from history state on popstate navigation", async () => {
     const harness = createRouterHarness({
       pathname: "/posts/42",
@@ -1074,6 +1124,182 @@ describe("hydration-script-builder/runtime/router", () => {
         1,
         "a background refresh of a route we are leaving the document for is wasted work",
       );
+    });
+  });
+
+  // The document click interceptor decides which clicks the SPA owns. Every
+  // bail-out below must reach the browser untouched, or the link stops
+  // behaving like a link.
+  describe("link interception", () => {
+    function makeLink(href: string): TestRuntimeElement {
+      const link = makeElement("a");
+      link.setAttribute("href", href);
+      return link;
+    }
+
+    function clickLink(
+      harness: RouterHarness,
+      link: TestRuntimeElement,
+      modifiers: Partial<RuntimeEvent> = {},
+    ): { prevented: number } {
+      const handler = harness.listeners.click?.[0];
+      if (!handler) throw new Error("click handler was not registered");
+      const state = { prevented: 0 };
+      handler({
+        ...modifiers,
+        target: { closest: () => link } as unknown as RuntimeElement,
+        preventDefault: () => {
+          state.prevented++;
+        },
+      } as RuntimeEvent);
+      return state;
+    }
+
+    const bailOuts: Array<{
+      name: string;
+      reason: string;
+      link: () => TestRuntimeElement;
+      modifiers?: Partial<RuntimeEvent>;
+    }> = [
+      {
+        name: "a meta-clicked internal link",
+        reason: "a meta-click must reach the browser so the link opens in a new tab",
+        link: () => makeLink("/about"),
+        modifiers: { metaKey: true },
+      },
+      {
+        name: "a ctrl-clicked internal link",
+        reason: "a ctrl-click must reach the browser so the link opens in a new tab",
+        link: () => makeLink("/about"),
+        modifiers: { ctrlKey: true },
+      },
+      {
+        name: "a shift-clicked internal link",
+        reason: "a shift-click must reach the browser so the link opens in a new window",
+        link: () => makeLink("/about"),
+        modifiers: { shiftKey: true },
+      },
+      {
+        name: "an alt-clicked internal link",
+        reason: "an alt-click must reach the browser so the link is downloaded",
+        link: () => makeLink("/about"),
+        modifiers: { altKey: true },
+      },
+      {
+        name: "a link targeting a new tab",
+        reason: 'a target="_blank" link must reach the browser',
+        link: () => {
+          const link = makeLink("/about");
+          link.target = "_blank";
+          return link;
+        },
+      },
+      {
+        name: "a download link",
+        reason: "a download link must reach the browser",
+        link: () => {
+          const link = makeLink("/report.pdf");
+          link.setAttribute("download", "");
+          return link;
+        },
+      },
+      {
+        name: "a protocol-relative link",
+        reason: "a protocol-relative link leaves the origin and must reach the browser",
+        link: () => makeLink("//other.example/x"),
+      },
+      {
+        name: "an absolute external link",
+        reason: "an external link must reach the browser",
+        link: () => makeLink("https://other.example/x"),
+      },
+    ];
+
+    for (const bailOut of bailOuts) {
+      it("leaves " + bailOut.name + " to the browser", async () => {
+        const harness = createRouterHarness();
+        harness.window.__veryfrontHydrationComplete?.();
+
+        const state = clickLink(harness, bailOut.link(), bailOut.modifiers);
+        for (let i = 0; i < 5; i++) await flushMicrotasks();
+
+        assertEquals(state.prevented, 0, bailOut.reason);
+        assertEquals(
+          harness.fetchCalls.length,
+          0,
+          bailOut.reason + ", so it must not trigger a page-data fetch",
+        );
+        assertEquals(
+          harness.historyCalls,
+          [],
+          bailOut.reason + ", so it must not mutate history",
+        );
+      });
+    }
+
+    it("soft navigates a plain internal link", async () => {
+      const harness = createRouterHarness();
+      harness.window.__veryfrontHydrationComplete?.();
+      harness.setNextPageData({ pagePath: "page", params: {} });
+
+      const state = clickLink(harness, makeLink("/about"));
+      await flushUntil(() => harness.router.pathname === "/about");
+
+      assertEquals(state.prevented, 1, "a plain internal link must be soft navigated");
+      assertEquals(
+        harness.fetchCalls.length,
+        1,
+        "a soft navigated link must fetch the target route's page data",
+      );
+      assertEquals(
+        harness.fetchCalls[0]?.url.includes("about"),
+        true,
+        "the page-data request must target the clicked route",
+      );
+      assertEquals(harness.router.pathname, "/about", "the SPA router must own the clicked route");
+    });
+
+    it("scrolls to the fragment target instead of navigating for a hash link", async () => {
+      const harness = createRouterHarness();
+      harness.window.__veryfrontHydrationComplete?.();
+      const section = makeElement("section");
+      section.id = "details";
+      let scrolled = 0;
+      section.scrollIntoView = () => {
+        scrolled++;
+      };
+      harness.document.head.appendChild(section);
+
+      const state = clickLink(harness, makeLink("#details"));
+      for (let i = 0; i < 5; i++) await flushMicrotasks();
+
+      assertEquals(state.prevented, 1, "an in-page hash link must be handled by the router");
+      assertEquals(scrolled, 1, "an in-page hash link must scroll its target into view");
+      assertEquals(
+        harness.fetchCalls.length,
+        0,
+        "an in-page hash link must not fetch page data",
+      );
+      assertEquals(
+        harness.historyCalls,
+        [{ method: "push", href: "#details" }],
+        "an in-page hash link must record exactly one history entry",
+      );
+    });
+
+    it("leaves a hash link with no matching target to the browser", async () => {
+      const harness = createRouterHarness();
+      harness.window.__veryfrontHydrationComplete?.();
+
+      const state = clickLink(harness, makeLink("#missing"));
+      for (let i = 0; i < 5; i++) await flushMicrotasks();
+
+      assertEquals(
+        state.prevented,
+        0,
+        "a hash link with no target in the document must reach the browser",
+      );
+      assertEquals(harness.historyCalls, [], "an unhandled hash link must not mutate history");
     });
   });
 

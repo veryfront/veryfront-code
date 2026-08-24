@@ -134,6 +134,32 @@ describe("build/renderer/utils/import-utils", () => {
       assertEquals(result, code);
     });
 
+    it("rewrites only the quoted import specifier", async () => {
+      const code = [
+        'import { a } from "./mod";',
+        'const s = "./mod-extra";',
+        "// see ./mod for details",
+      ].join("\n");
+      const result = await processImports(
+        code,
+        "/project/src/app.ts",
+        "/project",
+        async (importPath: string) => {
+          if (importPath.endsWith("/mod")) return "./mod/index.js";
+          return null;
+        },
+      );
+      assertEquals(
+        result,
+        [
+          'import { a } from "./mod/index.js";',
+          'const s = "./mod-extra";',
+          "// see ./mod for details",
+        ].join("\n"),
+        "only the quoted import specifier is rewritten; unrelated literals and comments are untouched",
+      );
+    });
+
     it("should handle multiple imports", async () => {
       const code = [
         'import { a } from "./mod-a";',

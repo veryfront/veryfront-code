@@ -369,16 +369,42 @@ describe("MemoryBackend", () => {
 
       await backend.savePendingApproval("run-2", approval);
 
-      await backend.updateApproval("run-2", "approval-2", {
-        approved: true,
-        approver: "admin@example.com",
-        comment: "Looks good!",
-      });
+      assertEquals(
+        await backend.updateApproval("run-2", "approval-2", {
+          approved: true,
+          approver: "admin@example.com",
+          comment: "Looks good!",
+        }),
+        true,
+        "the first decision on a pending approval must report that it was written",
+      );
 
       const updatedApproval = await backend.getPendingApproval("run-2", "approval-2");
       assertEquals(updatedApproval?.status, "approved");
       assertEquals(updatedApproval?.decidedBy, "admin@example.com");
       assertEquals(updatedApproval?.comment, "Looks good!");
+
+      assertEquals(
+        await backend.updateApproval("run-2", "approval-2", {
+          approved: false,
+          approver: "mallory@example.com",
+        }),
+        false,
+        "a decision on an already-resolved approval must be reported as skipped",
+      );
+
+      const afterLosingDecision = await backend.getPendingApproval("run-2", "approval-2");
+      assertEquals(afterLosingDecision?.status, "approved", "the winning decision must stand");
+      assertEquals(
+        afterLosingDecision?.decidedBy,
+        "admin@example.com",
+        "a losing decision must not overwrite the recorded approver",
+      );
+      assertEquals(
+        afterLosingDecision?.comment,
+        "Looks good!",
+        "a losing decision must not overwrite the recorded comment",
+      );
     });
 
     it("should condition approval appends on owner and patch notification metadata", async () => {
@@ -437,6 +463,31 @@ describe("MemoryBackend", () => {
       const dequeued = await backend.dequeue();
       assertExists(dequeued);
       assertEquals(dequeued.runId, "run-1");
+    });
+
+    it("rejects enqueue once the queue cap is reached", async () => {
+      const cappedBackend = new MemoryBackend({ maxQueueSize: 1 });
+      const createdAt = new Date();
+
+      await cappedBackend.enqueue({ runId: "first", workflowId: "wf", input: {}, createdAt });
+
+      await assertRejects(
+        () => cappedBackend.enqueue({ runId: "second", workflowId: "wf", input: {}, createdAt }),
+        Error,
+        "Queue full (max: 1)",
+        "enqueue must apply back-pressure at the cap",
+      );
+
+      assertEquals(
+        (await cappedBackend.dequeue())?.runId,
+        "first",
+        "the queued job must survive the rejected enqueue",
+      );
+      assertEquals(
+        await cappedBackend.dequeue(),
+        null,
+        "the rejected job must never have entered the queue",
+      );
     });
 
     it("should return null when queue is empty", async () => {

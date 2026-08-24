@@ -5,6 +5,7 @@ import {
   isSensitiveKey,
   REDACTED,
   redactForSerialization,
+  redactPathFromText,
   redactSensitive,
   sanitizeSerializedError,
   sanitizeUrlCredentials,
@@ -334,6 +335,32 @@ describe("logger/redact", () => {
       assertEquals(sanitizeUrlCredentials("just a plain message"), "just a plain message");
     });
 
+    it("masks whole cookie and set-cookie header lines", () => {
+      const cookieLine = sanitizeUrlCredentials("cookie: theme=dark; _ga=GA1.2.99; sess=SECRET");
+      assertEquals(
+        cookieLine,
+        `cookie: ${REDACTED}`,
+        "the whole cookie header line is masked, not just the first pair",
+      );
+      assertEquals(cookieLine.includes("SECRET"), false);
+
+      const setCookieLine = sanitizeUrlCredentials("set-cookie: sess=SECRET; Path=/; HttpOnly");
+      assertEquals(
+        setCookieLine,
+        `set-cookie: ${REDACTED}`,
+        "set-cookie attributes must not leak past the first delimiter",
+      );
+      assertEquals(setCookieLine.includes("SECRET"), false);
+
+      const embedded = sanitizeUrlCredentials("request headers -> cookie: sess=SECRET; a=b");
+      assertEquals(
+        embedded,
+        `request headers -> cookie: ${REDACTED}`,
+        "a cookie header embedded mid-message is masked from the header name onward",
+      );
+      assertEquals(embedded.includes("SECRET"), false);
+    });
+
     it("keeps benign assignment-shaped words intact", () => {
       for (
         const message of [
@@ -629,6 +656,44 @@ describe("logger/redact", () => {
 
     it("returns undefined unchanged", () => {
       assertEquals(sanitizeSerializedError(undefined), undefined);
+    });
+  });
+
+  describe("redactPathFromText", () => {
+    it("folds ASCII case and separators for Windows drive paths", () => {
+      assertEquals(
+        redactPathFromText(
+          "ENOENT: no such file 'C:/Users/Me/proj/a.js'",
+          "C:\\Users\\me\\proj",
+          "[path]",
+        ),
+        "ENOENT: no such file '[path]/a.js'",
+        "windows drive paths fold ASCII case and slash/backslash",
+      );
+    });
+
+    it("keeps POSIX paths case sensitive", () => {
+      assertEquals(
+        redactPathFromText("/home/Me/p/a.js", "/home/me/p", "[path]"),
+        "/home/Me/p/a.js",
+        "posix paths must not fold case",
+      );
+    });
+
+    it("replaces every occurrence", () => {
+      assertEquals(
+        redactPathFromText("a /x/y b /x/y c", "/x/y", "[p]"),
+        "a [p] b [p] c",
+        "every occurrence is replaced",
+      );
+    });
+
+    it("returns the input unchanged for an empty path", () => {
+      assertEquals(
+        redactPathFromText("abc", "", "[p]"),
+        "abc",
+        "an empty path returns the input unchanged",
+      );
     });
   });
 });

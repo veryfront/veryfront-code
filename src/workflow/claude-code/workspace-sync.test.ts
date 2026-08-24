@@ -15,10 +15,10 @@ import "#veryfront/schemas/_test-setup.ts";
  *   - Unicode paths with combining characters still succeed.
  */
 
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { dirname, join } from "@std/path";
-import { WorkspaceSync } from "./workspace-sync.ts";
+import { type FileChange, WorkspaceSync } from "./workspace-sync.ts";
 import type { CapturedTenantContext } from "../types.ts";
 
 function stubTenant(): CapturedTenantContext {
@@ -197,6 +197,23 @@ describe("WorkspaceSync symlink hardening (VULN-FS-4)", () => {
     assertEquals(await exists(workspace.workspaceDir), false);
   });
 
+  it("rejects a runId that escapes or splits the workspace path", () => {
+    for (const runId of ["../../etc", "a/b", "a\0b", ""]) {
+      assertThrows(
+        () => new WorkspaceSync({ baseDir, runId, tenant: stubTenant() }),
+        Error,
+        "Invalid runId",
+        `runId ${JSON.stringify(runId)} must be rejected before it can widen workspaceDir`,
+      );
+    }
+
+    assertEquals(
+      new WorkspaceSync({ baseDir, runId: "run_1-ok", tenant: stubTenant() }).workspaceDir,
+      `${baseDir}/run_1-ok`,
+      "a well-formed runId must still anchor the workspace under the base directory",
+    );
+  });
+
   it("rejects paths containing a NUL byte", async () => {
     const { workspace } = await makeWorkspace(baseDir);
     await assertRejects(
@@ -328,5 +345,76 @@ describe("WorkspaceSync symlink hardening (VULN-FS-4)", () => {
     const leakedPaths = changes.filter((c) => c.path.includes("outside/"));
     assertEquals(leakedPaths, []);
     assertEquals(changes.some((c) => c.path === "/real.txt"), true);
+  });
+});
+
+describe("WorkspaceSync uploadChanges", () => {
+  let baseDir: string;
+
+  beforeEach(async () => {
+    baseDir = await Deno.makeTempDir({ prefix: "vf-ws-sync-upload-" });
+  });
+
+  afterEach(async () => {
+    try {
+      await Deno.remove(baseDir, { recursive: true });
+    } catch (e) {
+      if (!(e instanceof Deno.errors.NotFound)) throw e;
+    }
+  });
+
+  it("records a change as skipped when no upload handler is given", async () => {
+    const { workspace } = await makeWorkspace(baseDir);
+    await workspace.writeFile("a.txt", "workspace content");
+
+    const result = await workspace.uploadChanges([{ path: "a.txt", type: "created" }]);
+
+    assertEquals(result.uploaded, [], "a dry run must not report uploads");
+    assertEquals(
+      result.skipped.map((change) => change.path),
+      ["a.txt"],
+      "a dry run must record the change as skipped",
+    );
+    assertEquals(result.failed, [], "a readable workspace file must not be reported as failed");
+  });
+
+  it("uploads through the handler with the current file content", async () => {
+    const { workspace } = await makeWorkspace(baseDir);
+    await workspace.writeFile("a.txt", "workspace content");
+    const change: FileChange = { path: "a.txt", type: "modified" };
+    const recorded: Array<[string, string, FileChange["type"]]> = [];
+
+    const result = await workspace.uploadChanges([change], {
+      onUpload: (path, content, type) => {
+        recorded.push([path, content, type]);
+        return Promise.resolve();
+      },
+    });
+
+    assertEquals(
+      recorded,
+      [["a.txt", "workspace content", "modified"]],
+      "the handler must receive the path, the file's content, and the change type",
+    );
+    assertEquals(result.uploaded, [change], "a handled change must be reported as uploaded");
+    assertEquals(result.skipped, [], "a handled change must not be reported as skipped");
+    assertEquals(result.failed, [], "a handled change must not be reported as failed");
+  });
+
+  it("reports a deletion as failed because the API cannot delete yet", async () => {
+    const { workspace } = await makeWorkspace(baseDir);
+    await workspace.writeFile("gone.txt", "workspace content");
+
+    const result = await workspace.uploadChanges([{ path: "gone.txt", type: "deleted" }], {
+      onUpload: () => Promise.resolve(),
+    });
+
+    assertEquals(
+      result.failed,
+      [{ path: "gone.txt", error: "Delete not yet supported via API" }],
+      "a deletion must be reported as failed while API delete support is missing",
+    );
+    assertEquals(result.uploaded, [], "a deletion must never be reported as uploaded");
+    assertEquals(result.skipped, [], "a deletion must never be reported as skipped");
   });
 });

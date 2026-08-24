@@ -337,6 +337,32 @@ describe("routing/client/page-loader", () => {
       }
     });
 
+    it("rejects the navigation when the HTML fallback fetch fails", async () => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (input: URL | RequestInfo) =>
+        Promise.resolve(
+          String(input).startsWith("/_veryfront/data")
+            ? new Response("Not Found", { status: 404 })
+            : new Response("boom", { status: 500 }),
+        );
+
+      try {
+        const error = await assertRejects(
+          () => new PageLoader().fetchPageData("/about"),
+          Error,
+          "Failed to fetch /about",
+          "a failed HTML fetch must reject instead of resolving an empty page",
+        );
+        assertEquals(
+          (error as { status?: number }).status,
+          500,
+          "the rejection must carry the upstream response status",
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
     it("places the JSON suffix before query parameters and preserves application pins while off", async () => {
       const originalFetch = globalThis.fetch;
       let requestedUrl = "";
@@ -445,6 +471,81 @@ describe("routing/client/page-loader", () => {
         );
         assertEquals(fetchCalls, 1);
         assertEquals(reloads, ["/docs"]);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("starts at most one document reload per loader on repeated snapshot conflicts", async () => {
+      const originalFetch = globalThis.fetch;
+      const reloads: string[] = [];
+      globalThis.fetch = () =>
+        Promise.resolve(new Response("Unknown dependency snapshot", { status: 409 }));
+
+      try {
+        const loader = new PageLoader(
+          makeHydrationDocument(() =>
+            JSON.stringify({
+              dependencyPinningCacheKey: "on:snapshot-a",
+            })
+          ),
+          (url) => reloads.push(url),
+        );
+        await assertRejects(
+          () => loader.fetchPageData("/docs"),
+          Error,
+          "Dependency snapshot is unavailable",
+        );
+        await assertRejects(
+          () => loader.fetchPageData("/other"),
+          Error,
+          "Dependency snapshot is unavailable",
+        );
+
+        assertEquals(
+          reloads,
+          ["/docs"],
+          "a loader may start at most one document reload per snapshot conflict",
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("retries the document reload when the first reload attempt throws", async () => {
+      const originalFetch = globalThis.fetch;
+      let reloadCalls = 0;
+      globalThis.fetch = () =>
+        Promise.resolve(new Response("Unknown dependency snapshot", { status: 409 }));
+
+      try {
+        const loader = new PageLoader(
+          makeHydrationDocument(() =>
+            JSON.stringify({
+              dependencyPinningCacheKey: "on:snapshot-a",
+            })
+          ),
+          () => {
+            reloadCalls++;
+            if (reloadCalls === 1) throw new Error("assign failed");
+          },
+        );
+        await assertRejects(
+          () => loader.fetchPageData("/docs"),
+          Error,
+          "Dependency snapshot is unavailable",
+        );
+        await assertRejects(
+          () => loader.fetchPageData("/other"),
+          Error,
+          "Dependency snapshot is unavailable",
+        );
+
+        assertEquals(
+          reloadCalls,
+          2,
+          "a failed document reload must release the once-per-loader guard so the next conflict can retry",
+        );
       } finally {
         globalThis.fetch = originalFetch;
       }

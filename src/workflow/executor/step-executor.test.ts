@@ -93,6 +93,63 @@ describe("workflow tenant registry scoping", () => {
         }),
     );
   });
+
+  it("scopes the distributed cache to the release of a release-backed tenant", async () => {
+    const tenant: CapturedTenantContext = {
+      projectSlug: "workflow-release-project",
+      projectId: "workflow-release-project-id",
+      token: "<TOKEN>",
+      productionMode: true,
+      releaseId: "release-1",
+      environmentName: "production",
+    };
+
+    await runWithCacheKeyContext(
+      { projectId: "outer-project", mode: "production", versionId: "outer-release" },
+      () =>
+        runWithWorkflowTenant(tenant, () => {
+          assertEquals(
+            tryGetCacheKeyContext(),
+            {
+              projectId: "workflow-release-project-id",
+              mode: "production",
+              versionId: "release-1",
+            },
+            "a release-backed tenant must scope the distributed cache to its own release",
+          );
+          return Promise.resolve();
+        }),
+    );
+  });
+
+  it("scopes the distributed cache to the branch of a preview tenant", async () => {
+    const tenant: CapturedTenantContext = {
+      projectSlug: "workflow-preview-project",
+      projectId: "workflow-preview-project-id",
+      token: "<TOKEN>",
+      productionMode: false,
+      releaseId: null,
+      branch: "feature/x",
+      environmentName: "preview",
+    };
+
+    await runWithCacheKeyContext(
+      { projectId: "outer-project", mode: "production", versionId: "outer-release" },
+      () =>
+        runWithWorkflowTenant(tenant, () => {
+          assertEquals(
+            tryGetCacheKeyContext(),
+            {
+              projectId: "workflow-preview-project-id",
+              mode: "preview",
+              versionId: "feature/x",
+            },
+            "a preview tenant must scope the distributed cache to its own branch",
+          );
+          return Promise.resolve();
+        }),
+    );
+  });
 });
 
 describe("StepExecutor retry validation", () => {

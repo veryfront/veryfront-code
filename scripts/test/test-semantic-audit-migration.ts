@@ -2425,19 +2425,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "removalPr": "PR 4h",
       },
     ),
-    entry("src/build/asset-pipeline/tailwind-processor/detector.test.ts", [
-      "filesystem-read",
-      "filesystem-watch",
-      "filesystem-write",
-    ], {
-      "disposition": "integration-relocation",
-      "owner": "build-rendering",
-      "rationale":
-        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
-      "destination":
-        "tests/integration/semantic-unit-boundary/src/build/asset-pipeline/tailwind-processor/detector.test.ts",
-      "removalPr": "PR 4h",
-    }),
     entry("src/build/asset-pipeline/tailwind-processor/processor.test.ts", [
       "filesystem-read",
       "filesystem-watch",
@@ -2674,12 +2661,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "replacement":
         "Inject an environment/runtime-state boundary instead of mutating shared global runtime objects or intrinsic constructors and prototypes.",
       "removalPr": "PR 4i",
-    }),
-    entry("src/cache/distributed-cache-init.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "config-tooling",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
     }),
     entry("src/cache/keys.test.ts", ["process"], {
       "disposition": "replaceable-fake",

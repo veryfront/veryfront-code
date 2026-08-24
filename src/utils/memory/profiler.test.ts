@@ -5,6 +5,7 @@ import { isBun } from "#veryfront/platform/compat/runtime.ts";
 import { withEnv } from "#veryfront/testing";
 import {
   checkMemoryPressure,
+  DEFAULT_MEMORY_MONITORING_INTERVAL_MS,
   DEFAULT_PROFILER_CRITICAL_THRESHOLD,
   DEFAULT_PROFILER_WARNING_THRESHOLD,
   evaluateMemoryPressure,
@@ -12,12 +13,16 @@ import {
   getCacheStats,
   getHeapStats,
   getInitialRapidHeapGrowthState,
+  getMemoryMonitoringConfig,
   getMemoryMonitoringLogContext,
+  getMemoryMonitoringState,
   getMemorySnapshot,
   getRapidHeapGrowthEvaluation,
+  type MemoryMonitoringEnv,
   registerCache,
   resolveEffectiveHeapLimitMB,
   setHeapWarningThreshold,
+  startConfiguredMemoryMonitoring,
   startMemoryMonitoring,
   stopMemoryMonitoring,
   unregisterCache,
@@ -353,30 +358,119 @@ describe("memory/profiler", () => {
       setHeapWarningThreshold(0.9);
       setHeapWarningThreshold(0.1);
     });
-
-    it("should clamp threshold to minimum 0.1", () => {
-      setHeapWarningThreshold(0.01);
-    });
-
-    it("should clamp threshold to maximum 0.99", () => {
-      setHeapWarningThreshold(1.5);
-    });
   });
 
   describe("startMemoryMonitoring / stopMemoryMonitoring", () => {
     it("should start and stop without errors", () => {
+      assertEquals(
+        getMemoryMonitoringState(),
+        { active: false, intervalMs: undefined },
+        "monitoring starts inactive",
+      );
+
       startMemoryMonitoring(60000);
+      assertEquals(
+        getMemoryMonitoringState(),
+        { active: true, intervalMs: 60000 },
+        "start records the active interval",
+      );
+
       stopMemoryMonitoring();
+      assertEquals(
+        getMemoryMonitoringState(),
+        { active: false, intervalMs: undefined },
+        "stop clears the recorded interval",
+      );
     });
 
     it("should handle multiple starts (replaces interval)", () => {
       startMemoryMonitoring(60000);
-      startMemoryMonitoring(60000);
+      startMemoryMonitoring(30000);
+      assertEquals(
+        getMemoryMonitoringState(),
+        { active: true, intervalMs: 30000 },
+        "restarting replaces the recorded interval",
+      );
+
       stopMemoryMonitoring();
+      assertEquals(
+        getMemoryMonitoringState(),
+        { active: false, intervalMs: undefined },
+        "stop clears the recorded interval",
+      );
     });
 
     it("should handle stop when not started", () => {
       stopMemoryMonitoring();
+      assertEquals(
+        getMemoryMonitoringState(),
+        { active: false, intervalMs: undefined },
+        "stopping an unstarted monitor leaves it inactive",
+      );
+    });
+  });
+
+  describe("getMemoryMonitoringConfig", () => {
+    const envOf = (values: Record<string, string>): MemoryMonitoringEnv => ({
+      get: (key: string) => values[key],
+    });
+
+    it('enables monitoring only for the exact string "true"', () => {
+      assertEquals(
+        getMemoryMonitoringConfig(envOf({})).enabled,
+        false,
+        "monitoring stays off when ENABLE_MEMORY_MONITORING is unset",
+      );
+      assertEquals(
+        getMemoryMonitoringConfig(envOf({ ENABLE_MEMORY_MONITORING: "true" })).enabled,
+        true,
+        "ENABLE_MEMORY_MONITORING=true enables monitoring",
+      );
+
+      for (const value of ["TRUE", "1", "yes", "false", ""]) {
+        assertEquals(
+          getMemoryMonitoringConfig(envOf({ ENABLE_MEMORY_MONITORING: value })).enabled,
+          false,
+          `only the exact string "true" may enable monitoring (got "${value}")`,
+        );
+      }
+    });
+
+    it("falls back to the default interval for unusable values", () => {
+      assertEquals(
+        getMemoryMonitoringConfig(envOf({})).intervalMs,
+        DEFAULT_MEMORY_MONITORING_INTERVAL_MS,
+        "an unset interval uses the default",
+      );
+
+      for (const raw of ["abc", "0", "-5"]) {
+        assertEquals(
+          getMemoryMonitoringConfig(
+            envOf({ ENABLE_MEMORY_MONITORING: "true", MEMORY_MONITORING_INTERVAL_MS: raw }),
+          ).intervalMs,
+          DEFAULT_MEMORY_MONITORING_INTERVAL_MS,
+          `a non-positive or unparseable interval must not become a spinning timer (got "${raw}")`,
+        );
+      }
+
+      assertEquals(
+        getMemoryMonitoringConfig(
+          envOf({ ENABLE_MEMORY_MONITORING: "true", MEMORY_MONITORING_INTERVAL_MS: "5000" }),
+        ).intervalMs,
+        5000,
+        "a positive interval is used as configured",
+      );
+    });
+
+    it("starts no interval when the env does not enable monitoring", () => {
+      const config = startConfiguredMemoryMonitoring(envOf({}));
+
+      assertEquals(config.enabled, false, "an unset env must not enable monitoring");
+      assertEquals(
+        getMemoryMonitoringState(),
+        { active: false, intervalMs: undefined },
+        "the disabled path must not install a monitoring interval",
+      );
     });
   });
 });

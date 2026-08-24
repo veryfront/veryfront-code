@@ -20,7 +20,7 @@ export function discoverPagesRoutes(
       for await (const file of discoverFiles({ baseDir: dir, extensions: EXTENSIONS, adapter })) {
         const relativePath = relative(dir, file.path);
         const routePath = `${prefix}/${relativePath.replace(PAGE_EXT_RE, "")}`;
-        const pattern = routePath.replace(/\/index$/, "") || prefix;
+        const pattern = routePath.replace(/\/index$/, "") || "/";
 
         router.addRoute(pattern, file.path);
       }

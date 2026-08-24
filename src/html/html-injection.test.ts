@@ -157,11 +157,17 @@ describe("html/html-injection", () => {
           mode: "production",
           slug: "test",
           importMapJson: hostileImportMap,
+          nonce: "nonce-123",
         },
       );
 
       assertEquals(html.includes("</script><script>"), false);
       assertEquals(html.includes("\\u003c/script"), true);
+      assertEquals(
+        html.includes('<script type="importmap" nonce="nonce-123">'),
+        true,
+        "the import map must carry the CSP nonce or a nonce-enforcing policy blocks module resolution",
+      );
     });
 
     it("should clear dev placeholders in production mode", () => {

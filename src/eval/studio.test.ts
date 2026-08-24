@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createEvalSourceDocument,
@@ -10,6 +10,7 @@ import {
   evalTool,
   getEvalRunSchema,
   getEvalSourceDocumentSchema,
+  getEvalSourcePatchSchema,
   metrics,
 } from "veryfront/eval";
 
@@ -49,6 +50,7 @@ describe("eval/studio", () => {
         metrics.judge.rubric({ rubric: "Answer must cite the correct city." }).soft({
           min: 0.8,
         }),
+        metrics.answer.exactMatch().gate(),
       ],
       tags: ["smoke"],
       metadata: { owner: "ai-quality" },
@@ -96,6 +98,7 @@ describe("eval/studio", () => {
         { name: "knowledge.citationRecall", editable: true, dynamic: false },
         { name: "answer.groundedness", editable: true, dynamic: true },
         { name: "judge.rubric", editable: true, dynamic: true },
+        { name: "answer.exactMatch", editable: false, dynamic: false },
       ],
     );
   });
@@ -190,6 +193,51 @@ describe("eval/studio", () => {
     };
 
     assertEquals(getEvalRunSchema().parse(run), run);
+  });
+
+  it("rejects unknown patch fields and out-of-enum run statuses", () => {
+    const patch = {
+      kind: "eval-source-patch" as const,
+      id: "eval:x",
+      source: { filePath: "evals/x.eval.ts", exportName: "default" },
+      fields: { name: "X" },
+    };
+
+    assertEquals(getEvalSourcePatchSchema().parse(patch), patch);
+    assertThrows(
+      () =>
+        getEvalSourcePatchSchema().parse({
+          ...patch,
+          fields: { ...patch.fields, evaluator: "nope" },
+        }),
+      Error,
+      undefined,
+      "unknown patch fields are rejected",
+    );
+
+    const run = {
+      kind: "eval-run" as const,
+      runId: "evalrun_status",
+      evalId: "eval:x",
+      status: "completed" as const,
+      targetKind: "agent" as const,
+      target: "agent:researcher",
+      summary: null,
+      reportPath: null,
+      error: null,
+      metadata: {},
+      createdAt: "2026-06-20T08:00:00.000Z",
+      startedAt: null,
+      completedAt: null,
+    };
+
+    assertEquals(getEvalRunSchema().parse(run), run);
+    assertThrows(
+      () => getEvalRunSchema().parse({ ...run, status: "done" }),
+      Error,
+      undefined,
+      "run status is a closed enum",
+    );
   });
 
   it("accepts tool eval source documents and run projections", () => {

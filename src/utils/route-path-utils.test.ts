@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  containsPathControlCharacters,
   extractParamName,
   extractParamsFromPattern,
   extractRelativePath,
@@ -16,6 +17,29 @@ import {
 } from "./route-path-utils.ts";
 
 describe("route-path-utils", () => {
+  describe("containsPathControlCharacters", () => {
+    it("rejects C0, DEL, and C1 control characters", () => {
+      assertEquals(containsPathControlCharacters("a\u0000b"), true, "NUL must be rejected");
+      assertEquals(containsPathControlCharacters("a\u001fb"), true, "C0 controls must be rejected");
+      assertEquals(containsPathControlCharacters("a\u007fb"), true, "DEL must be rejected");
+      assertEquals(containsPathControlCharacters("a\u0080b"), true, "C1 start must be rejected");
+      assertEquals(containsPathControlCharacters("a\u009fb"), true, "C1 end must be rejected");
+    });
+
+    it("accepts printable paths", () => {
+      assertEquals(
+        containsPathControlCharacters("a-b_c.tsx"),
+        false,
+        "printable ASCII paths must pass",
+      );
+      assertEquals(
+        containsPathControlCharacters("café.tsx"),
+        false,
+        "printable non-ASCII paths must pass",
+      );
+    });
+  });
+
   describe("isDynamicSegment", () => {
     it("should detect standard dynamic segments", () => {
       const segments = ["[id]", "[slug]", "[userId]", "[version.number]", "[post-id]"] as const;
@@ -289,6 +313,29 @@ describe("route-path-utils", () => {
 
       assertEquals(result.matched, true);
       assertEquals(result.params["slug"], []);
+    });
+
+    it("does not match an optional catch-all whose static prefix differs", () => {
+      const result = extractRouteParams("/app/docs/[[...slug]]/page.tsx", "blog");
+
+      assertEquals(
+        result.matched,
+        false,
+        "optional catch-all must not match a different static prefix",
+      );
+      assertEquals(
+        Object.keys(result.params).length,
+        0,
+        "no slug param is produced for a non-matching prefix",
+      );
+    });
+
+    it("matches an optional catch-all behind a dynamic segment", () => {
+      const result = extractRouteParams("/app/docs/[lang]/[[...slug]]/page.tsx", "docs/en");
+
+      assertEquals(result.matched, true, "a dynamic segment satisfies the static prefix check");
+      assertEquals(result.params["lang"], "en", "the dynamic segment is still extracted");
+      assertEquals(result.params["slug"], [], "the optional catch-all resolves to zero segments");
     });
 
     it("preserves __proto__ route params without changing the params prototype", () => {

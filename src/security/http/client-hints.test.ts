@@ -7,33 +7,43 @@ function assertScheme(
   req: Request,
   expectedScheme: "light" | "dark",
   expectedFromParam: boolean,
+  expectedFromHeader: boolean,
   url?: URL,
 ): void {
   const result = getColorSchemeFromRequest(req, url);
-  assertEquals(result.scheme, expectedScheme);
-  assertEquals(result.fromParam, expectedFromParam);
+  assertEquals(result.scheme, expectedScheme, "scheme must match the resolved color scheme");
+  assertEquals(
+    result.fromParam,
+    expectedFromParam,
+    "fromParam must record whether the query parameter decided the scheme",
+  );
+  assertEquals(
+    result.fromHeader,
+    expectedFromHeader,
+    "fromHeader must record whether the client hint header decided the scheme",
+  );
 }
 
 describe("security/http/client-hints", () => {
   describe("getColorSchemeFromRequest", () => {
     it("should default to light when no hints are present", () => {
-      assertScheme(new Request("http://localhost/"), "light", false);
+      assertScheme(new Request("http://localhost/"), "light", false, false);
     });
 
     it("should return dark from color_mode query param", () => {
-      assertScheme(new Request("http://localhost/?color_mode=dark"), "dark", true);
+      assertScheme(new Request("http://localhost/?color_mode=dark"), "dark", true, false);
     });
 
     it("should return light from color_mode query param", () => {
-      assertScheme(new Request("http://localhost/?color_mode=light"), "light", true);
+      assertScheme(new Request("http://localhost/?color_mode=light"), "light", true, false);
     });
 
     it("should handle color_mode param with extra whitespace", () => {
-      assertScheme(new Request("http://localhost/?color_mode=%20dark%20"), "dark", true);
+      assertScheme(new Request("http://localhost/?color_mode=%20dark%20"), "dark", true, false);
     });
 
     it("should handle color_mode param case-insensitively", () => {
-      assertScheme(new Request("http://localhost/?color_mode=DARK"), "dark", true);
+      assertScheme(new Request("http://localhost/?color_mode=DARK"), "dark", true, false);
     });
 
     it("should return dark from Sec-CH-Prefers-Color-Scheme header", () => {
@@ -43,6 +53,7 @@ describe("security/http/client-hints", () => {
         }),
         "dark",
         false,
+        true,
       );
     });
 
@@ -53,6 +64,7 @@ describe("security/http/client-hints", () => {
         }),
         "dark",
         false,
+        true,
       );
     });
 
@@ -63,6 +75,7 @@ describe("security/http/client-hints", () => {
         }),
         "light",
         false,
+        true,
       );
     });
 
@@ -73,6 +86,7 @@ describe("security/http/client-hints", () => {
         }),
         "light",
         true,
+        false,
       );
     });
 
@@ -81,12 +95,13 @@ describe("security/http/client-hints", () => {
         new Request("http://localhost/"),
         "dark",
         true,
+        false,
         new URL("http://localhost/?color_mode=dark"),
       );
     });
 
     it("should fall back to light for unrecognized color_mode param", () => {
-      assertScheme(new Request("http://localhost/?color_mode=sepia"), "light", false);
+      assertScheme(new Request("http://localhost/?color_mode=sepia"), "light", false, false);
     });
   });
 });

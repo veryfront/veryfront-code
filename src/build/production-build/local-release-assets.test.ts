@@ -199,7 +199,7 @@ describe("build/production-build/local-release-assets", () => {
 
   it("passes the project dependency snapshot to every local framework transform", async () => {
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
-    const { adapter } = makeAdapter();
+    const { adapter, writes } = makeAdapter();
     const snapshot: DependencyPinningSnapshot = Object.freeze({
       cacheKey: "on:local-build-snapshot",
       dependencies: Object.freeze({
@@ -252,6 +252,11 @@ describe("build/production-build/local-release-assets", () => {
           value.reactVersion === "18.3.1",
       ),
       true,
+    );
+    assertEquals(
+      [...writes.keys()].filter((path) => path.startsWith("/project/dist")),
+      [],
+      "a dry run must write no assets or manifest into the output directory",
     );
   });
 

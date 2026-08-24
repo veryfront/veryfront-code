@@ -63,6 +63,22 @@ describe("styles-builder/project-css-cache", () => {
       candidates,
     );
     assertEquals(await tryGetProjectCSSFromLocalFallback(context, candidates), undefined);
+
+    // The stale context is refused by the reader on its own, so the write guard
+    // is only observable through a fresh post-invalidation context, which
+    // resolves to the same epoch-independent cache key.
+    const freshContext = createProjectCSSRequestContext(
+      projectSlug,
+      TEST_STYLESHEET,
+      candidates,
+      { cssPipelineIdentity: "pipeline" },
+    );
+    assertEquals(freshContext.cacheKey, context.cacheKey);
+    assertEquals(
+      await tryGetProjectCSSFromLocalFallback(freshContext, candidates),
+      undefined,
+      "a generation that started before invalidateProjectCSS must not seed the local fallback for later requests",
+    );
   });
 
   it("populates hash-level cache on fresh generation so other pods can serve CSS", async () => {
