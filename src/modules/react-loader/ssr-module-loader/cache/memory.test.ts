@@ -14,6 +14,7 @@ import {
   releaseTransformSlot,
   tryAcquireTransformSlot,
 } from "./memory.ts";
+import { buildCrossProjectImportCacheKey } from "../cross-project-import-loader.ts";
 import { verifiedHttpBundlePaths } from "../http-bundle-helpers.ts";
 import { getTransformPerProjectLimit } from "../constants.ts";
 import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
@@ -276,7 +277,13 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
         tempPath: "/tmp/x1.mjs",
         contentHash: "x1",
       });
-      globalCrossProjectCache.set("cross:acme@1.0.0:project-1-extra", {
+      const prefixSharingProjectKey = buildCrossProjectImportCacheKey({
+        projectId: "project-1-extra",
+        specifier: "@acme/component",
+        reactVersion: "1.0.0",
+        registryBaseUrl: "https://registry.example.com",
+      });
+      globalCrossProjectCache.set(prefixSharingProjectKey, {
         tempPath: "/tmp/x2.mjs",
         contentHash: "x2",
       });
@@ -295,9 +302,9 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
         "project invalidation must evict its cross-project entries",
       );
       assertEquals(
-        globalCrossProjectCache.has("cross:acme@1.0.0:project-1-extra"),
-        false,
-        "substring-keyed cross-project entries must be evicted too",
+        globalCrossProjectCache.has(prefixSharingProjectKey),
+        true,
+        "a prefix-sharing project's cross-project entry must survive exact project invalidation",
       );
       assertEquals(
         globalCrossProjectCache.has("prefix:project-2:mod"),

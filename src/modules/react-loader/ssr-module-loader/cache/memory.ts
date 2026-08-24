@@ -363,7 +363,7 @@ export function clearSSRModuleCacheForProject(
   }
 
   for (const key of globalCrossProjectCache.keys()) {
-    if (!key.includes(projectId) && !isKeyForProject(key, projectId)) continue;
+    if (!isKeyForProject(key, projectId)) continue;
     globalCrossProjectCache.delete(key);
   }
 

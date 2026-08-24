@@ -3,6 +3,13 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { findFirstExistingFile } from "./fs-probe.ts";
 
+function namedError(name: string, message: string): Error {
+  const error = new Error(message) as Error & { code?: string };
+  error.name = name;
+  if (name === "NotFound") error.code = "ENOENT";
+  return error;
+}
+
 describe("modules/server/fs-probe", () => {
   it("uses candidate order rather than probe completion order", async () => {
     const found = await findFirstExistingFile(
@@ -23,7 +30,7 @@ describe("modules/server/fs-probe", () => {
       {
         stat(path) {
           if (path === "missing") {
-            return Promise.reject(new Deno.errors.NotFound("missing"));
+            return Promise.reject(namedError("NotFound", "missing"));
           }
           return Promise.resolve({ isFile: true });
         },
@@ -38,7 +45,7 @@ describe("modules/server/fs-probe", () => {
     const found = await findFirstExistingFile(
       {
         stat(path) {
-          return Promise.reject(new Deno.errors.NotFound(path));
+          return Promise.reject(namedError("NotFound", path));
         },
       },
       ["a.tsx", "a.ts", "a.jsx"],
@@ -74,7 +81,7 @@ describe("modules/server/fs-probe", () => {
   });
 
   it("propagates operational probe failures", async () => {
-    const denied = new Deno.errors.PermissionDenied("denied");
+    const denied = namedError("PermissionDenied", "denied");
     await assertRejects(
       () =>
         findFirstExistingFile(
@@ -85,7 +92,7 @@ describe("modules/server/fs-probe", () => {
           },
           ["denied", "present"],
         ),
-      Deno.errors.PermissionDenied,
+      Error,
       "denied",
     );
   });
@@ -96,7 +103,7 @@ describe("modules/server/fs-probe", () => {
         stat(path) {
           return path === "preferred"
             ? Promise.resolve({ isFile: true })
-            : Promise.reject(new Deno.errors.PermissionDenied("irrelevant fallback"));
+            : Promise.reject(namedError("PermissionDenied", "irrelevant fallback"));
         },
       },
       ["preferred", "fallback"],
