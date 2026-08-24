@@ -812,6 +812,7 @@ export function createHostedChatExecutionRuntime(
           })
         )
       );
+      return finishPromise;
     },
     messageMetadata: createStreamMessageMetadataBuilder({
       agentId: input.agentId,

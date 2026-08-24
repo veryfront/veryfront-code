@@ -55,6 +55,101 @@ describe("workflow/events", () => {
     ]);
   });
 
+  it("derives reserved-name node failures and delegates close", async () => {
+    const initialNodes = Object.create(null);
+    Object.defineProperty(initialNodes, "__proto__", {
+      enumerable: true,
+      value: { nodeId: "__proto__", status: "running", attempt: 1 },
+    });
+    const changedNodes = Object.create(null);
+    Object.defineProperty(changedNodes, "__proto__", {
+      enumerable: true,
+      value: { status: "failed", attempt: 1, error: "node failed" },
+    });
+    let closeCalls = 0;
+    const observation: WorkflowRunObservation = {
+      initial: {
+        id: "reserved-run",
+        status: "running",
+        nodeStates: initialNodes,
+      } as unknown as WorkflowRun,
+      changes: {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            revision: 1,
+            status: "failed",
+            runError: "run failed",
+            nodes: changedNodes,
+          };
+        },
+      },
+      close: () => {
+        closeCalls++;
+        return Promise.resolve();
+      },
+    };
+
+    const derived = deriveWorkflowRunEventObservation(observation);
+    const events = [];
+    for await (const event of derived.events) events.push(event);
+    await derived.close();
+
+    expect(events).toEqual([
+      {
+        type: "step.failed",
+        runId: "reserved-run",
+        nodeId: "__proto__",
+        attempt: 1,
+        error: "node failed",
+      },
+      {
+        type: "run.status",
+        runId: "reserved-run",
+        status: "failed",
+        error: "run failed",
+      },
+    ]);
+    expect(closeCalls).toBe(1);
+  });
+
+  it("does not invoke accessors on observed node errors", async () => {
+    let getterCalls = 0;
+    const failedNode = Object.defineProperty(
+      { status: "failed" as const, attempt: 1 },
+      "error",
+      {
+        enumerable: true,
+        get() {
+          getterCalls++;
+          return "must not run";
+        },
+      },
+    );
+    const observation: WorkflowRunObservation = {
+      initial: {
+        id: "accessor-run",
+        status: "running",
+        nodeStates: { a: { nodeId: "a", status: "running", attempt: 1 } },
+      } as unknown as WorkflowRun,
+      changes: {
+        async *[Symbol.asyncIterator]() {
+          yield { revision: 1, status: "running", nodes: { a: failedNode } };
+        },
+      },
+      close: () => Promise.resolve(),
+    };
+
+    const events = [];
+    for await (const event of deriveWorkflowRunEventObservation(observation).events) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "step.failed", runId: "accessor-run", nodeId: "a", attempt: 1 },
+    ]);
+    expect(getterCalls).toBe(0);
+  });
+
   describe("deriveRunEvents", () => {
     it("reports a first observation as the run's current status", () => {
       const events = deriveRunEvents("r1", undefined, snapshot("running"));
@@ -109,6 +204,31 @@ describe("workflow/events", () => {
       expect(deriveRunEvents("r1", snapshot("running", { a: node("running") }), after)).toEqual([
         { type: "step.failed", runId: "r1", nodeId: "a", attempt: 1 },
       ]);
+    });
+
+    it("does not invoke node error accessors", () => {
+      let getterCalls = 0;
+      const nodeErrors = Object.defineProperty({}, "a", {
+        enumerable: true,
+        get() {
+          getterCalls++;
+          return "must not run";
+        },
+      });
+      const after = snapshot("running", { a: node("failed") });
+
+      expect(
+        deriveRunEvents(
+          "r1",
+          snapshot("running", { a: node("running") }),
+          after,
+          undefined,
+          nodeErrors,
+        ),
+      ).toEqual([
+        { type: "step.failed", runId: "r1", nodeId: "a", attempt: 1 },
+      ]);
+      expect(getterCalls).toBe(0);
     });
 
     it("does not report a node's initial pending state as a transition", () => {
@@ -186,6 +306,19 @@ describe("workflow/events", () => {
       const run = { status: "pending" } as unknown as Pick<WorkflowRun, "status" | "nodeStates">;
 
       expect(snapshotRun(run)).toEqual({ status: "pending", nodes: {} });
+    });
+
+    it("preserves a node whose id is a reserved object property", () => {
+      const nodeStates = Object.create(null);
+      Object.defineProperty(nodeStates, "__proto__", {
+        enumerable: true,
+        value: { nodeId: "__proto__", status: "completed", attempt: 2 },
+      });
+
+      const taken = snapshotRun({ status: "running", nodeStates } as never);
+
+      expect(Object.prototype.hasOwnProperty.call(taken.nodes, "__proto__")).toBe(true);
+      expect(taken.nodes["__proto__"]).toEqual({ status: "completed", attempt: 2 });
     });
   });
 

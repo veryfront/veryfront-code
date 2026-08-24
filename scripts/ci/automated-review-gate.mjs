@@ -19,6 +19,7 @@ const CODEX_NO_FINDING_PREFIX = "Codex Review: Didn't find any major issues.";
 const CODEX_REVIEWED_COMMIT_PATTERN =
   /\*\*Reviewed commit:\*\*\s*`([0-9a-f]{10})`/i;
 const FULL_COMMIT_PATTERN = /^[0-9a-f]{40}$/i;
+const WORKFLOW_COMMENT_LOGIN = "github-actions[bot]";
 /** @type {(ref: string) => Promise<string | undefined>} */
 const NO_COMMIT_RESOLVER = () => Promise.resolve(undefined);
 export const AUTOMATED_REVIEW_STATUS_CONTEXT = "Automated review";
@@ -27,7 +28,7 @@ const SUBMITTED_REVIEW_STATES = new Set([
   "COMMENTED",
 ]);
 
-/** Find an actual automated review submitted against the current PR head. */
+/** Decide the newest automated-review outcome for the current PR head. */
 export async function findAutomatedReview(
   {
     reviews,
@@ -68,7 +69,7 @@ export async function findAutomatedReview(
       event.time === undefined &&
       (await outcomeFor(event)).kind !== "not-head"
     ) {
-      return undefined;
+      return { kind: "failure" };
     }
   }
   const timedEvents = Map.groupBy(
@@ -85,7 +86,7 @@ export async function findAutomatedReview(
     if (
       exactHeadOutcomes.length > 1 &&
       exactHeadOutcomes.some((outcome) => outcome.kind !== "success")
-    ) return undefined;
+    ) return { kind: "failure" };
   }
   events.sort((left, right) => {
     if (left.time === undefined) {
@@ -98,9 +99,9 @@ export async function findAutomatedReview(
   for (const event of events) {
     const outcome = await outcomeFor(event);
     if (outcome.kind === "not-head") continue;
-    return outcome.kind === "success" ? outcome.review : undefined;
+    return outcome;
   }
-  return undefined;
+  return { kind: "waiting" };
 }
 
 function automatedReviewEventTime(value) {
@@ -132,13 +133,17 @@ async function classifyAutomatedReviewEvent(
       review?.commit_id !== headSha
     ) return { kind: "not-head" };
     const state = review?.state;
+    if (typeof state !== "string") return { kind: "failure" };
+    if (state.toUpperCase() === "PENDING") return { kind: "waiting" };
     if (
-      typeof state !== "string" ||
       typeof review?.submitted_at !== "string" ||
       review.submitted_at.length === 0
-    ) return { kind: "invalid" };
+    ) return { kind: "failure" };
     if (!SUBMITTED_REVIEW_STATES.has(state.toUpperCase())) {
-      return { kind: "failure" };
+      return {
+        kind: "failure",
+        url: typeof review.html_url === "string" ? review.html_url : undefined,
+      };
     }
     return {
       kind: "success",
@@ -182,7 +187,12 @@ async function classifyAutomatedReviewEvent(
             : undefined,
         },
       }
-      : { kind: "failure" };
+      : {
+        kind: "failure",
+        url: typeof comment.html_url === "string"
+          ? comment.html_url
+          : undefined,
+      };
   }
   if (login.toLowerCase() !== CODERABBIT_LOGIN) {
     return { kind: "not-head" };
@@ -193,7 +203,12 @@ async function classifyAutomatedReviewEvent(
   if (
     skippedTip?.toLowerCase() === headSha.toLowerCase() ||
     requestedTip?.toLowerCase() === headSha.toLowerCase()
-  ) return { kind: "failure" };
+  ) {
+    return {
+      kind: "failure",
+      url: typeof comment.html_url === "string" ? comment.html_url : undefined,
+    };
+  }
   const reviewedTip = recentReview?.match(
     CODERABBIT_REVIEW_RANGE_PATTERN,
   )?.[2];
@@ -212,7 +227,10 @@ async function classifyAutomatedReviewEvent(
           : undefined,
       },
     }
-    : { kind: "failure" };
+    : {
+      kind: "failure",
+      url: typeof comment.html_url === "string" ? comment.html_url : undefined,
+    };
 }
 
 function codeRabbitRecentReview(body) {
@@ -237,19 +255,25 @@ export async function publishAutomatedReviewStatus({
   // Review bots skip drafts, so a draft has no verdict yet. Publish pending so
   // "not reviewed yet" never renders as a pass and never as a missing status.
   if (isDraft) {
+    const description = "Draft pull request waits for ready for review";
     await github.rest.repos.createCommitStatus({
       owner,
       repo,
       sha: headSha,
       state: "pending",
       context: AUTOMATED_REVIEW_STATUS_CONTEXT,
-      description: "Draft pull request waits for ready for review",
+      description,
       target_url: pullUrl,
     });
-    return { state: "pending", review: undefined, failure: undefined };
+    return {
+      state: "pending",
+      review: undefined,
+      failure: undefined,
+      description,
+    };
   }
 
-  let review;
+  let decision = { kind: "waiting" };
   let failure;
   try {
     const reviews = await github.paginate(github.rest.pulls.listReviews, {
@@ -264,48 +288,125 @@ export async function publishAutomatedReviewStatus({
       issue_number: pullNumber,
       per_page: 100,
     });
-    review = await findAutomatedReview({
+    decision = await findAutomatedReview({
       reviews,
       comments,
       resolveCommit: async (ref) => {
-        try {
-          const response = await github.rest.repos.getCommit({
-            owner,
-            repo,
-            ref,
-          });
-          const sha = response?.data?.sha;
-          return typeof sha === "string" && FULL_COMMIT_PATTERN.test(sha)
-            ? sha
-            : undefined;
-        } catch {
-          return undefined;
+        const response = await github.rest.repos.getCommit({
+          owner,
+          repo,
+          ref,
+        });
+        const sha = response?.data?.sha;
+        if (typeof sha !== "string" || !FULL_COMMIT_PATTERN.test(sha)) {
+          throw new Error("Commit lookup returned a malformed commit SHA");
         }
+        return sha;
       },
     }, headSha);
-    if (!review) {
-      failure = new Error(
-        `No automated review was submitted for current commit ${
-          headSha.slice(0, 12)
-        }. ` +
-          "CodeRabbit and Codex skip or rate-limit comments do not count as reviews.",
-      );
-    }
   } catch (error) {
     failure = error instanceof Error ? error : new Error(String(error));
   }
 
-  const state = review ? "success" : "failure";
+  // No review for the current head is the normal state right after a push,
+  // while the review bots are still working. Publish pending only for that
+  // absent-or-waiting decision. Completed negative evidence and errors while
+  // computing the decision stay failures so they are looked at, not waited out.
+  if (decision.kind === "failure" && !failure) {
+    failure = new Error("Automated review reported a negative outcome");
+  }
+  const review = decision.kind === "success" ? decision.review : undefined;
+  const state = review ? "success" : failure ? "failure" : "pending";
+  const description = review
+    ? `Reviewed by ${review.reviewer}`
+    : decision.kind === "failure"
+    ? "Automated review did not pass the current commit"
+    : failure
+    ? "Could not determine the automated review status"
+    : `Waiting for an automated review of ${headSha.slice(0, 12)}`;
   await github.rest.repos.createCommitStatus({
     owner,
     repo,
     sha: headSha,
     state,
     context: AUTOMATED_REVIEW_STATUS_CONTEXT,
-    description: review
-      ? `Reviewed by ${review.reviewer}`
-      : "No CodeRabbit or Codex review for current commit",
-    target_url: review?.url ?? pullUrl,
+    description,
+    target_url: review?.url ?? decision.url ?? pullUrl,
   });
-  return { state, review, failure };
+  return { state, review, failure, description };
+}
+
+/**
+ * Ask Codex to review the current head commit, at most once per commit.
+ *
+ * The Codex connector reviews a pull request when it opens or leaves draft,
+ * but a push to an open pull request does not trigger a new review. Posting
+ * the literal "@codex review" comment is how a new review is requested. The
+ * marker comment keeps the request idempotent: a rerun for the same head
+ * finds the marker in an existing comment and does not post again, while a
+ * new head carries a new marker and gets its own request.
+ *
+ * Only marker comments authored by the workflow itself count. A pull request
+ * participant can paste the marker text into their own comment, and letting
+ * that suppress the request would let anyone silence the review nudge for a
+ * head commit.
+ *
+ * Immediately before posting, re-fetch the pull request and require its
+ * current head to match the event head. That prevents a queued synchronize
+ * run from marking an old SHA while its unqualified request targets a newer
+ * current head.
+ */
+export async function requestAutomatedReview({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  headSha,
+}) {
+  // The comment body must stay a fixed instruction plus a verified commit
+  // SHA. Never interpolate pull request controlled content here: this runs
+  // with pull_request_target authority.
+  if (typeof headSha !== "string" || !FULL_COMMIT_PATTERN.test(headSha)) {
+    throw new Error(
+      "Refusing to request an automated review of a malformed head commit",
+    );
+  }
+  const marker = `<!-- automated-review-request: ${headSha.toLowerCase()} -->`;
+  const comments = await github.paginate(github.rest.issues.listComments, {
+    owner,
+    repo,
+    issue_number: pullNumber,
+    per_page: 100,
+  });
+  const alreadyRequested = comments.some((comment) =>
+    comment?.user?.login === WORKFLOW_COMMENT_LOGIN &&
+    comment?.user?.type === "Bot" &&
+    typeof comment?.body === "string" &&
+    comment.body.includes(marker)
+  );
+  if (alreadyRequested) {
+    return { requested: false, marker };
+  }
+  const response = await github.rest.pulls.get({
+    owner,
+    repo,
+    pull_number: pullNumber,
+  });
+  const currentHeadSha = response?.data?.head?.sha;
+  if (
+    typeof currentHeadSha !== "string" ||
+    !FULL_COMMIT_PATTERN.test(currentHeadSha)
+  ) {
+    throw new Error("Could not verify the current pull request head commit");
+  }
+  if (currentHeadSha.toLowerCase() !== headSha.toLowerCase()) {
+    return { requested: false, marker, reason: "stale-head" };
+  }
+  await github.rest.issues.createComment({
+    owner,
+    repo,
+    issue_number: pullNumber,
+    body: `${marker}\n@codex review`,
+  });
+  return { requested: true, marker };
 }

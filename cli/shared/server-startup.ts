@@ -1,4 +1,4 @@
-import { getEnv, runtime, setEnv } from "veryfront/platform";
+import { type HostRuntime, liveHostRuntime, runtime } from "veryfront/platform";
 import {
   type DevServerOptions,
   type DiscoveryOptions,
@@ -30,16 +30,16 @@ export interface StartCliProxyModeServerOptions {
 
 const LOCAL_CLI_PROXY_MODE_ENV = "VERYFRONT_CLI_LOCAL_PROXY_MODE";
 
-export function prepareCliProxyModeEnvironment(): void {
+export function prepareCliProxyModeEnvironment(host: HostRuntime = liveHostRuntime()): void {
   // Proxy mode must be set before config loading/bootstrap.
-  setEnv("PROXY_MODE", "1");
-  setEnv(LOCAL_CLI_PROXY_MODE_ENV, "1");
+  host.env.set("PROXY_MODE", "1");
+  host.env.set(LOCAL_CLI_PROXY_MODE_ENV, "1");
 
   // Ensure NODE_ENV is set for local proxy mode (the `start` command uses
   // startProductionServer with PROXY_MODE=1, but this is a local dev scenario,
   // not a deployed pod). Without this, validateProductionEnvironment throws.
-  if (!getEnv("NODE_ENV") && !getEnv("DENO_ENV")) {
-    setEnv("NODE_ENV", "development");
+  if (!host.env.get("NODE_ENV") && !host.env.get("DENO_ENV")) {
+    host.env.set("NODE_ENV", "development");
   }
 }
 
@@ -52,9 +52,12 @@ export function buildProxyRuntimeProjectIdentity(
   };
 }
 
-export function buildDiscoveryConfig(options: StartCliProxyModeServerOptions): DiscoveryOptions {
-  const token = getEnv("VERYFRONT_API_TOKEN") ?? "";
-  const slug = getEnv("VERYFRONT_PROJECT_SLUG") ?? options.linkedProjectSlug ?? "";
+export function buildDiscoveryConfig(
+  options: StartCliProxyModeServerOptions,
+  host: HostRuntime = liveHostRuntime(),
+): DiscoveryOptions {
+  const token = host.env.get("VERYFRONT_API_TOKEN") ?? "";
+  const slug = host.env.get("VERYFRONT_PROJECT_SLUG") ?? options.linkedProjectSlug ?? "";
 
   return {
     baseDir: options.projectDir,
