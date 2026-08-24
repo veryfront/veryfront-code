@@ -297,6 +297,16 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
         tempPath: "/tmp/colon-specifier.mjs",
         contentHash: "colon-specifier",
       });
+      const foreignSpecifierContainingProjectIdKey = buildCrossProjectImportCacheKey({
+        projectId: "project-2",
+        specifier: "prefix:project-1:component",
+        reactVersion: "1.0.0",
+        registryBaseUrl: "https://registry.example.com",
+      });
+      globalCrossProjectCache.set(foreignSpecifierContainingProjectIdKey, {
+        tempPath: "/tmp/foreign-specifier.mjs",
+        contentHash: "foreign-specifier",
+      });
       globalCrossProjectCache.set("prefix:project-2:mod", {
         tempPath: "/tmp/y.mjs",
         contentHash: "y",
@@ -320,6 +330,11 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
         globalCrossProjectCache.has(colonSpecifierKey),
         false,
         "cross-project entries with colon-containing specifiers must be evicted for their owner",
+      );
+      assertEquals(
+        globalCrossProjectCache.has(foreignSpecifierContainingProjectIdKey),
+        true,
+        "a foreign entry must survive when only its specifier contains the cleared project id",
       );
       assertEquals(
         globalCrossProjectCache.has("prefix:project-2:mod"),

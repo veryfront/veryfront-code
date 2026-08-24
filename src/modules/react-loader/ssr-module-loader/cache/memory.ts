@@ -353,18 +353,23 @@ export function clearSSRModuleCache(): void {
  * project id, so the specifier may contain arbitrary `:` characters. Parse
  * from the stable `:registry:` suffix instead of assuming fixed segments.
  */
-function isCrossProjectCacheKeyForProject(key: string, projectId: string): boolean {
+function parseCrossProjectCacheKeyOwner(
+  key: string,
+): { isCrossProjectKey: boolean; projectId?: string } {
   const registryMarker = ":registry:";
   const markerIndex = key.lastIndexOf(registryMarker);
-  if (markerIndex < 0) return false;
+  if (markerIndex < 0) return { isCrossProjectKey: false };
 
   const baseKey = key.slice(0, markerIndex);
   const reactVersionSeparator = baseKey.lastIndexOf(":");
-  if (reactVersionSeparator < 0) return false;
+  if (reactVersionSeparator < 0) return { isCrossProjectKey: true };
   const projectSeparator = baseKey.lastIndexOf(":", reactVersionSeparator - 1);
-  if (projectSeparator < 0) return false;
+  if (projectSeparator < 0) return { isCrossProjectKey: true };
 
-  return baseKey.slice(projectSeparator + 1, reactVersionSeparator) === projectId;
+  return {
+    isCrossProjectKey: true,
+    projectId: baseKey.slice(projectSeparator + 1, reactVersionSeparator),
+  };
 }
 
 export function clearSSRModuleCacheForProject(
@@ -382,9 +387,11 @@ export function clearSSRModuleCacheForProject(
   }
 
   for (const key of globalCrossProjectCache.keys()) {
-    if (!isCrossProjectCacheKeyForProject(key, projectId) && !isKeyForProject(key, projectId)) {
-      continue;
-    }
+    const crossProjectOwner = parseCrossProjectCacheKeyOwner(key);
+    const belongsToProject = crossProjectOwner.isCrossProjectKey
+      ? crossProjectOwner.projectId === projectId
+      : isKeyForProject(key, projectId);
+    if (!belongsToProject) continue;
     globalCrossProjectCache.delete(key);
   }
 
