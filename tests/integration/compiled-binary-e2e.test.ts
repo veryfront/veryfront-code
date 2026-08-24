@@ -29,7 +29,7 @@ import {
 import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { load as loadEnv } from "#veryfront/platform/compat/std/dotenv.ts";
-import { PROVIDER_ENV_KEYS } from "#veryfront/scripts/test/suites.ts";
+import { PROVIDER_ENV_KEYS } from "../../scripts/test/suites.ts";
 import {
   assertCounterHydration,
   assertHtmlDoesNotInclude,
