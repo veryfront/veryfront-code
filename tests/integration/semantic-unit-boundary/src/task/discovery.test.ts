@@ -40,7 +40,7 @@ function createMockAdapter(files: Record<string, string>): FileSystemAdapter {
     async readFile(path: string): Promise<string> {
       const content = normalizedFiles[normalize(path)];
       if (content === undefined) {
-        throw new Deno.errors.NotFound(`File not found: ${path}`);
+        throw Object.assign(new Error(`File not found: ${path}`), { code: "ENOENT" });
       }
       return content;
     },
@@ -458,11 +458,11 @@ describe("task/discovery effectful", { sanitizeOps: false, sanitizeResources: fa
   });
 
   it("reports invalid integration requirement metadata during unified discovery", async () => {
-    const tempDir = await Deno.makeTempDir({ prefix: "vf-task-invalid-requirements-" });
+    const tempDir = await makeTempDir({ prefix: "vf-task-invalid-requirements-" });
 
     try {
-      await Deno.mkdir(`${tempDir}/tasks`, { recursive: true });
-      await Deno.writeTextFile(
+      await mkdir(`${tempDir}/tasks`, { recursive: true });
+      await writeTextFile(
         `${tempDir}/tasks/sync.ts`,
         [
           "export default {",
@@ -486,16 +486,16 @@ describe("task/discovery effectful", { sanitizeOps: false, sanitizeResources: fa
         true,
       );
     } finally {
-      await Deno.remove(tempDir, { recursive: true });
+      await remove(tempDir, { recursive: true });
     }
   });
 
   it("keeps valid sibling tasks after malformed unified candidates", async () => {
-    const tempDir = await Deno.makeTempDir({ prefix: "vf-task-invalid-sibling-" });
+    const tempDir = await makeTempDir({ prefix: "vf-task-invalid-sibling-" });
 
     try {
-      await Deno.mkdir(`${tempDir}/tasks`, { recursive: true });
-      await Deno.writeTextFile(
+      await mkdir(`${tempDir}/tasks`, { recursive: true });
+      await writeTextFile(
         `${tempDir}/tasks/default-first.ts`,
         [
           "export default {",
@@ -505,7 +505,7 @@ describe("task/discovery effectful", { sanitizeOps: false, sanitizeResources: fa
           'export const validDefaultSibling = { run() { return "default sibling"; } };',
         ].join("\n"),
       );
-      await Deno.writeTextFile(
+      await writeTextFile(
         `${tempDir}/tasks/named-first.ts`,
         [
           "export const aBroken = {",
@@ -533,7 +533,7 @@ describe("task/discovery effectful", { sanitizeOps: false, sanitizeResources: fa
         true,
       );
     } finally {
-      await Deno.remove(tempDir, { recursive: true });
+      await remove(tempDir, { recursive: true });
     }
   });
 
@@ -566,11 +566,11 @@ describe("task/discovery effectful", { sanitizeOps: false, sanitizeResources: fa
   });
 
   it("reports accessor-backed task metadata without invoking the accessor", async () => {
-    const tempDir = await Deno.makeTempDir({ prefix: "vf-task-accessor-metadata-" });
+    const tempDir = await makeTempDir({ prefix: "vf-task-accessor-metadata-" });
 
     try {
-      await Deno.mkdir(`${tempDir}/tasks`, { recursive: true });
-      await Deno.writeTextFile(
+      await mkdir(`${tempDir}/tasks`, { recursive: true });
+      await writeTextFile(
         `${tempDir}/tasks/sync.ts`,
         [
           "export default {",
@@ -596,16 +596,16 @@ describe("task/discovery effectful", { sanitizeOps: false, sanitizeResources: fa
         true,
       );
     } finally {
-      await Deno.remove(tempDir, { recursive: true });
+      await remove(tempDir, { recursive: true });
     }
   });
 
   it("discovers class-instance tasks and preserves their run receiver", async () => {
-    const tempDir = await Deno.makeTempDir({ prefix: "vf-task-class-instance-" });
+    const tempDir = await makeTempDir({ prefix: "vf-task-class-instance-" });
 
     try {
-      await Deno.mkdir(`${tempDir}/tasks`, { recursive: true });
-      await Deno.writeTextFile(
+      await mkdir(`${tempDir}/tasks`, { recursive: true });
+      await writeTextFile(
         `${tempDir}/tasks/stateful.ts`,
         [
           "class StatefulTask {",
@@ -625,12 +625,12 @@ describe("task/discovery effectful", { sanitizeOps: false, sanitizeResources: fa
       assertEquals([...result.tasks.keys()], ["stateful"]);
       assertEquals(result.tasks.get("stateful")?.run({ env: {}, config: {} }), "stateful");
     } finally {
-      await Deno.remove(tempDir, { recursive: true });
+      await remove(tempDir, { recursive: true });
     }
   });
 
   it("does not treat Object.prototype.run pollution as a task export", async () => {
-    const tempDir = await Deno.makeTempDir({ prefix: "vf-task-prototype-pollution-" });
+    const tempDir = await makeTempDir({ prefix: "vf-task-prototype-pollution-" });
     Object.defineProperty(Object.prototype, "run", {
       configurable: true,
       value: () => "polluted",
@@ -638,8 +638,8 @@ describe("task/discovery effectful", { sanitizeOps: false, sanitizeResources: fa
 
     try {
       assertEquals(isTaskDefinition({}), false);
-      await Deno.mkdir(`${tempDir}/tasks`, { recursive: true });
-      await Deno.writeTextFile(
+      await mkdir(`${tempDir}/tasks`, { recursive: true });
+      await writeTextFile(
         `${tempDir}/tasks/config.ts`,
         [
           'export const config = { mode: "safe" };',
@@ -656,7 +656,7 @@ describe("task/discovery effectful", { sanitizeOps: false, sanitizeResources: fa
       assertEquals([...result.tasks.keys()], []);
     } finally {
       delete (Object.prototype as Record<string, unknown>).run;
-      await Deno.remove(tempDir, { recursive: true });
+      await remove(tempDir, { recursive: true });
     }
   });
 
