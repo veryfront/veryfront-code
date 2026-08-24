@@ -281,6 +281,7 @@ export class LayoutOrchestrator {
                   moduleServerOrigin,
                   config: this.config.config,
                   isLocalProject: this.config.isLocalProject === true,
+                  signal,
                 });
                 return { type: "mdx" as const, path: layout.path, success: true };
               } catch (error) {

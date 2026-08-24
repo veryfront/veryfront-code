@@ -392,6 +392,12 @@ export interface MDXLayoutModuleOptions {
   moduleServerOrigin?: string;
   config?: VeryfrontConfig;
   isLocalProject?: boolean;
+  /**
+   * Request cancellation. The import-map preloader and ESM module loader do
+   * not take a signal themselves, so the load checks it between stages and
+   * stops before starting the next one.
+   */
+  signal?: AbortSignal;
 }
 
 /** Inputs for {@link loadMDXLayout}. */
@@ -419,6 +425,7 @@ export function loadMDXLayout(
     moduleServerOrigin,
     config,
     isLocalProject,
+    signal,
   } = options;
 
   return withSpan(
@@ -429,6 +436,7 @@ export function loadMDXLayout(
         hasPreloadedImportMap: !!preloadedImportMap,
       });
 
+      throwIfAborted(signal);
       const map = preloadedImportMap ?? (await preloadImportMap(projectDir, adapter, projectId, {
         projectDir,
         contentSourceId,
@@ -438,6 +446,7 @@ export function loadMDXLayout(
         loadMdxLayoutLog.debug("Using preloaded import map", { projectSlug });
       }
 
+      throwIfAborted(signal);
       const code = transformImportsWithMap(bundle.compiledCode, map);
       loadMdxLayoutLog.debug("Loading module via loadModuleESM START", {
         projectSlug,

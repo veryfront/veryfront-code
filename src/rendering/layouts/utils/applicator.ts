@@ -88,6 +88,7 @@ export function applyLayoutsESM(
                   moduleServerOrigin,
                   config,
                   isLocalProject,
+                  signal,
                 }),
               spanAttrs,
             );
@@ -156,6 +157,7 @@ export function applyLayoutsESM(
             moduleServerOrigin,
             config,
             isLocalProject,
+            signal,
           }),
         { "layout.kind": "mdx", "layout.type": "named" },
       );
@@ -172,7 +174,30 @@ export function applyLayoutsESM(
 }
 
 /**
+ * Rejects a legacy function-body layout bundle before it reaches the ESM
+ * loader, where its top-level `return` would surface as an opaque syntax
+ * error. A compiled ESM bundle always contains an `export`; a function-body
+ * bundle produces its layout with a top-level `return` instead.
+ */
+function assertESMLayoutBundle(compiledCode: string | undefined, source: string): void {
+  if (!compiledCode) return;
+  if (/\bexport\b/.test(compiledCode) || !/\breturn\b/.test(compiledCode)) return;
+  throw new Error(
+    `applyLayoutsFunctionBody received a legacy function-body layout bundle (${source}). ` +
+      "Compiled layout code must be an ES module (e.g. `export default Layout`); " +
+      "the synchronous function-body evaluator was removed for security reasons. " +
+      "Recompile the layout with the current MDX pipeline, or migrate to applyLayoutsESM.",
+  );
+}
+
+/**
  * Compatibility alias for layout application through the secure ESM loader.
+ *
+ * Accepts the same bundle format as {@link applyLayoutsESM}: compiled layout
+ * code must be an ES module. Legacy function-body bundles (top-level
+ * `return { default: Layout }`) are rejected with a migration error — their
+ * synchronous evaluator was removed for security reasons and pre-dates this
+ * alias delegating to the ESM path.
  *
  * @deprecated Use {@link applyLayoutsESM}.
  */
@@ -198,6 +223,15 @@ export async function applyLayoutsFunctionBody(
   signal?: AbortSignal,
   isLocalProject?: boolean,
 ): Promise<BundledReact.ReactElement> {
+  assertESMLayoutBundle(layoutBundle?.compiledCode, "named layout");
+  for (const item of nestedLayouts) {
+    if (item.kind !== "mdx") continue;
+    assertESMLayoutBundle(
+      item.bundle?.compiledCode,
+      `nested layout ${item.componentPath || item.path || "<unknown>"}`,
+    );
+  }
+
   return await applyLayoutsESM(
     pageElement,
     layoutBundle,

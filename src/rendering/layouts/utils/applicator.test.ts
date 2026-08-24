@@ -581,6 +581,85 @@ describe(
           "applyLayoutsFunctionBody must propagate a broken layout rather than render without it",
         );
       });
+
+      it("rejects a legacy function-body bundle with a migration error", async () => {
+        await assertRejects(
+          () =>
+            applyLayoutsFunctionBody(
+              React.createElement("p", { id: "page-body" }, "Text"),
+              {
+                compiledCode: "return { default: function Layout() { return null; } };",
+              } as MdxBundle,
+              [],
+              {},
+              createLayoutComponentCache(),
+              "/project",
+              createMockAdapter(),
+              undefined,
+              "project-fb-legacy-bundle",
+              "project-slug",
+              "content-source-id",
+              PRODUCTION_MODES,
+            ),
+          Error,
+          "legacy function-body layout bundle",
+          "a top-level-return bundle must fail with migration guidance, not an opaque ESM syntax error",
+        );
+      });
+    });
+
+    describe("request cancellation", () => {
+      it("stops an MDX layout load when the signal is already aborted", async () => {
+        const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+        const mutableRenderer = mdxRenderer as unknown as {
+          loadModuleESM: typeof mdxRenderer.loadModuleESM;
+        };
+        let moduleLoads = 0;
+        mutableRenderer.loadModuleESM = () => {
+          moduleLoads++;
+          return Promise.resolve({ default: () => null });
+        };
+
+        const controller = new AbortController();
+        controller.abort(new Error("request canceled mid-render"));
+
+        try {
+          await assertRejects(
+            () =>
+              applyLayoutsESM(
+                React.createElement("p", { id: "page-body" }, "Text"),
+                {
+                  compiledCode: "export default function Layout() { return null; }",
+                } as MdxBundle,
+                [],
+                "/project",
+                {},
+                createLayoutComponentCache(),
+                createMockAdapter(),
+                undefined,
+                "project-esm-aborted",
+                "project-slug",
+                "content-source-id",
+                PRODUCTION_MODES,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                controller.signal,
+              ),
+            Error,
+            "request canceled mid-render",
+            "an aborted request must stop the MDX layout load instead of letting it run to completion",
+          );
+          assertEquals(moduleLoads, 0, "no module load may start after the request was aborted");
+        } finally {
+          mutableRenderer.loadModuleESM = originalLoadModuleESM;
+        }
+      });
     });
   },
 );
