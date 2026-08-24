@@ -59,7 +59,6 @@ export function assertWorkflowRunUpdate(patch: WorkflowRunUpdate): void {
 export interface BackendConfig {
   url?: string;
   prefix?: string;
-  defaultTtl?: number;
   debug?: boolean;
 }
 
@@ -251,10 +250,6 @@ type WithLockSupport =
   & WorkflowBackend
   & Required<Pick<WorkflowBackend, "acquireLock" | "releaseLock">>;
 
-type WithEventSupport =
-  & WorkflowBackend
-  & Required<Pick<WorkflowBackend, "publishEvent" | "subscribeEvents">>;
-
 type WithRunObservationSupport =
   & WorkflowBackend
   & Required<Pick<WorkflowBackend, "openRunObservation">>;
@@ -271,13 +266,6 @@ export function hasLockSupport(backend: WorkflowBackend): backend is WithLockSup
   return (
     typeof backend.acquireLock === "function" &&
     typeof backend.releaseLock === "function"
-  );
-}
-
-export function hasEventSupport(backend: WorkflowBackend): backend is WithEventSupport {
-  return (
-    typeof backend.publishEvent === "function" &&
-    typeof backend.subscribeEvents === "function"
   );
 }
 
