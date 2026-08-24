@@ -25,12 +25,6 @@ function capture(): UseChatScrollResult<HTMLDivElement> {
   return captured!;
 }
 
-function installDomGlobals(dom: JSDOM): () => void {
-  // The fake ResizeObserver is defined on the JSDOM window first so the shared
-  // installer copies it over its default stub.
-  return installComponentDom(dom, { windowGlobals: ["ResizeObserver", "Event"] });
-}
-
 describe("useChatScroll (superset)", () => {
   it("keeps the canonical base surface", () => {
     const s = capture();
@@ -112,7 +106,11 @@ describe("useChatScroll (superset)", () => {
       disconnect() {}
     }
     (dom.window as unknown as { ResizeObserver: unknown }).ResizeObserver = FakeResizeObserver;
-    const restore = installDomGlobals(dom);
+    // The fake ResizeObserver is defined on the JSDOM window first so the shared
+    // installer copies it over its default stub.
+    const restore = installComponentDom(dom, {
+      windowGlobals: ["ResizeObserver", "Event"],
+    });
     let root: Root | undefined;
     try {
       let captured: UseChatScrollResult<HTMLDivElement> | null = null;

@@ -8,7 +8,7 @@ import { describe, it } from "#veryfront/testing/bdd";
 import { installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import { MessageEditForm } from "./message-edit-form.tsx";
 
-function installDom(): () => void {
+function setupMessageEditFormDom(): () => void {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
     url: "https://example.com/",
   });
@@ -92,7 +92,7 @@ describe("MessageEditForm", () => {
   });
 
   it("submits trimmed content on Enter, ignores Shift+Enter, and cancels on Escape", async () => {
-    const restoreDom = installDom();
+    const restoreDom = setupMessageEditFormDom();
     const saves: string[] = [];
     let cancels = 0;
     try {
@@ -131,7 +131,7 @@ describe("MessageEditForm", () => {
   });
 
   it("submits trimmed content when the save button is clicked", async () => {
-    const restoreDom = installDom();
+    const restoreDom = setupMessageEditFormDom();
     const saves: string[] = [];
     try {
       const root = createRoot(document.getElementById("root")!);

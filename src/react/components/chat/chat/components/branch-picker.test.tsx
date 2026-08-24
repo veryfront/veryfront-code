@@ -15,10 +15,6 @@ function buttonTag(html: string, label: string): string {
   return tag.slice(0, tag.indexOf(">"));
 }
 
-function installDomGlobals(dom: JSDOM): () => void {
-  return installComponentDom(dom);
-}
-
 describe("BranchPicker", () => {
   it("renders the default previous, count, and next controls", () => {
     const html = renderToString(
@@ -60,7 +56,7 @@ describe("BranchPicker", () => {
 
   it("wires the previous and next controls to onPrev and onNext", async () => {
     const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
-    const restore = installDomGlobals(dom);
+    const restore = installComponentDom(dom);
     try {
       const rootElement = document.getElementById("root");
       assert(rootElement, "Expected root element to exist");

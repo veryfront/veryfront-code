@@ -5,41 +5,12 @@ import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { waitFor } from "#veryfront/testing/deno-compat.ts";
+import { type ComponentDomOptions, installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import { InlineCitation } from "./inline-citation.tsx";
 
-function installDomGlobals(dom: JSDOM): () => void {
-  const window = dom.window;
-  const previous = {
-    window: globalThis.window,
-    document: globalThis.document,
-    navigator: globalThis.navigator,
-    self: globalThis.self,
-    Node: globalThis.Node,
-    Element: globalThis.Element,
-    HTMLElement: globalThis.HTMLElement,
-    MouseEvent: globalThis.MouseEvent,
-    innerWidth: globalThis.innerWidth,
-    innerHeight: globalThis.innerHeight,
-  };
-
-  Object.assign(globalThis, {
-    window,
-    document: window.document,
-    navigator: window.navigator,
-    self: window,
-    Node: window.Node,
-    Element: window.Element,
-    HTMLElement: window.HTMLElement,
-    MouseEvent: window.MouseEvent,
-    innerWidth: window.innerWidth,
-    innerHeight: window.innerHeight,
-  });
-
-  return () => {
-    Object.assign(globalThis, previous);
-    dom.window.close();
-  };
-}
+const DOM_OPTIONS: ComponentDomOptions = {
+  windowGlobals: ["self", "innerWidth", "innerHeight"],
+};
 
 describe("InlineCitation", () => {
   it("exposes the trigger and hover card as compound parts", async () => {
@@ -50,7 +21,7 @@ describe("InlineCitation", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
     );
-    const restore = installDomGlobals(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
 
     try {
       const rootElement = document.getElementById("root");
@@ -96,7 +67,7 @@ describe("InlineCitation", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
     );
-    const restore = installDomGlobals(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
 
     try {
       const rootElement = document.getElementById("root");
@@ -155,7 +126,7 @@ describe("InlineCitation", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
     );
-    const restore = installDomGlobals(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
 
     try {
       const rootElement = document.getElementById("root");

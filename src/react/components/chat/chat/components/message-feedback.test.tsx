@@ -8,12 +8,6 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import { MessageFeedback } from "./message-feedback.tsx";
 
-function installDom(): { restore: () => void; window: JSDOM["window"] } {
-  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
-  const window = dom.window;
-  return { window, restore: installComponentDom(dom, { windowGlobals: ["Event"] }) };
-}
-
 describe("MessageFeedback", () => {
   it("renders both default feedback controls", () => {
     const html = renderToString(
@@ -25,7 +19,8 @@ describe("MessageFeedback", () => {
   });
 
   it("reports the messageId and polarity when a control is clicked", async () => {
-    const dom = installDom();
+    const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
+    const restore = installComponentDom(dom, { windowGlobals: ["Event"] });
     let root: Root | undefined;
     const calls: [string, string][] = [];
 
@@ -58,7 +53,7 @@ describe("MessageFeedback", () => {
       );
     } finally {
       if (root) await unmountReactRoot(root);
-      dom.restore();
+      restore();
     }
   });
 

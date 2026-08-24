@@ -8,12 +8,6 @@ import { describe, it } from "#veryfront/testing/bdd";
 import { installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import { ErrorBanner } from "./error-banner.tsx";
 
-function installDom(): { restore: () => void; window: JSDOM["window"] } {
-  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
-  const window = dom.window;
-  return { window, restore: installComponentDom(dom, { windowGlobals: ["Event"] }) };
-}
-
 describe("ErrorBanner", () => {
   it("renders the error message", () => {
     const html = renderToString(<ErrorBanner error={new Error("Something went wrong")} />);
@@ -33,7 +27,8 @@ describe("ErrorBanner", () => {
   });
 
   it("invokes onRetry when the retry button is clicked", async () => {
-    const dom = installDom();
+    const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
+    const restore = installComponentDom(dom, { windowGlobals: ["Event"] });
     let root: Root | undefined;
     let calls = 0;
 
@@ -53,7 +48,7 @@ describe("ErrorBanner", () => {
       assertEquals(calls, 1, "clicking the retry button invokes onRetry");
     } finally {
       if (root) await unmountReactRoot(root);
-      dom.restore();
+      restore();
     }
   });
 
