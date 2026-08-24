@@ -32,13 +32,6 @@ import type { FailureRecord, ModuleCacheEntry } from "../types.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 
-function isCrossProjectCacheKeyForProject(key: string, projectId: string): boolean {
-  const registryIndex = key.lastIndexOf(":registry:");
-  if (registryIndex < 0) return false;
-  const projectIndex = key.lastIndexOf(`:${projectId}:`, registryIndex);
-  return projectIndex >= 0 && projectIndex < registryIndex;
-}
-
 /** Maximum entries for temp path tracking (small, just pointers) */
 const TEMP_PATH_CACHE_MAX_ENTRIES = 500;
 
