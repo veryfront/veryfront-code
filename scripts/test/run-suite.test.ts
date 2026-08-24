@@ -111,6 +111,21 @@ describe("suite planning parity", () => {
     }
   });
 
+  it("runs the Deno KV polyfill integration in the Node and Bun suites", async () => {
+    // The polyfill only installs `globalThis.Deno.openKv` off Deno, so its
+    // interesting branch exists nowhere in the Deno lane. Selecting the file
+    // by name is what keeps that branch executed rather than merely present.
+    const polyfillFile = "tests/integration/runtime/compat/kv-polyfill.test.ts";
+
+    for (const suite of ["runtime:node", "runtime:bun"] as const) {
+      const plan = await planSuiteFiles({ suite });
+      assert(
+        plan.files.includes(polyfillFile),
+        `${suite} must select the Deno KV polyfill coverage`,
+      );
+    }
+  });
+
   it("keeps eight coverage shards complete, disjoint, and ordered", async () => {
     const paths = Array.from(
       { length: 27 },
@@ -523,6 +538,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "extensions/ext-bundler-esbuild/src/binary.test.ts",
       "tests/ensure-npm-links.test.mjs",
       "tests/test-file-utils.test.mjs",
+      "tests/integration/runtime/compat/kv-polyfill.test.ts",
       "tests/integration/security/sandbox-runtime-guard.test.ts",
     ]
     : [
@@ -530,6 +546,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/bun/dynamic-alias-resolution.test.ts",
       "tests/bun/npm-protocol-resolution.test.ts",
       "tests/bun/workspace-resolution.test.ts",
+      "tests/integration/runtime/compat/kv-polyfill.test.ts",
       "tests/integration/security/sandbox-runtime-guard.test.ts",
     ];
   const incompatible = runtime === "node"

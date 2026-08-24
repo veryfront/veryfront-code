@@ -34,7 +34,8 @@ describe("integration/runtime/compat/kv-polyfill", () => {
       polyfillDenoKv();
       assertStrictEquals(installed!.openKv, sentinel, "a host-provided openKv is never clobbered");
     } finally {
-      g.Deno = originalDeno;
+      if (originalDeno === undefined) delete g.Deno;
+      else g.Deno = originalDeno;
     }
   });
 });
