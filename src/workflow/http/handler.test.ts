@@ -1,15 +1,19 @@
 import "#veryfront/schemas/_test-setup.ts";
+
+import { delay } from "#std/async.ts";
+import { expect } from "#std/expect.ts";
+
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
-import { expect } from "#std/expect.ts";
-import { delay } from "#std/async.ts";
 import type { Tool } from "#veryfront/tool";
-import { defineSchema } from "#veryfront/schemas/index.ts";
-import type { PendingApproval, RunFilter, WorkflowRun } from "../types.ts";
-import { MemoryBackend } from "../backends/memory.ts";
-import { createWorkflowClient, type WorkflowClient } from "../api/workflow-client.ts";
-import { sequence, step, waitForApproval, workflow } from "../dsl/index.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
+
+import { createWorkflowClient, type WorkflowClient } from "../api/workflow-client.ts";
+import { MemoryBackend } from "../backends/memory.ts";
+import { sequence, step, waitForApproval, workflow } from "../dsl/index.ts";
+import type { PendingApproval, RunFilter, WorkflowRun } from "../types.ts";
 import { createWorkflowHandler } from "./handler.ts";
 
 class CountingMemoryBackend extends MemoryBackend {
@@ -718,6 +722,43 @@ describe("createWorkflowHandler", () => {
       expect(closeCalls).toBe(1);
     });
 
+    it("does not reread the raw initial status after encoding a valid terminal snapshot", async () => {
+      const runId = await startRun();
+      const persisted = await client.getRun(runId);
+      if (!persisted) throw new Error("expected the run to exist");
+      const initial = { ...persisted };
+      let statusReads = 0;
+      Object.defineProperty(initial, "status", {
+        configurable: true,
+        enumerable: true,
+        get: () => {
+          statusReads++;
+          if (statusReads > 1) {
+            throw new Error("status can only be read once");
+          }
+          return "completed";
+        },
+      });
+      replaceObservation({
+        supported: true,
+        initial,
+        events: {
+          [Symbol.asyncIterator]: () => ({
+            next: () => Promise.resolve({ value: undefined, done: true as const }),
+            return: () => Promise.resolve({ value: undefined, done: true as const }),
+          }),
+        },
+        close: () => Promise.resolve(),
+      });
+
+      const response = await handlers.GET(get(`/api/workflows/runs/${runId}/events`));
+      const frames = await readStream(response);
+
+      assertEquals(frames.map(([name]) => name), ["snapshot"]);
+      assertEquals(frames[0]?.[1].status, "completed");
+      assertEquals(statusReads, 1);
+    });
+
     it("streams transitions written by a separate client sharing the backend", async () => {
       await client.destroy();
       const backend = new MemoryBackend({ debug: false });
@@ -978,13 +1019,13 @@ describe("createWorkflowHandler", () => {
       expect(closeCalls).toBe(1);
     });
 
-    it("does not deliver a snapshot when the status read throws after projection", async () => {
+    it("does not reread status after projecting an ongoing snapshot", async () => {
       const runId = await startRun();
       const persisted = await client.getRun(runId);
       if (!persisted) throw new Error("expected the run to exist");
       // A stateful accessor can serialize cleanly and then throw on the
-      // follow-up terminal-status read; the stream must carry only the
-      // sanitized error frame, never a snapshot with an error appended.
+      // follow-up terminal-status read; the stream must use the projected
+      // snapshot and not synthesize a false serialization error.
       let statusReads = 0;
       const initial = { ...persisted };
       Object.defineProperty(initial, "status", {
@@ -1018,10 +1059,12 @@ describe("createWorkflowHandler", () => {
       const response = await handlers.GET(get(`/api/workflows/runs/${runId}/events`));
       const frames = await readStream(response);
 
-      expect(frames.map(([name]) => name)).toEqual(["error"]);
-      expect(JSON.stringify(frames)).not.toContain("stateful status detail");
-      expect(returnCalls).toBe(1);
-      expect(closeCalls).toBe(1);
+      assertEquals(frames.map(([name]) => name), ["snapshot"]);
+      assertEquals(frames[0]?.[1].status, "running");
+      assertEquals(statusReads, 1);
+      assertEquals(JSON.stringify(frames).includes("stateful status detail"), false);
+      assertEquals(returnCalls, 1);
+      assertEquals(closeCalls, 1);
     });
 
     it("logs only a classification when the snapshot raises run content", async () => {
