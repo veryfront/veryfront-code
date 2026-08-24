@@ -1956,11 +1956,57 @@ describe("agent/durable", () => {
 
     assertEquals(
       await recoverConversationRunAppendFailure({
+        error: new AppendConversationRunEventsError({
+          status: 404,
+          detail: "resource-not-found",
+        }),
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_append_failure_deleted",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        cursorResyncsThisFlush: 0,
+        maxCursorResyncsPerFlush: 3,
+      }),
+      {
+        outcome: "stopped",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        disableReason: "run_terminal",
+      },
+    );
+
+    assertEquals(
+      await recoverConversationRunAppendFailure({
         error: new AppendConversationRunEventsError({ status: 404 }),
         authToken: AUTH_TOKEN,
         apiUrl: API_URL,
         conversationId: CONVERSATION_ID,
         runId: "run_append_failure_missing",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        cursorResyncsThisFlush: 0,
+        maxCursorResyncsPerFlush: 3,
+      }),
+      {
+        outcome: "stopped",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        disableReason: "ignorable_append_rejection",
+      },
+    );
+
+    assertEquals(
+      await recoverConversationRunAppendFailure({
+        error: new AppendConversationRunEventsError({
+          status: 404,
+          detail: "conversation-not-found",
+        }),
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_append_failure_other_missing_resource",
         latestEventId: 2,
         latestExternalEventSequence: 4,
         cursorResyncsThisFlush: 0,

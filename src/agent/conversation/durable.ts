@@ -411,8 +411,8 @@ export async function recoverConversationRunAppendFailure(input: {
   // runtime the run is finished and its row may already be gone (a project delete
   // cancels its in-flight runs first). Classify it distinctly from the other
   // ignorable rejections so finalization can skip completing a run that can only
-  // 400 -- an absent run or a run waiting for a tool result must keep the generic
-  // stop, and every other rejection must still retry or surface.
+  // 400 -- other missing-resource responses and runs waiting for a tool result
+  // keep the generic stop; every other rejection must still retry or surface.
   if (isTerminalRunConversationRunAppendError(input.error)) {
     return {
       outcome: "stopped",

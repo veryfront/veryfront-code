@@ -1,9 +1,13 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
 import type { HostedAgentRunSpan, HostedAgentRunTracer } from "./agent-run-lifecycle.ts";
-import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
+import {
+  type ConversationRunChunkMirror,
+  createHostedConversationRunChunkMirror,
+} from "../conversation/run-chunk-mirror.ts";
 import type { ConversationRunMirrorDisableReason } from "../conversation/run-mirror.ts";
 import type {
   HostedChatRuntimeAgent,
@@ -1349,6 +1353,105 @@ describe("agent/hosted-chat-execution-runtime", () => {
     await runtime.waitForFinish();
 
     assertEquals(terminalStates, [{ status: "completed" }]);
+  });
+
+  it("stops cleanly when a late reasoning append finds a deleted run after local completion", async () => {
+    let appendRequestCount = 0;
+    const finalizeRequestStatuses: string[] = [];
+    const errorLogs: string[] = [];
+    const observedTerminalStatuses: string[] = [];
+    const resourceNotFoundFetch: typeof globalThis.fetch = async () => {
+      appendRequestCount += 1;
+      return Response.json({ error: "resource-not-found" }, { status: 404 });
+    };
+
+    const durableRunMirror = createHostedConversationRunChunkMirror({
+      authToken: "token",
+      apiUrl: "https://api.example.test",
+      conversationId: "conversation-1",
+      runId: "root-run-1",
+      latestEventId: 0,
+      fetch: resourceNotFoundFetch,
+      instrumentation: {
+        error: (message) => {
+          errorLogs.push(message);
+        },
+      },
+    });
+    const lifecycleAdapter = createLifecycleAdapter({ durableRunMirror });
+    const rejectFinalize = async (state: HostedLifecycleTerminalState) => {
+      finalizeRequestStatuses.push(state.status);
+      throw new Error("resource-not-found");
+    };
+    lifecycleAdapter.terminal.finalizeRun = rejectFinalize;
+    lifecycleAdapter.terminal.cancelRun = rejectFinalize;
+    lifecycleAdapter.terminal.onTerminalState = async (state) => {
+      observedTerminalStatuses.push(state.status);
+    };
+    let streamOptions: HostedChatRuntimeToUiMessageStreamOptions | undefined;
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "openai/gpt-5.4",
+      originalMessages: [],
+      runContext: { withContext: (fn) => fn() },
+      abortSignal: new AbortController().signal,
+      logger: {
+        error: (message) => {
+          errorLogs.push(message);
+        },
+        warn: () => {},
+      },
+      bootstrap: {
+        cleanup: async () => {},
+        lifecycleAdapter,
+        rootStreamWatchdog: createRootStreamWatchdog(),
+        streamResult: createStreamResult({
+          finalStep: {},
+          captureOptions: (options) => {
+            streamOptions = options;
+          },
+        }),
+        streamingMessageId: "stream-message-1",
+        capturedMessageId: "stream-message-1",
+        capturedConversationId: "conversation-1",
+        mirroredToolChunkState: createMirroredToolChunkState(),
+      },
+    });
+    if (!streamOptions) {
+      throw new Error("stream options were not captured");
+    }
+
+    await durableRunMirror.handleChunk({
+      type: "reasoning-delta",
+      id: "reasoning-1",
+      delta: "late reasoning",
+    });
+    await streamOptions.onFinish?.({
+      messages: [],
+      isContinuation: false,
+      responseMessage: createResponseMessage({ parts: [{ type: "text", text: "done" }] }),
+      isAborted: false,
+      finishReason: "stop",
+    });
+    await runtime.waitForFinish();
+    durableRunMirror.dispose();
+
+    assertEquals(
+      {
+        appendRequestCount,
+        disableReason: durableRunMirror.getSnapshot().disableReason,
+        finalizeRequestStatuses,
+        errorLogs,
+        observedTerminalStatuses,
+      },
+      {
+        appendRequestCount: 1,
+        disableReason: "run_terminal",
+        finalizeRequestStatuses: [],
+        errorLogs: [],
+        observedTerminalStatuses: ["completed"],
+      },
+    );
   });
 
   it("mirrors a pending knowledge source before response finalization flushes", async () => {

@@ -63,11 +63,23 @@ describe("agent/durable-append-errors", () => {
       status: 400,
       detail: "Cannot append external events to a terminal run",
     });
+    const deletedRun = new AppendConversationRunEventsError({
+      status: 404,
+      detail: "resource-not-found",
+    });
     const waitingForTool = new AppendConversationRunEventsError({
       status: 400,
       detail: "Cannot append external events while the run is waiting for a tool result",
     });
     const missingRun = new AppendConversationRunEventsError({ status: 404 });
+    const otherMissingResource = new AppendConversationRunEventsError({
+      status: 404,
+      detail: "conversation-not-found",
+    });
+    const similarMissingResource = new AppendConversationRunEventsError({
+      status: 404,
+      detail: "run-resource-not-found",
+    });
     const cursorMismatch = new AppendConversationRunEventsError({
       status: 400,
       detail: "External run event cursor mismatch",
@@ -82,11 +94,23 @@ describe("agent/durable-append-errors", () => {
     });
 
     assertEquals(isTerminalRunConversationRunAppendError(terminal), true);
+    assertEquals(isTerminalRunConversationRunAppendError(deletedRun), true);
     assertEquals(isTerminalRunConversationRunAppendError(waitingForTool), false);
     assertEquals(isTerminalRunConversationRunAppendError(missingRun), false);
+    assertEquals(isTerminalRunConversationRunAppendError(otherMissingResource), false);
+    assertEquals(isTerminalRunConversationRunAppendError(similarMissingResource), false);
     assertEquals(isTerminalRunConversationRunAppendError(cursorMismatch), false);
     assertEquals(isTerminalRunConversationRunAppendError(oversized), false);
     assertEquals(isTerminalRunConversationRunAppendError(otherValidationFailure), false);
+    assertEquals(
+      isTerminalRunConversationRunAppendError(
+        Object.assign(new Error("resource-not-found"), {
+          status: 404,
+          detail: "resource-not-found",
+        }),
+      ),
+      false,
+    );
     assertEquals(isTerminalRunConversationRunAppendError(new Error("terminal run")), false);
   });
 
