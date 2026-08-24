@@ -22,10 +22,20 @@ describe("markdown/index.ts exports", () => {
       markdownModule.MarkdownRendererProvider,
       markdownComponentModule.MarkdownRendererProvider,
     );
+    assertStrictEquals(
+      markdownModule.MarkdownRendererCapabilityError,
+      markdownComponentModule.MarkdownRendererCapabilityError,
+      "barrel must re-export the component error class, not a same-named copy",
+    );
   });
 
   it("keeps the documented veryfront/markdown entrypoint aligned with the barrel module", () => {
     assertEquals(Object.keys(publicMarkdownModule).sort(), expectedRuntimeExports);
     assertStrictEquals(publicMarkdownModule.Markdown, markdownModule.Markdown);
+    assertStrictEquals(
+      publicMarkdownModule.MarkdownRendererCapabilityError,
+      markdownComponentModule.MarkdownRendererCapabilityError,
+      "veryfront/markdown must expose the same error class as the component module",
+    );
   });
 });
