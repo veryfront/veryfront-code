@@ -10,7 +10,7 @@ const CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER =
 const CODERABBIT_REVIEW_RANGE_PATTERN =
   /(?:^|\r\n|[\r\n])Reviewing files that changed from the base of the PR and between ([0-9a-f]{40}) and ([0-9a-f]{40})\.(?=\r\n|[\r\n]|$)/;
 const CODERABBIT_REVIEW_RANGE_STATEMENT_START_PATTERN =
-  /(?:^|\r\n|[\r\n])([ \t]*(?:(?:>[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*(?:Reviewing[ \t]+(?:files(?:[ \t]+that[ \t]+changed[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?|changed[ \t]+files(?:[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?)[ \t]+(?:and[ \t]+)?between))([^\r\n]*)/gi;
+  /(?:^|\r\n|[\r\n])([ \t]*(?:(?:>[ \t]*)|(?:\|[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*(?:Reviewing[ \t]+(?:files(?:[ \t]+that[ \t]+changed[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?|changed[ \t]+files(?:[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?)[ \t]+(?:and[ \t]+)?between))([^\r\n]*)/gi;
 const CODERABBIT_REVIEW_RANGE_CONTINUATION_PREFIX_PATTERN =
   /^[ \t]*(?:(?:>[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*/;
 const CODERABBIT_REVIEW_RANGE_SEPARATOR_PATTERN =
@@ -352,10 +352,15 @@ function classifyCodeRabbitRangeEvidence(selectedRecentReview, headSha) {
 }
 
 function codeRabbitRangeEvidenceStatements(content) {
-  const excludedRanges = markdownExcludedRanges(content);
-  const matches = [
-    ...content.matchAll(CODERABBIT_REVIEW_RANGE_STATEMENT_START_PATTERN),
-  ];
+  const markdownStructure = scanMarkdownStructure(content);
+  const excludedRanges = markdownStructure.excludedRanges;
+  const matches = mergeCodeRabbitRangeMatches(
+    [...content.matchAll(CODERABBIT_REVIEW_RANGE_STATEMENT_START_PATTERN)],
+    markdownTableRangeEvidenceMatches(
+      content,
+      markdownStructure.tableCellRanges,
+    ),
+  );
   const statementIndexes = matches.map(codeRabbitStatementIndex);
   const statements = [];
   let excludedRangeIndex = 0;
@@ -380,18 +385,88 @@ function codeRabbitRangeEvidenceStatements(content) {
       match,
       continuationEnd,
     );
-    if (statement) statements.push(statement);
+    if (statement) {
+      statement.insideTableCell = match.tableCell !== undefined;
+      statements.push(statement);
+    } else if (match.tableCell !== undefined) {
+      statements.push({
+        baseSegment: "",
+        insideTableCell: true,
+        statement: match[1] + match[2],
+        tableCell: match.tableCell,
+        tableContent: content,
+        tableEvidenceEnd: continuationEnd,
+        tableEvidenceStart: statementIndex,
+        tipToken: "",
+        trailingStatement: "",
+      });
+    }
   }
   return statements;
 }
 
-function markdownExcludedRanges(content) {
-  return scanMarkdownStructure(content).excludedRanges;
+function mergeCodeRabbitRangeMatches(globalMatches, tableMatches) {
+  const matches = [];
+  let globalIndex = 0;
+  let tableIndex = 0;
+  while (
+    globalIndex < globalMatches.length || tableIndex < tableMatches.length
+  ) {
+    const globalMatch = globalMatches[globalIndex];
+    const tableMatch = tableMatches[tableIndex];
+    if (globalMatch === undefined) {
+      matches.push(tableMatch);
+      tableIndex += 1;
+      continue;
+    }
+    if (tableMatch === undefined) {
+      matches.push(globalMatch);
+      globalIndex += 1;
+      continue;
+    }
+    const globalStatementIndex = codeRabbitStatementIndex(globalMatch);
+    const tableStatementIndex = codeRabbitStatementIndex(tableMatch);
+    if (globalStatementIndex === tableStatementIndex) {
+      globalMatch.tableCell = tableMatch.tableCell;
+      matches.push(globalMatch);
+      globalIndex += 1;
+      tableIndex += 1;
+    } else if (globalStatementIndex < tableStatementIndex) {
+      matches.push(globalMatch);
+      globalIndex += 1;
+    } else {
+      matches.push(tableMatch);
+      tableIndex += 1;
+    }
+  }
+  return matches;
+}
+
+function markdownTableRangeEvidenceMatches(content, tableCellRanges) {
+  const matches = [];
+  for (const tableCell of tableCellRanges) {
+    const { end: cellEnd, start: cellStart } = tableCell;
+    const cell = content.slice(cellStart, cellEnd);
+    for (
+      const match of cell.matchAll(
+        CODERABBIT_REVIEW_RANGE_STATEMENT_START_PATTERN,
+      )
+    ) {
+      match.index += cellStart;
+      match.tableCell = tableCell;
+      match.tableLocal = true;
+      matches.push(match);
+    }
+  }
+  return matches;
 }
 
 function hasExactVisibleMarkdownLine(content, expectedLine) {
-  const excludedRanges = markdownExcludedRanges(content);
+  const markdownStructure = scanMarkdownStructure(content);
+  const excludedRanges = markdownStructure.excludedRanges;
+  const tableCellRanges = markdownStructure.tableCellRanges;
   let excludedRangeIndex = 0;
+  let tableCellRangeIndex = 0;
   let lineStart = 0;
   for (const lineMatch of content.matchAll(/[^\r\n]*(?:\r\n|[\r\n]|$)/g)) {
     const line = lineMatch[0];
@@ -407,7 +482,15 @@ function hasExactVisibleMarkdownLine(content, expectedLine) {
     const excludedRange = excludedRanges[excludedRangeIndex];
     const isExcluded = excludedRange?.[0] <= lineStart &&
       lineStart < excludedRange[1];
-    if (!isExcluded && lineWithoutEnding === expectedLine) return true;
+    while (tableCellRanges[tableCellRangeIndex]?.end <= lineStart) {
+      tableCellRangeIndex += 1;
+    }
+    const tableCellRange = tableCellRanges[tableCellRangeIndex];
+    const isInsideTableCell = tableCellRange?.start <= lineStart &&
+      lineStart < tableCellRange.end;
+    if (
+      !isExcluded && !isInsideTableCell && lineWithoutEnding === expectedLine
+    ) return true;
     lineStart = lineEnd;
   }
   return false;
@@ -432,11 +515,16 @@ function visibleMarkdownMatches(content, patterns, excludedRanges) {
 function scanMarkdownStructure(content) {
   const ranges = [];
   const reviewMarkers = [];
-  const { inlineCodeRanges, inlineHtmlRanges, inlineLinkRanges } =
-    markdownInlineStructureRanges(content);
-  const inlineExcludedRanges = mergeMarkdownRanges(
+  const {
     inlineCodeRanges,
+    inlineHtmlRanges,
     inlineLinkRanges,
+    referenceDefinitionRanges,
+    tableCellRanges,
+  } = markdownInlineStructureRanges(content);
+  const inlineExcludedRanges = mergeMarkdownRanges(
+    mergeMarkdownRanges(inlineCodeRanges, inlineLinkRanges),
+    referenceDefinitionRanges,
   );
   let inlineCodeRangeIndex = 0;
   const isInsideInlineCode = (index) => {
@@ -629,11 +717,20 @@ function scanMarkdownStructure(content) {
   }
   const blockRanges = mergeMarkdownRanges(ranges, []);
   const refinedInlineRanges = blockRanges.length === 0
-    ? { inlineCodeRanges, inlineHtmlRanges, inlineLinkRanges }
+    ? {
+      inlineCodeRanges,
+      inlineHtmlRanges,
+      inlineLinkRanges,
+      referenceDefinitionRanges,
+      tableCellRanges,
+    }
     : markdownInlineStructureRanges(content, blockRanges);
   const refinedInlineExcludedRanges = mergeMarkdownRanges(
-    refinedInlineRanges.inlineCodeRanges,
-    refinedInlineRanges.inlineLinkRanges,
+    mergeMarkdownRanges(
+      refinedInlineRanges.inlineCodeRanges,
+      refinedInlineRanges.inlineLinkRanges,
+    ),
+    refinedInlineRanges.referenceDefinitionRanges,
   );
   return {
     excludedRanges: mergeMarkdownRanges(
@@ -644,6 +741,7 @@ function scanMarkdownStructure(content) {
       ),
     ),
     reviewMarkers,
+    tableCellRanges: refinedInlineRanges.tableCellRanges,
   };
 }
 
@@ -711,6 +809,7 @@ function markdownParagraphLineContext(line) {
     content: listPrefix === undefined
       ? remainingLine
       : remainingLine.slice(listPrefix.length),
+    contentOffset: containerPrefix.length + (listPrefix?.length ?? 0),
     indentation,
     listInterruptsParagraph: listPrefix === undefined
       ? false
@@ -915,20 +1014,30 @@ function markdownInlineStructureRanges(content, excludedRanges = []) {
   const inlineCodeRanges = [];
   const inlineHtmlRanges = [];
   const inlineLinkRanges = [];
+  const referenceDefinitionRanges = [];
   const excludedRangeCursor = { index: 0 };
   const lines = [];
   let nextLineStart = 0;
   for (const lineMatch of content.matchAll(/[^\r\n]*(?:\r\n|[\r\n]|$)/g)) {
     const line = lineMatch[0];
     if (line.length === 0 && nextLineStart >= content.length) break;
+    const contentWithoutEnding = line.replace(/(?:\r\n|[\r\n])$/, "");
     const end = nextLineStart + line.length;
     lines.push({
-      content: line.replace(/(?:\r\n|[\r\n])$/, ""),
+      content: contentWithoutEnding,
+      contentEnd: nextLineStart + contentWithoutEnding.length,
       end,
       start: nextLineStart,
     });
     nextLineStart = end;
   }
+  const tableStructure = markdownTableInlineStructure(
+    content,
+    lines,
+    excludedRanges,
+  );
+  const tableSplitRanges = tableStructure.splitRanges;
+  const tableSplitRangeCursor = { index: 0 };
 
   let segmentStart = 0;
   let openParagraph;
@@ -965,10 +1074,13 @@ function markdownInlineStructureRanges(content, excludedRanges = []) {
         inlineLinkRanges,
         excludedRanges,
         excludedRangeCursor,
+        tableSplitRanges,
+        tableSplitRangeCursor,
       );
       const finalDefinitionLine = lines[
         lineIndex + referenceDefinitionLineCount - 1
       ];
+      referenceDefinitionRanges.push([lineStart, finalDefinitionLine.end]);
       segmentStart = finalDefinitionLine.end;
       lineIndex += referenceDefinitionLineCount - 1;
       openParagraph = undefined;
@@ -992,6 +1104,8 @@ function markdownInlineStructureRanges(content, excludedRanges = []) {
         inlineLinkRanges,
         excludedRanges,
         excludedRangeCursor,
+        tableSplitRanges,
+        tableSplitRangeCursor,
       );
       if (paragraphAfterLine !== undefined && !indentedCodeLine) {
         segmentStart = lineStart;
@@ -1016,8 +1130,169 @@ function markdownInlineStructureRanges(content, excludedRanges = []) {
     inlineLinkRanges,
     excludedRanges,
     excludedRangeCursor,
+    tableSplitRanges,
+    tableSplitRangeCursor,
   );
-  return { inlineCodeRanges, inlineHtmlRanges, inlineLinkRanges };
+  return {
+    inlineCodeRanges,
+    inlineHtmlRanges,
+    inlineLinkRanges,
+    referenceDefinitionRanges,
+    tableCellRanges: tableStructure.cellRanges,
+  };
+}
+
+function markdownTableInlineStructure(content, lines, excludedRanges) {
+  const ranges = [];
+  const cellRanges = [];
+  let excludedRangeIndex = 0;
+  const lineIsExcluded = (line) => {
+    while (excludedRanges[excludedRangeIndex]?.[1] <= line.start) {
+      excludedRangeIndex += 1;
+    }
+    const range = excludedRanges[excludedRangeIndex];
+    return range?.[0] <= line.start && line.start < range[1];
+  };
+
+  for (let lineIndex = 1; lineIndex < lines.length; lineIndex += 1) {
+    const headerLine = lines[lineIndex - 1];
+    const delimiterLine = lines[lineIndex];
+    if (lineIsExcluded(headerLine) || lineIsExcluded(delimiterLine)) continue;
+    const headerContext = markdownParagraphLineContext(headerLine.content);
+    const delimiterContext = markdownParagraphLineContext(
+      delimiterLine.content,
+    );
+    if (
+      isMarkdownIndentedCodeLine(headerLine.content) ||
+      isMarkdownIndentedCodeLine(delimiterLine.content) ||
+      isMarkdownInlineCodeBarrier(headerContext.content) ||
+      !markdownTableContextsMatch(headerContext, delimiterContext)
+    ) continue;
+    const headerRow = markdownTableRow(content, headerLine, headerContext);
+    const delimiterRow = markdownTableRow(
+      content,
+      delimiterLine,
+      delimiterContext,
+    );
+    if (
+      delimiterRow.cellCount === 0 ||
+      headerRow.cellCount !== delimiterRow.cellCount ||
+      delimiterRow.pipeIndexes.length === 0 ||
+      !delimiterRow.cells.every((cell) => /^:?-+:?$/.test(cell.content.trim()))
+    ) continue;
+
+    appendMarkdownTableRowSplits(ranges, headerLine, headerRow.pipeIndexes);
+    let previousRowCells = appendAndLinkMarkdownTableCells(
+      cellRanges,
+      headerRow.cells,
+      [],
+    );
+    ranges.push([delimiterLine.start, delimiterLine.end]);
+    let bodyLineIndex = lineIndex + 1;
+    for (; bodyLineIndex < lines.length; bodyLineIndex += 1) {
+      const bodyLine = lines[bodyLineIndex];
+      if (lineIsExcluded(bodyLine) || bodyLine.content.trim().length === 0) {
+        break;
+      }
+      const bodyContext = markdownParagraphLineContext(bodyLine.content);
+      if (
+        isMarkdownIndentedCodeLine(bodyLine.content) ||
+        !markdownTableContextsMatch(headerContext, bodyContext) ||
+        isMarkdownInlineCodeBarrier(bodyContext.content)
+      ) break;
+      const bodyRow = markdownTableRow(content, bodyLine, bodyContext);
+      appendMarkdownTableRowSplits(ranges, bodyLine, bodyRow.pipeIndexes);
+      previousRowCells = appendAndLinkMarkdownTableCells(
+        cellRanges,
+        bodyRow.cells,
+        previousRowCells,
+      );
+    }
+    lineIndex = bodyLineIndex - 1;
+  }
+  return {
+    cellRanges,
+    splitRanges: mergeMarkdownRanges(ranges, []),
+  };
+}
+
+function markdownTableContextsMatch(header, row) {
+  if (
+    header.structuralPrefix !== row.structuralPrefix ||
+    header.blockquoteDepth !== row.blockquoteDepth ||
+    row.listContinuationIndent !== undefined
+  ) return false;
+  const continuationIndent = header.listContinuationIndent ??
+    header.indentation;
+  return row.indentation >= continuationIndent &&
+    row.indentation <= continuationIndent + 3;
+}
+
+function markdownTableRow(content, line, context) {
+  const start = line.start + context.contentOffset;
+  const pipeIndexes = [];
+  for (let index = start; index < line.contentEnd; index += 1) {
+    if (
+      content[index] === "|" && !isEscapedMarkdownToken(content, index)
+    ) pipeIndexes.push(index);
+  }
+  const cellRanges = [];
+  let cellStart = start;
+  for (const pipeIndex of pipeIndexes) {
+    cellRanges.push([cellStart, pipeIndex]);
+    cellStart = pipeIndex + 1;
+  }
+  cellRanges.push([cellStart, line.contentEnd]);
+  if (
+    pipeIndexes.length > 0 &&
+    content.slice(...cellRanges[0]).trim().length === 0
+  ) cellRanges.shift();
+  const finalPipe = pipeIndexes.at(-1);
+  if (
+    finalPipe !== undefined &&
+    content.slice(finalPipe + 1, line.contentEnd).trim().length === 0
+  ) cellRanges.pop();
+  const cells = cellRanges.map(([start, end]) => ({
+    content: content.slice(start, end),
+    end,
+    rowEnd: line.contentEnd,
+    start,
+  }));
+  return {
+    cellCount: cells.length,
+    cells,
+    pipeIndexes,
+  };
+}
+
+function appendMarkdownTableRowSplits(ranges, line, pipeIndexes) {
+  ranges.push([line.start, line.start]);
+  for (const pipeIndex of pipeIndexes) {
+    ranges.push([pipeIndex, pipeIndex + 1]);
+  }
+  ranges.push([line.contentEnd, line.end]);
+}
+
+function appendAndLinkMarkdownTableCells(
+  allCells,
+  rowCells,
+  previousRowCells,
+) {
+  const firstCell = rowCells[0];
+  if (firstCell !== undefined) {
+    for (const previousCell of previousRowCells) {
+      previousCell.nextRowFirstCell = firstCell;
+    }
+    const previousFinalCell = previousRowCells.at(-1);
+    if (previousFinalCell !== undefined) {
+      previousFinalCell.nextTableCell = firstCell;
+    }
+  }
+  for (const [columnIndex, cell] of rowCells.entries()) {
+    cell.nextTableCell = rowCells[columnIndex + 1];
+    allCells.push(cell);
+  }
+  return rowCells;
 }
 
 function isMarkdownInlineCodeBarrier(line) {
@@ -1258,6 +1533,8 @@ function appendMarkdownInlineCodeRanges(
   inlineLinkRanges,
   excludedRanges,
   excludedRangeCursor,
+  splitRanges,
+  splitRangeCursor,
 ) {
   let segmentStart = start;
   let excludedIndex = excludedRangeCursor.index;
@@ -1268,13 +1545,15 @@ function appendMarkdownInlineCodeRanges(
     const [excludedStart, excludedEnd] = excludedRanges[excludedIndex];
     if (excludedStart >= end) break;
     if (segmentStart < excludedStart) {
-      appendMarkdownInlineCodeRangesInSegment(
+      appendMarkdownInlineCodeRangesAcrossSplits(
         content,
         segmentStart,
         Math.min(excludedStart, end),
         inlineCodeRanges,
         inlineHtmlRanges,
         inlineLinkRanges,
+        splitRanges,
+        splitRangeCursor,
       );
     }
     segmentStart = Math.max(segmentStart, excludedEnd);
@@ -1289,6 +1568,51 @@ function appendMarkdownInlineCodeRanges(
     }
   }
   excludedRangeCursor.index = excludedIndex;
+  if (segmentStart < end) {
+    appendMarkdownInlineCodeRangesAcrossSplits(
+      content,
+      segmentStart,
+      end,
+      inlineCodeRanges,
+      inlineHtmlRanges,
+      inlineLinkRanges,
+      splitRanges,
+      splitRangeCursor,
+    );
+  }
+}
+
+function appendMarkdownInlineCodeRangesAcrossSplits(
+  content,
+  start,
+  end,
+  inlineCodeRanges,
+  inlineHtmlRanges,
+  inlineLinkRanges,
+  splitRanges,
+  splitRangeCursor,
+) {
+  let segmentStart = start;
+  let splitIndex = splitRangeCursor.index;
+  while (splitRanges[splitIndex]?.[1] <= segmentStart) splitIndex += 1;
+  while (splitIndex < splitRanges.length) {
+    const [splitStart, splitEnd] = splitRanges[splitIndex];
+    if (splitStart >= end) break;
+    if (segmentStart < splitStart) {
+      appendMarkdownInlineCodeRangesInSegment(
+        content,
+        segmentStart,
+        splitStart,
+        inlineCodeRanges,
+        inlineHtmlRanges,
+        inlineLinkRanges,
+      );
+    }
+    segmentStart = Math.max(segmentStart, splitEnd);
+    splitIndex += 1;
+    if (segmentStart >= end) break;
+  }
+  splitRangeCursor.index = splitIndex;
   if (segmentStart < end) {
     appendMarkdownInlineCodeRangesInSegment(
       content,
@@ -1896,7 +2220,12 @@ function codeRabbitStatementIndex(match) {
 
 function parseCodeRabbitRangeStatement(content, match, continuationEnd) {
   const statementStart = match[1];
-  const firstLineTail = match[2];
+  const firstLineTail = match.tableLocal
+    ? match[2] + content.slice(
+      match.tableCell.end,
+      Math.min(match.tableCell.rowEnd, continuationEnd),
+    )
+    : match[2];
   const statementPrefix = codeRabbitMarkdownPrefixSignature(
     statementStart.slice(
       0,
@@ -1921,9 +2250,17 @@ function parseCodeRabbitRangeStatement(content, match, continuationEnd) {
   const baseLines = [firstLineTail];
   const statementParts = [statementStart + firstLineTail];
   let lineEnd = match.index + match[0].length;
+  let tableContinuationCell = match.tableCell?.nextRowFirstCell;
   while (true) {
-    const nextLine = codeRabbitNextLine(content, lineEnd, continuationEnd);
+    const nextLine = match.tableCell !== undefined
+      ? codeRabbitNextTableCell(
+        content,
+        tableContinuationCell,
+        continuationEnd,
+      )
+      : codeRabbitNextLine(content, lineEnd, continuationEnd);
     if (!nextLine) return undefined;
+    tableContinuationCell = nextLine.nextTableCell;
     const continuationPrefix = nextLine.content.match(
       CODERABBIT_REVIEW_RANGE_CONTINUATION_PREFIX_PATTERN,
     )?.[0] ?? "";
@@ -1974,6 +2311,17 @@ function parseCodeRabbitRangeStatement(content, match, continuationEnd) {
     baseLines.push(continuationContent);
     lineEnd = nextLine.lineEnd;
   }
+}
+
+function codeRabbitNextTableCell(content, cell, continuationEnd) {
+  if (cell === undefined || cell.start >= continuationEnd) return undefined;
+  const cellEnd = Math.min(cell.end, continuationEnd);
+  return {
+    content: content.slice(cell.start, cellEnd),
+    lineEnd: cellEnd,
+    nextTableCell: cell.nextTableCell,
+    separator: "\n",
+  };
 }
 
 function codeRabbitMarkdownPrefixSignature(prefix) {
@@ -2085,15 +2433,54 @@ function parseCodeRabbitRangeEvidence(evidence, headSha) {
     ...evidence.trailingStatement.matchAll(FULL_COMMIT_TOKEN_PATTERN),
   ].map((match) => match[2].toLowerCase());
   const exactMatch = evidence.statement.match(CODERABBIT_REVIEW_RANGE_PATTERN);
+  const tableExtraHasHead = tableEvidenceHasCommit(
+    evidence,
+    normalizedHeadSha,
+  );
   return {
     tipIsHead: evidence.tipToken === normalizedHeadSha,
-    extraHasHead: extraTokens.includes(normalizedHeadSha),
-    isExactProduction:
+    extraHasHead: tableExtraHasHead || extraTokens.includes(normalizedHeadSha),
+    isExactProduction: !evidence.insideTableCell &&
       exactMatch?.[1]?.toLowerCase() === evidence.baseSegment &&
       exactMatch?.[2]?.toLowerCase() === evidence.tipToken &&
       FULL_COMMIT_PATTERN.test(evidence.baseSegment) &&
       extraTokens.length === 0,
   };
+}
+
+function tableEvidenceHasCommit(evidence, commit) {
+  if (evidence.tableCell === undefined) return false;
+  if (
+    markdownRangeHasCommit(
+      evidence.tableContent,
+      evidence.tableEvidenceStart,
+      Math.min(evidence.tableCell.rowEnd, evidence.tableEvidenceEnd),
+      commit,
+    )
+  ) return true;
+
+  let cell = evidence.tableCell.nextRowFirstCell;
+  while (cell !== undefined && cell.start < evidence.tableEvidenceEnd) {
+    if (
+      markdownRangeHasCommit(
+        evidence.tableContent,
+        cell.start,
+        Math.min(cell.end, evidence.tableEvidenceEnd),
+        commit,
+      )
+    ) return true;
+    cell = cell.nextTableCell;
+  }
+  return false;
+}
+
+function markdownRangeHasCommit(content, start, end, commit) {
+  for (
+    const match of content.slice(start, end).matchAll(FULL_COMMIT_TOKEN_PATTERN)
+  ) {
+    if (match[2].toLowerCase() === commit) return true;
+  }
+  return false;
 }
 
 /** Publish the current automated-review decision on the exact PR head SHA. */
