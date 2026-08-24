@@ -166,6 +166,11 @@ describe("resource registry", () => {
         resourceRegistry.extractParams("/files/file-report.pdf", file.pattern),
         { base: "report", ext: "pdf" },
       );
+      assertEquals(
+        resourceRegistry.extractParams("/files/file-report.final.pdf", file.pattern),
+        { base: "report", ext: "final.pdf" },
+        "the first following literal belongs to the template",
+      );
 
       const search = resource({
         pattern: "/search?q=prefix-:term",
@@ -179,6 +184,13 @@ describe("resource registry", () => {
         resourceRegistry.extractParams("/search?q=prefix-books", search.pattern),
         { term: "books" },
       );
+    });
+
+    it("should reject a long multi-capture near-match without repartitioning", () => {
+      const pattern = "/stress/:a-:b-:c-:d-:e-:f-:g-:h/end";
+      const nearMatch = `/stress/${"value-".repeat(64)}tail/nope`;
+
+      assertEquals(resourceRegistry.extractParams(nearMatch, pattern), {});
     });
 
     it("should match parameters in rootless hierarchical URI paths", () => {
@@ -291,6 +303,44 @@ describe("resource registry", () => {
         resourceRegistry.extractParams("/users/42/posts/7", "/users/:userId/posts/:postId"),
         { userId: "42", postId: "7" },
       );
+    });
+
+    it("decodes path, query, and fragment captures exactly once", () => {
+      assertEquals(
+        resourceRegistry.extractParams(
+          "/files/a%20b%2Fc+plus?filter=x+y%26z#section-%252F",
+          "/files/:path?filter=:filter#section-:section",
+        ),
+        {
+          path: "a b/c+plus",
+          filter: "x+y&z",
+          section: "%2F",
+        },
+      );
+    });
+
+    it("rejects malformed escapes and raw component delimiters", () => {
+      const pattern = "/files/:path?filter=:filter#section-:section";
+      const file = resource({
+        pattern,
+        description: "Component boundaries",
+        paramsSchema: defineSchema((v) =>
+          v.object({ path: v.string(), filter: v.string(), section: v.string() })
+        )(),
+        load: async () => ({}),
+      });
+      resourceRegistry.register(file.id, file);
+      for (
+        const uri of [
+          "/files/%E0%A4%A?filter=ok#section-one",
+          "/files/one/two?filter=ok#section-three",
+          "/files/ok?filter=one&extra=two#section-three",
+          "/files/ok?filter=one#section-two#extra",
+        ]
+      ) {
+        assertEquals(resourceRegistry.findByPattern(uri), undefined);
+        assertEquals(resourceRegistry.extractParams(uri, pattern), {});
+      }
     });
 
     it("should return an empty object when the uri does not match", () => {

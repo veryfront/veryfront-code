@@ -46,63 +46,46 @@ function isUrnScheme(pattern: string, schemeDelimiter: number): boolean {
   return first === 117 && second === 114 && third === 110;
 }
 
-function escapeRegExp(value: string): string {
-  let escaped = "";
-  for (let index = 0; index < value.length; index++) {
-    const character = value[index]!;
-    if (
-      character === "." || character === "*" || character === "+" ||
-      character === "?" || character === "^" || character === "$" ||
-      character === "{" || character === "}" || character === "(" ||
-      character === ")" || character === "|" || character === "[" ||
-      character === "]" || character === "\\"
-    ) {
-      escaped += "\\";
-    }
-    escaped += character;
-  }
-  return escaped;
+type ResourceComponent = "path" | "query" | "fragment";
+
+type ResourcePatternToken =
+  | { readonly kind: "literal"; readonly value: string }
+  | {
+    readonly kind: "parameter";
+    readonly name: string;
+    readonly component: ResourceComponent;
+  };
+
+interface ParsedResourcePattern {
+  readonly tokens: readonly ResourcePatternToken[];
+  readonly parameterNames: readonly string[];
+  readonly adjacentParameters?: readonly [string, string];
 }
 
-export function resourcePatternToRegex(pattern: string): RegExp {
-  return new RegExp(
-    `^${transformResourcePattern(pattern, escapeRegExp, (name) => `(?<${name}>[^/]+)`).value}$`,
-  );
-}
-
-export function resourcePatternToUriTemplate(pattern: string): string | undefined {
-  const transformed = transformResourcePattern(
-    pattern,
-    (literal) => literal,
-    (name) => `{${name}}`,
-  );
-  return transformed.parameterized ? transformed.value : undefined;
-}
-
-function transformResourcePattern(
-  pattern: string,
-  transformLiteral: (literal: string) => string,
-  transformParameter: (name: string) => string,
-): { value: string; parameterized: boolean } {
-  let value = "";
+function parseResourcePattern(pattern: string): ParsedResourcePattern {
+  const tokens: ResourcePatternToken[] = [];
+  const parameterNames: string[] = [];
+  let adjacentParameters: readonly [string, string] | undefined;
   let literalStart = 0;
-  let parameterized = false;
   const schemeDelimiter = findSchemeDelimiter(pattern);
   const firstSchemeComponentEnd = findFirstSchemeComponentEnd(pattern, schemeDelimiter);
   const urnScheme = isUrnScheme(pattern, schemeDelimiter);
   const hierarchicalScheme = schemeDelimiter >= 0 &&
     pattern[schemeDelimiter + 1] === "/" && pattern[schemeDelimiter + 2] === "/";
   let segmentParameterized = false;
-  let inQueryOrFragment = false;
+  let component: ResourceComponent = "path";
 
   for (let index = 0; index < pattern.length; index++) {
     const character = pattern[index];
     if (character === "/") segmentParameterized = false;
-    if (character === "?" || character === "#") {
+    if (character === "?" && component === "path") {
       segmentParameterized = false;
-      inQueryOrFragment = true;
+      component = "query";
+    } else if (character === "#") {
+      segmentParameterized = false;
+      component = "fragment";
     }
-    if (character === "&" && inQueryOrFragment) segmentParameterized = false;
+    if (character === "&" && component === "query") segmentParameterized = false;
     if (pattern[index] !== ":") continue;
     if (index === schemeDelimiter) continue;
     const firstNameCode = pattern.charCodeAt(index + 1);
@@ -113,9 +96,9 @@ function transformResourcePattern(
     const previousCode = index === 0 ? -1 : pattern.charCodeAt(index - 1);
     const legacyParameterContext = index === 0 ||
       (!isAsciiLetter(previousCode) && !isAsciiDigit(previousCode));
-    const parameterContext = urnScheme && !inQueryOrFragment
+    const parameterContext = urnScheme && component === "path"
       ? false
-      : schemeDelimiter < 0 || inQueryOrFragment || hierarchicalScheme
+      : schemeDelimiter < 0 || component !== "path" || hierarchicalScheme
       ? legacyParameterContext
       : inFirstSchemeComponent
       ? !urnScheme && legacyParameterContext
@@ -124,13 +107,112 @@ function transformResourcePattern(
 
     let end = index + 2;
     while (end < pattern.length && isParameterNamePart(pattern.charCodeAt(end))) end++;
-    value += transformLiteral(pattern.slice(literalStart, index));
-    value += transformParameter(pattern.slice(index + 1, end));
+    if (index > literalStart) {
+      tokens.push({ kind: "literal", value: pattern.slice(literalStart, index) });
+    }
+    const name = pattern.slice(index + 1, end);
+    if (
+      adjacentParameters === undefined && pattern[end] === ":" &&
+      isParameterNameStart(pattern.charCodeAt(end + 1))
+    ) {
+      let adjacentEnd = end + 2;
+      while (
+        adjacentEnd < pattern.length &&
+        isParameterNamePart(pattern.charCodeAt(adjacentEnd))
+      ) {
+        adjacentEnd++;
+      }
+      adjacentParameters = [name, pattern.slice(end + 1, adjacentEnd)];
+    }
+    tokens.push({ kind: "parameter", name, component });
+    parameterNames.push(name);
     literalStart = end;
     index = end - 1;
-    parameterized = true;
     segmentParameterized = true;
   }
-  value += transformLiteral(pattern.slice(literalStart));
-  return { value, parameterized };
+  if (literalStart < pattern.length) {
+    tokens.push({ kind: "literal", value: pattern.slice(literalStart) });
+  }
+  return { tokens, parameterNames, adjacentParameters };
+}
+
+function captureAllows(component: ResourceComponent, value: string): boolean {
+  if (value.length === 0) return false;
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index];
+    if (character === "#") return false;
+    if (component === "path" && (character === "/" || character === "?")) return false;
+    if (component === "query" && character === "&") return false;
+  }
+  return true;
+}
+
+function findCaptureEnd(uri: string, offset: number, component: ResourceComponent): number {
+  for (let index = offset; index < uri.length; index++) {
+    const character = uri[index];
+    if (character === "#") return index;
+    if (component === "path" && (character === "/" || character === "?")) return index;
+    if (component === "query" && character === "&") return index;
+  }
+  return uri.length;
+}
+
+/** Validate construction-only parameter rules and return admitted names. */
+export function validateResourcePatternParameters(pattern: string): readonly string[] {
+  const parsed = parseResourcePattern(pattern);
+  if (parsed.adjacentParameters) {
+    const [left, right] = parsed.adjacentParameters;
+    throw new TypeError(
+      `Resource pattern parameters "${left}" and "${right}" require a literal separator`,
+    );
+  }
+  return parsed.parameterNames;
+}
+
+/**
+ * Match one resource URI deterministically and decode captures exactly once.
+ * Malformed percent escapes and raw component delimiters do not match.
+ */
+export function matchResourcePattern(
+  uri: string,
+  pattern: string,
+): Record<string, string> | undefined {
+  const { tokens, parameterNames } = parseResourcePattern(pattern);
+  if (parameterNames.length === 0) return uri === pattern ? {} : undefined;
+
+  const params = Object.create(null) as Record<string, string>;
+  let offset = 0;
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index]!;
+    if (token.kind === "literal") {
+      if (!uri.startsWith(token.value, offset)) return undefined;
+      offset += token.value.length;
+      continue;
+    }
+
+    const next = tokens[index + 1];
+    const end = next?.kind === "literal"
+      ? uri.indexOf(next.value, offset)
+      : findCaptureEnd(uri, offset, token.component);
+    if (end < offset) return undefined;
+    const rawValue = uri.slice(offset, end);
+    if (!captureAllows(token.component, rawValue)) return undefined;
+    try {
+      params[token.name] = decodeURIComponent(rawValue);
+    } catch {
+      return undefined;
+    }
+    offset = end;
+  }
+  return offset === uri.length ? params : undefined;
+}
+
+export function resourcePatternToUriTemplate(pattern: string): string | undefined {
+  const { tokens, parameterNames } = parseResourcePattern(pattern);
+  if (parameterNames.length === 0) return undefined;
+  let template = "";
+  for (const token of tokens) {
+    template += token.kind === "literal" ? token.value : `{${token.name}}`;
+  }
+  return template;
 }

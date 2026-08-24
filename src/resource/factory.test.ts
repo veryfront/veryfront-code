@@ -62,6 +62,34 @@ describe("resource factory", () => {
       assertEquals(r.paramsSchema, schema);
     });
 
+    it("should reject duplicate URI parameter names", () => {
+      assertThrows(
+        () =>
+          resource({
+            pattern: "/teams/:id/members/:id",
+            description: "Duplicate ids",
+            paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+            load: async () => ({}),
+          }),
+        TypeError,
+        'Resource pattern contains duplicate parameter name "id"',
+      );
+    });
+
+    it("should reject adjacent URI parameters without a literal separator", () => {
+      assertThrows(
+        () =>
+          resource({
+            pattern: "/pairs/:left:right",
+            description: "Ambiguous pair",
+            paramsSchema: defineSchema((v) => v.object({ left: v.string(), right: v.string() }))(),
+            load: async () => ({}),
+          }),
+        TypeError,
+        'Resource pattern parameters "left" and "right" require a literal separator',
+      );
+    });
+
     it("should preserve mcp config", () => {
       const r = resource({
         pattern: "/data",

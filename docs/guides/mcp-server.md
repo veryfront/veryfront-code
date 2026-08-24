@@ -141,6 +141,24 @@ export default resource({
 });
 ```
 
+Resource patterns use `:name` URI-template parameters. Common forms include:
+
+- hierarchical paths such as `/docs/:section`;
+- rootless hierarchical paths such as `docs:collection/:id`;
+- embedded and query parameters such as `/files/file-:base.:ext?lang=:lang`;
+- opaque literal identifiers such as `urn:isbn`, where colons do not declare parameters.
+
+Parameter names in one pattern must be unique and separated by literal text. For embedded
+parameters, the first following literal belongs to the template: `/file-:base.:ext` reads
+`file-report.final.pdf` as `base=report` and `ext=final.pdf`. Path captures stop at raw `/`,
+`?`, or `#`; query captures stop at raw `&` or `#`; and fragment captures cannot cross another `#`.
+Clients can percent-encode those characters inside a value. Captures are decoded exactly once
+before schema validation and loading, so `%2F` becomes `/`, `%252F` becomes `%2F`, and `+`
+stays `+`. A malformed percent escape does not match the resource and its loader is not called.
+
+Set `mcp: { enabled: false }` to keep a resource registered for application use while hiding it
+from MCP `resources/list`, `resources/templates/list`, and `resources/read`.
+
 ## Manual registration
 
 For tools, prompts, or resources not in the auto-discovered directories:

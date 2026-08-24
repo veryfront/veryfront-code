@@ -20,7 +20,10 @@ export function registerTool(id: string, tool: Tool): void {
   toolRegistry.register(id, tool);
 }
 
-/** Registers a schema-backed resource in the heterogeneous MCP registry. */
+/**
+ * Registers a schema-backed resource. MCP reads decode URI captures exactly
+ * once before validation; `mcp.enabled: false` hides list and read access.
+ */
 // deno-lint-ignore no-explicit-any
 export function registerResource(id: string, resource: Resource<any, any>): void {
   resourceRegistry.register(id, resource);

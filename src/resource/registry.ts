@@ -8,7 +8,7 @@
  */
 
 import type { Resource } from "./types.ts";
-import { resourcePatternToRegex } from "./pattern.ts";
+import { matchResourcePattern } from "./pattern.ts";
 import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 
@@ -35,12 +35,12 @@ class ResourceRegistry extends ScopedRegistryFacade<RegisteredResource> {
     return undefined;
   }
 
-  private matchPattern(uri: string, pattern: string): RegExpMatchArray | null {
-    return uri.match(resourcePatternToRegex(pattern));
+  private matchPattern(uri: string, pattern: string): Record<string, string> | undefined {
+    return matchResourcePattern(uri, pattern);
   }
 
   extractParams(uri: string, pattern: string): Record<string, string> {
-    return this.matchPattern(uri, pattern)?.groups ?? {};
+    return this.matchPattern(uri, pattern) ?? {};
   }
 
   list(): string[] {

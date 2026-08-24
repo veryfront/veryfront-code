@@ -1,5 +1,7 @@
 /**
- * MCP server exposing tools, prompts, and resources.
+ * MCP server exposing tools, prompts, and resources. Resource-template captures
+ * are percent-decoded exactly once; malformed escapes are not found, and
+ * resources with `mcp.enabled: false` are omitted from both lists and reads.
  *
  * @module mcp
  *

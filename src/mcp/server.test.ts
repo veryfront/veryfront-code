@@ -1329,6 +1329,83 @@ describe("mcp/server", () => {
         tag: "tag:news",
       });
     });
+
+    it("decodes encoded path and query parameters once before loading", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerResource(
+        "test:encoded",
+        resource({
+          pattern: "/encoded/:path?filter=:filter",
+          description: "Encoded resource",
+          paramsSchema: defineSchema((v) => v.object({ path: v.string(), filter: v.string() }))(),
+          load: (params) => params,
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/read",
+        params: { uri: "/encoded/a%20b%2Fc+plus?filter=x+y%26z" },
+      });
+
+      assertEquals(response.error, undefined);
+      const result = response.result as { contents: Array<{ text: string }> };
+      assertEquals(JSON.parse(result.contents[0]!.text), {
+        path: "a b/c+plus",
+        filter: "x+y&z",
+      });
+    });
+
+    it("treats malformed encoded parameters as not found without loading", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      let loadCalls = 0;
+      registerResource(
+        "test:malformed",
+        resource({
+          pattern: "/malformed/:value",
+          description: "Malformed resource",
+          paramsSchema: defineSchema((v) => v.object({ value: v.string() }))(),
+          load: () => {
+            loadCalls += 1;
+            return {};
+          },
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/read",
+        params: { uri: "/malformed/%E0%A4%A" },
+      });
+
+      assertStringIncludes(response.error?.message ?? "", "Resource not found");
+      assertEquals(loadCalls, 0);
+    });
+
+    it("rejects duplicate resource parameter names before MCP registration", () => {
+      assertThrows(
+        () =>
+          registerResource(
+            "test:duplicate",
+            resource({
+              pattern: "/duplicate/:id/:id",
+              description: "Duplicate resource",
+              paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+              load: async () => ({}),
+            }),
+          ),
+        TypeError,
+        'Resource pattern contains duplicate parameter name "id"',
+      );
+    });
   });
 
   it("declares completions capability in initialize", async () => {
