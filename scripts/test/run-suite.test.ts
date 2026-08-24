@@ -403,6 +403,17 @@ describe("migration command surface", () => {
     assert(config.tasks[match[1]], `${match[1]} must exist in deno.json`);
   });
 
+  it("runs the CLI integration suite in CI", async () => {
+    const workflow = await Deno.readTextFile(
+      new URL("../../.github/workflows/cicd.yml", import.meta.url),
+    );
+
+    assert(
+      workflow.includes("deno task test:integration:cli --no-lock"),
+      "CI must execute the CLI integration suite",
+    );
+  });
+
   it("routes the Dev UI browser bundle test through the browser E2E lane", async () => {
     const config = JSON.parse(
       await Deno.readTextFile(new URL("../../deno.json", import.meta.url)),

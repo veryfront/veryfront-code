@@ -119,6 +119,7 @@ function createDeployFetchHandler(options: {
 }) {
   let environmentReads = 0;
   const releaseSource = options.releaseSource ?? PUSHED_SOURCE;
+  const uploadedFiles = new Map<string, string>();
 
   return async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const request = input instanceof Request ? input : new Request(input, init);
@@ -153,10 +154,16 @@ function createDeployFetchHandler(options: {
       });
     }
     if (request.method === "GET" && url.pathname === "/api/projects/my-project/files") {
-      return Response.json({ data: [], page_info: {} });
+      return Response.json({
+        data: [...uploadedFiles].map(([path, content]) => ({ path, content })),
+        page_info: {},
+      });
     }
     if (request.method === "GET" && url.pathname === `/api/projects/${PROJECT_ID}/files`) {
-      return Response.json({ data: [], page_info: {} });
+      return Response.json({
+        data: [...uploadedFiles].map(([path, content]) => ({ path, content })),
+        page_info: {},
+      });
     }
     if (request.method === "GET" && url.pathname === `/api/projects/${PROJECT_ID}`) {
       return Response.json({ id: PROJECT_ID, slug: "my-project" });
@@ -174,7 +181,10 @@ function createDeployFetchHandler(options: {
       (url.pathname.startsWith(`/api/projects/${PROJECT_ID}/files/`) ||
         url.pathname.startsWith("/api/projects/my-project/files/"))
     ) {
-      options.uploadedPaths?.push(decodeURIComponent(url.pathname.split("/files/")[1] ?? ""));
+      const path = decodeURIComponent(url.pathname.split("/files/")[1] ?? "");
+      const body = await request.clone().json() as { content: string };
+      uploadedFiles.set(path, body.content);
+      options.uploadedPaths?.push(path);
       return Response.json({});
     }
     if (request.method === "GET" && url.pathname.endsWith("/environments")) {
