@@ -2047,7 +2047,26 @@ describe("automated review gate", () => {
       const hiddenRange of [
         ["- ordinary <!--", codeRabbitReviewRange(), "-->"],
         [
+          "- ordinary <!--",
+          "<span>continuation",
+          codeRabbitReviewRange(),
+          "-->",
+        ],
+        [
+          "- ordinary <!--",
+          "<span>",
+          codeRabbitReviewRange(),
+          "-->",
+        ],
+        [
+          "- ordinary <!--",
+          "</span>",
+          codeRabbitReviewRange(),
+          "-->",
+        ],
+        [
           "> - ordinary <!--",
+          "<span>continuation",
           codeRabbitReviewRange(),
           "> -->",
         ],
@@ -2082,7 +2101,15 @@ describe("automated review gate", () => {
       );
     }
 
-    for (const paragraphBreak of ["", "# next block", "- next item"]) {
+    for (
+      const paragraphBreak of [
+        "",
+        "# next block",
+        "- next item",
+        "<div>",
+        "<script></script>",
+      ]
+    ) {
       const newerVisibleRangeAfterBreak = codeRabbitSummary({
         body: [
           "<!-- recent_review_start -->",

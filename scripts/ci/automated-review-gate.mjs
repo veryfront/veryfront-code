@@ -30,6 +30,12 @@ const MARKDOWN_PARAGRAPH_LIST_PREFIX_PATTERN =
   /^(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?/;
 const MARKDOWN_RAW_HTML_BLOCK_START_PATTERN =
   /^<(script|pre|style|textarea)(?:[ \t]|>|$)/i;
+const MARKDOWN_PARAGRAPH_INTERRUPTING_HTML_TAG_PATTERN =
+  /^ {0,3}<\/?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[ \t]|\/?>|$)/i;
+const MARKDOWN_PARAGRAPH_INTERRUPTING_RAW_HTML_PATTERN =
+  /^ {0,3}<(?:script|pre|style|textarea)(?:[ \t]|>|$)/i;
+const MARKDOWN_PARAGRAPH_INTERRUPTING_HTML_SYNTAX_PATTERN =
+  /^ {0,3}(?:<!--|<\?|<![A-Z]|<!\[CDATA\[)/;
 const MARKDOWN_FENCE_CONTAINER_CONTINUATION_PATTERN = /^[ \t]*(?:>[ \t]*)*/;
 const CODERABBIT_REQUESTED_COMMIT_PATTERN =
   /Requested commit:\s*([0-9a-f]{40})/gi;
@@ -715,7 +721,16 @@ function markdownLineContinuesParagraph(line, paragraph) {
     !lazyBlockquoteContinuation && !lazyListContinuation
   ) return false;
   return line.indentation - paragraph.continuationIndent >= 4 ||
+    isMarkdownNonInterruptingHtmlLine(line.content) ||
     !isMarkdownInlineCodeBarrier(line.content);
+}
+
+function isMarkdownNonInterruptingHtmlLine(line) {
+  // CommonMark HTML block types 1–6 interrupt paragraphs; type 7 does not.
+  return /^ {0,3}<(?:[A-Za-z!?/])/.test(line) &&
+    !MARKDOWN_PARAGRAPH_INTERRUPTING_HTML_TAG_PATTERN.test(line) &&
+    !MARKDOWN_PARAGRAPH_INTERRUPTING_RAW_HTML_PATTERN.test(line) &&
+    !MARKDOWN_PARAGRAPH_INTERRUPTING_HTML_SYNTAX_PATTERN.test(line);
 }
 
 function markdownParagraphAfterLine(
