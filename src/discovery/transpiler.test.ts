@@ -315,6 +315,36 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(third === second, true);
     });
 
+    it("should isolate identical sources by cache namespace", async () => {
+      // Hosted runs address the VFS with baseDir "", so the explicit cache
+      // namespace is the only tenant separator: two projects whose entry
+      // module has byte-identical source must not share a module instance
+      // (and therefore must not share its module-level state).
+      const path = "/project/tools/x.ts";
+      const source = `export default { value: 1 };`;
+      const contextFor = (cacheNamespace: string): FileDiscoveryContext => ({
+        platform: "node",
+        fsAdapter: createMockAdapter({ [path]: source }),
+        baseDir: "",
+        cacheNamespace,
+      });
+
+      const projectA = await importModule(`file://${path}`, contextFor("project-a"));
+      const projectB = await importModule(`file://${path}`, contextFor("project-b"));
+      assertEquals(
+        projectA === projectB,
+        false,
+        "different cache namespaces must not share a module instance",
+      );
+
+      const projectAAgain = await importModule(`file://${path}`, contextFor("project-a"));
+      assertEquals(
+        projectAAgain === projectA,
+        true,
+        "the same cache namespace must reuse the cached module",
+      );
+    });
+
     it("should not serve a stale cached module when a bundled dependency changes", async () => {
       // esbuild inlines relative imports into the bundle, so an unchanged
       // entry file does not mean an unchanged module: a release that only
