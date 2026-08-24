@@ -689,15 +689,22 @@ describe("VeryfrontRunsClient", () => {
   });
 
   it("fails fast when project reference is missing for project listing", async () => {
-    const client = new VeryfrontRunsClient({
-      apiUrl: "https://93.184.216.34",
-      authToken: "test-token",
-    });
+    mockFetch([]);
+    await withEnv(
+      { VERYFRONT_PROJECT_SLUG: "" },
+      async () => {
+        const client = new VeryfrontRunsClient({
+          apiUrl: "https://93.184.216.34",
+          authToken: "test-token",
+        });
 
-    await assertRejects(
-      () => client.list(),
-      Error,
-      "Runs project reference not configured",
+        await assertRejects(
+          () => client.list(),
+          Error,
+          "Runs project reference not configured",
+        );
+      },
     );
+    assertEquals(fetchCalls.length, 0);
   });
 });
