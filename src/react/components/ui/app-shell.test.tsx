@@ -6,65 +6,13 @@ import { JSDOM } from "npm:jsdom@28.0.0";
 import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { type ComponentDomOptions, installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import { AppShell } from "./app-shell.tsx";
 
-function installDom(dom: JSDOM, options: { mobile?: boolean } = {}): () => void {
-  const window = dom.window;
-  const keys = [
-    "window",
-    "document",
-    "navigator",
-    "self",
-    "Node",
-    "Element",
-    "HTMLElement",
-    "localStorage",
-    "KeyboardEvent",
-    "MouseEvent",
-    "requestAnimationFrame",
-    "cancelAnimationFrame",
-    "matchMedia",
-  ] as const;
-  const previous = new Map<string, PropertyDescriptor | undefined>();
-  for (const key of keys) previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
-
-  const media = {
-    matches: options.mobile ?? false,
-    addEventListener() {},
-    removeEventListener() {},
-  } as unknown as MediaQueryList;
-  const replacements = {
-    window,
-    document: window.document,
-    navigator: window.navigator,
-    self: window,
-    Node: window.Node,
-    Element: window.Element,
-    HTMLElement: window.HTMLElement,
-    localStorage: window.localStorage,
-    KeyboardEvent: window.KeyboardEvent,
-    MouseEvent: window.MouseEvent,
-    requestAnimationFrame: (callback: FrameRequestCallback) =>
-      window.setTimeout(() => callback(Date.now()), 0),
-    cancelAnimationFrame: (id: number) => window.clearTimeout(id),
-    matchMedia: (() => media) as typeof globalThis.matchMedia,
-  };
-  for (const [key, value] of Object.entries(replacements)) {
-    Object.defineProperty(globalThis, key, {
-      configurable: true,
-      enumerable: true,
-      value,
-      writable: true,
-    });
-  }
-
-  return () => {
-    for (const key of keys) {
-      const descriptor = previous.get(key);
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-      else delete (globalThis as Record<string, unknown>)[key];
-    }
-    dom.window.close();
+function shellDomOptions(options: { mobile?: boolean } = {}): ComponentDomOptions {
+  return {
+    matchMedia: { matches: options.mobile ?? false },
+    windowGlobals: ["self", "localStorage", "KeyboardEvent"],
   };
 }
 
@@ -108,7 +56,7 @@ describe("AppShell", () => {
       { url: "https://example.com/" },
     );
     dom.window.localStorage.setItem("shell-left", "false");
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, shellDomOptions());
     const recoverableErrors: unknown[] = [];
     let root: Root | undefined;
 
@@ -132,7 +80,7 @@ describe("AppShell", () => {
       '<!doctype html><html><body><div id="root-a"></div><div id="root-b"></div></body></html>',
       { url: "https://example.com/" },
     );
-    const restore = installDom(dom, { mobile: true });
+    const restore = installComponentDom(dom, shellDomOptions({ mobile: true }));
     let rootA: ReturnType<typeof createRoot> | undefined;
     let rootB: ReturnType<typeof createRoot> | undefined;
 
@@ -196,7 +144,7 @@ describe("AppShell", () => {
       </body></html>`,
       { url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, shellDomOptions());
     const root = createRoot(document.getElementById("root")!);
 
     try {
@@ -245,7 +193,7 @@ describe("AppShell", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
     );
-    const restore = installDom(dom, { mobile: true });
+    const restore = installComponentDom(dom, shellDomOptions({ mobile: true }));
     const root = createRoot(document.getElementById("root")!);
 
     try {

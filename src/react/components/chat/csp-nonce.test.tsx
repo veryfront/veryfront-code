@@ -5,6 +5,7 @@ import { JSDOM } from "npm:jsdom@28.0.0";
 import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
+import { type ComponentDomOptions, installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import { Head } from "../Head.tsx";
 import { ChatStyleProvider } from "./chat-style-provider.tsx";
 import { ChatRoot } from "./chat/composition/chat-root.tsx";
@@ -25,46 +26,14 @@ function injectNonceIntoInlineTags(html: string, nonce: string): string {
     .replaceAll("<script", `<script nonce="${nonce}"`);
 }
 
-function installDomGlobals(dom: JSDOM): () => void {
-  const window = dom.window;
-  const previous = {
-    window: globalThis.window,
-    document: globalThis.document,
-    navigator: globalThis.navigator,
-    self: globalThis.self,
-    Node: globalThis.Node,
-    Element: globalThis.Element,
-    HTMLElement: globalThis.HTMLElement,
-    HTMLStyleElement: globalThis.HTMLStyleElement,
-    HTMLTextAreaElement: globalThis.HTMLTextAreaElement,
-    MutationObserver: globalThis.MutationObserver,
-    requestAnimationFrame: globalThis.requestAnimationFrame,
-    cancelAnimationFrame: globalThis.cancelAnimationFrame,
-    getComputedStyle: globalThis.getComputedStyle,
-  };
-
-  Object.assign(globalThis, {
-    window,
-    document: window.document,
-    navigator: window.navigator,
-    self: window,
-    Node: window.Node,
-    Element: window.Element,
-    HTMLElement: window.HTMLElement,
-    HTMLStyleElement: window.HTMLStyleElement,
-    HTMLTextAreaElement: window.HTMLTextAreaElement,
-    MutationObserver: window.MutationObserver,
-    requestAnimationFrame: (callback: FrameRequestCallback) =>
-      setTimeout(() => callback(Date.now()), 0) as unknown as number,
-    cancelAnimationFrame: (handle: number) => clearTimeout(handle),
-    getComputedStyle: window.getComputedStyle.bind(window),
-  });
-
-  return () => {
-    Object.assign(globalThis, previous);
-    dom.window.close();
-  };
-}
+const DOM_OPTIONS: ComponentDomOptions = {
+  windowGlobals: [
+    "self",
+    "HTMLStyleElement",
+    "HTMLTextAreaElement",
+    "MutationObserver",
+  ],
+};
 
 async function waitFor(
   condition: () => boolean,
@@ -90,7 +59,7 @@ async function hydrateAndReadStyleNonce(element: React.ReactElement): Promise<st
   const dom = new JSDOM(`<!doctype html><div id="root">${serverMarkup}</div>`, {
     url: "https://example.com/",
   });
-  const restore = installDomGlobals(dom);
+  const restore = installComponentDom(dom, DOM_OPTIONS);
 
   try {
     const root = document.getElementById("root");
@@ -116,7 +85,7 @@ async function hydrateAndReadScriptNonce(element: React.ReactElement): Promise<s
   const dom = new JSDOM(`<!doctype html><div id="root">${serverMarkup}</div>`, {
     url: "https://example.com/",
   });
-  const restore = installDomGlobals(dom);
+  const restore = installComponentDom(dom, DOM_OPTIONS);
 
   try {
     const root = document.getElementById("root");
@@ -147,7 +116,7 @@ async function hydrateAndReadManagedHeadStyleNonce(
       url: "https://example.com/",
     },
   );
-  const restore = installDomGlobals(dom);
+  const restore = installComponentDom(dom, DOM_OPTIONS);
 
   try {
     const root = document.getElementById("root");

@@ -6,48 +6,18 @@ import { JSDOM } from "npm:jsdom@28.0.0";
 import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { type ComponentDomOptions, installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./tooltip.tsx";
 
-function installDom(dom: JSDOM): () => void {
-  const window = dom.window;
-  const replacements: Record<string, unknown> = {
-    window,
-    document: window.document,
-    navigator: window.navigator,
-    self: window,
-    Node: window.Node,
-    Element: window.Element,
-    HTMLElement: window.HTMLElement,
-    HTMLButtonElement: window.HTMLButtonElement,
-    KeyboardEvent: window.KeyboardEvent,
-    MouseEvent: window.MouseEvent,
-    FocusEvent: window.FocusEvent,
-    MutationObserver: window.MutationObserver,
-    getComputedStyle: window.getComputedStyle.bind(window),
-    requestAnimationFrame: window.requestAnimationFrame.bind(window),
-    cancelAnimationFrame: window.cancelAnimationFrame.bind(window),
-  };
-  const previous = new Map<string, PropertyDescriptor | undefined>();
-
-  for (const [key, value] of Object.entries(replacements)) {
-    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
-    Object.defineProperty(globalThis, key, {
-      configurable: true,
-      enumerable: true,
-      value,
-      writable: true,
-    });
-  }
-
-  return () => {
-    for (const key of Object.keys(replacements)) {
-      const descriptor = previous.get(key);
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-      else delete (globalThis as Record<string, unknown>)[key];
-    }
-    dom.window.close();
-  };
-}
+const DOM_OPTIONS: ComponentDomOptions = {
+  windowGlobals: [
+    "self",
+    "HTMLButtonElement",
+    "KeyboardEvent",
+    "FocusEvent",
+    "MutationObserver",
+  ],
+};
 
 function createDom(): JSDOM {
   return new JSDOM(
@@ -121,7 +91,7 @@ function escapeLayerRegistered(): Promise<void> {
 describe("Tooltip", () => {
   it("gives the default trigger a keyboard path and honors an explicit tab index", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
 
     try {
@@ -212,7 +182,7 @@ describe("Tooltip", () => {
         url: "https://example.com/",
       },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     let root: ReturnType<typeof hydrateRoot> | undefined;
 
     try {
@@ -250,7 +220,7 @@ describe("Tooltip", () => {
 
   it("honors provider delay and keeps the tooltip open while hover or focus remains", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
 
     try {
@@ -288,7 +258,7 @@ describe("Tooltip", () => {
 
   it("dismisses on Escape and waits for a fresh interaction before reopening", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
 
     try {
@@ -339,7 +309,7 @@ describe("Tooltip", () => {
 
   it("runs child and trigger handlers before honoring cancellation", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const calls: string[] = [];
 
@@ -382,7 +352,7 @@ describe("Tooltip", () => {
 
   it("preserves internal handlers when an asChild handler is explicitly undefined", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
 
     try {
@@ -417,7 +387,7 @@ describe("Tooltip", () => {
 
   it("closes when disabled and cancels delayed work on disable or unmount", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     let rootMounted = true;
 
@@ -472,7 +442,7 @@ describe("Tooltip", () => {
         url: "https://frame.example.com/",
       },
     );
-    const restore = installDom(globalDom);
+    const restore = installComponentDom(globalDom, DOM_OPTIONS);
     const targetDocument = targetDom.window.document;
     const target = targetDocument.getElementById("target");
     assert(target);
@@ -557,7 +527,7 @@ describe("Tooltip", () => {
 
   it("preserves caller style overrides on tooltip content", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
 
     try {
@@ -597,7 +567,7 @@ describe("Tooltip", () => {
 
   it("clamps invalid negative provider delays to immediate opening", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
 
     try {
@@ -625,7 +595,7 @@ describe("Tooltip", () => {
 
   it("caps excessive provider delays and cancels the owner-window timer", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const setTimeoutDescriptor = Object.getOwnPropertyDescriptor(
       dom.window,
@@ -686,7 +656,7 @@ describe("Tooltip", () => {
 
   it("preserves an asChild callback ref across state changes and runs its cleanup", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     let attachedElement: HTMLButtonElement | null = null;
     let cleanupCalls = 0;
@@ -733,7 +703,7 @@ describe("Tooltip", () => {
 
   it("keeps an open tooltip stable when an inline child ref changes identity", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const refCalls: string[] = [];
 

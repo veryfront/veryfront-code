@@ -8,9 +8,9 @@ import { TEST_TIMEOUTS } from "../../../tests/_helpers/constants.ts";
 import { withTestContext } from "../../../tests/_helpers/context.ts";
 import {
   fetchWithTimeout,
-  pollHttpReadyByTimeout,
+  pollUrlReady,
   waitForPromiseWithTimeout,
-} from "../../../tests/_helpers/http-polling.ts";
+} from "../../../tests/_helpers/server.ts";
 import { VERSION } from "#cli/utils";
 
 const NOISY_DEFAULT_FRAGMENTS = [
@@ -282,7 +282,7 @@ describe(
           const run = startVeryfrontDev(context.projectDir, port);
           context.addCleanup(run.stop);
 
-          const ready = await pollHttpReadyByTimeout(`http://127.0.0.1:${port}/`, {
+          const ready = await pollUrlReady(`http://127.0.0.1:${port}/`, {
             timeoutMs: TEST_TIMEOUTS.SERVER_STARTUP,
             requestTimeoutMs: 1_000,
             verifyWithSecondRequest: false,
@@ -318,7 +318,7 @@ describe(
           const run = startVeryfrontDev(context.projectDir, port, ["--debug"]);
           context.addCleanup(run.stop);
 
-          const ready = await pollHttpReadyByTimeout(`http://127.0.0.1:${port}/`, {
+          const ready = await pollUrlReady(`http://127.0.0.1:${port}/`, {
             timeoutMs: TEST_TIMEOUTS.SERVER_STARTUP,
             requestTimeoutMs: 1_000,
             verifyWithSecondRequest: false,
@@ -359,7 +359,7 @@ describe(
           const run = startVeryfrontDev(context.projectDir, port, [], {}, true);
           context.addCleanup(run.stop);
 
-          const ready = await pollHttpReadyByTimeout(`http://127.0.0.1:${port}/`, {
+          const ready = await pollUrlReady(`http://127.0.0.1:${port}/`, {
             timeoutMs: TEST_TIMEOUTS.SERVER_STARTUP,
             requestTimeoutMs: 1_000,
             verifyWithSecondRequest: false,

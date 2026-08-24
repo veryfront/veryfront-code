@@ -37,10 +37,10 @@ export interface MediaQueryListStub {
   dispatchEvent: () => boolean;
 }
 
-/** A `matchMedia` that always reports no match, with the full event surface. */
-export function createMatchMediaStub(): () => MediaQueryListStub {
+/** A `matchMedia` with the full event surface, reporting `matches` for every query. */
+export function createMatchMediaStub(matches = false): () => MediaQueryListStub {
   return () => ({
-    matches: false,
+    matches,
     media: "",
     addEventListener: () => {},
     removeEventListener: () => {},
@@ -53,10 +53,20 @@ export function createMatchMediaStub(): () => MediaQueryListStub {
 
 /** Options for {@linkcode installComponentDom}. */
 export interface ComponentDomOptions {
-  /** Install a `matchMedia` stub. Omit it for tests whose component branches on its absence. */
-  matchMedia?: boolean;
+  /**
+   * Install a `matchMedia` stub. Omit it for tests whose component branches on
+   * its absence; pass `{ matches: true }` for tests that simulate a matching
+   * media query, such as a mobile viewport.
+   */
+  matchMedia?: boolean | { matches: boolean };
   /** Extra constructors to copy off the JSDOM window, such as `KeyboardEvent`. */
   windowGlobals?: readonly string[];
+  /**
+   * Window methods to install bound to the window, such as `addEventListener`.
+   * A plain copy through `windowGlobals` would lose its `this` and throw an
+   * illegal-invocation error when called as a bare global.
+   */
+  windowBound?: readonly string[];
 }
 
 /** The globals every component test installs. */
@@ -84,21 +94,33 @@ export function installComponentDom(
   options: ComponentDomOptions = {},
 ): () => void {
   const w = dom.window as Record<string, unknown>;
-  const readGlobal = (key: string): unknown => Reflect.get(globalThis, key);
+  // Define-and-restore through property descriptors, not plain assignment:
+  // the host runtime exposes some of these globals (localStorage, for one) as
+  // getter-only accessors, and a plain `Reflect.set` on those fails silently,
+  // leaving the host's value in place while the test believes the JSDOM one
+  // is installed.
   const writeGlobal = (key: string, value: unknown): void => {
-    Reflect.set(globalThis, key, value);
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      enumerable: true,
+      value,
+      writable: true,
+    });
   };
 
   const keys = [
     ...BASE_GLOBALS,
     ...(options.matchMedia ? ["matchMedia"] : []),
     ...(options.windowGlobals ?? []),
+    ...(options.windowBound ?? []),
     "requestAnimationFrame",
     "cancelAnimationFrame",
   ];
 
-  const previous: Record<string, unknown> = {};
-  for (const key of keys) previous[key] = readGlobal(key);
+  const previous = new Map<string, PropertyDescriptor | undefined>();
+  for (const key of keys) {
+    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+  }
 
   writeGlobal("document", w.document);
   writeGlobal("window", w);
@@ -112,8 +134,14 @@ export function installComponentDom(
     (w.getComputedStyle as (e: Element) => CSSStyleDeclaration).bind(w),
   );
   writeGlobal("ResizeObserver", ResizeObserverStub);
-  if (options.matchMedia) writeGlobal("matchMedia", createMatchMediaStub());
+  if (options.matchMedia) {
+    const matches = typeof options.matchMedia === "object" && options.matchMedia.matches;
+    writeGlobal("matchMedia", createMatchMediaStub(matches));
+  }
   for (const name of options.windowGlobals ?? []) writeGlobal(name, w[name]);
+  for (const name of options.windowBound ?? []) {
+    writeGlobal(name, (w[name] as (...args: unknown[]) => unknown).bind(w));
+  }
 
   const pendingFrames = new Set<number>();
   writeGlobal("requestAnimationFrame", (callback: (time: number) => void): number => {
@@ -132,7 +160,11 @@ export function installComponentDom(
   return () => {
     for (const frame of pendingFrames) clearTimeout(frame);
     pendingFrames.clear();
-    for (const key of keys) writeGlobal(key, previous[key]);
+    for (const key of keys) {
+      const descriptor = previous.get(key);
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as Record<string, unknown>)[key];
+    }
     (dom.window as { close: () => void }).close();
   };
 }

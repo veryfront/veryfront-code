@@ -4811,15 +4811,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
       "removalPr": "PR 4n",
     }),
-    entry("src/react/components/chat/chat-actions.test.tsx", ["process"], {
-      "disposition": "replaceable-fake",
-      "owner": "core-runtime",
-      "rationale":
-        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
-      "replacement":
-        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
-      "removalPr": "PR 4n",
-    }),
     entry("src/react/components/chat/chat-agent-picker.test.tsx", [
       "process",
       "network",
@@ -5074,15 +5065,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       ["filesystem-read"],
       unresolvedReadRelocation("core-runtime", "PR 4n"),
     ),
-    entry("src/react/components/chat/csp-nonce.test.tsx", ["process"], {
-      "disposition": "replaceable-fake",
-      "owner": "core-runtime",
-      "rationale":
-        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
-      "replacement":
-        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
-      "removalPr": "PR 4n",
-    }),
     entry("src/react/components/chat/hooks-coverage.test.tsx", [
       "process",
       "network",
@@ -5213,24 +5195,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
       "removalPr": "PR 4n",
     }),
-    entry("src/react/components/ui/anchored-surface.test.tsx", ["process"], {
-      "disposition": "replaceable-fake",
-      "owner": "core-runtime",
-      "rationale":
-        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
-      "replacement":
-        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
-      "removalPr": "PR 4n",
-    }),
-    entry("src/react/components/ui/app-shell.test.tsx", ["process"], {
-      "disposition": "replaceable-fake",
-      "owner": "core-runtime",
-      "rationale":
-        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
-      "replacement":
-        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
-      "removalPr": "PR 4n",
-    }),
     entry("src/react/components/ui/autocomplete.behaviour.test.tsx", [
       "process",
     ], {
@@ -5290,15 +5254,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       ["filesystem-read"],
       unresolvedReadRelocation("core-runtime", "PR 4n"),
     ),
-    entry("src/react/components/ui/floating.test.tsx", ["process"], {
-      "disposition": "replaceable-fake",
-      "owner": "core-runtime",
-      "rationale":
-        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
-      "replacement":
-        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
-      "removalPr": "PR 4n",
-    }),
     entry(
       "src/react/components/ui/hover-card.behaviour.test.tsx",
       ["process"],
@@ -5350,34 +5305,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
       "removalPr": "PR 4n",
     }),
-    entry("src/react/components/ui/overlay-surfaces.test.tsx", ["process"], {
-      "disposition": "replaceable-fake",
-      "owner": "core-runtime",
-      "rationale":
-        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
-      "replacement":
-        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
-      "removalPr": "PR 4n",
-    }),
-    entry("src/react/components/ui/select.test.tsx", ["process"], {
-      "disposition": "replaceable-fake",
-      "owner": "core-runtime",
-      "rationale":
-        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
-      "replacement":
-        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
-      "removalPr": "PR 4n",
-    }),
     entry("src/react/components/ui/slot.test.tsx", ["process"], {
-      "disposition": "replaceable-fake",
-      "owner": "core-runtime",
-      "rationale":
-        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
-      "replacement":
-        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
-      "removalPr": "PR 4n",
-    }),
-    entry("src/react/components/ui/tooltip.test.tsx", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "core-runtime",
       "rationale":

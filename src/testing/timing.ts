@@ -1,9 +1,4 @@
-import { getTimeScale, scaleDuration } from "#veryfront/platform/compat/time-scale.ts";
-
-/** Return test time scale. */
-export function getTestTimeScale(): number {
-  return getTimeScale();
-}
+import { scaleDuration } from "#veryfront/platform/compat/time-scale.ts";
 
 /** Scale a duration for the current test runtime. */
 export function scaleMs(ms: number, minMs = 1): number {
