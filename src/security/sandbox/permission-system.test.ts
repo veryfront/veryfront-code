@@ -259,9 +259,15 @@ describe("Permission System", () => {
       }
     });
 
-    it("should be resilient to unusual permission names (type safety)", () => {
-      const validPermissions: Permission[] = ["net", "fs", "env", "run", "read", "write"];
-      assertEquals(validPermissions.length, 6);
+    denoOnlyIt("should deny permission names outside this module's contract", async () => {
+      for (const name of ["sys", "ffi", "import"]) {
+        const result = await requestPermission({ name: name as Permission });
+        assertEquals(
+          result.state,
+          "denied",
+          `${name} is outside this module's contract and must be denied`,
+        );
+      }
     });
   });
 

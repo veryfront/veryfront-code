@@ -10,7 +10,6 @@ import type {
 } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "./define.ts";
 import { compileJsonSchemaValidator, tryCompileJsonSchemaValidator } from "./json-schema.ts";
-import { createRuntimeJsonSchema } from "#veryfront/agent/runtime/runtime-tool-builder.ts";
 import { lazySchema } from "./lazy.ts";
 import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
 
@@ -375,9 +374,21 @@ describe("defineSchema", () => {
     const { compileJsonSchema: _unsupported, ...legacyAdapter } = createZodAdapter();
     register<SchemaValidator>("SchemaValidator", legacyAdapter);
 
-    const runtimeSchema = createRuntimeJsonSchema({ type: "object" });
+    assertEquals(
+      tryCompileJsonSchemaValidator({ type: "object" }),
+      undefined,
+      "a legacy adapter without compileJsonSchema must yield no validator rather than throwing",
+    );
+  });
 
-    assertEquals(runtimeSchema.jsonSchema, { type: "object" });
-    assertEquals(runtimeSchema.validate, undefined);
+  it("compiles a validator when the adapter exposes raw-schema compilation", () => {
+    reset();
+    register<SchemaValidator>("SchemaValidator", createZodAdapter());
+
+    assertEquals(
+      typeof tryCompileJsonSchemaValidator({ type: "object" }),
+      "function",
+      "an adapter exposing compileJsonSchema must return a callable validator",
+    );
   });
 });

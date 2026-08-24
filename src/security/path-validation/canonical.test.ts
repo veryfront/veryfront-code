@@ -83,6 +83,39 @@ describe("security/path-validation/canonical", () => {
       }
     });
 
+    it("should fail closed when a missing traversal segment has no canonical ancestor", async () => {
+      // Returning null here would drop the caller into purely lexical
+      // resolution, which is exactly the escape the physical walk prevents.
+      const mockAdapter = createAdapterWithFs({
+        realPath: () => Promise.reject(Object.assign(new Error("missing"), { code: "ENOENT" })),
+      });
+
+      await assertRejects(
+        () => getCanonicalPath("/project/missing/../new.txt", mockAdapter),
+        Error,
+        "missing traversal segment",
+        "a missing component in front of a traversal segment must fail closed",
+      );
+    });
+
+    it("should resolve ancestors physically on the collapsed traversal retry", async () => {
+      const mockAdapter = createAdapterWithFs({
+        realPath: (path: string) => {
+          if (path === "/project/new.txt") return Promise.resolve("/physical/new.txt");
+          if (path === "/project") return Promise.resolve("/physical");
+          return Promise.reject(Object.assign(new Error("missing"), { code: "ENOENT" }));
+        },
+      });
+
+      const result = await getCanonicalPath("/project/missing/../new.txt", mockAdapter);
+
+      assertEquals(
+        result.path,
+        "/physical/new.txt",
+        "the collapsed retry must still resolve ancestors physically",
+      );
+    });
+
     it("should preserve the root while walking a missing Windows drive path", async () => {
       const candidates: string[] = [];
       const mockAdapter = createAdapterWithFs({

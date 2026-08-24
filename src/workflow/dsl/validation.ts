@@ -1,10 +1,23 @@
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { WorkflowNode, WorkflowNodeConfig } from "../types.ts";
 
-/** Validate that a node ID is a non-empty string */
+const numberIsSafeInteger = Number.isSafeInteger;
+const reflectApply = Reflect.apply;
+const stringTrim = String.prototype.trim;
+
+export function isCanonicalNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 &&
+    reflectApply(stringTrim, value, []) === value;
+}
+
+export function isPositiveSafeInteger(value: unknown): value is number {
+  return numberIsSafeInteger(value) && (value as number) > 0;
+}
+
+/** Validate that a node ID is a canonical non-empty string. */
 export function validateNodeId(id: string): void {
-  if (!id.trim()) {
-    throw INVALID_ARGUMENT.create({ detail: "Node ID must be a non-empty string" });
+  if (!isCanonicalNonEmptyString(id)) {
+    throw INVALID_ARGUMENT.create({ detail: "Node ID must be a canonical non-empty string" });
   }
 }
 

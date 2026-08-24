@@ -47,6 +47,7 @@ function createMockRedisClient(
 function createStoreWithMock(
   options?: RedisRateLimitOptions,
   client = createMockRedisClient(),
+  closeError?: Error,
 ): {
   store: RedisRateLimitStore;
   client: MockRedisClient;
@@ -72,7 +73,7 @@ function createStoreWithMock(
         closeCalls++;
         closed = true;
       }
-      return Promise.resolve();
+      return closeError ? Promise.reject(closeError) : Promise.resolve();
     },
   };
   return {
@@ -281,6 +282,36 @@ describe("provider-backed RedisRateLimitStore", () => {
       assertEquals(isVeryfrontError(error), true);
       assertEquals(isVeryfrontError(error) ? error.slug : undefined, TIMEOUT_ERROR.slug);
       assertEquals(closeCalls(), 1);
+    });
+
+    it("swallows a close failure while retiring a timed-out connection", async () => {
+      const client = createMockRedisClient();
+      client.eval = () => new Promise<never>(() => {});
+      const { store, closeCalls } = createStoreWithMock(
+        { operationTimeoutMs: 1 },
+        client,
+        new Error("close failed"),
+      );
+
+      const error = await withTimeoutRefGuard(() =>
+        assertRejects(
+          () => store.increment("key", 1_000),
+          Error,
+          "timed out",
+        )
+      );
+
+      assertEquals(
+        isVeryfrontError(error) ? error.slug : undefined,
+        TIMEOUT_ERROR.slug,
+        "a bounded operation must still reject with the timeout error",
+      );
+      assertEquals(
+        closeCalls(),
+        1,
+        "the timed-out connection must still be retired once",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
     it("unrefs the operation timeout so it does not hold the process open", async () => {

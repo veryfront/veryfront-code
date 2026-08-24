@@ -35,10 +35,28 @@ describe("observability/simple-metrics/otel-instruments", () => {
     it("should clear all instruments", () => {
       const instruments = getOtelInstruments();
       instruments.meter = "fake-meter" as never;
+      instruments.requestCounter = { add() {} } as never;
+      instruments.ssrHistogram = { record() {} } as never;
+      instruments.routeManifestLookupCounter = { add() {} } as never;
 
       resetOtelInstruments();
 
+      assertEquals(
+        Object.keys(getOtelInstruments()).length,
+        0,
+        "reset clears every instrument field, not just meter",
+      );
       assertEquals(getOtelInstruments().meter, undefined);
+      assertEquals(
+        getOtelInstruments().requestCounter,
+        undefined,
+        "counters from a previous provider revision must not survive a reset",
+      );
+      assertEquals(
+        getOtelInstruments().ssrHistogram,
+        undefined,
+        "histograms from a previous provider revision must not survive a reset",
+      );
     });
 
     it("should be callable multiple times", () => {
@@ -67,6 +85,11 @@ describe("observability/simple-metrics/otel-instruments", () => {
       await pending;
 
       assertEquals(getOtelInstruments().meter, undefined);
+      assertEquals(
+        Object.keys(getOtelInstruments()).length,
+        0,
+        "a superseded candidate must not publish any instrument field",
+      );
     });
   });
 

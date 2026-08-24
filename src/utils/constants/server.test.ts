@@ -61,8 +61,12 @@ describe("constants/server", () => {
       );
     });
 
-    it("should prepend custom base path", () => {
-      assertEquals(normalizeChunkPath("file.js", "/custom/"), "/custom/file.js");
+    it("should prepend a base path with no trailing slash", () => {
+      assertEquals(
+        normalizeChunkPath("file.js", "/custom"),
+        "/custom/file.js",
+        "a base path without a trailing slash must not lose its last character",
+      );
     });
 
     it("should handle base paths with trailing slash", () => {

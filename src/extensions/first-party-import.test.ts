@@ -822,8 +822,8 @@ describe("first-party extension imports", () => {
       );
       assertEquals(getterCalls, 0);
 
-      const nonEnumerableOptions = {};
-      Object.defineProperty(nonEnumerableOptions, "sourceEntry", {
+      const nonEnumerableSourceEntry = {};
+      Object.defineProperty(nonEnumerableSourceEntry, "sourceEntry", {
         value: "parser-only",
         enumerable: false,
       });
@@ -832,9 +832,32 @@ describe("first-party extension imports", () => {
           importFirstPartyExtensionModule(
             "ext-parser-babel",
             "@veryfront/ext-parser-babel",
-            nonEnumerableOptions,
+            nonEnumerableSourceEntry,
           ),
         TypeError,
+        "Invalid first-party extension import options",
+        "a non-enumerable option field must be rejected by the descriptor guard",
+      );
+
+      const nonEnumerableOptions = {};
+      Object.defineProperty(nonEnumerableOptions, "sourceEntry", {
+        value: "parser-only",
+        enumerable: false,
+      });
+      Object.defineProperty(nonEnumerableOptions, "packageSubpath", {
+        value: "parser-only",
+        enumerable: false,
+      });
+      await assertRejects(
+        () =>
+          importFirstPartyExtensionModule(
+            "ext-parser-babel",
+            "@veryfront/ext-parser-babel",
+            nonEnumerableOptions as never,
+          ),
+        TypeError,
+        "Invalid first-party extension import options",
+        "non-enumerable option fields must be rejected by the descriptor guard, not by the alignment check",
       );
 
       for (

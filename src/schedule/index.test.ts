@@ -6,6 +6,7 @@ import * as factoryModule from "./factory.ts";
 import * as scheduleModule from "./index.ts";
 import * as publicScheduleModule from "veryfront/schedule";
 import * as typesModule from "./types.ts";
+import * as validationModule from "./validation.ts";
 
 const expectedRuntimeExports = [
   "discoverSchedules",
@@ -29,11 +30,19 @@ describe("schedule/index.ts exports", () => {
     assertStrictEquals(scheduleModule.schedule, factoryModule.schedule);
     assertStrictEquals(scheduleModule.discoverSchedules, discoveryModule.discoverSchedules);
     assertStrictEquals(scheduleModule.isScheduleDefinition, typesModule.isScheduleDefinition);
+    assertStrictEquals(
+      scheduleModule.legacyScheduleTargetDiagnostic,
+      validationModule.legacyScheduleTargetDiagnostic,
+    );
     assertStrictEquals(publicScheduleModule.schedule, scheduleModule.schedule);
     assertStrictEquals(publicScheduleModule.discoverSchedules, scheduleModule.discoverSchedules);
     assertStrictEquals(
       publicScheduleModule.isScheduleDefinition,
       scheduleModule.isScheduleDefinition,
+    );
+    assertStrictEquals(
+      publicScheduleModule.legacyScheduleTargetDiagnostic,
+      scheduleModule.legacyScheduleTargetDiagnostic,
     );
   });
 });

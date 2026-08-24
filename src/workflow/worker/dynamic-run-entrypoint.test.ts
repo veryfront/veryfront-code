@@ -120,4 +120,29 @@ describe("runDynamicWorkflowRun", () => {
     assertEquals(persisted?.workerId, "run-execution:new-owner");
     assertEquals(persisted?.context.env, undefined);
   });
+
+  it("maps a vanished run to the NOT_FOUND exit code", async () => {
+    rememberEnv();
+    Deno.env.delete("RUN_EXECUTION_ID");
+    Deno.env.delete("VERYFRONT_TASK_ENV_JSON");
+    Deno.env.delete("TENANT_PROJECT_SLUG");
+    Deno.env.delete("TENANT_TOKEN");
+
+    const backend = new MemoryBackend();
+    Deno.env.set("WORKFLOW_RUN_ID", "run-never-created");
+
+    assertEquals(
+      await runDynamicWorkflowRun({ backend }),
+      DYNAMIC_EXIT_CODES.NOT_FOUND,
+      "a missing run must be distinguishable from a misconfigured container",
+    );
+
+    Deno.env.delete("WORKFLOW_RUN_ID");
+
+    assertEquals(
+      await runDynamicWorkflowRun({ backend }),
+      DYNAMIC_EXIT_CODES.CONFIG_ERROR,
+      "a missing run id is a config error, not a missing run",
+    );
+  });
 });

@@ -62,9 +62,51 @@ describe("rendering/element-validator/element-inspector", () => {
       );
     });
 
+    it("should throw for an invalid object inside a children array", () => {
+      assertThrows(
+        () => deepInspectElement(["text", { bad: 1 }], "root", 0, defaultOptions),
+        Error,
+        "root[1]",
+        "an invalid object inside a children array must be reported with its array index path",
+      );
+    });
+
+    it("should throw for an invalid object inside an element's array children", () => {
+      // React's prop types reject a plain object as a child, which is exactly the
+      // runtime shape this inspector has to report on, so the array is widened.
+      const invalidChildren = ["ok", { bad: 1 }] as unknown as React.ReactNode;
+
+      assertThrows(
+        () =>
+          deepInspectElement(
+            React.createElement("div", null, invalidChildren),
+            "root",
+            0,
+            defaultOptions,
+          ),
+        Error,
+        "root.children[1]",
+        "invalid children inside an element's array children must be reported",
+      );
+    });
+
     it("should stop at max depth", () => {
       const shallowOptions: InspectionOptions = { maxDepth: 0, debugMode: false };
       deepInspectElement({ foo: "bar" }, "root", 1, shallowOptions);
+    });
+
+    it("should inspect a node at exactly maxDepth but skip anything deeper", () => {
+      const opts: InspectionOptions = { maxDepth: 2, debugMode: false };
+
+      assertThrows(
+        () => deepInspectElement({ bad: 1 }, "root", 2, opts),
+        Error,
+        "Invalid React child",
+        "a node at exactly maxDepth must still be inspected",
+      );
+
+      // One level past maxDepth is skipped, so the same invalid object is ignored.
+      deepInspectElement({ bad: 1 }, "root", 3, opts);
     });
 
     it("should respect maxDepth and stop recursing", () => {
@@ -83,6 +125,19 @@ describe("rendering/element-validator/element-inspector", () => {
         "root",
         0,
         defaultOptions,
+      );
+    });
+
+    it("skips objects carrying an unrecognised React symbol instead of throwing", () => {
+      // Bundled or legacy React copies use a numeric $$typeof.
+      deepInspectElement({ $$typeof: 0xeac7 }, "root", 0, defaultOptions);
+      deepInspectElement({ $$typeof: Symbol.for("react.future_thing") }, "root", 0, defaultOptions);
+
+      assertThrows(
+        () => deepInspectElement({ $$typeof: "not-a-symbol" }, "root", 0, defaultOptions),
+        Error,
+        "Invalid React child",
+        "a non-symbol, non-numeric $$typeof is still an invalid child",
       );
     });
 

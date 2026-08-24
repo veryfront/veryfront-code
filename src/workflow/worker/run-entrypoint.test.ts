@@ -21,6 +21,8 @@ const ENV_KEYS = [
   "VERYFRONT_PROJECT_API_URL",
   "TENANT_TOKEN",
   "TENANT_PROJECT_SLUG",
+  "TENANT_PROJECT_ID",
+  "TENANT_PRODUCTION_MODE",
 ] as const;
 
 const savedEnv = new Map<string, string | undefined>();
@@ -264,6 +266,69 @@ describe("runWorkflowRun", () => {
     assertEquals(observedContext.token, "tenant-token");
     assertEquals(observedContext.productionMode, true);
     assertEquals(observedContext.releaseId, "release-1");
+  });
+
+  it("prefers the injected tenant context over the run's stored snapshot", async () => {
+    rememberEnv();
+
+    const backend = new MemoryBackend();
+    const run: WorkflowRun = {
+      id: "run-tenant-precedence",
+      workflowId: "test-workflow",
+      status: "pending",
+      input: {},
+      nodeStates: {},
+      currentNodes: [],
+      context: { input: {} },
+      checkpoints: [],
+      pendingApprovals: [],
+      createdAt: new Date(),
+      sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+      _tenant: {
+        projectSlug: "acme",
+        token: "tenant-token",
+        projectId: "project-123",
+        productionMode: true,
+        releaseId: "release-1",
+      },
+    };
+    await backend.createRun(run);
+
+    Deno.env.set("WORKFLOW_RUN_ID", run.id);
+    Deno.env.set("TENANT_PROJECT_SLUG", "env-project");
+    Deno.env.set("TENANT_TOKEN", "env-token");
+    Deno.env.set("TENANT_PROJECT_ID", "env-project-id");
+
+    let observedContext = getCurrentRequestContext();
+    const executor = {
+      resume: async (runId: string) => {
+        observedContext = getCurrentRequestContext();
+        await backend.updateRun(runId, { status: "waiting" });
+      },
+    };
+
+    const exitCode = await runWorkflowRun({
+      backend,
+      executor: executor as never,
+    });
+
+    assertEquals(exitCode, EXIT_CODES.SUCCESS);
+    assertExists(observedContext);
+    assertEquals(
+      observedContext.projectSlug,
+      "env-project",
+      "injected tenant identity must win over the run's persisted snapshot",
+    );
+    assertEquals(
+      observedContext.token,
+      "env-token",
+      "the run must execute under the injected token",
+    );
+    assertEquals(
+      observedContext.projectId,
+      "env-project-id",
+      "the injected project id must not fall back to the stored snapshot",
+    );
   });
 
   it("marks the run as failed when the executor throws", async () => {

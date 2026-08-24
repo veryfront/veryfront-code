@@ -32,6 +32,11 @@ describe("deno-permissions", () => {
       assertEquals(WORKFLOW_RUN_PERMISSIONS.includes("--allow-write"), true);
       assertEquals(WORKFLOW_RUN_PERMISSIONS.includes("--allow-net"), true);
       assertEquals(WORKFLOW_RUN_PERMISSIONS.includes("--allow-env"), true);
+      assertEquals(
+        [...WORKFLOW_RUN_PERMISSIONS],
+        ["--allow-read", "--allow-write", "--allow-net", "--allow-env"],
+        "restricted workflow profile is exhaustive: any added flag must be reviewed",
+      );
     });
 
     it("does NOT grant run, ffi, or sys", () => {

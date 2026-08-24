@@ -57,6 +57,16 @@ describe("replaceDiscoveredProjectPrimitives", () => {
     );
 
     assertInstanceOf(failure, DiscoveryGenerationError);
+    assertEquals(
+      failure.message.includes("/project/"),
+      false,
+      "DiscoveryGenerationError must not embed local paths in its message",
+    );
+    assertEquals(
+      failure.message.includes("broken prompt module"),
+      false,
+      "DiscoveryGenerationError must not embed project-authored error text in its message",
+    );
     assertEquals(failure.result.errors[0]?.error instanceof Error, true);
     assertStrictEquals(promptRegistry.get("stable"), storedStable);
     assertEquals(promptRegistry.get("broken"), undefined);
@@ -73,6 +83,63 @@ describe("replaceDiscoveredProjectPrimitives", () => {
     assertEquals(recovered.errors, []);
     assertStrictEquals(promptRegistry.get("stable"), storedStable);
     assertEquals(promptRegistry.get("broken")?.description, "Recovered");
+  });
+
+  it("rolls back primitives already registered when a later file fails", async () => {
+    const adapter = createMockAdapter();
+    const stable = prompt({
+      id: "stable",
+      description: "Last known good prompt",
+      content: "stable",
+    });
+    promptRegistry.register(stable.id, stable);
+    const storedStable = promptRegistry.get("stable");
+
+    // The rejected generation registers "valid" live before "broken" fails,
+    // so only the transaction can keep it out of the published registry.
+    await adapter.fs.writeFile(
+      "/project/prompts/valid.ts",
+      [
+        'import { prompt } from "veryfront/prompt";',
+        'export default prompt({ description: "Valid", content: "ok" });',
+      ].join("\n"),
+    );
+    await adapter.fs.writeFile(
+      "/project/prompts/broken.ts",
+      "throw new Error('broken prompt module');",
+    );
+
+    await assertRejects(
+      () =>
+        replaceDiscoveredProjectPrimitives({
+          baseDir: "/project",
+          fsAdapter: adapter.fs,
+          toolDirs: [],
+          agentDirs: [],
+          skillDirs: [],
+          resourceDirs: [],
+          promptDirs: ["prompts"],
+          workflowDirs: [],
+          taskDirs: [],
+          scheduleDirs: [],
+          webhookDirs: [],
+          evalDirs: [],
+          allowHostProjectCodeExecution: true,
+        }),
+      DiscoveryGenerationError,
+      "rejected with 1 error",
+    );
+
+    assertEquals(
+      promptRegistry.get("valid"),
+      undefined,
+      "a rejected generation must not leave a successfully registered primitive live",
+    );
+    assertStrictEquals(
+      promptRegistry.get("stable"),
+      storedStable,
+      "the previous complete generation stays live after a rejected replacement",
+    );
   });
 
   it("can atomically publish the valid subset for an error-reporting runtime", async () => {

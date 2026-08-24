@@ -114,15 +114,33 @@ describe("serializeWorkflowContext", () => {
     // These stay allowed: rejecting them would break workflows relying on the
     // current coercion. They are serialized, and reported, not thrown on.
     it("keeps serializing a Date, which comes back as a string", () => {
-      const serialized = serializeWorkflowContext(contextWith({ when: new Date(0) }));
+      let serialized = "";
+      const warnings = captureWorkflowWarnings(() => {
+        serialized = serializeWorkflowContext(contextWith({ when: new Date(0) }));
+      });
+      const paths = String(warnings[0]?.context?.paths);
 
       assertEquals(JSON.parse(serialized).step.when, "1970-01-01T00:00:00.000Z");
+      assertEquals(
+        paths.includes("context.step.when (Date)"),
+        true,
+        "a Date silently persisted as a string must be named in the lossy warning",
+      );
     });
 
     it("keeps serializing a Map, which comes back empty", () => {
-      const serialized = serializeWorkflowContext(contextWith({ tags: new Map([["a", 1]]) }));
+      let serialized = "";
+      const warnings = captureWorkflowWarnings(() => {
+        serialized = serializeWorkflowContext(contextWith({ tags: new Map([["a", 1]]) }));
+      });
+      const paths = String(warnings[0]?.context?.paths);
 
       assertEquals(JSON.parse(serialized).step.tags, {});
+      assertEquals(
+        paths.includes("context.step.tags (object)"),
+        true,
+        "a Map silently persisted as an empty object must be named in the lossy warning",
+      );
     });
 
     it("keeps serializing an undefined field, whose key disappears", () => {

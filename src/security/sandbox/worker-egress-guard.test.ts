@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import {
@@ -483,6 +488,67 @@ describe("worker-egress-guard admission and shutdown", () => {
         Promise.all([broker.closed, settledRequests]).then(() => undefined),
         "broker flood did not drain during cleanup",
       );
+      await targetServer.shutdown();
+    }
+  });
+
+  it("rejects broker requests without the per-broker authentication token", async () => {
+    let upstreamHits = 0;
+    const targetServer = Deno.serve(
+      { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+      () => {
+        upstreamHits++;
+        return new Response("ok");
+      },
+    );
+    const targetAddress = targetServer.addr;
+    if (targetAddress.transport !== "tcp") {
+      await targetServer.shutdown();
+      throw new Error("expected a TCP target server");
+    }
+
+    const broker = startWorkerEgressBroker({ allowInternalEgress: true });
+
+    try {
+      for (const forgedToken of [undefined, "wrong-token"]) {
+        const headers = new Headers({
+          "x-veryfront-egress-target": `http://127.0.0.1:${targetAddress.port}/`,
+        });
+        if (forgedToken !== undefined) {
+          headers.set("x-veryfront-egress-auth", forgedToken);
+        }
+
+        const response = await beforeDeadline(
+          fetch(broker.config.httpBroker.url, { headers }),
+          "the broker did not answer an unauthenticated request",
+        );
+        const body = await response.text();
+
+        assertEquals(
+          response.status,
+          403,
+          "the broker must reject an unauthenticated egress request",
+        );
+        assertEquals(
+          response.headers.get("x-veryfront-egress-error"),
+          "1",
+          "the rejection must be marked as a broker error",
+        );
+        assertStringIncludes(
+          body,
+          "authentication failed",
+          "the rejection must name the broker authentication gate",
+        );
+      }
+
+      assertEquals(
+        upstreamHits,
+        0,
+        "no upstream request may be made for an unauthenticated broker call",
+      );
+    } finally {
+      broker.close();
+      await beforeDeadline(broker.closed, "broker did not drain after close");
       await targetServer.shutdown();
     }
   });

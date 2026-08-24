@@ -44,13 +44,22 @@ describe("contentSecurityPolicy", () => {
 
   it("should add nonce to script-src", async () => {
     const middleware = contentSecurityPolicy(
-      { "script-src": "'self'" },
+      { "script-src": "'self'", "style-src": "'self'" },
       { nonce: "abc123" },
     );
 
     const response = await runMiddleware(middleware, new Response("OK"));
 
-    assertStringIncludes(getCsp(response), "'nonce-abc123'");
+    assertEquals(
+      getCsp(response),
+      "script-src 'self' 'nonce-abc123'; style-src 'self'",
+      "the nonce must be inserted into script-src, not appended to the last directive",
+    );
+    assertEquals(
+      getCsp(response).split("; ").find((directive) => directive.startsWith("style-src")),
+      "style-src 'self'",
+      "style-src must not receive the script nonce",
+    );
   });
 
   it("should merge with existing CSP", async () => {
@@ -81,6 +90,37 @@ describe("contentSecurityPolicy", () => {
     const response = await runMiddleware(middleware, new Response("Original Body"));
 
     assertEquals(await response?.text(), "Original Body");
+  });
+
+  it("preserves upstream response headers alongside the CSP header", async () => {
+    const middleware = contentSecurityPolicy({ "default-src": "'self'" });
+    const response = await runMiddleware(
+      middleware,
+      new Response("OK", {
+        headers: {
+          "set-cookie": "sid=abc; HttpOnly",
+          "content-type": "application/json",
+          "cache-control": "no-store",
+        },
+      }),
+    );
+
+    assertEquals(
+      response?.headers.get("set-cookie"),
+      "sid=abc; HttpOnly",
+      "the middleware must not drop upstream Set-Cookie",
+    );
+    assertEquals(
+      response?.headers.get("content-type"),
+      "application/json",
+      "the middleware must not drop upstream Content-Type",
+    );
+    assertEquals(
+      response?.headers.get("cache-control"),
+      "no-store",
+      "the middleware must not drop upstream Cache-Control",
+    );
+    assertStringIncludes(getCsp(response), "default-src 'self'");
   });
 
   it("should handle undefined response from next", async () => {

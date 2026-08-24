@@ -87,6 +87,13 @@ function assertSpanDoesNotContain(spans: readonly ReadableSpan[], value: string)
         );
       }
     }
+    for (const attributeValue of Object.values(span.attributes ?? {})) {
+      assertEquals(
+        String(attributeValue).includes(value),
+        false,
+        `${span.name} leaked sensitive text into its span attributes`,
+      );
+    }
   }
 }
 

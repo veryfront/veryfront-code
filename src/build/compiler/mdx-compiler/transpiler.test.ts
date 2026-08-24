@@ -25,13 +25,26 @@ describe(
 
       it("should transpile JSX code in production mode", async () => {
         const code = `const el = <div>Hello</div>;`;
-        const result = await transpileCode(code, {
-          projectDir: "/tmp",
-          outputDir: "/tmp/out",
-          mode: "production",
-        });
-        // Production should minify
-        assertEquals(result.includes("\n\n"), false);
+        const options = { projectDir: "/tmp", outputDir: "/tmp/out" };
+        const dev = await transpileCode(code, { ...options, mode: "development" });
+        const prod = await transpileCode(code, { ...options, mode: "production" });
+
+        assertEquals(prod.length < dev.length, true, "production must minify");
+        assertEquals(
+          prod.includes(" = "),
+          false,
+          "minified output must not keep declaration spacing",
+        );
+        assertEquals(
+          prod.includes("{ children"),
+          false,
+          "minified output must not keep object spacing",
+        );
+        assertStringIncludes(
+          dev,
+          "const el = /* @__PURE__ */",
+          "development output must stay unminified",
+        );
       });
 
       it("should output ESM format", async () => {
@@ -41,8 +54,13 @@ describe(
           outputDir: "/tmp/out",
           mode: "development",
         });
-        // ESM uses export
-        assertStringIncludes(result, "export");
+        assertStringIncludes(result, "export {", "must emit an ESM export clause");
+        assertStringIncludes(
+          result,
+          'import { jsx } from "react/jsx-runtime"',
+          "ESM output imports the JSX runtime rather than requiring it",
+        );
+        assertEquals(result.includes("module.exports"), false, "must not emit CommonJS");
       });
 
       it("should handle empty code", async () => {

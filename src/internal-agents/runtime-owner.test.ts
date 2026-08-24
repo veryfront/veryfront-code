@@ -57,6 +57,107 @@ describe("internal-agents/runtime-owner", () => {
     assertEquals(ownerUrl, "http://10.0.0.9:20000/channels/invoke");
   });
 
+  it("prefers VERYFRONT_RUNTIME_OWNER_HOST over POD_IP", async () => {
+    const request = new Request(
+      "https://demo-project.preview.veryfront.org/api/control-plane/runs/run_1/stream",
+    );
+
+    const ownerUrl = await resolveRuntimeOwnerInvokeUrl(request, {
+      getHostEnv: (key) => {
+        if (key === "VERYFRONT_RUNTIME_OWNER_HOST") return "10.9.9.9";
+        if (key === "POD_IP") return "10.0.0.7";
+        if (key === "VERYFRONT_RUNTIME_OWNER_PORT") return "20000";
+        return undefined;
+      },
+      getDenoNetworkInterfaces: () => [],
+      dynamicImport: createDynamicImportStub({
+        networkInterfaces: () => ({}),
+      }),
+    });
+
+    assertEquals(
+      ownerUrl,
+      "http://10.9.9.9:20000/channels/invoke",
+      "VERYFRONT_RUNTIME_OWNER_HOST outranks POD_IP",
+    );
+  });
+
+  it("prefers VERYFRONT_SERVER_PORT over the request url port", async () => {
+    const request = new Request(
+      "https://demo-project.preview.veryfront.org:21000/api/control-plane/runs/run_1/stream",
+    );
+
+    const ownerUrl = await resolveRuntimeOwnerInvokeUrl(request, {
+      getHostEnv: (key) => {
+        if (key === "POD_IP") return "10.0.0.7";
+        if (key === "VERYFRONT_SERVER_PORT") return "20500";
+        return undefined;
+      },
+      getDenoNetworkInterfaces: () => [],
+      dynamicImport: createDynamicImportStub({
+        networkInterfaces: () => ({}),
+      }),
+    });
+
+    assertEquals(
+      ownerUrl,
+      "http://10.0.0.7:20500/channels/invoke",
+      "VERYFRONT_SERVER_PORT outranks the request url port",
+    );
+  });
+
+  it("falls back to node:os interfaces when the Deno probe yields nothing", async () => {
+    const request = new Request(
+      "https://demo-project.preview.veryfront.org/api/control-plane/runs/run_1/stream",
+    );
+
+    const ownerUrl = await resolveRuntimeOwnerInvokeUrl(request, {
+      getHostEnv: (key) => {
+        if (key === "PROXY_MODE") return "1";
+        return undefined;
+      },
+      getDenoNetworkInterfaces: () => [],
+      dynamicImport: createDynamicImportStub({
+        networkInterfaces: () => ({
+          lo: [{ address: "127.0.0.1", family: "IPv4", internal: true }],
+          eth0: [{ address: "10.1.2.3", family: "IPv4", internal: false }],
+        }),
+      }),
+    });
+
+    assertEquals(
+      ownerUrl,
+      "http://10.1.2.3:20000/channels/invoke",
+      "the node:os interface host must reach the owner url",
+    );
+  });
+
+  it("skips a loopback address that is not reported as internal", async () => {
+    const request = new Request(
+      "https://demo-project.preview.veryfront.org/api/control-plane/runs/run_1/stream",
+    );
+
+    const ownerUrl = await resolveRuntimeOwnerInvokeUrl(request, {
+      getHostEnv: (key) => {
+        if (key === "PROXY_MODE") return "1";
+        return undefined;
+      },
+      getDenoNetworkInterfaces: () => [
+        { address: "127.0.0.1", family: "IPv4", internal: false },
+        { address: "10.0.0.9", family: "IPv4", internal: false },
+      ],
+      dynamicImport: createDynamicImportStub({
+        networkInterfaces: () => ({}),
+      }),
+    });
+
+    assertEquals(
+      ownerUrl,
+      "http://10.0.0.9:20000/channels/invoke",
+      "a loopback address is never advertised as the runtime owner host even when the interface is not flagged internal",
+    );
+  });
+
   it("does not let a generic PORT env override the runtime listener port", async () => {
     const request = new Request(
       "https://demo-project.preview.veryfront.org:21000/api/control-plane/runs/run_1/stream",

@@ -34,6 +34,11 @@ describe("CSSPurgingEngine contract", () => {
 
     assertEquals(captured.cacheIdentity, "test-css-purging-engine@1");
     assertEquals(
+      Object.isFrozen(captured),
+      true,
+      "captured purging engine must be a frozen snapshot",
+    );
+    assertEquals(
       (await captured.purge({
         css: "input",
         content: [],

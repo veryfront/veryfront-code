@@ -55,12 +55,30 @@ describe("hydration-script-builder/dev-error-logger", () => {
 
     it("should override console.error", () => {
       const result = generateDevErrorLoggerScript();
-      assertEquals(result.includes("console.error"), true);
+      assertEquals(
+        result.includes("console.error = function("),
+        true,
+        "the dev logger must install a console.error override",
+      );
+      assertEquals(
+        result.includes("logToServer('error', 'Console error'"),
+        true,
+        "the console.error override must forward to the dev log endpoint",
+      );
     });
 
     it("should override console.warn", () => {
       const result = generateDevErrorLoggerScript();
-      assertEquals(result.includes("console.warn"), true);
+      assertEquals(
+        result.includes("console.warn = function("),
+        true,
+        "the dev logger must install a console.warn override",
+      );
+      assertEquals(
+        result.includes("logToServer('warn', 'Console warning'"),
+        true,
+        "the console.warn override must forward to the dev log endpoint",
+      );
     });
 
     it("should include page loaded log", () => {

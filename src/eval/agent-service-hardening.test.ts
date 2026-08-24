@@ -125,6 +125,7 @@ describe("eval/agent-service hardening", () => {
   it("does not let explicit case ids bypass write authorization", () => {
     const readCase = createLiveCase("read");
     const writeCase = createLiveCase("write");
+    const experimentalCase = createLiveCase("experimental");
 
     const selected = selectLiveEvalCases({
       allCases: [readCase, writeCase],
@@ -137,6 +138,38 @@ describe("eval/agent-service hardening", () => {
     });
 
     assertEquals(selected, []);
+
+    const withWriteEvals = selectLiveEvalCases({
+      allCases: [readCase, writeCase, experimentalCase],
+      readOnlyCases: [readCase],
+      writeCases: [writeCase],
+      experimentalWriteCases: [experimentalCase],
+      requestedCaseIds: new Set(),
+      runWriteEvals: true,
+      runExperimentalWriteEvals: false,
+    });
+
+    assertEquals(
+      withWriteEvals.map((testCase) => testCase.id),
+      ["read", "write"],
+      "experimental write cases stay out unless AG_UI_EVAL_EXPERIMENTAL is set",
+    );
+
+    const withExperimentalWriteEvals = selectLiveEvalCases({
+      allCases: [readCase, writeCase, experimentalCase],
+      readOnlyCases: [readCase],
+      writeCases: [writeCase],
+      experimentalWriteCases: [experimentalCase],
+      requestedCaseIds: new Set(),
+      runWriteEvals: true,
+      runExperimentalWriteEvals: true,
+    });
+
+    assertEquals(
+      withExperimentalWriteEvals.map((testCase) => testCase.id),
+      ["read", "write", "experimental"],
+      "experimental write cases run only when both flags are set",
+    );
   });
 
   it("rejects explicitly requested write cases when the CLI write gate is disabled", async () => {
@@ -917,6 +950,50 @@ describe("eval/agent-service hardening", () => {
     assertEquals(lifecycle, ["sidecar:stop"]);
   });
 
+  it("cleans successful durable evidence when evidence retention is disabled", async () => {
+    const conversationId = "11111111-1111-4111-8111-111111111111";
+    const lifecycle: string[] = [];
+    let cleanupRunId: string | undefined;
+    const runner = createDurableRunCanaryRunner({
+      agentId: "veryfront",
+      apiUrl: "https://api.example.test",
+      authToken: "token",
+      keepSuccessfulEvidence: false,
+      projectId: null,
+      requestTimeoutMs: 1_000,
+    }, createCompletedDurableRunCanaryApiClient(conversationId));
+
+    const result = await runner.runCase({
+      id: "clean-successful-evidence",
+      label: "Clean successful evidence",
+      prepare: async () => ({
+        cleanup: async (input) => {
+          cleanupRunId = input?.runId;
+          lifecycle.push("prepared:cleanup");
+        },
+        conversationId,
+        prompt: "run",
+        title: "Clean successful evidence",
+        startSidecar: async () => async () => {
+          lifecycle.push("sidecar:stop");
+        },
+        validate: () => {},
+      }),
+    });
+
+    assertEquals(
+      result.status,
+      "pass",
+      "a successful canary still passes when evidence is not kept",
+    );
+    assertEquals(
+      lifecycle,
+      ["sidecar:stop", "prepared:cleanup"],
+      "successful runs clean prepared evidence after stopping the sidecar",
+    );
+    assertEquals(cleanupRunId, result.runId, "cleanup receives the terminal run id");
+  });
+
   it("retains durable run identity and cleanup when a hostile value is thrown", async () => {
     const hostileThrownValue = new Proxy(Object.create(null), {
       get: () => {
@@ -977,6 +1054,7 @@ describe("eval/agent-service hardening", () => {
 
   it("bounds durable terminal polling by the configured deadline", async () => {
     const conversationId = "11111111-1111-4111-8111-111111111111";
+    const requestTimeoutMs = 150;
     let summaryCalls = 0;
     const apiClient: DurableRunCanaryApiClient = {
       createDurableRootRun: async () => {},
@@ -1005,10 +1083,8 @@ describe("eval/agent-service hardening", () => {
       authToken: "token",
       keepSuccessfulEvidence: false,
       projectId: null,
-      requestTimeoutMs: 20,
+      requestTimeoutMs,
     }, apiClient);
-    const startedAt = Date.now();
-
     const result = await runner.runCase({
       id: "deadline",
       label: "Deadline",
@@ -1024,7 +1100,16 @@ describe("eval/agent-service hardening", () => {
     assertEquals(result.status, "fail");
     assertStringIncludes(result.details, "terminal state");
     assertEquals(result.runId.startsWith("run_"), true);
-    assertEquals(Date.now() - startedAt < 500, true);
+    assertEquals(
+      summaryCalls,
+      2,
+      "the canary polls once for running state and once for the deadline-bounded pending request",
+    );
+    assertEquals(
+      result.durationMs >= requestTimeoutMs,
+      true,
+      "the canary waits out the configured terminal-poll deadline",
+    );
   });
 
   it("accepts structured statusCode 404 from injected durable clients", async () => {

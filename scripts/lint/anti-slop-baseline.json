@@ -72,7 +72,7 @@
     "src/rendering/cache/cache-payload.ts": 2,
     "src/rendering/element-validator/element-inspector.ts": 1,
     "src/routing/api/response-normalization.ts": 1,
-    "src/runtime/runtime-bridge.ts": 2,
+    "src/runtime/runtime-bridge.ts": 1,
     "src/schemas/json-value.ts": 1,
     "src/schemas/lazy.ts": 2,
     "src/security/sandbox/project-worker.ts": 1,

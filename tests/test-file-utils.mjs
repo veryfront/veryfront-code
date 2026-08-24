@@ -168,9 +168,9 @@ function walk(dir, onFile) {
     // is where every gitignored `*.test.*` in the tree lives — 498 of them,
     // under `npm/node_modules/` and `node_modules/.deno/`. Nothing under
     // `src/`, `tests/` or `proxy/` contains a `node_modules`, so this cannot
-    // change what the four consumers select; it makes the guarantee explicit
-    // rather than incidental, and covers `run-affected-tests.mjs`, which can
-    // pass the repo root as a directory pattern when a root-level file changes.
+    // change what the consumers select; it makes the guarantee explicit
+    // rather than incidental, and covers any caller that passes the repo root
+    // itself as a directory pattern.
     if (entry.isDirectory() && isPrunedDirectoryName(entry.name)) continue;
     const fullPath = resolve(dir, entry.name);
     if (entry.isDirectory()) {

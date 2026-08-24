@@ -1,6 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  getCachedTransform,
+  setCachedTransform,
+} from "#veryfront/transforms/esm/transform-cache.ts";
 import {
   cleanupCaches,
   cleanupRenderer,
@@ -32,9 +36,20 @@ describe("build/production-build/build/build-cleanup", () => {
   });
 
   describe("cleanupCaches", () => {
-    it("should not throw when transform cache module is not available", async () => {
-      // This test verifies the catch block handles missing module gracefully
+    it("clears the transform cache", async () => {
+      setCachedTransform("build-cleanup-probe", "export const a = 1;", "hash");
+      assertExists(
+        getCachedTransform("build-cleanup-probe"),
+        "the probe entry must be cached before cleanup",
+      );
+
       await cleanupCaches();
+
+      assertEquals(
+        getCachedTransform("build-cleanup-probe"),
+        undefined,
+        "cleanupCaches must destroy the transform cache",
+      );
     });
   });
 

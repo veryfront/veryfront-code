@@ -26,9 +26,19 @@ describe("base64url", () => {
     });
 
     it("should handle latin1 characters", () => {
-      const result = base64urlEncode("café");
-      assertEquals(typeof result, "string");
-      assertEquals(result.length > 0, true);
+      assertEquals(
+        base64urlEncode("café"),
+        "Y2Fm6Q",
+        "latin1 input uses btoa binary-string semantics, not UTF-8 bytes",
+      );
+    });
+
+    it("should fall back to UTF-8 bytes outside latin1", () => {
+      assertEquals(
+        base64urlEncode("日本"),
+        "5pel5pys",
+        "input outside latin1 falls back to UTF-8 bytes",
+      );
     });
 
     it("should produce consistent output", () => {

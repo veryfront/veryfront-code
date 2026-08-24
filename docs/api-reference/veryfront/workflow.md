@@ -130,27 +130,27 @@ Options accepted by parallel.
 | `branch`                   | Create a conditional branch node.                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/branch.ts#L27)               |
 | `createWorkflowClient`     | Create workflow client.                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/api/workflow-client.ts#L275)     |
 | `createWorkflowHandler`    | Build the HTTP routes the workflow hooks call.                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/http/handler.ts#L322)            |
-| `dag`                      | Create a directed workflow graph.                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/workflow.ts#L96)             |
+| `dag`                      | Create a directed workflow graph.                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/workflow.ts#L111)            |
 | `delay`                    | Create a simple delay/sleep node.                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/wait.ts#L75)                 |
-| `dependsOn`                | Declare workflow step dependencies.                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/workflow.ts#L123)            |
-| `deriveRunEvents`          | Events describing how a run got from `previous` to `next`.                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/events.ts#L170)                  |
-| `doWhile`                  | Create a do-while workflow loop.                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/loop.ts#L105)                |
+| `dependsOn`                | Declare workflow step dependencies.                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/workflow.ts#L138)            |
+| `deriveRunEvents`          | Events describing how a run got from `previous` to `next`.                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/events.ts#L228)                  |
+| `doWhile`                  | Create a do-while workflow loop.                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/loop.ts#L110)                |
 | `generateId`               | Generate a unique workflow ID                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L652)                   |
 | `getAllWorkflowIds`        | List registered workflow IDs for the current project scope.                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/registry.ts#L527)                |
 | `getWorkflow`              | Get metadata for a registered workflow by ID.                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/registry.ts#L522)                |
 | `getWorkflowTenant`        | Get the current workflow tenant context. Returns undefined if not executing within a workflow step. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/executor/step-executor.ts#L56)   |
 | `hasRunObservationSupport` | Check whether atomic run observation is available.                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L278)          |
 | `hasWorkerSupport`         | Check whether worker support is present.                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L303)          |
-| `isTerminalRunStatus`      | Whether a run in this status can still produce events.                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/events.ts#L49)                   |
+| `isTerminalRunStatus`      | Whether a run in this status can still produce events.                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/events.ts#L104)                  |
 | `loop`                     | Create a loop workflow step.                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/loop.ts#L57)                 |
 | `map`                      | Create a mapped workflow step.                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/map.ts#L24)                  |
 | `parallel`                 | Create a parallel node for concurrent execution of multiple steps.                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/parallel.ts#L21)             |
 | `parseDuration`            | Parse duration string to milliseconds                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L498)                   |
 | `sequence`                 | Create a sequential workflow definition.                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/workflow.ts#L82)             |
-| `snapshotRun`              | Reduce a run to the state `deriveRunEvents` compares.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/events.ts#L123)                  |
+| `snapshotRun`              | Reduce a run to the state `deriveRunEvents` compares.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/events.ts#L178)                  |
 | `step`                     | Create a workflow step definition.                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/step.ts#L25)                 |
 | `subWorkflow`              | Create a sub-workflow node for nested execution.                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/sub-workflow.ts#L19)         |
-| `times`                    | Create a fixed-count workflow loop.                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/loop.ts#L123)                |
+| `times`                    | Create a fixed-count workflow loop.                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/loop.ts#L133)                |
 | `toolStep`                 | Create a workflow step that runs a tool.                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/step.ts#L66)                 |
 | `unless`                   | Create a branch that only executes if condition is false.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/branch.ts#L62)               |
 | `useApproval`              | Manage workflow approval interactions.                                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/react/use-approval.ts#L30)       |
@@ -166,8 +166,8 @@ Options accepted by parallel.
 
 | Name               | Description                | Source                                                                                                          |
 | ------------------ | -------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `MemoryBackend`    | Implement memory backend.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/memory.ts#L110)            |
-| `RedisBackend`     | Implement redis backend.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/redis/index.ts#L405)       |
+| `MemoryBackend`    | Implement memory backend.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/memory.ts#L111)            |
+| `RedisBackend`     | Implement redis backend.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/redis/index.ts#L411)       |
 | `WorkflowClient`   | Implement workflow client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/api/workflow-client.ts#L48)         |
 | `WorkflowExecutor` | Workflow Executor class    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/executor/workflow-executor.ts#L124) |
 
@@ -184,7 +184,7 @@ Options accepted by parallel.
 | `ParallelOptions`             | Options accepted by parallel.                                                                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/parallel.ts#L12)                |
 | `RedisAdapter`                | Standardized Redis Adapter Interface Normalizes differences between Deno and Node Redis clients                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/redis/interface.ts#L5)     |
 | `RedisBackendConfig`          | Redis backend configuration                                                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/redis/types.ts#L22)        |
-| `RunEventSnapshot`            | The slice of a run this module diffs against.                                                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/events.ts#L117)                     |
+| `RunEventSnapshot`            | The slice of a run this module diffs against.                                                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/events.ts#L172)                     |
 | `StepOptions`                 | Options accepted by step.                                                                                                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/step.ts#L14)                    |
 | `SubWorkflowOptions`          | Options accepted by sub workflow.                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/sub-workflow.ts#L12)            |
 | `UseApprovalOptions`          | Options accepted by use approval.                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/react/use-approval.ts#L7)           |
@@ -211,18 +211,18 @@ Options accepted by parallel.
 | `WorkflowNodeConfig`          | Union of all workflow node configurations                                                                                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L283)                      |
 | `WorkflowOptions`             | Options accepted by workflow.                                                                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/workflow.ts#L23)                |
 | `WorkflowRun`                 | Workflow run state                                                                                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L355)                      |
-| `WorkflowRunEvent`            | A persisted workflow transition suitable for streaming to run observers.                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/events.ts#L101)                     |
-| `WorkflowRunEventObservation` | Subscriber-local event stream derived from one atomic backend observation.                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/events.ts#L199)                     |
+| `WorkflowRunEvent`            | A persisted workflow transition suitable for streaming to run observers.                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/events.ts#L156)                     |
+| `WorkflowRunEventObservation` | Subscriber-local event stream derived from one atomic backend observation.                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/events.ts#L260)                     |
 | `WorkflowRunEventsResult`     | Supported observation stream or an explicit unsupported-backend result.                                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/api/workflow-client.ts#L43)         |
 | `WorkflowRunObservation`      | Atomic initial snapshot and ordered changes for one workflow run.                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L85)              |
 | `WorkflowRunObservedState`    | Minimal persisted run state used to derive public workflow events.                                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L74)              |
-| `WorkflowRunStatusEvent`      | The run as a whole moved to a new status.                                                                                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/events.ts#L86)                      |
+| `WorkflowRunStatusEvent`      | The run as a whole moved to a new status.                                                                                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/events.ts#L141)                     |
 | `WorkflowRunUpdate`           | Run state that may change after the immutable run snapshot is created.                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L13)              |
 | `WorkflowStatus`              | Public API contract for workflow status.                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/schemas/workflow.schema.ts#L253)    |
-| `WorkflowStepCompletedEvent`  | A step finished successfully.                                                                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/events.ts#L62)                      |
-| `WorkflowStepFailedEvent`     | A step failed. `error` is the persisted message, absent when none was set.                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/events.ts#L70)                      |
-| `WorkflowStepSkippedEvent`    | A step was skipped, typically by an unmet branch condition.                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/events.ts#L79)                      |
-| `WorkflowStepStartedEvent`    | A step began executing.                                                                                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/events.ts#L54)                      |
+| `WorkflowStepCompletedEvent`  | A step finished successfully.                                                                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/events.ts#L117)                     |
+| `WorkflowStepFailedEvent`     | A step failed. `error` is the persisted message, absent when none was set.                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/events.ts#L125)                     |
+| `WorkflowStepSkippedEvent`    | A step was skipped, typically by an unmet branch condition.                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/events.ts#L134)                     |
+| `WorkflowStepStartedEvent`    | A step began executing.                                                                                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/events.ts#L109)                     |
 
 ### Constants
 
@@ -253,14 +253,14 @@ import { assertSafeBlobId, BlobStorageContractName, isSafeBlobId } from "veryfro
 
 | Name               | Description                                                               | Source                                                                                           |
 | ------------------ | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `assertSafeBlobId` | Validate an identifier before any blob backend constructs a storage path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/blob-id.ts#L13) |
-| `isSafeBlobId`     | Return whether a runtime value is a framework-safe blob identifier.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/blob-id.ts#L7)  |
+| `assertSafeBlobId` | Validate an identifier before any blob backend constructs a storage path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/blob-id.ts#L15) |
+| `isSafeBlobId`     | Return whether a runtime value is a framework-safe blob identifier.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/blob-id.ts#L9)  |
 
 #### Classes
 
 | Name                        | Description | Source                                                                                                            |
 | --------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------- |
-| `LocalBlobStorage`          |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/local-storage.ts#L12)            |
+| `LocalBlobStorage`          |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/local-storage.ts#L13)            |
 | `VeryfrontCloudBlobStorage` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/veryfront-cloud-storage.ts#L462) |
 
 #### Types
@@ -492,17 +492,17 @@ import {
 
 | Name                     | Description                                          | Source                                                                                                            |
 | ------------------------ | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `createWorkflowRegistry` | Create a workflow registry from discovered workflows | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L235) |
-| `discoverWorkflows`      | Discover all workflows in a project                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L124) |
-| `findWorkflowById`       | Find a specific workflow by ID                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L224) |
+| `createWorkflowRegistry` | Create a workflow registry from discovered workflows | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L328) |
+| `discoverWorkflows`      | Discover all workflows in a project                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L207) |
+| `findWorkflowById`       | Find a specific workflow by ID                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L314) |
 
 #### Types
 
-| Name                       | Description                    | Source                                                                                                           |
-| -------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `DiscoveredWorkflow`       | Discovered workflow info       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L38) |
-| `WorkflowDiscoveryOptions` | Options for workflow discovery | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L55) |
-| `WorkflowDiscoveryResult`  | Result of workflow discovery   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L78) |
+| Name                       | Description                    | Source                                                                                                            |
+| -------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `DiscoveredWorkflow`       | Discovered workflow info       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L70)  |
+| `WorkflowDiscoveryOptions` | Options for workflow discovery | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L87)  |
+| `WorkflowDiscoveryResult`  | Result of workflow discovery   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L110) |
 
 ### `veryfront/workflow/registry`
 
@@ -557,7 +557,7 @@ import {
 | `createDynamicWorkflowRunEntrypoint` | Create a dynamic workflow run entrypoint.               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-run-entrypoint.ts#L276) |
 | `createWorkflowRunEntrypoint`        | Create a workflow run entrypoint.                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-entrypoint.ts#L203)         |
 | `createWorkflowRunManager`           | Create a workflow run manager backed by run executors.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-manager.ts#L442)            |
-| `createWorkflowWorker`               | Create a workflow worker                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/workflow-worker.ts#L340)        |
+| `createWorkflowWorker`               | Create a workflow worker                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/workflow-worker.ts#L341)        |
 | `isRunExecutor`                      | Type guard to check if an object implements RunExecutor | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/types.ts#L130)        |
 | `runDynamicWorkflowRun`              | Run a workflow run with dynamic discovery.              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-run-entrypoint.ts#L89)  |
 | `runWorkflowRun`                     | Run the workflow run entrypoint                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-entrypoint.ts#L98)          |

@@ -55,8 +55,18 @@ describe("hydration-script-builder/dev-scripts", () => {
 
     it("should include nonce in all scripts when provided", () => {
       const result = getDevScripts("page", baseConfig, undefined, undefined, "test-nonce");
-      const nonceCount = (result.match(/nonce="test-nonce"/g) ?? []).length;
-      assertEquals(nonceCount >= 3, true);
+      const scriptCount = (result.match(/<script/g) ?? []).length;
+      assertEquals(
+        scriptCount,
+        5,
+        "dev mode emits five scripts: dev flag, error logger, component manifest, " +
+          "client renderer, HMR",
+      );
+      assertEquals(
+        (result.match(/nonce="test-nonce"/g) ?? []).length,
+        scriptCount,
+        "every dev script tag must carry the CSP nonce",
+      );
     });
 
     it("should handle empty config", () => {

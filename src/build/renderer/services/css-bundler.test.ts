@@ -36,9 +36,7 @@ describe("build/renderer/services/css-bundler", () => {
         result,
       );
       const output = result.outputs.get("style.css")!;
-      // Should remove comments and extra whitespace
-      assertEquals(output.content.includes("/* comment */"), false);
-      assertEquals(output.content.includes("\n"), false);
+      assertEquals(output.content, "body{color:red}", "production CSS must be fully minified");
     });
 
     it("should not minify CSS in development mode", () => {

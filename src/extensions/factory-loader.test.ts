@@ -6,6 +6,7 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { toFileUrl } from "#veryfront/compat/path";
 import { join } from "@std/path";
@@ -70,10 +71,25 @@ describe("loadExtensionFactory()", () => {
       `export const named = () => ({ name: "x", version: "1.0.0", capabilities: [] });`,
     );
 
-    await assertRejects(
+    const error = await assertRejects(
       () => loadExtensionFactory(path, "local-file"),
-      Error,
+      VeryfrontError,
       "no default export",
+    ) as VeryfrontError;
+    assertEquals(
+      error.slug,
+      "extension-validation",
+      "factory-loader failures must carry the registry slug",
+    );
+    assertEquals(
+      error.status,
+      422,
+      "factory-loader failures must carry the registry status",
+    );
+    assertEquals(
+      error.category,
+      "CONFIG",
+      "factory-loader failures must carry the registry category",
     );
   });
 
@@ -84,10 +100,25 @@ describe("loadExtensionFactory()", () => {
       `export default { name: "not-fn", version: "1.0.0", capabilities: [] };`,
     );
 
-    await assertRejects(
+    const error = await assertRejects(
       () => loadExtensionFactory(path, "local-file"),
-      Error,
+      VeryfrontError,
       "default export is not a function",
+    ) as VeryfrontError;
+    assertEquals(
+      error.slug,
+      "extension-validation",
+      "factory-loader failures must carry the registry slug",
+    );
+    assertEquals(
+      error.status,
+      422,
+      "factory-loader failures must carry the registry status",
+    );
+    assertEquals(
+      error.category,
+      "CONFIG",
+      "factory-loader failures must carry the registry category",
     );
   });
 
@@ -98,20 +129,50 @@ describe("loadExtensionFactory()", () => {
       `export default () => { throw new Error("boom"); };`,
     );
 
-    await assertRejects(
+    const error = await assertRejects(
       () => loadExtensionFactory(path, "local-file"),
-      Error,
+      VeryfrontError,
       "boom",
+    ) as VeryfrontError;
+    assertEquals(
+      error.slug,
+      "extension-validation",
+      "factory-loader failures must carry the registry slug",
+    );
+    assertEquals(
+      error.status,
+      422,
+      "factory-loader failures must carry the registry status",
+    );
+    assertEquals(
+      error.category,
+      "CONFIG",
+      "factory-loader failures must carry the registry category",
     );
   });
 
   it("throws EXTENSION_VALIDATION_ERROR when import fails (missing file)", async () => {
     const path = join(tmp, "does-not-exist.extension.ts");
 
-    await assertRejects(
+    const error = await assertRejects(
       () => loadExtensionFactory(path, "local-file"),
-      Error,
+      VeryfrontError,
       "Failed to import extension",
+    ) as VeryfrontError;
+    assertEquals(
+      error.slug,
+      "extension-validation",
+      "factory-loader failures must carry the registry slug",
+    );
+    assertEquals(
+      error.status,
+      422,
+      "factory-loader failures must carry the registry status",
+    );
+    assertEquals(
+      error.category,
+      "CONFIG",
+      "factory-loader failures must carry the registry category",
     );
   });
 
@@ -176,6 +237,34 @@ describe("loadExtensionFactory()", () => {
       () => loadExtensionFactory(binding.path, "project", undefined, binding),
       Error,
       "target identity changed",
+    );
+  });
+
+  it("rejects a binding captured for a different entrypoint than the import target", async () => {
+    const boundOwnerPath = join(tmp, "bound-owner");
+    const otherOwnerPath = join(tmp, "other-owner");
+    const otherPath = join(otherOwnerPath, "index.ts");
+    await Deno.mkdir(boundOwnerPath, { recursive: true });
+    await Deno.mkdir(otherOwnerPath, { recursive: true });
+    await Deno.writeTextFile(
+      join(boundOwnerPath, "index.ts"),
+      'export default () => ({ name: "bound", version: "1", capabilities: [] });',
+    );
+    // Importing this module throws at module scope, so the rejection message
+    // doubles as proof that the guard refused before any import happened.
+    await Deno.writeTextFile(
+      otherPath,
+      'throw new Error("other module must not be imported");',
+    );
+    const binding = await bindExtensionEntrypoint(
+      await captureExtensionOwner(boundOwnerPath),
+      "./index.ts",
+    );
+
+    await assertRejects(
+      () => loadExtensionFactory(otherPath, "project", undefined, binding),
+      Error,
+      "Extension discovery binding does not match import target",
     );
   });
 

@@ -58,6 +58,22 @@ class FailingRunExecutor extends FakeRunExecutor {
   }
 }
 
+/**
+ * Reports its executions normally until `hideExecutions` is set, at which point
+ * `listRunExecutions` stops reporting them - the shape of a child process that
+ * was reaped before it could report a terminal status.
+ */
+class VanishingRunExecutor extends FakeRunExecutor {
+  hideExecutions = false;
+
+  override listRunExecutions(managerId: string): Promise<RunExecutionInfo[]> {
+    if (this.hideExecutions) {
+      return Promise.resolve([]);
+    }
+    return super.listRunExecutions(managerId);
+  }
+}
+
 class MissingPolicyOnListBackend extends MemoryBackend {
   override async getRun(runId: string): Promise<WorkflowRun | null> {
     const run = await super.getRun(runId);
@@ -293,6 +309,84 @@ describe("workflow/worker/run-manager", () => {
     assertEquals(await backend.isLocked(run.id), false);
     assertEquals(manager.getActiveExecutions(), []);
     assertEquals(manager.getStats().executionsFailed, 1);
+  });
+
+  it("poll() never exceeds maxConcurrentExecutions isolated executions", async () => {
+    const executor = new FakeRunExecutor();
+    const backend = new MemoryBackend();
+    const manager = new WorkflowRunManager({
+      backend,
+      executor,
+      pollInterval: NO_POLL,
+      maxConcurrentExecutions: 1,
+    });
+    track(manager);
+    await backend.createRun(createPendingRun("run-a"));
+    await backend.createRun(createPendingRun("run-b"));
+    await manager.start();
+
+    await pollOnce(manager);
+
+    assertEquals(executor.created.length, 1, "poll must not exceed the concurrency budget");
+    assertEquals(manager.getActiveExecutions().length, 1, "one slot is consumed");
+
+    // The first execution is still running, so the single slot stays taken.
+    await pollOnce(manager);
+
+    assertEquals(executor.created.length, 1, "a full slot budget blocks new executions");
+    const statuses = await Promise.all(
+      ["run-a", "run-b"].map(async (id) => (await backend.getRun(id))?.status),
+    );
+    assertEquals(
+      statuses.filter((status) => status === "pending").length,
+      1,
+      "the second run is left unclaimed",
+    );
+  });
+
+  it("poll() reclaims the slot of a vanished execution after two consecutive misses", async () => {
+    const executor = new VanishingRunExecutor();
+    const backend = new MemoryBackend();
+    const manager = new WorkflowRunManager({
+      backend,
+      executor,
+      pollInterval: NO_POLL,
+      maxConcurrentExecutions: 1,
+    });
+    track(manager);
+    await backend.createRun(createPendingRun("run-vanishing"));
+    await manager.start();
+
+    await pollOnce(manager);
+    assertEquals(manager.getActiveExecutions().length, 1, "the execution occupies the slot");
+
+    // The child process disappears from the executor's list without ever
+    // reporting a terminal status.
+    executor.hideExecutions = true;
+
+    await pollOnce(manager);
+    assertEquals(
+      manager.getActiveExecutions().length,
+      1,
+      "a single missed poll must not reclaim the slot",
+    );
+    assertEquals(
+      manager.getStats().executionsFailed,
+      0,
+      "a single missed poll must not be counted as a failure",
+    );
+
+    await pollOnce(manager);
+    assertEquals(
+      manager.getActiveExecutions(),
+      [],
+      "two consecutive misses must free the concurrency slot",
+    );
+    assertEquals(
+      manager.getStats().executionsFailed,
+      1,
+      "a vanished execution is recorded as a failure",
+    );
   });
 
   it("createWorkflowRunManager builds a WorkflowRunManager", () => {

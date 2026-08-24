@@ -1,6 +1,6 @@
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import type { BaseNodeConfig, RetryConfig, WorkflowContext, WorkflowNode } from "../types.ts";
-import { validateNodeId } from "./validation.ts";
+import { isCanonicalNonEmptyString, validateNodeId } from "./validation.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 /** Options accepted by wait for approval. */
@@ -52,7 +52,7 @@ export interface WaitForEventOptions extends Omit<BaseNodeConfig, "checkpoint"> 
 export function waitForEvent(id: string, options: WaitForEventOptions): WorkflowNode {
   validateNodeId(id);
 
-  if (!options.eventName) {
+  if (!isCanonicalNonEmptyString(options.eventName)) {
     throw INVALID_ARGUMENT.create({ detail: `waitForEvent "${id}" must specify an eventName` });
   }
 

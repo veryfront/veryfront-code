@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { writeCompiledFile } from "./file-writer.ts";
 
 describe("build/compiler/mdx-compiler/file-writer", () => {
@@ -19,14 +20,9 @@ describe("build/compiler/mdx-compiler/file-writer", () => {
         const outputPath = await writeCompiledFile(filePath, code, options);
 
         assertEquals(
-          outputPath.endsWith("pages/hello.js"),
-          true,
-          "should replace .mdx with .js in output path",
-        );
-        assertEquals(
-          outputPath.startsWith(options.outputDir),
-          true,
-          "output should be under outputDir",
+          outputPath,
+          join(options.outputDir, "pages/hello.js"),
+          "output path must be the projectDir-relative path under outputDir",
         );
 
         const written = await Deno.readTextFile(outputPath);
@@ -50,9 +46,9 @@ describe("build/compiler/mdx-compiler/file-writer", () => {
         const outputPath = await writeCompiledFile(filePath, code, options);
 
         assertEquals(
-          outputPath.endsWith("pages/blog/post.js"),
-          true,
-          "should preserve nested directory structure",
+          outputPath,
+          join(options.outputDir, "pages/blog/post.js"),
+          "nested sources keep their projectDir-relative structure under outputDir",
         );
 
         const written = await Deno.readTextFile(outputPath);
@@ -82,7 +78,7 @@ describe("build/compiler/mdx-compiler/file-writer", () => {
       }
     });
 
-    it("should strip leading slash from relative path", async () => {
+    it("should mirror the project-relative path under outputDir", async () => {
       const tmpDir = await Deno.makeTempDir();
       try {
         const filePath = `${tmpDir}/pages/index.mdx`;
@@ -95,11 +91,10 @@ describe("build/compiler/mdx-compiler/file-writer", () => {
 
         const outputPath = await writeCompiledFile(filePath, code, options);
 
-        // Should not have double slashes from leading slash
         assertEquals(
-          outputPath.includes("//"),
-          false,
-          "output path should not contain double slashes",
+          outputPath,
+          join(options.outputDir, "pages", "index.js"),
+          "output path mirrors the project-relative source path under outputDir",
         );
       } finally {
         await Deno.remove(tmpDir, { recursive: true });

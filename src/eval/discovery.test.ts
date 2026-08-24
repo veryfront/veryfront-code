@@ -145,6 +145,31 @@ describe("eval/discovery", () => {
     assertEquals(result.errors.every((entry) => entry.error.includes("Duplicate eval id")), true);
   });
 
+  it("resolves the evals directory against the project dir for local filesystems", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/evals/local.eval.ts": "",
+    });
+
+    const result = await discoverEvals({
+      projectDir: "/project",
+      adapter,
+      moduleLoader: async () => ({
+        default: evalAgent({
+          id: "eval:local",
+          target: "agent:researcher",
+          dataset: datasets.inline([{ id: "q1", input: "capital" }]),
+        }),
+      }),
+    });
+
+    assertEquals(result.errors, []);
+    assertEquals(
+      result.evals[0]?.filePath,
+      "/project/evals/local.eval.ts",
+      "local discovery joins projectDir with evalsDir",
+    );
+  });
+
   it("discovers eval files with source metadata for Studio editing", async () => {
     const adapter = createRuntimeAdapter({
       "/project/evals/deep-research.eval.ts": "",

@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  getBundleManifestStore,
+  InMemoryBundleManifestStore,
+  setBundleManifestStore,
+} from "./bundle-manifest.ts";
 import { getBundleManifestTTL, initializeBundleManifest } from "./bundle-manifest-init.ts";
 import { BUNDLE_MANIFEST_DEV_TTL_MS, BUNDLE_MANIFEST_PROD_TTL_MS } from "./constants/cache.ts";
 
@@ -46,6 +51,55 @@ describe("getBundleManifestTTL", () => {
 });
 
 describe("initializeBundleManifest", () => {
+  it("installs a freshly created store on the default production path", async () => {
+    const previous = getBundleManifestStore();
+    const sentinel = new InMemoryBundleManifestStore();
+    setBundleManifestStore(sentinel);
+
+    try {
+      await initializeBundleManifest({}, "production");
+
+      assertEquals(
+        getBundleManifestStore() === sentinel,
+        false,
+        "initialize must install a freshly created store",
+      );
+      assertEquals(
+        getBundleManifestStore() instanceof InMemoryBundleManifestStore,
+        true,
+        "the default production backend is the in-memory store",
+      );
+    } finally {
+      setBundleManifestStore(previous);
+    }
+  });
+
+  it("installs a freshly created store when the bundle manifest is disabled", async () => {
+    const previous = getBundleManifestStore();
+    const sentinel = new InMemoryBundleManifestStore();
+    setBundleManifestStore(sentinel);
+
+    try {
+      await initializeBundleManifest(
+        { cache: { bundleManifest: { enabled: false } } },
+        "development",
+      );
+
+      assertEquals(
+        getBundleManifestStore() === sentinel,
+        false,
+        "the disabled path must install a freshly created store",
+      );
+      assertEquals(
+        getBundleManifestStore() instanceof InMemoryBundleManifestStore,
+        true,
+        "the disabled path installs the in-memory store",
+      );
+    } finally {
+      setBundleManifestStore(previous);
+    }
+  });
+
   it("rejects explicit redis backend config instead of silently falling back to memory", async () => {
     await assertRejects(
       () =>

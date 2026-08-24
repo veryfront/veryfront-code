@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import {
   BUN_SANDBOX_ALLOW_UNSAFE_ENV,
   isBunSandboxAllowedUnsafe,
@@ -54,6 +55,9 @@ describe("deno-sandbox input validation", () => {
 // SEC-008: Node.js Workers do not support permission isolation. The opt-in
 // decision helper must be strict — only the literal "1" enables unsafe mode.
 // Unit-testing the pure helper means coverage works under any runtime.
+// The end-to-end guard case (runInWorker actually refusing on Node.js with the
+// env var absent) needs host env mutation, so it lives in
+// tests/integration/security/sandbox-runtime-guard.test.ts.
 describe("deno-sandbox Node opt-in guard (SEC-008)", () => {
   it("exposes the documented env var name", () => {
     assertEquals(NODE_SANDBOX_ALLOW_UNSAFE_ENV, "VERYFRONT_NODE_SANDBOX_ALLOW_UNSAFE");
@@ -88,6 +92,8 @@ describe("deno-sandbox Node opt-in guard (SEC-008)", () => {
 // SEC-008: Bun Workers have no permission isolation. The opt-in decision helper
 // must be strict — only the literal "1" enables unsafe mode. Unit-testing the
 // pure helper means coverage works under any runtime.
+// The end-to-end guard case lives in
+// tests/integration/security/sandbox-runtime-guard.test.ts (host env mutation).
 describe("deno-sandbox Bun opt-in guard (SEC-008)", () => {
   it("exposes the documented env var name", () => {
     assertEquals(BUN_SANDBOX_ALLOW_UNSAFE_ENV, "VERYFRONT_BUN_SANDBOX_ALLOW_UNSAFE");
@@ -135,6 +141,38 @@ testSuite("deno-sandbox", () => {
       const message = String((e as Error)?.message ?? e);
       assertEquals(message.includes("boom"), true);
     }
+  });
+
+  it("denies filesystem and network access inside the worker", async () => {
+    // `permissions: "none"` is the whole isolation guarantee on the only
+    // runtime this sandbox claims to be safe on. Match the permission family
+    // rather than one exact wording so the case survives runtime upgrades.
+    const fsError = await assertRejects(
+      () => runInWorker<string>("return Deno.readTextFile('/etc/hosts');"),
+      VeryfrontError,
+      undefined,
+      "a worker denied every permission must not read the host filesystem",
+    ) as VeryfrontError;
+    assert(
+      /NotCapable|PermissionDenied|read access/i.test(fsError.message),
+      "worker filesystem read must be denied by permissions: none",
+    );
+    assertEquals(
+      fsError.message.includes("localhost"),
+      false,
+      "no /etc/hosts content may reach the host",
+    );
+
+    const netError = await assertRejects(
+      () => runInWorker("return fetch('http://127.0.0.1:1/').then((r) => r.status);"),
+      VeryfrontError,
+      undefined,
+      "a worker denied every permission must not open outbound sockets",
+    ) as VeryfrontError;
+    assert(
+      /NotCapable|PermissionDenied|net access/i.test(netError.message),
+      "worker network access must be denied by permissions: none",
+    );
   });
 
   it("runInWorker enforces timeout", async () => {

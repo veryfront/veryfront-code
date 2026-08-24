@@ -29,12 +29,35 @@ describe("lazySchema", () => {
   });
 
   it("can be frozen without breaking reflection or validation", () => {
-    const schema = lazySchema(defineSchema((v) => v.string().min(1)));
+    const getConcreteSchema = defineSchema((v) => v.string().min(1));
+    const schema = lazySchema(() => {
+      const concreteSchema = getConcreteSchema();
+      Object.defineProperty(concreteSchema, "adapterMetadata", {
+        configurable: false,
+        enumerable: true,
+        value: "test-adapter",
+      });
+      return concreteSchema;
+    });
 
     Object.freeze(schema);
 
-    assertEquals(Object.isFrozen(schema), true);
-    assertEquals(schema.parse("Veryfront"), "Veryfront");
+    assertEquals(Object.isFrozen(schema), true, "the lazy schema facade must be freezable");
+    assertEquals(
+      Object.keys(schema).includes("adapterMetadata"),
+      true,
+      "frozen lazy schema must still enumerate concrete schema own properties",
+    );
+    assertEquals(
+      Object.getOwnPropertyDescriptor(schema, "adapterMetadata")?.value,
+      "test-adapter",
+      "frozen lazy schema must still reflect concrete property descriptors",
+    );
+    assertEquals(
+      schema.parse("Veryfront"),
+      "Veryfront",
+      "a frozen lazy schema must still validate through the concrete schema",
+    );
   });
 
   it("prefers concrete own metadata over inherited facade properties", () => {

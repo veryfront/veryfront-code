@@ -14,9 +14,14 @@ import {
 } from "../../tests/test-file-utils.mjs";
 import {
   buildDenoSuiteCommandArgs,
+  DENO_SUITE_PROFILES,
   parseDenoSuiteArgs,
 } from "./run-deno-suite.ts";
-import { LEAF_TEST_SUITES } from "./suites.ts";
+import {
+  DENO_TEST_ENV,
+  LEAF_TEST_SUITES,
+  PROVIDER_EGRESS_DENY_NET,
+} from "./suites.ts";
 import { classifyTestPath } from "./test-layout.ts";
 import {
   formatSuitePlan,
@@ -45,6 +50,15 @@ describe("suite planning parity", () => {
       "integration:legacy-tests-root": await legacyIntegrationRootFiles(),
       "integration:cli": await legacyCliIntegrationFiles(),
       "coverage:unit": await legacyUnitCoverageFiles(),
+      "coverage:integration": await legacyIntegrationRootFiles(),
+      "e2e:rsc-browser": [
+        "tests/e2e/regressions/2026-07-27-legacy-router-hydration.test.ts",
+        "tests/e2e/regressions/2026-07-27-release-asset-page-island-hydration.test.ts",
+        "tests/e2e/regressions/2026-08-14-server-layout-spa-fallback.test.ts",
+        "tests/e2e/regressions/dev-ui-browser-bundle.test.ts",
+        "tests/e2e/regressions/rsc-proxy-hydration.test.ts",
+      ],
+      "e2e:binary": ["tests/integration/compiled-binary-e2e.test.ts"],
       "runtime:node": await legacyRuntimeFiles("node"),
       "runtime:bun": await legacyRuntimeFiles("bun"),
     };
@@ -82,6 +96,18 @@ describe("suite planning parity", () => {
       plan.files.includes("src/routing/api/module-loader/loader.test.ts"),
       "the Node plan must keep runtime-guarded module-loader coverage",
     );
+  });
+
+  it("runs the sandbox runtime guard in the Node and Bun suites", async () => {
+    const guardFile = "tests/integration/security/sandbox-runtime-guard.test.ts";
+
+    for (const suite of ["runtime:node", "runtime:bun"] as const) {
+      const plan = await planSuiteFiles({ suite });
+      assert(
+        plan.files.includes(guardFile),
+        `${suite} must select the sandbox runtime guard coverage`,
+      );
+    }
   });
 
   it("keeps eight coverage shards complete, disjoint, and ordered", async () => {
@@ -214,15 +240,76 @@ describe("migration command surface", () => {
     assertEquals(parallel.at(-1), "src/a test.test.ts");
     assertEquals(cwd.includes("--parallel"), false);
     assert(integration.includes("--parallel"));
-    assertEquals(
-      integration.some((arg) => arg.startsWith("--deny-net=")),
-      false,
-    );
-    assertEquals(
-      cliIntegration.includes("--preload=src/testing/preload.ts"),
-      false,
-    );
+    // The hand-written flag branches let these lanes drift out of the shared
+    // isolation contract; the profile records closed that gap, so the pins
+    // now assert the intended flags are present rather than absent.
+    assert(integration.some((arg) => arg.startsWith("--deny-net=")));
+    assert(integration.includes("--trace-leaks"));
+    assert(cliIntegration.includes("--preload=src/testing/preload.ts"));
+    assert(cliIntegration.some((arg) => arg.startsWith("--deny-net=")));
+    assert(cliIntegration.includes("--trace-leaks"));
     assertEquals(cliIntegration.at(-1), "cli/routes.integration.test.ts");
+  });
+
+  it("declares every isolation decision explicitly on every Deno suite", () => {
+    // A field with a default is a field that can drift silently; the profile
+    // type keeps them required and this pins the shape at runtime too.
+    for (const [suite, profile] of Object.entries(DENO_SUITE_PROFILES)) {
+      for (
+        const field of [
+          "preload",
+          "denyNet",
+          "traceLeaks",
+          "parallel",
+          "heap",
+          "coverage",
+        ] as const
+      ) {
+        assertEquals(
+          typeof profile[field],
+          "boolean",
+          `${suite} must declare ${field} explicitly`,
+        );
+      }
+      assert(Array.isArray(profile.extraFlags), `${suite} extraFlags`);
+      assert(
+        profile.env !== undefined && typeof profile.env === "object",
+        `${suite} env`,
+      );
+    }
+  });
+
+  it("denies provider egress on every lane that does not opt out with a reason", () => {
+    for (const [suite, profile] of Object.entries(DENO_SUITE_PROFILES)) {
+      const args = buildDenoSuiteCommandArgs(
+        suite as Parameters<typeof buildDenoSuiteCommandArgs>[0],
+        ["src/example.test.ts"],
+      );
+      if (profile.denyNet) {
+        assert(
+          args.includes(PROVIDER_EGRESS_DENY_NET),
+          `${suite} must render the provider deny-net flag`,
+        );
+      } else {
+        assert(
+          typeof profile.denyNetOptOutReason === "string" &&
+            profile.denyNetOptOutReason.length > 0,
+          `${suite} opts out of deny-net without a reason`,
+        );
+      }
+    }
+  });
+
+  it("keeps the CI coverage lane on the local unit lane's execution contract", () => {
+    // coverage:unit and unit:parallel already share planSuiteFiles selection;
+    // this keeps their execution environment from splitting apart too.
+    const coverage = DENO_SUITE_PROFILES["coverage:unit"];
+    const unit = DENO_SUITE_PROFILES["unit:parallel"];
+
+    assertEquals(coverage.env, unit.env);
+    assertEquals(coverage.preload, unit.preload);
+    assertEquals(coverage.denyNet, unit.denyNet);
+    assertEquals(unit.env, DENO_TEST_ENV);
   });
 
   it("forwards task-level Deno flags before selected files", () => {
@@ -256,6 +343,10 @@ describe("migration command surface", () => {
       "test:integration": "integration:legacy-tests-root",
       "test:integration:cli": "integration:cli",
       "test:coverage:unit": "coverage:unit",
+      "test:coverage:integration": "coverage:integration",
+      "test:e2e:rsc-browser": "e2e:rsc-browser",
+      "test:e2e:binary": "e2e:binary",
+      "test:e2e:binary:fresh": "e2e:binary",
       "test:node": "runtime:node",
       "test:bun": "runtime:bun",
     };
@@ -266,6 +357,13 @@ describe("migration command surface", () => {
       assert(command, `${task} must remain a supported task`);
       assert(command.includes(suite), `${task} must route through ${suite}`);
       assertEquals(/\bwarn(?:ing)?\b/i.test(command), false);
+      // The suite record owns the environment now; a prefix reappearing on a
+      // task line is the start of the drift this migration removed.
+      assertEquals(
+        command.includes("DENO_TESTING="),
+        false,
+        `${task} must inherit its env from the suite record`,
+      );
     }
 
     for (
@@ -308,7 +406,12 @@ describe("migration command surface", () => {
 
     assert(task, "browser E2E task must remain defined");
     assert(
-      task.includes(browserBundleTest),
+      task.includes("--suite=e2e:rsc-browser"),
+      "the browser E2E task must route through the e2e:rsc-browser suite",
+    );
+    const plan = await planSuiteFiles({ suite: "e2e:rsc-browser" });
+    assert(
+      plan.files.includes(browserBundleTest),
       "the Chromium-backed Dev UI bundle test needs an explicit browser-capable runner",
     );
     assertEquals(classifyTestPath(browserBundleTest), {
@@ -402,12 +505,14 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "extensions/ext-bundler-esbuild/src/binary.test.ts",
       "tests/ensure-npm-links.test.mjs",
       "tests/test-file-utils.test.mjs",
+      "tests/integration/security/sandbox-runtime-guard.test.ts",
     ]
     : [
       "src/",
       "tests/bun/dynamic-alias-resolution.test.ts",
       "tests/bun/npm-protocol-resolution.test.ts",
       "tests/bun/workspace-resolution.test.ts",
+      "tests/integration/security/sandbox-runtime-guard.test.ts",
     ];
   const incompatible = runtime === "node"
     ? [

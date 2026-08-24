@@ -1,10 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { type ModelRuntime } from "#veryfront/provider";
 import { tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { agent } from "../index.ts";
+import { scriptedModel } from "./model-runtime.test-helpers.ts";
 
 /**
  * Regression coverage for #2334: cancelling an in-flight agent run must be
@@ -23,45 +23,13 @@ function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 20));
 }
 
-/** A model stream that stays open until the run is aborted, then rejects its
- * pending read with the abort reason — mirroring a real provider fetch body. */
-function createPendingModelStream(abortSignal: AbortSignal | undefined): ReadableStream<unknown> {
-  return new ReadableStream<unknown>({
-    start(controller) {
-      controller.enqueue({ type: "text-start", id: "t" });
-      controller.enqueue({ type: "text-delta", id: "t", delta: "thinking" });
-
-      if (!abortSignal) {
-        return;
-      }
-      if (abortSignal.aborted) {
-        controller.error(abortSignal.reason);
-        return;
-      }
-      abortSignal.addEventListener("abort", () => {
-        controller.error(abortSignal.reason);
-      }, { once: true });
-    },
-  });
-}
-
 describe("agent runtime stream cancellation (#2334)", () => {
   it("cancelling a model-streaming run does not raise an unhandled AbortError", async () => {
-    const model: ModelRuntime = {
-      provider: "hosted",
-      modelId: "hosted/cancel-crash-model",
-      async doGenerate() {
-        return {
-          content: [],
-          finishReason: "stop",
-          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-        };
-      },
-      async doStream(options: unknown) {
-        const abortSignal = (options as { abortSignal?: AbortSignal }).abortSignal;
-        return { stream: createPendingModelStream(abortSignal) };
-      },
-    };
+    // The model stream stays open until the run is aborted, then rejects its
+    // pending read with the abort reason — mirroring a real provider fetch body.
+    const model = scriptedModel([
+      { hangUntilAbort: true, parts: [{ type: "text-delta", text: "thinking" }] },
+    ], { modelId: "hosted/cancel-crash-model", only: "stream" });
 
     const assistant = agent({
       model: "hosted/cancel-crash-model",
@@ -104,41 +72,12 @@ describe("agent runtime stream cancellation (#2334)", () => {
       },
     });
 
-    let call = 0;
-    const model: ModelRuntime = {
-      provider: "hosted",
-      modelId: "hosted/cancel-crash-tool",
-      async doGenerate() {
-        return {
-          content: [],
-          finishReason: "stop",
-          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-        };
-      },
-      async doStream(options: unknown) {
-        call += 1;
-        const abortSignal = (options as { abortSignal?: AbortSignal }).abortSignal;
-        if (call === 1) {
-          // First step: emit a tool call so a tool execution opens.
-          return {
-            stream: new ReadableStream<unknown>({
-              start(controller) {
-                controller.enqueue({
-                  type: "tool-call",
-                  toolCallId: "slow-1",
-                  toolName: "slow_tool",
-                  input: "{}",
-                });
-                controller.enqueue({ type: "finish", finishReason: "tool-calls" });
-                controller.close();
-              },
-            }),
-          };
-        }
-        // Any later step stays open until aborted.
-        return { stream: createPendingModelStream(abortSignal) };
-      },
-    };
+    const model = scriptedModel([
+      // First step: emit a tool call so a tool execution opens.
+      { toolCalls: [{ id: "slow-1", name: "slow_tool", input: {} }] },
+      // Any later step stays open until aborted.
+      { hangUntilAbort: true },
+    ], { modelId: "hosted/cancel-crash-tool", only: "stream" });
 
     const assistant = agent({
       model: "hosted/cancel-crash-tool",
