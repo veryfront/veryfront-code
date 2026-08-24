@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertNotEquals, assertRejects, assertThrows } from "#std/assert";
 import { FakeTime } from "#std/testing/time";
 import { MemoryTokenStore } from "./memory.ts";
@@ -19,7 +20,7 @@ function oauthState(userId: string, createdAt = Date.now()): StoredOAuthState {
   };
 }
 
-Deno.test("MemoryTokenStore stores and retrieves tokens per (serviceId, userId)", async () => {
+it("MemoryTokenStore stores and retrieves tokens per (serviceId, userId)", async () => {
   const store = new MemoryTokenStore();
   await store.setTokens("svc", "alice", tokens("a-token"));
   await store.setTokens("svc", "bob", tokens("b-token"));
@@ -29,14 +30,14 @@ Deno.test("MemoryTokenStore stores and retrieves tokens per (serviceId, userId)"
   assertEquals(await store.getTokens("svc", "carol"), null);
 });
 
-Deno.test("MemoryTokenStore clears a single user's tokens", async () => {
+it("MemoryTokenStore clears a single user's tokens", async () => {
   const store = new MemoryTokenStore();
   await store.setTokens("svc", "alice", tokens("a-token"));
   await store.clearTokens("svc", "alice");
   assertEquals(await store.getTokens("svc", "alice"), null);
 });
 
-Deno.test("MemoryTokenStore isConnected: fresh, expired-without-refresh, expired-with-refresh", async () => {
+it("MemoryTokenStore isConnected: fresh, expired-without-refresh, expired-with-refresh", async () => {
   const store = new MemoryTokenStore();
   await store.setTokens("svc", "fresh", tokens("t", { expiresAt: Date.now() + 60_000 }));
   await store.setTokens("svc", "stale", tokens("t", { expiresAt: Date.now() - 1 }));
@@ -52,7 +53,7 @@ Deno.test("MemoryTokenStore isConnected: fresh, expired-without-refresh, expired
   assertEquals(store.isConnected("svc", "unknown"), false);
 });
 
-Deno.test("MemoryTokenStore consumeState is one-shot and rejects unknown", async () => {
+it("MemoryTokenStore consumeState is one-shot and rejects unknown", async () => {
   const store = new MemoryTokenStore();
   const meta = oauthState("alice");
   await store.setState("state-1", meta);
@@ -63,7 +64,7 @@ Deno.test("MemoryTokenStore consumeState is one-shot and rejects unknown", async
   assertEquals(await store.consumeState("never-set"), null);
 });
 
-Deno.test("MemoryTokenStore consumeState rejects and drops expired state", async () => {
+it("MemoryTokenStore consumeState rejects and drops expired state", async () => {
   using time = new FakeTime();
   const store = new MemoryTokenStore();
   await store.setState("old", oauthState("alice"));
@@ -75,7 +76,7 @@ Deno.test("MemoryTokenStore consumeState rejects and drops expired state", async
   assertEquals(await store.consumeState("old"), null);
 });
 
-Deno.test("MemoryTokenStore bounds OAuth states via oldest-entry eviction", async () => {
+it("MemoryTokenStore bounds OAuth states via oldest-entry eviction", async () => {
   const store = new MemoryTokenStore("default", { maxStateEntries: 2 });
 
   await store.setState("state-1", oauthState("u1"));
@@ -87,7 +88,7 @@ Deno.test("MemoryTokenStore bounds OAuth states via oldest-entry eviction", asyn
   assertEquals((await store.consumeState("state-3"))?.userId, "u3");
 });
 
-Deno.test("MemoryTokenStore scopes keys by projectId", async () => {
+it("MemoryTokenStore scopes keys by projectId", async () => {
   const a = new MemoryTokenStore("project-a");
   const b = new MemoryTokenStore("project-b");
   await a.setTokens("svc", "alice", tokens("a-token"));
@@ -96,7 +97,7 @@ Deno.test("MemoryTokenStore scopes keys by projectId", async () => {
   assertEquals(a.getConnectedServices(), ["svc:alice"]);
 });
 
-Deno.test("MemoryTokenStore bounds the token map via LRU eviction (#1989)", async () => {
+it("MemoryTokenStore bounds the token map via LRU eviction (#1989)", async () => {
   const store = new MemoryTokenStore("default", { maxEntries: 3 });
 
   for (const user of ["u1", "u2", "u3"]) {
@@ -115,7 +116,7 @@ Deno.test("MemoryTokenStore bounds the token map via LRU eviction (#1989)", asyn
   assertEquals(store.getConnectedServices().length, 3);
 });
 
-Deno.test("MemoryTokenStore clearAll empties tokens and states", async () => {
+it("MemoryTokenStore clearAll empties tokens and states", async () => {
   const store = new MemoryTokenStore();
   await store.setTokens("svc", "alice", tokens("a-token"));
   await store.setState("s", oauthState("alice"));
@@ -125,62 +126,56 @@ Deno.test("MemoryTokenStore clearAll empties tokens and states", async () => {
   assertEquals(store.getConnectedServices().length, 0);
 });
 
-Deno.test("MemoryTokenStore warns once when persisting tokens in production (#1989)", async () => {
-  const prevNodeEnv = Deno.env.get("NODE_ENV");
-  const originalWarn = console.warn;
-  const warnings: string[] = [];
-  console.warn = (...args: unknown[]) => {
-    warnings.push(args.map(String).join(" "));
-  };
-  try {
-    Deno.env.set("NODE_ENV", "production");
+it("MemoryTokenStore warns once when persisting tokens in production (#1989)", async () => {
+  const script = `
+    const warnings = [];
+    console.warn = (...args) => warnings.push(args.map(String).join(" "));
+    const { MemoryTokenStore } = await import("./src/oauth/token-store/memory.ts");
     const store = new MemoryTokenStore();
-    await store.setTokens("svc", "alice", tokens("a-token"));
-    await store.setTokens("svc", "bob", tokens("b-token"));
+    await store.setTokens("svc", "alice", { accessToken: "a-token" });
+    await store.setTokens("svc", "bob", { accessToken: "b-token" });
+    const matched = warnings.filter((warning) => warning.includes("MemoryTokenStore"));
+    console.log(JSON.stringify({ matched: matched.length }));
+  `;
+  const output = await new Deno.Command(Deno.execPath(), {
+    args: ["eval", script],
+    clearEnv: true,
+    cwd: new URL("../../../", import.meta.url).pathname,
+    env: { NODE_ENV: "production" },
+  }).output();
 
-    const matched = warnings.filter((w) => w.includes("MemoryTokenStore"));
-    // Warned exactly once despite two writes.
-    assertEquals(matched.length, 1, "two production token writes must warn exactly once");
-  } finally {
-    console.warn = originalWarn;
-    if (prevNodeEnv === undefined) Deno.env.delete("NODE_ENV");
-    else Deno.env.set("NODE_ENV", prevNodeEnv);
-  }
+  assertEquals(
+    output.success,
+    true,
+    new TextDecoder().decode(output.stderr),
+  );
+  assertEquals(
+    JSON.parse(new TextDecoder().decode(output.stdout)).matched,
+    1,
+    "two production token writes must warn exactly once",
+  );
 });
 
-Deno.test("MemoryTokenStore stays silent outside production", async () => {
-  const previous = new Map(
-    (["VERYFRONT_ENV", "NODE_ENV", "DENO_ENV"] as const).map((
-      name,
-    ) => [name, Deno.env.get(name)]),
-  );
+it("MemoryTokenStore stays silent outside production", async () => {
   const originalWarn = console.warn;
   const warnings: string[] = [];
   console.warn = (...args: unknown[]) => {
     warnings.push(args.map(String).join(" "));
   };
   try {
-    // resolveEnvironment prefers VERYFRONT_ENV, then NODE_ENV, then DENO_ENV.
-    Deno.env.delete("VERYFRONT_ENV");
-    Deno.env.delete("DENO_ENV");
-    Deno.env.set("NODE_ENV", "development");
     await new MemoryTokenStore().setTokens("svc", "alice", tokens("a-token"));
 
     assertEquals(
       warnings.filter((w) => w.includes("MemoryTokenStore")).length,
       0,
-      "development token writes must not warn",
+      "non-production token writes must not warn",
     );
   } finally {
     console.warn = originalWarn;
-    for (const [name, value] of previous) {
-      if (value === undefined) Deno.env.delete(name);
-      else Deno.env.set(name, value);
-    }
   }
 });
 
-Deno.test("MemoryTokenStore encodes tuple keys without delimiter collisions", async () => {
+it("MemoryTokenStore encodes tuple keys without delimiter collisions", async () => {
   const store = new MemoryTokenStore("project");
   await store.setTokens("service:a", "user", tokens("first"));
   await store.setTokens("service", "a:user", tokens("second"));
@@ -190,7 +185,7 @@ Deno.test("MemoryTokenStore encodes tuple keys without delimiter collisions", as
   assertEquals(store.getConnectedServices().sort(), ["service%3Aa:user", "service:a%3Auser"]);
 });
 
-Deno.test("MemoryTokenStore detaches stored and returned token objects", async () => {
+it("MemoryTokenStore detaches stored and returned token objects", async () => {
   const store = new MemoryTokenStore();
   const input = tokens("original", { refreshToken: "refresh" });
   await store.setTokens("svc", "alice", input);
@@ -203,7 +198,7 @@ Deno.test("MemoryTokenStore detaches stored and returned token objects", async (
   assertEquals((await store.getTokens("svc", "alice"))?.accessToken, "original");
 });
 
-Deno.test("MemoryTokenStore conditionally replaces only the observed token revision", async () => {
+it("MemoryTokenStore conditionally replaces only the observed token revision", async () => {
   const store = new MemoryTokenStore();
   await store.setTokens("svc", "alice", tokens("original", { refreshToken: "refresh" }));
   const snapshot = await store.getTokenSnapshot("svc", "alice");
@@ -224,7 +219,7 @@ Deno.test("MemoryTokenStore conditionally replaces only the observed token revis
   assertEquals((await store.getTokens("svc", "alice"))?.accessToken, "replacement");
 });
 
-Deno.test("MemoryTokenStore bounds and canonicalizes expected token revisions", async () => {
+it("MemoryTokenStore bounds and canonicalizes expected token revisions", async () => {
   const store = new MemoryTokenStore();
   await store.setTokens("svc", "alice", tokens("original"));
   for (const revision of ["", " revision", "rev\nision", "x".repeat(257)]) {
@@ -237,7 +232,7 @@ Deno.test("MemoryTokenStore bounds and canonicalizes expected token revisions", 
   assertEquals((await store.getTokens("svc", "alice"))?.accessToken, "original");
 });
 
-Deno.test("MemoryTokenStore revisions prevent ABA after disconnect and reauthorization", async () => {
+it("MemoryTokenStore revisions prevent ABA after disconnect and reauthorization", async () => {
   const store = new MemoryTokenStore();
   await store.setTokens("svc", "alice", tokens("same-token"));
   const first = await store.getTokenSnapshot("svc", "alice");
@@ -256,7 +251,7 @@ Deno.test("MemoryTokenStore revisions prevent ABA after disconnect and reauthori
   assertEquals((await store.getTokens("svc", "alice"))?.accessToken, "same-token");
 });
 
-Deno.test("MemoryTokenStore serializes refresh work per token slot", async () => {
+it("MemoryTokenStore serializes refresh work per token slot", async () => {
   const store = new MemoryTokenStore();
   const events: string[] = [];
   let releaseFirst!: () => void;
@@ -282,7 +277,7 @@ Deno.test("MemoryTokenStore serializes refresh work per token slot", async () =>
   assertEquals(events, ["first:start", "first:end", "second:start", "second:end"]);
 });
 
-Deno.test("MemoryTokenStore releases a refresh lock after operation rejection", async () => {
+it("MemoryTokenStore releases a refresh lock after operation rejection", async () => {
   const store = new MemoryTokenStore();
   await assertRejects(
     () =>
@@ -297,7 +292,7 @@ Deno.test("MemoryTokenStore releases a refresh lock after operation rejection", 
   );
 });
 
-Deno.test("MemoryTokenStore permits refresh work for different slots concurrently", async () => {
+it("MemoryTokenStore permits refresh work for different slots concurrently", async () => {
   const store = new MemoryTokenStore();
   let releaseAlice!: () => void;
   const aliceGate = new Promise<void>((resolve) => {
@@ -317,7 +312,7 @@ Deno.test("MemoryTokenStore permits refresh work for different slots concurrentl
   await alice;
 });
 
-Deno.test("MemoryTokenStore rejects malformed and accessor-backed token rows", async () => {
+it("MemoryTokenStore rejects malformed and accessor-backed token rows", async () => {
   const store = new MemoryTokenStore();
   for (
     const malformed of [
@@ -352,7 +347,7 @@ Deno.test("MemoryTokenStore rejects malformed and accessor-backed token rows", a
   assertEquals(getterCalls, 0);
 });
 
-Deno.test("MemoryTokenStore rejects token fields that exceed storage bounds", async () => {
+it("MemoryTokenStore rejects token fields that exceed storage bounds", async () => {
   const store = new MemoryTokenStore();
   await assertRejects(
     () => store.setTokens("github", "alice", { accessToken: "x".repeat(65_537) }),
@@ -361,7 +356,7 @@ Deno.test("MemoryTokenStore rejects token fields that exceed storage bounds", as
   );
 });
 
-Deno.test("MemoryTokenStore detaches state metadata from callers", async () => {
+it("MemoryTokenStore detaches state metadata from callers", async () => {
   const store = new MemoryTokenStore();
   const meta: StoredOAuthState = {
     ...oauthState("alice"),
@@ -378,7 +373,7 @@ Deno.test("MemoryTokenStore detaches state metadata from callers", async () => {
   assertEquals(consumed?.metadata, { nested: { value: "original" } });
 });
 
-Deno.test("MemoryTokenStore rejects non-data and oversized state metadata", async () => {
+it("MemoryTokenStore rejects non-data and oversized state metadata", async () => {
   const store = new MemoryTokenStore();
   let getterCalls = 0;
   const accessorMetadata = Object.defineProperty({}, "secret", {
@@ -416,7 +411,7 @@ Deno.test("MemoryTokenStore rejects non-data and oversized state metadata", asyn
   assertEquals(getterCalls, 0);
 });
 
-Deno.test("MemoryTokenStore rejects duplicate live state values", async () => {
+it("MemoryTokenStore rejects duplicate live state values", async () => {
   const store = new MemoryTokenStore();
   await store.setState("duplicate", oauthState("alice"));
 
@@ -428,7 +423,7 @@ Deno.test("MemoryTokenStore rejects duplicate live state values", async () => {
   assertEquals((await store.consumeState("duplicate"))?.userId, "alice");
 });
 
-Deno.test("MemoryTokenStore rejects invalid capacity options", () => {
+it("MemoryTokenStore rejects invalid capacity options", () => {
   for (const value of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
     assertThrows(
       () => new MemoryTokenStore("project", { maxStateEntries: value }),
@@ -445,7 +440,7 @@ Deno.test("MemoryTokenStore rejects invalid capacity options", () => {
   }
 });
 
-Deno.test("MemoryTokenStore rejects invalid state rows before insertion", async () => {
+it("MemoryTokenStore rejects invalid state rows before insertion", async () => {
   const store = new MemoryTokenStore();
   for (
     const [state, value] of [
@@ -464,7 +459,7 @@ Deno.test("MemoryTokenStore rejects invalid state rows before insertion", async 
   }
 });
 
-Deno.test("MemoryTokenStore invalid state cannot evict a live transaction", async () => {
+it("MemoryTokenStore invalid state cannot evict a live transaction", async () => {
   const store = new MemoryTokenStore("default", { maxStateEntries: 1 });
   await store.setState("live", oauthState("alice"));
   await assertRejects(
@@ -475,7 +470,7 @@ Deno.test("MemoryTokenStore invalid state cannot evict a live transaction", asyn
   assertEquals((await store.consumeState("live"))?.userId, "alice");
 });
 
-Deno.test("MemoryTokenStore rejects non-canonical key identifiers", async () => {
+it("MemoryTokenStore rejects non-canonical key identifiers", async () => {
   const store = new MemoryTokenStore();
   for (
     const [serviceId, userId] of [[" svc", "alice"], ["svc", " alice "]] as const

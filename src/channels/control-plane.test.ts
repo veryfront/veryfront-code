@@ -908,7 +908,7 @@ describe("channels/control-plane", () => {
   });
 });
 
-Deno.test("resolveAgentSkills includes the agent's own skills and excludes others'", () => {
+it("resolveAgentSkills includes the agent's own skills and excludes others'", () => {
   skillRegistryInternal.clearAll();
   try {
     registerSkill("global-howto", {
