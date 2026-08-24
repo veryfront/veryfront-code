@@ -371,7 +371,7 @@ describe(
             return idReads === 1 ? "duplicate" : idReads === 2 ? "other" : "duplicate";
           },
         },
-      ) as DiscoveredWorkflow;
+      ) as unknown as DiscoveredWorkflow;
       const duplicate: DiscoveredWorkflow = {
         id: "duplicate",
         filePath: "workflows/b.ts",
