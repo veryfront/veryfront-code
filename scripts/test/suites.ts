@@ -65,7 +65,12 @@ export function buildTestProcessEnv(
   overrides: Readonly<Record<string, string>> = {},
 ): Record<string, string> {
   const env = { ...parentEnv, ...overrides };
-  for (const key of PROVIDER_ENV_KEYS) delete env[key];
+  // Windows environment names are case-insensitive, so a credential inherited
+  // as OpenAI_Api_Key would survive an exact-case delete. Match by folded name.
+  const scrubbed = new Set<string>(PROVIDER_ENV_KEYS);
+  for (const key of Object.keys(env)) {
+    if (scrubbed.has(key.toUpperCase())) delete env[key];
+  }
   return env;
 }
 
