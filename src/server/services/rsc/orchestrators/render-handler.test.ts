@@ -14,6 +14,7 @@ import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants
 import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
 import { type MDXLoadModuleOptions, mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/deno.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 describe("server/services/rsc/orchestrators/render-handler", () => {
   describe("handle", () => {
@@ -57,7 +58,7 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
     });
 
     it("returns error response when renderer is null", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-rsc-null-renderer-" });
+      const projectDir = await makeTempDir({ prefix: "vf-rsc-null-renderer-" });
       const pagePath = `${projectDir}/app/page.tsx`;
       const pageSource = "export default function Page() { return null; }";
       await Deno.mkdir(`${projectDir}/app`);
@@ -94,7 +95,7 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
     });
 
     it("returns the component error when the module does not export a component", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-rsc-invalid-component-" });
+      const projectDir = await makeTempDir({ prefix: "vf-rsc-invalid-component-" });
       const pagePath = `${projectDir}/app/page.tsx`;
       const pageSource = "export default 'not a component';";
       await Deno.mkdir(`${projectDir}/app`);
@@ -189,7 +190,7 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
     });
 
     it("uses the historical snapshot loader when no adapter was supplied", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-rsc-runtime-adapter-" });
+      const projectDir = await makeTempDir({ prefix: "vf-rsc-runtime-adapter-" });
       const packageJsonPath = `${projectDir}/package.json`;
       const pagePath = `${projectDir}/app/page.tsx`;
       const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
@@ -297,7 +298,7 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
     });
 
     it("resolves the current render token on a fresh worker", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-rsc-fresh-render-pins-" });
+      const projectDir = await makeTempDir({ prefix: "vf-rsc-fresh-render-pins-" });
       const packageJsonPath = `${projectDir}/package.json`;
       const pagePath = `${projectDir}/app/page.tsx`;
       const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
@@ -361,7 +362,7 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
     });
 
     it("threads trusted project options into RSC MDX loading", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-rsc-local-mdx-" });
+      const projectDir = await makeTempDir({ prefix: "vf-rsc-local-mdx-" });
       await Deno.mkdir(`${projectDir}/app`, { recursive: true });
       await Deno.writeTextFile(`${projectDir}/app/page.mdx`, "# Local RSC page");
 
@@ -414,7 +415,7 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
     });
 
     it("threads the render mode into RSC MDX loading", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-rsc-mdx-mode-" });
+      const projectDir = await makeTempDir({ prefix: "vf-rsc-mdx-mode-" });
       await Deno.mkdir(`${projectDir}/app`, { recursive: true });
       await Deno.writeTextFile(`${projectDir}/app/page.mdx`, "# Mode RSC page");
 
