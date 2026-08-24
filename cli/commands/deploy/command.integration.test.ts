@@ -73,6 +73,7 @@ async function withDeployEnv<T>(
   fn: (context: { commitSha: string; sourceDigest: string }) => Promise<T>,
 ): Promise<T> {
   const envKeys = [
+    "GITHUB_SHA",
     "VERYFRONT_API_TOKEN",
     "VERYFRONT_API_URL",
     "VERYFRONT_PROJECT_SLUG",
@@ -93,6 +94,7 @@ async function withDeployEnv<T>(
     Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
     Deno.env.set("VERYFRONT_API_URL", "https://control.example.test/api");
     Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+    Deno.env.set("GITHUB_SHA", commitSha);
     Deno.env.delete("VERYFRONT_PROJECT_ID");
     _resetEnvironmentConfig();
 
