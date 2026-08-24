@@ -47,7 +47,7 @@ export class RSCProductionOptimizer {
 
     for (
       const [key, moduleUrl] of Object.entries(payload.clientRefs).sort(([a], [b]) =>
-        a.localeCompare(b)
+        a < b ? -1 : a > b ? 1 : 0
       )
     ) {
       const clientReference = `${key}\0${moduleUrl}\0`;

@@ -121,6 +121,31 @@ describe("rendering/rsc/production-optimizer", () => {
       assertEquals(a !== b, true, "ETag must cover complete UTF-16 client reference values");
     });
 
+    it("is independent of canonically equivalent key insertion order", () => {
+      const composedFirst = RSCProductionOptimizer.generateETag(
+        makePayload({
+          clientRefs: {
+            "é": "/composed.js",
+            "é": "/decomposed.js",
+          },
+        }),
+      );
+      const decomposedFirst = RSCProductionOptimizer.generateETag(
+        makePayload({
+          clientRefs: {
+            "é": "/decomposed.js",
+            "é": "/composed.js",
+          },
+        }),
+      );
+
+      assertEquals(
+        composedFirst,
+        decomposedFirst,
+        "ETag must not depend on client reference insertion order",
+      );
+    });
+
     it("differs for identical output rendered under different dependency snapshots", () => {
       const a = RSCProductionOptimizer.generateETag(
         makePayload({ dependencyPinningCacheKey: "on:pins-a" }),
