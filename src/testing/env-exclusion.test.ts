@@ -29,6 +29,10 @@ describe("testing/BDD cross-file environment isolation", () => {
         ...FIXTURES,
       ],
       cwd: PROJECT_ROOT,
+      env: {
+        CONTEXT7_API_KEY: "probe-context7-key",
+        OPENAI_API_KEY: "probe-openai-key",
+      },
       stdout: "piped",
       stderr: "piped",
     }).output();
