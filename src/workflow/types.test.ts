@@ -94,6 +94,20 @@ describe("parseDuration", () => {
     assertThrows(() => parseDuration("10x"), Error, message);
     assertThrows(() => parseDuration(""), Error, message);
   });
+
+  it("rejects non-string and non-number values before duration parsing", () => {
+    const coercibleDuration = {
+      toString() {
+        return "1s";
+      },
+    };
+
+    assertThrows(
+      () => parseDuration(coercibleDuration as never),
+      Error,
+      "invalid duration type",
+    );
+  });
 });
 
 describe("generateId", () => {

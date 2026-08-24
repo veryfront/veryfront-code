@@ -13,6 +13,7 @@ import {
   parseDuration,
   validateRetryConfig,
 } from "#veryfront/workflow/types.ts";
+import type { RetryConfig } from "#veryfront/workflow/types.ts";
 
 describe("workflow type boundaries with hostile ambient intrinsics", () => {
   it("parses durations without live string or RegExp protocols", () => {
@@ -77,6 +78,22 @@ describe("workflow type boundaries with hostile ambient intrinsics", () => {
     }
 
     assertEquals(error instanceof VeryfrontError, true);
+  });
+
+  it("rejects inherited retry fields before execution can read them", () => {
+    Object.defineProperty(Object.prototype, "maxAttempts", {
+      value: 2,
+      configurable: true,
+    });
+    try {
+      assertThrows(
+        () => validateRetryConfig({} as RetryConfig),
+        VeryfrontError,
+        "own data properties",
+      );
+    } finally {
+      delete (Object.prototype as { maxAttempts?: unknown }).maxAttempts;
+    }
   });
 
   it("uses the admitted UUID capability for generated IDs", () => {

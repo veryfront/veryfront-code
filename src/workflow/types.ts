@@ -561,6 +561,11 @@ export function parseDurationWithLabel(
     }
     return duration === 0 ? 0 : duration;
   }
+  if (typeof duration !== "string") {
+    throw INVALID_ARGUMENT.create({
+      detail: `${label} has invalid duration type: ${typeof duration}`,
+    });
+  }
 
   const match = reflectApply(regExpExec, DURATION_PATTERN, [duration]) as
     | RegExpExecArray
@@ -695,6 +700,11 @@ function inspectRetryConfig(value: unknown, label: string): InspectedRetryConfig
 
   const read = (key: keyof InspectedRetryConfig): unknown => {
     const descriptor = objectGetOwnPropertyDescriptor(value, key);
+    if (!descriptor && key in value) {
+      throw INVALID_ARGUMENT.create({
+        detail: `${label} must contain only own data properties`,
+      });
+    }
     if (!descriptor) return undefined;
     if (!objectHasOwn(descriptor, "value")) {
       throw INVALID_ARGUMENT.create({
