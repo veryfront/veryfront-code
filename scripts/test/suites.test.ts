@@ -58,6 +58,49 @@ describe("leaf test suite registry", () => {
     );
   });
 
+  it("rejects suite records that inherit required fields", () => {
+    const suite = Object.create({
+      pathSelectors: ["src/"],
+    });
+    Object.assign(suite, {
+      id: "unit",
+      level: "unit",
+      runner: "deno",
+      prOwner: "test-architecture",
+      supportExclusions: [],
+    });
+
+    assertThrows(
+      () => validateLeafSuiteRegistry([suite]),
+      Error,
+      "must own pathSelectors",
+    );
+  });
+
+  it("rejects inherited selector keys instead of treating them as canonical owners", () => {
+    const pathSelectors = Object.create({ 0: "src/extra/" });
+    Object.defineProperty(pathSelectors, "length", {
+      value: 1,
+      enumerable: false,
+    });
+
+    assertThrows(
+      () =>
+        validateLeafSuiteRegistry([
+          {
+            id: "unit",
+            level: "unit",
+            pathSelectors,
+            runner: "deno",
+            prOwner: "test-architecture",
+            supportExclusions: [],
+          },
+        ]),
+      Error,
+      "pathSelectors must be an array",
+    );
+  });
+
   it("resolves canonical unit roots using real path matching", () => {
     // Production break caught: the approved colocated unit roots are recorded
     // in docs but the runtime matcher still treats them as migration paths.

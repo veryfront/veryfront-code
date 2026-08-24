@@ -39,7 +39,16 @@ This is content.`;
           assertExists(result.outputPath);
           assertEquals(result.frontmatter.title, "Test Page");
           assertEquals(result.frontmatter.description, "A test");
-          assertEquals(Array.isArray(result.imports), true);
+          assertEquals(
+            result.imports,
+            ["react/jsx-runtime"],
+            "imports must list the compiled module's real specifiers",
+          );
+          // The emitted module's text is asserted in
+          // tests/integration/build/compiler/mdx-compiler/compiler.test.ts —
+          // reading it back requires a filesystem read that writeCompiledFile
+          // offers no seam for (file-writer.ts holds a module-level
+          // createFileSystem()).
         } finally {
           await Deno.remove(tmpDir, { recursive: true });
         }

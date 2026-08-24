@@ -1,9 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "./__tests__/css-processor-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { MAX_CSS_SELECTOR_TOKEN_CHARACTERS } from "#veryfront/utils/constants/css.ts";
 import {
+  MAX_CSS_FILES,
+  MAX_CSS_SELECTOR_TOKEN_CHARACTERS,
+} from "#veryfront/utils/constants/css.ts";
+import {
+  cacheCSSAsync,
   clearCSSCache,
   extractCandidates,
   extractCandidatesFromFiles,
@@ -255,6 +259,15 @@ describe("styles-builder/tailwind-compiler", () => {
       const candidates = extractCandidatesFromFiles([]);
       assertEquals(candidates.size, 0);
     });
+
+    it("rejects more files than the cap", () => {
+      assertThrows(
+        () => extractCandidatesFromFiles(new Array(MAX_CSS_FILES + 1)),
+        TypeError,
+        String(MAX_CSS_FILES),
+        "the file-count cap must reject oversized input before any file is read",
+      );
+    });
   });
 
   describe("hashCSS", () => {
@@ -377,11 +390,29 @@ describe("styles-builder/tailwind-compiler", () => {
     it("should return undefined for unknown hash", () => {
       clearCSSCache();
       assertEquals(getCSSByHash("nonexistent"), undefined);
+      assertEquals(
+        getCSSByHash("0".repeat(64)),
+        undefined,
+        "a valid digest with no entry must miss",
+      );
     });
 
-    it("should clear all caches", () => {
+    it("should clear all caches", async () => {
       clearCSSCache();
-      assertEquals(getCSSByHash("any-hash"), undefined);
+      const css = ".vf-clear-probe { color: red; }";
+      const hash = hashCSS(css);
+      await cacheCSSAsync(css, hash);
+      assertEquals(
+        getCSSByHash(hash),
+        css,
+        "a cached entry must be readable by its content hash",
+      );
+      clearCSSCache();
+      assertEquals(
+        getCSSByHash(hash),
+        undefined,
+        "clearCSSCache must drop cached entries",
+      );
     });
   });
 

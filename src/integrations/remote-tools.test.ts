@@ -19,6 +19,7 @@ import {
   getRemoteIntegrationToolDefinitions,
   getRemoteIntegrationToolDiscovery,
   isRemoteIntegrationTool,
+  type RemoteIntegrationToolDiscoveryResult,
   runWithRemoteIntegrationToolDiscoveryScope,
 } from "./remote-tools.ts";
 
@@ -130,6 +131,102 @@ describe("integrations/remote-tools", () => {
       { status: "ok", tools: [] },
       { status: "ok", tools: [] },
     ]);
+  });
+
+  it("keys the per-run discovery cache by credential and project", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+
+    let fetchCalls = 0;
+    const results = await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        fetchCalls++;
+        const authorization = request.headers.get("Authorization");
+        const tenant = authorization === "Bearer tenant-a-token" ? "a" : "b";
+        const project = request.headers.get("x-veryfront-project-slug") ?? "none";
+        return Response.json({
+          tools: [{
+            name: `github__tenant_${tenant}_${project}`,
+            description: `Tenant ${tenant} ${project}`,
+            inputSchema: {},
+          }],
+        });
+      },
+      () =>
+        runWithRemoteIntegrationToolDiscoveryScope(async () => {
+          const tenantA = await getRemoteIntegrationToolDiscovery({
+            authToken: "tenant-a-token",
+            projectSlug: "project-a",
+          });
+          const tenantARepeat = await getRemoteIntegrationToolDiscovery({
+            authToken: "tenant-a-token",
+            projectSlug: "project-a",
+          });
+          const repeatFetchCalls = fetchCalls;
+          const tenantB = await getRemoteIntegrationToolDiscovery({
+            authToken: "tenant-b-token",
+            projectSlug: "project-a",
+          });
+          const projectB = await getRemoteIntegrationToolDiscovery({
+            authToken: "tenant-a-token",
+            projectSlug: "project-b",
+          });
+          return { tenantA, tenantARepeat, repeatFetchCalls, tenantB, projectB };
+        }),
+    );
+
+    const tenantACatalog: RemoteIntegrationToolDiscoveryResult = {
+      status: "ok",
+      tools: [{
+        name: "github__tenant_a_project-a",
+        description: "Tenant a project-a",
+        parameters: { type: "object", properties: {} },
+      }],
+    };
+
+    assertEquals(
+      results.repeatFetchCalls,
+      1,
+      "repeating the same credential and project must hit the per-run cache",
+    );
+    assertEquals(
+      fetchCalls,
+      3,
+      "different credentials and projects must independently miss the per-run cache",
+    );
+    assertEquals(results.tenantA, tenantACatalog, "tenant A must receive its own catalog");
+    assertEquals(
+      results.tenantARepeat,
+      tenantACatalog,
+      "the cached tenant A catalog must be replayed unchanged",
+    );
+    assertEquals(
+      results.tenantB,
+      {
+        status: "ok",
+        tools: [{
+          name: "github__tenant_b_project-a",
+          description: "Tenant b project-a",
+          parameters: { type: "object", properties: {} },
+        }],
+      },
+      "a different credential with the same project must never be served tenant A's catalog",
+    );
+    assertEquals(
+      results.projectB,
+      {
+        status: "ok",
+        tools: [{
+          name: "github__tenant_a_project-b",
+          description: "Tenant a project-b",
+          parameters: { type: "object", properties: {} },
+        }],
+      },
+      "the same credential with a different project must miss the per-run cache",
+    );
   });
 
   it("caches a transient failure for the current run and retries the next run", async () => {
@@ -709,6 +806,46 @@ describe("integrations/remote-tools", () => {
     });
   });
 
+  it("rejects a malformed MCP error marker instead of reporting success", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+
+    await withMockFetch(
+      async () =>
+        Response.json({
+          isError: "true",
+          content: [{ type: "text", text: "permission denied" }],
+        }),
+      () =>
+        assertRejects(
+          () => executeRemoteIntegrationTool("github__list_repos", {}),
+          TypeError,
+          "malformed MCP error marker",
+          "a non-boolean isError must not be coerced into a successful tool result",
+        ),
+    );
+
+    const structuredError = await withMockFetch(
+      async () =>
+        Response.json({
+          isError: true,
+          content: [{
+            type: "text",
+            text: JSON.stringify({ error: "authentication_required" }),
+          }],
+        }),
+      () => executeRemoteIntegrationTool("github__list_repos", {}),
+    );
+
+    assertEquals(
+      structuredError,
+      { error: "authentication_required" },
+      "a well-formed MCP error must still resolve to its parsed structured payload",
+    );
+  });
+
   it("addresses execution by integration and tool path without duplicating identity in the body", async () => {
     setRemoteToolEnv({
       VERYFRONT_API_BASE_URL: "https://api.test",
@@ -744,6 +881,36 @@ describe("integrations/remote-tools", () => {
       run_id: "run-123",
       agent_id: "agent-123",
     });
+  });
+
+  it("rejects noncanonical run and agent identifiers before any request", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+
+    let fetchCalls = 0;
+    for (const context of [{ runId: "run\n1" }, { runId: " run-1 " }, { agentId: "" }]) {
+      await withMockFetch(
+        async () => {
+          fetchCalls++;
+          return Response.json({ structuredContent: { ok: true } });
+        },
+        () =>
+          assertRejects(
+            () => executeRemoteIntegrationTool("github__list_repos", {}, context),
+            TypeError,
+            "must be a canonical identifier",
+            "a noncanonical run or agent identity must be rejected",
+          ),
+      );
+    }
+
+    assertEquals(
+      fetchCalls,
+      0,
+      "a noncanonical identity must fail before the integrations API is called",
+    );
   });
 
   it("forwards the request project slug when executing a remote integration tool", async () => {

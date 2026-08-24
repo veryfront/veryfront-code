@@ -357,13 +357,15 @@ export function findStylesheetFromFiles(
 export function findGlobalStylesheet(
   files: Array<{ path: string; content?: string }>,
 ): string | undefined {
+  // Anchored to a path-segment boundary so a prefixed filename such as
+  // `theme-globals.css` is not mistaken for the project's global stylesheet.
   const stylesheetPatterns = [
-    /globals\.css$/,
-    /global\.css$/,
-    /styles\/globals\.css$/,
-    /app\/globals\.css$/,
-    /src\/globals\.css$/,
-    /src\/styles\/globals\.css$/,
+    /(^|\/)globals\.css$/,
+    /(^|\/)global\.css$/,
+    /(^|\/)styles\/globals\.css$/,
+    /(^|\/)app\/globals\.css$/,
+    /(^|\/)src\/globals\.css$/,
+    /(^|\/)src\/styles\/globals\.css$/,
   ];
 
   for (const pattern of stylesheetPatterns) {

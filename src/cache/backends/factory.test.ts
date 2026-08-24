@@ -73,6 +73,42 @@ describe("cache backend factory", () => {
     assertEquals(callCount, 2);
   });
 
+  it("evicts the least recently used scope, not the oldest", async () => {
+    const backend = new DiskCacheBackend();
+    let scope = "";
+    let callCount = 0;
+    const accessor = createDistributedCacheAccessor(
+      () => {
+        callCount++;
+        return Promise.resolve(backend);
+      },
+      "test-scoped-lru",
+      () => scope,
+    );
+
+    for (let index = 0; index < 128; index++) {
+      scope = `scope-${index}`;
+      await accessor();
+    }
+    assertEquals(callCount, 128, "each distinct scope must initialize its own backend");
+
+    scope = "scope-0";
+    await accessor();
+    assertEquals(callCount, 128, "a re-accessed scope must stay memoized");
+
+    scope = "scope-128";
+    await accessor();
+    assertEquals(callCount, 129, "a scope beyond the capacity must initialize a backend");
+
+    scope = "scope-0";
+    await accessor();
+    assertEquals(callCount, 129, "the most recently used scope must survive eviction");
+
+    scope = "scope-1";
+    await accessor();
+    assertEquals(callCount, 130, "the least recently used scope must be the evicted one");
+  });
+
   it("bounds scoped state while every factory is pending", async () => {
     const backend = new DiskCacheBackend();
     const resolveFactories: Array<() => void> = [];

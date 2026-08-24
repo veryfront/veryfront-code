@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertNotEquals,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
 import { MemoCache, memoize, memoizeAsync, simpleHash } from "./memoize.ts";
@@ -55,11 +60,35 @@ describe("memoize", () => {
     });
 
     it("should use key hasher for cache key", () => {
-      const fn = (a: number, b: number): number => a + b;
+      let calls = 0;
+      const fn = (a: number, b: number): number => {
+        calls++;
+        return a + b;
+      };
       const memoized = memoize(fn, (a, b) => `${a}-${b}`);
 
-      assertEquals(memoized(1, 2), 3);
-      assertEquals(memoized(2, 1), 3);
+      assertEquals(memoized(1, 2), 3, "first call computes");
+      assertEquals(
+        memoized(1, 5),
+        6,
+        "a differing second argument must miss the cache, not reuse the first result",
+      );
+      assertEquals(calls, 2, "keyHasher must include every argument in the cache key");
+      assertEquals(memoized(1, 2), 3, "repeat of the first pair hits the cache");
+      assertEquals(calls, 2, "identical arguments must not recompute");
+    });
+
+    it("treats the supplied key hasher as authoritative", () => {
+      let calls = 0;
+      const fn = (a: number, b: number): number => {
+        calls++;
+        return a + b;
+      };
+      const memoized = memoize(fn, () => "k");
+
+      assertEquals(memoized(1, 2), 3, "first call computes");
+      assertEquals(memoized(9, 9), 3, "a constant keyHasher must reuse the first cached result");
+      assertEquals(calls, 1, "a constant keyHasher must collapse distinct arguments");
     });
 
     it("should handle complex return types", () => {
@@ -103,6 +132,35 @@ describe("memoize", () => {
       await memoized(5);
       await memoized(10);
       assertEquals(callCount.value, 2);
+    });
+
+    it("shares one in-flight promise across concurrent callers", async () => {
+      const callCount = { value: 0 };
+      const memoized = createAsyncDoublerMemoized(callCount);
+
+      const first = memoized(5);
+      const second = memoized(5);
+
+      assertStrictEquals(first, second, "concurrent calls for the same key must share one promise");
+      assertEquals(await first, 10, "the shared promise resolves the memoized value");
+      assertEquals(callCount.value, 1, "the expensive fn must run once for concurrent callers");
+    });
+
+    it("drops a rejected key so the next caller retries", async () => {
+      let calls = 0;
+      const fn = (): Promise<string> => {
+        calls++;
+        return calls === 1 ? Promise.reject(new Error("boom")) : Promise.resolve("recovered");
+      };
+      const memoized = memoizeAsync(fn, () => "k");
+
+      await assertRejects(() => memoized(), Error, "boom");
+      assertEquals(
+        await memoized(),
+        "recovered",
+        "a rejected key must not be cached and must be retried",
+      );
+      assertEquals(calls, 2, "inflight entry must be dropped on rejection");
     });
 
     it("should handle promise resolution", async () => {

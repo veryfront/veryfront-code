@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   _resetShimForTests,
@@ -113,18 +113,61 @@ describe("observability/tracing/api-shim", () => {
     it("installs and clears one complete provider generation atomically", () => {
       const tracerProvider = { getTracer: () => getTracer("fallback") };
       const metricsApi = { getMeter: () => ({}) } as unknown as MetricsAPI;
-      const owner = installGlobalTelemetryAPI({ tracerProvider, metricsApi });
+      const contextAccessor = {
+        active: () => context.active(),
+        with: <T>(_ctx: Context, fn: () => T): T => fn(),
+      };
+      const span = { updateName() {} } as unknown as Span;
+      const activeSpanAccessor = {
+        getActiveSpan: () => span,
+        getSpan: () => span,
+        setSpan: (ctx: Context) => ctx,
+      };
+      const propagator: TextMapPropagator = {
+        inject: () => {},
+        extract: (ctx: Context) => ctx,
+        fields: () => [],
+      };
+      const owner = installGlobalTelemetryAPI({
+        tracerProvider,
+        metricsApi,
+        contextAccessor,
+        activeSpanAccessor,
+        propagator,
+      });
 
       const installed = getGlobalTelemetryAPISnapshot();
       assertEquals(installed.generation, owner.generation);
       assertEquals(installed.tracerProvider, tracerProvider);
       assertEquals(installed.metricsApi, metricsApi);
+      assertStrictEquals(
+        installed.contextAccessor,
+        contextAccessor,
+        "install must publish the context accessor",
+      );
+      assertStrictEquals(
+        installed.activeSpanAccessor,
+        activeSpanAccessor,
+        "install must publish the active-span accessor",
+      );
+      assertStrictEquals(
+        installed.propagator,
+        propagator,
+        "install must publish the propagator",
+      );
 
       assertEquals(owner.dispose(), true);
       assertEquals(owner.dispose(), false);
       const cleared = getGlobalTelemetryAPISnapshot();
       assertEquals(cleared.generation > owner.generation, true);
       assertEquals(cleared.metricsApi, null);
+      assertEquals(cleared.contextAccessor, null, "dispose clears the context accessor");
+      assertEquals(
+        cleared.activeSpanAccessor,
+        null,
+        "dispose clears the active-span accessor",
+      );
+      assertEquals(cleared.propagator, null, "dispose clears the propagator");
       assertEquals(
         cleared.tracerProvider.getTracer("cleared").startSpan("span").spanContext().traceId,
         "00000000000000000000000000000000",
@@ -198,6 +241,24 @@ describe("observability/tracing/api-shim", () => {
 
       assertEquals(trace.getSpan(scoped), real);
       assertEquals(context.with(scoped, () => trace.getActiveSpan()), real);
+    });
+
+    it("refuses to store a no-op span in context", () => {
+      const noop = getTracer("t").startSpan("s");
+      const active = context.active();
+      const scoped = trace.setSpan(active, noop);
+
+      assertEquals(scoped === active, true, "a no-op span must leave the context unchanged");
+      assertEquals(
+        trace.getSpan(scoped),
+        undefined,
+        "a no-op span must not become the active span",
+      );
+      assertEquals(
+        context.with(scoped, () => trace.getActiveSpan()),
+        undefined,
+        "getActiveSpan must stay undefined for a no-op span",
+      );
     });
   });
 

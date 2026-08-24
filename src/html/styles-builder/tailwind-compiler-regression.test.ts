@@ -75,6 +75,38 @@ describe("styles-builder/tailwind-compiler regressions", () => {
       }
     });
 
+    it("refuses regenerated CSS that does not reproduce the requested hash", async () => {
+      const restoreFetch = forbidNetwork();
+
+      try {
+        const stylesheet = '@import "tailwindcss";/*vf-hash-mismatch-regression*/';
+        const projectSlug = "vf-hash-mismatch-regression";
+        const candidatesA = ["text-red-500"];
+        const candidatesB = ["font-bold"];
+
+        const generatedA = await generateTailwindCSS(stylesheet, candidatesA, {
+          minify: true,
+          projectSlug,
+        });
+        const hashA = hashCSS(generatedA.css);
+        // The entry keeps A's output under A's hash but B's inputs, so the
+        // regenerated CSS can no longer reproduce the requested content hash.
+        await cacheCSSAsync(generatedA.css, hashA, {
+          candidates: candidatesB,
+          stylesheet,
+          pipelineIdentity: generatedA.cacheIdentity,
+        });
+
+        assertEquals(
+          await regenerateCSSByHash(hashA, projectSlug),
+          undefined,
+          "CSS that does not reproduce the requested content hash must not be served at an immutable URL",
+        );
+      } finally {
+        restoreFetch();
+      }
+    });
+
     it("returns undefined when cached inputs are missing", async () => {
       const regenerated = await regenerateCSSByHash("vf-missing-regeneration-hash", undefined);
       assertEquals(regenerated, undefined);

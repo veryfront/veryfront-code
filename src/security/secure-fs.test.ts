@@ -7,6 +7,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createSecureFs, SecureFs, wrapAdapterWithSecurity } from "./secure-fs.ts";
+import type { SecurityEvent } from "./secure-fs.ts";
 import { wrapFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/adapter.ts";
@@ -713,6 +714,48 @@ describe("SecureFs", () => {
       });
 
       assertEquals(await secureFs.readFile("file.txt"), "ok");
+    } finally {
+      await Deno.remove(baseDir, { recursive: true });
+    }
+  });
+
+  it("labels and sanitizes the security events it reports to an observer", async () => {
+    const baseDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(`${baseDir}/file.txt`, "ok");
+      const events: SecurityEvent[] = [];
+      const secureFs = createSecureFs({
+        baseDir,
+        adapter: new DenoAdapter(),
+        context: "internal",
+        onSecurityEvent: (event) => {
+          events.push(event);
+        },
+      });
+
+      assertEquals(await secureFs.readFile("file.txt"), "ok");
+      await assertRejects(() => secureFs.readFile("../../etc/passwd"), VeryfrontError);
+
+      assertEquals(
+        events.map((event) => event.type),
+        ["validation-passed", "validation-failed"],
+        "secure-fs must label the allowed read and the rejected traversal distinctly",
+      );
+      assertEquals(
+        events.map((event) => event.operation),
+        ["readFile", "readFile"],
+        "each event carries the originating operation",
+      );
+      assertEquals(
+        events[0]?.path,
+        "file.txt",
+        "an in-root path is reported relative to the trust root",
+      );
+      assertEquals(
+        events[1]?.path,
+        "passwd",
+        "a rejected traversal is reported sanitized, never as a host absolute path",
+      );
     } finally {
       await Deno.remove(baseDir, { recursive: true });
     }

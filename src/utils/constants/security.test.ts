@@ -17,6 +17,21 @@ describe("constants/security", () => {
       assertEquals(SCANNER_PATH_PATTERN.test("/cgi-bin/test.cgi"), true);
       assertEquals(SCANNER_PATH_PATTERN.test("/.env"), true);
       assertEquals(SCANNER_PATH_PATTERN.test("/.env.production"), true);
+      assertEquals(
+        SCANNER_PATH_PATTERN.test("/WP-ADMIN"),
+        true,
+        "scanner matching must be case-insensitive",
+      );
+      assertEquals(
+        SCANNER_PATH_PATTERN.test("/Wp-Config.php"),
+        true,
+        "mixed-case probe paths are still detected",
+      );
+      assertEquals(
+        SCANNER_PATH_PATTERN.test("/.ENV"),
+        true,
+        "uppercase dotfile probes are still detected",
+      );
     });
 
     it("does not block normal nested application routes", () => {
@@ -25,6 +40,26 @@ describe("constants/security", () => {
       assertEquals(SCANNER_PATH_PATTERN.test("/blog/wp-content/foo"), false);
       assertEquals(SCANNER_PATH_PATTERN.test("/docs/wp-admin-guide"), false);
       assertEquals(SCANNER_PATH_PATTERN.test("/assets/index.php.md"), false);
+      assertEquals(
+        SCANNER_PATH_PATTERN.test("/wp-admin-guide"),
+        false,
+        "a root route that merely starts with wp-admin must not be treated as a scanner probe",
+      );
+      assertEquals(
+        SCANNER_PATH_PATTERN.test("/wp-contents"),
+        false,
+        "a root route that merely starts with wp-content must not be treated as a scanner probe",
+      );
+      assertEquals(
+        SCANNER_PATH_PATTERN.test("/wp-includes-docs"),
+        false,
+        "a root route that merely starts with wp-includes must not be treated as a scanner probe",
+      );
+      assertEquals(
+        SCANNER_PATH_PATTERN.test("/cgi-binary"),
+        false,
+        "a root route that merely starts with cgi-bin must not be treated as a scanner probe",
+      );
     });
   });
 });

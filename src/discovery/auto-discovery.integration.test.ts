@@ -59,7 +59,11 @@ describe(
       });
 
       assertEquals(result.tools.size >= 2, true);
-      assertExists(result.tools.get("greet") ?? result.tools.get("searchWeb"));
+      assertEquals(
+        Array.from(result.tools.keys()).sort(),
+        ["greet", "searchWeb"],
+        "kebab-cased tool filenames must derive camelCase ids",
+      );
     });
 
     it("should discover project-authored tools with raw JSON schemas", async () => {
@@ -135,6 +139,15 @@ describe(
       });
 
       assertEquals(result.resources.size >= 1, true);
+      assertEquals(
+        result.resources.get("profile")?.pattern,
+        "/users/:userId/profile",
+        "dynamic [param] segments must become :param in the derived resource pattern",
+      );
+      assertExists(
+        resourceRegistry.get("profile"),
+        "a discovered resource must be registered in the MCP resource registry",
+      );
     });
 
     it("should discover prompts from prompts/ directory", async () => {
@@ -162,8 +175,9 @@ describe(
         verbose: false,
       });
 
-      assertExists(result);
-      assertExists(result.errors);
+      assertEquals(result.errors, [], "a missing baseDir is not a discovery error");
+      assertEquals(result.tools.size, 0, "a missing baseDir must yield an empty tool map");
+      assertEquals(result.agents.size, 0, "a missing baseDir must yield an empty agent map");
     });
 
     it("discovers source-defined schedules and webhooks", async () => {

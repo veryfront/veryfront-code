@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { join } from "#veryfront/compat/path/index.ts";
+import { makeTempDir, remove, writeTextFile } from "#veryfront/platform/compat/fs.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { CacheManager, loadCSSManifest } from "./css-bundle-cache.ts";
@@ -27,11 +28,11 @@ function createBundle(
 async function withTempDir(
   callback: (directory: string) => Promise<void>,
 ): Promise<void> {
-  const directory = await Deno.makeTempDir();
+  const directory = await makeTempDir();
   try {
     await callback(directory);
   } finally {
-    await Deno.remove(directory, { recursive: true });
+    await remove(directory, { recursive: true });
   }
 }
 
@@ -84,8 +85,8 @@ describe("build/asset-pipeline/css-optimizer/cache-manager", () => {
   it("hydrates legacy manifests from their generated CSS file", async () => {
     await withTempDir(async (directory) => {
       const content = ".legacy{}";
-      await Deno.writeTextFile(join(directory, "legacy.min.css"), content);
-      await Deno.writeTextFile(
+      await writeTextFile(join(directory, "legacy.min.css"), content);
+      await writeTextFile(
         join(directory, "css-manifest.json"),
         JSON.stringify({
           "legacy.css": {
@@ -105,7 +106,7 @@ describe("build/asset-pipeline/css-optimizer/cache-manager", () => {
   it("returns empty only for an absent manifest", async () => {
     await withTempDir(async (directory) => {
       assertEquals((await loadCSSManifest(directory)).size, 0);
-      await Deno.writeTextFile(join(directory, "css-manifest.json"), "{");
+      await writeTextFile(join(directory, "css-manifest.json"), "{");
       await assertRejects(
         () => loadCSSManifest(directory),
         TypeError,
@@ -116,7 +117,7 @@ describe("build/asset-pipeline/css-optimizer/cache-manager", () => {
 
   it("rejects malformed entries instead of trusting casts", async () => {
     await withTempDir(async (directory) => {
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(directory, "css-manifest.json"),
         JSON.stringify({
           "../escape.css": {
@@ -132,6 +133,49 @@ describe("build/asset-pipeline/css-optimizer/cache-manager", () => {
         () => loadCSSManifest(directory),
         TypeError,
         "malformed",
+      );
+    });
+  });
+
+  it("rejects case-folded key and output collisions", async () => {
+    const entry = (file: string, outputFile: string) => ({
+      file,
+      outputFile,
+      content: ".a{}",
+      size: 4,
+      minifiedSize: 4,
+      savings: calculateSavings(4, 4),
+    });
+
+    await withTempDir(async (directory) => {
+      await writeTextFile(
+        join(directory, "css-manifest.json"),
+        JSON.stringify({
+          "A.css": entry("A.css", ".veryfront/css/first.min.css"),
+          "a.css": entry("a.css", ".veryfront/css/second.min.css"),
+        }),
+      );
+      await assertRejects(
+        () => loadCSSManifest(directory),
+        TypeError,
+        "path collision",
+        "keys differing only in case must be rejected",
+      );
+    });
+
+    await withTempDir(async (directory) => {
+      await writeTextFile(
+        join(directory, "css-manifest.json"),
+        JSON.stringify({
+          "one.css": entry("one.css", ".veryfront/css/Out.min.css"),
+          "two.css": entry("two.css", ".veryfront/css/out.min.css"),
+        }),
+      );
+      await assertRejects(
+        () => loadCSSManifest(directory),
+        TypeError,
+        "path collision",
+        "output files differing only in case must be rejected",
       );
     });
   });

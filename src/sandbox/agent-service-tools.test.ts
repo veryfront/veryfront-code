@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert";
+import {
+  assertEquals,
+  assertExists,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert";
 import type { CreateSandboxBashTool, SandboxShellToolSet } from "./shell-tools.ts";
 import {
   createAgentServiceSandboxClient,
@@ -113,6 +118,66 @@ describe("sandbox/agent-service-tools", () => {
     assertExists(tools.cancel_background_command);
     assertEquals(tools.readFile, undefined);
     assertEquals(tools.writeFile, undefined);
+  });
+
+  it("normalizes sandbox writeFiles entries before dispatch", async () => {
+    mockFetch([
+      createSandboxSessionResponse(),
+      createOkResponse(),
+      createOkResponse(),
+      createOkResponse(),
+    ]);
+
+    const sandbox = createAgentServiceSandboxClient({
+      authToken: "test-token",
+      apiUrl: "https://api.example.com",
+      projectId: "project-123",
+    });
+    const writeFiles = sandbox.writeFiles;
+    assertExists(writeFiles, "the agent-service sandbox client must expose writeFiles");
+
+    try {
+      await writeFiles([
+        { path: "a.txt", content: "plain" },
+        { path: "b.bin", content: new TextEncoder().encode("decoded") },
+        { path: "c.txt", content: null },
+      ]);
+    } finally {
+      await sandbox.close();
+    }
+
+    const filesCallIndex = fetchCalls.findIndex((call) => call.url.includes("/files"));
+    assertEquals(
+      jsonBody(fetchCalls, filesCallIndex),
+      {
+        files: [
+          { path: "a.txt", content: "plain" },
+          { path: "b.bin", content: "decoded" },
+          { path: "c.txt", content: "" },
+        ],
+      },
+      "binary write payloads are decoded as UTF-8 text before reaching the sandbox",
+    );
+  });
+
+  it("rejects sandbox writeFiles entries without a string path", () => {
+    mockFetch([]);
+
+    const sandbox = createAgentServiceSandboxClient({
+      authToken: "test-token",
+      apiUrl: "https://api.example.com",
+      projectId: "project-123",
+    });
+    const writeFiles = sandbox.writeFiles;
+    assertExists(writeFiles, "the agent-service sandbox client must expose writeFiles");
+
+    assertThrows(
+      () => writeFiles([{ content: "x" }]),
+      Error,
+      "Sandbox writeFiles entries must include a string path",
+      "a write entry without a string path is rejected before any request is dispatched",
+    );
+    assertEquals(fetchCalls.length, 0, "a rejected write entry dispatches no sandbox request");
   });
 
   it("passes the latest project reference through exec and background-command requests", async () => {

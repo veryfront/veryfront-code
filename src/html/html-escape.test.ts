@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildAttributes,
@@ -102,6 +102,80 @@ describe("html-escape", () => {
           "aria-label": 'Say "Hello"',
         }),
         'data-value="test &amp; value" aria-label="Say &quot;Hello&quot;"',
+      );
+    });
+
+    it("should reject attribute names that break out of the attribute", () => {
+      assertThrows(
+        () => buildAttributes({ 'a" onload="x': "1" }),
+        TypeError,
+        "HTML attribute name is invalid",
+        "an injecting attribute name must be rejected, not interpolated raw",
+      );
+      assertThrows(
+        () => buildAttributes({ "data value": "1" }),
+        TypeError,
+        "HTML attribute name is invalid",
+        "an attribute name containing a space must be rejected",
+      );
+      assertThrows(
+        () => buildAttributes({ "data>value": "1" }),
+        TypeError,
+        "HTML attribute name is invalid",
+        "an attribute name containing > must be rejected",
+      );
+    });
+
+    it("should reject attribute names beyond the name size limit", () => {
+      assertThrows(
+        () => buildAttributes({ ["a".repeat(257)]: "1" }),
+        TypeError,
+        "HTML attribute name is invalid",
+        "an attribute name over the byte limit must be rejected",
+      );
+    });
+
+    it("should reject more attributes than the entry limit", () => {
+      assertThrows(
+        () =>
+          buildAttributes(
+            Object.fromEntries(
+              Array.from({ length: 129 }, (_, index) => [`data-k${index}`, "1"]),
+            ),
+          ),
+        Error,
+        "HTML attributes exceed the entry limit",
+        "an attribute set over the entry limit must be rejected",
+      );
+    });
+
+    it("should reject attribute containers that are not plain objects", () => {
+      assertThrows(
+        () => buildAttributes(["id"] as unknown as Record<string, unknown>),
+        Error,
+        "HTML attributes must be an object",
+        "an array must not be treated as an attribute map",
+      );
+      class Attrs {
+        id = "x";
+      }
+      assertThrows(
+        () => buildAttributes(new Attrs() as unknown as Record<string, unknown>),
+        Error,
+        "HTML attributes must be a plain object",
+        "a class instance must not be treated as an attribute map",
+      );
+    });
+
+    it("should reject accessor-backed attribute values", () => {
+      assertThrows(
+        () =>
+          buildAttributes(
+            Object.defineProperty({}, "id", { get: () => "x", enumerable: true }),
+          ),
+        Error,
+        "HTML attribute value cannot be inspected",
+        "a getter-backed attribute value must not be invoked during rendering",
       );
     });
   });

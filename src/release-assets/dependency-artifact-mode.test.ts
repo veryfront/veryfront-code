@@ -48,6 +48,30 @@ describe("dependency artifact rollout mode", () => {
     }
   });
 
+  it("activates the configured mode for allowlisted projects from host env", () => {
+    const original = new Map(ROLLOUT_ENV_KEYS.map((key) => [key, getHostEnv(key)]));
+    try {
+      // Percent 0 plus an allowlist pins each env key to its own field: a
+      // swapped key leaves the project outside both the mode and the cohort.
+      setEnv(DEPENDENCY_ARTIFACT_MODE_ENV, "prefer");
+      setEnv(DEPENDENCY_ARTIFACT_ROLLOUT_PERCENT_ENV, "0");
+      setEnv(DEPENDENCY_ARTIFACT_PROJECTS_ENV, "project-alpha");
+
+      assertEquals(
+        getDependencyArtifactModeForProject("project-alpha"),
+        "prefer",
+        "an allowlisted project must pick up the host-configured mode",
+      );
+      assertEquals(
+        getDependencyArtifactModeForProject("project-gamma"),
+        "off",
+        "a project outside the allowlist and cohort stays off",
+      );
+    } finally {
+      restoreEnv(original);
+    }
+  });
+
   it("accepts only the four rollout modes", () => {
     for (const mode of ["off", "shadow", "prefer", "require"] as const) {
       assertEquals(

@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertNotStrictEquals,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getObservabilityMetrics, resetObservabilityLoader } from "./observability-loader.ts";
 
@@ -24,7 +29,11 @@ describe("observability/simple-metrics/observability-loader", () => {
       const first = await getObservabilityMetrics();
       const second = await getObservabilityMetrics();
 
-      assertEquals(first, second);
+      assertStrictEquals(
+        first,
+        second,
+        "second call returns the cached instance, not a rebuilt facade",
+      );
     });
 
     it("should return same instance across multiple calls", async () => {
@@ -34,19 +43,20 @@ describe("observability/simple-metrics/observability-loader", () => {
         getObservabilityMetrics(),
       ]);
 
-      assertEquals(first, second);
-      assertEquals(second, third);
+      assertStrictEquals(first, second, "concurrent callers share one cached instance");
+      assertStrictEquals(second, third, "concurrent callers share one cached instance");
     });
   });
 
   describe("resetObservabilityLoader", () => {
     it("should reset the loader state", async () => {
-      await getObservabilityMetrics();
+      const before = await getObservabilityMetrics();
 
       resetObservabilityLoader();
 
-      const metrics = await getObservabilityMetrics();
-      assertExists(metrics);
+      const after = await getObservabilityMetrics();
+      assertExists(after);
+      assertNotStrictEquals(after, before, "reset forces a fresh load");
     });
 
     it("should be callable multiple times", () => {

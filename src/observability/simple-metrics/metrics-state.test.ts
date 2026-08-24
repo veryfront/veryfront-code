@@ -46,23 +46,59 @@ describe("observability/simple-metrics/metrics-state", () => {
   describe("createSnapshot", () => {
     it("should return all metric fields", () => {
       resetMetrics();
-      const snap = createSnapshot();
-      assertEquals(typeof snap.requests, "number");
-      assertEquals(typeof snap.cacheGets, "number");
-      assertEquals(typeof snap.cacheHits, "number");
-      assertEquals(typeof snap.cacheMisses, "number");
-      assertEquals(typeof snap.moduleServeTotal, "number");
-      assertEquals(typeof snap.moduleTransformTotal, "number");
-      assertEquals(typeof snap.routeManifestLruHits, "number");
-      assertEquals(typeof snap.corsRejections, "number");
+      const numericKeys = Object.keys(state).filter(
+        (key) => !key.startsWith("_") && typeof state[key as keyof typeof state] === "number",
+      );
+      const counters = state as unknown as Record<string, number>;
+      numericKeys.forEach((key, index) => {
+        counters[key] = index + 1;
+      });
+
+      const snap = createSnapshot() as unknown as Record<string, number>;
+      const expected = Object.fromEntries(numericKeys.map((key, index) => [key, index + 1]));
+      const actual = Object.fromEntries(numericKeys.map((key) => [key, snap[key]]));
+
+      assertEquals(actual, expected, "each snapshot field must copy its own state counter");
+      assertEquals(
+        numericKeys.filter((key) => !(key in snap)),
+        [],
+        "createSnapshot must not drop a state counter",
+      );
+      resetMetrics();
     });
 
     it("should return ssrHistogram with boundaries and counts", () => {
       resetMetrics();
+      state._ssrCounts[0] = 3;
+      state._contentNetworkCounts[0] = 4;
       const snap = createSnapshot();
+      resetMetrics();
+
       assertExists(snap.ssrHistogram);
       assertEquals(Array.isArray(snap.ssrHistogram.boundaries), true);
       assertEquals(Array.isArray(snap.ssrHistogram.counts), true);
+      assertEquals(
+        snap.ssrHistogram.boundaries,
+        getSSRBoundaries(),
+        "snapshot boundaries must match the published SSR boundaries",
+      );
+      assertEquals(
+        snap.ssrHistogram.counts[0],
+        3,
+        "snapshot histogram counts must survive a later resetMetrics",
+      );
+      assertEquals(
+        snap.contentNetworkHistogram?.counts[0],
+        4,
+        "snapshot content-network counts must survive a later resetMetrics",
+      );
+
+      snap.ssrHistogram.counts[1] = 99;
+      assertEquals(
+        state._ssrCounts[1],
+        0,
+        "mutating a snapshot must not write back into live state",
+      );
     });
 
     it("should return a copy (not reference)", () => {

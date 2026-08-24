@@ -2425,19 +2425,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "removalPr": "PR 4h",
       },
     ),
-    entry("src/build/asset-pipeline/tailwind-processor/detector.test.ts", [
-      "filesystem-read",
-      "filesystem-watch",
-      "filesystem-write",
-    ], {
-      "disposition": "integration-relocation",
-      "owner": "build-rendering",
-      "rationale":
-        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
-      "destination":
-        "tests/integration/semantic-unit-boundary/src/build/asset-pipeline/tailwind-processor/detector.test.ts",
-      "removalPr": "PR 4h",
-    }),
     entry("src/build/asset-pipeline/tailwind-processor/processor.test.ts", [
       "filesystem-read",
       "filesystem-watch",
@@ -2674,12 +2661,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "replacement":
         "Inject an environment/runtime-state boundary instead of mutating shared global runtime objects or intrinsic constructors and prototypes.",
       "removalPr": "PR 4i",
-    }),
-    entry("src/cache/distributed-cache-init.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "config-tooling",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
     }),
     entry("src/cache/keys.test.ts", ["process"], {
       "disposition": "replaceable-fake",
@@ -5783,15 +5764,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "removalPr": "PR 4n",
     }),
     entry("src/sandbox/sandbox.test.ts", ["process", "network"], {
-      "disposition": "replaceable-fake",
-      "owner": "core-runtime",
-      "rationale":
-        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
-      "replacement":
-        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
-      "removalPr": "PR 4n",
-    }),
-    entry("src/schedule/factory.test.ts", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "core-runtime",
       "rationale":

@@ -1,15 +1,21 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
-import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __resetAutoInstrumentForTests,
   initAutoInstrumentation,
   isAutoInstrumentEnabled,
 } from "./orchestrator.ts";
+import { getTracingState, shutdownTracing } from "../tracing/index.ts";
 
 describe("observability/auto-instrument/orchestrator", () => {
   beforeEach(() => {
     __resetAutoInstrumentForTests();
+    shutdownTracing();
+  });
+
+  afterEach(() => {
+    shutdownTracing();
   });
 
   describe("isAutoInstrumentEnabled", () => {
@@ -56,13 +62,48 @@ describe("observability/auto-instrument/orchestrator", () => {
       assertEquals(isAutoInstrumentEnabled(), true);
     });
 
+    it("should start the tracing runtime when tracing is enabled", async () => {
+      await initAutoInstrumentation({
+        tracing: { enabled: true, exporter: "console" },
+        metrics: { enabled: false },
+      });
+
+      assertEquals(
+        getTracingState().initialized,
+        true,
+        "enabled tracing config must reach initTracing",
+      );
+    });
+
+    it("should leave the tracing runtime down when tracing is disabled", async () => {
+      await initAutoInstrumentation({ tracing: { enabled: false } });
+
+      assertEquals(
+        getTracingState().initialized,
+        false,
+        "disabled tracing config must not start the tracer",
+      );
+    });
+
     it("should not reinitialize if already initialized", async () => {
       await initAutoInstrumentation({ tracing: { enabled: false } });
       assertEquals(isAutoInstrumentEnabled(), true);
+      shutdownTracing();
+      assertEquals(
+        getTracingState().initialized,
+        false,
+        "precondition: the tracing runtime is down",
+      );
 
       await initAutoInstrumentation({
         tracing: { enabled: true, exporter: "console" },
       });
+
+      assertEquals(
+        getTracingState().initialized,
+        false,
+        "a duplicate initAutoInstrumentation must not start tracing",
+      );
       assertEquals(isAutoInstrumentEnabled(), true);
     });
 

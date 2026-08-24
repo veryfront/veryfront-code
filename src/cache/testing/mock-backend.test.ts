@@ -163,6 +163,8 @@ describe("cache/testing/mock-backend", () => {
       await assertRejects(
         () => mock.get("bad-key"),
         Error,
+        "Mock cache error",
+        "a failing key must reject with the default mock error",
       );
     });
 
@@ -175,6 +177,8 @@ describe("cache/testing/mock-backend", () => {
       await assertRejects(
         () => mock.set("bad-key", "value"),
         Error,
+        "Mock cache error",
+        "a failing key must reject with the default mock error",
       );
     });
 
@@ -184,11 +188,12 @@ describe("cache/testing/mock-backend", () => {
         errorMessage: "Custom error",
       });
 
-      try {
-        await mock.get("key");
-      } catch (e) {
-        assertEquals((e as Error).message, "Custom error");
-      }
+      await assertRejects(
+        () => mock.get("key"),
+        Error,
+        "Custom error",
+        "a failing mock must surface the configured error message",
+      );
     });
   });
 

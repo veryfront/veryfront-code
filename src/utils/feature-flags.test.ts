@@ -32,6 +32,17 @@ describe("feature-flags", () => {
       assertEquals(isRSCEnabled(), true);
     });
 
+    it("treats every value other than '1' as disabled", () => {
+      for (const value of ["0", "false", "", "true", "yes", "2"]) {
+        Deno.env.set("VERYFRONT_EXPERIMENTAL_RSC", value);
+        assertEquals(
+          isRSCEnabled(),
+          false,
+          `VERYFRONT_EXPERIMENTAL_RSC=${JSON.stringify(value)} must not enable experimental RSC`,
+        );
+      }
+    });
+
     it("should return false when env is not set and no config", () => {
       Deno.env.delete("VERYFRONT_EXPERIMENTAL_RSC");
       assertEquals(isRSCEnabled(), false);

@@ -101,6 +101,35 @@ describe("data response metadata", () => {
     );
   });
 
+  it("rejects invalid response header names", () => {
+    assertThrows(
+      () => normalizeDataResponseMetadata({ headers: { "x trace": "value" } }),
+      TypeError,
+      "returned invalid response header name",
+    );
+    assertThrows(
+      () => normalizeDataResponseMetadata({ headers: { "x-trace\r\nInjected": "value" } }),
+      TypeError,
+      "returned invalid response header name",
+      "a header name carrying CRLF must be refused before it reaches Headers.append",
+    );
+    assertThrows(
+      () => normalizeDataResponseMetadata({ headers: { "": "value" } }),
+      TypeError,
+      "returned invalid response header name",
+    );
+    assertThrows(
+      () => normalizeDataResponseMetadata({ headers: { ["x".repeat(257)]: "value" } }),
+      TypeError,
+      "returned invalid response header name",
+    );
+    assertEquals(
+      normalizeDataResponseMetadata({ headers: { ["x".repeat(256)]: "value" } }),
+      { headers: { ["x".repeat(256)]: "value" } },
+      "a header name at exactly the length limit must be accepted",
+    );
+  });
+
   it("serializes cookie values and attributes without allowing header injection", () => {
     assertEquals(
       serializeResponseCookie({
@@ -192,5 +221,20 @@ describe("data response metadata", () => {
       headers: { "x-page-state": "resolved" },
       cookies: [{ name: "page-seen", value: "1", path: "/" }],
     });
+    assertEquals(
+      Object.keys(carrier),
+      [],
+      "the error carrier must expose no enumerable metadata",
+    );
+    assertEquals(
+      JSON.stringify(carrier),
+      "{}",
+      "cookie values must not serialize with the error",
+    );
+    assertEquals(
+      JSON.stringify({ ...carrier }).includes("page-seen"),
+      false,
+      "spreading the error must not leak cookie names or values",
+    );
   });
 });

@@ -90,5 +90,18 @@ describe("routing/api/module-loader/security-config", () => {
       );
       assertEquals(result, DEFAULT_ALLOWED_CDN_HOSTS);
     });
+
+    it("falls back to the default CDN hosts when config loading fails", async () => {
+      const failingAdapter = makeAdapter();
+      failingAdapter.fs.exists = () => Promise.reject(new Error("config read exploded"));
+      failingAdapter.fs.readFile = () => Promise.reject(new Error("config read exploded"));
+
+      const result = await loadSecurityConfig("/tmp/config-load-failure-project", failingAdapter);
+      assertEquals(
+        result,
+        DEFAULT_ALLOWED_CDN_HOSTS,
+        "a getConfig failure must fall back to the default allow-list, never to a broader or empty one",
+      );
+    });
   });
 });

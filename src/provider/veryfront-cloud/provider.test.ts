@@ -28,6 +28,14 @@ function readableStreamFrom<T>(values: Iterable<T>): ReadableStream<T> {
   });
 }
 
+async function drainStream(stream: ReadableStream<unknown>): Promise<void> {
+  const reader = stream.getReader();
+  while (!(await reader.read()).done) {
+    // drain: the assertions target the outgoing request, not the parsed chunks
+  }
+  reader.releaseLock();
+}
+
 function clearCloudEnv(): void {
   for (const key of CLOUD_ENV_KEYS) {
     try {
@@ -396,6 +404,55 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(model.modelProvider, "anthropic");
   });
 
+  it("routes veryfront-cloud anthropic requests through the guarded gateway fetch", async () => {
+    setCloudBootstrap();
+    let capturedRequest: Request | undefined;
+
+    installMockFetch(
+      ((input: URL | Request | string, init?: RequestInit) => {
+        capturedRequest = new Request(input, init);
+
+        return Promise.resolve(
+          new Response(
+            [
+              'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":1}}}\n\n',
+              'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n',
+              'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+            ].join(""),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+        );
+      }) as typeof fetch,
+    );
+
+    const model = resolveModel("veryfront-cloud/anthropic/claude-sonnet-4-6");
+    const { stream } = await model.doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+    });
+    await drainStream(stream);
+
+    assertEquals(
+      capturedRequest?.url.startsWith("https://api.veryfront.com/ai/gateway/anthropic/v1"),
+      true,
+      "the anthropic runtime must be pointed at the Veryfront Cloud anthropic gateway",
+    );
+    assertEquals(
+      capturedRequest?.headers.get("authorization"),
+      "Bearer vf_test_provider",
+      "the anthropic runtime must send the Veryfront token as Bearer auth, not native auth",
+    );
+    assertEquals(
+      capturedRequest?.headers.get("x-veryfront-project-slug"),
+      "provider-test-project",
+      "the guarded gateway fetch must stamp the bootstrap project slug on anthropic requests",
+    );
+    assertEquals(
+      capturedRequest?.headers.get("x-api-key"),
+      null,
+      "the Veryfront token must never leak through Anthropic's native x-api-key header",
+    );
+  });
+
   it("resolves veryfront-cloud google models without project ext-llm-google installed", () => {
     setCloudBootstrap();
 
@@ -408,6 +465,60 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(typeof model.doStream, "function");
     assertEquals(model._generateViaStream, true);
     assertEquals(model.modelProvider, "google");
+  });
+
+  it("routes veryfront-cloud google requests through the guarded gateway fetch", async () => {
+    setCloudBootstrap();
+    const encoder = new TextEncoder();
+    let capturedRequest: Request | undefined;
+
+    installMockFetch(
+      ((input: URL | Request | string, init?: RequestInit) => {
+        capturedRequest = new Request(input, init);
+
+        return Promise.resolve(
+          new Response(
+            readableStreamFrom([
+              encoder.encode(
+                'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Hello"}]}}]}\n\n',
+              ),
+              encoder.encode(
+                'data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1,"totalTokenCount":2}}\n\n',
+              ),
+              encoder.encode("data: [DONE]\n\n"),
+            ]),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+        );
+      }) as typeof fetch,
+    );
+
+    const model = resolveModel("veryfront-cloud/google-ai-studio/gemini-2.5-flash");
+    const { stream } = await model.doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+    });
+    await drainStream(stream);
+
+    assertEquals(
+      capturedRequest?.url.startsWith("https://api.veryfront.com/ai/gateway/google/v1beta"),
+      true,
+      "the google runtime must be pointed at the Veryfront Cloud google gateway",
+    );
+    assertEquals(
+      capturedRequest?.headers.get("authorization"),
+      "Bearer vf_test_provider",
+      "the google runtime must send the Veryfront token as Bearer auth, not native auth",
+    );
+    assertEquals(
+      capturedRequest?.headers.get("x-veryfront-project-slug"),
+      "provider-test-project",
+      "the guarded gateway fetch must stamp the bootstrap project slug on google requests",
+    );
+    assertEquals(
+      capturedRequest?.headers.get("x-goog-api-key"),
+      null,
+      "the Veryfront token must never leak through Google's native x-goog-api-key header",
+    );
   });
 
   it("resolves direct anthropic models through the built-in provider", () => {

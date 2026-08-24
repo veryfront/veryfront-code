@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { register, unregister } from "#veryfront/extensions/contracts.ts";
 import type { RedisClient, RedisRuntimeProvider } from "#veryfront/extensions/distributed";
 import { RedisRuntimeProviderName } from "#veryfront/extensions/distributed";
@@ -99,6 +100,115 @@ describe("shared Redis client facade", () => {
       await disconnectRedisClient();
       await assertRejects(() => pending, Error, "acquisition cancelled");
       assertEquals(disconnects, 1);
+    } finally {
+      unregister(RedisRuntimeProviderName);
+      await disconnectRedisClient();
+    }
+  });
+
+  it("defers an acquisition issued while a disconnect is in flight", async () => {
+    const order: string[] = [];
+    let disconnects = 0;
+    let releaseDisconnect: (() => void) | undefined;
+    const provider = createProvider("teardown-race", {
+      getClient: () => {
+        order.push("getClient");
+        return Promise.resolve(createClient());
+      },
+      disconnectClient: () => {
+        disconnects++;
+        // Only the first teardown is gated; later cleanup calls resolve at once.
+        if (disconnects > 1) return Promise.resolve();
+        order.push("disconnectClient");
+        return new Promise<void>((resolve) => {
+          releaseDisconnect = () => {
+            releaseDisconnect = undefined;
+            order.push("disconnected");
+            resolve();
+          };
+        });
+      },
+    });
+
+    register(RedisRuntimeProviderName, provider);
+    try {
+      const teardown = disconnectRedisClient();
+      const reacquired = getRedisClient();
+
+      await waitFor(() => releaseDisconnect !== undefined, {
+        message: "disconnectClient was never called",
+      });
+      assertEquals(
+        order,
+        ["disconnectClient"],
+        "no acquisition may reach the provider while teardown is in flight",
+      );
+
+      releaseDisconnect?.();
+      await teardown;
+      await reacquired;
+
+      assertEquals(
+        order,
+        ["disconnectClient", "disconnected", "getClient"],
+        "an acquisition issued during teardown must wait for the disconnect to finish",
+      );
+    } finally {
+      // Ungate the teardown even when an assertion failed, so cleanup can run.
+      releaseDisconnect?.();
+      unregister(RedisRuntimeProviderName);
+      await disconnectRedisClient();
+    }
+  });
+
+  it("aggregates failures from every owner that could not disconnect", async () => {
+    let firstDisconnects = 0;
+    let secondDisconnects = 0;
+    const first = createProvider("aggregate-first", {
+      disconnectClient: () => {
+        firstDisconnects++;
+        return firstDisconnects === 1
+          ? Promise.reject(new Error("first disconnect failed"))
+          : Promise.resolve();
+      },
+    });
+    const second = createProvider("aggregate-second", {
+      disconnectClient: () => {
+        secondDisconnects++;
+        return secondDisconnects === 1
+          ? Promise.reject(new Error("second disconnect failed"))
+          : Promise.resolve();
+      },
+    });
+
+    register(RedisRuntimeProviderName, first);
+    try {
+      await getRedisClient();
+      register(RedisRuntimeProviderName, second);
+      await getRedisClient();
+
+      const error = await assertRejects(
+        () => disconnectRedisClient(),
+        AggregateError,
+        "Redis shared client disconnect failed",
+      );
+      assertEquals(
+        (error as AggregateError).errors.length,
+        2,
+        "every failed owner is reported",
+      );
+
+      await disconnectRedisClient();
+      assertEquals(
+        firstDisconnects,
+        2,
+        "failed owners are retained and retried",
+      );
+      assertEquals(
+        secondDisconnects,
+        2,
+        "failed owners are retained and retried",
+      );
     } finally {
       unregister(RedisRuntimeProviderName);
       await disconnectRedisClient();

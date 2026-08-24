@@ -7,6 +7,25 @@ import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensi
 import { embedding } from "./embedding.ts";
 import { clearEmbeddingProviders, registerEmbeddingProvider } from "./resolve.ts";
 
+function recordingEmbeddingModel(calls: string[][]) {
+  return {
+    specificationVersion: "v2",
+    provider: "test",
+    modelId: "test/demo",
+    maxEmbeddingsPerCall: undefined,
+    supportsParallelCalls: true,
+    async doEmbed({ values: inputValues }: { values: string[] }) {
+      calls.push([...inputValues]);
+      return {
+        embeddings: inputValues.map((_value, index) => [index]),
+        usage: { tokens: 0 },
+        rawResponse: undefined,
+        warnings: [],
+      };
+    },
+  };
+}
+
 describe("embedding", () => {
   afterEach(() => {
     restoreMockFetch();
@@ -70,6 +89,55 @@ describe("embedding", () => {
 
     assertEquals(result, [1, 2, 3]);
     assertEquals(values, ["search_query: cats"]);
+  });
+
+  it("applies documentPrefix to every embedMany value", async () => {
+    const calls: string[][] = [];
+    registerEmbeddingProvider("test", () => recordingEmbeddingModel(calls) as never);
+
+    const embedder = embedding({
+      model: "test/demo",
+      documentPrefix: "search_document: ",
+    });
+
+    await embedder.embedMany(["a", "b"]);
+
+    assertEquals(
+      calls,
+      [["search_document: a", "search_document: b"]],
+      "embedMany must apply documentPrefix to every value",
+    );
+  });
+
+  it("chunks embedMany input at batchSize and concatenates in input order", async () => {
+    const calls: string[][] = [];
+    registerEmbeddingProvider("test", () => recordingEmbeddingModel(calls) as never);
+
+    const embedder = embedding({ model: "test/demo", batchSize: 2 });
+
+    const result = await embedder.embedMany(["a", "b", "c"]);
+
+    assertEquals(
+      calls.map((call) => call.length),
+      [2, 1],
+      "embedMany must chunk at batchSize",
+    );
+    assertEquals(result.length, 3, "chunked embeddings must be concatenated in input order");
+    assertEquals(result, [[0], [1], [0]], "each chunk's embeddings must be appended in order");
+  });
+
+  it("returns an empty result for empty embedMany input without calling the provider", async () => {
+    const calls: string[][] = [];
+    registerEmbeddingProvider("test", () => recordingEmbeddingModel(calls) as never);
+
+    const embedder = embedding({ model: "test/demo" });
+
+    assertEquals(
+      await embedder.embedMany([]),
+      [],
+      "empty input must return [] without calling the provider",
+    );
+    assertEquals(calls.length, 0, "empty input must not reach the provider");
   });
 
   it("keeps auto-initialized Google embeddings on the captured guarded transport", async () => {

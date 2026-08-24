@@ -243,6 +243,32 @@ describe("ApiRouteMatcher - Route Priority", () => {
       assertEquals(match.params, { id: "123" });
     });
 
+    it("should prefer the deeper catch-all regardless of registration order", () => {
+      for (const shallowFirst of [true, false]) {
+        const router = createRouter();
+        const register: Array<[string, string]> = [
+          ["/docs/[...slug]", "/pages/docs/[...slug].ts"],
+          ["/docs/guide/[...slug]", "/pages/docs/guide/[...slug].ts"],
+        ];
+        for (const [pattern, page] of shallowFirst ? register : [...register].reverse()) {
+          router.addRoute(pattern, page);
+        }
+
+        const match = router.match("/docs/guide/intro");
+        assertExists(match);
+        assertEquals(
+          match.route.pattern,
+          "/docs/guide/[...slug]",
+          "the deeper catch-all wins regardless of registration order",
+        );
+        assertEquals(
+          match.params.slug,
+          ["intro"],
+          "the deeper catch-all consumes only the trailing segment",
+        );
+      }
+    });
+
     it("should prefer [param] over [...slug]", () => {
       const router = createRouter();
       router.addRoute("/docs/[...slug]", "/pages/docs/[...slug].ts");

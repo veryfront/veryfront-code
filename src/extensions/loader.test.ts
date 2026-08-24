@@ -7,6 +7,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import { ExtensionLoader } from "./loader.ts";
 import {
   register,
@@ -855,15 +856,34 @@ describe("ExtensionLoader", () => {
     });
 
     it("should disable timeout when setupTimeoutMs is 0", async () => {
-      // A setup that takes longer than a tight timeout would catch,
-      // but we call with 0 (disabled) so it must not throw.
+      // A setup held open past the 30 s default deadline proves that 0 arms no
+      // deadline at all, rather than quietly falling back to the default.
+      using time = new FakeTime();
+      const gate = Promise.withResolvers<void>();
       const slow = makeExt("slow", {
-        setup: () => new Promise<void>((resolve) => setTimeout(resolve, 20)),
+        setup: () => gate.promise,
       });
 
       const loader = new ExtensionLoader(noopLogger);
-      // With a 5 ms timeout this would fail; with 0 (disabled) it must succeed.
-      await loader.setupAll([makeResolved(slow)], {}, { setupTimeoutMs: 0 });
+      let settled: "resolved" | "rejected" | undefined;
+      const setupAll = loader.setupAll([makeResolved(slow)], {}, { setupTimeoutMs: 0 })
+        .then(() => {
+          settled = "resolved";
+        }, () => {
+          settled = "rejected";
+        });
+
+      await time.tickAsync(120_000);
+      assertEquals(
+        settled,
+        undefined,
+        "setupTimeoutMs 0 must arm no deadline, even past the 30s default",
+      );
+
+      gate.resolve();
+      await setupAll;
+      assertEquals(settled, "resolved", "setup must complete once released");
+      await loader.teardownAll();
     });
   });
 
@@ -1496,6 +1516,21 @@ describe("ExtensionLoader", () => {
         () => loader.flattenPresets([makeResolved(preset)]),
         Error,
         "nesting exceeds 32 levels",
+      );
+    });
+
+    it("bounds total preset graph work when subgraphs are shared across siblings", () => {
+      // Sibling repetition of one extension object is legal, so a graph well
+      // inside the depth and children limits can still expand without bound.
+      const leaf = makeExt("leaf");
+      const mid = makeExt("mid", { extends: Array.from({ length: 256 }, () => leaf) });
+      const top = makeExt("top", { extends: Array.from({ length: 20 }, () => mid) });
+
+      const loader = new ExtensionLoader(noopLogger);
+      assertThrows(
+        () => loader.flattenPresets([makeResolved(top)]),
+        Error,
+        "graph exceeds 4096 nodes",
       );
     });
   });

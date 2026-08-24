@@ -503,8 +503,15 @@ describe("ViewportPrefetch", () => {
 
       viewportPrefetch.setup(createMockRoot<Document>([]));
       viewportPrefetch.disconnect();
+
+      mocks.reset();
       viewportPrefetch.disconnect();
 
+      assertEquals(
+        mocks.isDisconnectCalled(),
+        false,
+        "disconnect must clear the observer reference so a second call short-circuits",
+      );
       mocks.cleanup();
     });
 

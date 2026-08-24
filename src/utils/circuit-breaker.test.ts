@@ -107,6 +107,32 @@ describe("CircuitBreaker", () => {
     assertEquals(cb.getState(), "OPEN");
   });
 
+  it("caps concurrent HALF_OPEN probes", async () => {
+    const cb = new CircuitBreaker({
+      failureThreshold: 1,
+      resetTimeoutMs: 1,
+      name: "test-halfopen-cap",
+    });
+
+    await ignoreRejection(cb.execute(() => Promise.reject(new Error("fail"))));
+    await sleep(10);
+
+    // MAX_HALF_OPEN_ATTEMPTS probes stay in flight, so the next caller is the
+    // one that must be turned away instead of piling onto a sick dependency.
+    const gates = Array.from({ length: 3 }, () => Promise.withResolvers<string>());
+    const probes = gates.map((gate) => cb.execute(() => gate.promise));
+
+    await assertRejects(() => cb.execute(() => Promise.resolve("extra")), CircuitBreakerOpen);
+    assertEquals(
+      cb.getState(),
+      "OPEN",
+      "exceeding MAX_HALF_OPEN_ATTEMPTS must reopen the breaker",
+    );
+
+    for (const gate of gates) gate.resolve("ok");
+    await Promise.all(probes.map(ignoreRejection));
+  });
+
   it("should reset failure count on success", async () => {
     const cb = new CircuitBreaker({ failureThreshold: 3, name: "test-reset" });
 

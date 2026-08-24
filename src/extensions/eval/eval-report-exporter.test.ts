@@ -295,6 +295,26 @@ describe("EvalReportExporterRegistry", () => {
     );
   });
 
+  it("register is first-write-wins for duplicate exporter ids", () => {
+    const registry = createEvalReportExporterRegistry();
+    const first = { id: "braintrust", export() {} };
+    const second = { id: "braintrust", export() {} };
+
+    registry.register(first);
+    registry.register(second);
+
+    assertEquals(
+      registry.get("braintrust"),
+      first,
+      "duplicate registration must not replace the first exporter",
+    );
+    assertEquals(
+      registry.list().length,
+      1,
+      "a duplicate exporter id must not add a second registration",
+    );
+  });
+
   it("redacts export context metadata unless keys are explicitly allowed", async () => {
     const registry = createEvalReportExporterRegistry();
     const exportedContexts: unknown[] = [];
@@ -334,6 +354,8 @@ describe("EvalReportExporterRegistry", () => {
         context.redaction.includeInputs = true;
         context.redaction.metadataAllowlist?.push("tenantId");
         context.metadata = { tenantId: "mutated" };
+        context.tags?.push("leaked");
+        if (context.trace) context.trace.traceId = "leaked";
       },
     });
     registry.register({
@@ -345,6 +367,8 @@ describe("EvalReportExporterRegistry", () => {
     });
 
     const context = {
+      tags: ["nightly"],
+      trace: { traceId: "trace-1", spanId: "span-1" },
       metadata: {
         topic: "planning",
         tenantId: "tenant-secret",
@@ -360,11 +384,15 @@ describe("EvalReportExporterRegistry", () => {
     assertEquals(exportedRecord.metadata, { topic: "planning" });
     assertEquals(exportedContexts, [
       {
+        tags: ["nightly"],
+        trace: { traceId: "trace-1", spanId: "span-1" },
         metadata: { topic: "planning" },
         redaction: { metadataAllowlist: ["topic"] },
       },
     ]);
     assertEquals(context, {
+      tags: ["nightly"],
+      trace: { traceId: "trace-1", spanId: "span-1" },
       metadata: {
         topic: "planning",
         tenantId: "tenant-secret",
@@ -424,6 +452,16 @@ describe("EvalReportExporterRegistry", () => {
       output: "The plan changed.",
       reference: "Plan update",
     });
+    assertEquals(
+      record.metrics?.[0]?.label,
+      'Answer contained "the private launch codename"',
+      "metric label must survive when includeMetricEvidence allows evidence",
+    );
+    assertEquals(
+      redacted.summary.metrics[0]?.label,
+      'Answer contained "the private launch codename"',
+      "summary metric label must survive when includeMetricEvidence allows evidence",
+    );
     assertEquals(redacted.dataset, {
       kind: "json",
       path: "private/evals/deep-research.json",

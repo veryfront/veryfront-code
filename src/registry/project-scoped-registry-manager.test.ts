@@ -1,6 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd";
-import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert";
 import {
   buildVersionedRegistryScopeId,
   runWithCacheKeyContext,
@@ -961,6 +967,7 @@ describe("ProjectScopedRegistryManager transactions", () => {
 
   it("discards staged mutations when the transaction fails", async () => {
     const manager = new ProjectScopedRegistryManager<string>("skill");
+    const lateWrite = Promise.withResolvers<unknown>();
     runWithCacheKeyContext(scope, () => manager.register("stable-skill", "stable"));
 
     await assertRejects(
@@ -971,6 +978,16 @@ describe("ProjectScopedRegistryManager transactions", () => {
             runWithRegistryTransaction(async () => {
               manager.clear();
               manager.register("partial-skill", "partial");
+              setTimeout(() => {
+                try {
+                  manager.register("late-skill", "late");
+                  lateWrite.reject(
+                    new Error("descendant write inside an aborted transaction must throw"),
+                  );
+                } catch (error) {
+                  lateWrite.resolve(error);
+                }
+              }, 0);
               throw new Error("discovery failed");
             }),
         ),
@@ -978,9 +995,21 @@ describe("ProjectScopedRegistryManager transactions", () => {
       "discovery failed",
     );
 
+    const rejection = await lateWrite.promise;
+    assertStringIncludes(
+      String((rejection as Error).message),
+      "Registry transaction already aborted",
+      "a write from an async descendant of an aborted transaction must be rejected, not routed to the live registry",
+    );
+
     runWithCacheKeyContext(scope, () => {
       assertEquals(manager.get("stable-skill"), "stable");
       assertEquals(manager.get("partial-skill"), undefined);
+      assertEquals(
+        manager.get("late-skill"),
+        undefined,
+        "an aborted transaction's descendant must not publish into the live scope",
+      );
     });
   });
 

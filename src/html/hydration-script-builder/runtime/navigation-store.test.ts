@@ -19,6 +19,28 @@ async function withCleanRegistry(run: () => void | Promise<void>): Promise<void>
   }
 }
 
+/**
+ * `globalThis.location` is an own writable, configurable property under Deno
+ * whose value is undefined, so a test can define a stub and restore the
+ * original descriptor afterwards.
+ */
+async function withLocation(
+  value: unknown,
+  run: () => void | Promise<void>,
+): Promise<void> {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "location");
+  Object.defineProperty(globalThis, "location", { value, writable: true, configurable: true });
+  try {
+    await run();
+  } finally {
+    if (original) {
+      Object.defineProperty(globalThis, "location", original);
+    } else {
+      delete (globalThis as unknown as Record<string, unknown>).location;
+    }
+  }
+}
+
 describe("hydration-script-builder/runtime/navigation-store", () => {
   it("uses the router asset's own export when it has one", () => {
     const store = { subscribe: () => () => {} } as unknown as NavigationStore;
@@ -37,6 +59,11 @@ describe("hydration-script-builder/runtime/navigation-store", () => {
 
       assertEquals(resolved.usesRegistryFallback, true);
       assertEquals(resolved.getNavigationStore() === resolved.getNavigationStore(), true);
+      assertEquals(
+        (globalThis as unknown as StoreRegistry)[REGISTRY_KEY] === resolved.getNavigationStore(),
+        true,
+        "the fallback store must be published under the shared registry symbol so a pinned router asset binds to the same object",
+      );
     });
   });
 
@@ -97,6 +124,47 @@ describe("hydration-script-builder/runtime/navigation-store", () => {
       await store.navigate("/docs", { history: "push" });
 
       assertEquals(navigated, [{ href: "/docs", options: { history: "push" } }]);
+    });
+  });
+
+  it("reports the full location href including search and hash", async () => {
+    await withCleanRegistry(async () => {
+      await withLocation({ pathname: "/docs", search: "?q=1", hash: "#top" }, () => {
+        assertEquals(
+          resolveNavigationStore({}).getNavigationStore().getHref(),
+          "/docs?q=1#top",
+          "getHref must include search and hash so search-only navigations change the snapshot",
+        );
+      });
+    });
+  });
+
+  it('falls back to "/" when there is no location', async () => {
+    await withCleanRegistry(async () => {
+      await withLocation(undefined, () => {
+        assertEquals(
+          resolveNavigationStore({}).getNavigationStore().getHref(),
+          "/",
+          "getHref must fall back to the documented root path off-document",
+        );
+      });
+    });
+  });
+
+  it("falls back to a document navigation before a navigator is registered", async () => {
+    await withCleanRegistry(async () => {
+      const assigned: string[] = [];
+
+      await withLocation({ assign: (href: string) => assigned.push(href) }, async () => {
+        const store = resolveNavigationStore({}).getNavigationStore();
+        await store.navigate("/docs");
+      });
+
+      assertEquals(
+        assigned,
+        ["/docs"],
+        "navigate must fall back to a real page load until a navigator registers",
+      );
     });
   });
 });

@@ -374,6 +374,90 @@ describe("internal-agents/schema", () => {
     );
   });
 
+  it("caps runtime collections on control-plane stream requests", () => {
+    const base = {
+      agentId: "agent_1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
+      agentSource: { type: "branch", branch: "main" },
+      messages: [],
+    };
+    const messages = (count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        id: `m${index}`,
+        role: "user" as const,
+        parts: [],
+      }));
+    const tools = (count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        name: `tool_${index}`,
+        parameters: {},
+      }));
+    const context = (count: number) =>
+      Array.from({ length: count }, () => ({ type: "text" as const, text: "x" }));
+
+    assertEquals(
+      getInternalAgentStreamRequestSchema().parse({ ...base, messages: messages(100) })
+        .messages.length,
+      100,
+      "the message cap itself must still parse",
+    );
+    assertThrows(
+      () => getInternalAgentStreamRequestSchema().parse({ ...base, messages: messages(101) }),
+      Error,
+      "expected array to have <=100 items",
+    );
+
+    assertEquals(
+      getInternalAgentStreamRequestSchema().parse({ ...base, tools: tools(50) }).tools.length,
+      50,
+      "the injected tool cap itself must still parse",
+    );
+    assertThrows(
+      () => getInternalAgentStreamRequestSchema().parse({ ...base, tools: tools(51) }),
+      Error,
+      "expected array to have <=50 items",
+    );
+
+    assertEquals(
+      getInternalAgentStreamRequestSchema().parse({ ...base, context: context(10) })
+        .context.length,
+      10,
+      "the context cap itself must still parse",
+    );
+    assertThrows(
+      () => getInternalAgentStreamRequestSchema().parse({ ...base, context: context(11) }),
+      Error,
+      "expected array to have <=10 items",
+    );
+  });
+
+  it("rejects agent ids outside the id character and length contract", () => {
+    const base = {
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
+      agentSource: { type: "branch", branch: "main" },
+      messages: [],
+    };
+
+    for (const agentId of ["../escape", "agents/one", "agent id", "", "a".repeat(129)]) {
+      assertThrows(
+        () => getInternalAgentStreamRequestSchema().parse({ ...base, agentId }),
+        Error,
+        undefined,
+        `agentId ${JSON.stringify(agentId)} must be rejected`,
+      );
+    }
+
+    assertEquals(
+      getInternalAgentStreamRequestSchema().parse({ ...base, agentId: "agent_1-2" }).agentId,
+      "agent_1-2",
+      "ids inside the contract must still parse",
+    );
+  });
+
   it("rejects mismatched agent config on control-plane stream payloads", () => {
     assertThrows(
       () =>

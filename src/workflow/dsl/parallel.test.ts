@@ -3,6 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * Parallel DSL Tests
  */
 
+import { VeryfrontError } from "#veryfront/errors";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parallel } from "./parallel.ts";
@@ -57,8 +58,16 @@ describe("parallel()", () => {
   it("should throw for empty children array", () => {
     assertThrows(
       () => parallel("empty", []),
-      Error,
+      VeryfrontError,
       "must have at least one child node",
+    );
+  });
+
+  it("rejects a child without an id", () => {
+    assertThrows(
+      () => parallel("invalid", [{ ...step("child", { agent: "a" }), id: "" }]),
+      VeryfrontError,
+      "has invalid ID",
     );
   });
 
@@ -90,6 +99,17 @@ describe("parallel()", () => {
     const node = parallel("test", [step("a", { agent: "a" })]);
 
     assertEquals(getConfig(node).strategy, "all");
+    assertEquals(
+      getConfig(node).checkpoint,
+      true,
+      "a parallel batch must checkpoint by default so a resume does not repeat the fan-out",
+    );
+  });
+
+  it("should allow checkpoint false", () => {
+    const node = parallel("test", [step("a", { agent: "a" })], { checkpoint: false });
+
+    assertEquals(getConfig(node).checkpoint, false);
   });
 
   it("should support timeout option", () => {

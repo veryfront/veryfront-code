@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import type { OptimizedImageMetadata } from "../asset-pipeline/image-optimizer/types.ts";
 import {
   calculateAspectRatio,
@@ -94,14 +95,19 @@ describe("build/utils/asset-utils", () => {
 
   describe("getVariantPath", () => {
     it("should generate variant path with size and format", () => {
-      const result = getVariantPath("/out", "images/hero.jpg", "webp", 800);
-      assertEquals(result.includes("hero-800w.webp"), true);
+      assertEquals(
+        getVariantPath("/out", "images/hero.jpg", "webp", 800),
+        join("/out", "images", "hero-800w.webp"),
+        "variant path must be rooted at outputDir",
+      );
     });
 
     it("should preserve directory structure", () => {
-      const result = getVariantPath("/out", "deep/nested/img.png", "avif", 400);
-      assertEquals(result.includes("deep/nested/"), true);
-      assertEquals(result.includes("img-400w.avif"), true);
+      assertEquals(
+        getVariantPath("/out", "deep/nested/img.png", "avif", 400),
+        join("/out", "deep", "nested", "img-400w.avif"),
+        "variant path must preserve source directories under outputDir",
+      );
     });
   });
 

@@ -48,6 +48,16 @@ describe("middleware/core/pipeline/executor", () => {
       assertEquals(body.error, "Internal Server Error");
       assertEquals(body.method, "GET");
       assertEquals(body.url, "http://localhost/");
+      assertEquals(
+        body.message,
+        undefined,
+        "error message must be redacted when no adapter reports NODE_ENV",
+      );
+      assertEquals(
+        body.stack,
+        undefined,
+        "stack must be redacted when no adapter reports NODE_ENV",
+      );
     });
 
     it("should include error details in development mode", async () => {
@@ -152,17 +162,43 @@ describe("middleware/core/pipeline/executor", () => {
       assertEquals(res.status, 500);
       const body = await res.json();
       assertEquals(body.error, "Internal Server Error");
+      assertEquals(
+        body.message,
+        undefined,
+        "error message must be redacted when no adapter reports NODE_ENV",
+      );
+      assertEquals(
+        body.stack,
+        undefined,
+        "stack must be redacted when no adapter reports NODE_ENV",
+      );
     });
 
     it("should handle async middleware that rejects", async () => {
-      const handler: MiddlewareHandler = () => {
-        throw new Error("async fail");
-      };
+      const handler: MiddlewareHandler = () => Promise.reject(new Error("async fail"));
       const res = await executeMiddlewarePipeline(
         new Request("http://localhost/"),
         handler,
       );
       assertEquals(res.status, 500);
+      assertEquals(
+        (await res.json()).error,
+        "Internal Server Error",
+        "a rejected middleware promise must be converted to the 500 JSON body, not rethrown",
+      );
+    });
+
+    it("should await an async middleware that resolves a Response", async () => {
+      const handler: MiddlewareHandler = () => Promise.resolve(new Response("async ok"));
+      const res = await executeMiddlewarePipeline(
+        new Request("http://localhost/"),
+        handler,
+      );
+      assertEquals(
+        await res.text(),
+        "async ok",
+        "the pipeline must await the middleware result instead of leaking a promise",
+      );
     });
   });
 });

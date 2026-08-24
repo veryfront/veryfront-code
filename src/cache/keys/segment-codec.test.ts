@@ -89,6 +89,33 @@ describe("cache key base64url segment codec", () => {
     assertEquals(encodings.every((value) => /^[A-Za-z0-9_-]+$/.test(value)), true);
     assertNotEquals(encodeCacheKeySegment("\ud800"), encodeCacheKeySegment("�"));
   });
+
+  it("rejects malformed and non-canonical base64url encodings", () => {
+    const toBase64Url = (binary: string) =>
+      btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+
+    for (
+      const [encoded, reason] of [
+        ["a", "a base64url length of one modulo four must be refused"],
+        ["a+b/c", "standard base64 characters must be refused"],
+        ["a=", "padding characters must be refused"],
+        [
+          toBase64Url(String.fromCharCode(0xff, 0xfe)),
+          "invalid UTF-8 bytes must be refused",
+        ],
+        [
+          toBase64Url("123"),
+          "a non-string JSON payload must not decode to a tenant identifier",
+        ],
+        [
+          toBase64Url("null"),
+          "a non-string JSON payload must not decode to a tenant identifier",
+        ],
+      ] as const
+    ) {
+      assertEquals(decodeCacheKeySegment(encoded), null, reason);
+    }
+  });
 });
 
 describe("cache key percent segment codec", () => {

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
@@ -149,6 +149,7 @@ describe("build/bundler/code-splitter/splitter", () => {
           pagePath,
           [
             `import { notFound } from "veryfront";`,
+            `import "vf-external-probe";`,
             `import { hashSecret } from "./server-helper.ts";`,
             `export async function getServerData() {`,
             `  if (!hashSecret("candidate")) notFound();`,
@@ -173,12 +174,40 @@ describe("build/bundler/code-splitter/splitter", () => {
           mode: "production",
           routes: [{ path: "/", file: pagePath, name: "index" }],
           moduleResolution: "bundled",
+          external: ["vf-external-probe"],
         });
 
-        await splitter.split();
+        const result = await splitter.split();
         assertEquals(tryResolve("CodeParser") !== undefined, true);
         const browserOutputs = await readJsOutputs(outDir);
 
+        const routeEntries = Object.entries(result.manifest.routes);
+        assertEquals(
+          routeEntries.length,
+          1,
+          "the split must map the built route in its chunk manifest",
+        );
+        const route = routeEntries[0]?.[1];
+        assertExists(route, "the mapped route must carry chunk metadata");
+        assertExists(
+          result.manifest.chunks[route.entry],
+          "the route entry must be one of the emitted chunks",
+        );
+        assertEquals(
+          result.entries.has(route.entry),
+          true,
+          "the route entry chunk must be reported as an entry, not a shared chunk",
+        );
+        assertEquals(
+          result.shared.has(route.entry),
+          false,
+          "the route entry chunk must not also be reported as shared",
+        );
+        assertEquals(
+          browserOutputs.includes("vf-external-probe"),
+          true,
+          "externals declared on SplitOptions stay unbundled",
+        );
         assertEquals(browserOutputs.includes("browser page"), true);
         assertEquals(browserOutputs.includes("node:crypto"), false);
         assertEquals(browserOutputs.includes("createHash"), false);

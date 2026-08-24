@@ -789,6 +789,48 @@ describe("workflow/runtime/workflow-run-control reconcile", () => {
     assertEquals(persisted?.error, undefined);
   });
 
+  it("fails the run on a rejected approval and never resumes it", async () => {
+    const backend = new MemoryBackend();
+    const run = {
+      ...createRun("reconcile-rejected"),
+      status: "waiting" as const,
+      workerId: "run-execution:owner",
+    };
+    await backend.createRun(run);
+    const resumeCalls: Array<{ runId: string; expectedWorkerId?: string }> = [];
+
+    const outcome = await reconcileWorkflowRunControl({
+      backend,
+      operation: {
+        type: "approval-decision",
+        runId: run.id,
+        approvalId: "approval-x",
+        nodeId: "review",
+        decision: approvalDecision(false, "not ready"),
+        decidedAt: new Date("2026-01-01T00:00:00.000Z"),
+        maxAttempts: 3,
+        resume: (runId, expectedWorkerId) => {
+          resumeCalls.push({ runId, expectedWorkerId });
+          return Promise.resolve();
+        },
+      },
+    });
+
+    const persisted = await backend.getRun(run.id);
+    assertEquals(outcome.status, "reconciled");
+    assertEquals(persisted?.status, "failed", "a rejected approval fails the run");
+    assertEquals(
+      persisted?.error?.message,
+      'Approval "approval-x" was rejected: not ready',
+      "the rejection reason is persisted",
+    );
+    assertEquals(
+      resumeCalls,
+      [],
+      "a rejected approval must never resume execution past the gate",
+    );
+  });
+
   it("persists approval decisions against the current owner and retries on owner change", async () => {
     const backend = new ReconcileOwnerChangesBackend([
       "run-execution:owner-b",

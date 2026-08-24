@@ -195,6 +195,42 @@ describe("runtime-bridge", () => {
     assertEquals(dispatches, 0);
   });
 
+  it("rejects accessor-backed system content without invoking it", async () => {
+    let accessorCalls = 0;
+    let dispatches = 0;
+    const system = Object.defineProperty({ role: "system" }, "content", {
+      enumerable: true,
+      get() {
+        accessorCalls += 1;
+        return "must not run";
+      },
+    });
+    const model = createGenerateModel("test", "test/system-content", async () => {
+      dispatches += 1;
+      return {
+        content: [{ type: "text", text: "done" }],
+        finishReason: "stop",
+        usage: {},
+      };
+    });
+
+    for (const systemValue of [system, [system]]) {
+      await assertRejects(
+        async () =>
+          await generateText({
+            model,
+            system: systemValue,
+            messages: [{ role: "user", content: "Hello" }],
+          }),
+        TypeError,
+        "content must be an own enumerable data property",
+      );
+    }
+
+    assertEquals(accessorCalls, 0);
+    assertEquals(dispatches, 0);
+  });
+
   it("skips non-cloneable model context without failing model dispatch", async () => {
     const sensitiveValue = "CUSTOMER_SECRET_123";
     for (
@@ -236,20 +272,44 @@ describe("runtime-bridge", () => {
         };
       });
 
-      const result = await runWithRunEventSink(
-        () => {
-          sinkCalls += 1;
-        },
-        () =>
-          generateText({
-            model,
-            messages: testCase.messages,
-            tools: testCase.tools as never,
-          }),
-      );
+      const recorder = metricsManager.getRecorder();
+      const originalRecordError = recorder?.recordError;
+      const failureClasses: string[] = [];
+      if (recorder) {
+        recorder.recordError = (attributes) => {
+          if (
+            attributes?.slug === "model-call-context-clone-failed" &&
+            typeof attributes.failure_class === "string"
+          ) {
+            failureClasses.push(attributes.failure_class);
+          }
+        };
+      }
+
+      let result;
+      try {
+        result = await runWithRunEventSink(
+          () => {
+            sinkCalls += 1;
+          },
+          () =>
+            generateText({
+              model,
+              messages: testCase.messages,
+              tools: testCase.tools as never,
+            }),
+        );
+      } finally {
+        if (recorder && originalRecordError) recorder.recordError = originalRecordError;
+      }
       assertEquals(result.text, "dispatched");
       assertEquals(sinkCalls, 0);
       assertEquals(dispatches, 1);
+      assertEquals(
+        failureClasses,
+        ["DataCloneError"],
+        "a genuinely non-cloneable payload is classified as DataCloneError",
+      );
     }
   });
 
@@ -1098,6 +1158,77 @@ describe("runtime-bridge", () => {
     });
   });
 
+  it("forwards provider cost and billing telemetry from the flat usage branch", async () => {
+    const model = createGenerateModel("test", "test/flat-usage-billing", async () => ({
+      content: [{ type: "text", text: "billed" }],
+      finishReason: "stop",
+      usage: {
+        inputTokens: 3,
+        outputTokens: 4,
+        totalTokens: 7,
+        billableInputTokens: 3,
+        billableOutputTokens: 4,
+        costUsd: 0.0021,
+        providerCostUsd: 0.0018,
+        veryfrontChargeUsd: 0.0003,
+        costCredits: 2,
+        costSource: "gateway",
+        billingMode: "deferred",
+        usageCaptureStatus: "complete",
+      },
+    }));
+
+    const result = await generateText({
+      model,
+      messages: [{ role: "user", content: "Hello" }],
+    });
+
+    assertEquals(
+      result.usage,
+      {
+        inputTokens: 3,
+        outputTokens: 4,
+        totalTokens: 7,
+        billableInputTokens: 3,
+        billableOutputTokens: 4,
+        costUsd: 0.0021,
+        providerCostUsd: 0.0018,
+        veryfrontChargeUsd: 0.0003,
+        costCredits: 2,
+        costSource: "gateway",
+        billingMode: "deferred",
+        usageCaptureStatus: "complete",
+      },
+      "the flat usage branch forwards provider cost and billing telemetry",
+    );
+  });
+
+  it("drops flat usage billing labels outside the supported allowlists", async () => {
+    const model = createGenerateModel("test", "test/flat-usage-bogus-labels", async () => ({
+      content: [{ type: "text", text: "billed" }],
+      finishReason: "stop",
+      usage: {
+        inputTokens: 3,
+        outputTokens: 4,
+        totalTokens: 7,
+        costSource: "bogus",
+        billingMode: "bogus",
+        usageCaptureStatus: "bogus",
+      },
+    }));
+
+    const result = await generateText({
+      model,
+      messages: [{ role: "user", content: "Hello" }],
+    });
+
+    assertEquals(
+      result.usage,
+      { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
+      "unknown cost source, billing mode and capture status labels are not forwarded",
+    );
+  });
+
   it("forwards reasoning options to direct generate models", async () => {
     const model = createGenerateModel("test", "test/reasoning-generate", async (options) => {
       assertEquals(options.reasoning, { enabled: false });
@@ -1207,6 +1338,71 @@ describe("runtime-bridge", () => {
       outputTokens: 3,
       totalTokens: 7,
     });
+  });
+
+  it("buffers streamed tool results and tool errors for models that prefer streamed generate", async () => {
+    const model = {
+      ...createStreamModel("veryfront-cloud", "veryfront-cloud/anthropic/claude-test", async () => {
+        return {
+          stream: readableStreamFrom([
+            { type: "tool-result", toolCallId: "tool-1", toolName: "search", output: { ok: true } },
+            { type: "tool-error", toolCallId: "tool-2", toolName: "search", error: "boom" },
+            {
+              type: "finish",
+              finishReason: "tool-calls",
+              usage: { inputTokens: 4, outputTokens: 3 },
+            },
+          ]),
+        };
+      }),
+      _generateViaStream: true,
+    };
+
+    const result = await generateText({
+      model,
+      messages: [{ role: "user", content: "Search" }],
+      temperature: 0,
+    });
+
+    assertEquals(
+      result.toolResults,
+      [
+        { toolCallId: "tool-1", toolName: "search", result: { ok: true } },
+        { toolCallId: "tool-2", toolName: "search", result: "boom", isError: true },
+      ],
+      "buffered generate surfaces provider tool results and failures",
+    );
+  });
+
+  it("preserves a provider-reported total that differs from input plus output", async () => {
+    const model = createStreamModel("test", "test/authoritative-total", async () => ({
+      stream: readableStreamFrom([
+        { type: "text-delta", delta: "ok" },
+        {
+          type: "finish",
+          finishReason: { unified: "stop", raw: "stop" },
+          usage: { inputTokens: 2, outputTokens: 5, totalTokens: 11 },
+        },
+      ]),
+    }));
+
+    const result = streamText({
+      model,
+      messages: [{ role: "user", content: "Hello" }],
+      temperature: 0,
+    });
+
+    const fullStreamParts = await collectAsync(result.fullStream);
+
+    assertEquals(
+      fullStreamParts.at(-1),
+      {
+        type: "finish",
+        finishReason: "stop",
+        totalUsage: { inputTokens: 2, outputTokens: 5, totalTokens: 11 },
+      },
+      "a provider-reported total that differs from input plus output is preserved",
+    );
   });
 
   it("uses the direct stream path for models without tools", async () => {

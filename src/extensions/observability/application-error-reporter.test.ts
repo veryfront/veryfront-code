@@ -7,10 +7,33 @@ import {
   ApplicationErrorReporterInitializerName,
 } from "./index.ts";
 
+type CanonicalFieldParity<TExtension, TCanonical> = [keyof TExtension] extends [keyof TCanonical]
+  ? ([keyof TCanonical] extends [keyof TExtension] ? true : never)
+  : never;
+
 Deno.test("application-error initializer re-exports the canonical context contract", async () => {
+  const fieldParity: CanonicalFieldParity<
+    ApplicationErrorContext,
+    CanonicalApplicationErrorContext
+  > = true;
+  if (!fieldParity) {
+    throw new Error(
+      "the extension entry point must re-export the canonical ApplicationErrorContext, not a local duplicate",
+    );
+  }
+
+  // Annotated as a literal so excess-property checking fails the typecheck if
+  // the re-exported context ever drops one of the canonical fields.
   const extensionContext: ApplicationErrorContext = {
     boundary: "worker.request",
+    method: "POST",
     processRole: "worker",
+    requestId: "req-1",
+    spanId: "span-1",
+    traceId: "trace-1",
+    errorClass: "tenant-build",
+    level: "error",
+    attributes: { tenant: "acme", attempt: 2, retried: true },
   };
   const canonicalContext: CanonicalApplicationErrorContext = extensionContext;
   const roundTripContext: ApplicationErrorContext = canonicalContext;

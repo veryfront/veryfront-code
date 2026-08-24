@@ -199,6 +199,55 @@ describe("workflow definition snapshot", () => {
     assertEquals(config._waitKind, "event");
   });
 
+  it("refuses a forged delay marker on a wait that is not the reserved delay event", () => {
+    assertThrows(
+      () =>
+        captureWorkflowDefinition(workflowWith({
+          id: "forged-event",
+          config: {
+            type: "wait",
+            waitType: "event",
+            eventName: "user-approved",
+            _waitKind: "delay",
+            checkpoint: true,
+          },
+        } as unknown as WorkflowNode)),
+      Error,
+      "delay marker requires the reserved delay event name",
+    );
+    assertThrows(
+      () =>
+        captureWorkflowDefinition(workflowWith({
+          id: "forged-approval",
+          config: {
+            type: "wait",
+            waitType: "approval",
+            _waitKind: "delay",
+            checkpoint: true,
+          },
+        } as unknown as WorkflowNode)),
+      Error,
+      "delay marker requires the reserved delay event name",
+    );
+  });
+
+  it("keeps the delay marker on the reserved delay event", () => {
+    const captured = captureWorkflowDefinition(workflowWith({
+      id: "real-delay",
+      config: {
+        type: "wait",
+        waitType: "event",
+        eventName: "__delay__",
+        _waitKind: "delay",
+        checkpoint: true,
+      },
+    } as unknown as WorkflowNode));
+    assert(Array.isArray(captured.steps));
+    const config = captured.steps[0]?.config as WaitNodeConfig & { _waitKind?: string };
+
+    assertEquals(config._waitKind, "delay", "the reserved delay event keeps its delay marker");
+  });
+
   it("rejects Proxy callbacks without invoking them", () => {
     let calls = 0;
     const builder = new Proxy(() => [step()], {

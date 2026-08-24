@@ -20,8 +20,12 @@ import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { EXPERIMENTAL_INTEGRATIONS_ENV } from "./feature-flags.ts";
 import { createLocalIntegrationToolSource, getConnector } from "./index.ts";
 import { HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV } from "./local-credential-host-policy.ts";
+import { MAX_LOCAL_INTEGRATION_TOOLS } from "./limits.ts";
 import type { LocalIntegrationEndpointTransport } from "./local-endpoint-executor.ts";
-import { _createLocalIntegrationToolSourceForTesting } from "./local-tool-source.ts";
+import {
+  _createLocalIntegrationToolSourceForTesting,
+  type LocalIntegrationToolSourceOptions,
+} from "./local-tool-source.ts";
 
 const TEST_CREDENTIAL = "LOCAL_INTEGRATION_SECRET_MUST_NOT_LEAK";
 const testCredentialProvider = () => TEST_CREDENTIAL;
@@ -314,6 +318,50 @@ describe("createLocalIntegrationToolSource", () => {
       });
       await duplicateSource.listTools();
     }, "duplicate");
+  });
+
+  it("rejects malformed source options", async () => {
+    await assertConfigurationError(async () => {
+      const oversizedSource = createLocalIntegrationToolSource({
+        tools: Array.from(
+          { length: MAX_LOCAL_INTEGRATION_TOOLS + 1 },
+          (_unused, index) => `vercel__list_projects_${index}`,
+        ),
+        credentialProvider: testCredentialProvider,
+      });
+      await oversizedSource.listTools();
+    }, `${MAX_LOCAL_INTEGRATION_TOOLS} tool limit`);
+
+    await assertConfigurationError(async () => {
+      const emptySource = createLocalIntegrationToolSource({
+        tools: [],
+        credentialProvider: testCredentialProvider,
+      });
+      await emptySource.listTools();
+    }, "at least one");
+
+    await assertConfigurationError(async () => {
+      const providerSource = createLocalIntegrationToolSource(
+        {
+          tools: ["vercel__list_projects"],
+          credentialProvider: "nope",
+        } as unknown as LocalIntegrationToolSourceOptions,
+      );
+      await providerSource.listTools();
+    }, "credentialProvider must be a function");
+
+    const accessorOptions = { credentialProvider: testCredentialProvider };
+    defineProperty(accessorOptions, "tools", {
+      configurable: true,
+      enumerable: true,
+      get: () => ["vercel__list_projects"],
+    });
+    await assertConfigurationError(async () => {
+      const accessorSource = createLocalIntegrationToolSource(
+        accessorOptions as unknown as LocalIntegrationToolSourceOptions,
+      );
+      await accessorSource.listTools();
+    }, 'option "tools" must be a data property');
   });
 
   it("denies unmarked deployment modes through listing and execution", async () => {

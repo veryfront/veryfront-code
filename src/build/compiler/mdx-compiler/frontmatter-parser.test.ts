@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { extractExports, parseFrontmatter } from "./frontmatter-parser.ts";
 
@@ -127,6 +127,30 @@ describe("build/compiler/mdx-compiler/frontmatter-parser", () => {
       const content = "---\n---\nBody text";
       const result = await parseFrontmatter(content);
       assertEquals(result.content.includes("Body text"), true);
+    });
+
+    it("should fail the build when broken frontmatter leaves no body", async () => {
+      await assertRejects(
+        () => parseFrontmatter("---\na: [1, 2\n---\n"),
+        Error,
+        "MDX content missing after frontmatter",
+        "broken frontmatter with no body must fail the build",
+      );
+    });
+
+    it("should fall back to the untouched source when frontmatter cannot be parsed", async () => {
+      const content = "---\na: [1, 2\n---\nBody";
+      const result = await parseFrontmatter(content);
+      assertEquals(
+        result.frontmatter,
+        {},
+        "unparseable frontmatter falls back to empty attributes",
+      );
+      assertEquals(
+        result.content,
+        content,
+        "unparseable frontmatter leaves the source untouched",
+      );
     });
   });
 });

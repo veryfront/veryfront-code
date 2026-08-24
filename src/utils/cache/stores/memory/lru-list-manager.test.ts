@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { LRUListManager } from "./lru-list-manager.ts";
 import { LRUNode } from "./lru-node.ts";
@@ -85,6 +85,11 @@ describe("LRUListManager", () => {
       assertEquals(list.getHead()?.key, "b");
       assertEquals(list.getHead()?.next?.key, "c");
       assertEquals(list.getTail()?.key, "a");
+      assertStrictEquals(
+        list.getTail()?.prev,
+        getNode(nodes, "c"),
+        "moveToFront must repair the backward link of the moved node's old successor",
+      );
     });
   });
 
@@ -96,6 +101,11 @@ describe("LRUListManager", () => {
 
       assertEquals(list.getHead()?.key, "a");
       assertEquals(list.getTail()?.key, "a");
+      assertStrictEquals(
+        list.getHead()?.prev,
+        null,
+        "the new head must not point back at the removed node",
+      );
     });
 
     it("should remove tail node", () => {
@@ -115,6 +125,16 @@ describe("LRUListManager", () => {
       assertEquals(list.getHead()?.key, "c");
       assertEquals(list.getHead()?.next?.key, "a");
       assertEquals(list.getTail()?.key, "a");
+      assertStrictEquals(
+        list.getTail()?.prev,
+        getNode(nodes, "c"),
+        "tail must link back to its new predecessor after the middle node is removed",
+      );
+      assertStrictEquals(
+        list.getHead()?.prev,
+        null,
+        "head prev must stay null",
+      );
     });
   });
 

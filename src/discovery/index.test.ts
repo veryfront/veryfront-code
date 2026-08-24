@@ -1,8 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { clearTrackedAgents, clearTranspileCache } from "./index.ts";
-import type { DiscoveryConfig, DiscoveryResult } from "./index.ts";
+import { clearTrackedAgents, clearTranspileCache, createEmptyDiscoveryResult } from "./index.ts";
+import type { DiscoveryConfig } from "./index.ts";
 
 describe("src/discovery/index", () => {
   describe("clearTranspileCache", () => {
@@ -55,31 +55,35 @@ describe("src/discovery/index", () => {
   });
 
   describe("DiscoveryResult type", () => {
-    it("should have all expected map fields", () => {
-      const result: DiscoveryResult = {
-        tools: new Map(),
-        agents: new Map(),
-        skills: new Map(),
-        resources: new Map(),
-        prompts: new Map(),
-        workflows: new Map(),
-        tasks: new Map(),
-        schedules: new Map(),
-        webhooks: new Map(),
-        evals: new Map(),
-        errors: [],
-      };
+    // Every primitive map the factory must expose; `errors` is the one
+    // non-map field and is checked separately.
+    const EMPTY_RESULT_MAP_FIELDS = [
+      "agents",
+      "evals",
+      "prompts",
+      "resources",
+      "schedules",
+      "skills",
+      "tasks",
+      "tools",
+      "webhooks",
+      "workflows",
+    ] as const;
 
-      assertEquals(result.tools.size, 0);
-      assertEquals(result.agents.size, 0);
-      assertEquals(result.resources.size, 0);
-      assertEquals(result.prompts.size, 0);
-      assertEquals(result.workflows.size, 0);
-      assertEquals(result.tasks.size, 0);
-      assertEquals(result.schedules.size, 0);
-      assertEquals(result.webhooks.size, 0);
-      assertEquals(result.evals.size, 0);
-      assertEquals(result.errors.length, 0);
+    it("should have all expected map fields", () => {
+      const result = createEmptyDiscoveryResult();
+
+      assertEquals(
+        Object.keys(result).sort(),
+        [...EMPTY_RESULT_MAP_FIELDS, "errors"].sort(),
+        "createEmptyDiscoveryResult must expose every result field",
+      );
+      for (const field of EMPTY_RESULT_MAP_FIELDS) {
+        const value: unknown = result[field];
+        assert(value instanceof Map, `${field} must be a Map on an empty discovery result`);
+        assertEquals(value.size, 0, `${field} must start empty`);
+      }
+      assertEquals(result.errors, [], "errors must start as an empty array");
     });
   });
 });

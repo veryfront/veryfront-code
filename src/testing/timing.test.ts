@@ -38,6 +38,7 @@ describe("testing/timing", () => {
     setEnv(TEST_TIME_SCALE_ENV, "0.25");
 
     assertEquals(scaleMs(10), 3, "scaled durations should use Math.round");
+    assertEquals(scaleMs(9), 2, "9ms at 0.25x should round down rather than up");
     assertEquals(scaleMs(1), 1, "the default minimum should be one millisecond");
     assertEquals(scaleMs(1, 5), 5, "the caller-provided minimum should be honored");
   });

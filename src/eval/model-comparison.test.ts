@@ -31,6 +31,7 @@ function createReport(
     groundednessScore?: number;
     measureGroundedness?: boolean;
     failedExamples?: string[];
+    groundednessRecords?: number[];
   } = {},
 ): EvalReport {
   const measureGroundedness = overrides.measureGroundedness ?? true;
@@ -57,6 +58,28 @@ function createReport(
         },
       ]
       : [],
+  }));
+  const scoredRecords = (overrides.groundednessRecords ?? []).map((score, index) => ({
+    id: `grounded-${index}:1`,
+    evalId: "eval:support",
+    exampleId: `grounded-${index}`,
+    repetition: 1,
+    input: "question",
+    output: { text: "answer" },
+    metadata: {},
+    trace: { events: [], toolCalls: [] },
+    usage: {},
+    durationMs: 100,
+    completed: true,
+    metrics: [
+      {
+        name: "answer.groundedness",
+        family: "answer" as const,
+        severity: "gate" as const,
+        score,
+        pass: true,
+      },
+    ],
   }));
   const passed = overrides.passed ?? 4;
   const failed = overrides.failed ?? 0;
@@ -133,7 +156,7 @@ function createReport(
         flaky: false,
       })),
     },
-    records,
+    records: [...records, ...scoredRecords],
   };
 }
 
@@ -158,6 +181,124 @@ describe("eval/model-comparison", () => {
         "cost improved by 50%",
       ],
     });
+  });
+
+  it("keeps the baseline when the candidate groundedness falls below the gate", () => {
+    const comparison = compareEvalModelReports(
+      [
+        createReport("anthropic/claude-opus-4-6", { totalTokens: 10_000, costUsd: 1 }),
+        createReport("moonshotai/kimi-k2.6", {
+          totalTokens: 9_000,
+          costUsd: 0.5,
+          groundednessRecords: [0.2],
+        }),
+      ],
+      { baselineModel: "anthropic/claude-opus-4-6" },
+    );
+
+    assertEquals(
+      comparison.candidates[0]?.decision,
+      "keep-baseline",
+      "a candidate below the groundedness gate is not promoted",
+    );
+    assertEquals(
+      comparison.candidates[0]?.reasons.includes("groundedness is below 0.8"),
+      true,
+      "the decision names the groundedness gate",
+    );
+
+    const boundary = compareEvalModelReports(
+      [
+        createReport("anthropic/claude-opus-4-6", { totalTokens: 10_000, costUsd: 1 }),
+        createReport("moonshotai/kimi-k2.6", {
+          totalTokens: 9_000,
+          costUsd: 0.5,
+          groundednessRecords: [0.8],
+        }),
+      ],
+      { baselineModel: "anthropic/claude-opus-4-6", minGroundedness: 0.8 },
+    );
+
+    assertEquals(
+      boundary.candidates[0]?.decision,
+      "promote-candidate",
+      "a candidate exactly at the groundedness gate is still promoted",
+    );
+  });
+
+  it("keeps the baseline when a candidate violates absolute constraint bounds", () => {
+    const aboveMax = compareEvalModelReports(
+      [
+        createReport("anthropic/claude-opus-4-6", { totalTokens: 10_000, costUsd: 1 }),
+        createReport("moonshotai/kimi-k2.6", { totalTokens: 9_000, costUsd: 0.5 }),
+      ],
+      {
+        baselineModel: "anthropic/claude-opus-4-6",
+        constraints: { costUsd: { max: 0.25 } },
+      },
+    );
+
+    assertEquals(
+      aboveMax.candidates[0]?.constraintFailures,
+      ["costUsd 0.5 is above the allowed 0.25"],
+      "an absolute max constraint is enforced",
+    );
+    assertEquals(
+      aboveMax.candidates[0]?.decision,
+      "keep-baseline",
+      "a candidate above an absolute max constraint is not promoted",
+    );
+
+    const belowMin = compareEvalModelReports(
+      [
+        createReport("anthropic/claude-opus-4-6", { totalTokens: 10_000, costUsd: 1 }),
+        createReport("moonshotai/kimi-k2.6", {
+          totalTokens: 9_000,
+          costUsd: 0.5,
+          groundednessRecords: [0.9],
+        }),
+      ],
+      {
+        baselineModel: "anthropic/claude-opus-4-6",
+        constraints: { groundednessScore: { min: 0.95 } },
+      },
+    );
+
+    assertEquals(
+      belowMin.candidates[0]?.constraintFailures,
+      ["groundednessScore 0.9 is below the required 0.95"],
+      "an absolute min constraint is enforced",
+    );
+    assertEquals(
+      belowMin.candidates[0]?.decision,
+      "keep-baseline",
+      "a candidate below an absolute min constraint is not promoted",
+    );
+
+    const unmeasured = compareEvalModelReports(
+      [
+        createReport("anthropic/claude-opus-4-6", {
+          measureGroundedness: false,
+          totalTokens: 10_000,
+          costUsd: 1,
+        }),
+        createReport("moonshotai/kimi-k2.6", {
+          measureGroundedness: false,
+          totalTokens: 9_000,
+          costUsd: 0.5,
+        }),
+      ],
+      {
+        baselineModel: "anthropic/claude-opus-4-6",
+        constraints: { groundednessScore: { min: 0.5 } },
+      },
+    );
+
+    assertEquals(
+      unmeasured.candidates[0]?.constraintFailures,
+      ["groundednessScore was not measured"],
+      "a constraint on an unmeasured metric fails closed",
+    );
   });
 
   it("keeps the baseline when a cheaper candidate introduces new failed examples", () => {

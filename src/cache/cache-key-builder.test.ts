@@ -1,8 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertNotEquals, assertThrows } from "#veryfront/testing/assert";
+import type { HandlerContext } from "#veryfront/types";
 import {
   type CacheKeyContext,
+  extractCacheKeyContext,
   getContentHashKey,
   getCurrentCacheKeyContext,
   getProjectScopedKey,
@@ -81,6 +83,70 @@ describe("cache-key-builder", () => {
       const result = runWithCacheKeyContext(ctx, tryGetCacheKeyContext);
 
       assertEquals(result?.projectId, "test");
+    });
+
+    it("returns null when the ambient request has no project identity", async () => {
+      const result = await runWithRequestContext(
+        {
+          projectSlug: "",
+          token: "<TOKEN>",
+          productionMode: true,
+          releaseId: "release-id",
+        },
+        async () => tryGetCacheKeyContext(),
+      );
+
+      assertEquals(
+        result,
+        null,
+        "a request with no project identity must not fall back to a shared cache bucket",
+      );
+    });
+
+    it("returns null when the ambient production request has no release", async () => {
+      const result = await runWithRequestContext(
+        {
+          projectSlug: "slug",
+          token: "<TOKEN>",
+          productionMode: true,
+          releaseId: null,
+        },
+        async () => tryGetCacheKeyContext(),
+      );
+
+      assertEquals(result, null, "production without a releaseId must skip caching");
+    });
+
+    it("derives the ambient scope from project identity, release, and branch", async () => {
+      const production = await runWithRequestContext(
+        {
+          projectSlug: "slug",
+          projectId: "p",
+          token: "<TOKEN>",
+          productionMode: true,
+          releaseId: "r",
+        },
+        async () => tryGetCacheKeyContext(),
+      );
+      const preview = await runWithRequestContext(
+        {
+          projectSlug: "slug",
+          token: "<TOKEN>",
+          productionMode: false,
+        },
+        async () => tryGetCacheKeyContext(),
+      );
+
+      assertEquals(
+        production,
+        { projectId: "p", mode: "production", versionId: "r" },
+        "projectId wins over slug for the ambient cache scope",
+      );
+      assertEquals(
+        preview,
+        { projectId: "slug", mode: "preview", versionId: "main" },
+        "preview without a branch defaults to main",
+      );
     });
   });
 
@@ -374,6 +440,63 @@ describe("cache-key-builder", () => {
       const key = runWithCacheKeyContext(ctx, () => getProjectScopedKey("prefix", "resource"));
 
       assertEquals(key, "prefix:test:production:rel_123:resource");
+    });
+  });
+
+  describe("extractCacheKeyContext", () => {
+    const handlerContext = (overrides: Record<string, unknown>): HandlerContext =>
+      overrides as unknown as HandlerContext;
+
+    it("should return null without project identity", () => {
+      assertEquals(
+        extractCacheKeyContext(
+          handlerContext({ resolvedEnvironment: "production", releaseId: "rel_1" }),
+        ),
+        null,
+        "missing project identity must skip caching rather than share a default bucket",
+      );
+    });
+
+    it("should return null for production without a release", () => {
+      assertEquals(
+        extractCacheKeyContext(
+          handlerContext({ projectId: "p1", resolvedEnvironment: "production" }),
+        ),
+        null,
+        "production without a releaseId must skip caching so releases cannot collide",
+      );
+    });
+
+    it("should scope production by release and preview by branch", () => {
+      assertEquals(
+        extractCacheKeyContext(
+          handlerContext({
+            projectId: "p1",
+            resolvedEnvironment: "production",
+            releaseId: "rel_1",
+          }),
+        ),
+        { projectId: "p1", mode: "production", versionId: "rel_1" },
+        "production must scope the key by releaseId",
+      );
+      assertEquals(
+        extractCacheKeyContext(
+          handlerContext({
+            projectSlug: "p-slug",
+            resolvedEnvironment: "preview",
+            parsedDomain: { branch: "feat-x" },
+          }),
+        ),
+        { projectId: "p-slug", mode: "preview", versionId: "feat-x" },
+        "preview must scope the key by the parsed branch",
+      );
+      assertEquals(
+        extractCacheKeyContext(
+          handlerContext({ projectSlug: "p-slug", resolvedEnvironment: "preview" }),
+        ),
+        { projectId: "p-slug", mode: "preview", versionId: "main" },
+        "preview without a branch must default to main",
+      );
     });
   });
 

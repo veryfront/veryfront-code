@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform";
 import type { CreateScheduleRunFromSourceResult } from "#veryfront/runs";
@@ -10,6 +10,7 @@ import type {
   TriggerTarget,
   WorkflowTriggerTarget,
 } from "#veryfront/trigger";
+import { webhook as webhookFactory } from "#veryfront/webhook";
 import type { WebhookConfig, WebhookDefinition } from "#veryfront/webhook";
 import { resolveTriggerTarget } from "./target.ts";
 
@@ -54,7 +55,7 @@ interface CustomScheduleConfig extends ScheduleConfig {
 }
 
 describe("trigger target public type contracts", () => {
-  it("accepts extended workflow and exported TriggerTarget values on public authoring surfaces", () => {
+  it("types extended workflow targets that the authoring factories reject at runtime", () => {
     const ownedWorkflowTarget: OwnedWorkflowTarget = {
       kind: "workflow",
       id: "billing/sync",
@@ -95,6 +96,28 @@ describe("trigger target public type contracts", () => {
       adapter,
       target: exportedTriggerTarget,
     });
+
+    assertThrows(
+      () =>
+        schedule({
+          id: "billing-sync",
+          schedule: "0 * * * *",
+          target: ownedWorkflowTarget,
+        }),
+      Error,
+      "Schedule target.owner is not supported.",
+      "the schedule factory rejects caller extension fields the type surface accepts",
+    );
+    assertThrows(
+      () =>
+        webhookFactory({
+          id: "exported-trigger-target-webhook",
+          target: ownedWorkflowTarget,
+        }),
+      Error,
+      "Webhook target.owner is not supported.",
+      "the webhook factory rejects caller extension fields the type surface accepts",
+    );
 
     assertEquals(ownedSchedule.target, ownedWorkflowTarget);
     assertEquals(exportedSchedule.target, exportedTriggerTarget);
