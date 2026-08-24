@@ -12,7 +12,23 @@ describe("release asset constants", () => {
   it("builds URLs only from canonical content identities", () => {
     const hash = "a".repeat(64);
     assertEquals(releaseAssetUrl(hash, "js"), `/_vf/assets/${hash}.js`);
-    assertThrows(() => releaseAssetUrl("../asset", "js"));
+    assertThrows(() => releaseAssetUrl("../asset", "js"), TypeError, "64 lowercase hexadecimal");
+    // Near misses: only exactly 64 lowercase hex characters is an identity.
+    assertThrows(
+      () => releaseAssetUrl("A".repeat(64), "js"),
+      TypeError,
+      "64 lowercase hexadecimal",
+    );
+    assertThrows(
+      () => releaseAssetUrl("a".repeat(63), "js"),
+      TypeError,
+      "64 lowercase hexadecimal",
+    );
+    assertThrows(
+      () => releaseAssetUrl("a".repeat(65), "js"),
+      TypeError,
+      "64 lowercase hexadecimal",
+    );
     assertThrows(() => releaseAssetUrl(hash, "map" as "js"));
   });
 

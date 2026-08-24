@@ -41,21 +41,29 @@ describe("middleware/builtin/timeout", () => {
     });
 
     it("should exclude health check paths", async () => {
-      const mw = timeout({ timeoutMs: 5000 });
-      const res = await mw(
-        makeCtx("http://localhost/healthz"),
-        () => Promise.resolve(new Response("healthy")),
+      const mw = timeout({ timeoutMs: 10 });
+      const slow = makeSlowNext(200);
+      const res = await mw(makeCtx("http://localhost/healthz"), slow.next);
+      assertEquals(
+        res?.status,
+        200,
+        "an excluded path must bypass the timeout race entirely",
       );
-      assertEquals(await res?.text(), "healthy");
+      assertEquals(await res?.text(), "late");
+      slow.clear();
     });
 
     it("should exclude readyz path by default", async () => {
-      const mw = timeout({ timeoutMs: 5000 });
-      const res = await mw(
-        makeCtx("http://localhost/readyz"),
-        () => Promise.resolve(new Response("ready")),
+      const mw = timeout({ timeoutMs: 10 });
+      const slow = makeSlowNext(200);
+      const res = await mw(makeCtx("http://localhost/readyz"), slow.next);
+      assertEquals(
+        res?.status,
+        200,
+        "an excluded path must bypass the timeout race entirely",
       );
-      assertEquals(await res?.text(), "ready");
+      assertEquals(await res?.text(), "late");
+      slow.clear();
     });
 
     it("should use custom message", async () => {
@@ -68,21 +76,29 @@ describe("middleware/builtin/timeout", () => {
     });
 
     it("should use custom exclude paths", async () => {
-      const mw = timeout({ timeoutMs: 5000, exclude: ["/custom"] });
-      const res = await mw(
-        makeCtx("http://localhost/custom"),
-        () => Promise.resolve(new Response("ok")),
+      const mw = timeout({ timeoutMs: 10, exclude: ["/custom"] });
+      const slow = makeSlowNext(200);
+      const res = await mw(makeCtx("http://localhost/custom"), slow.next);
+      assertEquals(
+        res?.status,
+        200,
+        "an excluded path must bypass the timeout race entirely",
       );
-      assertEquals(await res?.text(), "ok");
+      assertEquals(await res?.text(), "late");
+      slow.clear();
     });
 
     it("should exclude nested paths for configured prefixes", async () => {
-      const mw = timeout({ timeoutMs: 5000, exclude: ["/custom"] });
-      const res = await mw(
-        makeCtx("http://localhost/custom/deep/path"),
-        () => Promise.resolve(new Response("ok")),
+      const mw = timeout({ timeoutMs: 10, exclude: ["/custom"] });
+      const slow = makeSlowNext(200);
+      const res = await mw(makeCtx("http://localhost/custom/deep/path"), slow.next);
+      assertEquals(
+        res?.status,
+        200,
+        "an excluded path must bypass the timeout race entirely",
       );
-      assertEquals(await res?.text(), "ok");
+      assertEquals(await res?.text(), "late");
+      slow.clear();
     });
 
     it("should propagate non-timeout errors", async () => {

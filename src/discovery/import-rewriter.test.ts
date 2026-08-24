@@ -178,6 +178,7 @@ describe("discovery/import-rewriter", () => {
         'import fs from "node:fs";',
         'import path from "node:path";',
         'import local from "./helpers.ts";',
+        'import bundled from "file:///abs/vendor/lib.js";',
         'import remote from "https://esm.sh/some-pkg";',
       ].join("\n"),
       "/project/tools",
@@ -186,7 +187,34 @@ describe("discovery/import-rewriter", () => {
     assertStringIncludes(transformed, 'from "node:fs"');
     assertStringIncludes(transformed, 'from "node:path"');
     assertStringIncludes(transformed, 'from "./helpers.ts"');
+    assertStringIncludes(transformed, 'from "file:///abs/vendor/lib.js"');
     assertStringIncludes(transformed, 'from "https://esm.sh/some-pkg"');
+  });
+
+  it("resolves parent-relative specifiers to absolute file:// URLs for Deno", () => {
+    const transformed = rewriteForDeno(
+      [
+        'import { helper } from "../lib/util.ts";',
+        'export { shared } from "../../shared/index.ts";',
+      ].join("\n"),
+      "/project/tools",
+    );
+
+    assertStringIncludes(
+      transformed,
+      'from "file:///project/lib/util.ts"',
+      "a ../ specifier must resolve against fileDir, not the temp module dir",
+    );
+    assertStringIncludes(
+      transformed,
+      'from "file:///shared/index.ts"',
+      "a ../../ specifier must resolve against fileDir, not the temp module dir",
+    );
+    assertEquals(
+      transformed.includes('from "../lib/util.ts"'),
+      false,
+      "no parent-relative specifier may survive the Deno rewrite",
+    );
   });
 
   it("resolves bare-package subpath imports via package.json#exports in the Node discovery path", async () => {
@@ -395,6 +423,62 @@ describe("discovery/import-rewriter", () => {
       assertStringIncludes(after, "late-installed/index.js");
     } finally {
       await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("keeps resolved-specifier cache entries scoped to their project root", async () => {
+    const projectA = await Deno.makeTempDir({ prefix: "vf-rewriter-test-a-" });
+    const projectB = await Deno.makeTempDir({ prefix: "vf-rewriter-test-b-" });
+    const code = 'import { z } from "zod";';
+
+    const writeZod = async (projectDir: string, entry: string) => {
+      const pkgDir = `${projectDir}/node_modules/zod`;
+      await Deno.mkdir(pkgDir, { recursive: true });
+      await Deno.writeTextFile(
+        `${pkgDir}/package.json`,
+        JSON.stringify({ name: "zod", main: `./${entry}` }),
+      );
+      await Deno.writeTextFile(`${pkgDir}/${entry}`, "");
+    };
+
+    try {
+      await writeZod(projectA, "a.js");
+      await writeZod(projectB, "b.js");
+
+      const firstPass = await rewriteDiscoveryImports(
+        code,
+        projectA,
+        createFileSystem(),
+        `${projectA}/app`,
+      );
+      const secondPass = await rewriteDiscoveryImports(
+        code,
+        projectB,
+        createFileSystem(),
+        `${projectB}/app`,
+      );
+
+      assertStringIncludes(
+        firstPass,
+        `${projectA}/node_modules/zod/a.js`,
+        "the first project must resolve zod from its own node_modules",
+      );
+      assert(
+        !firstPass.includes(projectB),
+        "the first project must not resolve zod from another project's node_modules",
+      );
+      assertStringIncludes(
+        secondPass,
+        `${projectB}/node_modules/zod/b.js`,
+        "the second project must resolve zod from its own node_modules",
+      );
+      assert(
+        !secondPass.includes(projectA),
+        "a second project must not inherit the first project's cached zod resolution",
+      );
+    } finally {
+      await Deno.remove(projectA, { recursive: true });
+      await Deno.remove(projectB, { recursive: true });
     }
   });
 
