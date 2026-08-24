@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { branch, unless, when } from "./branch.ts";
 import { step } from "./step.ts";
@@ -60,6 +61,23 @@ describe("branch()", () => {
 
     const config = node.config as BranchNodeConfig;
     assertEquals(typeof config.condition, "function");
+  });
+
+  it("rejects a missing condition or empty then branch", () => {
+    assertThrows(
+      () =>
+        branch("missing-condition", {
+          condition: undefined as unknown as () => boolean,
+          then: [step("work", { agent: "writer" })],
+        }),
+      VeryfrontError,
+      "must specify a condition",
+    );
+    assertThrows(
+      () => branch("empty-then", { condition: () => true, then: [] }),
+      VeryfrontError,
+      "must have at least one 'then' node",
+    );
   });
 });
 

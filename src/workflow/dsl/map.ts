@@ -6,7 +6,7 @@ import type {
   WorkflowDefinition,
   WorkflowNode,
 } from "../types.ts";
-import { validateNodeId } from "./validation.ts";
+import { isPositiveSafeInteger, validateNodeId } from "./validation.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 /** Options accepted by map. */
@@ -30,6 +30,11 @@ export function map(id: string, options: MapOptions): WorkflowNode {
   if (!options.processor) {
     throw INVALID_ARGUMENT.create({
       detail: `Map node "${id}" must have a 'processor' configured`,
+    });
+  }
+  if (options.concurrency !== undefined && !isPositiveSafeInteger(options.concurrency)) {
+    throw INVALID_ARGUMENT.create({
+      detail: `Map node "${id}" concurrency must be a positive safe integer`,
     });
   }
 

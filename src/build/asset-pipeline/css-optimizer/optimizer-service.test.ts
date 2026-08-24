@@ -320,18 +320,31 @@ describe("build/asset-pipeline/css-optimizer/optimizer-service", () => {
         join(projectDir, "styles/main.css"),
         ".main { color: red; }",
       );
-      const service = await createService(projectDir);
+      let runs = 0;
+      const countingEngine = createTestCSSOptimizationEngine((request) => {
+        runs++;
+        return { css: request.css };
+      });
+      const service = await createService(projectDir, {}, {
+        optimizationEngine: countingEngine,
+      });
       const [first, second] = await Promise.all([
         service.optimize(),
         service.optimize(),
       ]);
+      assertEquals(runs, 1, "concurrent optimize() calls share one optimization run");
       first.get("main.css")!.content = "mutated";
-      assertEquals(second.get("main.css")!.content.includes(".main"), true);
+      assertEquals(
+        second.get("main.css")!.content.includes(".main"),
+        true,
+        "each caller receives an independent clone of the result",
+      );
       assertEquals(
         service.getCacheManager().getBundle("main.css")!.content.includes(
           ".main",
         ),
         true,
+        "mutating a returned bundle must not corrupt the cached bundle",
       );
     });
   });

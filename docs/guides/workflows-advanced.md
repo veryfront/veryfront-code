@@ -20,19 +20,25 @@ the base workflow can't do yet.
 Repeat steps based on conditions:
 
 ```ts
-import { delay, doWhile, loop, map, times } from "veryfront/workflow";
+import { delay, doWhile, loop, map, step, times } from "veryfront/workflow";
 
 // Repeat while condition is true
-loop("refine", (ctx) => ctx.results.review.score < 0.9, [
-  step("rewrite", { agent: "writer" }),
-  step("review", { agent: "reviewer" }),
-]);
+loop("refine", {
+  while: (ctx) => ((ctx.review as { score?: number } | undefined)?.score ?? 0) < 0.9,
+  steps: [
+    step("rewrite", { agent: "writer" }),
+    step("review", { agent: "reviewer" }),
+  ],
+});
 
-// Execute once, then repeat while true
-doWhile("poll", (ctx) => !ctx.results.check.done, [
-  step("check", { tool: "statusChecker" }),
-  delay("wait", "5s"),
-]);
+// Execute once, then repeat until the condition is true
+doWhile("poll", {
+  until: (ctx) => Boolean((ctx.check as { done?: boolean } | undefined)?.done),
+  steps: [
+    step("check", { tool: "statusChecker" }),
+    delay("wait", "5s"),
+  ],
+});
 
 // Fixed iterations
 times("generate", 3, [
@@ -40,14 +46,15 @@ times("generate", 3, [
 ]);
 
 // Map over array items
-map("process", (ctx) => ctx.input.urls, [
-  step("scrape", { tool: "webScraper" }),
-]);
+map("process", {
+  items: (ctx) => (ctx.input as { urls: string[] }).urls,
+  processor: step("scrape", { tool: "webScraper" }),
+});
 ```
 
-`loop` checks the condition before each iteration. `doWhile` runs the body once
-before checking. `times` runs a fixed number of iterations. `map` runs the body
-once per item in an array.
+`loop` checks the condition before each iteration. `doWhile` runs the body once,
+then repeats until its condition is true. `times` runs a fixed number of
+iterations. `map` runs the processor once per item in an array.
 
 ## Blob storage
 

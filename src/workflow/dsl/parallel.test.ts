@@ -3,6 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * Parallel DSL Tests
  */
 
+import { VeryfrontError } from "#veryfront/errors";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parallel } from "./parallel.ts";
@@ -57,8 +58,16 @@ describe("parallel()", () => {
   it("should throw for empty children array", () => {
     assertThrows(
       () => parallel("empty", []),
-      Error,
+      VeryfrontError,
       "must have at least one child node",
+    );
+  });
+
+  it("rejects a child without an id", () => {
+    assertThrows(
+      () => parallel("invalid", [{ ...step("child", { agent: "a" }), id: "" }]),
+      VeryfrontError,
+      "has invalid ID",
     );
   });
 

@@ -2,14 +2,17 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MinificationStrategy } from "./minification-strategy.ts";
+import type { CSSOptimizationRequest } from "#veryfront/extensions/css/index.ts";
 import { createTestCSSOptimizationEngine } from "../../../../../tests/_helpers/css-optimization-engine.ts";
 
 describe("build/asset-pipeline/css-optimizer/strategies/minification-strategy", () => {
   describe("MinificationStrategy", () => {
+    let request: CSSOptimizationRequest | undefined;
     const strategy = new MinificationStrategy(
-      createTestCSSOptimizationEngine((request) => ({
-        css: request.css.replaceAll(/\s+/g, ""),
-      })),
+      createTestCSSOptimizationEngine((received) => {
+        request = received;
+        return { css: received.css.replaceAll(/\s+/g, "") };
+      }),
     );
 
     it("should have correct name and priority", () => {
@@ -39,9 +42,19 @@ describe("build/asset-pipeline/css-optimizer/strategies/minification-strategy", 
   background: blue;
 }`;
         const result = await strategy.process(input, "test.css", {});
-        assertEquals(typeof result.code, "string");
-        assertEquals(result.code.length <= input.length, true);
-        assertEquals(result.sourceMap, undefined);
+        assertEquals(
+          result.code,
+          "body{color:red;background:blue;}",
+          "strategy returns the engine output verbatim",
+        );
+        assertEquals(request?.minify, true, "strategy must request minification");
+        assertEquals(
+          request?.sourcePath,
+          "test.css",
+          "strategy must forward the filename as sourcePath",
+        );
+        assertEquals(request?.sourceMap, false, "strategy must not request a source map");
+        assertEquals(result.sourceMap, undefined, "minification emits no source map");
       });
 
       it("should return a resolved promise", async () => {

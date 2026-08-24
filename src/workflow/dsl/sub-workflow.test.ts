@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { subWorkflow } from "./sub-workflow.ts";
@@ -29,7 +30,7 @@ describe("workflow/dsl/sub-workflow", () => {
     it("should throw for empty id", () => {
       assertThrows(
         () => subWorkflow("", { workflow: { id: "w", steps: [] } }),
-        Error,
+        VeryfrontError,
         "non-empty",
       );
     });
@@ -40,7 +41,7 @@ describe("workflow/dsl/sub-workflow", () => {
           subWorkflow("test", {
             workflow: undefined as unknown as WorkflowDefinition,
           }),
-        Error,
+        VeryfrontError,
         "workflow",
       );
     });

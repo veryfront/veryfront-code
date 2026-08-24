@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { validateNodeId } from "./validation.ts";
@@ -12,9 +13,13 @@ describe("workflow/dsl/validation", () => {
     });
 
     it("should throw for empty or whitespace-only string", () => {
-      assertThrows(() => validateNodeId(""), Error, "non-empty");
-      assertThrows(() => validateNodeId("   "), Error, "non-empty");
-      assertThrows(() => validateNodeId("\t"), Error, "non-empty");
+      assertThrows(() => validateNodeId(""), VeryfrontError, "non-empty");
+      assertThrows(() => validateNodeId("   "), VeryfrontError, "non-empty");
+      assertThrows(() => validateNodeId("\t"), VeryfrontError, "non-empty");
+    });
+
+    it("rejects surrounding whitespace", () => {
+      assertThrows(() => validateNodeId(" step "), VeryfrontError, "canonical");
     });
   });
 });

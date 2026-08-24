@@ -22,8 +22,21 @@ describe("build/bundler/code-splitter/manifest-builder", () => {
       assertEquals(extractEntryName("a/b/c/d/page.tsx"), "page");
     });
 
-    it("should return unknown for extensionless files", () => {
+    it("should keep the filename when there is no known extension", () => {
       assertEquals(extractEntryName("src/Makefile"), "Makefile");
+    });
+
+    it("falls back to unknown when the filename is only an extension", () => {
+      assertEquals(
+        extractEntryName("src/.tsx"),
+        "unknown",
+        "entry whose filename is only an extension falls back to unknown",
+      );
+      assertEquals(
+        extractEntryName(".mdx"),
+        "unknown",
+        "bare extension filename falls back to unknown",
+      );
     });
 
     it("should throw for empty path segment", () => {
@@ -107,8 +120,11 @@ describe("build/bundler/code-splitter/manifest-builder", () => {
         exports: [],
       };
       const hints = getPreloadHints(output, "/out");
-      assertEquals(hints.length, 1);
-      assertEquals(hints[0].includes("react"), true);
+      assertEquals(
+        hints,
+        ["chunks/react-abc.js"],
+        "preload hints are emitted relative to outDir, not as on-disk absolute paths",
+      );
     });
 
     it("should return empty array when no critical imports", () => {

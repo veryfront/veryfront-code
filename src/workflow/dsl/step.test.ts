@@ -3,6 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * Step DSL Tests
  */
 
+import { VeryfrontError } from "#veryfront/errors";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { agentStep, step, toolStep } from "./step.ts";
@@ -79,7 +80,7 @@ describe("step()", () => {
   it("should reject a step with neither agent nor tool", () => {
     assertThrows(
       () => step("bad", {}),
-      Error,
+      VeryfrontError,
       "must specify either 'agent' or 'tool'",
       "a step with neither agent nor tool must fail at build time, not at run time",
     );
@@ -88,8 +89,8 @@ describe("step()", () => {
   it("should reject a step specifying both agent and tool", () => {
     assertThrows(
       () => step("bad", { agent: "a", tool: "t" }),
-      Error,
-      "cannot specify both",
+      VeryfrontError,
+      "cannot specify both 'agent' and 'tool'",
       "an ambiguous agent+tool step must be rejected rather than resolved by executor precedence",
     );
   });

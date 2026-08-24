@@ -3,6 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * Wait DSL Tests
  */
 
+import { VeryfrontError } from "#veryfront/errors";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { delay, waitForApproval, waitForEvent, type WaitForEventOptions } from "./wait.ts";
@@ -85,6 +86,17 @@ describe("waitForEvent()", () => {
       "must specify an eventName",
       "waitForEvent must reject a missing eventName",
     );
+  });
+
+  it("requires a canonical non-empty eventName", () => {
+    for (const eventName of ["", "   ", " order.updated "]) {
+      assertThrows(
+        () => waitForEvent("specific-event", { eventName }),
+        VeryfrontError,
+        "eventName",
+        `waitForEvent must reject non-canonical eventName ${JSON.stringify(eventName)}`,
+      );
+    }
   });
 });
 
