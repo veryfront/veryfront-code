@@ -2193,16 +2193,18 @@ function appendMarkdownInlineHtmlRanges(content, start, end, ranges) {
 function createMarkdownInlineTerminatorFinder(content, end) {
   const nextIndexByTerminator = new Map();
   return (terminator, start) => {
-    let nextIndex = nextIndexByTerminator.get(terminator);
-    if (nextIndex === -1) return undefined;
-    if (nextIndex === undefined || nextIndex < start) {
-      nextIndex = content.indexOf(terminator, start);
-      if (nextIndex < 0 || nextIndex >= end) {
-        nextIndexByTerminator.set(terminator, -1);
-        return undefined;
-      }
-      nextIndexByTerminator.set(terminator, nextIndex);
+    const cached = nextIndexByTerminator.get(terminator);
+    if (cached?.searchStart <= start) {
+      if (cached.index < 0 || cached.index >= end) return undefined;
+      if (cached.index >= start) return cached.index;
     }
+
+    const nextIndex = content.indexOf(terminator, start);
+    nextIndexByTerminator.set(terminator, {
+      index: nextIndex,
+      searchStart: start,
+    });
+    if (nextIndex < 0 || nextIndex >= end) return undefined;
     return nextIndex;
   };
 }

@@ -2660,6 +2660,71 @@ describe("automated review gate", () => {
     );
   });
 
+  it("keeps HTML terminator searches start-aware across scanner passes", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    for (
+      const htmlAroundVisibleEvidence of [
+        [
+          '<a title="one">',
+          MALFORMED_CURRENT_RANGE,
+          '<b title="two">',
+        ],
+        [
+          '<a title="`">',
+          MALFORMED_CURRENT_RANGE,
+          '<b title="unterminated`',
+        ],
+      ]
+    ) {
+      const newerVisibleCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...htmlAroundVisibleEvidence,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerVisibleCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+  });
+
+  it("lets escaped multi-backtick runs close matching code spans", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    const newerHiddenCurrentRange = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "``unclosed code span",
+        MALFORMED_CURRENT_RANGE,
+        "\\``",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerHiddenCurrentRange],
+        },
+        HEAD_SHA,
+      ))?.url,
+      "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+    );
+  });
+
   it("keeps non-code backticks from masking visible evidence", async () => {
     const olderSuccess = olderCodeRabbitSuccess();
 
