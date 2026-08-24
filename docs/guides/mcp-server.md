@@ -149,8 +149,8 @@ Resource patterns use `:name` URI-template parameters. Common forms include:
 - opaque literal identifiers such as `urn:isbn`, where colons do not declare parameters.
 
 Parameter names in one pattern must be unique and separated by literal text. A `:` that
-directly follows an alphanumeric character is always data, never a parameter — write
-`/files/file-:id`, not `/files/file:id` — which is the same uniform rule that keeps opaque
+directly follows an alphanumeric character is always data, never a parameter: write
+`/files/file-:id`, not `/files/file:id`. This is the same uniform rule that keeps opaque
 identifiers like `urn:isbn` literal. For embedded
 parameters, the first following literal belongs to the template: `/file-:base.:ext` reads
 `file-report.final.pdf` as `base=report` and `ext=final.pdf`. Path captures stop at raw `/`,
