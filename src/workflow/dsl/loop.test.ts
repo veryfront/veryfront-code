@@ -2,14 +2,25 @@ import "#veryfront/schemas/_test-setup.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { doWhile, loop, times } from "./loop.ts";
-import type { LoopNodeConfig, WorkflowNode } from "../types.ts";
+import { doWhile, loop, type LoopContext, times } from "./loop.ts";
+import type { LoopNodeConfig, WorkflowContext, WorkflowNode } from "../types.ts";
 
 function expectLoopConfig(node: WorkflowNode): LoopNodeConfig {
   if (node.config.type !== "loop") {
     throw new Error(`Expected loop node, got ${node.config.type}`);
   }
   return node.config;
+}
+
+function loopContext(overrides: Partial<LoopContext> = {}): LoopContext {
+  return {
+    iteration: 0,
+    totalIterations: 0,
+    previousResults: [],
+    isFirstIteration: false,
+    isLastAllowedIteration: false,
+    ...overrides,
+  };
 }
 
 describe("workflow/dsl/loop", () => {
@@ -129,6 +140,43 @@ describe("workflow/dsl/loop", () => {
         () => doWhile("poll", { until: undefined as never, steps: [] }),
         VeryfrontError,
         "until",
+      );
+    });
+  });
+
+  describe("doWhile", () => {
+    const context = {} as WorkflowContext;
+
+    it("should always run the first iteration even when until is already satisfied", async () => {
+      const node = doWhile("dw", { until: () => true, steps: [] });
+      const predicate = expectLoopConfig(node).while;
+
+      assertEquals(
+        await predicate(context, loopContext({ isFirstIteration: true, iteration: 5 })),
+        true,
+        "doWhile must always run its first iteration regardless of until",
+      );
+    });
+
+    it("should stop once until is satisfied", async () => {
+      const node = doWhile("dw", { until: () => true, steps: [] });
+      const predicate = expectLoopConfig(node).while;
+
+      assertEquals(
+        await predicate(context, loopContext({ iteration: 1 })),
+        false,
+        "doWhile must stop once until is satisfied",
+      );
+    });
+
+    it("should continue while until is unsatisfied", async () => {
+      const node = doWhile("dw", { until: () => false, steps: [] });
+      const predicate = expectLoopConfig(node).while;
+
+      assertEquals(
+        await predicate(context, loopContext({ iteration: 1 })),
+        true,
+        "doWhile must continue while until is unsatisfied",
       );
     });
   });

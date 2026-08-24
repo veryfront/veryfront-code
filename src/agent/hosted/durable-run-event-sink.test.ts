@@ -160,7 +160,11 @@ describe("agent/hosted/durable-run-event-sink", () => {
         "serializedSegment",
       ]
     ) {
-      assertEquals(field in event, false);
+      assertEquals(
+        field in persisted,
+        false,
+        `${field} must not be stamped on a direct persisted event`,
+      );
     }
   });
 
@@ -572,6 +576,107 @@ describe("agent/hosted/durable-run-event-sink", () => {
     assertInstanceOf(error, DOMException);
     assertEquals(error.name, "AbortError");
     assertEquals(target.isDisposed(), true);
+  });
+
+  it("fails closed when the post-append flush leaves events pending", async () => {
+    const target = mirror({ flush: async () => snapshot({ pendingEventCount: 1 }) });
+
+    await assertRejects(
+      async () =>
+        await createDurableRunEventSink({ mirror: target.result })({
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          messages: [],
+        }),
+      DurableRunEventPersistenceError,
+      "Required durable run event was not flushed",
+      "pending events after flush must reject the model call",
+    );
+    assertEquals(target.appended.length, 1, "the event must still have been appended");
+    assertEquals(
+      target.isDisposed(),
+      true,
+      "mirror must be disposed after a failed required flush",
+    );
+  });
+
+  it("fails closed when the post-append flush leaves a retry timer armed", async () => {
+    const target = mirror({ flush: async () => snapshot({ hasRetryTimer: true }) });
+
+    await assertRejects(
+      async () =>
+        await createDurableRunEventSink({ mirror: target.result })({
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          messages: [],
+        }),
+      DurableRunEventPersistenceError,
+      "Required durable run event was not flushed",
+      "an armed retry timer after flush must reject the model call",
+    );
+    assertEquals(
+      target.isDisposed(),
+      true,
+      "mirror must be disposed after a failed required flush",
+    );
+  });
+
+  it("fails closed when the mirror reports in-flight work after a drained flush", async () => {
+    const target = mirror();
+    let flushCount = 0;
+    let disposed = false;
+
+    await assertRejects(
+      async () =>
+        await createDurableRunEventSink({
+          mirror: {
+            ...target.result,
+            flush: async () => {
+              flushCount += 1;
+              return snapshot();
+            },
+            getSnapshot: () => snapshot({ inFlight: flushCount > 0 }),
+            dispose: () => {
+              disposed = true;
+            },
+          },
+        })({
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          messages: [],
+        }),
+      DurableRunEventPersistenceError,
+      "Required durable run event was not flushed",
+      "in-flight work reported after a drained flush must reject the model call",
+    );
+    assertEquals(disposed, true, "mirror must be disposed after a failed required flush");
+  });
+
+  it("times out persistence that never settles", async () => {
+    const target = mirror({
+      append: () => new Promise(() => {}),
+    });
+    // Guard rail only: if the sink's own deadline never fires, this caller abort
+    // turns a hang into a distinct AbortError rejection.
+    const guard = new AbortController();
+    const guardTimer = setTimeout(() => guard.abort(), 5_000);
+
+    try {
+      await assertRejects(
+        async () =>
+          await createDurableRunEventSink({
+            mirror: target.result,
+            timeoutMs: 1,
+            abortSignal: guard.signal,
+          })({
+            type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+            messages: [],
+          }),
+        DurableRunEventPersistenceError,
+        "Durable run event persistence timed out",
+        "a mirror that never settles must hit the persistence deadline",
+      );
+    } finally {
+      clearTimeout(guardTimer);
+    }
+    assertEquals(target.isDisposed(), true, "mirror must be disposed after a persistence timeout");
   });
 
   it("uses a registered VeryfrontError for durable persistence failures", () => {

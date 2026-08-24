@@ -56,12 +56,26 @@ describe("veryfront/mdx provider behavior", () => {
         <MDXProvider components={{ h1: InnerHeading }}>
           <ComponentProbe />
         </MDXProvider>
+        <ComponentProbe />
       </MDXProvider>,
     );
 
     assertStringIncludes(html, '<h1 data-source="inner">Heading</h1>');
     assertStringIncludes(html, '<a href="/docs" data-source="outer">Link</a>');
     assertStringIncludes(html, '<code data-source="local">Code</code>');
+    assertStringIncludes(
+      html,
+      '<h1 data-source="outer">Heading</h1>',
+      "a nested provider must not leak its overrides into sibling subtrees",
+    );
+
+    const bare = renderToString(<ComponentProbe />);
+
+    assertStringIncludes(
+      bare,
+      "<h1>Heading</h1>",
+      "provider merges must not pollute the default MDX context",
+    );
   });
 
   it("returns the same merged map while provider inputs are unchanged", () => {

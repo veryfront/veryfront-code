@@ -13,6 +13,7 @@ import {
   countFindings,
   type Finding,
   findLineMatches,
+  isExecutableTestFile,
   isIgnoredDirectory,
   isSourceFile,
   isTestFile,
@@ -32,6 +33,18 @@ describe("predicates", () => {
     assertEquals(isTestFile("src/a.ts"), false);
     assertEquals(isTestFile("src/testing/bdd.ts"), false);
     assertEquals(isTestFile("src/a.test.js"), false);
+  });
+
+  it("isExecutableTestFile takes every suffix tests/README.md documents", () => {
+    assertEquals(isExecutableTestFile("src/a.test.ts"), true);
+    assertEquals(isExecutableTestFile("src/a.test.tsx"), true);
+    assertEquals(isExecutableTestFile("tests/a.test.js"), true);
+    assertEquals(isExecutableTestFile("tests/a.test.mjs"), true);
+    assertEquals(isExecutableTestFile("tests/a.test.cjs"), true);
+    assertEquals(isExecutableTestFile("tests/e2e/a.playwright.ts"), true);
+    assertEquals(isExecutableTestFile("src/a.ts"), false);
+    assertEquals(isExecutableTestFile("src/a.spec.ts"), false);
+    assertEquals(isExecutableTestFile("tests/a.playwright.js"), false);
   });
 
   it("isTypeScriptFile takes any .ts/.tsx but no declarations", () => {

@@ -245,6 +245,30 @@ describe("AgentController", () => {
     registry.releaseRun(registration.run);
   });
 
+  it("fails an unanswered approval closed when its timeout elapses", async () => {
+    const publisher = new FakePublisher("run-1");
+    const { controller, registration, registry } = registerController(publisher, {
+      approvalTimeout: 1,
+    });
+    const approval = controller.requestApproval("tool-timeout", "Write", {}, "needs permission");
+
+    assertEquals(await approval, false, "an unanswered approval must fail closed");
+
+    const request = publisher.events.find((event) => event.type === "approval_request");
+    assertExists(request);
+    assertEquals(
+      publisher.emit(command({
+        type: "approve",
+        toolCallId: "tool-timeout",
+        requestId: request.requestId,
+        commandId: "late-approval",
+      })),
+      [{ status: "rejected", reason: "approval correlation does not match a pending request" }],
+      "a timed-out approval must no longer be approvable",
+    );
+    registry.releaseRun(registration.run);
+  });
+
   it("binds every approval decision to immutable run and unique request identities", async () => {
     const publisher = new FakePublisher("run-1");
     const { controller, registration, registry } = registerController(publisher, {

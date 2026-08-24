@@ -13,9 +13,6 @@ export const PORT_RANGE = {
 } as const;
 
 export const SERVER_CONFIG = {
-  MAX_READY_ATTEMPTS: 20,
-  READY_CHECK_DELAY: 100,
-  MAX_READY_DELAY: 2000,
   FETCH_TIMEOUT: 2000,
 } as const;
 

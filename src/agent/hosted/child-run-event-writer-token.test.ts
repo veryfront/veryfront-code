@@ -3,9 +3,12 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import {
   createHostedConversationRunChunkMirrorFromCapability,
   createHostedRunEventWriterCapability,
+  createHostedRunEventWriterCapabilityForRequest,
   getActiveHostedRunEventWriterCapability,
   HostedChildRunEventWriterTokenExchangeError,
+  registerHostedRunEventWriterToken,
   runWithHostedRunEventWriterCapability,
+  runWithVerifiedHostedRunEventWriterRequest,
 } from "./child-run-event-writer-token.ts";
 
 Deno.test("explicit authority-less scopes clear and restore ambient writer authority", async () => {
@@ -641,4 +644,86 @@ Deno.test("writer capabilities keep credentials private after shared-realm poiso
     poisonedFetch: 0,
   });
   assertEquals(trustedAuthorizations, [`Bearer ${rootToken}`, `Bearer ${childToken}`]);
+});
+
+Deno.test("verified request tokens never mint writer authority for a different runId", () => {
+  const request = { projectId: "project-1", durableRootRun: { runId: "run_parent" } };
+  registerHostedRunEventWriterToken(request, {
+    projectId: "project-1",
+    runId: "run_parent",
+    token: "root-token",
+  });
+
+  assertEquals(
+    createHostedRunEventWriterCapabilityForRequest(request, {
+      apiUrl: "https://api.example.test",
+      runId: "run_other",
+    }),
+    undefined,
+    "a verified token must not mint authority for a different runId",
+  );
+  assertEquals(
+    typeof createHostedRunEventWriterCapabilityForRequest(request, {
+      apiUrl: "https://api.example.test",
+      runId: "run_parent",
+    })?.mintChildRunEventWriterCapability,
+    "function",
+    "the exact verified runId must still mint authority",
+  );
+});
+
+Deno.test("ambient verified writer reuse requires a matching projectId", async () => {
+  const request = { projectId: "project-1", durableRootRun: { runId: "run_parent" } };
+  registerHostedRunEventWriterToken(request, {
+    projectId: "project-1",
+    runId: "run_parent",
+    token: "root-token",
+  });
+
+  await runWithVerifiedHostedRunEventWriterRequest(request, () => {
+    assertEquals(
+      createHostedRunEventWriterCapabilityForRequest(
+        { ...request, projectId: "project_other" },
+        { apiUrl: "https://api.example.test", runId: "run_parent" },
+      ),
+      undefined,
+      "ambient reuse must require a matching projectId",
+    );
+    assertEquals(
+      typeof createHostedRunEventWriterCapabilityForRequest(
+        { ...request },
+        { apiUrl: "https://api.example.test", runId: "run_parent" },
+      )?.mintChildRunEventWriterCapability,
+      "function",
+      "an identity-preserving clone must reuse the verified writer",
+    );
+  });
+});
+
+Deno.test("ambient verified writer reuse requires a matching durable root runId", async () => {
+  const request = { projectId: "project-1", durableRootRun: { runId: "run_parent" } };
+  registerHostedRunEventWriterToken(request, {
+    projectId: "project-1",
+    runId: "run_parent",
+    token: "root-token",
+  });
+
+  await runWithVerifiedHostedRunEventWriterRequest(request, () => {
+    assertEquals(
+      createHostedRunEventWriterCapabilityForRequest(
+        { ...request, durableRootRun: { runId: "run_other" } },
+        { apiUrl: "https://api.example.test", runId: "run_parent" },
+      ),
+      undefined,
+      "ambient reuse must require a matching durable root runId",
+    );
+    assertEquals(
+      createHostedRunEventWriterCapabilityForRequest(
+        { ...request, durableRootRun: { runId: "run_other" } },
+        { apiUrl: "https://api.example.test", runId: "run_other" },
+      ),
+      undefined,
+      "a mismatched clone must not mint authority for the runId it names either",
+    );
+  });
 });

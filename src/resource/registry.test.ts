@@ -41,6 +41,23 @@ describe("resource registry", () => {
       assertEquals(resourceRegistry.findByPattern("/users/42/comments/7"), undefined);
     });
 
+    it("should not match a uri whose param value spans path segments", () => {
+      const userPosts = resource({
+        pattern: "/users/:userId/posts/:postId",
+        description: "User post",
+        paramsSchema: defineSchema((v) => v.object({ userId: v.string(), postId: v.string() }))(),
+        load: async () => ({}),
+      });
+
+      resourceRegistry.register(userPosts.id, userPosts);
+
+      assertEquals(
+        resourceRegistry.findByPattern("/users/42/extra/posts/7"),
+        undefined,
+        "a :param must not match across path segments",
+      );
+    });
+
     it("should treat regex metacharacters in patterns as literals", () => {
       const docs = resource({
         pattern: "/docs/:version/page.html",
@@ -54,6 +71,287 @@ describe("resource registry", () => {
       assertEquals(resourceRegistry.findByPattern("/docs/v1/page.html"), docs);
       assertEquals(resourceRegistry.findByPattern("/docs/v1/pageXhtml"), undefined);
     });
+
+    it("should prefer an exact resource over an earlier parameterized match", () => {
+      const userById = resource({
+        pattern: "/users/:userId",
+        description: "User by id",
+        paramsSchema: defineSchema((v) => v.object({ userId: v.string() }))(),
+        load: async () => ({}),
+      });
+      const currentUser = resource({
+        pattern: "/users/me",
+        description: "Current user",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
+
+      resourceRegistry.register(userById.id, userById);
+      resourceRegistry.register(currentUser.id, currentUser);
+
+      assertEquals(resourceRegistry.findByPattern("/users/me"), currentUser);
+    });
+
+    it("should treat opaque URI scheme values as literals", () => {
+      const isbn = resource({
+        pattern: "urn:isbn",
+        description: "ISBN namespace",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
+
+      resourceRegistry.register(isbn.id, isbn);
+
+      assertEquals(resourceRegistry.findByPattern("urn:isbn"), isbn);
+      assertEquals(resourceRegistry.findByPattern("urn:other"), undefined);
+
+      const ietf = resource({
+        pattern: "urn:ietf:params",
+        description: "IETF parameters namespace",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
+      resourceRegistry.register(ietf.id, ietf);
+      assertEquals(resourceRegistry.findByPattern("urn:ietf:params"), ietf);
+      assertEquals(resourceRegistry.findByPattern("urn:ietf:anything"), undefined);
+
+      const punctuated = resource({
+        pattern: "urn:ietf_:xml",
+        description: "Punctuated IETF namespace",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
+      resourceRegistry.register(punctuated.id, punctuated);
+      assertEquals(resourceRegistry.findByPattern("urn:ietf_:xml"), punctuated);
+      assertEquals(resourceRegistry.findByPattern("urn:ietf_anything"), undefined);
+
+      const slashDelimitedUrn = resource({
+        pattern: "urn:example:path/:literal",
+        description: "Slash-delimited URN",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
+      resourceRegistry.register(slashDelimitedUrn.id, slashDelimitedUrn);
+      assertEquals(
+        resourceRegistry.findByPattern("urn:example:path/:literal"),
+        slashDelimitedUrn,
+      );
+      assertEquals(
+        resourceRegistry.findByPattern("urn:example:path/anything"),
+        undefined,
+      );
+
+      const custom = resource({
+        pattern: "custom:namespace/path:literal",
+        description: "Opaque custom namespace",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
+      resourceRegistry.register(custom.id, custom);
+      assertEquals(resourceRegistry.findByPattern("custom:namespace/path:literal"), custom);
+      assertEquals(resourceRegistry.findByPattern("custom:namespace/pathanything"), undefined);
+
+      const punctuatedPath = resource({
+        pattern: "custom:namespace/path-:literal",
+        description: "Punctuated opaque path",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
+      resourceRegistry.register(punctuatedPath.id, punctuatedPath);
+      assertEquals(
+        resourceRegistry.findByPattern("custom:namespace/path-:literal"),
+        punctuatedPath,
+      );
+      assertEquals(
+        resourceRegistry.findByPattern("custom:namespace/path-anything"),
+        undefined,
+      );
+    });
+
+    it("should match multiple parameters within one path segment", () => {
+      const file = resource({
+        pattern: "/files/file-:base.:ext",
+        description: "File by name",
+        paramsSchema: defineSchema((v) => v.object({ base: v.string(), ext: v.string() }))(),
+        load: async () => ({}),
+      });
+
+      resourceRegistry.register(file.id, file);
+
+      assertEquals(resourceRegistry.findByPattern("/files/file-report.pdf"), file);
+      assertEquals(
+        resourceRegistry.extractParams("/files/file-report.pdf", file.pattern),
+        { base: "report", ext: "pdf" },
+      );
+      assertEquals(
+        resourceRegistry.extractParams("/files/file-report.final.pdf", file.pattern),
+        { base: "report", ext: "final.pdf" },
+        "the first following literal belongs to the template",
+      );
+
+      const search = resource({
+        pattern: "/search?q=prefix-:term",
+        description: "Prefixed search query",
+        paramsSchema: defineSchema((v) => v.object({ term: v.string() }))(),
+        load: async () => ({}),
+      });
+      resourceRegistry.register(search.id, search);
+      assertEquals(resourceRegistry.findByPattern("/search?q=prefix-books"), search);
+      assertEquals(
+        resourceRegistry.extractParams("/search?q=prefix-books", search.pattern),
+        { term: "books" },
+      );
+    });
+
+    it("should reject a long multi-capture near-match without repartitioning", () => {
+      const pattern = "/stress/:a-:b-:c-:d-:e-:f-:g-:h/end";
+      const nearMatch = `/stress/${"value-".repeat(64)}tail/nope`;
+
+      assertEquals(resourceRegistry.extractParams(nearMatch, pattern), {});
+    });
+
+    it("should match parameters in rootless hierarchical URI paths", () => {
+      const item = resource({
+        pattern: "custom:collection/:id",
+        description: "Collection item",
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+        load: async () => ({}),
+      });
+      resourceRegistry.register(item.id, item);
+
+      assertEquals(resourceRegistry.findByPattern("custom:collection/42"), item);
+      assertEquals(
+        resourceRegistry.extractParams("custom:collection/42", item.pattern),
+        { id: "42" },
+      );
+
+      const dynamicCollection = resource({
+        pattern: "custom::collection/items",
+        description: "Dynamic collection",
+        paramsSchema: defineSchema((v) => v.object({ collection: v.string() }))(),
+        load: async () => ({}),
+      });
+      resourceRegistry.register(dynamicCollection.id, dynamicCollection);
+      assertEquals(
+        resourceRegistry.findByPattern("custom:books/items"),
+        dynamicCollection,
+      );
+      assertEquals(
+        resourceRegistry.extractParams(
+          "custom:books/items",
+          dynamicCollection.pattern,
+        ),
+        { collection: "books" },
+      );
+
+      const prefixedCollection = resource({
+        pattern: "custom:collection-:id/items",
+        description: "Prefixed dynamic collection",
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+        load: async () => ({}),
+      });
+      resourceRegistry.clearAll();
+      resourceRegistry.register(prefixedCollection.id, prefixedCollection);
+      assertEquals(
+        resourceRegistry.findByPattern("custom:collection-42/items"),
+        prefixedCollection,
+      );
+      assertEquals(
+        resourceRegistry.extractParams(
+          "custom:collection-42/items",
+          prefixedCollection.pattern,
+        ),
+        { id: "42" },
+      );
+
+      const nestedFile = resource({
+        pattern: "custom:collections/:collection/file-:id",
+        description: "Collection file",
+        paramsSchema: defineSchema((v) => v.object({ collection: v.string(), id: v.string() }))(),
+        load: async () => ({}),
+      });
+      resourceRegistry.clearAll();
+      resourceRegistry.register(nestedFile.id, nestedFile);
+      assertEquals(
+        resourceRegistry.findByPattern("custom:collections/books/file-42"),
+        nestedFile,
+      );
+      assertEquals(
+        resourceRegistry.extractParams(
+          "custom:collections/books/file-42",
+          nestedFile.pattern,
+        ),
+        { collection: "books", id: "42" },
+      );
+
+      const hostedFile = resource({
+        pattern: "custom://host/files/file-:id",
+        description: "Hosted file",
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+        load: async () => ({}),
+      });
+      resourceRegistry.clearAll();
+      resourceRegistry.register(hostedFile.id, hostedFile);
+      assertEquals(
+        resourceRegistry.findByPattern("custom://host/files/file-42"),
+        hostedFile,
+      );
+      assertEquals(
+        resourceRegistry.extractParams(
+          "custom://host/files/file-42",
+          hostedFile.pattern,
+        ),
+        { id: "42" },
+      );
+
+      const pathAbsoluteFile = resource({
+        pattern: "custom:/files/file-:id",
+        description: "Path-absolute file",
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+        load: async () => ({}),
+      });
+      resourceRegistry.clearAll();
+      resourceRegistry.register(pathAbsoluteFile.id, pathAbsoluteFile);
+      assertEquals(
+        resourceRegistry.findByPattern("custom:/files/file-42"),
+        pathAbsoluteFile,
+      );
+      assertEquals(
+        resourceRegistry.extractParams(
+          "custom:/files/file-42",
+          pathAbsoluteFile.pattern,
+        ),
+        { id: "42" },
+      );
+    });
+
+    it("should support caller-scoped visibility without changing default lookup", () => {
+      const userById = resource({
+        pattern: "/users/:userId",
+        description: "User by id",
+        paramsSchema: defineSchema((v) => v.object({ userId: v.string() }))(),
+        load: async () => ({}),
+      });
+      const disabledCurrentUser = resource({
+        pattern: "/users/me",
+        description: "Disabled current user",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+        mcp: { enabled: false },
+      });
+
+      resourceRegistry.register(userById.id, userById);
+      resourceRegistry.register(disabledCurrentUser.id, disabledCurrentUser);
+
+      assertEquals(resourceRegistry.findByPattern("/users/me"), disabledCurrentUser);
+      assertEquals(
+        resourceRegistry.findByPattern(
+          "/users/me",
+          (candidate) => candidate.mcp?.enabled !== false,
+        ),
+        userById,
+      );
+    });
   });
 
   describe("extractParams()", () => {
@@ -64,10 +362,56 @@ describe("resource registry", () => {
       );
     });
 
+    it("decodes path, query, and fragment captures exactly once", () => {
+      assertEquals(
+        resourceRegistry.extractParams(
+          "/files/a%20b%2Fc+plus?filter=x+y%26z#section-%252F",
+          "/files/:path?filter=:filter#section-:section",
+        ),
+        {
+          path: "a b/c+plus",
+          filter: "x+y&z",
+          section: "%2F",
+        },
+      );
+    });
+
+    it("rejects malformed escapes and raw component delimiters", () => {
+      const pattern = "/files/:path?filter=:filter#section-:section";
+      const file = resource({
+        pattern,
+        description: "Component boundaries",
+        paramsSchema: defineSchema((v) =>
+          v.object({ path: v.string(), filter: v.string(), section: v.string() })
+        )(),
+        load: async () => ({}),
+      });
+      resourceRegistry.register(file.id, file);
+      for (
+        const uri of [
+          "/files/%E0%A4%A?filter=ok#section-one",
+          "/files/one/two?filter=ok#section-three",
+          "/files/ok?filter=one&extra=two#section-three",
+          "/files/ok?filter=one#section-two#extra",
+        ]
+      ) {
+        assertEquals(resourceRegistry.findByPattern(uri), undefined);
+        assertEquals(resourceRegistry.extractParams(uri, pattern), {});
+      }
+    });
+
     it("should return an empty object when the uri does not match", () => {
       assertEquals(
         resourceRegistry.extractParams("/users/42/comments/7", "/users/:userId/posts/:postId"),
         {},
+      );
+    });
+
+    it("should not capture a multi-segment value into a single param", () => {
+      assertEquals(
+        resourceRegistry.extractParams("/users/a/b/posts/7", "/users/:userId/posts/:postId"),
+        {},
+        "a multi-segment value must not be captured into a single :param",
       );
     });
   });

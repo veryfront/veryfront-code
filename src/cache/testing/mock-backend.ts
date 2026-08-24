@@ -8,6 +8,7 @@
  */
 
 import type { CacheBackend } from "../backend.ts";
+import type { CacheBackendType } from "../types.ts";
 import { buildBatchResults } from "../backends/batch-results.ts";
 
 /**
@@ -41,6 +42,14 @@ export interface MockCacheBackendOptions {
   errorMessage?: string;
   /** Initial data to populate the cache */
   initialData?: Map<string, { value: string; expiresAt: number }>;
+  /**
+   * Backend type discriminant, default "memory". Pass "redis" (or another
+   * distributed type) for code under test that gates on
+   * `isDistributedBackend`, which rejects the "memory" default.
+   */
+  type?: CacheBackendType;
+  /** When true, stored entries never expire, whatever TTL the caller passes. */
+  ignoreTtl?: boolean;
 }
 
 /**
@@ -59,7 +68,7 @@ export interface MockCacheBackendOptions {
  * ```
  */
 export class MockCacheBackend implements CacheBackend {
-  readonly type = "memory" as const;
+  readonly type: CacheBackendType;
 
   private store = new Map<string, { value: string; expiresAt: number }>();
   private _operations: RecordedOperation[] = [];
@@ -67,6 +76,7 @@ export class MockCacheBackend implements CacheBackend {
 
   constructor(options: MockCacheBackendOptions = {}) {
     this.options = options;
+    this.type = options.type ?? "memory";
     if (options.initialData) {
       this.store = new Map(options.initialData);
     }
@@ -235,10 +245,14 @@ export class MockCacheBackend implements CacheBackend {
 
     this.store.set(key, {
       value,
-      expiresAt: Date.now() + ttlSeconds * 1000,
+      expiresAt: this.expiresAt(Date.now(), ttlSeconds),
     });
 
     this._operations.push(operation);
+  }
+
+  private expiresAt(now: number, ttlSeconds: number): number {
+    return this.options.ignoreTtl ? Number.POSITIVE_INFINITY : now + ttlSeconds * 1000;
   }
 
   async setBatch(entries: Array<{ key: string; value: string; ttl?: number }>): Promise<void> {
@@ -255,7 +269,7 @@ export class MockCacheBackend implements CacheBackend {
       if (!this.shouldFail(key, "set")) {
         this.store.set(key, {
           value,
-          expiresAt: now + (ttl ?? 300) * 1000,
+          expiresAt: this.expiresAt(now, ttl ?? 300),
         });
       }
     }

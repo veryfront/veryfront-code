@@ -6,51 +6,16 @@ import { JSDOM } from "npm:jsdom@28.0.0";
 import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { type ComponentDomOptions, installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "./dropdown-menu.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "./popover.tsx";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./select.tsx";
 import { Floating } from "./floating.tsx";
 
-function installDom(dom: JSDOM): () => void {
-  const window = dom.window;
-  const replacements: Record<string, unknown> = {
-    window,
-    document: window.document,
-    navigator: window.navigator,
-    self: window,
-    Node: window.Node,
-    Element: window.Element,
-    HTMLElement: window.HTMLElement,
-    MouseEvent: window.MouseEvent,
-    KeyboardEvent: window.KeyboardEvent,
-    innerWidth: window.innerWidth,
-    innerHeight: window.innerHeight,
-    addEventListener: window.addEventListener.bind(window),
-    removeEventListener: window.removeEventListener.bind(window),
-    requestAnimationFrame: window.requestAnimationFrame.bind(window),
-    cancelAnimationFrame: window.cancelAnimationFrame.bind(window),
-  };
-  const previous = new Map<string, PropertyDescriptor | undefined>();
-
-  for (const [key, value] of Object.entries(replacements)) {
-    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
-    Object.defineProperty(globalThis, key, {
-      configurable: true,
-      enumerable: true,
-      value,
-      writable: true,
-    });
-  }
-
-  return () => {
-    for (const key of Object.keys(replacements)) {
-      const descriptor = previous.get(key);
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-      else delete (globalThis as Record<string, unknown>)[key];
-    }
-    dom.window.close();
-  };
-}
+const DOM_OPTIONS: ComponentDomOptions = {
+  windowGlobals: ["self", "KeyboardEvent", "innerWidth", "innerHeight"],
+  windowBound: ["addEventListener", "removeEventListener"],
+};
 
 async function waitFor(condition: () => boolean, timeoutMs = 3000): Promise<void> {
   const startedAt = Date.now();
@@ -132,7 +97,7 @@ describe("Floating SSR and hydration", () => {
         `<!doctype html><html><body><div id="root">${serverMarkup}</div></body></html>`,
         { pretendToBeVisual: true, url: "https://example.com/" },
       );
-      const restore = installDom(dom);
+      const restore = installComponentDom(dom, DOM_OPTIONS);
       let root: ReturnType<typeof hydrateRoot> | undefined;
 
       try {
@@ -187,7 +152,7 @@ describe("Floating SSR and hydration", () => {
       `<!doctype html><html><body><div id="root">${serverMarkup}</div></body></html>`,
       { pretendToBeVisual: true, url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     let root: ReturnType<typeof hydrateRoot> | undefined;
 
     try {
@@ -236,7 +201,7 @@ describe("Floating SSR and hydration", () => {
       `<!doctype html><html><body><div id="root">${serverMarkup}</div></body></html>`,
       { pretendToBeVisual: true, url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     let root: ReturnType<typeof hydrateRoot> | undefined;
 
     try {
@@ -303,7 +268,7 @@ describe("Floating SSR and hydration", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { pretendToBeVisual: true, url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const rootElement = document.getElementById("root");
     assert(rootElement);
     const root = createRoot(rootElement);
@@ -382,7 +347,7 @@ describe("Floating SSR and hydration", () => {
       '<!doctype html><html><body><div id="owner-root"></div></body></html>',
       { pretendToBeVisual: true, url: "https://owner.example/" },
     );
-    const restore = installDom(globalDom);
+    const restore = installComponentDom(globalDom, DOM_OPTIONS);
     const ownerRoot = ownerDom.window.document.getElementById("owner-root");
     assert(ownerRoot);
     const root = createRoot(ownerRoot);

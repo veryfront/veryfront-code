@@ -113,6 +113,10 @@ export async function runDynamicWorkflowRun(
 
     const sourceIntegrationPolicy = requireWorkflowSourceIntegrationPolicy(storedRun);
     const run = await hydrateRunContextEnv(backend, runId, storedRun, expectedWorkerId);
+    if (!run) {
+      logger.error(`Workflow run not found: ${runId}`);
+      return DYNAMIC_EXIT_CODES.NOT_FOUND;
+    }
 
     // Get tenant context (from env or from stored run)
     const tenant = getTenantFromEnv() ?? run._tenant;

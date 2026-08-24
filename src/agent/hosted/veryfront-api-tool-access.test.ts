@@ -120,6 +120,27 @@ Deno.test("filterVeryfrontApiToolDefinitionsByAccessProfile applies action overr
   );
 });
 
+Deno.test("filterVeryfrontApiToolDefinitionsByAccessProfile hides mapped tools whose family is absent from the profile", () => {
+  const parsed = parseVeryfrontApiToolAccessProfile(profile({
+    createServerVisibility: "visible",
+    deleteServerVisibility: "visible",
+  }));
+
+  assertEquals(
+    filterVeryfrontApiToolDefinitionsByAccessProfile({
+      toolDefinitions: [
+        remoteTool("create_invite"),
+        remoteTool("create_domain"),
+        remoteTool("download_release"),
+        remoteTool("update_file"),
+      ],
+      profile: parsed,
+    }).map((tool) => tool.name),
+    ["update_file"],
+    "mapped tools whose family is absent from the profile must stay hidden while unmapped tools pass through",
+  );
+});
+
 Deno.test("filterVeryfrontApiToolDefinitionsWithAccessProfile fails closed for mapped tools when the profile is stale", async () => {
   const source = {
     id: "veryfront-mcp",

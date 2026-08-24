@@ -1985,7 +1985,7 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
     description: "Resource description",
     pattern: "URI template pattern for parameterized resources",
     mimeType: "Content MIME type",
-    paramsSchema: "Zod schema for URI parameters",
+    paramsSchema: "Schema that validates and transforms URI parameters",
     load: "Function returning resource content",
     subscribe: "Async iterable for real-time resource updates",
     handler: "Function returning resource content",

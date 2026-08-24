@@ -9,7 +9,13 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module ai/workflow/backends/redis/index.test
  */
 
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
 import { RedisBackend } from "./index.ts";
@@ -36,6 +42,8 @@ class MockRedisAdapter implements RedisAdapter {
   sets = new Map<string, Set<string>>();
   expiries = new Map<string, number>();
   streams = new Map<string, Array<{ id: string; data: Record<string, string> }>>();
+  lastScript = "";
+  lastArgs: string[] = [];
   groups = new Map<string, Set<string>>();
   nextStreamSequence = 1;
 
@@ -143,6 +151,11 @@ class MockRedisAdapter implements RedisAdapter {
   // and extend (P)EXPIREs it, atomically with respect to the JS event loop.
   eval(script: string, keys: string[], args: string[]): Promise<unknown> {
     const key = keys[0]!;
+    // The mock re-implements each Lua script in TypeScript, so it cannot prove the
+    // Lua itself still carries its guards. Record what the backend actually sent so
+    // tests can assert against the script source and its ARGV layout.
+    this.lastScript = script;
+    this.lastArgs = [...args];
 
     if (script.includes("open-run-observation")) {
       const hash = this.hashes.get(key);
@@ -582,9 +595,23 @@ describe("RedisBackend", () => {
   });
 
   describe("constructor defaults", () => {
-    it("should set default config values", () => {
+    it("should set default config values", async () => {
       const b = new RedisBackend({ client: mockRedis as unknown as RedisAdapter });
       assertExists(b);
+
+      await b.initialize();
+      assertEquals(
+        mockRedis.groups.get("vf:workflow:stream:schema-v1"),
+        new Set(["vf:workflow:workers:schema-v1"]),
+        "default stream and consumer group keys are a compatibility contract with running workers",
+      );
+
+      await b.createRun(createTestRun("run-default"));
+      assertEquals(
+        mockRedis.hashes.has("vf:workflow:schema-v1:run:run-default"),
+        true,
+        "the default key prefix must place run hashes where existing deployments read them",
+      );
     });
   });
 
@@ -741,10 +768,24 @@ describe("RedisBackend", () => {
       const readFailure = await backend.openRunObservation(run.id);
       assertExists(readFailure);
       mockRedis.xread = () => Promise.reject(new Error("redis://private-host raw failure"));
-      await assertRejects(
+      const readError = await assertRejects(
         () => readFailure.changes[Symbol.asyncIterator]().next(),
         Error,
+      );
+      assertInstanceOf(
+        readError,
+        Error,
+        "the sanitized rejection must still be an Error",
+      );
+      assertEquals(
+        readError.message,
         "Workflow run observation failed",
+        "the raw Redis failure must not reach the caller",
+      );
+      assertEquals(
+        readError.cause,
+        undefined,
+        "no cause chain may carry the Redis connection string",
       );
 
       const parseBackend = new RedisBackend({ client: mockRedis, prefix: "parse:" });
@@ -760,10 +801,24 @@ describe("RedisBackend", () => {
             data: { revision: "not-a-revision", status: "running", nodes: "private payload" },
           }],
         }]);
-      await assertRejects(
+      const parseError = await assertRejects(
         () => parseFailure.changes[Symbol.asyncIterator]().next(),
         Error,
+      );
+      assertInstanceOf(
+        parseError,
+        Error,
+        "the sanitized rejection must still be an Error",
+      );
+      assertEquals(
+        parseError.message,
         "Workflow run observation failed",
+        "the unparsable record must not reach the caller",
+      );
+      assertEquals(
+        parseError.cause,
+        undefined,
+        "no cause chain may carry the raw stream payload",
       );
     });
 
@@ -1116,6 +1171,18 @@ describe("RedisBackend", () => {
       );
       assertEquals((await backend.getRun("run-owner-cas"))?.status, "running");
 
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "redis.call('hget', KEYS[1], 'workerId') ~= expectedWorkerId",
+        "the owner fence must live in the Lua the backend executes, not only in the mock",
+      );
+      const ownerFenceArgvCount = Number(mockRedis.lastArgs[0]);
+      assertEquals(
+        mockRedis.lastArgs[ownerFenceArgvCount + 4],
+        "worker-old",
+        "the expected workerId must sit at the ARGV index the Lua fence reads",
+      );
+
       assertEquals(
         await backend.updateRunIfStatusAndWorker(
           "run-owner-cas",
@@ -1438,6 +1505,19 @@ describe("RedisBackend", () => {
         ),
         false,
       );
+
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "if redis.call('hget', KEYS[1], 'workerId') ~= expectedWorkerId then return 0 end",
+        "the checkpoint owner fence must live in the Lua the backend executes",
+      );
+      const checkpointFenceArgvCount = Number(mockRedis.lastArgs[0]);
+      assertEquals(
+        mockRedis.lastArgs[checkpointFenceArgvCount + 1],
+        "worker-old",
+        "the expected workerId must sit at the ARGV index the Lua fence reads",
+      );
+
       assertEquals(
         await backend.saveCheckpointIfStatusAndWorker(
           "synthetic-child-run",
@@ -1642,6 +1722,24 @@ describe("RedisBackend", () => {
       assertEquals(stored.status, "approved");
       assertEquals(stored.decidedBy, "admin");
       assertEquals(stored.comment, "looks good");
+    });
+
+    it("updateApproval omits absent comments at the serialized boundary", async () => {
+      await backend.createRun(createTestRun("run-ap-no-comment"));
+      await backend.savePendingApproval("run-ap-no-comment", makeApproval("ap-no-comment"));
+
+      assertEquals(
+        await backend.updateApproval("run-ap-no-comment", "ap-no-comment", {
+          approved: true,
+          approver: "admin",
+        }),
+        true,
+      );
+
+      const stored = JSON.parse(
+        mockRedis.lists.get("test:schema-v1:approvals:run-ap-no-comment")![0]!,
+      );
+      assertEquals(Object.hasOwn(stored, "comment"), false);
     });
 
     it("updateApproval returns false (no-op) once the approval is already decided", async () => {
@@ -1869,6 +1967,23 @@ describe("RedisBackend", () => {
       assertExists(observation);
 
       assertEquals(await backend.claimStalledRun("run-claim", "worker-a", 60_000), true);
+
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "if activity ~= ARGV[1] then return 0 end",
+        "the stalled-claim activity fence must live in the Lua the backend executes",
+      );
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "redis.call('set', KEYS[2], ARGV[2], 'NX', 'PX', ARGV[3])",
+        "the claim must be taken with a single NX set in the Lua the backend executes",
+      );
+      assertEquals(
+        mockRedis.lastArgs[1],
+        "worker-a",
+        "the claiming workerId must sit at the ARGV index the Lua claim reads",
+      );
+
       assertEquals(await backend.claimStalledRun("run-claim", "worker-b", 60_000), false);
 
       const run = await backend.getRun("run-claim");

@@ -492,6 +492,45 @@ describe("VeryfrontRunsClient", () => {
     assertEquals(fetchCalls.length, 1);
   });
 
+  it("does not trust a manually defined schedule returned by the source filter", async () => {
+    mockFetch([
+      jsonResponse({
+        schedules: [{
+          id: scheduleId,
+          name: "Process job submissions",
+          status: "active",
+          target: {
+            kind: "agent",
+            id: "job-submission-orchestrator",
+          },
+          definition_source: "manual",
+          source_trigger_id: "process-job-submissions",
+          timeout_seconds: 1800,
+        }],
+      }),
+    ]);
+    const client = new VeryfrontRunsClient({
+      apiUrl: "https://93.184.216.34",
+      authToken: "test-token",
+      projectReference: "dreamy-haven",
+    });
+
+    await assertRejects(
+      () =>
+        client.createScheduleRunFromSource({
+          sourceTriggerId: "process-job-submissions",
+        }),
+      Error,
+      'Active source schedule "process-job-submissions" not found in project "dreamy-haven".',
+    );
+
+    assertEquals(
+      fetchCalls.length,
+      1,
+      "a manually defined schedule must not be triggered as a source schedule",
+    );
+  });
+
   it("creates every knowledge ingest task-run variant", async () => {
     mockFetch([
       jsonResponse({ accepted: true, run: makeRun() }, 202),
@@ -546,6 +585,68 @@ describe("VeryfrontRunsClient", () => {
         config: { path_prefix: "handbook/" },
       },
     });
+  });
+
+  it("creates knowledge ingest task runs from upload paths", async () => {
+    mockFetch([jsonResponse({ accepted: true, run: makeRun() }, 202)]);
+
+    const client = new VeryfrontRunsClient({
+      apiUrl: "https://93.184.216.34",
+      authToken: "test-token",
+      projectReference: "dreamy-haven",
+    });
+
+    await client.knowledge.ingestByUploadPaths({
+      projectId,
+      uploadPaths: ["docs/a.md", "docs/b.md"],
+    });
+
+    assertEquals(
+      jsonBody(0),
+      {
+        kind: "task",
+        owner: { kind: "project", id: projectId },
+        request: {
+          name: "Ingest knowledge",
+          target: "task:knowledge-ingest",
+          config: {
+            paths: ["docs/a.md", "docs/b.md"],
+          },
+        },
+      },
+      "ingestByUploadPaths sends the paths config with the default run name",
+    );
+  });
+
+  it("creates knowledge ingest task runs from an upload prefix", async () => {
+    mockFetch([jsonResponse({ accepted: true, run: makeRun() }, 202)]);
+
+    const client = new VeryfrontRunsClient({
+      apiUrl: "https://93.184.216.34",
+      authToken: "test-token",
+      projectReference: "dreamy-haven",
+    });
+
+    await client.knowledge.ingestByUploadPrefix({
+      projectId,
+      uploadPrefix: "docs/",
+    });
+
+    assertEquals(
+      jsonBody(0),
+      {
+        kind: "task",
+        owner: { kind: "project", id: projectId },
+        request: {
+          name: "Ingest knowledge",
+          target: "task:knowledge-ingest",
+          config: {
+            path_prefix: "docs/",
+          },
+        },
+      },
+      "ingestByUploadPrefix sends the path_prefix config with the default run name",
+    );
   });
 
   it("lists project runs with project-reference routing", async () => {
@@ -673,6 +774,29 @@ describe("VeryfrontRunsClient", () => {
     assertEquals(fetchCalls.length, 1);
     assertStringIncludes(call(0).url, "https://93.184.216.34/runs/");
     assertEquals(headerValue(0, "Authorization"), "Bearer request-token");
+  });
+
+  it("routes runs requests through the guarded outbound transport", async () => {
+    mockFetch([jsonResponse(makeRun())]);
+
+    const client = new VeryfrontRunsClient({
+      apiUrl: "http://127.0.0.1:9",
+      authToken: "test-token",
+      projectReference: "dreamy-haven",
+      retry: { maxRetries: 0 },
+    });
+
+    await assertRejects(
+      () => client.get("run_11111111-1111-4111-8111-111111111111"),
+      Error,
+      "Outbound network egress blocked for internal host",
+    );
+
+    assertEquals(
+      fetchCalls.length,
+      0,
+      "the egress guard blocks before any fetch is dispatched",
+    );
   });
 
   it("fails fast when auth is missing", async () => {

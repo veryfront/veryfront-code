@@ -10,31 +10,12 @@ import {
   remove,
   writeTextFile,
 } from "#veryfront/testing/deno-compat.ts";
-import type { CacheBackend } from "#veryfront/cache/types.ts";
+import { MockCacheBackend } from "#veryfront/cache/testing/index.ts";
 import { tokenizeAllVeryFrontPaths } from "#veryfront/cache";
 import { __injectCachesForTests } from "#veryfront/transforms/esm/transform-cache.ts";
 import { buildMdxEsmModuleRecoveryCacheKey } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 import { SSRCacheManager } from "./ssr-cache-manager.ts";
 import { getMdxEsmSsrCacheDir } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
-
-class FakeDistributedCache implements CacheBackend {
-  readonly type = "redis" as const;
-  private values = new Map<string, string>();
-
-  get(key: string): Promise<string | null> {
-    return Promise.resolve(this.values.get(key) ?? null);
-  }
-
-  set(key: string, value: string): Promise<void> {
-    this.values.set(key, value);
-    return Promise.resolve();
-  }
-
-  del(key: string): Promise<void> {
-    this.values.delete(key);
-    return Promise.resolve();
-  }
-}
 
 describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, () => {
   it("separates hosted preview and production transform cache identities", () => {
@@ -126,7 +107,7 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
 
   it("recovers missing vfmod dependencies for redis cache entries", async () => {
     const projectDir = await makeTempDir({ prefix: "vf-ssr-cache-manager-" });
-    const distributedCache = new FakeDistributedCache();
+    const distributedCache = new MockCacheBackend({ type: "redis", ignoreTtl: true });
     const projectId = `project-${crypto.randomUUID()}`;
     const contentSourceId = `preview-${crypto.randomUUID()}`;
     const vfmodDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);

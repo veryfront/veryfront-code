@@ -1,6 +1,6 @@
 ---
 title: "veryfront/mcp"
-description: "MCP server exposing tools, prompts, and resources."
+description: "MCP server exposing tools, prompts, and resources. Resource-template captures are percent-decoded exactly once; malformed escapes are not found, and resources with `mcp.enabled: false` are omitted from both lists and reads."
 order: 18
 ---
 
@@ -53,26 +53,26 @@ Create mcpserver.
 
 ### Functions
 
-| Name                    | Description                                                                                                            | Source                                                                                     |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `buildFormElicitation`  | Builds form elicitation.                                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/elicitation.ts#L21) |
-| `buildUrlElicitation`   | Builds URL elicitation.                                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/elicitation.ts#L35) |
-| `clearMCPRegistry`      | Clear MCP registry.                                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/registry.ts#L44)    |
-| `createMCPServer`       | Create mcpserver.                                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/server.ts#L850)     |
-| `formatSSEEvent`        | Stateless SSE formatting utilities per the Server-Sent Events standard. Used by the Streamable HTTP transport for MCP. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/sse.ts#L6)          |
-| `formatSSEPrimingEvent` | Format an SSE priming event.                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/sse.ts#L19)         |
-| `formatSSERetry`        | Formats sseretry.                                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/sse.ts#L14)         |
-| `getMCPRegistry`        | Return MCP registry.                                                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/registry.ts#L10)    |
-| `getMCPStats`           | Return MCP stats.                                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/registry.ts#L35)    |
-| `registerPrompt`        | Registers prompt.                                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/registry.ts#L30)    |
-| `registerResource`      | Registers a schema-backed resource in the heterogeneous MCP registry.                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/registry.ts#L25)    |
-| `registerTool`          | Registers tool.                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/registry.ts#L19)    |
+| Name                    | Description                                                                                                                                        | Source                                                                                     |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `buildFormElicitation`  | Builds form elicitation.                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/elicitation.ts#L21) |
+| `buildUrlElicitation`   | Builds URL elicitation.                                                                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/elicitation.ts#L35) |
+| `clearMCPRegistry`      | Clear MCP registry.                                                                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/registry.ts#L47)    |
+| `createMCPServer`       | Create mcpserver.                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/server.ts#L857)     |
+| `formatSSEEvent`        | Stateless SSE formatting utilities per the Server-Sent Events standard. Used by the Streamable HTTP transport for MCP.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/sse.ts#L6)          |
+| `formatSSEPrimingEvent` | Format an SSE priming event.                                                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/sse.ts#L19)         |
+| `formatSSERetry`        | Formats sseretry.                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/sse.ts#L14)         |
+| `getMCPRegistry`        | Return MCP registry.                                                                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/registry.ts#L10)    |
+| `getMCPStats`           | Return MCP stats.                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/registry.ts#L38)    |
+| `registerPrompt`        | Registers prompt.                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/registry.ts#L33)    |
+| `registerResource`      | Registers a schema-backed resource. MCP reads decode URI captures exactly once before validation; `mcp.enabled: false` hides list and read access. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/registry.ts#L28)    |
+| `registerTool`          | Registers tool.                                                                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/registry.ts#L19)    |
 
 ### Classes
 
 | Name             | Description           | Source                                                                                    |
 | ---------------- | --------------------- | ----------------------------------------------------------------------------------------- |
-| `MCPServer`      | Implement mcpserver.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/server.ts#L110)    |
+| `MCPServer`      | Implement mcpserver.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/server.ts#L111)    |
 | `SessionManager` |                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/session.ts#L21)    |
 | `TaskStore`      | Implement task store. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/task-store.ts#L20) |
 

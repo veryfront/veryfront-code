@@ -138,20 +138,38 @@ describe("LocalBlobStorage", () => {
     });
 
     try {
+      const putAt = now;
       const expiredData = "Expired content";
       const expiredRef = await storage.put(expiredData, { id: "custom-expired", ttl: 1 });
       assertExists(expiredRef.expiresAt);
-      assertEquals(expiredRef.expiresAt, new Date(now + 1_000));
+      assertEquals(
+        expiredRef.expiresAt.getTime(),
+        putAt + 1_000,
+        "a ttl of 1 must expire exactly one second after creation",
+      );
 
       const validData = "Valid content";
       const validRef = await storage.put(validData, { id: "custom-valid", ttl: 3600 });
       assertExists(validRef.expiresAt);
-      assertEquals(validRef.expiresAt, new Date(now + 3_600_000));
+      assertEquals(
+        validRef.expiresAt.getTime(),
+        putAt + 3_600_000,
+        "a ttl of 3600 must expire exactly one hour after creation",
+      );
+
+      now += 10;
+      const newestRef = await storage.put("Newest content");
 
       now += 1500;
 
       assert(await storage.exists(expiredRef.id));
       assert(await storage.exists(validRef.id));
+
+      assertEquals(
+        (await storage.list()).map((ref) => ref.id),
+        [newestRef.id, validRef.id],
+        "list() hides expired blobs and returns the rest newest-first",
+      );
 
       await storage.cleanupExpiredBlobs();
 

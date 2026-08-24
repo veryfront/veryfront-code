@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { schedule } from "./factory.ts";
@@ -211,6 +211,14 @@ describe("schedule/factory", () => {
           { ...base, ["line\nbreak"]: true },
           'Schedule configuration["line\\nbreak"] is not supported.',
         ],
+        [
+          { ...base, ["x".repeat(100)]: true },
+          `Schedule configuration["${"x".repeat(80)}…"] is not supported.`,
+        ],
+        [
+          { ...base, [`${"x".repeat(79)}\u{1F600}${"y".repeat(20)}`]: true },
+          `Schedule configuration["${"x".repeat(79)}…"] is not supported.`,
+        ],
       ] as const
     ) {
       assertThrows(
@@ -284,15 +292,21 @@ describe("schedule/factory", () => {
   });
 
   it("rejects malformed schedule health configuration", () => {
+    const positiveIntegerMessage =
+      "Schedule health.maxStalenessSeconds must be a positive integer within the safe integer range.";
+
     for (
-      const health of [
-        {},
-        { maxStalenessSeconds: 0 },
-        { maxStalenessSeconds: 1.5 },
-        { maxStalenessSeconds: 60, unexpected: true },
-      ]
+      const [health, message] of [
+        [{}, positiveIntegerMessage],
+        [{ maxStalenessSeconds: 0 }, positiveIntegerMessage],
+        [{ maxStalenessSeconds: 1.5 }, positiveIntegerMessage],
+        [
+          { maxStalenessSeconds: 60, unexpected: true },
+          "Schedule health.unexpected is not supported.",
+        ],
+      ] as const
     ) {
-      assertThrows(
+      const error = assertThrows(
         () =>
           schedule({
             id: "triage-sweep",
@@ -301,6 +315,18 @@ describe("schedule/factory", () => {
             health: health as never,
           }),
         VeryfrontError,
+        message,
+        `health ${JSON.stringify(health)} must be rejected with the expected message`,
+      );
+      assertInstanceOf(
+        error,
+        VeryfrontError,
+        `health ${JSON.stringify(health)} must be rejected with a VeryfrontError`,
+      );
+      assertEquals(
+        error.slug,
+        "schedule-config-invalid",
+        `health ${JSON.stringify(health)} must carry the schedule-config-invalid slug`,
       );
     }
   });
@@ -967,6 +993,16 @@ describe("schedule/factory", () => {
             target: { kind: "workflow", id: "escalate-ticket" },
           },
         ),
+        {
+          id: "daily-triage",
+          schedule: "0 8 * * mon-fri",
+          target: { kind: "workflow", id: "escalate-ticket" },
+        },
+        {
+          id: "daily-triage",
+          schedule: "  0 8 * * 1-5  ",
+          target: { kind: "workflow", id: "escalate-ticket" },
+        },
       ]
     ) {
       assertEquals(isScheduleDefinition(value), false);

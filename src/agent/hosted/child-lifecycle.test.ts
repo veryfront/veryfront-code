@@ -641,6 +641,42 @@ describe("agent/hosted-child-lifecycle", () => {
     assertEquals(result.terminalState.terminalErrorCode, "DURABLE_CHILD_FAILED");
   });
 
+  it("skips cancelled terminal persistence for externally cancelled durable children", async () => {
+    const calls: string[] = [];
+    const adapter: HostedChildLifecycleAdapter = {
+      cancelled: () => {
+        calls.push("cancelled");
+      },
+      failed: () => {
+        calls.push("failed");
+      },
+    };
+
+    const result = await runHostedChildExecutionLifecycle({
+      adapter,
+      executionFailedCode: "DURABLE_CHILD_FAILED",
+      execute: () => {
+        throw new HostedChildTerminalStateError("cancelled", {
+          childConversationId: "conversation-1",
+          childRunId: "run-1",
+          childMessageId: "message-1",
+          latestEventId: 1,
+          latestExternalEventSequence: 1,
+        });
+      },
+      getExecutionSnapshot: () => null,
+      skipTerminalPersistence: shouldSkipHostedChildTerminalPersistence,
+    });
+
+    assertEquals(
+      calls,
+      [],
+      "externally cancelled child must not re-persist a cancelled terminal state",
+    );
+    assertEquals(result.status, "cancelled");
+    assertEquals(result.terminalState.terminalErrorCode, "DURABLE_CHILD_CANCELLED");
+  });
+
   it("preserves external terminal status without re-persisting it", async () => {
     const calls: string[] = [];
     const adapter: HostedChildLifecycleAdapter = {

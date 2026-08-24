@@ -1,8 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   collectHead,
+  getHeadCollectorContext,
   getHeadCollectorNonce,
   hasCollectedHead,
   HEAD_COLLECTOR_SYMBOL,
@@ -281,6 +282,42 @@ describe("head-collector", () => {
       assertEquals(getHeadCollectorNonce(), undefined);
     });
 
+    it("does not re-count an identical payload against the request budgets", async () => {
+      const payload = serializeManagedHeadPayload([
+        descriptorFromHeadProps("title", { children: "same" })!,
+      ]);
+      const { result } = await runWithHeadCollector((renderContext) => {
+        const tokens = new Set<string>();
+        for (let index = 0; index < 200; index++) {
+          tokens.add(renderContext.registerHeadPayload(payload));
+        }
+        return tokens;
+      });
+      assertEquals(
+        result.size,
+        1,
+        "re-registering an identical payload must return the same token " +
+          "instead of minting a new one",
+      );
+    });
+
+    it("mints distinct tokens for distinct payloads", async () => {
+      const { result } = await runWithHeadCollector((renderContext) => {
+        const tokenA = renderContext.registerHeadPayload(
+          serializeManagedHeadPayload([descriptorFromHeadProps("title", { children: "a" })!]),
+        );
+        const tokenB = renderContext.registerHeadPayload(
+          serializeManagedHeadPayload([descriptorFromHeadProps("title", { children: "b" })!]),
+        );
+        return { tokenA, tokenB };
+      });
+      assertNotEquals(
+        result.tokenA,
+        result.tokenB,
+        "distinct payloads must not share a commit token",
+      );
+    });
+
     it("counts repeated singleton titles before aggregation", async () => {
       await assertRejects(
         () =>
@@ -368,8 +405,23 @@ describe("head-collector", () => {
   });
 
   describe("collectHead outside context", () => {
-    it("silently ignores calls outside context", () => {
-      collectHead({ title: "Orphan" });
+    it("silently ignores calls outside context", async () => {
+      const { head } = await runWithHeadCollector(() => collectHead({ title: "Prior" }));
+
+      collectHead({ title: "Orphan", metas: [{ name: "x", content: "y" }] });
+
+      assertEquals(
+        getHeadCollectorContext(),
+        null,
+        "no collector context exists outside runWithHeadCollector",
+      );
+      assertEquals(hasCollectedHead(), false, "orphan collectHead must not create a context");
+      assertEquals(
+        head.title,
+        "Prior",
+        "orphan collectHead must not write into a completed request's head",
+      );
+      assertEquals(head.metas, [], "orphan metas must not leak into a prior request");
     });
   });
 

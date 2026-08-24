@@ -6,8 +6,9 @@ import "#veryfront/schemas/_test-setup.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { delay, waitForApproval, waitForEvent } from "./wait.ts";
+import { delay, waitForApproval, waitForEvent, type WaitForEventOptions } from "./wait.ts";
 import type { WaitNodeConfig, WorkflowNode } from "../types.ts";
+import { getConfiguredTimedWaitKind, INTERNAL_DELAY_EVENT_NAME } from "../timed-wait-state.ts";
 
 function expectWaitConfig(node: WorkflowNode): WaitNodeConfig {
   if (node.config.type !== "wait") {
@@ -65,12 +66,35 @@ describe("waitForEvent()", () => {
     assertEquals(config.timeout, "1h");
   });
 
+  it("should require eventName", () => {
+    const node = waitForEvent("specific-event", {
+      eventName: "order.updated",
+    });
+
+    const config = expectWaitConfig(node);
+    assertEquals(config.eventName, "order.updated");
+
+    assertThrows(
+      () => waitForEvent("no-event", { eventName: "" }),
+      Error,
+      "must specify an eventName",
+      "waitForEvent must reject an empty eventName",
+    );
+    assertThrows(
+      () => waitForEvent("no-event", {} as WaitForEventOptions),
+      Error,
+      "must specify an eventName",
+      "waitForEvent must reject a missing eventName",
+    );
+  });
+
   it("requires a canonical non-empty eventName", () => {
     for (const eventName of ["", "   ", " order.updated "]) {
       assertThrows(
         () => waitForEvent("specific-event", { eventName }),
         VeryfrontError,
         "eventName",
+        `waitForEvent must reject non-canonical eventName ${JSON.stringify(eventName)}`,
       );
     }
   });
@@ -85,6 +109,16 @@ describe("delay()", () => {
     assertEquals(config.type, "wait");
     assertEquals(config.waitType, "event");
     assertEquals(config.timeout, "5m");
+    assertEquals(
+      config.eventName,
+      INTERNAL_DELAY_EVENT_NAME,
+      "delay nodes must carry the reserved delay event name",
+    );
+    assertEquals(
+      getConfiguredTimedWaitKind(config),
+      "delay",
+      "delay() must produce a durable delay, not an external event wait",
+    );
   });
 
   it("should support numeric duration", () => {
