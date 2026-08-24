@@ -304,4 +304,54 @@ describe("transforms/pipeline/stages/compile", () => {
       );
     });
   });
+
+  // The MDX loader resolves a page's layout by preferring an exported
+  // `MDXLayout`. The MDX compiler declares the binding but does not export it,
+  // so COMPILE has to add the export - after esbuild has run, and before the
+  // inline sourcemap directive esbuild leaves last in dev.
+  describe("MDX layout export injection", () => {
+    const declaresLayout =
+      `import Layout from "./Layout.js";\nconst MDXLayout = Layout;\nexport default function MDXContent(){ return null; }\n`;
+
+    it("exports a declared but unexported MDXLayout", async () => {
+      const result = await compilePlugin.transform(
+        createContext(declaresLayout, "/project/app/post.mdx"),
+      );
+
+      assertStringIncludes(
+        result,
+        "export { MDXLayout };",
+        "an MDX module that declares MDXLayout must export it for the loader to find",
+      );
+    });
+
+    it("injects the export before the inline sourcemap directive", async () => {
+      const result = await compilePlugin.transform(
+        createContext(declaresLayout, "/project/app/post.mdx"),
+      );
+
+      const exportIndex = result.indexOf("export { MDXLayout };");
+      const sourceMapIndex = result.indexOf("//# sourceMappingURL=");
+      assertEquals(
+        exportIndex > -1 && sourceMapIndex > -1 && exportIndex < sourceMapIndex,
+        true,
+        "the injected export must precede esbuild's trailing sourcemap directive",
+      );
+    });
+
+    it("does not duplicate an MDXLayout export that is already present", async () => {
+      const result = await compilePlugin.transform(
+        createContext(
+          `import Layout from "./Layout.js";\nconst MDXLayout = Layout;\nexport { MDXLayout };\nexport default function MDXContent(){ return null; }\n`,
+          "/project/app/post.mdx",
+        ),
+      );
+
+      assertEquals(
+        result.match(/export\s*\{[^}]*MDXLayout/g)?.length,
+        1,
+        "an MDX module that already exports MDXLayout must not get a second export",
+      );
+    });
+  });
 });

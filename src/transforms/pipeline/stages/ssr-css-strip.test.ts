@@ -3,6 +3,18 @@ import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { TransformContext } from "../types.ts";
 import { cssStripPlugin } from "./ssr-css-strip.ts";
+import {
+  getCssModuleScope,
+  resolveCssModuleKey,
+  rewriteCssModuleContent,
+  toScopedCssModuleClass,
+} from "#veryfront/transforms/css-modules/naming.ts";
+
+const MODULE_KEY = resolveCssModuleKey(
+  "./Button.module.css",
+  "/project/pages/index.tsx",
+  "/project",
+);
 
 function createContext(code: string): TransformContext {
   return {
@@ -32,11 +44,17 @@ describe("css-strip plugin", () => {
 
     assertEquals(result.includes(`import("./Button.module.css")`), false);
     assertEquals(result.includes("await /* css import"), false);
+    const scope = getCssModuleScope(MODULE_KEY);
     assertStringIncludes(
       result,
       'await Promise.resolve({ default: new Proxy({}, { get: (_, p) => typeof p === "string" ? "Button_"',
+      "a dynamic css module import must become a scoped proxy stub",
     );
-    assertStringIncludes(result, "__");
+    assertStringIncludes(
+      result,
+      `+ "__${scope.hash}" : "" })`,
+      "the dynamic stub must carry the module scope hash resolved from the importer path",
+    );
     assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
   });
 
@@ -47,10 +65,49 @@ describe("css-strip plugin", () => {
 
     const result = await cssStripPlugin.transform(ctx);
 
+    const expectedClass = toScopedCssModuleClass(MODULE_KEY, "container");
+
     assertEquals(result.includes(`import styles`), false);
-    assertStringIncludes(result, "const styles = new Proxy({},");
-    assertStringIncludes(result, "const styles = new Proxy({},");
-    assertStringIncludes(result, 'root = "Button_container__');
+    assertStringIncludes(
+      result,
+      "const styles = new Proxy({},",
+      "the default css module binding must become a proxy stub",
+    );
+    assertStringIncludes(
+      result,
+      `root = "${expectedClass}"`,
+      "the named binding must resolve to the scoped class of the importer-resolved module key",
+    );
+    assertStringIncludes(
+      rewriteCssModuleContent(".container { color: red; }", MODULE_KEY),
+      `.${expectedClass}`,
+      "the emitted class must match the class the aggregated css is rewritten to",
+    );
+    assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
+  });
+
+  it("strips a css re-export without turning it into a local const", async () => {
+    const ctx = createContext(
+      `export { default as styles } from "./Button.module.css";`,
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+
+    assertStringIncludes(
+      result,
+      "css re-export stripped",
+      "a css re-export must be replaced by the re-export comment",
+    );
+    assertEquals(
+      /\bconst\s+styles\s*=/.test(result),
+      false,
+      "a css re-export must not degrade into a non-exported const binding",
+    );
+    assertEquals(
+      result.includes(`.module.css"`),
+      false,
+      "no live .module.css specifier may survive",
+    );
     assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
   });
 

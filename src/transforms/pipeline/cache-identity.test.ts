@@ -278,10 +278,18 @@ describe("transform pipeline cache identity", () => {
     const plugins = await computePipelineConfigIdentity(
       identityInput({ customPlugins: [[0, "custom", TransformStage.FINALIZE, "custom@1"]] }),
     );
+    const vendor = await computePipelineConfigIdentity(
+      identityInput({ vendorBundleHash: "vendor-2" }),
+    );
 
     assertNotEquals(moduleServer, baseline);
     assertNotEquals(api, baseline);
     assertNotEquals(plugins, baseline);
+    assertNotEquals(
+      vendor,
+      baseline,
+      "vendor bundle hash must partition the transform cache",
+    );
   });
 
   it("keeps distinct fractional stages distinct in precomputed identities", async () => {

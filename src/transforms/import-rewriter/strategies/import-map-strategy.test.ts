@@ -121,6 +121,35 @@ describe("transforms/import-rewriter/strategies/import-map-strategy", () => {
       assertEquals(resolveImportWithMap("https://esm.sh/lodash@4", map), "/local/lodash.js");
     });
 
+    it("appends the esm.sh subpath to a URL mapping", () => {
+      const map: ImportMapConfig = { imports: { lodash: "https://cdn.example/lodash" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/lodash@4/fp", map),
+        "https://cdn.example/lodash/fp",
+        "a URL mapping keeps the subpath so the /fp entry point is resolved, not the package root",
+      );
+    });
+
+    it("prefers an exact package+subpath mapping over the package mapping", () => {
+      const map: ImportMapConfig = {
+        imports: { lodash: "https://cdn.example/lodash", "lodash/fp": "/local/fp.js" },
+      };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/lodash@4/fp", map),
+        "/local/fp.js",
+        "the package+subpath key wins over the bare package key",
+      );
+    });
+
+    it("drops the esm.sh subpath for a file-path mapping", () => {
+      const map: ImportMapConfig = { imports: { lodash: "/local/lodash.js" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/lodash@4/fp", map),
+        "/local/lodash.js",
+        "a file-path mapping already points at a single module, so the subpath is not appended",
+      );
+    });
+
     it("returns null for empty imports", () => {
       assertEquals(resolveImportWithMap("foo", {}), null);
     });

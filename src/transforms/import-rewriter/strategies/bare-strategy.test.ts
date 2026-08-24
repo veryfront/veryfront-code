@@ -15,7 +15,11 @@ import {
 import type { ImportSpecifierInfo, RewriteContext } from "../types.ts";
 import { rewriteSSRImportsCompatAsync } from "../ssr-adapter.ts";
 import { rewriteImports } from "../unified-rewriter.ts";
+import { TAILWIND_VERSION } from "../url-builder.ts";
 import { bareStrategy } from "./bare-strategy.ts";
+
+const TAILWIND_PINNED_URL =
+  `https://esm.sh/tailwindcss@${TAILWIND_VERSION}?external=react,react-dom&target=es2022`;
 
 function makeCtx(overrides: Partial<RewriteContext> = {}): RewriteContext {
   return {
@@ -113,7 +117,23 @@ describe("BareStrategy", () => {
         makeInfo("tailwindcss"),
         makeCtx({ target: "browser" }),
       );
-      assertEquals(result.specifier?.includes("tailwindcss@"), true);
+      assertEquals(
+        result.specifier,
+        TAILWIND_PINNED_URL,
+        "tailwindcss must resolve to the framework-pinned version that the config hash is built from",
+      );
+    });
+
+    it("overrides an author-supplied tailwindcss version with the framework pin", () => {
+      const result = bareStrategy.rewrite(
+        makeInfo("tailwindcss@3.4.0"),
+        makeCtx({ target: "browser" }),
+      );
+      assertEquals(
+        result.specifier,
+        TAILWIND_PINNED_URL,
+        "an inline tailwindcss version must be replaced by the framework pin",
+      );
     });
 
     it("should preserve versioned specifiers", () => {
@@ -276,7 +296,11 @@ describe("BareStrategy", () => {
 
     it("still pins tailwindcss regardless of the flag", () => {
       const result = bareStrategy.rewrite(makeInfo("tailwindcss"), makeCtx({ target: "browser" }));
-      assertEquals(result.specifier?.includes("tailwindcss@"), true);
+      assertEquals(
+        result.specifier,
+        TAILWIND_PINNED_URL,
+        "tailwindcss must keep the framework pin when the pinning flag is off",
+      );
     });
 
     it("preserves inline-versioned specifiers unchanged", () => {
@@ -364,8 +388,8 @@ describe("BareStrategy", () => {
     it("falls back to unversioned URL when both caches are cold", async () => {
       // No package.json cache, no npm registry cache — must behave like flag-off.
       const result = bareStrategy.rewrite(makeInfo("lodash"), makeCtx({ target: "browser" }));
-      // Yield one tick so the background fetch microtask settles and clears its timer.
-      await new Promise<void>((r) => setTimeout(r, 1));
+      // Drain the background registry resolution before the sanitizer runs.
+      await _pendingResolutions();
       assertEquals(
         result.specifier,
         "https://esm.sh/lodash?external=react,react-dom&target=es2022",
@@ -481,7 +505,11 @@ describe("BareStrategy", () => {
 
     it("still uses tailwindcss pinned version regardless of npm cache", () => {
       const result = bareStrategy.rewrite(makeInfo("tailwindcss"), makeCtx({ target: "browser" }));
-      assertEquals(result.specifier?.includes("tailwindcss@"), true);
+      assertEquals(
+        result.specifier,
+        TAILWIND_PINNED_URL,
+        "tailwindcss must keep the framework pin regardless of the npm version cache",
+      );
     });
 
     it("SSR target is not affected by the pin flag", () => {

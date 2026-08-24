@@ -2,7 +2,9 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ImportSpecifierInfo, RewriteContext } from "../types.ts";
+import { aliasStrategy } from "./alias-strategy.ts";
 import { assetStrategy } from "./asset-strategy.ts";
+import { relativeStrategy } from "./relative-strategy.ts";
 
 function makeCtx(overrides: Partial<RewriteContext> = {}): RewriteContext {
   return {
@@ -205,6 +207,15 @@ describe("AssetStrategy", () => {
 
   it("runs before the alias and relative strategies", () => {
     // Otherwise they claim the specifier first and append .js to it.
-    assertEquals(assetStrategy.priority < 1, true);
+    assertEquals(
+      assetStrategy.priority < aliasStrategy.priority,
+      true,
+      "asset strategy must outrank alias, which would otherwise append .js to @/assets paths",
+    );
+    assertEquals(
+      assetStrategy.priority < relativeStrategy.priority,
+      true,
+      "asset strategy must outrank relative, which would otherwise append .js to ./assets paths",
+    );
   });
 });

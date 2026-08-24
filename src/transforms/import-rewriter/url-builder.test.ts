@@ -14,6 +14,7 @@ import {
   buildPinnedEsmShUrl,
   buildReactUrl,
   buildVeryfrontModuleUrl,
+  CSSTYPE_VERSION,
   extractDependencyPinningPathKey,
   getReactImportMap,
   isEsmShUrl,
@@ -156,6 +157,33 @@ describe("transforms/import-rewriter/url-builder", () => {
           "https://app.example",
         ),
         "/_vf_modules/_pins/on%3Asnapshot-a/components/Button.js?ssr=true#default",
+      );
+      assertEquals(
+        appendSameOriginSSRDependencyPinningPathKey(
+          "https://cdn.example/_vf_modules/components/Button.js",
+          "on:snapshot-a",
+          "https://app.example",
+        ),
+        "https://cdn.example/_vf_modules/components/Button.js",
+        "a foreign-origin module URL must be returned unchanged",
+      );
+      assertEquals(
+        appendSameOriginSSRDependencyPinningPathKey(
+          "https://app.example/assets/Button.js",
+          "on:snapshot-a",
+          "https://app.example",
+        ),
+        "https://app.example/assets/Button.js",
+        "a same-origin non-/_vf_modules/ path must be returned unchanged",
+      );
+      assertEquals(
+        appendSameOriginSSRDependencyPinningPathKey(
+          "https://app.example/_vf_modules/components/Button.js",
+          "off",
+          "https://app.example",
+        ),
+        "https://app.example/_vf_modules/components/Button.js",
+        "a flag-off snapshot key must not rewrite the URL",
       );
     });
 
@@ -302,24 +330,54 @@ describe("transforms/import-rewriter/url-builder", () => {
   describe("getReactImportMap", () => {
     it("should return map with react entries", () => {
       const map = getReactImportMap("19.1.1");
-      const keys = [
-        "react",
-        "react-dom",
-        "react-dom/client",
-        "react-dom/server",
-        "react/jsx-runtime",
-        "react/jsx-dev-runtime",
-        "react/",
-        "react-dom/",
-      ] as const;
+      const deps = `target=es2022&deps=csstype@${CSSTYPE_VERSION}`;
 
-      for (const key of keys) {
-        assertEquals(typeof map[key], "string");
-      }
+      assertEquals(
+        map["react"],
+        `https://esm.sh/react@19.1.1?${deps}`,
+        "react resolves to the unexternalized bundle that owns the single React instance",
+      );
+      assertEquals(
+        map["react-dom"],
+        `https://esm.sh/react-dom@19.1.1?external=react&${deps}`,
+        "react-dom keeps react external so it reuses the same React instance",
+      );
+      assertEquals(
+        map["react-dom/client"],
+        `https://esm.sh/react-dom@19.1.1/client?external=react&${deps}`,
+        "react-dom/client keeps react external so hydration shares one React instance",
+      );
+      assertEquals(
+        map["react-dom/server"],
+        `https://esm.sh/react-dom@19.1.1/server?external=react&${deps}`,
+        "react-dom/server keeps react external so it reuses the same React instance",
+      );
+      assertEquals(
+        map["react/jsx-runtime"],
+        `https://esm.sh/react@19.1.1/jsx-runtime?external=react&${deps}`,
+        "the production JSX runtime is mapped, not the dev runtime",
+      );
+      assertEquals(
+        map["react/jsx-dev-runtime"],
+        `https://esm.sh/react@19.1.1/jsx-dev-runtime?external=react&${deps}`,
+        "the dev JSX runtime keeps its own entry",
+      );
 
-      assertEquals(map["react/"]?.endsWith("/"), true);
-      assertEquals(map["react-dom/"]?.endsWith("/"), true);
-      assertEquals(map["react-dom/"]?.includes("&external=react"), true);
+      assertEquals(
+        map["react/"]?.endsWith("/"),
+        true,
+        "the react prefix entry keeps the trailing slash import maps require",
+      );
+      assertEquals(
+        map["react-dom/"]?.endsWith("/"),
+        true,
+        "the react-dom prefix entry keeps the trailing slash import maps require",
+      );
+      assertEquals(
+        map["react-dom/"]?.includes("&external=react"),
+        true,
+        "the react-dom prefix entry keeps react external",
+      );
     });
   });
 

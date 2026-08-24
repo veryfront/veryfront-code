@@ -1,7 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { fromFileUrl, join } from "#veryfront/compat/path/index.ts";
 import {
@@ -47,6 +53,22 @@ describe("reactReExportToEsmUrl", () => {
     assertEquals(
       reactReExportToEsmUrl(reactPath("jsx-runtime.js"), "19.2.4"),
       buildReactUrl("react", "19.2.4", "/jsx-runtime", true),
+    );
+  });
+
+  it("maps the react-dom re-export to the externalized react-dom bundle", () => {
+    assertEquals(
+      reactReExportToEsmUrl(reactPath("react-dom.js"), "19.2.4"),
+      buildReactUrl("react-dom", "19.2.4", undefined, true),
+      "react-dom.js must route to the externalized react-dom bundle",
+    );
+  });
+
+  it("maps jsx-dev-runtime re-exports to the dev runtime", () => {
+    assertEquals(
+      reactReExportToEsmUrl(reactPath("jsx-dev-runtime.js"), "19.2.4"),
+      buildReactUrl("react", "19.2.4", "/jsx-dev-runtime", true),
+      "jsx-dev-runtime.js must route to the dev JSX runtime, not the production one",
     );
   });
 
@@ -648,6 +670,100 @@ describe("transformFrameworkCode depth-limit fallback", {
       // Survived: the parent file produced output. The bad-dep handling
       // is verified by the absence of an unhandled exception above.
       assert(transformed.length > 0, "fallback returned empty output");
+
+      // The unresolvable dep is left bare rather than aborting the parent.
+      assertStringIncludes(
+        transformed,
+        "./bad.js",
+        "the unresolvable dep must be left bare rather than aborting the parent",
+      );
+
+      // Control: the same good dep, transformed without a failing sibling.
+      // Comparing the two runs pins "a bad sibling changes nothing about the
+      // good one" without depending on whether this runtime materializes it.
+      const controlPath = `${srcDir}/owner-good.ts.src`;
+      const controlContent = [
+        `import { G } from "./good.js";`,
+        `export const z = G;`,
+      ].join("\n");
+      await Deno.writeTextFile(controlPath, controlContent);
+      const controlTransformed = await transformFrameworkCode(
+        controlContent,
+        controlPath,
+        { reactVersion: "19.1.1", projectDir: tmp, fs: createFileSystem() },
+        false,
+        MAX_RELATIVE_IMPORT_DEPTH + 1,
+      );
+
+      assertEquals(
+        transformed.includes('from "./good.js"'),
+        controlTransformed.includes('from "./good.js"'),
+        "a failing sibling dep must not change how ./good.js is linked",
+      );
+    } finally {
+      await Deno.remove(tmp, { recursive: true });
+    }
+  });
+
+  it("fails closed on an unresolvable #veryfront import when asked to throw", async () => {
+    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-missing-vf-" });
+    const srcDir = `${tmp}/src`;
+    await Deno.mkdir(srcDir, { recursive: true });
+    const sourcePath = `${srcDir}/imports-missing-vf.ts`;
+    const sourceContent = [
+      `import { missing } from "#veryfront/does-not-exist.ts";`,
+      `export const y = missing;`,
+    ].join("\n");
+
+    try {
+      const error = await assertRejects(
+        () =>
+          transformFrameworkCode(
+            sourceContent,
+            sourcePath,
+            { reactVersion: "19.2.4", projectDir: tmp, fs: createFileSystem() },
+            true,
+          ),
+        VeryfrontError,
+        "#veryfront/does-not-exist.ts",
+      );
+      assertEquals(
+        (error as VeryfrontError).slug,
+        "import-resolution-error",
+        "an unresolvable framework import must surface as import-resolution-error",
+      );
+    } finally {
+      await Deno.remove(tmp, { recursive: true });
+    }
+  });
+
+  it("fails closed on an unresolvable relative import when asked to throw", async () => {
+    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-missing-rel-" });
+    const srcDir = `${tmp}/src`;
+    await Deno.mkdir(srcDir, { recursive: true });
+    const sourcePath = `${srcDir}/imports-missing-relative.ts`;
+    const sourceContent = [
+      `import { gone } from "./not-on-disk.js";`,
+      `export const y = gone;`,
+    ].join("\n");
+
+    try {
+      const error = await assertRejects(
+        () =>
+          transformFrameworkCode(
+            sourceContent,
+            sourcePath,
+            { reactVersion: "19.2.4", projectDir: tmp, fs: createFileSystem() },
+            true,
+          ),
+        VeryfrontError,
+        "./not-on-disk.js",
+      );
+      assertEquals(
+        (error as VeryfrontError).slug,
+        "import-resolution-error",
+        "an unresolvable relative framework import must surface as import-resolution-error",
+      );
     } finally {
       await Deno.remove(tmp, { recursive: true });
     }
@@ -680,6 +796,16 @@ describe("transformFrameworkCode depth-limit fallback", {
       // No bare specifier and no remote https: import left behind.
       assertEquals(transformed.includes('from "lodash"'), false);
       assertEquals(/from\s+["']https:\/\//.test(transformed), false);
+      // And the positive half: it became a local bundle that exists on disk.
+      assertStringIncludes(
+        transformed,
+        "file://",
+        "a bare npm specifier must be materialized to a local bundle",
+      );
+      const bundleMatch = transformed.match(/from\s+"(file:\/\/[^"]+)"/);
+      assert(bundleMatch?.[1], "expected a file:// specifier in the fallback output");
+      const bundleStat = await Deno.stat(fromFileUrl(bundleMatch[1]));
+      assertEquals(bundleStat.isFile, true, "the materialized bundle must exist on disk");
     } finally {
       await Deno.remove(tmp, { recursive: true });
     }
