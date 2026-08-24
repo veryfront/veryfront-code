@@ -47,6 +47,8 @@ const MAX_EVENT_FILTER_PATH_LENGTH = 255;
 const MAX_PROMPT_TEMPLATE_LENGTH = 20_000;
 const MAX_DIAGNOSTIC_KEY_LENGTH = 80;
 const SIMPLE_DIAGNOSTIC_KEY_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$-]*$/;
+const reflectApply = Reflect.apply;
+const setHas = Set.prototype.has;
 
 function invalid(detail: string, cause?: unknown): never {
   throw WEBHOOK_CONFIG_INVALID.create({
@@ -303,7 +305,11 @@ function normalizeFilterCondition(
   );
   const path = requireEventFilterPath(condition.path, `${label} path`);
   const operator = condition.operator;
-  if (!EVENT_FILTER_OPERATORS.has(operator as WebhookEventFilterOperator)) {
+  if (
+    !reflectApply(setHas, EVENT_FILTER_OPERATORS, [
+      operator as WebhookEventFilterOperator,
+    ])
+  ) {
     invalid(`${label} operator is not supported.`);
   }
 
