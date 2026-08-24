@@ -1,6 +1,6 @@
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { defineSchema } from "#veryfront/schemas/index.ts";
@@ -405,6 +405,138 @@ describe("WorkflowClient", () => {
 
       await client.approve(handle.runId, approval.id, "reviewer", "looks good");
       assertEquals(await backend.getPendingApprovals(handle.runId), []);
+    });
+  });
+
+  describe("definition-resolved wait config", () => {
+    it("sets expiresAt on an approval created for a wait node with a timeout", async () => {
+      client.register(workflow({
+        id: "timeout-approval-workflow",
+        steps: [
+          waitForApproval("review", { message: "Confirm within the hour", timeout: "1h" }),
+        ],
+      }));
+
+      const before = Date.now();
+      const handle = await client.start("timeout-approval-workflow", {});
+      await handle.settled();
+
+      const [approval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(approval);
+      assertExists(
+        approval.expiresAt,
+        "a wait node timeout must produce an approval expiry",
+      );
+
+      const hourMs = 60 * 60 * 1000;
+      const expiresAtMs = new Date(approval.expiresAt).getTime();
+      assert(
+        expiresAtMs >= before + hourMs && expiresAtMs <= Date.now() + hourMs,
+        `expiresAt must be roughly one hour out, got ${approval.expiresAt}`,
+      );
+    });
+
+    it("rejects a decision from an approver outside the allow-list", async () => {
+      client.register(workflow({
+        id: "allow-list-approval-workflow",
+        steps: [
+          waitForApproval("review", { message: "Restricted review", approvers: ["alice"] }),
+        ],
+      }));
+
+      const handle = await client.start("allow-list-approval-workflow", {});
+      await handle.settled();
+
+      const [approval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(approval);
+
+      await assertRejects(
+        () => client.approve(handle.runId, approval.id, "bob"),
+        VeryfrontError,
+        "Not authorized to approve this request",
+      );
+
+      const stillPending = await backend.getPendingApprovals(handle.runId);
+      assertEquals(stillPending.length, 1);
+      assertEquals(
+        stillPending[0]!.status,
+        "pending",
+        "an unauthorized decision must not consume the approval",
+      );
+    });
+
+    it("accepts a decision from an allow-listed approver and resumes the run", async () => {
+      client.register(workflow({
+        id: "allow-list-resume-workflow",
+        steps: [
+          waitForApproval("review", { message: "Restricted review", approvers: ["alice"] }),
+        ],
+      }));
+
+      const handle = await client.start("allow-list-resume-workflow", {});
+      await handle.settled();
+
+      const [approval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(approval);
+
+      await client.approve(handle.runId, approval.id, "alice", "approved");
+
+      assertEquals(await backend.getPendingApprovals(handle.runId), []);
+      const run = await backend.getRun(handle.runId);
+      assertEquals(run?.status, "completed");
+    });
+
+    it("resolves timeout and approvers for a wait nested in a static sub-workflow", async () => {
+      client.register(workflow({
+        id: "sub-workflow-guarded-approval-workflow",
+        steps: [
+          subWorkflow("child-workflow", {
+            workflow: workflow({
+              id: "guarded-child-approval-workflow",
+              steps: [
+                waitForApproval("child-review", {
+                  message: "Restricted child review",
+                  timeout: "1h",
+                  approvers: ["alice"],
+                }),
+              ],
+            }).definition,
+          }),
+        ],
+      }));
+
+      const before = Date.now();
+      const handle = await client.start("sub-workflow-guarded-approval-workflow", {});
+      await handle.settled();
+
+      const [approval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(approval);
+      assertEquals(approval.nodeId, "child-review");
+
+      assertExists(
+        approval.expiresAt,
+        "a sub-workflow wait node timeout must produce an approval expiry",
+      );
+      const hourMs = 60 * 60 * 1000;
+      const expiresAtMs = new Date(approval.expiresAt).getTime();
+      assert(
+        expiresAtMs >= before + hourMs && expiresAtMs <= Date.now() + hourMs,
+        `expiresAt must be roughly one hour out, got ${approval.expiresAt}`,
+      );
+
+      await assertRejects(
+        () => client.approve(handle.runId, approval.id, "bob"),
+        VeryfrontError,
+        "Not authorized to approve this request",
+      );
+      const stillPending = await backend.getPendingApprovals(handle.runId);
+      assertEquals(stillPending.length, 1);
+      assertEquals(stillPending[0]!.status, "pending");
+
+      await client.approve(handle.runId, approval.id, "alice");
+      assertEquals(await backend.getPendingApprovals(handle.runId), []);
+      const run = await backend.getRun(handle.runId);
+      assertEquals(run?.status, "completed");
     });
   });
 

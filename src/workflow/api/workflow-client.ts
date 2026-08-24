@@ -8,12 +8,12 @@ import { logger as baseLogger } from "#veryfront/utils";
 import type {
   PendingApproval,
   RunFilter,
+  WaitNodeConfig,
   WorkflowDefinition,
   WorkflowNode,
   WorkflowRun,
   WorkflowStatus,
 } from "../types.ts";
-import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { hasRunObservationSupport, type WorkflowBackend } from "../backends/types.ts";
 import { deriveWorkflowRunEventObservation, type WorkflowRunEventObservation } from "../events.ts";
 import { MemoryBackend } from "../backends/memory.ts";
@@ -50,8 +50,8 @@ export class WorkflowClient {
   private executor: WorkflowExecutor;
   private approvalManager: ApprovalManager;
   private debug: boolean;
-  /** Wait-node response schemas, keyed "<workflowId>::<nodeId>". */
-  private approvalSchemas = new Map<string, Schema<unknown>>();
+  /** Wait-node configs from registered definitions, keyed "<workflowId>::<nodeId>". */
+  private waitNodeConfigs = new Map<string, WaitNodeConfig>();
 
   constructor(config: WorkflowClientConfig = {}) {
     this.debug = config.debug ?? false;
@@ -80,11 +80,19 @@ export class WorkflowClient {
           return;
         }
 
-        const waitConfig = {
+        // Node state persists only the resolved message and payload. `timeout`
+        // and `approvers` never reach the run record, so resolve them from the
+        // registered definition; dropping them here would create approvals that
+        // never expire and that anyone can decide. `responseSchema` stays on
+        // the decision-time resolver below so a re-registration updates it.
+        const registered = this.waitNodeConfigs.get(`${run.workflowId}::${nodeId}`);
+        const waitConfig: WaitNodeConfig = {
           type: "wait" as const,
           waitType: "approval" as const,
           message: input.message,
           payload: input.payload,
+          ...(registered?.timeout !== undefined ? { timeout: registered.timeout } : {}),
+          ...(registered?.approvers !== undefined ? { approvers: registered.approvers } : {}),
         };
 
         try {
@@ -108,7 +116,8 @@ export class WorkflowClient {
         const userSchema = await userResponseSchemaResolver?.(input);
         if (userSchema) return userSchema;
 
-        return this.approvalSchemas.get(`${input.run.workflowId}::${input.approval.nodeId}`);
+        return this.waitNodeConfigs.get(`${input.run.workflowId}::${input.approval.nodeId}`)
+          ?.responseSchema;
       },
     });
   }
@@ -116,26 +125,33 @@ export class WorkflowClient {
   register(workflow: Workflow | WorkflowDefinition): void {
     const definition = "definition" in workflow ? workflow.definition : workflow;
     this.executor.register(definition);
-    this.indexApprovalSchemas(definition);
+    this.indexWaitNodeConfigs(definition);
     logger.debug("Registered workflow", { workflowId: definition.id });
   }
 
   /**
-   * Record every wait node's `responseSchema` under "<workflowId>::<nodeId>".
+   * Record every wait node's config under "<workflowId>::<nodeId>".
    *
-   * Schemas are live objects and never reach the run record, so a decision is
-   * validated against the registered definition. Node ids are already
-   * arm-qualified by the DSL, so they match what an approval is keyed by.
+   * `timeout`, `approvers`, and `responseSchema` never reach the run record
+   * (schemas are live objects, and node state persists only the resolved
+   * message and payload), so approval expiry, the approver allow-list, and
+   * decision validation all resolve against the registered definition. Node
+   * ids are already arm-qualified by the DSL, so they match what an approval
+   * is keyed by. A statically declared sub-workflow is walked too: its child
+   * node ids are not namespaced at runtime and its approvals are reported on
+   * the parent run, so its wait nodes are keyed under the registering
+   * workflow's id.
    *
    * A workflow or loop whose `steps` is a function is not walked: the node list
-   * depends on runtime input/iteration state, so no schema can be resolved ahead
-   * of a decision and such nodes are accepted unvalidated.
+   * depends on runtime input/iteration state, so no config can be resolved ahead
+   * of a decision. Approvals on such nodes never expire, accept any approver,
+   * and are accepted unvalidated.
    */
-  private indexApprovalSchemas(definition: WorkflowDefinition): void {
+  private indexWaitNodeConfigs(definition: WorkflowDefinition): void {
     const keyPrefix = `${definition.id}::`;
-    for (const key of this.approvalSchemas.keys()) {
+    for (const key of this.waitNodeConfigs.keys()) {
       if (key.startsWith(keyPrefix)) {
-        this.approvalSchemas.delete(key);
+        this.waitNodeConfigs.delete(key);
       }
     }
 
@@ -145,19 +161,25 @@ export class WorkflowClient {
       for (const node of nodes) {
         const config = node.config as {
           type?: string;
-          responseSchema?: Schema<unknown>;
           nodes?: WorkflowNode[];
           then?: WorkflowNode[];
           else?: WorkflowNode[];
           steps?: WorkflowNode[] | ((...args: never[]) => WorkflowNode[]);
+          workflow?: string | WorkflowDefinition;
         };
-        if (config.type === "wait" && config.responseSchema) {
-          this.approvalSchemas.set(`${definition.id}::${node.id}`, config.responseSchema);
+        if (config.type === "wait") {
+          this.waitNodeConfigs.set(`${definition.id}::${node.id}`, node.config as WaitNodeConfig);
         }
         if (Array.isArray(config.nodes)) visit(config.nodes);
         if (Array.isArray(config.then)) visit(config.then);
         if (Array.isArray(config.else)) visit(config.else);
         if (Array.isArray(config.steps)) visit(config.steps);
+        if (
+          typeof config.workflow === "object" &&
+          Array.isArray(config.workflow.steps)
+        ) {
+          visit(config.workflow.steps);
+        }
       }
     };
 
