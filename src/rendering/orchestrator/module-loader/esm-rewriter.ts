@@ -28,10 +28,6 @@ async function staticImportSpecifiers(code: string): Promise<Set<string>> {
   }
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 /**
  * Point an esm.sh bundle's server-absolute and relative specifiers at absolute
  * esm.sh URLs, so the module still resolves once it is written to a temp file.
@@ -82,6 +78,8 @@ type GraphState = {
   unwritten: Map<string, Set<string>>;
   /** Cache entries that are only sound if this whole graph succeeds. */
   provisional: Set<string>;
+  /** Artifacts written by this graph, published only after the root succeeds. */
+  artifacts: Map<string, string>;
 };
 
 export async function fetchEsmModule(
@@ -90,9 +88,22 @@ export async function fetchEsmModule(
   localAdapter: RuntimeAdapter,
   esmCache: Map<string, string>,
 ): Promise<string> {
-  const graph: GraphState = { unwritten: new Map(), provisional: new Set() };
+  const graph: GraphState = {
+    unwritten: new Map(),
+    provisional: new Set(),
+    artifacts: new Map(),
+  };
   try {
-    return await fetchEsmModuleWithin(url, tmpDir, localAdapter, esmCache, new Set(), graph);
+    const result = await fetchEsmModuleWithin(
+      url,
+      tmpDir,
+      localAdapter,
+      esmCache,
+      new Set(),
+      graph,
+    );
+    for (const [key, value] of graph.artifacts) esmCache.set(key, value);
+    return result;
   } catch (error) {
     // A cycle member points at the predicted path of an ancestor that only
     // writes that file on its way out. When an ancestor throws instead, the
@@ -121,6 +132,8 @@ async function fetchEsmModuleWithin(
 ): Promise<string> {
   const cached = esmCache.get(url);
   if (cached) return cached;
+  const graphCached = graph.artifacts.get(url);
+  if (graphCached) return graphCached;
 
   logger.debug("Fetching esm.sh module:", url);
 
@@ -200,22 +213,9 @@ async function fetchEsmModuleWithin(
       // longest-first ordering alone cannot help when the longer URL failed to
       // fetch and so never entered the map, yet it must stay verbatim for the
       // runtime to resolve.
-      const combinedPattern = new RegExp(
-        `(["'])(${
-          Array.from(replacementMap.keys())
-            .sort((a, b) => b.length - a.length)
-            .map(escapeRegExp)
-            .join("|")
-        })\\1`,
-        "g",
-      );
-      code = code.replace(
-        combinedPattern,
-        (m, quote: string, url: string) => {
-          const replacement = replacementMap.get(url);
-          return replacement ? `${quote}${replacement}${quote}` : m;
-        },
-      );
+      code = await replaceSpecifiers(code, (specifier) => {
+        return replacementMap.get(specifier) ?? null;
+      });
     }
   }
 
@@ -225,7 +225,7 @@ async function fetchEsmModuleWithin(
   // predicted path is satisfied.
   unwritten.delete(url);
   graph.unwritten.set(url, unwritten);
-  esmCache.set(url, tempFilePath);
+  graph.artifacts.set(url, tempFilePath);
   if (unwritten.size) graph.provisional.add(url);
   return tempFilePath;
 }

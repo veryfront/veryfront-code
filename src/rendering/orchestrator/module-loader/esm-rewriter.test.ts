@@ -182,6 +182,17 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       );
     });
 
+    it("does not rewrite an esm.sh URL stored in ordinary string data", async () => {
+      const code = `import "https://esm.sh/v135/react.js";\n` +
+        `const endpoint = "https://esm.sh/v135/react.js";`;
+      const result = await rewriteEsmPaths(code, urlBase);
+      assertEquals(
+        result,
+        code,
+        "only lexer-reported specifiers may be replaced; string data must remain unchanged",
+      );
+    });
+
     it("leaves a specifier-shaped path inside a comment alone", async () => {
       const code = `// import "/v135/react.js"\nconst x = 1;`;
       assertEquals(
