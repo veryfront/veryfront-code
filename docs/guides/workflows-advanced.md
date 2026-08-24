@@ -193,15 +193,15 @@ with a single `error` frame instead and closes; reconnecting re-reads the same
 stored run, so that error is marked not retryable. Later frames use these
 shapes:
 
-| Event            | Data                                                                             |
-| ---------------- | -------------------------------------------------------------------------------- |
-| `step.started`   | `{ type: "step.started", runId, nodeId, attempt }`                               |
-| `step.completed` | `{ type: "step.completed", runId, nodeId, attempt }`                             |
-| `step.failed`    | `{ type: "step.failed", runId, nodeId, attempt, error? }`                        |
-| `step.skipped`   | `{ type: "step.skipped", runId, nodeId }`                                        |
-| `run.status`     | `{ type: "run.status", runId, status, error? }`                                  |
-| `error`          | `{ code: "workflow_observation_failed", message, retryable: true }`              |
-| `error`          | `{ code: "workflow_snapshot_serialization_failed", message, retryable: false }`  |
+| Event            | Data                                                                            |
+| ---------------- | ------------------------------------------------------------------------------- |
+| `step.started`   | `{ type: "step.started", runId, nodeId, attempt }`                              |
+| `step.completed` | `{ type: "step.completed", runId, nodeId, attempt }`                            |
+| `step.failed`    | `{ type: "step.failed", runId, nodeId, attempt, error? }`                       |
+| `step.skipped`   | `{ type: "step.skipped", runId, nodeId }`                                       |
+| `run.status`     | `{ type: "run.status", runId, status, error? }`                                 |
+| `error`          | `{ code: "workflow_observation_failed", message, retryable: true }`             |
+| `error`          | `{ code: "workflow_snapshot_serialization_failed", message, retryable: false }` |
 
 Top-level sequential nodes persist `running` before their side effect starts and
 persist their settled state before dependents execute. Parallel nodes start as a
