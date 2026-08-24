@@ -315,6 +315,72 @@ async function publishRejectedEnvelopeAndDrain(
   }
 }
 
+/**
+ * Installs a fake-server publish hook that answers the bus's invalidation
+ * event with an acknowledgement the bus must reject, and only lets the event
+ * publish complete once that acknowledgement has been fully processed.
+ *
+ * The production `publish()` starts its `acknowledgementTimeoutMs` timer only
+ * after `publishClient.publish` resolves, and the fake server awaits this hook
+ * before resolving it. Delivering the rejected acknowledgement here, waiting
+ * for its listener invocation to return, draining every WebCrypto verification
+ * it started, and settling the queued continuations therefore guarantees that
+ * the acknowledgement's fate is decided before the timer is even armed. If the
+ * guard under test were removed, `acknowledgedReplicas` would already hold the
+ * forged replica when `publish()` checks it, and the result would report
+ * `acknowledged: 1` regardless of how long verification took. Without this
+ * ordering a slow verification could lose the race against the timeout and let
+ * the negative assertion pass vacuously.
+ *
+ * Returns a restore function the caller must invoke once `publish()` settles.
+ */
+function answerEventWithRejectedAcknowledgement(
+  redis: ReturnType<typeof createFakeRedisServer>,
+  buildAcknowledgement: () => Promise<string>,
+): { restore: () => void } {
+  const originalVerify = crypto.subtle.verify.bind(crypto.subtle);
+  const originalVerifyDescriptor = Object.getOwnPropertyDescriptor(crypto.subtle, "verify");
+  let pendingVerifications = 0;
+  Object.defineProperty(crypto.subtle, "verify", {
+    configurable: true,
+    value: (...args: Parameters<SubtleCrypto["verify"]>) => {
+      pendingVerifications++;
+      return originalVerify(...args).finally(() => {
+        pendingVerifications--;
+      });
+    },
+  });
+
+  redis.setOnPublish(async (channel) => {
+    if (channel !== ROUTING_INVALIDATION_CHANNEL) return;
+    const acknowledgementChannel = `${ROUTING_INVALIDATION_ACK_PREFIX}event-1`;
+    const deliveredBefore = redis.deliveredCount(acknowledgementChannel);
+    await redis.publishRaw(acknowledgementChannel, await buildAcknowledgement());
+    await spinUntil(
+      () => redis.deliveredCount(acknowledgementChannel) > deliveredBefore,
+      "the rejected acknowledgement was never delivered to the publisher",
+    );
+    await spinUntil(
+      () => pendingVerifications === 0,
+      "the rejected acknowledgement's signature verification never settled",
+    );
+    await settleEventLoop();
+  });
+
+  return {
+    restore() {
+      if (originalVerifyDescriptor) {
+        Object.defineProperty(crypto.subtle, "verify", originalVerifyDescriptor);
+      } else {
+        Object.defineProperty(crypto.subtle, "verify", {
+          configurable: true,
+          value: originalVerify,
+        });
+      }
+    },
+  };
+}
+
 describe("proxy routing invalidation Redis bus", () => {
   it("warns for a managed socket recycle and reports successful resubscription", async () => {
     const redis = createFakeRedisServer();
@@ -775,17 +841,15 @@ describe("proxy routing invalidation Redis bus", () => {
   it("ignores forged Redis acknowledgements", async () => {
     const redis = createFakeRedisServer();
     const integritySecret = createIntegritySecret();
-    redis.setOnPublish(async (channel) => {
-      if (channel !== ROUTING_INVALIDATION_CHANNEL) return;
-      await redis.publishRaw(
-        `${ROUTING_INVALIDATION_ACK_PREFIX}event-1`,
-        await signTestEnvelope(
+    const acknowledgement = answerEventWithRejectedAcknowledgement(
+      redis,
+      () =>
+        signTestEnvelope(
           EVENT_SIGNATURE_DOMAIN,
           JSON.stringify({ eventId: "event-1", replicaId: "replica-b" }),
           integritySecret,
         ),
-      );
-    });
+    );
     const bus = await startProxyRoutingInvalidationBus({
       redisUrl: "redis://example.test:6379",
       expectedReplicas: 1,
@@ -799,27 +863,33 @@ describe("proxy routing invalidation Redis bus", () => {
       },
     });
 
-    const result = await bus?.publish(createEvent());
+    try {
+      const result = await bus?.publish(createEvent());
 
-    assertEquals(result, { acknowledged: 0, converged: false, recipients: 1 });
-    await bus?.close();
+      assertEquals(
+        result,
+        { acknowledged: 0, converged: false, recipients: 1 },
+        "an acknowledgement signed under the event domain must not count toward convergence",
+      );
+    } finally {
+      acknowledgement.restore();
+      await bus?.close();
+    }
   });
 
   it("ignores expired Redis acknowledgements", async () => {
     const redis = createFakeRedisServer();
     const integritySecret = createIntegritySecret();
-    redis.setOnPublish(async (channel) => {
-      if (channel !== ROUTING_INVALIDATION_CHANNEL) return;
-      await redis.publishRaw(
-        `${ROUTING_INVALIDATION_ACK_PREFIX}event-1`,
-        await signTestEnvelope(
+    const acknowledgement = answerEventWithRejectedAcknowledgement(
+      redis,
+      () =>
+        signTestEnvelope(
           ACK_SIGNATURE_DOMAIN,
           JSON.stringify({ eventId: "event-1", replicaId: "replica-b" }),
           integritySecret,
           TEST_NOW_MS - 61_000,
         ),
-      );
-    });
+    );
     const bus = await startProxyRoutingInvalidationBus({
       redisUrl: "redis://example.test:6379",
       expectedReplicas: 1,
@@ -833,27 +903,33 @@ describe("proxy routing invalidation Redis bus", () => {
       },
     });
 
-    const result = await bus?.publish(createEvent());
+    try {
+      const result = await bus?.publish(createEvent());
 
-    assertEquals(result, { acknowledged: 0, converged: false, recipients: 1 });
-    await bus?.close();
+      assertEquals(
+        result,
+        { acknowledged: 0, converged: false, recipients: 1 },
+        "an expired acknowledgement must not count toward convergence",
+      );
+    } finally {
+      acknowledgement.restore();
+      await bus?.close();
+    }
   });
 
   it("ignores future-dated Redis acknowledgements", async () => {
     const redis = createFakeRedisServer();
     const integritySecret = createIntegritySecret();
-    redis.setOnPublish(async (channel) => {
-      if (channel !== ROUTING_INVALIDATION_CHANNEL) return;
-      await redis.publishRaw(
-        `${ROUTING_INVALIDATION_ACK_PREFIX}event-1`,
-        await signTestEnvelope(
+    const acknowledgement = answerEventWithRejectedAcknowledgement(
+      redis,
+      () =>
+        signTestEnvelope(
           ACK_SIGNATURE_DOMAIN,
           JSON.stringify({ eventId: "event-1", replicaId: "replica-b" }),
           integritySecret,
           TEST_NOW_MS + 6_000,
         ),
-      );
-    });
+    );
     const bus = await startProxyRoutingInvalidationBus({
       redisUrl: "redis://example.test:6379",
       expectedReplicas: 1,
@@ -867,14 +943,18 @@ describe("proxy routing invalidation Redis bus", () => {
       },
     });
 
-    const result = await bus?.publish(createEvent());
+    try {
+      const result = await bus?.publish(createEvent());
 
-    assertEquals(
-      result,
-      { acknowledged: 0, converged: false, recipients: 1 },
-      "a future-dated acknowledgement must not count toward convergence",
-    );
-    await bus?.close();
+      assertEquals(
+        result,
+        { acknowledged: 0, converged: false, recipients: 1 },
+        "a future-dated acknowledgement must not count toward convergence",
+      );
+    } finally {
+      acknowledgement.restore();
+      await bus?.close();
+    }
   });
 
   it("resolves an in-flight publish without convergence when the bus closes", async () => {

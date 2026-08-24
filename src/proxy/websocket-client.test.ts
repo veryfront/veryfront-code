@@ -202,9 +202,26 @@ describe("upstream WebSocket client", () => {
         frames.push(typeof data === "string" ? data : Array.from(data));
         if (frames.length === 3) resolveFrames();
       };
-      await new Promise<void>((resolve) => {
-        socket.onopen = () => resolve();
-      });
+      // Bound the handshake wait too: if connection setup regresses and the
+      // socket errors or closes without ever opening, an unbounded `onopen`
+      // await would wedge the worker before the frame timeout below is armed.
+      let openTimer: number | undefined;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          socket.onopen = () => resolve();
+          socket.onerror = () => reject(new Error("the upstream handshake errored before opening"));
+          socket.onclose = (event) =>
+            reject(new Error(`the upstream socket closed before opening (code ${event.code})`));
+          openTimer = setTimeout(
+            () => reject(new Error("timed out waiting for the upstream handshake to open")),
+            5_000,
+          );
+        });
+      } finally {
+        if (openTimer !== undefined) clearTimeout(openTimer);
+        socket.onerror = null;
+        socket.onclose = null;
+      }
 
       const buffer = new Uint8Array([1, 2, 3, 4, 5]);
       socket.send(buffer.subarray(2));
