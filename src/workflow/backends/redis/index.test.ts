@@ -19,6 +19,7 @@ import {
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
 import { RedisBackend } from "./index.ts";
+import { deriveWorkflowRunEventObservation } from "../../events.ts";
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
 import type { PendingApproval, WorkflowRun } from "../../types.ts";
 import {
@@ -205,42 +206,6 @@ class MockRedisAdapter implements RedisAdapter {
       return Promise.resolve(list.length);
     }
 
-    if (script.includes("state-aware-approval-append")) {
-      let list = this.lists.get(key);
-      if (!list) {
-        list = [];
-        this.lists.set(key, list);
-      }
-      if (!this.retainApprovals(list, Number(args[1]))) return Promise.resolve(0);
-      list.push(args[0]!);
-      return Promise.resolve(1);
-    }
-
-    if (script.includes("conditional-owned-approval-append")) {
-      const expectedCount = Number(args[0]);
-      const expectedStatuses = args.slice(1, expectedCount + 1);
-      const expectedWorkerId = args[expectedCount + 1]!;
-      const storageKey = args[expectedCount + 2]!;
-      const value = args[expectedCount + 3]!;
-      const maxEntries = Number(args[expectedCount + 4]);
-      const hash = this.hashes.get(key);
-      if (
-        !hash || !expectedStatuses.includes(hash.get("status") ?? "") ||
-        hash.get("workerId") !== expectedWorkerId
-      ) {
-        return Promise.resolve(0);
-      }
-
-      let list = this.lists.get(storageKey);
-      if (!list) {
-        list = [];
-        this.lists.set(storageKey, list);
-      }
-      if (!this.retainApprovals(list, maxEntries)) return Promise.resolve(2);
-      list.push(value);
-      return Promise.resolve(1);
-    }
-
     if (script.includes("conditional-stalled-run-claim")) {
       const claimKey = keys[1]!;
       const observedActivity = args[0]!;
@@ -287,6 +252,58 @@ class MockRedisAdapter implements RedisAdapter {
       if (Number.isSafeInteger(maxEntries) && maxEntries > 0 && list.length > maxEntries) {
         list.splice(0, list.length - maxEntries);
       }
+      return Promise.resolve(1);
+    }
+
+    if (script.includes("observable-approval-append")) {
+      const approvalsKey = keys[1]!;
+      let list = this.lists.get(approvalsKey);
+      if (!list) {
+        list = [];
+        this.lists.set(approvalsKey, list);
+      }
+      if (!this.retainApprovals(list, Number(args[1]))) return Promise.resolve(2);
+      list.push(args[0]!);
+      const hash = this.hashes.get(key);
+      if (!hash) return Promise.resolve(0);
+      this.appendRunObservation(
+        hash,
+        args[2]!,
+        Number(args[3]),
+        this.pendingApprovalProjection(list),
+      );
+      return Promise.resolve(1);
+    }
+
+    if (script.includes("conditional-owned-approval-append")) {
+      const expectedCount = Number(args[0]);
+      const expectedStatuses = args.slice(1, expectedCount + 1);
+      const expectedWorkerId = args[expectedCount + 1]!;
+      const value = args[expectedCount + 2]!;
+      const maxEntries = Number(args[expectedCount + 3]);
+      const streamKey = args[expectedCount + 4]!;
+      const maxLength = Number(args[expectedCount + 5]);
+      const hash = this.hashes.get(key);
+      if (
+        !hash || !expectedStatuses.includes(hash.get("status") ?? "") ||
+        hash.get("workerId") !== expectedWorkerId
+      ) {
+        return Promise.resolve(0);
+      }
+      const approvalsKey = keys[1]!;
+      let list = this.lists.get(approvalsKey);
+      if (!list) {
+        list = [];
+        this.lists.set(approvalsKey, list);
+      }
+      if (!this.retainApprovals(list, maxEntries)) return Promise.resolve(2);
+      list.push(value);
+      this.appendRunObservation(
+        hash,
+        streamKey,
+        maxLength,
+        this.pendingApprovalProjection(list),
+      );
       return Promise.resolve(1);
     }
 
@@ -511,10 +528,32 @@ class MockRedisAdapter implements RedisAdapter {
     return true;
   }
 
+  private pendingApprovalProjection(
+    list: string[],
+  ): Array<{ id: string; nodeId: string; message?: string }> {
+    const pending: Array<{ id: string; nodeId: string; message?: string }> = [];
+    for (const raw of list) {
+      const approval = JSON.parse(raw) as {
+        id: string;
+        nodeId: string;
+        message?: string;
+        status: string;
+      };
+      if (approval.status !== "pending") continue;
+      pending.push({
+        id: approval.id,
+        nodeId: approval.nodeId,
+        ...(approval.message !== undefined ? { message: approval.message } : {}),
+      });
+    }
+    return pending;
+  }
+
   private appendRunObservation(
     hash: Map<string, string>,
     streamKey: string,
     maxLength: number,
+    approvals?: Array<{ id: string; nodeId: string; message?: string }>,
   ): number {
     const revision = Number(hash.get("__runObservationRevision") ?? "0") + 1;
     hash.set("__runObservationRevision", String(revision));
@@ -537,6 +576,7 @@ class MockRedisAdapter implements RedisAdapter {
       status: hash.get("status") ?? "",
       nodes: JSON.stringify(nodes),
     };
+    if (approvals !== undefined) data.approvals = JSON.stringify(approvals);
     const rawError = hash.get("error");
     if (rawError) {
       const error = JSON.parse(rawError) as { message?: string };
@@ -595,6 +635,25 @@ class MockRedisAdapter implements RedisAdapter {
 
   disconnect(): Promise<void> {
     return Promise.resolve();
+  }
+}
+
+/**
+ * Forces the observation-setup interleaving: `openRunObservation` captures the
+ * revision baseline in one atomic script, then hydrates the initial approvals
+ * in a separate read. This adapter runs a caller-supplied write between those
+ * two steps, landing state that is newer than the captured baseline revision.
+ */
+class ApprovalRaceRedisAdapter extends MockRedisAdapter {
+  beforeApprovalsRead?: () => Promise<void>;
+
+  override async lrange(key: string, start: number, stop: number): Promise<string[]> {
+    if (this.beforeApprovalsRead && key.includes(":approvals:")) {
+      const hook = this.beforeApprovalsRead;
+      this.beforeApprovalsRead = undefined;
+      await hook();
+    }
+    return await super.lrange(key, start, stop);
   }
 }
 
@@ -710,6 +769,159 @@ describe("RedisBackend", () => {
         revision: 2,
         status: "running",
         nodes: {},
+      });
+      await observation.close();
+    });
+
+    it("journals an approval append as its own contiguous revision across instances", async () => {
+      const writer = new RedisBackend({ client: mockRedis, prefix: "test:" });
+      const reader = new RedisBackend({ client: mockRedis, prefix: "test:" });
+      const run = createTestRun("run-approval-observed");
+      await writer.createRun(run);
+      const observation = await reader.openRunObservation(run.id);
+      assertExists(observation);
+
+      await writer.updateRun(run.id, { status: "waiting" });
+      await writer.savePendingApproval(run.id, {
+        id: "apr-1",
+        nodeId: "review",
+        message: "Please review",
+        payload: { secret: "approval-payload" },
+        requestedAt: new Date("2025-01-02T00:00:00Z"),
+        status: "pending",
+      });
+      await writer.updateRun(run.id, { status: "running" });
+
+      // The approval save must journal its own observation record, and that
+      // record must carry only the reduced projection, never the payload.
+      const stream = mockRedis.streams.get(
+        "test:schema-v1:run-observation:run-approval-observed",
+      );
+      assertExists(stream);
+      assertEquals(stream.length, 4);
+      const approvalRecord = stream[2]!.data;
+      assertEquals(approvalRecord.revision, "2");
+      assertEquals(JSON.parse(approvalRecord.approvals ?? "null"), [
+        { id: "apr-1", nodeId: "review", message: "Please review" },
+      ]);
+      assertEquals(approvalRecord.approvals?.includes("approval-payload"), false);
+
+      const iterator = observation.changes[Symbol.asyncIterator]();
+      assertEquals((await iterator.next()).value, {
+        revision: 1,
+        status: "waiting",
+        nodes: {},
+      });
+      assertEquals((await iterator.next()).value, {
+        revision: 2,
+        status: "waiting",
+        nodes: {},
+        approvals: [{ id: "apr-1", nodeId: "review", message: "Please review" }],
+      });
+      assertEquals((await iterator.next()).value, {
+        revision: 3,
+        status: "running",
+        nodes: {},
+      });
+      await observation.close();
+    });
+
+    it("delivers an approval appended during observation setup exactly once", async () => {
+      // Observation setup captures the revision baseline atomically, then
+      // hydrates initial approvals in a separate read. An approval landing in
+      // between is newer than the baseline revision AND already present in the
+      // initial snapshot. The subscriber must still learn the approval exactly
+      // once: from the snapshot, with its journaled revision consumed
+      // contiguously and suppressed as already-baselined, never re-reported
+      // and never dropped.
+      const racingRedis = new ApprovalRaceRedisAdapter();
+      const racingBackend = new RedisBackend({
+        client: racingRedis as unknown as RedisAdapter,
+        prefix: "test:",
+      });
+      const run = createTestRun("run-open-approval-race", { status: "waiting" });
+      await racingBackend.createRun(run);
+
+      racingRedis.beforeApprovalsRead = () =>
+        racingBackend.savePendingApproval(run.id, {
+          id: "apr-race",
+          nodeId: "review",
+          message: "Please review",
+          payload: undefined,
+          requestedAt: new Date("2025-01-02T00:00:00Z"),
+          status: "pending",
+        });
+
+      const observation = await racingBackend.openRunObservation(run.id);
+      assertExists(observation);
+
+      // The initial snapshot is the delivery channel for this approval.
+      assertEquals(
+        observation.initial.pendingApprovals.map((approval) => approval.id),
+        ["apr-race"],
+      );
+
+      // The approval's own revision record (1, above the captured baseline 0)
+      // must be consumed without a contiguity failure, and the derived stream
+      // must not repeat what the snapshot already delivered.
+      await racingBackend.updateRun(run.id, { status: "completed" });
+      const events = [];
+      for await (const event of deriveWorkflowRunEventObservation(observation).events) {
+        events.push(event);
+      }
+      assertEquals(events, [
+        { type: "run.status", runId: run.id, status: "completed" },
+      ]);
+    });
+
+    it("journals owned approval appends only when ownership holds", async () => {
+      const run = createTestRun("run-owned-approval", { status: "waiting", workerId: "w1" });
+      await backend.createRun(run);
+      const observation = await backend.openRunObservation(run.id);
+      assertExists(observation);
+
+      const approval = (id: string): PendingApproval => ({
+        id,
+        nodeId: "review",
+        message: "Please review",
+        payload: undefined,
+        requestedAt: new Date("2025-01-02T00:00:00Z"),
+        status: "pending",
+      });
+
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          run.id,
+          ["waiting"],
+          "other-worker",
+          approval("apr-denied"),
+        ),
+        false,
+      );
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          run.id,
+          ["waiting"],
+          "w1",
+          approval("apr-owned"),
+        ),
+        true,
+      );
+
+      // Only the owned append may journal: a denied save that still bumped the
+      // revision would leave readers waiting on a record that never comes.
+      const stream = mockRedis.streams.get(
+        "test:schema-v1:run-observation:run-owned-approval",
+      );
+      assertExists(stream);
+      assertEquals(stream.length, 2);
+
+      const iterator = observation.changes[Symbol.asyncIterator]();
+      assertEquals((await iterator.next()).value, {
+        revision: 1,
+        status: "waiting",
+        nodes: {},
+        approvals: [{ id: "apr-owned", nodeId: "review", message: "Please review" }],
       });
       await observation.close();
     });
@@ -1753,6 +1965,12 @@ describe("RedisBackend", () => {
       for (let index = 0; index < MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES; index++) {
         await backend.savePendingApproval("run-ap-full", makeApproval(`ap-${index}`));
       }
+      const runHash = mockRedis.hashes.get("test:schema-v1:run:run-ap-full")!;
+      const stream = mockRedis.streams.get(
+        "test:schema-v1:run-observation:run-ap-full",
+      )!;
+      const revisionBeforeRejection = runHash.get("__runObservationRevision");
+      const journalLengthBeforeRejection = stream.length;
 
       await assertRejects(
         () => backend.savePendingApproval("run-ap-full", makeApproval("ap-overflow")),
@@ -1764,6 +1982,8 @@ describe("RedisBackend", () => {
       assertEquals(stored.length, MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES);
       assertEquals(JSON.parse(stored[0]!).id, "ap-0");
       assertEquals(stored.some((raw) => JSON.parse(raw).id === "ap-overflow"), false);
+      assertEquals(runHash.get("__runObservationRevision"), revisionBeforeRejection);
+      assertEquals(stream.length, journalLengthBeforeRejection);
     });
 
     it("does not partially prune legacy overflow when too few records are decided", async () => {
@@ -1821,6 +2041,12 @@ describe("RedisBackend", () => {
       assertEquals(stored.length, MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES);
       assertEquals(stored.some((raw) => JSON.parse(raw).id === "owned-decided"), false);
       assertEquals(JSON.parse(stored[0]!).id, "owned-live-oldest");
+      const runHash = mockRedis.hashes.get("test:schema-v1:run:run-ap-owned-bounded")!;
+      const stream = mockRedis.streams.get(
+        "test:schema-v1:run-observation:run-ap-owned-bounded",
+      )!;
+      const revisionBeforeRejection = runHash.get("__runObservationRevision");
+      const journalLengthBeforeRejection = stream.length;
 
       await assertRejects(
         () => saveOwned(makeApproval("owned-overflow")),
@@ -1828,6 +2054,8 @@ describe("RedisBackend", () => {
         "pending approval",
       );
       assertEquals(stored.length, MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES);
+      assertEquals(runHash.get("__runObservationRevision"), revisionBeforeRejection);
+      assertEquals(stream.length, journalLengthBeforeRejection);
 
       assertEquals(
         await backend.savePendingApprovalIfStatusAndWorker(

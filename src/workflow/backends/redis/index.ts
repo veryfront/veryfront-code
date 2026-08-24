@@ -231,7 +231,7 @@ return { tostring(run['${RUN_OBSERVATION_REVISION_FIELD}'] or '0'), cjson.encode
 const TERMINAL_RUN_STATUSES = new Set<WorkflowStatus>(["completed", "failed", "cancelled"]);
 
 function parseRunObservedState(data: Record<string, string>): WorkflowRunObservedState {
-  const allowedFields = new Set(["revision", "status", "nodes", "runError"]);
+  const allowedFields = new Set(["revision", "status", "nodes", "runError", "approvals"]);
   if (Object.keys(data).some((field) => !allowedFields.has(field))) {
     throw new Error("Invalid workflow run observation record");
   }
@@ -283,11 +283,37 @@ function parseRunObservedState(data: Record<string, string>): WorkflowRunObserve
   if (data.runError !== undefined && typeof data.runError !== "string") {
     throw new Error("Invalid workflow run observation record");
   }
+  let approvals: WorkflowRunObservedState["approvals"];
+  if (data.approvals !== undefined) {
+    const parsedApprovals = JSON.parse(data.approvals) as unknown;
+    if (!Array.isArray(parsedApprovals)) {
+      throw new Error("Invalid workflow run observation record");
+    }
+    approvals = parsedApprovals.map((value) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new Error("Invalid workflow run observation record");
+      }
+      const entry = value as Record<string, unknown>;
+      if (
+        Object.keys(entry).some((field) => !["id", "nodeId", "message"].includes(field)) ||
+        typeof entry.id !== "string" || typeof entry.nodeId !== "string" ||
+        (entry.message !== undefined && typeof entry.message !== "string")
+      ) {
+        throw new Error("Invalid workflow run observation record");
+      }
+      return {
+        id: entry.id,
+        nodeId: entry.nodeId,
+        ...(entry.message !== undefined ? { message: entry.message } : {}),
+      };
+    });
+  }
   return {
     revision,
     status: data.status as WorkflowStatus,
     nodes,
     ...(data.runError !== undefined ? { runError: data.runError } : {}),
+    ...(approvals !== undefined ? { approvals } : {}),
   };
 }
 
@@ -382,35 +408,86 @@ const RETAIN_APPROVALS_LUA = `local function retainApprovals(key, maxEntries)
 end`;
 
 /**
- * Atomically append one approval with state-aware retention.
+ * Atomically append a pending approval and journal it as its own observation
+ * revision. The run-mutation scripts above publish node/status transitions,
+ * but an approval append changes what a `waiting` run is blocked on without
+ * touching the run hash, so it must bump `__runObservationRevision` and XADD
+ * itself or subscribers only learn of the approval by re-fetching (and even an
+ * immediate fetch races this write, because the run flips to `waiting` before
+ * the approval exists).
  *
- * KEYS[1] = approvals list key
+ * The journaled record reduces the approvals list to pending id/nodeId/message
+ * projections; approval payloads never enter the stream.
+ *
+ * KEYS[1] = run hash key
+ * KEYS[2] = approvals list key
  * ARGV[1] = serialized approval
- * ARGV[2] = max entries
+ * ARGV[2] = max approval entries
+ * ARGV[3] = observation stream key
+ * ARGV[4] = observation stream max length
  *
- * Returns 1 when appended, 0 when insufficient decided history can be evicted.
+ * Returns 1 when the append was journaled, 0 when the run hash is absent (the
+ * approval is still appended, preserving the unconditional-save contract),
+ * and 2 when insufficient decided history can be evicted. Retention preflight,
+ * append, revision increment, and journal write all happen atomically.
  */
-const APPEND_RETAINED_APPROVAL_SCRIPT = `-- state-aware-approval-append
+const SAVE_PENDING_APPROVAL_SCRIPT = `-- observable-approval-append
 ${RETAIN_APPROVALS_LUA}
-if not retainApprovals(KEYS[1], tonumber(ARGV[2])) then return 0 end
-redis.call('rpush', KEYS[1], ARGV[1])
+if not retainApprovals(KEYS[2], tonumber(ARGV[2])) then return 2 end
+redis.call('rpush', KEYS[2], ARGV[1])
+if redis.call('exists', KEYS[1]) == 0 then return 0 end
+local revision = redis.call('hincrby', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}', 1)
+local status = redis.call('hget', KEYS[1], 'status')
+local sourceNodes = cjson.decode(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
+local nodes = {}
+for nodeId, node in pairs(sourceNodes) do
+  local reduced = { status = node.status, attempt = node.attempt }
+  if node.error ~= nil then reduced.error = node.error end
+  nodes[nodeId] = reduced
+end
+local nodesJson = next(nodes) == nil and '{}' or cjson.encode(nodes)
+local rawApprovals = redis.call('lrange', KEYS[2], 0, -1)
+local pending = {}
+for i = 1, #rawApprovals do
+  local candidate = cjson.decode(rawApprovals[i])
+  if candidate.status == 'pending' then
+    local entry = { id = candidate.id, nodeId = candidate.nodeId }
+    if candidate.message ~= nil then entry.message = candidate.message end
+    pending[#pending + 1] = entry
+  end
+end
+local approvalsJson = #pending == 0 and '[]' or cjson.encode(pending)
+local streamFields = { 'revision', tostring(revision), 'status', status, 'nodes', nodesJson, 'approvals', approvalsJson }
+local rawError = redis.call('hget', KEYS[1], 'error')
+if rawError and rawError ~= '' then
+  local runError = cjson.decode(rawError)
+  if runError.message ~= nil then
+    table.insert(streamFields, 'runError')
+    table.insert(streamFields, runError.message)
+  end
+end
+redis.call('xadd', ARGV[3], 'MAXLEN', '~', ARGV[4], '*', unpack(streamFields))
 return 1`;
 
 /**
- * Atomically verify canonical run ownership, then append one approval with
- * state-aware retention.
+ * Ownership-checked variant of the script above: verify status and worker
+ * ownership, then append and journal in the same atomic step. A denied append
+ * must not bump the revision, or readers wait on a record that never comes.
  *
- * KEYS[1] = canonical run hash key
- * ARGV[1] = expected status count, followed by that many statuses
- * ARGV[n + 2] = expected worker id
- * ARGV[n + 3] = approvals list key
- * ARGV[n + 4] = serialized approval
- * ARGV[n + 5] = max entries
+ * KEYS[1] = run hash key
+ * KEYS[2] = approvals list key
+ * ARGV[1] = expected status count
+ * ARGV[2..n+1] = expected statuses
+ * ARGV[n+2] = expected worker id
+ * ARGV[n+3] = serialized approval
+ * ARGV[n+4] = max approval entries
+ * ARGV[n+5] = observation stream key
+ * ARGV[n+6] = observation stream max length
  *
- * Returns 1 when appended, 0 when the ownership fence fails, and 2 when
- * insufficient decided history can be evicted.
+ * Returns 1 when appended and journaled, 0 when the ownership fence fails,
+ * and 2 when insufficient decided history can be evicted.
  */
-const APPEND_APPROVAL_IF_STATUS_AND_WORKER_SCRIPT = `-- conditional-owned-approval-append
+const SAVE_PENDING_APPROVAL_IF_OWNED_SCRIPT = `-- conditional-owned-approval-append
 ${RETAIN_APPROVALS_LUA}
 local status = redis.call('hget', KEYS[1], 'status')
 local expectedCount = tonumber(ARGV[1])
@@ -424,11 +501,40 @@ end
 if not allowed then return 0 end
 local expectedWorkerId = ARGV[expectedCount + 2]
 if redis.call('hget', KEYS[1], 'workerId') ~= expectedWorkerId then return 0 end
-local storageKey = ARGV[expectedCount + 3]
-if not retainApprovals(storageKey, tonumber(ARGV[expectedCount + 5])) then
+if not retainApprovals(KEYS[2], tonumber(ARGV[expectedCount + 4])) then
   return 2
 end
-redis.call('rpush', storageKey, ARGV[expectedCount + 4])
+redis.call('rpush', KEYS[2], ARGV[expectedCount + 3])
+local revision = redis.call('hincrby', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}', 1)
+local sourceNodes = cjson.decode(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
+local nodes = {}
+for nodeId, node in pairs(sourceNodes) do
+  local reduced = { status = node.status, attempt = node.attempt }
+  if node.error ~= nil then reduced.error = node.error end
+  nodes[nodeId] = reduced
+end
+local nodesJson = next(nodes) == nil and '{}' or cjson.encode(nodes)
+local rawApprovals = redis.call('lrange', KEYS[2], 0, -1)
+local pending = {}
+for i = 1, #rawApprovals do
+  local candidate = cjson.decode(rawApprovals[i])
+  if candidate.status == 'pending' then
+    local entry = { id = candidate.id, nodeId = candidate.nodeId }
+    if candidate.message ~= nil then entry.message = candidate.message end
+    pending[#pending + 1] = entry
+  end
+end
+local approvalsJson = #pending == 0 and '[]' or cjson.encode(pending)
+local streamFields = { 'revision', tostring(revision), 'status', status, 'nodes', nodesJson, 'approvals', approvalsJson }
+local rawError = redis.call('hget', KEYS[1], 'error')
+if rawError and rawError ~= '' then
+  local runError = cjson.decode(rawError)
+  if runError.message ~= nil then
+    table.insert(streamFields, 'runError')
+    table.insert(streamFields, runError.message)
+  end
+end
+redis.call('xadd', ARGV[expectedCount + 5], 'MAXLEN', '~', ARGV[expectedCount + 6], '*', unpack(streamFields))
 return 1`;
 
 /**
@@ -1108,15 +1214,21 @@ export class RedisBackend implements WorkflowBackend {
 
     if (this.config.debug) logger.debug(`[RedisBackend] Saving approval: ${approval.id}`);
 
+    // Append and journal in one atomic script so the observation revision the
+    // record carries is contiguous with the run-mutation scripts' revisions.
+    // State-aware retention runs first in that same script and refuses to
+    // mutate anything when no decided approval can be evicted safely.
     const result = await client.eval(
-      APPEND_RETAINED_APPROVAL_SCRIPT,
-      [this.approvalsKey(runId)],
+      SAVE_PENDING_APPROVAL_SCRIPT,
+      [this.runKey(runId), this.approvalsKey(runId)],
       [
         this.serializeApproval(approval),
         String(MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES),
+        this.runObservationKey(runId),
+        String(RUN_OBSERVATION_STREAM_MAX_LENGTH),
       ],
     );
-    if (Number(result) !== 1) {
+    if (Number(result) === 2) {
       throw this.approvalListFullError(approval.id);
     }
   }
@@ -1137,15 +1249,16 @@ export class RedisBackend implements WorkflowBackend {
   ): Promise<boolean> {
     const client = await this.ensureClient();
     const result = await client.eval(
-      APPEND_APPROVAL_IF_STATUS_AND_WORKER_SCRIPT,
-      [this.runKey(runId)],
+      SAVE_PENDING_APPROVAL_IF_OWNED_SCRIPT,
+      [this.runKey(runId), this.approvalsKey(runId)],
       [
         String(expectedStatuses.length),
         ...expectedStatuses,
         expectedWorkerId,
-        this.approvalsKey(runId),
         this.serializeApproval(approval),
         String(MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES),
+        this.runObservationKey(runId),
+        String(RUN_OBSERVATION_STREAM_MAX_LENGTH),
       ],
     );
     if (Number(result) === 2) {
@@ -1464,6 +1577,14 @@ export class RedisBackend implements WorkflowBackend {
       const data = JSON.parse(captured[1]) as unknown;
       if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error();
       initial = this.deserializeRun(data as Record<string, string>);
+      // Hydrated after the atomic revision capture, so this read can include
+      // an approval whose journaled revision is newer than the baseline. That
+      // direction is safe by design: the subscriber gets the approval in the
+      // initial snapshot, and event derivation seeds its baseline from that
+      // same snapshot, so the newer record is consumed (contiguity intact)
+      // and suppressed instead of reported twice. The reverse order would be
+      // the real hazard (a snapshot older than the baseline revision misses
+      // state), which is why the fetch must stay after the capture.
       initial.pendingApprovals = await this.getPendingApprovals(runId);
     } catch {
       throw new Error("Workflow run observation failed");

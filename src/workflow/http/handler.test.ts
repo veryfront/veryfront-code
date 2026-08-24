@@ -670,6 +670,44 @@ describe("createWorkflowHandler", () => {
       await handle.settled();
     });
 
+    it("streams approval.pending with the approval id when a run parks", async () => {
+      client.register(
+        workflow({
+          id: "observable-approval",
+          steps: [waitForApproval("review", { message: "Please review" })],
+        }),
+      );
+
+      // Subscribe before the run parks. The stream itself must name the
+      // blocking approval; the approvals endpoint is only consulted below to
+      // verify the id matches what was persisted.
+      const handle = await client.start("observable-approval", {});
+      const response = await handlers.GET(get(`/api/workflows/runs/${handle.runId}/events`));
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("expected an SSE response body");
+
+      let approvalFrame: Record<string, unknown> | undefined;
+      try {
+        for (let frame = 0; frame < 10 && !approvalFrame; frame++) {
+          const [name, data] = await readEvent(reader);
+          if (name === "approval.pending") approvalFrame = data;
+        }
+      } finally {
+        await reader.cancel();
+      }
+
+      await handle.settled();
+      const [approval] = await client.getPendingApprovals(handle.runId);
+      expect(approval).toBeDefined();
+      expect(approvalFrame).toEqual({
+        type: "approval.pending",
+        runId: handle.runId,
+        approvalId: approval?.id,
+        nodeId: "review",
+        message: "Please review",
+      });
+    });
+
     it("streams a finished run's snapshot and closes", async () => {
       // A terminal run has no transitions left. Holding the connection open
       // would strand the caller waiting for an event that cannot arrive.
