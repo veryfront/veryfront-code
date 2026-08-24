@@ -111,15 +111,15 @@ jobs:
             return result.state;
       # A pending status on a trusted push event means no review exists for
       # this head yet, and nothing would request one: the Codex connector
-      # reviews on open and on ready for review, not on a push to an open pull
-      # request. Post the "@codex review" request here so the pending status
-      # can resolve without a human comment. Drafts are excluded because
-      # review bots skip them until they leave draft.
+      # handles open and ready-for-review events, but not a push to an open
+      # pull request. Post the "@codex review" request only for synchronize.
+      # The helper re-fetches the PR immediately before posting so a queued
+      # stale event cannot bind its marker to a request for a newer head.
       - name: Request an automated review of the current commit
         if: >-
           github.event_name == 'pull_request_target' &&
           github.event.pull_request.draft == false &&
-          contains(fromJSON('["opened", "synchronize", "reopened", "ready_for_review"]'), github.event.action) &&
+          github.event.action == 'synchronize' &&
           steps.publish.outputs.result == 'pending'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
@@ -141,5 +141,7 @@ jobs:
             core.notice(
               result.requested
                 ? `Requested an automated review of ${pullRequest.head.sha.slice(0, 12)}.`
+                : result.reason === "stale-head"
+                ? "Skipped an automated review request from a stale synchronize event."
                 : "An automated review request for this head commit already exists.",
             );

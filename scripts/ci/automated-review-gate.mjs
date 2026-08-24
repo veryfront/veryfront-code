@@ -28,7 +28,7 @@ const SUBMITTED_REVIEW_STATES = new Set([
   "COMMENTED",
 ]);
 
-/** Find an actual automated review submitted against the current PR head. */
+/** Decide the newest automated-review outcome for the current PR head. */
 export async function findAutomatedReview(
   {
     reviews,
@@ -69,7 +69,7 @@ export async function findAutomatedReview(
       event.time === undefined &&
       (await outcomeFor(event)).kind !== "not-head"
     ) {
-      return undefined;
+      return { kind: "failure" };
     }
   }
   const timedEvents = Map.groupBy(
@@ -86,7 +86,7 @@ export async function findAutomatedReview(
     if (
       exactHeadOutcomes.length > 1 &&
       exactHeadOutcomes.some((outcome) => outcome.kind !== "success")
-    ) return undefined;
+    ) return { kind: "failure" };
   }
   events.sort((left, right) => {
     if (left.time === undefined) {
@@ -99,9 +99,9 @@ export async function findAutomatedReview(
   for (const event of events) {
     const outcome = await outcomeFor(event);
     if (outcome.kind === "not-head") continue;
-    return outcome.kind === "success" ? outcome.review : undefined;
+    return outcome;
   }
-  return undefined;
+  return { kind: "waiting" };
 }
 
 function automatedReviewEventTime(value) {
@@ -133,13 +133,17 @@ async function classifyAutomatedReviewEvent(
       review?.commit_id !== headSha
     ) return { kind: "not-head" };
     const state = review?.state;
+    if (typeof state !== "string") return { kind: "failure" };
+    if (state.toUpperCase() === "PENDING") return { kind: "waiting" };
     if (
-      typeof state !== "string" ||
       typeof review?.submitted_at !== "string" ||
       review.submitted_at.length === 0
-    ) return { kind: "invalid" };
+    ) return { kind: "failure" };
     if (!SUBMITTED_REVIEW_STATES.has(state.toUpperCase())) {
-      return { kind: "failure" };
+      return {
+        kind: "failure",
+        url: typeof review.html_url === "string" ? review.html_url : undefined,
+      };
     }
     return {
       kind: "success",
@@ -183,7 +187,12 @@ async function classifyAutomatedReviewEvent(
             : undefined,
         },
       }
-      : { kind: "failure" };
+      : {
+        kind: "failure",
+        url: typeof comment.html_url === "string"
+          ? comment.html_url
+          : undefined,
+      };
   }
   if (login.toLowerCase() !== CODERABBIT_LOGIN) {
     return { kind: "not-head" };
@@ -194,7 +203,12 @@ async function classifyAutomatedReviewEvent(
   if (
     skippedTip?.toLowerCase() === headSha.toLowerCase() ||
     requestedTip?.toLowerCase() === headSha.toLowerCase()
-  ) return { kind: "failure" };
+  ) {
+    return {
+      kind: "failure",
+      url: typeof comment.html_url === "string" ? comment.html_url : undefined,
+    };
+  }
   const reviewedTip = recentReview?.match(
     CODERABBIT_REVIEW_RANGE_PATTERN,
   )?.[2];
@@ -213,7 +227,10 @@ async function classifyAutomatedReviewEvent(
           : undefined,
       },
     }
-    : { kind: "failure" };
+    : {
+      kind: "failure",
+      url: typeof comment.html_url === "string" ? comment.html_url : undefined,
+    };
 }
 
 function codeRabbitRecentReview(body) {
@@ -256,7 +273,7 @@ export async function publishAutomatedReviewStatus({
     };
   }
 
-  let review;
+  let decision = { kind: "waiting" };
   let failure;
   try {
     const reviews = await github.paginate(github.rest.pulls.listReviews, {
@@ -271,23 +288,20 @@ export async function publishAutomatedReviewStatus({
       issue_number: pullNumber,
       per_page: 100,
     });
-    review = await findAutomatedReview({
+    decision = await findAutomatedReview({
       reviews,
       comments,
       resolveCommit: async (ref) => {
-        try {
-          const response = await github.rest.repos.getCommit({
-            owner,
-            repo,
-            ref,
-          });
-          const sha = response?.data?.sha;
-          return typeof sha === "string" && FULL_COMMIT_PATTERN.test(sha)
-            ? sha
-            : undefined;
-        } catch {
-          return undefined;
+        const response = await github.rest.repos.getCommit({
+          owner,
+          repo,
+          ref,
+        });
+        const sha = response?.data?.sha;
+        if (typeof sha !== "string" || !FULL_COMMIT_PATTERN.test(sha)) {
+          throw new Error("Commit lookup returned a malformed commit SHA");
         }
+        return sha;
       },
     }, headSha);
   } catch (error) {
@@ -295,14 +309,18 @@ export async function publishAutomatedReviewStatus({
   }
 
   // No review for the current head is the normal state right after a push,
-  // while the review bots are still working. Publish pending, not failure: a
-  // required pending status blocks merging exactly like a failure does, and it
-  // resolves itself as soon as a review for this head arrives. Only an error
-  // while computing the decision stays a failure, because that red must be
-  // looked at instead of waited out.
+  // while the review bots are still working. Publish pending only for that
+  // absent-or-waiting decision. Completed negative evidence and errors while
+  // computing the decision stay failures so they are looked at, not waited out.
+  if (decision.kind === "failure" && !failure) {
+    failure = new Error("Automated review reported a negative outcome");
+  }
+  const review = decision.kind === "success" ? decision.review : undefined;
   const state = review ? "success" : failure ? "failure" : "pending";
   const description = review
     ? `Reviewed by ${review.reviewer}`
+    : decision.kind === "failure"
+    ? "Automated review did not pass the current commit"
     : failure
     ? "Could not determine the automated review status"
     : `Waiting for an automated review of ${headSha.slice(0, 12)}`;
@@ -313,7 +331,7 @@ export async function publishAutomatedReviewStatus({
     state,
     context: AUTOMATED_REVIEW_STATUS_CONTEXT,
     description,
-    target_url: review?.url ?? pullUrl,
+    target_url: review?.url ?? decision.url ?? pullUrl,
   });
   return { state, review, failure, description };
 }
@@ -332,6 +350,11 @@ export async function publishAutomatedReviewStatus({
  * participant can paste the marker text into their own comment, and letting
  * that suppress the request would let anyone silence the review nudge for a
  * head commit.
+ *
+ * Immediately before posting, re-fetch the pull request and require its
+ * current head to match the event head. That prevents a queued synchronize
+ * run from marking an old SHA while its unqualified request targets a newer
+ * current head.
  */
 export async function requestAutomatedReview({
   github,
@@ -363,6 +386,21 @@ export async function requestAutomatedReview({
   );
   if (alreadyRequested) {
     return { requested: false, marker };
+  }
+  const response = await github.rest.pulls.get({
+    owner,
+    repo,
+    pull_number: pullNumber,
+  });
+  const currentHeadSha = response?.data?.head?.sha;
+  if (
+    typeof currentHeadSha !== "string" ||
+    !FULL_COMMIT_PATTERN.test(currentHeadSha)
+  ) {
+    throw new Error("Could not verify the current pull request head commit");
+  }
+  if (currentHeadSha.toLowerCase() !== headSha.toLowerCase()) {
+    return { requested: false, marker, reason: "stale-head" };
   }
   await github.rest.issues.createComment({
     owner,
