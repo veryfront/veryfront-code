@@ -137,7 +137,14 @@ export function validateLeafSuiteRegistry(
   const seenSelectors = new Set<string>();
 
   for (const suite of suites) {
-    for (const selector of suite.pathSelectors) {
+    readOwnDataProperty(suite, "id");
+    readOwnDataProperty(suite, "level");
+    readOwnDataProperty(suite, "runner");
+    readOwnDataProperty(suite, "prOwner");
+    const pathSelectors = readOwnDataProperty(suite, "pathSelectors");
+    readOwnDataProperty(suite, "supportExclusions");
+
+    for (const selector of pathSelectors) {
       const normalized = normalizeSelector(selector);
       if (seenSelectors.has(normalized)) {
         throw new Error(
@@ -159,6 +166,23 @@ export function validateLeafSuiteRegistry(
       }
     }
   }
+}
+
+function readOwnDataProperty<K extends keyof LeafTestSuite>(
+  suite: LeafTestSuite,
+  key: K,
+): LeafTestSuite[K] {
+  const descriptor = Object.getOwnPropertyDescriptor(suite, key);
+  if (!descriptor || !Object.hasOwn(descriptor, "value")) {
+    throw new Error(`Leaf suite record must own ${String(key)}`);
+  }
+  if (
+    (key === "pathSelectors" || key === "supportExclusions") &&
+    !Array.isArray(descriptor.value)
+  ) {
+    throw new Error(`Leaf suite record ${String(key)} must be an array`);
+  }
+  return descriptor.value as unknown as LeafTestSuite[K];
 }
 
 function normalizeSelector(selector: string): string {
