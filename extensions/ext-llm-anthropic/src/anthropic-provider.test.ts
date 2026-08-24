@@ -4567,6 +4567,64 @@ describe("anthropic-provider", () => {
       }
     });
 
+    it("clamps replay header waits to the remaining shared header budget", async () => {
+      const originalNow = performance.now;
+      let now = 0;
+      let attempts = 0;
+      let resolveReplayStarted: (() => void) | undefined;
+      let resolveReplayAborted: (() => void) | undefined;
+      const replayStarted = new Promise<void>((resolve) => {
+        resolveReplayStarted = resolve;
+      });
+      const replayAborted = new Promise<void>((resolve) => {
+        resolveReplayAborted = resolve;
+      });
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          attempts++;
+          if (attempts === 1) {
+            return Promise.resolve(streamResponse(OVERLOADED));
+          }
+
+          const signal = init && "signal" in init ? init.signal : undefined;
+          if (!(signal instanceof AbortSignal)) {
+            return Promise.reject(new Error("Replay request did not receive an AbortSignal"));
+          }
+          resolveReplayStarted?.();
+          signal.addEventListener("abort", () => {
+            now = 40_000;
+            resolveReplayAborted?.();
+          }, { once: true });
+          return new Promise<Response>((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+        },
+      }, "claude-opus-4-6");
+
+      try {
+        performance.now = () => now;
+        const result = await runtime.doStream({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+          maxOutputTokens: 64,
+        });
+        now = 39_980;
+        const collectPromise = collectAsync(result.stream);
+
+        await waitWithin(replayStarted, 1_500);
+        await waitWithin(replayAborted, 500);
+        await assertRejects(
+          () => collectPromise,
+          ProviderRequestError,
+          "request timed out",
+        );
+        assertEquals(attempts, 2);
+      } finally {
+        performance.now = originalNow;
+      }
+    });
+
     it("caps how long a replay may wait for headers", async () => {
       // The replay never gets headers. Only a budget handed to requestStream
       // can end it; without one it inherits the 40s default.
@@ -4577,7 +4635,8 @@ describe("anthropic-provider", () => {
         baseURL: "https://example.anthropic.test/v1",
         fetch: (_input, init) => {
           attempts++;
-          if (init?.signal) signals.push(init.signal);
+          const signal = init && "signal" in init ? init.signal : undefined;
+          if (signal instanceof AbortSignal) signals.push(signal);
           if (attempts === 1) return Promise.resolve(streamResponse(OVERLOADED));
           return new Promise<Response>(() => {});
         },

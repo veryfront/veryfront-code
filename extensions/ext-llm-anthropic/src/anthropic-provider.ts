@@ -639,11 +639,20 @@ export function createAnthropicModelRuntime(
       // yielded), and carrying the spent budget into it strips the
       // continuation of the pre-header retry veryfront-code#3993 added.
       let streamHeadersBudgetStartedAt = Math.floor(performance.now());
+      const remainingStreamHeadersBudgetMs = () =>
+        Math.max(
+          0,
+          DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS -
+            (Math.floor(performance.now()) - streamHeadersBudgetStartedAt),
+        );
       const issueStream = (
         requestBody: AnthropicRequestBody,
         headersBudgetCeilingMs?: number,
-      ): Promise<ReadableStream<Uint8Array>> =>
-        requestStream({
+      ): Promise<ReadableStream<Uint8Array>> => {
+        const totalHeadersBudgetMs = headersBudgetCeilingMs === undefined
+          ? remainingStreamHeadersBudgetMs()
+          : Math.min(headersBudgetCeilingMs, remainingStreamHeadersBudgetMs());
+        return requestStream({
           url,
           fetchImpl,
           providerLabel: config.name ?? "anthropic",
@@ -663,16 +672,10 @@ export function createAnthropicModelRuntime(
           // the per-attempt deadline and the budget its own retries draw on.
           ...(headersBudgetCeilingMs === undefined
             ? {}
-            : { headersTimeoutMs: headersBudgetCeilingMs }),
-          totalHeadersBudgetMs: Math.min(
-            headersBudgetCeilingMs ?? Number.POSITIVE_INFINITY,
-            Math.max(
-              0,
-              DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS -
-                (Math.floor(performance.now()) - streamHeadersBudgetStartedAt),
-            ),
-          ),
+            : { headersTimeoutMs: totalHeadersBudgetMs }),
+          totalHeadersBudgetMs,
         });
+      };
       let firstResponseStream: ReadableStream<Uint8Array>;
       try {
         firstResponseStream = await issueStream(body);
@@ -739,6 +742,9 @@ export function createAnthropicModelRuntime(
             );
             streamReplayCount++;
             throwIfAnthropicRequestAborted(providerAbortScope.controller.signal);
+            if (remainingStreamHeadersBudgetMs() <= 0) {
+              throw error;
+            }
             responseStream = await issueStream(
               requestBody,
               ANTHROPIC_STREAM_REPLAY_HEADERS_BUDGET_MS,
