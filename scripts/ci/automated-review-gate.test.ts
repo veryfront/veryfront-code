@@ -14,6 +14,9 @@ import {
 
 const HEAD_SHA = "a".repeat(40);
 const STALE_SHA = "b".repeat(40);
+const MALFORMED_CURRENT_RANGE =
+  "Reviewing files that changed from the base of the PR and between " +
+  `not-a-sha and ${HEAD_SHA}.`;
 const CODEX_BOT_ID = 199175422;
 const WORKFLOW_PATH = new URL(
   "../../.github/workflows/automated-review-gate.yml",
@@ -59,6 +62,40 @@ function codeRabbitSummary(
     updated_at: "2026-08-22T12:00:00Z",
     ...overrides,
   };
+}
+
+function codeRabbitRecentReviewSummary(
+  reviewContent: string[],
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return codeRabbitSummary({
+    body: [
+      "<!-- recent_review_start -->",
+      ...reviewContent,
+      "<!-- recent_review_end -->",
+    ].join("\n"),
+    ...overrides,
+  });
+}
+
+function olderCodeRabbitSuccess(): Record<string, unknown> {
+  return codeRabbitSummary({
+    created_at: "2026-08-22T12:01:00Z",
+    updated_at: "2026-08-22T12:01:00Z",
+  });
+}
+
+function findCodeRabbitComments(...comments: Record<string, unknown>[]) {
+  return findAutomatedReview({ reviews: [], comments }, HEAD_SHA);
+}
+
+async function assertCodeRabbitSummaryRejected(
+  ...reviewContent: string[]
+): Promise<void> {
+  assertEquals(
+    await findCodeRabbitComments(codeRabbitRecentReviewSummary(reviewContent)),
+    undefined,
+  );
 }
 
 function codexNoFindingComment(
@@ -221,6 +258,49 @@ describe("automated review gate", () => {
           HEAD_SHA,
         ),
         undefined,
+      );
+    }
+  });
+
+  it("rejects an HTML-commented CodeRabbit no-actionable verdict", async () => {
+    await assertCodeRabbitSummaryRejected(
+      "<!--",
+      "No actionable comments were generated in the recent review.",
+      "-->",
+      codeRabbitReviewRange(),
+    );
+  });
+
+  it("rejects a fenced CodeRabbit no-actionable verdict", async () => {
+    await assertCodeRabbitSummaryRejected(
+      "```text",
+      "No actionable comments were generated in the recent review.",
+      "```",
+      codeRabbitReviewRange(),
+    );
+  });
+
+  it("rejects an inline-code CodeRabbit no-actionable verdict", async () => {
+    await assertCodeRabbitSummaryRejected(
+      "`inline code starts",
+      "No actionable comments were generated in the recent review.",
+      "inline code closes`",
+      codeRabbitReviewRange(),
+    );
+  });
+
+  it("requires CodeRabbit's exact no-actionable verdict line", async () => {
+    for (
+      const alteredVerdict of [
+        " No actionable comments were generated in the recent review.",
+        "No actionable comments were generated in the recent review. ",
+        "> No actionable comments were generated in the recent review.",
+        "No actionable comments were generated in the recent review. Example.",
+      ]
+    ) {
+      await assertCodeRabbitSummaryRejected(
+        alteredVerdict,
+        codeRabbitReviewRange(),
       );
     }
   });
@@ -506,11 +586,8 @@ describe("automated review gate", () => {
     );
   });
 
-  it("lets a malformed current-head range override an older valid review", async () => {
-    const olderSuccess = codeRabbitSummary({
-      created_at: "2026-08-22T12:01:00Z",
-      updated_at: "2026-08-22T12:01:00Z",
-    });
+  it("classifies malformed and wrapped current-head ranges fail closed", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
 
     for (
       const malformedCurrentRange of [
@@ -752,6 +829,10 @@ describe("automated review gate", () => {
       ))?.source,
       "summary",
     );
+  });
+
+  it("rejects unterminated and Markdown-prefixed current-head ranges", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
 
     for (
       const unterminatedCurrentRange of [
@@ -926,6 +1007,10 @@ describe("automated review gate", () => {
       ),
       undefined,
     );
+  });
+
+  it("scopes range evidence outside inline code and fenced blocks", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
 
     const newerFencedCurrentRangeExample = codeRabbitSummary({
       body: [
@@ -983,9 +1068,6 @@ describe("automated review gate", () => {
       "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
     );
 
-    const malformedCurrentRange =
-      "Reviewing files that changed from the base of the PR and between " +
-      `not-a-sha and ${HEAD_SHA}.`;
     for (
       const paragraphBoundary of [
         "> quoted block",
@@ -1003,7 +1085,7 @@ describe("automated review gate", () => {
           "No actionable comments were generated in the recent review.",
           "`inline code starts",
           paragraphBoundary,
-          malformedCurrentRange,
+          MALFORMED_CURRENT_RANGE,
           "inline code closes`",
           "<!-- recent_review_end -->",
         ].join("\n"),
@@ -1024,11 +1106,11 @@ describe("automated review gate", () => {
 
     for (
       const escapedContainerFence of [
-        ["> ```text", malformedCurrentRange, "```"],
-        [">     ```text", `> ${malformedCurrentRange}`, "> ```"],
-        ["- ```text", malformedCurrentRange, "```"],
-        ["   - ```text", `  ${malformedCurrentRange}`, "  ```"],
-        ["> - ```text", `>  ${malformedCurrentRange}`, ">  ```"],
+        ["> ```text", MALFORMED_CURRENT_RANGE, "```"],
+        [">     ```text", `> ${MALFORMED_CURRENT_RANGE}`, "> ```"],
+        ["- ```text", MALFORMED_CURRENT_RANGE, "```"],
+        ["   - ```text", `  ${MALFORMED_CURRENT_RANGE}`, "  ```"],
+        ["> - ```text", `>  ${MALFORMED_CURRENT_RANGE}`, ">  ```"],
       ]
     ) {
       const newerCurrentRangeOutsideFenceContainer = codeRabbitSummary({
@@ -1055,12 +1137,12 @@ describe("automated review gate", () => {
 
     for (
       const containedFence of [
-        ["> ```text", `> ${malformedCurrentRange}`, "> ```"],
-        [">    ```text", `> ${malformedCurrentRange}`, "> ```"],
-        ["- ```text", `  ${malformedCurrentRange}`, "  ```"],
-        ["   - ```text", `     ${malformedCurrentRange}`, "     ```"],
-        ["- [ ] ```text", `      ${malformedCurrentRange}`, "      ```"],
-        ["> - ```text", `>   ${malformedCurrentRange}`, ">   ```"],
+        ["> ```text", `> ${MALFORMED_CURRENT_RANGE}`, "> ```"],
+        [">    ```text", `> ${MALFORMED_CURRENT_RANGE}`, "> ```"],
+        ["- ```text", `  ${MALFORMED_CURRENT_RANGE}`, "  ```"],
+        ["   - ```text", `     ${MALFORMED_CURRENT_RANGE}`, "     ```"],
+        ["- [ ] ```text", `      ${MALFORMED_CURRENT_RANGE}`, "      ```"],
+        ["> - ```text", `>   ${MALFORMED_CURRENT_RANGE}`, ">   ```"],
       ]
     ) {
       const newerCurrentRangeInsideFenceContainer = codeRabbitSummary({
@@ -1090,37 +1172,37 @@ describe("automated review gate", () => {
         [
           "- ```md",
           "  # example",
-          `  ${malformedCurrentRange}`,
+          `  ${MALFORMED_CURRENT_RANGE}`,
           "  ```",
         ],
         [
           "> ```md",
           "> - example",
-          `> ${malformedCurrentRange}`,
+          `> ${MALFORMED_CURRENT_RANGE}`,
           "> ```",
         ],
         [
           "> - ```md",
           ">   # example",
-          `>   ${malformedCurrentRange}`,
+          `>   ${MALFORMED_CURRENT_RANGE}`,
           ">   ```",
         ],
         [
           "- ```md",
           "  - ```",
-          `  ${malformedCurrentRange}`,
+          `  ${MALFORMED_CURRENT_RANGE}`,
           "  ```",
         ],
         [
           "- ```md",
           "",
-          `  ${malformedCurrentRange}`,
+          `  ${MALFORMED_CURRENT_RANGE}`,
           "  ```",
         ],
         [
           "> - ```md",
           ">",
-          `>   ${malformedCurrentRange}`,
+          `>   ${MALFORMED_CURRENT_RANGE}`,
           ">   ```",
         ],
       ]
@@ -1149,12 +1231,12 @@ describe("automated review gate", () => {
 
     for (
       const closedContainerFence of [
-        ["- ```text", "  example", "  ```", malformedCurrentRange],
+        ["- ```text", "  example", "  ```", MALFORMED_CURRENT_RANGE],
         [
           "> - ```text",
           ">   example",
           ">   ```",
-          malformedCurrentRange,
+          MALFORMED_CURRENT_RANGE,
         ],
       ]
     ) {
@@ -1182,8 +1264,8 @@ describe("automated review gate", () => {
 
     for (
       const tabSensitiveFence of [
-        ["- ```text", "\t```", malformedCurrentRange],
-        ["\t```text", malformedCurrentRange],
+        ["- ```text", "\t```", MALFORMED_CURRENT_RANGE],
+        ["\t```text", MALFORMED_CURRENT_RANGE],
       ]
     ) {
       const newerVisibleCurrentRangeAroundTabFence = codeRabbitSummary({
@@ -1236,7 +1318,7 @@ describe("automated review gate", () => {
         body: [
           "<!-- recent_review_start -->",
           "No actionable comments were generated in the recent review.",
-          malformedCurrentRange,
+          MALFORMED_CURRENT_RANGE,
           "<!-- recent_review_end -->",
           ...nonStructuralMarkerExample,
         ].join("\n"),
@@ -1260,7 +1342,7 @@ describe("automated review gate", () => {
         "<!-- recent_review_start -->",
         "No actionable comments were generated in the recent review.",
         "   ```text",
-        malformedCurrentRange,
+        MALFORMED_CURRENT_RANGE,
         "   ```",
         "<!-- recent_review_end -->",
       ].join("\n"),
@@ -1277,6 +1359,10 @@ describe("automated review gate", () => {
       ))?.source,
       "summary",
     );
+  });
+
+  it("scopes HTML comments and validates fence openers", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
 
     const newerHtmlCommentedCurrentRange = codeRabbitSummary({
       body: [
@@ -1317,7 +1403,7 @@ describe("automated review gate", () => {
         "<!--",
         "```text",
         "-->",
-        malformedCurrentRange,
+        MALFORMED_CURRENT_RANGE,
         "<!-- recent_review_end -->",
       ].join("\n"),
       created_at: "2026-08-22T12:03:41Z",
@@ -1336,18 +1422,18 @@ describe("automated review gate", () => {
 
     for (
       const visibleRangeAfterCommentLookalike of [
-        ["\\<!--", malformedCurrentRange, "-->"],
-        ["`<!--`", malformedCurrentRange, "-->"],
-        ["``<!--``", malformedCurrentRange, "-->"],
-        ["inline code ```<!--```", malformedCurrentRange, "-->"],
+        ["\\<!--", MALFORMED_CURRENT_RANGE, "-->"],
+        ["`<!--`", MALFORMED_CURRENT_RANGE, "-->"],
+        ["``<!--``", MALFORMED_CURRENT_RANGE, "-->"],
+        ["inline code ```<!--```", MALFORMED_CURRENT_RANGE, "-->"],
         [
           "`multiline inline code starts",
           "text <!--",
           "multiline inline code closes`",
-          malformedCurrentRange,
+          MALFORMED_CURRENT_RANGE,
           "-->",
         ],
-        ["```", "<!--", "```", malformedCurrentRange, "-->"],
+        ["```", "<!--", "```", MALFORMED_CURRENT_RANGE, "-->"],
       ]
     ) {
       const newerVisibleCurrentRange = codeRabbitSummary({
@@ -1378,7 +1464,7 @@ describe("automated review gate", () => {
           "<!-- recent_review_start -->",
           "No actionable comments were generated in the recent review.",
           activeCommentAfterLiteralBacktick,
-          malformedCurrentRange,
+          MALFORMED_CURRENT_RANGE,
           "-->",
           "<!-- recent_review_end -->",
         ].join("\n"),
@@ -1402,7 +1488,7 @@ describe("automated review gate", () => {
         "<!-- recent_review_start -->",
         "No actionable comments were generated in the recent review.",
         "```js`oops",
-        malformedCurrentRange,
+        MALFORMED_CURRENT_RANGE,
         "```",
         "<!-- recent_review_end -->",
       ].join("\n"),
@@ -1425,7 +1511,7 @@ describe("automated review gate", () => {
         "<!-- recent_review_start -->",
         "No actionable comments were generated in the recent review.",
         "~~~js`allowed",
-        malformedCurrentRange,
+        MALFORMED_CURRENT_RANGE,
         "~~~",
         "<!-- recent_review_end -->",
       ].join("\n"),
@@ -1442,6 +1528,10 @@ describe("automated review gate", () => {
       ))?.source,
       "summary",
     );
+  });
+
+  it("keeps fence continuation examples excluded", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
 
     for (
       const fencedContinuation of [
@@ -1572,6 +1662,10 @@ describe("automated review gate", () => {
       ))?.source,
       "summary",
     );
+  });
+
+  it("handles unterminated and nested recent-review groups", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
 
     const newerUnterminatedStaleRange = codeRabbitSummary({
       body: [
@@ -1679,6 +1773,10 @@ describe("automated review gate", () => {
       ),
       undefined,
     );
+  });
+
+  it("ignores out-of-scope and diagnostic commit text", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
 
     const newerOutOfScopeCurrentRange = codeRabbitSummary({
       body: [
@@ -1767,6 +1865,10 @@ describe("automated review gate", () => {
       ))?.source,
       "summary",
     );
+  });
+
+  it("keeps whitespace-only malformed range parsing linear", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
 
     const newerWhitespaceOnlyRangeStart = codeRabbitSummary({
       body: [
@@ -1794,6 +1896,10 @@ describe("automated review gate", () => {
       performance.now() - whitespaceOnlyStartedAt < 1_000,
       "whitespace-only malformed range parsing must stay linear",
     );
+  });
+
+  it("accepts an exact range with unrelated diagnostic text", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
 
     const newerExactCurrentWithDiagnostic = codeRabbitSummary({
       body: [

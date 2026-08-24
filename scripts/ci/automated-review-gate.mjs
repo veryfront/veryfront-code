@@ -253,7 +253,8 @@ async function classifyAutomatedReviewEvent(
       url: typeof comment.html_url === "string" ? comment.html_url : undefined,
     };
   }
-  return effectiveRangeReview?.content.includes(
+  return hasExactVisibleMarkdownLine(
+      effectiveRangeReview.content,
       CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER,
     )
     ? {
@@ -367,6 +368,30 @@ function codeRabbitRangeEvidenceStatements(content) {
 
 function markdownExcludedRanges(content) {
   return scanMarkdownStructure(content).excludedRanges;
+}
+
+function hasExactVisibleMarkdownLine(content, expectedLine) {
+  const excludedRanges = markdownExcludedRanges(content);
+  let excludedRangeIndex = 0;
+  let lineStart = 0;
+  for (const lineMatch of content.matchAll(/[^\r\n]*(?:\r\n|[\r\n]|$)/g)) {
+    const line = lineMatch[0];
+    if (line.length === 0 && lineStart >= content.length) break;
+    const lineEnd = lineStart + line.length;
+    const lineWithoutEnding = line.replace(/(?:\r\n|[\r\n])$/, "");
+    while (
+      excludedRangeIndex < excludedRanges.length &&
+      excludedRanges[excludedRangeIndex][1] <= lineStart
+    ) {
+      excludedRangeIndex += 1;
+    }
+    const excludedRange = excludedRanges[excludedRangeIndex];
+    const isExcluded = excludedRange?.[0] <= lineStart &&
+      lineStart < excludedRange[1];
+    if (!isExcluded && lineWithoutEnding === expectedLine) return true;
+    lineStart = lineEnd;
+  }
+  return false;
 }
 
 function markdownReviewMarkers(content) {
