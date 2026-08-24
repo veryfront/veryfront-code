@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/skill/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects, assertThrows } from "@std/assert";
+import { it } from "#veryfront/testing/bdd.ts";
 import { resolve } from "node:path";
 import {
   SKILL_CATALOG_MAX_DOCUMENT_CHARACTERS,
@@ -826,7 +827,7 @@ Deno.test("a mismatched project-file response path fails closed for the claimed 
   }]);
 });
 
-Deno.test("an oversized project skill document fails closed without resurrecting the built-in", async () => {
+it("an oversized project skill document fails closed without resurrecting the built-in", async () => {
   const errors: Array<[string, Record<string, unknown> | undefined]> = [];
   const skills = await getRuntimeProjectSkillCatalog({
     ...PROJECT_CONTEXT,

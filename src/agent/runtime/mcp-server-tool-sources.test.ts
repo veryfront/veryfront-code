@@ -1,4 +1,5 @@
 import { assertEquals, assertRejects, assertThrows } from "@std/assert";
+import { it } from "#veryfront/testing/bdd.ts";
 import type {
   RemoteMCPToolSourceConfig,
   RemoteToolSource,
@@ -27,7 +28,7 @@ Deno.test("getRequestedUnresolvedBooleanToolNames keeps legacy delegation local"
   );
 });
 
-Deno.test("getRequestedUnresolvedBooleanToolNames does not request tools already available locally", () => {
+it("getRequestedUnresolvedBooleanToolNames does not request tools already available locally", () => {
   assertEquals(
     getRequestedUnresolvedBooleanToolNames({
       tools: { get_file: true, sleep: true },

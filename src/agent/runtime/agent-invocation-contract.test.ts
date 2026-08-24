@@ -161,8 +161,8 @@ describe("agent/runtime-agent-invocation-contract", () => {
     );
     const unpinnedResult = RuntimeAgentRunInvocationSchema.safeParse(unpinned);
     assertEquals(
-      unpinnedResult.success ? undefined : unpinnedResult.issues[0]?.path,
-      ["agentSource", "releaseId"],
+      unpinnedResult.success ? [] : unpinnedResult.issues.map((issue) => issue.path),
+      [["agentSource", "releaseId"]],
       "the only rejection must be the missing releaseId, not the target binding rule",
     );
 

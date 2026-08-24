@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import type { ChatUiMessage } from "../../chat/types.ts";
 import { generateText } from "../../runtime/runtime-bridge.ts";
@@ -68,7 +69,7 @@ Deno.test("prepareAgentRuntimeMessagesFromUiMessages returns an empty-conversati
   assertEquals(messages[0]?.parts, [{ type: "text", text: "Suggest next steps." }]);
 });
 
-Deno.test("prepareAgentRuntimeMessagesFromUiMessages uses the default empty-conversation prompt", async () => {
+it("prepareAgentRuntimeMessagesFromUiMessages uses the default empty-conversation prompt", async () => {
   const messages = await prepareAgentRuntimeMessagesFromUiMessages({ messages: [] });
 
   assertEquals(messages.length, 1, "an empty conversation yields exactly one prompt message");
@@ -84,7 +85,7 @@ Deno.test("prepareAgentRuntimeMessagesFromUiMessages uses the default empty-conv
   );
 });
 
-Deno.test("prepareAgentRuntimeMessagesFromUiMessages treats a whitespace-only user turn as empty", async () => {
+it("prepareAgentRuntimeMessagesFromUiMessages treats a whitespace-only user turn as empty", async () => {
   const messages = await prepareAgentRuntimeMessagesFromUiMessages({
     messages: [userMessage([{ type: "text", text: "   " }])],
   });
@@ -101,7 +102,7 @@ Deno.test("prepareAgentRuntimeMessagesFromUiMessages treats a whitespace-only us
   );
 });
 
-Deno.test("prepareAgentRuntimeMessagesFromUiMessages keeps an attachment-only user turn", async () => {
+it("prepareAgentRuntimeMessagesFromUiMessages keeps an attachment-only user turn", async () => {
   const messages = await prepareAgentRuntimeMessagesFromUiMessages({
     messages: [
       userMessage([

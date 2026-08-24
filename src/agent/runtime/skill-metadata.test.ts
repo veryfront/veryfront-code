@@ -1091,7 +1091,7 @@ Deno.test("buildStrictRuntimeLoadedSkillResponse bounds direct response inputs",
   );
 });
 
-Deno.test("buildStrictRuntimeLoadedSkillResponse rejects references outside readable skill directories", () => {
+it("buildStrictRuntimeLoadedSkillResponse rejects references outside readable skill directories", () => {
   const base = {
     skillId: "bounded",
     instructions: "Body",

@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessage } from "../../chat/types.ts";
 import { composeAbortSignals, resolveRuntimeMessageFileUrls } from "./message-file-url-refresh.ts";
 
@@ -61,7 +62,7 @@ Deno.test("resolveRuntimeMessageFileUrls refreshes upload file URLs once", async
   ], "a refreshed upload must keep its storage path alongside the new url");
 });
 
-Deno.test("resolveRuntimeMessageFileUrls canonicalizes a snake_case upload_path", async () => {
+it("resolveRuntimeMessageFileUrls canonicalizes a snake_case upload_path", async () => {
   const messages = await resolveRuntimeMessageFileUrls(
     [
       userMessage([
