@@ -2447,6 +2447,132 @@ describe("automated review gate", () => {
     );
   });
 
+  it("keeps non-code backticks from masking visible evidence", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+
+    for (
+      const nonCodeBacktick of [
+        ["`inline code starts", "\\` closes inline code"],
+        ["ordinary <https://example.com/`>"],
+        ["ordinary <foo`bar@example.com>"],
+        ["", "[reference]: https://example.com/`"],
+        ["", "[reference]:", "  https://example.com/`"],
+        ["", "[reference]: https://example.com/", '  "title `"'],
+        ["", "[", "reference", "]: https://example.com/`"],
+        [
+          "",
+          '[reference]: https://example.com/ "title',
+          'continued `"',
+        ],
+      ]
+    ) {
+      const newerVisibleCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...nonCodeBacktick,
+          MALFORMED_CURRENT_RANGE,
+          "`",
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerVisibleCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+  });
+
+  it("keeps reference-definition lookalikes inside inline code", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+
+    for (
+      const lookalike of [
+        "[reference]:",
+        "[reference]:   ",
+      ]
+    ) {
+      const newerHiddenCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          "`inline code starts",
+          lookalike,
+          MALFORMED_CURRENT_RANGE,
+          "inline code closes`",
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerHiddenCurrentRange],
+          },
+          HEAD_SHA,
+        ))?.url,
+        olderSuccess.html_url,
+      );
+    }
+
+    const newerParagraphLookalike = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "[reference]: https://example.com/`",
+        MALFORMED_CURRENT_RANGE,
+        "`",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerParagraphLookalike],
+        },
+        HEAD_SHA,
+      ))?.url,
+      olderSuccess.html_url,
+    );
+
+    const newerUnseparatedTitleLookalike = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "",
+        "[reference]: <https://example.com>(title `)",
+        MALFORMED_CURRENT_RANGE,
+        "`",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerUnseparatedTitleLookalike],
+        },
+        HEAD_SHA,
+      ))?.url,
+      olderSuccess.html_url,
+    );
+  });
+
   it("keeps structural review markers outside unmatched inline code", async () => {
     const olderSuccess = olderCodeRabbitSuccess();
     const newerMalformedCurrentRange = codeRabbitSummary({
@@ -2988,6 +3114,67 @@ describe("automated review gate", () => {
     assert(
       performance.now() - denseInlineStartedAt < 1_000,
       "dense inline-code scanning must stay linear",
+    );
+
+    const newerDenseUnmatchedProcessingInstructions = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        `ordinary ${"<?".repeat(32_000)}`,
+        MALFORMED_CURRENT_RANGE,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:02Z",
+      updated_at: "2026-08-22T12:02:02Z",
+    });
+    const denseProcessingInstructionsStartedAt = performance.now();
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [
+            olderSuccess,
+            newerDenseUnmatchedProcessingInstructions,
+          ],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+    assert(
+      performance.now() - denseProcessingInstructionsStartedAt < 1_000,
+      "dense unmatched processing-instruction scanning must stay linear",
+    );
+
+    const newerDenseReferenceDefinitions = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "",
+        ...Array.from(
+          { length: 4_000 },
+          (_, index) => `[reference-${index}]: /target-${index}`,
+        ),
+        MALFORMED_CURRENT_RANGE,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:02Z",
+      updated_at: "2026-08-22T12:02:02Z",
+    });
+    const denseReferenceDefinitionsStartedAt = performance.now();
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerDenseReferenceDefinitions],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+    assert(
+      performance.now() - denseReferenceDefinitionsStartedAt < 1_000,
+      "dense reference-definition scanning must stay linear",
     );
 
     const newerDenseRawHtmlBlocks = codeRabbitSummary({

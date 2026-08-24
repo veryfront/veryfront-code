@@ -908,14 +908,28 @@ function markdownInlineStructureRanges(content, excludedRanges = []) {
   const inlineCodeRanges = [];
   const inlineHtmlRanges = [];
   const excludedRangeCursor = { index: 0 };
-  let segmentStart = 0;
-  let openParagraph;
-  let lineStart = 0;
+  const lines = [];
+  let nextLineStart = 0;
   for (const lineMatch of content.matchAll(/[^\r\n]*(?:\r\n|[\r\n]|$)/g)) {
     const line = lineMatch[0];
-    if (line.length === 0 && lineStart >= content.length) break;
-    const lineEnd = lineStart + line.length;
-    const lineWithoutEnding = line.replace(/(?:\r\n|[\r\n])$/, "");
+    if (line.length === 0 && nextLineStart >= content.length) break;
+    const end = nextLineStart + line.length;
+    lines.push({
+      content: line.replace(/(?:\r\n|[\r\n])$/, ""),
+      end,
+      start: nextLineStart,
+    });
+    nextLineStart = end;
+  }
+
+  let segmentStart = 0;
+  let openParagraph;
+  let excludedRangeIndex = 0;
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
+    const lineStart = line.start;
+    const lineEnd = line.end;
+    const lineWithoutEnding = line.content;
     const paragraphLine = markdownParagraphLineContext(lineWithoutEnding);
     const continuesParagraph = markdownLineContinuesParagraph(
       paragraphLine,
@@ -923,6 +937,34 @@ function markdownInlineStructureRanges(content, excludedRanges = []) {
     );
     const indentedCodeLine = isMarkdownIndentedCodeLine(lineWithoutEnding) &&
       !continuesParagraph;
+    while (excludedRanges[excludedRangeIndex]?.[1] <= lineStart) {
+      excludedRangeIndex += 1;
+    }
+    const excludedRange = excludedRanges[excludedRangeIndex];
+    const lineIsExcluded = excludedRange?.[0] <= lineStart &&
+      lineStart < excludedRange[1];
+    const referenceDefinitionLineCount = !continuesParagraph &&
+        !indentedCodeLine && !lineIsExcluded
+      ? markdownReferenceDefinitionLineCount(lines, lineIndex)
+      : 0;
+    if (referenceDefinitionLineCount > 0) {
+      appendMarkdownInlineCodeRanges(
+        content,
+        segmentStart,
+        lineStart,
+        inlineCodeRanges,
+        inlineHtmlRanges,
+        excludedRanges,
+        excludedRangeCursor,
+      );
+      const finalDefinitionLine = lines[
+        lineIndex + referenceDefinitionLineCount - 1
+      ];
+      segmentStart = finalDefinitionLine.end;
+      lineIndex += referenceDefinitionLineCount - 1;
+      openParagraph = undefined;
+      continue;
+    }
     const paragraphAfterLine = markdownParagraphAfterLine(
       paragraphLine,
       openParagraph,
@@ -954,7 +996,6 @@ function markdownInlineStructureRanges(content, excludedRanges = []) {
       }
     }
     openParagraph = paragraphAfterLine;
-    lineStart = lineEnd;
   }
   appendMarkdownInlineCodeRanges(
     content,
@@ -983,6 +1024,218 @@ function isMarkdownInlineCodeBarrier(line) {
   const fenceMatch = line.match(MARKDOWN_FENCE_LINE_PATTERN);
   return fenceMatch !== null &&
     hasValidMarkdownBlockquoteSpacing(fenceMatch[1]);
+}
+
+function markdownReferenceDefinitionLineCount(lines, lineIndex) {
+  const firstLine = markdownParagraphLineContext(lines[lineIndex].content);
+  let candidate = firstLine.content;
+  let finalCandidateLine = lineIndex;
+  while (candidate.length <= 2_048) {
+    const parsed = markdownReferenceCandidate(candidate);
+    const continuation = markdownReferenceContinuationLine(
+      lines,
+      finalCandidateLine + 1,
+      firstLine,
+    );
+    if (
+      parsed !== undefined &&
+      (!parsed.acceptsTitleContinuation || continuation === undefined ||
+        !markdownReferenceTitleStarts(continuation))
+    ) return parsed.lineCount;
+    if (continuation === undefined) return parsed?.lineCount ?? 0;
+    candidate += `\n${continuation}`;
+    finalCandidateLine += 1;
+  }
+
+  for (
+    let index = finalCandidateLine + 1;
+    index < lines.length;
+    index += 1
+  ) {
+    const continuation = markdownReferenceContinuationLine(
+      lines,
+      index,
+      firstLine,
+    );
+    if (continuation === undefined) break;
+    candidate += `\n${continuation}`;
+  }
+  return markdownReferenceCandidate(candidate)?.lineCount ?? 0;
+}
+
+function markdownReferenceCandidate(candidate) {
+  const labelEnd = markdownReferenceLabelEnd(candidate);
+  if (labelEnd === undefined) return undefined;
+
+  const beforeDestination = markdownReferenceWhitespaceEnd(candidate, labelEnd);
+  const destinationEnd = markdownReferenceDestinationEnd(
+    candidate,
+    beforeDestination.end,
+  );
+  if (destinationEnd === undefined) return undefined;
+
+  const destinationLineEnd = markdownReferenceLineEnd(
+    candidate,
+    destinationEnd,
+  );
+  const afterDestination = markdownReferenceWhitespaceEnd(
+    candidate,
+    destinationEnd,
+  );
+  if (afterDestination.end === candidate.length) {
+    return {
+      acceptsTitleContinuation: true,
+      lineCount: markdownReferenceLineCount(candidate, destinationLineEnd),
+    };
+  }
+
+  const titleStarts = candidate[afterDestination.end] === '"' ||
+    candidate[afterDestination.end] === "'" ||
+    candidate[afterDestination.end] === "(";
+  if (titleStarts && afterDestination.end > destinationEnd) {
+    const titleEnd = markdownReferenceTitleEnd(
+      candidate,
+      afterDestination.end,
+    );
+    if (titleEnd !== undefined) {
+      const titleLineEnd = markdownReferenceLineEnd(candidate, titleEnd);
+      if (/^[ \t]*$/.test(candidate.slice(titleEnd, titleLineEnd))) {
+        return {
+          acceptsTitleContinuation: false,
+          lineCount: markdownReferenceLineCount(candidate, titleLineEnd),
+        };
+      }
+    }
+  }
+
+  if (afterDestination.crossedLine) {
+    return {
+      acceptsTitleContinuation: false,
+      lineCount: markdownReferenceLineCount(candidate, destinationLineEnd),
+    };
+  }
+  return undefined;
+}
+
+function markdownReferenceTitleStarts(line) {
+  const firstCharacter = line.trimStart()[0];
+  return firstCharacter === '"' || firstCharacter === "'" ||
+    firstCharacter === "(";
+}
+
+function markdownReferenceContinuationLine(lines, lineIndex, firstLine) {
+  const line = lines[lineIndex];
+  if (line === undefined || line.content.trim().length === 0) return undefined;
+  const continuation = markdownParagraphLineContext(line.content);
+  if (
+    continuation.structuralPrefix !== firstLine.structuralPrefix ||
+    continuation.listContinuationIndent !== undefined ||
+    (firstLine.listContinuationIndent !== undefined &&
+      continuation.indentation < firstLine.listContinuationIndent)
+  ) return undefined;
+  return continuation.content;
+}
+
+function markdownReferenceLabelEnd(candidate) {
+  if (candidate[0] !== "[") return undefined;
+
+  let index = 1;
+  let labelLength = 0;
+  let hasNonWhitespace = false;
+  while (index < candidate.length && labelLength <= 999) {
+    const character = candidate[index];
+    if (character === "]") {
+      return labelLength <= 999 && hasNonWhitespace &&
+          candidate[index + 1] === ":"
+        ? index + 2
+        : undefined;
+    }
+    if (character === "[") return undefined;
+    if (character === "\\" && index + 1 < candidate.length) index += 1;
+    if (!/[ \t\n]/.test(candidate[index])) hasNonWhitespace = true;
+    labelLength += 1;
+    index += 1;
+  }
+  return undefined;
+}
+
+function markdownReferenceWhitespaceEnd(candidate, start) {
+  let index = start;
+  while (candidate[index] === " " || candidate[index] === "\t") index += 1;
+  if (candidate[index] !== "\n") {
+    return { crossedLine: false, end: index };
+  }
+  index += 1;
+  while (candidate[index] === " " || candidate[index] === "\t") index += 1;
+  return { crossedLine: true, end: index };
+}
+
+function markdownReferenceDestinationEnd(candidate, start) {
+  if (candidate[start] === "<") {
+    for (let index = start + 1; index < candidate.length; index += 1) {
+      if (candidate[index] === "\\" && index + 1 < candidate.length) {
+        index += 1;
+        continue;
+      }
+      if (candidate[index] === "\n" || candidate[index] === "<") {
+        return undefined;
+      }
+      if (candidate[index] === ">") return index + 1;
+    }
+    return undefined;
+  }
+  if (candidate[start] === undefined || candidate[start] === "<") {
+    return undefined;
+  }
+
+  let parentheses = 0;
+  let index = start;
+  while (index < candidate.length && !/[ \t\n]/.test(candidate[index])) {
+    const character = candidate[index];
+    const characterCode = character.charCodeAt(0);
+    if (characterCode <= 0x1f || characterCode === 0x7f) return undefined;
+    if (character === "\\" && index + 1 < candidate.length) {
+      index += 2;
+      continue;
+    }
+    if (character === "(") parentheses += 1;
+    else if (character === ")") {
+      if (parentheses === 0) return undefined;
+      parentheses -= 1;
+    }
+    index += 1;
+  }
+  return index > start && parentheses === 0 ? index : undefined;
+}
+
+function markdownReferenceTitleEnd(line, start) {
+  const opening = line[start];
+  const closing = opening === "(" ? ")" : opening;
+  if (opening !== '"' && opening !== "'" && opening !== "(") return undefined;
+  for (let index = start + 1; index < line.length; index += 1) {
+    if (line[index] === "\\" && index + 1 < line.length) {
+      index += 1;
+      continue;
+    }
+    if (line[index] === closing) {
+      return index + 1;
+    }
+    if (opening === "(" && line[index] === "(") return undefined;
+  }
+  return undefined;
+}
+
+function markdownReferenceLineEnd(candidate, start) {
+  const lineEnd = candidate.indexOf("\n", start);
+  return lineEnd < 0 ? candidate.length : lineEnd;
+}
+
+function markdownReferenceLineCount(candidate, end) {
+  let lineCount = 1;
+  for (let index = 0; index < end; index += 1) {
+    if (candidate[index] === "\n") lineCount += 1;
+  }
+  return lineCount;
 }
 
 function appendMarkdownInlineCodeRanges(
@@ -1047,13 +1300,10 @@ function appendMarkdownInlineCodeRangesInSegment(
       index += 1;
       continue;
     }
-    if (isEscapedMarkdownToken(content, index)) {
-      index += 1;
-      continue;
-    }
     let runEnd = index + 1;
     while (content[runEnd] === "`") runEnd += 1;
     delimiterRuns.push({
+      escaped: isEscapedMarkdownToken(content, index),
       start: index,
       end: runEnd,
       length: runEnd - index,
@@ -1065,17 +1315,35 @@ function appendMarkdownInlineCodeRangesInSegment(
   const nextIndexByLength = new Map();
   for (let index = delimiterRuns.length - 1; index >= 0; index -= 1) {
     const run = delimiterRuns[index];
-    nextRunWithLength[index] = nextIndexByLength.get(run.length);
+    const openingLength = run.escaped ? run.length - 1 : run.length;
+    if (openingLength > 0) {
+      nextRunWithLength[index] = nextIndexByLength.get(openingLength);
+    }
     nextIndexByLength.set(run.length, index);
   }
 
+  const findHtmlTerminator = createMarkdownInlineTerminatorFinder(content, end);
   let delimiterIndex = 0;
   let cursor = start;
   while (cursor < end) {
     while (delimiterRuns[delimiterIndex]?.end <= cursor) {
       delimiterIndex += 1;
     }
-    const delimiter = delimiterRuns[delimiterIndex];
+    while (
+      delimiterRuns[delimiterIndex]?.escaped &&
+      delimiterRuns[delimiterIndex].length === 1
+    ) {
+      cursor = delimiterRuns[delimiterIndex].end;
+      delimiterIndex += 1;
+    }
+    const delimiterRun = delimiterRuns[delimiterIndex];
+    const delimiter = delimiterRun?.escaped
+      ? {
+        start: delimiterRun.start + 1,
+        end: delimiterRun.end,
+        length: delimiterRun.length - 1,
+      }
+      : delimiterRun;
     const htmlStart = content.indexOf("<", cursor);
     if (
       htmlStart >= 0 && htmlStart < end &&
@@ -1085,7 +1353,12 @@ function appendMarkdownInlineCodeRangesInSegment(
         cursor = htmlStart + 1;
         continue;
       }
-      const htmlEnd = markdownInlineHtmlEnd(content, htmlStart, end);
+      const htmlEnd = markdownInlineHtmlEnd(
+        content,
+        htmlStart,
+        end,
+        findHtmlTerminator,
+      );
       cursor = htmlEnd ?? htmlStart + 1;
       if (htmlEnd !== undefined) {
         if (!content.startsWith("<!--", htmlStart)) {
@@ -1115,6 +1388,7 @@ function appendMarkdownInlineCodeRangesInSegment(
 }
 
 function appendMarkdownInlineHtmlRanges(content, start, end, ranges) {
+  const findHtmlTerminator = createMarkdownInlineTerminatorFinder(content, end);
   let cursor = start;
   while (cursor < end) {
     const htmlStart = content.indexOf("<", cursor);
@@ -1123,7 +1397,12 @@ function appendMarkdownInlineHtmlRanges(content, start, end, ranges) {
       cursor = htmlStart + 1;
       continue;
     }
-    const htmlEnd = markdownInlineHtmlEnd(content, htmlStart, end);
+    const htmlEnd = markdownInlineHtmlEnd(
+      content,
+      htmlStart,
+      end,
+      findHtmlTerminator,
+    );
     if (htmlEnd === undefined) {
       cursor = htmlStart + 1;
       continue;
@@ -1135,28 +1414,71 @@ function appendMarkdownInlineHtmlRanges(content, start, end, ranges) {
   }
 }
 
-function markdownInlineHtmlEnd(content, start, end) {
+function createMarkdownInlineTerminatorFinder(content, end) {
+  const nextIndexByTerminator = new Map();
+  return (terminator, start) => {
+    let nextIndex = nextIndexByTerminator.get(terminator);
+    if (nextIndex === -1) return undefined;
+    if (nextIndex === undefined || nextIndex < start) {
+      nextIndex = content.indexOf(terminator, start);
+      if (nextIndex < 0 || nextIndex >= end) {
+        nextIndexByTerminator.set(terminator, -1);
+        return undefined;
+      }
+      nextIndexByTerminator.set(terminator, nextIndex);
+    }
+    return nextIndex;
+  };
+}
+
+function markdownInlineHtmlEnd(content, start, end, findTerminator) {
   if (content.startsWith("<!--", start)) {
     const shortCommentEnd = markdownShortHtmlCommentEnd(content, start);
     if (shortCommentEnd !== undefined && shortCommentEnd <= end) {
       return shortCommentEnd;
     }
-    const closeStart = content.indexOf("-->", start + 4);
-    return closeStart >= 0 && closeStart < end ? closeStart + 3 : undefined;
+    const closeStart = findTerminator("-->", start + 4);
+    return closeStart === undefined ? undefined : closeStart + 3;
   }
   if (content.startsWith("<?", start)) {
-    const closeStart = content.indexOf("?>", start + 2);
-    return closeStart >= 0 && closeStart < end ? closeStart + 2 : undefined;
+    const closeStart = findTerminator("?>", start + 2);
+    return closeStart === undefined ? undefined : closeStart + 2;
   }
   if (content.startsWith("<![CDATA[", start)) {
-    const closeStart = content.indexOf("]]>", start + 9);
-    return closeStart >= 0 && closeStart < end ? closeStart + 3 : undefined;
+    const closeStart = findTerminator("]]>", start + 9);
+    return closeStart === undefined ? undefined : closeStart + 3;
   }
   if (content.startsWith("<!", start) && isAsciiLetter(content[start + 2])) {
-    const closeStart = content.indexOf(">", start + 3);
-    return closeStart >= 0 && closeStart < end ? closeStart + 1 : undefined;
+    const closeStart = findTerminator(">", start + 3);
+    return closeStart === undefined ? undefined : closeStart + 1;
   }
-  return markdownInlineHtmlTagEnd(content, start, end);
+  return markdownAngleAutolinkEnd(content, start, end) ??
+    markdownInlineHtmlTagEnd(content, start, end, findTerminator);
+}
+
+function markdownAngleAutolinkEnd(content, start, end) {
+  let index = start + 1;
+  while (index < end) {
+    const character = content[index];
+    if (character === ">") {
+      const destination = content.slice(start + 1, index);
+      const uri = /^[A-Za-z][A-Za-z0-9.+-]{1,31}:[^\s<>]*$/.test(
+        destination,
+      );
+      const email =
+        /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/
+          .test(
+            destination,
+          );
+      return uri || email ? index + 1 : undefined;
+    }
+    const characterCode = character.charCodeAt(0);
+    if (
+      character === "<" || characterCode <= 0x20 || characterCode === 0x7f
+    ) return undefined;
+    index += 1;
+  }
+  return undefined;
 }
 
 function markdownShortHtmlCommentEnd(content, start) {
@@ -1165,7 +1487,7 @@ function markdownShortHtmlCommentEnd(content, start) {
   return undefined;
 }
 
-function markdownInlineHtmlTagEnd(content, start, end) {
+function markdownInlineHtmlTagEnd(content, start, end, findTerminator) {
   let index = start + 1;
   const closingTag = content[index] === "/";
   if (closingTag) index += 1;
@@ -1199,8 +1521,8 @@ function markdownInlineHtmlTagEnd(content, start, end) {
     while (index < end && isMarkdownWhitespace(content[index])) index += 1;
     const quote = content[index];
     if (quote === '"' || quote === "'") {
-      const quoteEnd = content.indexOf(quote, index + 1);
-      if (quoteEnd < 0 || quoteEnd >= end) return undefined;
+      const quoteEnd = findTerminator(quote, index + 1);
+      if (quoteEnd === undefined) return undefined;
       index = quoteEnd + 1;
       continue;
     }
