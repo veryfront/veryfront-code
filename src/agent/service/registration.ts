@@ -236,12 +236,14 @@ function getErrorMessage(error: unknown): string {
 const HEARTBEAT_MAX_ATTEMPTS = 3;
 /** Backoff before the first retry when the heartbeat interval leaves room for it. */
 const HEARTBEAT_RETRY_BASE_DELAY_MS = 250;
+/** Minimum time allowed for a control-plane heartbeat attempt. */
+const HEARTBEAT_MIN_ATTEMPT_TIMEOUT_MS = 5_000;
 /**
  * Share of one heartbeat interval the retry backoff may occupy.
  *
  * This bounds only the waits between attempts. Each request has its own
- * interval-sized deadline, so a complete retry sequence can still outlive one
- * interval. The in-flight guard below prevents overlap in that case.
+ * interval-derived deadline, so a complete retry sequence can still outlive
+ * one interval. The in-flight guard below prevents overlap in that case.
  */
 const HEARTBEAT_RETRY_BUDGET_RATIO = 0.25;
 
@@ -496,13 +498,11 @@ async function heartbeatAgentPushRuntimeService(
   return await retryWithBackoff((signal) => sendHeartbeatRequest(input, fetchImpl, signal), {
     maxAttempts: schedule.maxAttempts,
     abortSignal: options.abortSignal,
-    // One interval is the deadline for a single attempt. A heartbeat that has
-    // not answered by the time the next one is due is not slow, it is gone, and
-    // without a deadline a hung request never fails, so the failure counter
-    // never advances and the service looks alive to itself while doing nothing.
-    // Deriving the deadline from the configured interval keeps the two in step:
-    // raise the interval for a slow link and the deadline moves with it.
-    timeoutMs: input.heartbeatIntervalMs,
+    // Derive the deadline from the configured interval, but keep enough room
+    // for a known-valid slow control-plane response. Raising the interval for a
+    // slower link still raises the deadline, while the floor prevents a short
+    // interval from falsely escalating a healthy service.
+    timeoutMs: Math.max(input.heartbeatIntervalMs, HEARTBEAT_MIN_ATTEMPT_TIMEOUT_MS),
     computeDelay: (attempt) => schedule.delaysMs[attempt] ?? 0,
     shouldRetry: isRetryableHeartbeatFailure,
     onRetry: ({ error, attempt, delay }) => {
@@ -525,34 +525,43 @@ export async function createAgentServiceRegistrationLifecycle(
   const service = await registerAgentPushRuntimeService(input, fetchImpl);
   let stopped = false;
   const teardown = new AbortController();
+  let heartbeatInFlight: Promise<void> | undefined;
+  let heartbeatSkipLogged = false;
 
-  const heartbeat = async () => {
-    if (stopped) {
-      return;
-    }
-    try {
-      await heartbeatAgentPushRuntimeService(
-        {
-          apiUrl: input.apiUrl,
-          authToken: input.authToken,
-          serviceId: service.id,
-          heartbeatIntervalMs: input.heartbeatIntervalMs,
-        },
-        fetchImpl,
-        { logger: options.logger, abortSignal: teardown.signal },
-      );
-    } catch (error) {
-      // stop() aborts the in-flight request and any pending backoff. That is a
-      // teardown, not a heartbeat failure, so it must not reach the counter.
+  const heartbeat = () => {
+    if (heartbeatInFlight) return heartbeatInFlight;
+
+    heartbeatSkipLogged = false;
+    heartbeatInFlight = (async () => {
       if (stopped) {
         return;
       }
-      throw error;
-    }
+      try {
+        await heartbeatAgentPushRuntimeService(
+          {
+            apiUrl: input.apiUrl,
+            authToken: input.authToken,
+            serviceId: service.id,
+            heartbeatIntervalMs: input.heartbeatIntervalMs,
+          },
+          fetchImpl,
+          { logger: options.logger, abortSignal: teardown.signal },
+        );
+      } catch (error) {
+        // stop() aborts the in-flight request and any pending backoff. That is a
+        // teardown, not a heartbeat failure, so it must not reach the counter.
+        if (stopped) {
+          return;
+        }
+        throw error;
+      }
+    })().finally(() => {
+      heartbeatInFlight = undefined;
+    });
+    return heartbeatInFlight;
   };
 
   let consecutiveHeartbeatFailures = 0;
-  let heartbeatInFlight = false;
 
   const interval = setInterval(() => {
     // Retries make a tick outlive its interval whenever the control plane is
@@ -560,12 +569,15 @@ export async function createAgentServiceRegistrationLifecycle(
     // that is already struggling, and would let the failure counter advance
     // out of order, so the beat is skipped instead.
     if (heartbeatInFlight) {
-      options.logger?.warn?.("Agent service heartbeat tick skipped, previous tick still running", {
-        serviceId: service.id,
-      });
+      if (!heartbeatSkipLogged) {
+        heartbeatSkipLogged = true;
+        options.logger?.warn?.(
+          "Agent service heartbeat tick skipped, previous tick still running",
+          { serviceId: service.id },
+        );
+      }
       return;
     }
-    heartbeatInFlight = true;
     void heartbeat().then(() => {
       consecutiveHeartbeatFailures = 0;
     }).catch((error: unknown) => {
@@ -584,8 +596,6 @@ export async function createAgentServiceRegistrationLifecycle(
           error: getErrorMessage(error),
         });
       }
-    }).finally(() => {
-      heartbeatInFlight = false;
     });
   }, input.heartbeatIntervalMs);
 
