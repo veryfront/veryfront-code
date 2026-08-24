@@ -27,6 +27,7 @@ import {
   appendRetainedCheckpoint,
   deleteOldestCheckpointOccurrences,
 } from "./checkpoint-retention.ts";
+import { appendRetainedPendingApproval } from "./approval-retention.ts";
 import { ORCHESTRATION_ERROR, RESOURCE_NOT_FOUND } from "#veryfront/errors";
 import { requireWorkflowSourceIntegrationPolicy } from "../source-integration-policy.ts";
 
@@ -442,7 +443,11 @@ export class MemoryBackend implements WorkflowBackend {
   savePendingApproval(runId: string, approval: PendingApproval): Promise<void> {
     logger.debug("Saving approval", { approvalId: approval.id, runId });
     const approvals = this.approvals.get(runId) ?? [];
-    approvals.push(structuredClone(approval));
+    try {
+      appendRetainedPendingApproval(approvals, approval);
+    } catch (error) {
+      return Promise.reject(error);
+    }
     this.approvals.set(runId, approvals);
     return Promise.resolve();
   }
@@ -461,7 +466,11 @@ export class MemoryBackend implements WorkflowBackend {
     }
 
     const approvals = this.approvals.get(runId) ?? [];
-    approvals.push(structuredClone(approval));
+    try {
+      appendRetainedPendingApproval(approvals, approval);
+    } catch (error) {
+      return Promise.reject(error);
+    }
     this.approvals.set(runId, approvals);
     return Promise.resolve(true);
   }

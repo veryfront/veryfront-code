@@ -26,9 +26,17 @@ import {
 import { agentLogger, safeJsonParse } from "#veryfront/utils";
 import { prepareWorkflowJson, serializeWorkflowContext } from "../../context-serialization.ts";
 import { requeueRun } from "../shared/requeue-run.ts";
-import { INITIALIZATION_ERROR, INVALID_ARGUMENT, RESOURCE_NOT_FOUND } from "#veryfront/errors";
+import {
+  INITIALIZATION_ERROR,
+  INVALID_ARGUMENT,
+  ORCHESTRATION_ERROR,
+  RESOURCE_NOT_FOUND,
+} from "#veryfront/errors";
 import { requireWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
-import { MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES } from "../../limits.ts";
+import {
+  MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES,
+  MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES,
+} from "../../limits.ts";
 
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
 import { getRedisModule, NodeRedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
@@ -337,6 +345,90 @@ local storageKey = ARGV[expectedCount + 3]
 redis.call('rpush', storageKey, ARGV[expectedCount + 4])
 local maxEntries = tonumber(ARGV[expectedCount + 5])
 if maxEntries then redis.call('ltrim', storageKey, -maxEntries, -1) end
+return 1`;
+
+/**
+ * State-aware retention for the per-run approval list, shared by the approval
+ * append scripts. The list is append-only (decisions rewrite records in
+ * place), so a live pending approval must never be evicted: a run waiting on
+ * an evicted ID could never be decided or expired and would wait forever. At
+ * the bound this evicts the oldest decided record. An expired record remains
+ * pending until expiration reconciliation decides it, so it cannot be evicted
+ * safely. The routine reports failure when there are not enough decided
+ * records to make room, so the caller can reject the append without changing
+ * existing history instead of silently dropping a decidable approval.
+ */
+const RETAIN_APPROVALS_LUA = `local function retainApprovals(key, maxEntries)
+  local len = redis.call('llen', key)
+  local evictionsRequired = len - maxEntries + 1
+  if evictionsRequired <= 0 then return true end
+  local decidedIndexes = {}
+  for i = 0, len - 1 do
+    local raw = redis.call('lindex', key, i)
+    if raw then
+      local approval = cjson.decode(raw)
+      if approval.status ~= 'pending' then
+        table.insert(decidedIndexes, i)
+        if #decidedIndexes == evictionsRequired then break end
+      end
+    end
+  end
+  if #decidedIndexes < evictionsRequired then return false end
+  for _, index in ipairs(decidedIndexes) do
+    redis.call('lset', key, index, '__vf_evicted__')
+  end
+  redis.call('lrem', key, 0, '__vf_evicted__')
+  return true
+end`;
+
+/**
+ * Atomically append one approval with state-aware retention.
+ *
+ * KEYS[1] = approvals list key
+ * ARGV[1] = serialized approval
+ * ARGV[2] = max entries
+ *
+ * Returns 1 when appended, 0 when insufficient decided history can be evicted.
+ */
+const APPEND_RETAINED_APPROVAL_SCRIPT = `-- state-aware-approval-append
+${RETAIN_APPROVALS_LUA}
+if not retainApprovals(KEYS[1], tonumber(ARGV[2])) then return 0 end
+redis.call('rpush', KEYS[1], ARGV[1])
+return 1`;
+
+/**
+ * Atomically verify canonical run ownership, then append one approval with
+ * state-aware retention.
+ *
+ * KEYS[1] = canonical run hash key
+ * ARGV[1] = expected status count, followed by that many statuses
+ * ARGV[n + 2] = expected worker id
+ * ARGV[n + 3] = approvals list key
+ * ARGV[n + 4] = serialized approval
+ * ARGV[n + 5] = max entries
+ *
+ * Returns 1 when appended, 0 when the ownership fence fails, and 2 when
+ * insufficient decided history can be evicted.
+ */
+const APPEND_APPROVAL_IF_STATUS_AND_WORKER_SCRIPT = `-- conditional-owned-approval-append
+${RETAIN_APPROVALS_LUA}
+local status = redis.call('hget', KEYS[1], 'status')
+local expectedCount = tonumber(ARGV[1])
+local allowed = false
+for i = 2, expectedCount + 1 do
+  if status == ARGV[i] then
+    allowed = true
+    break
+  end
+end
+if not allowed then return 0 end
+local expectedWorkerId = ARGV[expectedCount + 2]
+if redis.call('hget', KEYS[1], 'workerId') ~= expectedWorkerId then return 0 end
+local storageKey = ARGV[expectedCount + 3]
+if not retainApprovals(storageKey, tonumber(ARGV[expectedCount + 5])) then
+  return 2
+end
+redis.call('rpush', storageKey, ARGV[expectedCount + 4])
 return 1`;
 
 /**
@@ -1016,25 +1108,50 @@ export class RedisBackend implements WorkflowBackend {
 
     if (this.config.debug) logger.debug(`[RedisBackend] Saving approval: ${approval.id}`);
 
-    await client.rpush(
-      this.approvalsKey(runId),
-      this.serializeApproval(approval),
+    const result = await client.eval(
+      APPEND_RETAINED_APPROVAL_SCRIPT,
+      [this.approvalsKey(runId)],
+      [
+        this.serializeApproval(approval),
+        String(MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES),
+      ],
     );
+    if (Number(result) !== 1) {
+      throw this.approvalListFullError(approval.id);
+    }
   }
 
-  savePendingApprovalIfStatusAndWorker(
+  private approvalListFullError(approvalId: string): Error {
+    return ORCHESTRATION_ERROR.create({
+      detail: `Approval list full (max: ${MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES}) and ` +
+        `not enough decided records can be evicted without dropping a pending approval. ` +
+        `Cannot append approval: ${approvalId}`,
+    });
+  }
+
+  async savePendingApprovalIfStatusAndWorker(
     runId: string,
     expectedStatuses: WorkflowStatus[],
     expectedWorkerId: string,
     approval: PendingApproval,
   ): Promise<boolean> {
-    return this.appendIfStatusAndWorker(
-      runId,
-      expectedStatuses,
-      expectedWorkerId,
-      this.approvalsKey(runId),
-      this.serializeApproval(approval),
+    const client = await this.ensureClient();
+    const result = await client.eval(
+      APPEND_APPROVAL_IF_STATUS_AND_WORKER_SCRIPT,
+      [this.runKey(runId)],
+      [
+        String(expectedStatuses.length),
+        ...expectedStatuses,
+        expectedWorkerId,
+        this.approvalsKey(runId),
+        this.serializeApproval(approval),
+        String(MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES),
+      ],
     );
+    if (Number(result) === 2) {
+      throw this.approvalListFullError(approval.id);
+    }
+    return Number(result) === 1;
   }
 
   private parseApproval(raw: string): PendingApproval {
