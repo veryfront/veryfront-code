@@ -554,8 +554,8 @@ import {
 
 | Name                                 | Description                                             | Source                                                                                                             |
 | ------------------------------------ | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `createDynamicWorkflowRunEntrypoint` | Create a dynamic workflow run entrypoint.               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-run-entrypoint.ts#L276) |
-| `createWorkflowRunEntrypoint`        | Create a workflow run entrypoint.                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-entrypoint.ts#L203)         |
+| `createDynamicWorkflowRunEntrypoint` | Create a dynamic workflow run entrypoint.               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-run-entrypoint.ts#L280) |
+| `createWorkflowRunEntrypoint`        | Create a workflow run entrypoint.                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-entrypoint.ts#L207)         |
 | `createWorkflowRunManager`           | Create a workflow run manager backed by run executors.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-manager.ts#L442)            |
 | `createWorkflowWorker`               | Create a workflow worker                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/workflow-worker.ts#L341)        |
 | `isRunExecutor`                      | Type guard to check if an object implements RunExecutor | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/types.ts#L130)        |
@@ -574,8 +574,8 @@ import {
 
 | Name                                        | Description                                                         | Source                                                                                                             |
 | ------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `CreateDynamicWorkflowRunEntrypointOptions` | Create a dynamic workflow run entrypoint.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-run-entrypoint.ts#L267) |
-| `CreateWorkflowRunEntrypointOptions`        | Create a simple workflow run entrypoint script.                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-entrypoint.ts#L191)         |
+| `CreateDynamicWorkflowRunEntrypointOptions` | Create a dynamic workflow run entrypoint.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-run-entrypoint.ts#L271) |
+| `CreateWorkflowRunEntrypointOptions`        | Create a simple workflow run entrypoint script.                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-entrypoint.ts#L195)         |
 | `DynamicWorkflowRunEntrypointConfig`        | Configuration for the dynamic workflow run entrypoint.              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-run-entrypoint.ts#L70)  |
 | `ManagerStats`                              | Manager statistics                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-manager.ts#L75)             |
 | `ManagerStatus`                             | Manager status                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-manager.ts#L70)             |
