@@ -10,6 +10,69 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { serializeWorkflowContext } from "#veryfront/workflow/context-serialization.ts";
 
 describe("workflow context serialization with hostile ambient intrinsics", () => {
+  it("skips diagnostic-only Proxy metadata when brand checks are unavailable", async () => {
+    const script = `
+      Object.defineProperty(globalThis, "caches", {
+        configurable: true,
+        value: {},
+      });
+      Object.defineProperty(globalThis, "WebSocketPair", {
+        configurable: true,
+        value: function WebSocketPair() {},
+      });
+
+      const { canIdentifyProxyWithoutHooks } = await import(
+        "./src/platform/compat/error-introspection.ts"
+      );
+      const { serializeWorkflowContext } = await import(
+        "./src/workflow/context-serialization.ts"
+      );
+      let prototypeTrapCalls = 0;
+      let descriptorTrapCalls = 0;
+      let ownKeysCalls = 0;
+      const value = new Proxy({}, {
+        getPrototypeOf() {
+          prototypeTrapCalls += 1;
+          throw new Error("diagnostic prototype trap must not run");
+        },
+        getOwnPropertyDescriptor() {
+          descriptorTrapCalls += 1;
+          throw new Error("diagnostic descriptor trap must not run");
+        },
+        ownKeys() {
+          ownKeysCalls += 1;
+          return [];
+        },
+      });
+      const serialized = serializeWorkflowContext({ input: {}, step: value });
+      console.log(JSON.stringify({
+        canIdentifyProxyWithoutHooks,
+        serialized,
+        prototypeTrapCalls,
+        descriptorTrapCalls,
+        ownKeysCalls,
+      }));
+    `;
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: ["eval", "--config=deno.json", script],
+      cwd: new URL("../../../", import.meta.url),
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const stderr = new TextDecoder().decode(output.stderr);
+    assertEquals(output.code, 0, stderr);
+    assertEquals(
+      JSON.parse(new TextDecoder().decode(output.stdout)),
+      {
+        canIdentifyProxyWithoutHooks: false,
+        serialized: '{"input":{},"step":{}}',
+        prototypeTrapCalls: 0,
+        descriptorTrapCalls: 0,
+        ownKeysCalls: 1,
+      },
+    );
+  });
+
   it("uses admitted JSON, object, reflection, and array primitives", () => {
     const originalStringify = JSON.stringify;
     const originalKeys = Object.keys;

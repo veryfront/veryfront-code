@@ -1,5 +1,8 @@
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
-import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import {
+  canIdentifyProxyWithoutHooks,
+  isProxyWithoutHooks,
+} from "#veryfront/platform/compat/error-introspection.ts";
 import { agentLogger } from "#veryfront/utils";
 import type { WorkflowContext } from "./types.ts";
 
@@ -149,7 +152,7 @@ function describe(value: unknown): string {
 
 /** Whether a value is a plain `{}` object rather than a class instance. */
 function isPlainObject(value: JsonTraversalReference): boolean {
-  if (isProxyWithoutHooks(value)) return false;
+  if (!canIdentifyProxyWithoutHooks || isProxyWithoutHooks(value)) return false;
   try {
     const prototype = objectGetPrototypeOf(value);
     return prototype === objectPrototype || prototype === null;
@@ -181,6 +184,7 @@ function toJsonLength(value: unknown): number {
 }
 
 function hasToStringTagWithoutHooks(value: JsonTraversalReference): boolean {
+  if (!canIdentifyProxyWithoutHooks) return true;
   let current: object | null = value;
   for (let depth = 0; current !== null && depth < 100; depth++) {
     if (isProxyWithoutHooks(current)) return true;
@@ -387,7 +391,7 @@ function normalizeAndFindUnrepresentableValues(
           const indexKey = StringConstructor(index);
           const child = reflectGet(nested, indexKey);
           let isHole = false;
-          if (!isProxyWithoutHooks(nested)) {
+          if (canIdentifyProxyWithoutHooks && !isProxyWithoutHooks(nested)) {
             try {
               isHole = !objectHasOwn(nested, indexKey);
             } catch {
