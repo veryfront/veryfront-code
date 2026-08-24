@@ -9,8 +9,10 @@ const CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER =
   "No actionable comments were generated in the recent review.";
 const CODERABBIT_REVIEW_RANGE_PATTERN =
   /(?:^|\r\n|[\r\n])Reviewing files that changed from the base of the PR and between ([0-9a-f]{40}) and ([0-9a-f]{40})\.(?=\r\n|[\r\n]|$)/;
-const CODERABBIT_REVIEW_RANGE_STATEMENT_START_PATTERN =
-  /(?<![A-Za-z0-9])(?=(Reviewing\b))/gi;
+const CODERABBIT_REVIEW_RANGE_STATEMENT_START_PATTERN = new RegExp(
+  `(?=(${markdownAsciiWordPattern("Reviewing")}))`,
+  "gi",
+);
 const CODERABBIT_REVIEW_RANGE_BASE_INTRO_PATTERN =
   /^(?:files(?: that changed from the base of the pr)?|changed files(?: from the base of the pr)?)(?: and)? between(?: |$)/;
 const CODERABBIT_REVIEW_RANGE_CONTINUATION_PREFIX_PATTERN =
@@ -35,6 +37,59 @@ const MARKDOWN_PARAGRAPH_INTERRUPTING_RAW_HTML_PATTERN =
 const MARKDOWN_PARAGRAPH_INTERRUPTING_HTML_SYNTAX_PATTERN =
   /^ {0,3}(?:<!--|<\?|<![A-Za-z]|<!\[CDATA\[)/;
 const MARKDOWN_FENCE_CONTAINER_CONTINUATION_PATTERN = /^[ \t]*(?:>[ \t]*)*/;
+const MARKDOWN_CHARACTER_REFERENCE_PATTERN =
+  /&#(?:[xX][0-9A-Fa-f]{1,6}|[0-9]{1,7});|&[A-Za-z][A-Za-z0-9]{1,31};/g;
+const MARKDOWN_CHARACTER_REFERENCE_AT_END_PATTERN =
+  /(?:&#(?:[xX][0-9A-Fa-f]{1,6}|[0-9]{1,7});|&[A-Za-z][A-Za-z0-9]{1,31};)$/;
+const MARKDOWN_NAMED_CHARACTER_REFERENCE_NORMALIZATIONS = new Map([
+  ["&Tab;", " "],
+  ["&NewLine;", " "],
+  ["&nbsp;", " "],
+  ["&NonBreakingSpace;", " "],
+  ["&ensp;", " "],
+  ["&emsp;", " "],
+  ["&emsp13;", " "],
+  ["&emsp14;", " "],
+  ["&numsp;", " "],
+  ["&puncsp;", " "],
+  ["&thinsp;", " "],
+  ["&ThinSpace;", " "],
+  ["&hairsp;", " "],
+  ["&VeryThinSpace;", " "],
+  ["&MediumSpace;", " "],
+  ["&ThickSpace;", " "],
+  ["&NegativeMediumSpace;", ""],
+  ["&NegativeThickSpace;", ""],
+  ["&NegativeThinSpace;", ""],
+  ["&NegativeVeryThinSpace;", ""],
+  ["&ZeroWidthSpace;", ""],
+  ["&NoBreak;", ""],
+  ["&ApplyFunction;", ""],
+  ["&InvisibleTimes;", ""],
+  ["&InvisibleComma;", ""],
+  ["&af;", ""],
+  ["&it;", ""],
+  ["&ic;", ""],
+  ["&zwj;", ""],
+  ["&zwnj;", ""],
+  ["&shy;", ""],
+  ["&lrm;", ""],
+  ["&rlm;", ""],
+  ["&period;", "."],
+]);
+const MARKDOWN_INVISIBLE_CHARACTER_REFERENCE_CODE_POINTS = new Set([
+  0x00ad,
+  0x200b,
+  0x200c,
+  0x200d,
+  0x200e,
+  0x200f,
+  0x2060,
+  0x2061,
+  0x2062,
+  0x2063,
+  0xfeff,
+]);
 const CODERABBIT_REQUESTED_COMMIT_PATTERN =
   /Requested commit:[ \t]*([0-9a-f]{40})/gi;
 const CODERABBIT_SKIPPED_COMMIT_PATTERN =
@@ -2411,6 +2466,59 @@ function isEscapedMarkdownToken(content, tokenStart) {
   return (tokenStart - slashStart) % 2 === 1;
 }
 
+function markdownAsciiWordPattern(word) {
+  return Array.from(word, (character) => {
+    const codes = new Set([
+      character.toLowerCase().charCodeAt(0),
+      character.toUpperCase().charCodeAt(0),
+    ]);
+    const references = [...codes].flatMap((code) => {
+      const decimal = String(code);
+      const hexadecimal = code.toString(16);
+      return [
+        `&#0{0,${7 - decimal.length}}${decimal};`,
+        `&#[xX]0{0,${6 - hexadecimal.length}}${hexadecimal};`,
+      ];
+    });
+    return `(?:${character}|${references.join("|")})`;
+  }).join("");
+}
+
+function decodeMarkdownCharacterReferences(value) {
+  return value.replace(MARKDOWN_CHARACTER_REFERENCE_PATTERN, (reference) => {
+    const named = MARKDOWN_NAMED_CHARACTER_REFERENCE_NORMALIZATIONS.get(
+      reference,
+    );
+    if (named !== undefined) return named;
+    if (!reference.startsWith("&#")) return reference;
+    const hexadecimal = reference[2] === "x" || reference[2] === "X";
+    const digits = reference.slice(hexadecimal ? 3 : 2, -1);
+    const codePoint = Number.parseInt(digits, hexadecimal ? 16 : 10);
+    if (
+      codePoint > 0x10ffff ||
+      (codePoint >= 0xd800 && codePoint <= 0xdfff)
+    ) return reference;
+    if (MARKDOWN_INVISIBLE_CHARACTER_REFERENCE_CODE_POINTS.has(codePoint)) {
+      return "";
+    }
+    const decoded = String.fromCodePoint(codePoint);
+    if (/\s/u.test(decoded)) return " ";
+    return codePoint >= 32 && codePoint <= 126 ? decoded : reference;
+  });
+}
+
+function codeRabbitPreviousVisibleCharacterIsWord(content, index) {
+  if (index === 0) return false;
+  const prefix = content.slice(Math.max(0, index - 40), index);
+  const reference = prefix.match(
+    MARKDOWN_CHARACTER_REFERENCE_AT_END_PATTERN,
+  )?.[0];
+  const previous = reference === undefined
+    ? content[index - 1]
+    : decodeMarkdownCharacterReferences(reference).at(-1);
+  return previous !== undefined && /[A-Za-z0-9]/.test(previous);
+}
+
 function codeRabbitStatementIndex(match) {
   return match.index;
 }
@@ -2422,21 +2530,27 @@ function parseCodeRabbitRangeStatement(
   nextStatementIndex,
   paragraphContinuationLineStarts,
 ) {
-  const statementPhrase = match[1];
-  const statementEnd = match.index + statementPhrase.length;
+  const rawStatementPhrase = match[1];
+  if (
+    codeRabbitPreviousVisibleCharacterIsWord(content, match.index) ||
+    decodeMarkdownCharacterReferences(rawStatementPhrase).toLowerCase() !==
+      "reviewing"
+  ) return undefined;
+  const statementEnd = match.index + rawStatementPhrase.length;
   const statementDecoration = match.index === match.lineStart ? "" : " ";
-  const statementStart = statementDecoration + statementPhrase;
+  const statementStart = statementDecoration + rawStatementPhrase;
   const firstLineEnd = Math.min(
     match.tableLocal ? match.tableCell.end : match.lineEnd,
     nextStatementIndex,
   );
-  let firstLineTail = content.slice(statementEnd, firstLineEnd);
+  let rawFirstLineTail = content.slice(statementEnd, firstLineEnd);
   if (match.tableLocal && nextStatementIndex > match.tableCell.end) {
-    firstLineTail += content.slice(
+    rawFirstLineTail += content.slice(
       match.tableCell.end,
       Math.min(match.tableCell.rowEnd, nextStatementIndex),
     );
   }
+  const firstLineTail = decodeMarkdownCharacterReferences(rawFirstLineTail);
   const statementPrefix = codeRabbitRangeContainerSignature(
     match.tableCell === undefined ? match.linePrefix : "",
   );
@@ -2451,7 +2565,7 @@ function parseCodeRabbitRangeStatement(
     if (baseSegment === undefined) return undefined;
     return {
       baseSegment,
-      statement: statementStart + firstLineTail,
+      statement: statementStart + rawFirstLineTail,
       tipToken: sameLineSeparator[2].toLowerCase(),
       trailingStatement: firstLineTail.slice(
         sameLineSeparator.index + sameLineSeparator[0].length,
@@ -2460,7 +2574,7 @@ function parseCodeRabbitRangeStatement(
   }
 
   const baseLines = [firstLineTail];
-  const statementParts = [statementStart + firstLineTail];
+  const statementParts = [statementStart + rawFirstLineTail];
   let lineEnd = match.tableLocal ? match.tableCell.end : match.lineEnd;
   let tableContinuationCell = match.tableCell?.nextRowFirstCell;
   while (true) {
@@ -2476,12 +2590,15 @@ function parseCodeRabbitRangeStatement(
     const continuationPrefix = nextLine.content.match(
       CODERABBIT_REVIEW_RANGE_CONTINUATION_PREFIX_PATTERN,
     )?.[0] ?? "";
-    const continuationContent = nextLine.content.slice(
+    const rawContinuationContent = nextLine.content.slice(
       continuationPrefix.length,
     );
+    const continuationContent = decodeMarkdownCharacterReferences(
+      rawContinuationContent,
+    );
     if (
-      continuationContent.trim().length === 0 ||
-      continuationContent.trimStart().startsWith("<!--") ||
+      rawContinuationContent.trim().length === 0 ||
+      rawContinuationContent.trimStart().startsWith("<!--") ||
       (codeRabbitRangeContainerSignature(continuationPrefix) !==
           statementPrefix &&
         (match.tableCell !== undefined ||
