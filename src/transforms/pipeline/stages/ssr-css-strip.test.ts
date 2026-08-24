@@ -11,12 +11,18 @@ import {
   rewriteCssModuleContent,
   toScopedCssModuleClass,
 } from "#veryfront/transforms/css-modules/naming.ts";
+import { encodeBase64Bytes } from "#veryfront/utils/base64url.ts";
 
 const MODULE_KEY = resolveCssModuleKey(
   "./Button.module.css",
   "/project/pages/index.tsx",
   "/project",
 );
+
+function moduleDataUrl(source: string): string {
+  const encoded = encodeBase64Bytes(new TextEncoder().encode(source));
+  return `data:text/javascript;base64,${encoded}`;
+}
 
 function createContext(code: string, dev = true): TransformContext {
   return {
@@ -43,7 +49,7 @@ function createContext(code: string, dev = true): TransformContext {
 async function assertParsesAsModule(source: string, message: string): Promise<void> {
   let parseError: string | undefined;
   try {
-    await import(`data:text/javascript,${encodeURIComponent(source)}`);
+    await import(moduleDataUrl(source));
   } catch (error) {
     parseError = error instanceof Error ? error.message : String(error);
   }
@@ -58,7 +64,7 @@ async function assertParsesAsModule(source: string, message: string): Promise<vo
  * running the module rather than by matching its text.
  */
 async function evaluateModule(source: string): Promise<Record<string, unknown>> {
-  const namespace = await import(`data:text/javascript,${encodeURIComponent(source)}`);
+  const namespace = await import(moduleDataUrl(source));
   return namespace as Record<string, unknown>;
 }
 
