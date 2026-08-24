@@ -126,6 +126,23 @@ describe("findFrontDoorBypasses", () => {
       ].join("\n");
       assertEquals(groupsOf(source), ["jsdom", "jsdom"]);
     });
+
+    it("exempts a file that wires the DOM through the shared harness", () => {
+      const source = [
+        'import { installComponentDom } from "../../src/testing/dom-globals.ts";',
+        "const dom = new JSDOM(markup);",
+        "const restore = installComponentDom(dom);",
+      ].join("\n");
+      assertEquals(groupsOf(source), []);
+    });
+
+    it("keeps counting when the harness is absent", () => {
+      const source = [
+        "const dom = new JSDOM(markup);",
+        "globalThis.document = dom.window.document;",
+      ].join("\n");
+      assertEquals(groupsOf(source), ["jsdom"]);
+    });
   });
 
   it("reports the 1-based line of each finding", () => {

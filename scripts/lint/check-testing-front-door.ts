@@ -53,6 +53,8 @@ export interface FrontDoorRule {
   group: string;
   /** Line-oriented pattern, matched against stripped source. Global flag required. */
   pattern: RegExp;
+  /** Skip the whole file when the RAW source matches: it is already at the front door. */
+  exemptWhenRawSourceMatches?: RegExp;
   message: string | ((match: RegExpExecArray) => string);
 }
 
@@ -82,6 +84,12 @@ export const FRONT_DOOR_RULES: readonly FrontDoorRule[] = [
   {
     group: "jsdom",
     pattern: /\bnew\s+JSDOM\s*\(/g,
+    // Constructing a JSDOM is the prescribed first half of the pattern; the
+    // bypass is wiring its globals by hand. A file that brings in the shared
+    // harness is already at the front door, so it is exempt. The exemption is
+    // checked against the raw source because import specifiers are string
+    // literals, which the stripper removes.
+    exemptWhenRawSourceMatches: /\binstallComponentDom\b/,
     message:
       "new JSDOM in a test file; install and restore its globals through installComponentDom",
   },
@@ -92,6 +100,7 @@ export function findFrontDoorBypasses(source: string, file: string): Finding[] {
   const stripped = stripCommentsAndStrings(source);
   const findings: Finding[] = [];
   for (const rule of FRONT_DOOR_RULES) {
+    if (rule.exemptWhenRawSourceMatches?.test(source)) continue;
     for (
       const finding of findLineMatches(
         stripped,
