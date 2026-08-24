@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { FakeTime } from "#std/testing/time";
 import { withTimeoutThrow } from "../../utils/stream-utils.ts";
 import { APICacheStore } from "./api-store.ts";
 import type { CachePayload } from "../types.ts";
@@ -526,6 +527,7 @@ describe("rendering/cache/stores/api-store", () => {
     });
 
     it("retains distributed entries through staleUntil instead of only the fresh TTL", async () => {
+      using _time = new FakeTime();
       const previousApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
       const previousApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
       const globals = globalThis as Record<string, unknown>;
@@ -573,8 +575,7 @@ describe("rendering/cache/stores/api-store", () => {
           async () => {
             await store.set("distributed-stale-key", payload);
 
-            const expectedTtl = Math.max(5, Math.ceil((staleUntil - Date.now()) / 1_000));
-            assertEquals(receivedTtl, expectedTtl, "backend ttl must cover the full stale window");
+            assertEquals(receivedTtl, 60, "backend ttl must cover the full stale window");
             assertEquals(
               receivedValue.includes('"staleUntil"'),
               true,
