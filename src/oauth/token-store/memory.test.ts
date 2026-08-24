@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { it } from "#veryfront/testing/bdd.ts";
+import { withEnv } from "#veryfront/testing/deno-compat.ts";
 import { assertEquals, assertNotEquals, assertRejects, assertThrows } from "#std/assert";
 import { FakeTime } from "#std/testing/time";
 import { MemoryTokenStore } from "./memory.ts";
@@ -126,62 +127,42 @@ it("MemoryTokenStore clearAll empties tokens and states", async () => {
   assertEquals(store.getConnectedServices().length, 0);
 });
 
-it("MemoryTokenStore warns once when persisting tokens in production (#1989)", async () => {
-  const script = `
-    const warnings = [];
-    console.warn = (...args) => warnings.push(args.map(String).join(" "));
-    const { MemoryTokenStore } = await import("./src/oauth/token-store/memory.ts");
-    const store = new MemoryTokenStore();
-    await store.setTokens("svc", "alice", { accessToken: "a-token" });
-    await store.setTokens("svc", "bob", { accessToken: "b-token" });
-    const matched = warnings.filter((warning) => warning.includes("MemoryTokenStore"));
-    console.log(JSON.stringify({ matched: matched.length }));
-  `;
-  const output = await new Deno.Command(Deno.execPath(), {
-    args: ["eval", script],
-    clearEnv: true,
-    cwd: new URL("../../../", import.meta.url).pathname,
-    env: { NODE_ENV: "production" },
-  }).output();
+async function captureWarnings(run: () => Promise<void>): Promise<string[]> {
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(" "));
+  };
+  try {
+    await run();
+  } finally {
+    console.warn = originalWarn;
+  }
+  return warnings.filter((warning) => warning.includes("MemoryTokenStore"));
+}
 
-  assertEquals(
-    output.success,
-    true,
-    new TextDecoder().decode(output.stderr),
+it("MemoryTokenStore warns once when persisting tokens in production (#1989)", async () => {
+  // VERYFRONT_ENV is resolved ahead of NODE_ENV, so this pins the posture
+  // regardless of what the host runner exported.
+  const matched = await captureWarnings(() =>
+    withEnv({ VERYFRONT_ENV: "production" }, async () => {
+      const store = new MemoryTokenStore();
+      await store.setTokens("svc", "alice", tokens("a-token"));
+      await store.setTokens("svc", "bob", tokens("b-token"));
+    })
   );
-  assertEquals(
-    JSON.parse(new TextDecoder().decode(output.stdout)).matched,
-    1,
-    "two production token writes must warn exactly once",
-  );
+
+  assertEquals(matched.length, 1, "two production token writes must warn exactly once");
 });
 
 it("MemoryTokenStore stays silent outside production", async () => {
-  const script = `
-    const warnings = [];
-    console.warn = (...args) => warnings.push(args.map(String).join(" "));
-    const { MemoryTokenStore } = await import("./src/oauth/token-store/memory.ts");
-    await new MemoryTokenStore().setTokens("svc", "alice", { accessToken: "a-token" });
-    const matched = warnings.filter((warning) => warning.includes("MemoryTokenStore"));
-    console.log(JSON.stringify({ matched: matched.length }));
-  `;
-  const output = await new Deno.Command(Deno.execPath(), {
-    args: ["eval", script],
-    clearEnv: true,
-    cwd: new URL("../../../", import.meta.url).pathname,
-    env: { NODE_ENV: "development" },
-  }).output();
+  const matched = await captureWarnings(() =>
+    withEnv({ VERYFRONT_ENV: "development" }, async () => {
+      await new MemoryTokenStore().setTokens("svc", "alice", tokens("a-token"));
+    })
+  );
 
-  assertEquals(
-    output.success,
-    true,
-    new TextDecoder().decode(output.stderr),
-  );
-  assertEquals(
-    JSON.parse(new TextDecoder().decode(output.stdout)).matched,
-    0,
-    "non-production token writes must not warn",
-  );
+  assertEquals(matched.length, 0, "non-production token writes must not warn");
 });
 
 it("MemoryTokenStore encodes tuple keys without delimiter collisions", async () => {

@@ -430,6 +430,95 @@ describe("Salesforce service-account integration source", () => {
     );
   });
 
+  async function assertCacheKeyDimensionMintsSeparately(
+    first: Record<string, string>,
+    second: Record<string, string>,
+    dimension: string,
+  ): Promise<void> {
+    setCredentials();
+    let tokenRequests = 0;
+    const transport = createTransport(({ body, request }) => {
+      if (request.url.endsWith("/services/oauth2/token")) {
+        tokenRequests++;
+        // Both credential sets share a login origin, so the minted identity is
+        // keyed off the posted client credentials rather than the request URL.
+        const form = new URLSearchParams(body);
+        const isFirst = form.get("client_id") === first[CLIENT_ID_ENV] &&
+          form.get("client_secret") === first[CLIENT_SECRET_ENV];
+        return Response.json({
+          access_token: isFirst ? "token-first" : "token-second",
+          instance_url: isFirst
+            ? "https://na-first.salesforce.com"
+            : "https://na-second.salesforce.com",
+        });
+      }
+      return Response.json({ totalSize: 0, records: [] });
+    });
+    const source = createSalesforceServiceAccountToolSourceWithTransport({
+      allowedTools: ["salesforce__list_cases"],
+      createOriginBoundFetch: transport.createOriginBoundFetch,
+    });
+
+    await runWithProjectEnv(first, () => source.executeTool("salesforce__list_cases", {}));
+    await runWithProjectEnv(second, () => source.executeTool("salesforce__list_cases", {}));
+
+    assertEquals(
+      tokenRequests,
+      2,
+      `a changed ${dimension} must mint its own token`,
+    );
+    const providerRequests = transport.captures.filter((capture) =>
+      capture.request.url.includes("/services/data/")
+    );
+    assertEquals(
+      providerRequests.length,
+      2,
+      `a changed ${dimension} must issue its own provider request`,
+    );
+    assertEquals(
+      providerRequests[1]?.request.headers.get("authorization"),
+      "Bearer token-second",
+      `a changed ${dimension} must not reuse the cached bearer token`,
+    );
+    assertEquals(
+      new URL(providerRequests[1]!.request.url).origin,
+      "https://na-second.salesforce.com",
+      `a changed ${dimension} must not reuse the cached instance origin`,
+    );
+  }
+
+  it("mints a fresh token when only the client id changes on one login origin", async () => {
+    await assertCacheKeyDimensionMintsSeparately(
+      {
+        [CLIENT_ID_ENV]: "client-a",
+        [CLIENT_SECRET_ENV]: "shared-secret",
+        [LOGIN_URL_ENV]: "https://shared.my.salesforce.com",
+      },
+      {
+        [CLIENT_ID_ENV]: "client-b",
+        [CLIENT_SECRET_ENV]: "shared-secret",
+        [LOGIN_URL_ENV]: "https://shared.my.salesforce.com",
+      },
+      "client id",
+    );
+  });
+
+  it("mints a fresh token when only the client secret changes on one login origin", async () => {
+    await assertCacheKeyDimensionMintsSeparately(
+      {
+        [CLIENT_ID_ENV]: "shared-client",
+        [CLIENT_SECRET_ENV]: "secret-a",
+        [LOGIN_URL_ENV]: "https://shared.my.salesforce.com",
+      },
+      {
+        [CLIENT_ID_ENV]: "shared-client",
+        [CLIENT_SECRET_ENV]: "secret-b",
+        [LOGIN_URL_ENV]: "https://shared.my.salesforce.com",
+      },
+      "client secret",
+    );
+  });
+
   it("rejects oversized token and provider responses before buffering them", async () => {
     setCredentials({
       [CLIENT_ID_ENV]: "client-id",
