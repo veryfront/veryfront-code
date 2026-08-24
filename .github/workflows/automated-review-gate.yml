@@ -21,13 +21,45 @@ permissions:
   pull-requests: write
   statuses: write
 
-concurrency:
-  group: automated-review-${{ github.event.pull_request.number || github.event.issue.number || github.event.sha || github.run_id }}
-  # Preserve event order for one pull request without allowing unrelated pull
-  # requests and commit-status events to fill the same repository-wide queue.
-  queue: max
-
 jobs:
+  target:
+    name: resolve automated review target
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      key: ${{ steps.resolve.outputs.result }}
+    steps:
+      - name: Resolve the current head commit
+        id: resolve
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          retries: 3
+          result-encoding: string
+          script: |
+            let headSha = context.payload.sha;
+            const pullNumber = context.payload.pull_request?.number ??
+              (context.payload.issue?.pull_request
+                ? context.payload.issue.number
+                : undefined);
+            if (!headSha && pullNumber) {
+              const response = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pullNumber,
+              });
+              headSha = response.data.head.sha;
+            }
+            // Non-PR issue comments never reach a publisher job, but still
+            // need a harmless key so this resolver succeeds for the trigger.
+            if (!headSha && context.eventName === "issue_comment") {
+              return `issue-${context.payload.issue.number}`;
+            }
+            if (!/^[0-9a-f]{40}$/i.test(headSha ?? "")) {
+              core.setFailed("Could not resolve a valid review target commit");
+              return `run-${context.runId}`;
+            }
+            return headSha;
+
   review:
     name: publish automated review status
     # issue_comment fires for issues too, so keep only pull request comments.
@@ -39,6 +71,12 @@ jobs:
       (github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
       (github.event_name != 'pull_request_review' ||
        github.event.pull_request.head.repo.full_name == github.repository)
+    needs: target
+    concurrency:
+      # Every event for one head, including issue comments and status events,
+      # must serialize on the same key so an older pending write cannot win.
+      group: automated-review-${{ needs.target.outputs.key }}
+      queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -170,6 +208,10 @@ jobs:
       github.event.sender.login == 'coderabbitai[bot]' &&
       github.event.sender.id == 136622811 &&
       github.event.sender.type == 'Bot'
+    needs: target
+    concurrency:
+      group: automated-review-${{ needs.target.outputs.key }}
+      queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

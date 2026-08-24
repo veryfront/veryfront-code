@@ -1020,11 +1020,40 @@ describe("automated review workflow", () => {
     );
     assert("status" in triggers, "completion status must have a wakeup path");
     const jobs = record(workflow.jobs, "jobs");
+    const targetJob = record(jobs.target, "target job");
+    assertEquals(
+      record(targetJob.outputs, "target outputs").key,
+      "${{ steps.resolve.outputs.result }}",
+    );
+    const targetSteps = targetJob.steps;
+    assert(Array.isArray(targetSteps));
+    const targetScript = String(
+      record(
+        record(targetSteps[0], "target resolver").with,
+        "target resolver inputs",
+      )
+        .script,
+    );
+    for (
+      const required of [
+        "context.payload.sha",
+        "context.payload.pull_request?.number",
+        "context.payload.issue?.pull_request",
+        "github.rest.pulls.get",
+        "Could not resolve a valid review target commit",
+      ]
+    ) assert(targetScript.includes(required));
+    assert(
+      !targetScript.includes("pull_request?.head.sha"),
+      "queued pull request events must resolve the current head before choosing a lock",
+    );
+
     const job = record(jobs.review, "review job");
     const publisherConcurrency = {
-      group: "automated-review-status-publishers",
+      group: "automated-review-${{ needs.target.outputs.key }}",
       queue: "max",
     };
+    assertEquals(job.needs, "target");
     assertEquals(record(job.concurrency, "review concurrency"), {
       ...publisherConcurrency,
     });
@@ -1104,6 +1133,7 @@ describe("automated review workflow", () => {
     );
 
     const statusJob = record(jobs.status_review, "status review job");
+    assertEquals(statusJob.needs, "target");
     const statusIf = String(statusJob.if);
     for (
       const condition of [
