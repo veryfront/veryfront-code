@@ -169,6 +169,29 @@ describe("createRuntimeAgentSystemMessages", () => {
     assertEquals(result[0]?.content, "Keep the authored instructions.");
   });
 
+  it("forwards the agent's provider alias so an authored cache breakpoint is recognized", () => {
+    const result = createRuntimeAgentSystemMessages({
+      agent: {
+        id: "bedrock-agent",
+        name: "Bedrock",
+        description: "d",
+        instructions: "ignored",
+        model: "bedrock/claude-sonnet",
+        system: [{
+          role: "system",
+          content: "Base",
+          providerOptions: { bedrock: { cacheControl: { type: "ephemeral" } } },
+        }],
+      },
+    });
+
+    assertEquals(
+      result[0]?.providerOptions,
+      { bedrock: { cacheControl: { type: "ephemeral" } } },
+      "the authored bedrock breakpoint is retained and no duplicate anthropic breakpoint is appended",
+    );
+  });
+
   it("keeps the prompt prefix static and moves runtime blocks before the authored tail", () => {
     const result = createRuntimeAgentSystemMessages({
       agent: {

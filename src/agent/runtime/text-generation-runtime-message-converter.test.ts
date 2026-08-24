@@ -88,6 +88,45 @@ describe("text-generation-runtime-message-converter", () => {
       assertStringIncludes(text, "application/pdf");
     });
 
+    it("keeps inline data: attachment bytes in the native file part only", () => {
+      const msg = {
+        id: "u-inline",
+        role: "user",
+        parts: [
+          { type: "text", text: "look" },
+          {
+            type: "file",
+            url: "data:image/png;base64,ABCPAYLOAD==",
+            mediaType: "image/png",
+            filename: "inline.png",
+          },
+        ],
+      } as unknown as Message;
+
+      const result = convertToTextGenerationRuntimeMessage(msg);
+
+      const content = (result as TextGenerationRuntimeUserMessage).content;
+      if (!Array.isArray(content)) {
+        throw new Error("Expected user content to preserve native file parts");
+      }
+      assertEquals(content[1], {
+        type: "file",
+        mediaType: "image/png",
+        url: "data:image/png;base64,ABCPAYLOAD==",
+        filename: "inline.png",
+      }, "inline bytes must ride in the native file part");
+      const annotation = content.flatMap((part) => part.type === "text" ? [part.text] : []).join(
+        "\n",
+      );
+      assertStringIncludes(annotation, "inline.png");
+      assertStringIncludes(annotation, "image/png");
+      assertEquals(
+        annotation.includes("data:"),
+        false,
+        "the uploaded_files annotation must never inline a data: URL",
+      );
+    });
+
     it("names the attachment when its URL is one no provider can fetch", () => {
       // The chat upload handler mints this URL: with a storage backend that
       // has no external URL of its own it falls back to the app's own origin
@@ -971,6 +1010,33 @@ describe("text-generation-runtime-message-converter", () => {
       const requestMessages = convertToTextGenerationRuntimeRequestMessages(messages);
       assertEquals(requestMessages.at(-1)?.role, "tool");
       assertEquals(requestMessages.length, historyMessages.length - 1);
+    });
+
+    it("strips every trailing assistant message, including a split unanswered tool call", () => {
+      const messages: Message[] = [
+        { id: "u1", role: "user", parts: [{ type: "text", text: "hi" }] },
+        {
+          id: "a1",
+          role: "assistant",
+          parts: [
+            { type: "tool-search", toolCallId: "tc1", toolName: "search", args: { q: "x" } },
+            { type: "text", text: "trailing" },
+          ],
+        },
+      ];
+
+      const history = convertToTextGenerationRuntimeMessages(messages);
+      assertEquals(
+        history.map((m) => m.role),
+        ["user", "assistant", "assistant"],
+        "an unanswered tool call splits the assistant turn in two",
+      );
+
+      assertEquals(
+        convertToTextGenerationRuntimeRequestMessages(messages),
+        [{ role: "user", content: "hi" }],
+        "every trailing assistant message must be stripped so the request never ends on an unanswered tool call",
+      );
     });
   });
 

@@ -22,6 +22,7 @@ Deno.test("resolveRuntimeMessageFileUrls refreshes upload file URLs once", async
           mediaType: "text/plain",
           filename: "notes.txt",
           uploadId: "upload-1",
+          uploadPath: "_chat/user/notes.txt",
           url: "https://files.example.com/original.txt",
         },
         {
@@ -47,6 +48,7 @@ Deno.test("resolveRuntimeMessageFileUrls refreshes upload file URLs once", async
       mediaType: "text/plain",
       filename: "notes.txt",
       uploadId: "upload-1",
+      uploadPath: "_chat/user/notes.txt",
       url: "https://signed.example.com/file.txt",
     },
     {
@@ -56,7 +58,36 @@ Deno.test("resolveRuntimeMessageFileUrls refreshes upload file URLs once", async
       uploadId: "upload-1",
       url: "https://signed.example.com/file.txt",
     },
-  ]);
+  ], "a refreshed upload must keep its storage path alongside the new url");
+});
+
+Deno.test("resolveRuntimeMessageFileUrls canonicalizes a snake_case upload_path", async () => {
+  const messages = await resolveRuntimeMessageFileUrls(
+    [
+      userMessage([
+        {
+          type: "file",
+          mediaType: "text/plain",
+          filename: "notes.txt",
+          uploadId: "upload-1",
+          upload_path: "_chat/user/notes.txt",
+          url: "https://files.example.com/original.txt",
+        } as unknown as ChatUiMessage["parts"][number],
+      ]),
+    ],
+    () => Promise.resolve("https://signed.example.com/file.txt"),
+  );
+
+  assertEquals(messages[0]?.parts, [
+    {
+      type: "file",
+      mediaType: "text/plain",
+      filename: "notes.txt",
+      uploadId: "upload-1",
+      uploadPath: "_chat/user/notes.txt",
+      url: "https://signed.example.com/file.txt",
+    },
+  ], "a snake_case upload_path must be carried forward as the canonical uploadPath");
 });
 
 Deno.test("resolveRuntimeMessageFileUrls keeps existing parts when resolver returns no URL", async () => {
@@ -67,15 +98,27 @@ Deno.test("resolveRuntimeMessageFileUrls keeps existing parts when resolver retu
         mediaType: "text/plain",
         filename: "notes.txt",
         uploadId: "upload-1",
+        uploadPath: "_chat/user/notes.txt",
         url: "https://files.example.com/original.txt",
       },
     ]),
   ];
 
-  assertEquals(
-    await resolveRuntimeMessageFileUrls(messages, () => Promise.resolve(undefined)),
+  const resolved = await resolveRuntimeMessageFileUrls(
     messages,
+    () => Promise.resolve(undefined),
   );
+
+  assertEquals(resolved[0]?.parts, [
+    {
+      type: "file",
+      mediaType: "text/plain",
+      filename: "notes.txt",
+      uploadId: "upload-1",
+      uploadPath: "_chat/user/notes.txt",
+      url: "https://files.example.com/original.txt",
+    },
+  ], "an unresolved upload must keep its storage path");
 });
 
 Deno.test("composeAbortSignals aborts immediately when a source signal is already aborted", () => {

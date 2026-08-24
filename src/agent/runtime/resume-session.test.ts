@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  RunAlreadyExistsError,
   RunCancelledError,
   RunResumeSessionManager,
   WaitConflictError,
@@ -63,6 +64,33 @@ describe("agent/runtime/resume-session", () => {
     );
   });
 
+  it("rejects a second startRun for a live runId and keeps the first session's signal", async () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+    const first = manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    const pending = manager.waitForSignal("run_1", "tool_1");
+
+    assertThrows(
+      () => manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() }),
+      RunAlreadyExistsError,
+      "already active",
+      "a live runId must not be admitted twice",
+    );
+    assertEquals(first.aborted, false, "the rejected duplicate must not disturb the live session");
+
+    assertEquals(
+      manager.cancelRun("run_1"),
+      true,
+      "the original session must still be cancellable",
+    );
+    assertEquals(first.aborted, true, "cancelRun must still reach the original AbortController");
+    await assertRejects(
+      () => pending,
+      RunCancelledError,
+      undefined,
+      "the original parked waiter must still be settled by the cancel",
+    );
+  });
+
   it("rejects submissions for wait keys that are not currently pending", () => {
     const manager = new RunResumeSessionManager<{ ok: boolean }>();
     manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
@@ -108,6 +136,31 @@ describe("agent/runtime/resume-session", () => {
       RunCancelledError,
     );
     assertEquals(manager.getRunStatus("run_1"), null);
+  });
+
+  it("rejects a second parked wait for a different wait key", async () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+    manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    const pending = manager.waitForSignal("run_1", "tool_1");
+
+    // Race against settled microtasks instead of awaiting the second wait
+    // directly: a displaced wait would never settle and hang the test.
+    const collision = await Promise.race([
+      manager.waitForSignal("run_1", "tool_2").then(() => "resolved", (error) => error),
+      Promise.resolve().then(() => Promise.resolve()).then(() => "still pending"),
+    ]);
+    assertEquals(
+      collision instanceof WaitNotPendingError,
+      true,
+      "a second wait key must not silently displace the parked wait",
+    );
+
+    assertEquals(
+      manager.submitSignal("run_1", { waitKey: "tool_1", value: { ok: true } }),
+      { accepted: true },
+      "the original wait must still be resolvable",
+    );
+    assertEquals(await pending, { ok: true }, "the first parked caller must receive its signal");
   });
 
   it("expires waiting runs after the configured TTL", async () => {
@@ -158,6 +211,40 @@ describe("agent/runtime/resume-session", () => {
       Error,
       "Maximum concurrent sessions (1) reached",
     );
+  });
+
+  it("frees the session slot when a run completes", () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>({ maxConcurrentSessions: 1 });
+    manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+
+    manager.completeRun("run_1");
+
+    assertEquals(manager.getRunStatus("run_1"), null, "a completed run must leave the session map");
+    manager.startRun({ runId: "run_2", threadId: crypto.randomUUID() });
+    assertEquals(manager.getRunStatus("run_2"), "running", "the freed slot must admit a new run");
+  });
+
+  it("frees the session slot when a run fails", () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>({ maxConcurrentSessions: 1 });
+    manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+
+    manager.failRun("run_1");
+
+    assertEquals(manager.getRunStatus("run_1"), null, "a failed run must leave the session map");
+    manager.startRun({ runId: "run_2", threadId: crypto.randomUUID() });
+    assertEquals(manager.getRunStatus("run_2"), "running", "the freed slot must admit a new run");
+  });
+
+  it("does not leak session slots across repeated completed runs", () => {
+    const maxConcurrentSessions = 2;
+    const manager = new RunResumeSessionManager<{ ok: boolean }>({ maxConcurrentSessions });
+
+    for (let index = 0; index <= maxConcurrentSessions; index += 1) {
+      const runId = `run_${index}`;
+      manager.startRun({ runId, threadId: crypto.randomUUID() });
+      manager.completeRun(runId);
+      assertEquals(manager.getRunStatus(runId), null, `${runId} must be released after completion`);
+    }
   });
 
   it("aborts the run signal with a DOMException AbortError so downstream fetch consumers don't leak unhandled rejections", () => {

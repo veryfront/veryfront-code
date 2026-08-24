@@ -133,6 +133,28 @@ describe("skill delegation overrides", () => {
     );
   });
 
+  it("keeps an explicit invoke_agent model and thinking over the loaded skill's defaults", () => {
+    assertEquals(
+      applySkillDelegationOverridesToToolInput(
+        "invoke_agent",
+        { prompt: "p", description: "d", model: "sonnet", thinking: 4096 },
+        { model: "opus", thinking: false, maxSteps: 160 },
+      ),
+      { prompt: "p", description: "d", model: "sonnet", thinking: 4096, max_steps: 160 },
+      "caller-chosen model and thinking win; only max_steps is floored",
+    );
+
+    assertEquals(
+      applySkillDelegationOverridesToToolInput(
+        "invoke_agent",
+        { prompt: "p", description: "d", model: "   " },
+        { model: "opus" },
+      ).model,
+      "opus",
+      "a blank model is treated as omitted",
+    );
+  });
+
   it("does not inject hosted child overrides into direct invoke_agent", () => {
     const input = {
       prompt: "Research reference system",

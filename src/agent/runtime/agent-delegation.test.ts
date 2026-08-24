@@ -15,6 +15,7 @@ import {
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { getAvailableTools } from "./tool-helpers.ts";
+import { parseInvokeAgentStreamValue } from "#veryfront/chat/invoke-agent-stream.ts";
 
 it("buildAgentDelegateTools exposes one tool per delegate, excluding self and dupes", () => {
   const tools = buildAgentDelegateTools({
@@ -149,6 +150,71 @@ describe("invoke_agent", () => {
       'Draft a concise reply.\n\n<structured_context>\n{"case_id":"500-test"}\n</structured_context>',
     );
     assertEquals(result, { text: "drafted copy", toolCalls: 0, status: "completed" });
+  });
+
+  it("publishes child stream events to the parent tool call", async () => {
+    const writer = {
+      id: "writer",
+      config: {},
+      stream: (input: { onFinish?: (response: unknown) => void }) => {
+        input.onFinish?.({ text: "hi", toolCalls: [], status: "completed" });
+        return Promise.resolve({
+          toDataStreamResponse: () =>
+            new Response(
+              'data: {"type":"text-delta","id":"child-1","delta":"hi"}\n\n',
+              { headers: { "Content-Type": "text/event-stream" } },
+            ),
+        });
+      },
+    } as unknown as Agent;
+    const published: unknown[] = [];
+    const invokeAgent = createInvokeAgentTool({
+      selfId: "orchestrator",
+      resolveAgent: (id) => id === "writer" ? writer : undefined,
+    });
+
+    await invokeAgent.execute({
+      agent_id: "writer",
+      description: "Draft reply",
+      prompt: "Draft it.",
+    }, {
+      toolCallId: "call-1",
+      publishDataEvent: (event) => {
+        published.push(event.value);
+      },
+    });
+
+    assertEquals(
+      published.length >= 1,
+      true,
+      "invoke_agent must publish child stream events to the parent tool call",
+    );
+    const parsed = parseInvokeAgentStreamValue(published[0]);
+    assertEquals(
+      parsed?.toolCallId,
+      "call-1",
+      "published child events must carry the parent toolCallId",
+    );
+    assertEquals(parsed?.agentId, "writer", "published child events must name the invoked agent");
+  });
+
+  it("reports an error when the invoked agent id is unknown", async () => {
+    const invokeAgent = createInvokeAgentTool({
+      selfId: "orchestrator",
+      resolveAgent: () => undefined,
+    });
+
+    const result = await invokeAgent.execute({
+      agent_id: "ghost",
+      description: "Draft reply",
+      prompt: "Draft it.",
+    });
+
+    assertEquals(
+      result,
+      { text: 'Agent "ghost" is not available.', toolCalls: 0, status: "error" },
+      "an unresolvable agent_id must return a recoverable error result, not throw",
+    );
   });
 
   it("rejects self-invocation", async () => {

@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { agent } from "../index.ts";
@@ -19,8 +20,16 @@ import { scriptedModel } from "./model-runtime.test-helpers.ts";
  * rejection, so these tests fail loudly if the regression returns.
  */
 
-function flushMicrotasks(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 20));
+function decodeChunks(chunks: readonly Uint8Array[]): string {
+  const decoder = new TextDecoder();
+  return chunks.map((chunk) => decoder.decode(chunk, { stream: true })).join("");
+}
+
+async function waitForRunAbort(model: ReturnType<typeof scriptedModel>): Promise<void> {
+  await waitFor(
+    () => model.calls.some((call) => call.abortSignal?.aborted === true),
+    { message: "the run's shared signal must be aborted by the client disconnect" },
+  );
 }
 
 describe("agent runtime stream cancellation (#2334)", () => {
@@ -43,14 +52,23 @@ describe("agent runtime stream cancellation (#2334)", () => {
     assert(body !== null, "expected a streaming response body");
 
     const reader = body.getReader();
+    const chunks: Uint8Array[] = [];
     // Pull the opening frames so the run is genuinely mid-stream.
-    await reader.read();
+    const first = await reader.read();
+    if (first.value !== undefined) chunks.push(first.value);
     // The client disconnects: cancel with a foreign AbortError reason, exactly
     // as Deno hands to the stream's cancel algorithm.
     await reader.cancel(new DOMException("client disconnected", "AbortError"));
+    const afterCancel = await reader.read();
+    if (afterCancel.value !== undefined) chunks.push(afterCancel.value);
 
-    await flushMicrotasks();
-    assert(true, "cancellation completed without an unhandled rejection");
+    await waitForRunAbort(model);
+    assertEquals(afterCancel.done, true, "the body must close on cancel");
+    assertEquals(
+      decodeChunks(chunks).includes('"type":"error"'),
+      false,
+      "a client disconnect must not emit an error frame",
+    );
   });
 
   it("cancelling while a tool is executing does not raise an unhandled AbortError", async () => {
@@ -92,12 +110,46 @@ describe("agent runtime stream cancellation (#2334)", () => {
     assert(body !== null, "expected a streaming response body");
 
     const reader = body.getReader();
-    await reader.read();
+    const chunks: Uint8Array[] = [];
+    const first = await reader.read();
+    if (first.value !== undefined) chunks.push(first.value);
     await toolStarted.promise;
     await reader.cancel(new DOMException("client disconnected", "AbortError"));
     releaseTool?.();
+    const afterCancel = await reader.read();
+    if (afterCancel.value !== undefined) chunks.push(afterCancel.value);
 
-    await flushMicrotasks();
-    assert(true, "cancellation during tool execution completed cleanly");
+    await waitForRunAbort(model);
+    assertEquals(afterCancel.done, true, "the body must close on cancel during a tool call");
+    assertEquals(
+      decodeChunks(chunks).includes('"type":"error"'),
+      false,
+      "a client disconnect during tool execution must not emit an error frame",
+    );
+  });
+
+  it("closes the response body once a mid-stream reader is cancelled", async () => {
+    const model = scriptedModel([
+      { hangUntilAbort: true, parts: [{ type: "text-delta", text: "still streaming" }] },
+    ], { modelId: "hosted/cancel-close-model", only: "stream" });
+
+    const assistant = agent({
+      model: "hosted/cancel-close-model",
+      system: "cancel close test",
+      maxSteps: 1,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const response = (await assistant.stream({ input: "hi" })).toDataStreamResponse();
+    const body = response.body;
+    assert(body !== null, "expected a streaming response body");
+
+    const reader = body.getReader();
+    const first = await reader.read();
+    assertEquals(first.done, false, "the run must be mid-stream before cancelling");
+    await reader.cancel(new DOMException("client disconnected", "AbortError"));
+
+    assertEquals((await reader.read()).done, true, "the body must close on cancel");
+    await waitForRunAbort(model);
   });
 });

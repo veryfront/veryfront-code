@@ -276,6 +276,72 @@ describe("agent/runtime-step", () => {
     );
   });
 
+  it("tells the model once when integration discovery is unavailable with a structured system prompt", async () => {
+    const getAvailableTools: RuntimeStepToolLoader = async (_toolsConfig, options) => {
+      options?.onIntegrationToolDiscovery?.({
+        status: "unavailable",
+        reason: "request_failed",
+      });
+      return [];
+    };
+    const baseSystemPrompt = [{ role: "system" as const, content: "Base" }];
+    const input = {
+      agentId: "agent_1",
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "auto", system: baseSystemPrompt, tools: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools,
+      supportsToolCalling: true,
+      messages: [],
+      mode: "generate" as const,
+      remoteToolSources: undefined,
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: baseSystemPrompt,
+      toolContextBase: undefined,
+    };
+
+    const first = await prepareAgentRuntimeStep({
+      ...input,
+      resolveRuntimeState: async () => ({ systemPrompt: baseSystemPrompt }),
+    });
+    const firstSystemPrompt = withIntegrationToolDiscoveryStatus(
+      first.systemPrompt,
+      first.integrationToolDiscovery,
+    );
+    const second = await prepareAgentRuntimeStep({
+      ...input,
+      systemPrompt: firstSystemPrompt,
+      resolveRuntimeState: async () => ({ systemPrompt: firstSystemPrompt }),
+    });
+    const secondSystemPrompt = withIntegrationToolDiscoveryStatus(
+      second.systemPrompt,
+      second.integrationToolDiscovery,
+    );
+
+    if (typeof secondSystemPrompt === "string") {
+      throw new Error("Expected a structured system prompt to stay structured");
+    }
+    assertEquals(
+      secondSystemPrompt.map((m) => m.content).join("\n").split(
+        "Integration tool discovery status:",
+      ).length - 1,
+      1,
+      "a structured prompt must not accumulate one status block per step",
+    );
+    assertEquals(
+      secondSystemPrompt.length,
+      2,
+      "stripping must drop the emptied status message rather than keep an empty system message",
+    );
+    assertEquals(
+      secondSystemPrompt[0],
+      { role: "system", content: "Base" },
+      "the authored system message must survive the strip-and-reappend",
+    );
+  });
+
   it("replaces an integration discovery status block before prompt suffix content", () => {
     const unavailable = {
       status: "unavailable" as const,

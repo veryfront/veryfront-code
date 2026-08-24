@@ -142,33 +142,47 @@ describe("src/agent/runtime AgentLoopSkillState", () => {
   });
 
   describe("markFormInputSubmitted", () => {
-    it("narrows the active policy and sets the flag when submitted is true", () => {
+    it("sets the flag and leaves the policy untouched when submitted is true", () => {
       const state = AgentLoopSkillState.hydrate(
         [
           loadSkillResultMessage({
             skillId: "review",
             instructions: "# Review",
             allowedTools: ["Read", "form_input"],
-            references: [],
-            scripts: [],
+            references: ["references/notes.md"],
+            scripts: ["scripts/check.sh"],
           }),
         ],
         undefined,
       );
-      assertEquals(state.hasSubmittedFormInput, false);
+      assertEquals(state.hasSubmittedFormInput, false, "hydrated history has no submission");
 
       state.markFormInputSubmitted(true);
-      assertEquals(state.hasSubmittedFormInput, true);
+      assertEquals(state.hasSubmittedFormInput, true, "a submission must set the flag");
+      assertEquals(
+        state.activeSkillToolAvailability,
+        {
+          hasActiveSkill: true,
+          references: ["references/notes.md"],
+          scripts: ["scripts/check.sh"],
+        },
+        "marking a form submission must leave the active skill policy untouched",
+      );
+      assertEquals(
+        state.activeSkillId,
+        "review",
+        "marking a form submission must not deactivate the skill",
+      );
     });
 
-    it("updates the policy without setting the flag when submitted is false", () => {
+    it("leaves the flag and policy untouched when submitted is false", () => {
       const state = AgentLoopSkillState.hydrate(
         [
           loadSkillResultMessage({
             skillId: "review",
             instructions: "# Review",
             allowedTools: ["Read", "form_input"],
-            references: [],
+            references: ["references/notes.md"],
             scripts: [],
           }),
         ],
@@ -176,25 +190,48 @@ describe("src/agent/runtime AgentLoopSkillState", () => {
       );
 
       state.markFormInputSubmitted(false);
-      assertEquals(state.hasSubmittedFormInput, false);
+      assertEquals(state.hasSubmittedFormInput, false, "a non-submission must not set the flag");
+      assertEquals(
+        state.activeSkillToolAvailability,
+        { hasActiveSkill: true, references: ["references/notes.md"], scripts: [] },
+        "a non-submission must leave the active skill policy untouched",
+      );
+      assertEquals(state.activeSkillId, "review", "a non-submission must not deactivate the skill");
     });
 
-    it("leaves the policy untouched for non-form_input tool results", () => {
+    it("keeps hydrated delegation overrides and availability after a submission", () => {
       const state = AgentLoopSkillState.hydrate(
         [
           loadSkillResultMessage({
             skillId: "review",
             instructions: "# Review",
             allowedTools: ["Read", "form_input"],
-            references: [],
-            scripts: [],
+            references: ["references/notes.md"],
+            scripts: ["scripts/check.sh"],
+            model: "anthropic/claude-sonnet-4-5",
+            thinking: false,
+            maxSteps: 6,
           }),
         ],
         undefined,
       );
 
-      state.markFormInputSubmitted(false);
-      assertEquals(state.hasSubmittedFormInput, false);
+      state.markFormInputSubmitted(true);
+      assertEquals(state.hasSubmittedFormInput, true, "a submission must set the flag");
+      assertEquals(
+        state.activeSkillToolAvailability,
+        {
+          hasActiveSkill: true,
+          references: ["references/notes.md"],
+          scripts: ["scripts/check.sh"],
+        },
+        "a submission must keep the hydrated tool availability",
+      );
+      assertEquals(
+        state.activeSkillDelegationOverrides,
+        { model: "anthropic/claude-sonnet-4-5", thinking: false, maxSteps: 6 },
+        "a submission must keep the hydrated delegation overrides",
+      );
     });
   });
 

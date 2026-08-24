@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { VERYFRONT_CLOUD_CHAT_MODELS } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
@@ -53,9 +59,12 @@ describe("agent/runtime/model-resolution", () => {
   it("reports a default-model mismatch when only another provider has a key", () => {
     setEnv("ANTHROPIC_API_KEY", "sk-ant-test");
 
-    const err = assertThrows(() => resolveRuntimeModel());
-    const message = err instanceof Error ? err.message : String(err);
-    assertEquals(message.includes("anthropic"), true, message);
+    const err = assertThrows(() => resolveRuntimeModel(), VeryfrontError);
+    assertInstanceOf(err, VeryfrontError, "the mismatch must be a VeryfrontError");
+    assertEquals(err.slug, "default-model-credential-mismatch", err.message);
+    assertEquals(err.status, 400, "the mismatch must stay a 400 client error");
+    assertStringIncludes(err.message, "needs a openai credential", err.message);
+    assertStringIncludes(err.message, "Found anthropic", err.message);
   });
 
   it("still routes the default model directly when its own provider has a key", () => {

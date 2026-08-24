@@ -46,6 +46,37 @@ describe("agent runtime streamed tool result collection", () => {
     assertEquals(shouldContinue, true);
   });
 
+  it("stops when a suppressed tool call is followed by a stop finish", () => {
+    const shouldContinue = shouldContinueAfterStreamStep({
+      accumulatedText: "",
+      finishReason: "stop",
+      toolCalls: new Map(),
+      toolResults: [],
+      suppressedToolCalls: [{ id: "tc-stale", name: "load_skill" }],
+    });
+
+    assertEquals(
+      shouldContinue,
+      false,
+      "a suppressed call must not re-invoke the model once the stream finished with stop",
+    );
+  });
+
+  it("stops on a tool-calls finish that produced no tool calls", () => {
+    const shouldContinue = shouldContinueAfterStreamStep({
+      accumulatedText: "",
+      finishReason: "tool-calls",
+      toolCalls: new Map(),
+      toolResults: [],
+    });
+
+    assertEquals(
+      shouldContinue,
+      false,
+      "a tool-calls finish with nothing streamed and nothing suppressed must terminate the run",
+    );
+  });
+
   it("continues after provider-executed tool results arrive without assistant text", () => {
     const shouldContinue = shouldContinueAfterStreamStep({
       accumulatedText: "",

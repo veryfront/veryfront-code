@@ -786,6 +786,10 @@ describe("chat-stream-handler", () => {
     it("does not cut off a slow active local tool input before the provider finishes it", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();
+      let releasePause: () => void = () => {};
+      const paused = new Promise<void>((resolve) => {
+        releasePause = resolve;
+      });
       const result = {
         fullStream: {
           async *[Symbol.asyncIterator]() {
@@ -799,7 +803,7 @@ describe("chat-stream-handler", () => {
               id: "tc-slow",
               delta: '{"uploadId":"upload-1",',
             };
-            await new Promise((resolve) => setTimeout(resolve, 2_100));
+            await paused;
             yield {
               type: "tool-input-delta",
               id: "tc-slow",
@@ -812,9 +816,19 @@ describe("chat-stream-handler", () => {
         textStream: emptyAsyncIterable(),
       };
 
-      await processStream(result, state, controller, encoder, "t", undefined);
+      const processing = processStream(result, state, controller, encoder, "t", {
+        localToolInputIdleTimeoutMs: 1_000,
+      });
+      // Let the handler park on the pending delta before the provider resumes.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      releasePause();
+      await processing;
 
-      assertEquals(state.toolCalls.get("tc-slow")?.inputAvailable, true);
+      assertEquals(
+        state.toolCalls.get("tc-slow")?.inputAvailable,
+        true,
+        "a paused local tool input that resumes within the idle timeout must complete",
+      );
       assertEquals(
         events.filter((event) => event.type === "tool-input-available"),
         [
@@ -828,6 +842,50 @@ describe("chat-stream-handler", () => {
             },
           },
         ],
+        "the resumed deltas must merge into a single tool-input-available event",
+      );
+    });
+
+    it("cuts off a local tool input that idles past the configured timeout", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const result = {
+        fullStream: {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: "tool-input-start",
+              id: "tc-slow",
+              toolName: "retrieveDocumentEvidence",
+            };
+            yield {
+              type: "tool-input-delta",
+              id: "tc-slow",
+              delta: '{"uploadId":"upload-1",',
+            };
+            await new Promise(() => {});
+          },
+        },
+        textStream: emptyAsyncIterable(),
+      };
+
+      await processStream(result, state, controller, encoder, "t", {
+        localToolInputIdleTimeoutMs: 10,
+      });
+
+      assertEquals(
+        state.toolCalls.get("tc-slow")?.inputAvailable,
+        false,
+        "a local tool input that idles past the configured timeout must not be marked available",
+      );
+      assertEquals(
+        events.filter((event) => event.type === "tool-input-available"),
+        [],
+        "a cut-off local tool input must not emit tool-input-available",
+      );
+      assertEquals(
+        state.finishReason,
+        "tool-calls",
+        "a cut-off local tool input still ends the step",
       );
     });
 

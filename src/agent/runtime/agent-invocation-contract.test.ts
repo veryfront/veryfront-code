@@ -138,13 +138,32 @@ describe("agent/runtime-agent-invocation-contract", () => {
   });
 
   it("requires an immutable release for environment agent sources", () => {
-    assertThrows(() =>
-      RuntimeAgentRunInvocationSchema.parse(createInvocation({
-        agentSource: {
-          type: "environment",
-          environmentName: "Production",
+    const unpinned = createInvocation({
+      run: {
+        ...createInvocation().run,
+        project: {
+          projectId,
+          projectSlug: "demo-project",
+          runtimeTargetKind: "environment",
+          runtimeTargetEnvironmentId: environmentId,
         },
-      }))
+      },
+      agentSource: {
+        type: "environment",
+        environmentName: "Production",
+      },
+    });
+    assertThrows(
+      () => RuntimeAgentRunInvocationSchema.parse(unpinned),
+      Error,
+      "releaseId",
+      "environment agent sources must be pinned to an immutable release",
+    );
+    const unpinnedResult = RuntimeAgentRunInvocationSchema.safeParse(unpinned);
+    assertEquals(
+      unpinnedResult.success ? undefined : unpinnedResult.issues[0]?.path,
+      ["agentSource", "releaseId"],
+      "the only rejection must be the missing releaseId, not the target binding rule",
     );
 
     const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
@@ -191,9 +210,76 @@ describe("agent/runtime-agent-invocation-contract", () => {
     );
   });
 
+  it("rejects a release agent source outside a main-branch runtime target", () => {
+    assertThrows(
+      () =>
+        RuntimeAgentRunInvocationSchema.parse(createInvocation({
+          agentSource: { type: "release", releaseId: "release-1" },
+        })),
+      Error,
+      "release agent source requires a main-branch runtime target",
+      "a release source must not bind to a preview branch target",
+    );
+
+    assertThrows(
+      () =>
+        RuntimeAgentRunInvocationSchema.parse(createInvocation({
+          run: {
+            ...createInvocation().run,
+            project: {
+              projectId,
+              projectSlug: "demo-project",
+              runtimeTargetKind: "environment",
+              runtimeTargetEnvironmentId: environmentId,
+            },
+          },
+          agentSource: { type: "release", releaseId: "release-1" },
+        })),
+      Error,
+      "release agent source requires a main-branch runtime target",
+      "a release source must not bind to an environment target",
+    );
+  });
+
+  it("accepts a release agent source on a main-branch runtime target", () => {
+    const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      run: {
+        ...createInvocation().run,
+        project: { projectId, projectSlug: "demo-project" },
+      },
+      agentSource: { type: "release", releaseId: "release-1" },
+    }));
+
+    assertEquals(
+      parsed.agentSource,
+      { type: "release", releaseId: "release-1" },
+      "a release source must bind to a main-branch target",
+    );
+    const request = buildRuntimeAgentControlPlaneStreamRequestFromInvocation(parsed);
+    assertEquals(
+      request.agentSource,
+      { type: "release", releaseId: "release-1" },
+      "the release source must reach the control-plane request unchanged",
+    );
+  });
+
   it("requires an exact source for every runtime invocation", () => {
-    assertThrows(() =>
-      RuntimeAgentRunInvocationSchema.parse(createInvocation({ agentSource: undefined }))
+    const result = RuntimeAgentRunInvocationSchema.safeParse(
+      createInvocation({ agentSource: undefined }),
+    );
+    assertEquals(
+      result.success,
+      false,
+      "an invocation without an agentSource must be rejected by validation",
+    );
+    assertEquals(
+      result.success
+        ? false
+        : result.issues.some((issue) =>
+          issue.path.join(".") === "agentSource" && issue.code === "invalid_type"
+        ),
+      true,
+      "a missing agentSource must surface as an invalid_type issue on agentSource, not a refinement crash",
     );
   });
 

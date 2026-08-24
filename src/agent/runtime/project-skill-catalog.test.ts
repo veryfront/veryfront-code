@@ -826,6 +826,42 @@ Deno.test("a mismatched project-file response path fails closed for the claimed 
   }]);
 });
 
+Deno.test("an oversized project skill document fails closed without resurrecting the built-in", async () => {
+  const errors: Array<[string, Record<string, unknown> | undefined]> = [];
+  const skills = await getRuntimeProjectSkillCatalog({
+    ...PROJECT_CONTEXT,
+    builtinSkills: [{
+      id: "shared",
+      name: "shared",
+      description: "Builtin shared",
+      instructions: "# Builtin shared",
+      allowedTools: [],
+    }],
+    getProjectFiles: async () => [{ path: "skills/shared/SKILL.md" }],
+    getProjectFile: async () => ({
+      path: "skills/shared/SKILL.md",
+      // Over the per-file byte budget while staying under the character budget.
+      content: "\u{1F600}".repeat(Math.floor(SKILL_TEXT_FILE_MAX_BYTES / 4) + 1),
+    }),
+    logger: {
+      error: (message, metadata) => errors.push([message, metadata]),
+    },
+  });
+
+  assertEquals(
+    skills,
+    [],
+    "a skill whose content exceeds the per-file byte budget must be dropped, not fall back to the built-in",
+  );
+  assertEquals(
+    errors,
+    [["Project skill content exceeded its budget; skipping skill", {
+      path: "skills/shared/SKILL.md",
+    }]],
+    "the byte budget guard must log the skipped skill path",
+  );
+});
+
 Deno.test("getRuntimeProjectSkillCatalog still parses legacy hidden project skills", async () => {
   const { catalog, fileCalls } = createSkillCatalog({
     paths: [".veryfront/skills/legacy/SKILL.md"],

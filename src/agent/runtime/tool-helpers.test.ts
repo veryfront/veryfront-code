@@ -1046,5 +1046,40 @@ describe("tool-helpers", () => {
         toolRegistryInternal.clearAll();
       }
     });
+
+    it("drops a remote tool source whose listTools rejects instead of failing the load", async () => {
+      toolRegistryInternal.clearAll();
+
+      const failing: RemoteToolSource = {
+        id: "down",
+        listTools: () => Promise.reject(new Error("remote MCP unreachable")),
+        executeTool: () => Promise.resolve({}),
+      };
+      const healthy: RemoteToolSource = {
+        id: "docs",
+        listTools: () =>
+          Promise.resolve([{
+            name: "search_docs",
+            description: "Search documentation",
+            parameters: { type: "object", properties: {} },
+          }]),
+        executeTool: () => Promise.resolve({}),
+      };
+
+      try {
+        const defs = await getAvailableTools(true, {
+          includeIntegrationTools: false,
+          remoteToolSources: [failing, healthy],
+        });
+
+        assertEquals(
+          defs.map((def) => def.name),
+          ["search_docs"],
+          "a remote source whose listTools rejects must be dropped, not fail the whole tool load",
+        );
+      } finally {
+        toolRegistryInternal.clearAll();
+      }
+    });
   });
 });

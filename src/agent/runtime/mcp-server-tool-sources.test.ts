@@ -27,6 +27,26 @@ Deno.test("getRequestedUnresolvedBooleanToolNames keeps legacy delegation local"
   );
 });
 
+Deno.test("getRequestedUnresolvedBooleanToolNames does not request tools already available locally", () => {
+  assertEquals(
+    getRequestedUnresolvedBooleanToolNames({
+      tools: { get_file: true, sleep: true },
+      agentId: "a",
+    }),
+    ["get_file", "sleep"],
+    "without availableToolNames every unregistered boolean tool is still requested",
+  );
+  assertEquals(
+    getRequestedUnresolvedBooleanToolNames({
+      tools: { get_file: true, sleep: true },
+      agentId: "a",
+      availableToolNames: ["get_file"],
+    }),
+    ["sleep"],
+    "a tool already provided locally must not be requested from the remote Veryfront MCP server",
+  );
+});
+
 type FetchCall = {
   url: string;
   init: RequestInit;

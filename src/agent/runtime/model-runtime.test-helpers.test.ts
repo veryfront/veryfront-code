@@ -30,6 +30,45 @@ describe("scriptedModel turn exhaustion", () => {
     assertEquals(model.callCount, 2);
   });
 
+  it("rejects the hook the transport restriction forbids", async () => {
+    const generateOnly = scriptedModel([{ text: "x" }], { only: "generate" });
+    const streamOnly = scriptedModel([{ text: "x" }], { only: "stream" });
+
+    await assertRejects(
+      async () => await generateOnly.doStream(CALL_OPTIONS),
+      Error,
+      "scripted model: doStream must not be called",
+    );
+    await assertRejects(
+      async () => await streamOnly.doGenerate(CALL_OPTIONS),
+      Error,
+      "scripted model: doGenerate must not be called",
+    );
+    assertEquals(
+      generateOnly.callCount,
+      0,
+      "a forbidden hook must reject before consuming a scripted turn",
+    );
+    assertEquals(
+      streamOnly.callCount,
+      0,
+      "a forbidden hook must reject before consuming a scripted turn",
+    );
+  });
+
+  it("rejects cross-mode turn shapes", async () => {
+    await assertRejects(
+      async () => await scriptedModel([{ parts: [] }]).doGenerate(CALL_OPTIONS),
+      Error,
+      "a parts turn is stream-only",
+    );
+    await assertRejects(
+      async () => await scriptedModel([{ content: [] }]).doStream(CALL_OPTIONS),
+      Error,
+      "a content turn is generate-only",
+    );
+  });
+
   it("repeats the final turn only when explicitly requested", async () => {
     const generateModel = scriptedModel([{ text: "repeat me" }], {
       only: "generate",

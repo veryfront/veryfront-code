@@ -98,11 +98,24 @@ describe("model-tool-converter", () => {
         description: "Get current weather",
         parameters: { type: "object", properties: {} },
       },
+      {
+        name: "forecast",
+        description: "Get a five day forecast",
+        parameters: { type: "object", properties: {} },
+      },
     ];
 
     const result = convertToolsToRuntimeTools(tools)!;
-    // The runtime tool entry should preserve the execute handler.
-    assertEquals("weather" in result, true);
+    assertEquals(
+      (result.weather as { description?: string }).description,
+      "Get current weather",
+      "converted runtime tool must keep the source tool description",
+    );
+    assertEquals(
+      (result.forecast as { description?: string }).description,
+      "Get a five day forecast",
+      "each converted runtime tool must keep its own description",
+    );
   });
 
   it("handles tools with complex schemas", () => {

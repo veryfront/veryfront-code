@@ -58,6 +58,16 @@ describe("agent/runtime message origin", () => {
       );
       assertEquals(isRuntimeGeneratedUserMessage(revokedMessage.proxy), false);
       assertEquals(isGenuineUserTurnMessage(revokedMessage.proxy), false);
+      assertEquals(
+        isGenuineUserTurnMessage(accessorRole),
+        false,
+        "an accessor-backed role must not count as a genuine user turn under a polluted Object.prototype.value",
+      );
+      assertEquals(
+        isGenuineUserTurnMessage({ role: "user", metadata: revoked.proxy }),
+        true,
+        "a real own-data role must still register as a user turn while the prototype is polluted",
+      );
       assertEquals(reads, 0);
     } finally {
       if (original) {
