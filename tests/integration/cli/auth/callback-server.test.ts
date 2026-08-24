@@ -4,14 +4,14 @@ import "#veryfront/schemas/_test-setup.ts";
  * Deno.listen) and are skipped on Node.js and Bun.
  */
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno, scaleMs } from "#veryfront/testing";
 import {
   type CallbackServer,
   getCallbackUrl,
   startCallbackServer,
-} from "../../../../cli/auth/callback-server.ts";
+} from "#cli/auth/callback-server";
 
 describe(
   "Callback Server",
@@ -41,14 +41,11 @@ describe(
         server = server1;
 
         const server2 = await startCallbackServer(9876);
-        assertExists(server2);
-
-        assertEquals(
-          server1.port !== server2.port || server1.port === 9876,
-          true,
-        );
-
-        await server2.stop();
+        try {
+          assertNotEquals(server1.port, server2.port);
+        } finally {
+          await server2.stop();
+        }
       });
 
       it("should have waitForCallback method", async () => {
