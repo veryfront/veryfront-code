@@ -91,10 +91,102 @@ describe("observability/metrics/manager", () => {
     });
 
     it("should skip duplicate initialization", async () => {
-      await manager.initialize({ enabled: false });
-      await manager.initialize({ enabled: true });
+      const calls: string[] = [];
+      const provider = createMetricsApi("A", calls);
+      let getMeterCalls = 0;
+      installGlobalTelemetryAPI({
+        metricsApi: {
+          getMeter: (name, version) => {
+            getMeterCalls++;
+            return provider.getMeter(name, version);
+          },
+        },
+      });
 
-      assertEquals(manager.isEnabled(), false);
+      await manager.initialize({ enabled: true, prefix: "first" });
+      await manager.initialize({ enabled: true, prefix: "second" });
+      manager.getRecorder()?.recordHttpRequest();
+
+      assertEquals(
+        calls,
+        ["A:first.http.requests", "A:first.http.requests.active"],
+        "a duplicate initialize is ignored: instruments keep the first prefix",
+      );
+      assertEquals(getMeterCalls, 1, "a duplicate initialize does not re-invoke getMeter");
+    });
+
+    it("keeps a disabled first initialization when a later call enables metrics", async () => {
+      const calls: string[] = [];
+      installGlobalTelemetryAPI({ metricsApi: createMetricsApi("A", calls) });
+
+      await manager.initialize({ enabled: false });
+      await manager.initialize({ enabled: true, prefix: "second" });
+
+      assertEquals(manager.isEnabled(), false, "a duplicate initialize must not enable metrics");
+      assertEquals(calls, [], "a duplicate initialize must not create instruments");
+    });
+
+    it("recovers after a transient instrument failure", async () => {
+      const calls: string[] = [];
+      const provider = createMetricsApi("A", calls);
+      let failing = true;
+      installGlobalTelemetryAPI({
+        metricsApi: {
+          getMeter: (name, version) => {
+            const meter = provider.getMeter(name, version);
+            return {
+              ...meter,
+              createHistogram: (histogramName, options) => {
+                if (failing) throw new Error("histogram backend unavailable");
+                return meter.createHistogram(histogramName, options);
+              },
+            };
+          },
+        },
+      });
+
+      await manager.initialize({ enabled: true, prefix: "test" });
+      assertEquals(
+        manager.isEnabled(),
+        false,
+        "a partial instrument set must not be treated as enabled",
+      );
+
+      failing = false;
+      assertEquals(
+        manager.isEnabled(),
+        true,
+        "a later call must retry after a transient provider failure",
+      );
+      manager.getRecorder()?.recordHttpRequest();
+      assertEquals(
+        calls,
+        ["A:test.http.requests", "A:test.http.requests.active"],
+        "the retried instruments record through the recovered provider",
+      );
+    });
+
+    it("stays fail-open when the metrics provider throws", async () => {
+      installGlobalTelemetryAPI({
+        metricsApi: {
+          getMeter: () => {
+            throw new Error("meter unavailable");
+          },
+        },
+      });
+
+      await manager.initialize({ enabled: true, prefix: "test" });
+
+      assertEquals(
+        manager.isEnabled(),
+        false,
+        "a throwing getMeter must not propagate to callers",
+      );
+      assertEquals(
+        manager.getState().initialized,
+        true,
+        "getState must remain callable after a provider failure",
+      );
     });
 
     it("should accept empty config", async () => {
@@ -125,19 +217,41 @@ describe("observability/metrics/manager", () => {
       const calls: string[] = [];
       installGlobalTelemetryAPI({ metricsApi: createMetricsApi("A", calls) });
       await manager.initialize({ enabled: true, prefix: "test" });
+      manager.getRecorder()?.recordHttpRequest();
+      manager.getRecorder()?.setCacheSize(7);
+      assertEquals(
+        manager.getState(),
+        { initialized: true, cacheSize: 7, activeRequests: 1 },
+        "runtime counters are live before shutdown",
+      );
+
       manager.shutdown();
 
-      assertEquals(manager.getState(), {
-        initialized: false,
-        cacheSize: 0,
-        activeRequests: 0,
-      });
+      assertEquals(
+        manager.getState(),
+        {
+          initialized: false,
+          cacheSize: 0,
+          activeRequests: 0,
+        },
+        "shutdown resets runtime counters so they do not leak into the next initialization",
+      );
       assertEquals(manager.isEnabled(), false);
 
       installGlobalTelemetryAPI({ metricsApi: createMetricsApi("B", calls) });
       await manager.initialize({ enabled: true, prefix: "test" });
+      assertEquals(
+        manager.getState(),
+        { initialized: true, cacheSize: 0, activeRequests: 0 },
+        "a fresh initialization starts from zeroed runtime counters",
+      );
       manager.getRecorder()?.recordHttpRequest();
-      assertEquals(calls, ["B:test.http.requests", "B:test.http.requests.active"]);
+      assertEquals(calls, [
+        "A:test.http.requests",
+        "A:test.http.requests.active",
+        "B:test.http.requests",
+        "B:test.http.requests.active",
+      ]);
     });
 
     it("should not throw when not initialized", () => {
