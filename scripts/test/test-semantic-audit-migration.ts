@@ -2675,12 +2675,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary instead of mutating shared global runtime objects or intrinsic constructors and prototypes.",
       "removalPr": "PR 4i",
     }),
-    entry("src/cache/distributed-cache-init.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "config-tooling",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
     entry("src/cache/keys.test.ts", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "config-tooling",

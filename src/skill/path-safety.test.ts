@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { FILE_NOT_FOUND } from "#veryfront/errors";
@@ -54,21 +54,43 @@ describe("src/skill/path-safety", () => {
     });
 
     it("should reject parent traversal", async () => {
-      try {
-        await validateSkillPath("/tmp/skill", "references/../../../etc/passwd", ["references"]);
-        throw new Error("Should have thrown");
-      } catch (e) {
-        assertEquals(e instanceof Error, true);
-      }
+      const error = await assertRejects(
+        () => validateSkillPath("/tmp/skill", "references/../../../etc/passwd", ["references"]),
+        Error,
+        "Skill path validation failed",
+      ) as Error;
+      assertStringIncludes(
+        error.message,
+        "Path is outside base directory",
+        "traversal must be rejected by base-directory containment, not by an unrelated error",
+      );
     });
 
     it("should reject wrong subdir", async () => {
-      try {
-        await validateSkillPath("/tmp/skill", "assets/file.txt", ["scripts"]);
-        throw new Error("Should have thrown");
-      } catch (e) {
-        assertEquals(e instanceof Error, true);
-      }
+      const error = await assertRejects(
+        () => validateSkillPath("/tmp/skill", "assets/file.txt", ["scripts"]),
+        Error,
+        "Skill path validation failed",
+      ) as Error;
+      assertStringIncludes(
+        error.message,
+        "Access to directory 'assets' not allowed",
+        "the rejected directory is named",
+      );
+      assertStringIncludes(
+        error.message,
+        "Allowed: scripts",
+        "the allowed list is named",
+      );
+
+      const adapter = createSkillTestAdapter({
+        "/project/skills/test/scripts/run.sh": "#!/bin/sh",
+      });
+      assertEquals(
+        await validateSkillPath("/project/skills/test", "scripts/run.sh", ["scripts"], adapter),
+        "/project/skills/test/scripts/run.sh",
+        "an allowlisted directory is not turned into a blanket deny",
+      );
     });
 
     it("allows root files while an empty allowlist still rejects subdirectories", async () => {
@@ -328,6 +350,29 @@ describe("src/skill/path-safety", () => {
         adapter,
       );
       assertEquals(validated, "/project/skills/test/references/guide.md");
+    });
+
+    it("should reject directories requested as files and files requested as directories", async () => {
+      const fileAdapter = createSkillTestAdapter({
+        "/project/skills/test/references/guide.md": "Guide",
+      });
+      await assertRejects(
+        () => validateSkillPath("/project/skills/test", "references", ["references"], fileAdapter),
+        Error,
+        "must point to a file",
+        "a directory must not be returned as a validated skill file",
+      );
+
+      const directoryAdapter = createSkillTestAdapter({
+        "/project/skills/test/SKILL.md": "# Test skill",
+        "/project/skills/test/references": "not a directory",
+      });
+      await assertRejects(
+        () => listSkillSubdir("/project/skills/test", "references", directoryAdapter),
+        Error,
+        "must point to a directory",
+        "a file must not be listed as a skill subdirectory",
+      );
     });
 
     it("uses adapter lstat and realPath capabilities to reject escapes", async () => {

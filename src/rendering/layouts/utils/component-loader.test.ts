@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import * as React from "react";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import {
@@ -345,6 +345,45 @@ describe("rendering/layouts/utils/component-loader", () => {
       const child = React.Children.only(result.props.children) as React.ReactElement;
       assertEquals(child.type, "button");
     });
+
+    it("should fall back to the passed children when the root renders no body", () => {
+      function RootLayout({ children }: { children?: React.ReactNode }) {
+        return React.createElement("html", null, children);
+      }
+
+      const WrappedLayout = unwrapAppRouterDocumentLayout(React, RootLayout);
+      const passedChildren = React.createElement("button", { id: "counter" }, "Count: 0");
+      const result = WrappedLayout({ children: passedChildren });
+
+      assertStrictEquals(
+        result,
+        passedChildren,
+        "a root layout without a direct <body> must fall back to the children it was given, not render blank",
+      );
+    });
+
+    it("should pass through a root layout that does not render html", () => {
+      function RootLayout({ children }: { children?: React.ReactNode }) {
+        return React.createElement("div", { id: "shell" }, children);
+      }
+
+      const WrappedLayout = unwrapAppRouterDocumentLayout(React, RootLayout);
+      const passedChildren = React.createElement("button", { id: "counter" }, "Count: 0");
+      const result = WrappedLayout({ children: passedChildren }) as React.ReactElement<
+        { children?: React.ReactNode }
+      >;
+
+      assertEquals(
+        result.type,
+        "div",
+        "a root layout that does not render <html> must be passed through unchanged",
+      );
+      assertStrictEquals(
+        React.Children.only(result.props.children),
+        passedChildren,
+        "the passed children must survive the pass-through unchanged",
+      );
+    });
   });
 
   describe("loadTSXComponent", () => {
@@ -492,6 +531,48 @@ describe("rendering/layouts/utils/component-loader", () => {
       assertEquals(loadCalls, 2);
     });
 
+    it("rejects a load that resolves nothing instead of caching undefined", async () => {
+      const cache = createLayoutComponentCache();
+      let loadCalls = 0;
+      function Layout() {
+        return null;
+      }
+      const deps = {
+        loadComponentFromSource: () => {
+          loadCalls++;
+          return loadCalls === 1
+            ? Promise.resolve(undefined as unknown as React.ComponentType)
+            : Promise.resolve(Layout);
+        },
+      };
+      const args = [
+        "/project/app/empty-layout.tsx",
+        "/project",
+        cache,
+        layoutAdapter("export default function Layout() { return null; }"),
+        "project-1",
+        "project-slug",
+        "release-1",
+        PRODUCTION_MODES,
+        "19.1.0",
+        deps,
+      ] as const;
+
+      await assertRejects(
+        () => loadTSXComponent(...args),
+        Error,
+        "Component loading failed",
+        "an empty component load must surface as a classified render error",
+      );
+
+      assertEquals(
+        await loadTSXComponent(...args),
+        Layout,
+        "a retry after an empty load must resolve the real component",
+      );
+      assertEquals(loadCalls, 2, "a failed load must not poison the layout component cache");
+    });
+
     it("does not let a stale load overwrite its replacement cache entry", async () => {
       using time = new FakeTime();
       const cache = createLayoutComponentCache();
@@ -590,6 +671,68 @@ describe("rendering/layouts/utils/component-loader", () => {
       assertEquals(moduleReactVersion, "18.3.1");
       assertEquals(modulePinKey, SNAPSHOT_A_PIN_KEY);
       assertEquals(moduleDependencies, SNAPSHOT_A_DEPENDENCIES);
+    } finally {
+      mutableRenderer.loadModuleESM = originalLoadModuleESM;
+    }
+  });
+
+  it("resolves MDX layout exports in MDXLayout, MainLayout, default order", async () => {
+    const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+    const mutableRenderer = mdxRenderer as unknown as {
+      loadModuleESM: typeof mdxRenderer.loadModuleESM;
+    };
+    function MDXLayoutExport() {
+      return null;
+    }
+    function MainLayoutExport() {
+      return null;
+    }
+    function DefaultExport() {
+      return null;
+    }
+    const stubModule = (mod: Record<string, unknown>) => {
+      mutableRenderer.loadModuleESM =
+        (() => Promise.resolve(mod)) as typeof mdxRenderer.loadModuleESM;
+    };
+    const baseOptions = {
+      bundle: {
+        compiledCode: "export default function Layout() { return null; }",
+      } as MdxBundle,
+      projectDir: "/project",
+      adapter: { fs: {} } as unknown as RuntimeAdapter,
+      projectId: "export-order-project",
+      projectSlug: "project-slug",
+      contentSourceId: "release-1",
+      modes: PRODUCTION_MODES,
+      preloadedImportMap: { imports: {} },
+      reactVersion: "19.1.1",
+    };
+
+    try {
+      stubModule({
+        MDXLayout: MDXLayoutExport,
+        MainLayout: MainLayoutExport,
+        default: DefaultExport,
+      });
+      assertStrictEquals(
+        await loadMDXLayout(baseOptions),
+        MDXLayoutExport,
+        "MDXLayout must win over MainLayout and default",
+      );
+
+      stubModule({ MainLayout: MainLayoutExport, default: DefaultExport });
+      assertStrictEquals(
+        await loadMDXLayout(baseOptions),
+        MainLayoutExport,
+        "MainLayout must win over default",
+      );
+
+      stubModule({ default: DefaultExport });
+      assertStrictEquals(
+        await loadMDXLayout(baseOptions),
+        DefaultExport,
+        "the default export must be used when no named layout export exists",
+      );
     } finally {
       mutableRenderer.loadModuleESM = originalLoadModuleESM;
     }

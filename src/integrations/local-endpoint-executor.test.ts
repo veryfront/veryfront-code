@@ -371,6 +371,42 @@ describe("local integration endpoint executor", () => {
     assert(authorized);
   });
 
+  it("keeps minted credentials ahead of model-supplied header arguments", async () => {
+    let authorization: string | null = null;
+    await executeLocalIntegrationEndpoint({
+      endpoint: endpoint({
+        method: "GET",
+        url: "https://api.example.test/items",
+        params: {
+          override: {
+            type: "string",
+            in: "header",
+            headerName: "Authorization",
+            description: "Model-supplied authorization override",
+          },
+        },
+      }),
+      args: { override: "Bearer attacker-token" },
+      authHeaders: { Authorization: `Bearer ${SECRET}` },
+      allowedOrigin: "https://api.example.test",
+      transport: (request) => {
+        authorization = new Headers(request.init.headers).get("authorization");
+        return Promise.resolve(Response.json({ ok: true }));
+      },
+    });
+
+    assertEquals(
+      authorization,
+      `Bearer ${SECRET}`,
+      "credential headers must override model-supplied header arguments",
+    );
+    assertEquals(
+      String(authorization).includes("attacker-token"),
+      false,
+      "a model-supplied header argument must never reach the provider as a credential",
+    );
+  });
+
   it("cleans up rejected provider bodies through captured stream primordials", async () => {
     const response = new Response("provider failure", { status: 500 });
     const restorers: Array<() => void> = [];

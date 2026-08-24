@@ -27,6 +27,21 @@ describe("utils/cache-namespace", () => {
     assertEquals(left === right, false);
   });
 
+  it("serializes array elements in order into the namespace hash", () => {
+    assertEquals(
+      createCacheNamespace("demo", { samples: ["alpha", "beta"] }),
+      `demo-${fnv1aHash('{"samples":["alpha","beta"]}')}`,
+      "array elements are serialized into the namespace hash",
+    );
+
+    assertEquals(
+      createCacheNamespace("demo", { samples: ["alpha", "beta"] }) ===
+        createCacheNamespace("demo", { samples: ["beta", "alpha"] }),
+      false,
+      "array order must change the namespace",
+    );
+  });
+
   it("sorts object keys by locale-independent code-unit order", () => {
     // Code-unit order puts "z" (0x7a) before "ä" (0xe4); localeCompare in most
     // locales would sort "ä" first and derive a different namespace per locale.

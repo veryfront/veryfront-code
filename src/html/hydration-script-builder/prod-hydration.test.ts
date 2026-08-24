@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateProdHydrationScript } from "./prod-hydration.ts";
 
@@ -66,7 +66,11 @@ describe("hydration-script-builder/prod-hydration", () => {
 
     it("should serialize empty props by default", () => {
       const result = generateProdHydrationScript("index");
-      assertEquals(result.includes("{}"), true);
+      assertEquals(
+        result.includes("React.createElement(Page, {})"),
+        true,
+        "absent props must hydrate the page with an empty object literal",
+      );
     });
 
     it("should serialize provided props", () => {
@@ -97,6 +101,29 @@ describe("hydration-script-builder/prod-hydration", () => {
       assertEquals(
         result.includes("import { Layout } from '@/components/layout'"),
         true,
+      );
+    });
+
+    it("should emit a script body that parses as an ES module", async () => {
+      const result = generateProdHydrationScript("index");
+      const body = result.match(/<script type="module"[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? "";
+      assertEquals(body.length > 0, true, "the generated tag must contain a script body");
+
+      // Bare specifiers cannot resolve outside the browser, so drop the import
+      // lines; everything after them must still parse as a module.
+      const stripped = body.replace(/^\s*import[^\n]*\n/gm, "");
+      let caught: unknown;
+      try {
+        await import(`data:text/javascript,${encodeURIComponent(stripped)}`);
+      } catch (error) {
+        caught = error;
+      }
+
+      // A ReferenceError for the missing browser globals proves the body parsed;
+      // any other failure means the emitted module never runs at all.
+      assert(
+        caught === undefined || caught instanceof ReferenceError,
+        `emitted hydration script must parse as a module, got: ${caught}`,
       );
     });
 

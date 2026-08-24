@@ -69,6 +69,70 @@ describe("PermitSemaphore", () => {
     assertEquals(order, [1, 2]);
   });
 
+  it("refuses to enqueue past the queue budget", async () => {
+    const semaphore = new PermitSemaphore(0, { maxQueueSize: 2 });
+    const first = semaphore.tryAcquire(Number.POSITIVE_INFINITY);
+    const second = semaphore.tryAcquire(Number.POSITIVE_INFINITY);
+
+    assertEquals(semaphore.waiting, 2, "both waiters must be queued");
+
+    const refused = semaphore.tryAcquire(1_000);
+    assertEquals(
+      semaphore.waiting,
+      2,
+      "a refused acquisition must not grow the queue",
+    );
+    assertEquals(
+      await refused,
+      false,
+      "an acquisition past the queue budget must be refused instead of queued",
+    );
+
+    semaphore.release();
+    assertEquals(await first, true, "the first queued waiter must be granted a permit");
+    semaphore.release();
+    assertEquals(await second, true, "the second queued waiter must be granted a permit");
+    assertEquals(semaphore.waiting, 0, "the queue must drain once both waiters are granted");
+  });
+
+  it("reports failure and dequeues a waiter whose timeout expires", async () => {
+    const semaphore = new PermitSemaphore(0);
+
+    assertEquals(
+      await semaphore.tryAcquire(5),
+      false,
+      "an expired wait must report that no permit was granted",
+    );
+    assertEquals(semaphore.waiting, 0, "a timed-out waiter must leave the queue");
+    assertEquals(semaphore.available, 0, "a timed-out waiter must not consume a permit");
+
+    assertEquals(
+      await semaphore.tryAcquire(0),
+      false,
+      "a zero timeout must fail immediately",
+    );
+    assertEquals(semaphore.waiting, 0, "a zero timeout must not enqueue a waiter");
+  });
+
+  it("creates a permit when released with no waiter queued", async () => {
+    const semaphore = new PermitSemaphore(0);
+    assertEquals(semaphore.available, 0, "a zero-permit gate starts with no permit");
+
+    semaphore.release();
+
+    assertEquals(
+      semaphore.available,
+      1,
+      "a release with no waiter must create a permit",
+    );
+    assertEquals(
+      await semaphore.tryAcquire(0),
+      true,
+      "the permit created by an unqueued release must be acquirable without waiting",
+    );
+    assertEquals(semaphore.available, 0, "acquiring the created permit consumes it");
+  });
+
   it("normalizes primitive abort reasons before and during acquisition", async () => {
     const semaphore = new PermitSemaphore(0);
     const preflight = new AbortController();

@@ -113,6 +113,40 @@ describe("MultiTierCache", () => {
       await cache.get("key");
       assertEquals(l1.store.has("key"), false);
     });
+
+    it("prefers the nearest tier when the same key is present in several", async () => {
+      const l1 = createMockTier("l1");
+      const l2 = createMockTier("l2");
+      const l3 = createMockTier("l3");
+      l1.store.set("key", "l1-value");
+      l2.store.set("key", "l2-value");
+      l3.store.set("key", "l3-value");
+      const cache = new MultiTierCache({ name: "test", l1, l2, l3, asyncBackfill: false });
+
+      assertEquals(
+        await cache.get("key"),
+        "l1-value",
+        "an L1 hit must win over a stale L2 or L3 entry",
+      );
+      const stats = cache.getStats();
+      assertEquals(
+        [stats.l2Hits, stats.l3Hits],
+        [0, 0],
+        "a nearer-tier hit must not consult the farther tiers",
+      );
+    });
+
+    it("prefers L2 over L3 when only L1 misses", async () => {
+      const l1 = createMockTier("l1");
+      const l2 = createMockTier("l2");
+      const l3 = createMockTier("l3");
+      l2.store.set("key", "l2-value");
+      l3.store.set("key", "l3-value");
+      const cache = new MultiTierCache({ name: "test", l1, l2, l3, asyncBackfill: false });
+
+      assertEquals(await cache.get("key"), "l2-value", "L2 must beat L3");
+      assertEquals(cache.getStats().l3Hits, 0, "L2 must beat L3");
+    });
   });
 
   describe("set", () => {
@@ -137,6 +171,39 @@ describe("MultiTierCache", () => {
       await cache.set("b", "2");
 
       assertEquals(cache.getStats().sets, 2);
+    });
+
+    it("should surface a distributed L3 write failure", async () => {
+      const l3 = createMockTier("l3");
+      l3.set = () => Promise.reject(new Error("backend unavailable"));
+      const cache = new MultiTierCache({
+        name: "test",
+        l1: createMockTier("l1"),
+        l3,
+        asyncBackfill: false,
+      });
+
+      await assertRejects(
+        () => cache.set("key", "value"),
+        Error,
+        "backend unavailable",
+        "a distributed L3 write failure must reach the caller",
+      );
+    });
+
+    it("should keep a per-pod write failure best-effort", async () => {
+      const l1 = createMockTier("l1");
+      l1.set = () => Promise.reject(new Error("pod disk full"));
+      const l3 = createMockTier("l3");
+      const cache = new MultiTierCache({ name: "test", l1, l3, asyncBackfill: false });
+
+      await cache.set("key", "value");
+
+      assertEquals(
+        l3.store.get("key"),
+        "value",
+        "a per-pod tier failure must stay best-effort and not block the authoritative write",
+      );
     });
   });
 

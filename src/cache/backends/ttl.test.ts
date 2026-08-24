@@ -6,6 +6,7 @@ import {
   expiresImmediately,
   MAX_CACHE_TTL_MILLISECONDS,
   MAX_CACHE_TTL_SECONDS,
+  requirePositiveIntegerCacheTtlSeconds,
   resolveCacheTtlSeconds,
   resolveIntegerCacheTtlSeconds,
 } from "./ttl.ts";
@@ -51,6 +52,24 @@ describe("cache TTL contract", () => {
       );
       assertThrows(() => resolveIntegerCacheTtlSeconds(ttl), RangeError);
     }
+  });
+
+  it("accepts the advertised maximum TTL", () => {
+    assertEquals(
+      resolveCacheTtlSeconds(MAX_CACHE_TTL_SECONDS),
+      MAX_CACHE_TTL_SECONDS,
+      "the advertised maximum TTL must be accepted",
+    );
+    assertEquals(
+      resolveIntegerCacheTtlSeconds(MAX_CACHE_TTL_SECONDS),
+      MAX_CACHE_TTL_SECONDS,
+      "the advertised maximum must survive integer-second resolution",
+    );
+    assertEquals(
+      requirePositiveIntegerCacheTtlSeconds(MAX_CACHE_TTL_SECONDS),
+      MAX_CACHE_TTL_SECONDS,
+      "the advertised maximum is a valid constructor TTL",
+    );
   });
 
   it("converts positive millisecond TTLs without shortening them", () => {

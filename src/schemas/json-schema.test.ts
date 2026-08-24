@@ -135,6 +135,35 @@ describe("JSON Schema helpers", () => {
       () => schemaToJsonSchema(adapter.string()),
       TypeError,
       "must return a bounded JSON Schema object",
+      "a null conversion result must not be accepted as a JSON Schema object",
+    );
+
+    reset();
+    const arrayAdapter = createZodAdapter();
+    register<SchemaValidator>("SchemaValidator", {
+      ...arrayAdapter,
+      toJsonSchema: () => [] as never,
+    });
+
+    assertThrows(
+      () => schemaToJsonSchema(arrayAdapter.string()),
+      TypeError,
+      "must return a bounded JSON Schema object",
+      "an array must not be accepted as a JSON Schema object",
+    );
+
+    reset();
+    const primitiveAdapter = createZodAdapter();
+    register<SchemaValidator>("SchemaValidator", {
+      ...primitiveAdapter,
+      toJsonSchema: () => "string" as never,
+    });
+
+    assertThrows(
+      () => schemaToJsonSchema(primitiveAdapter.string()),
+      TypeError,
+      "must return a bounded JSON Schema object",
+      "a primitive must not be accepted as a JSON Schema object",
     );
   });
 

@@ -680,6 +680,42 @@ describe("cache/keys", () => {
       assertEquals(await sanitizeCacheKey(key), key);
     });
 
+    it("truncates an overlong trusted backend prefix so the fallback stays API-valid", async () => {
+      const sanitized = await sanitizeCacheKey("a b", "x".repeat(600));
+      assertEquals(
+        sanitized.length <= API_CACHE_KEY_MAX_LENGTH,
+        true,
+        "a trusted prefix must be truncated so the sanitized key stays API-valid",
+      );
+      assertEquals(
+        isValidCacheKey(sanitized),
+        true,
+        "a truncated trusted prefix must still yield a valid concrete key",
+      );
+    });
+
+    it("retains a valid trusted backend prefix on the fallback key", async () => {
+      const sanitized = await sanitizeCacheKey("a b", "render:proj");
+      assertEquals(
+        sanitized.startsWith("render:proj:vf-sanitized:"),
+        true,
+        "a valid trusted prefix must be retained so prefix invalidation still reaches the fallback key",
+      );
+      assertEquals(
+        isValidCacheKey(sanitized),
+        true,
+        "a prefixed fallback key must still be valid for the API backend",
+      );
+    });
+
+    it("drops a trusted prefix that carries the reserved sanitized marker", async () => {
+      assertEquals(
+        await sanitizeCacheKey("a b", "vf-sanitized:evil"),
+        await sanitizeCacheKey("a b"),
+        "a marker-bearing prefix must be dropped entirely rather than aliased into the reserved namespace",
+      );
+    });
+
     it("treats `*` as a wildcard for patterns but not as a valid key character", () => {
       const pattern = "render:proj_123:production:rel-abc:*";
       // `*` is only valid in a del-pattern, never in a concrete key.

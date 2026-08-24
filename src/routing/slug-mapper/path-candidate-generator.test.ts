@@ -64,15 +64,41 @@ describe("path-candidate-generator", () => {
     it("should return both app and pages router candidates", () => {
       const { appRouter, pagesRouter } = getPathCandidates("/project", "about");
 
-      assertEquals(appRouter.length > 0, true);
-      assertEquals(pagesRouter.length > 0, true);
+      assertEquals(
+        appRouter.some((c) => c.endsWith("/app/about/page.tsx")),
+        true,
+        "appRouter must carry app-router candidates",
+      );
+      assertEquals(
+        appRouter.some((c) => c.includes("/pages/")),
+        false,
+        "appRouter must not carry pages-router candidates",
+      );
+      assertEquals(
+        pagesRouter.some((c) => c.includes("/pages/about")),
+        true,
+        "pagesRouter must carry pages-router candidates",
+      );
     });
 
     it("should normalize empty slug", () => {
       const { appRouter, pagesRouter } = getPathCandidates("/project", "");
 
-      assertEquals(appRouter.length > 0, true);
-      assertEquals(pagesRouter.length > 0, true);
+      assertEquals(
+        appRouter.some((c) => c.endsWith("/app/page.tsx")),
+        true,
+        "an empty slug resolves to the app-router root page",
+      );
+      assertEquals(
+        appRouter.some((c) => c.includes("/pages/")),
+        false,
+        "appRouter must not carry pages-router candidates",
+      );
+      assertEquals(
+        pagesRouter.some((c) => c.includes("/pages/index")),
+        true,
+        "an empty slug resolves to the pages-router index",
+      );
     });
   });
 

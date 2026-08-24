@@ -47,6 +47,19 @@ describe("method-validator", () => {
         assertEquals(allowHeader.includes(method), true);
       }
     });
+
+    it("ignores non-method function exports", () => {
+      const response = createAppRouteMethodNotAllowed({
+        GET: () => new Response("ok"),
+        generateStaticParams: () => [],
+      });
+
+      assertEquals(
+        response.headers.get("Allow"),
+        "GET",
+        "Allow must list only standard HTTP methods",
+      );
+    });
   });
 
   describe("createPagesRouteMethodNotAllowed", () => {

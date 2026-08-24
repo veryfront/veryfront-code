@@ -505,6 +505,44 @@ describe("tool/remote-mcp", () => {
     });
   });
 
+  it("passes successful MCP tool results that mention OAuth failure tokens through untouched", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://93.184.216.34",
+    });
+
+    const textResult = await withMockFetch(async () =>
+      Response.json({
+        jsonrpc: "2.0",
+        id: "docs:tools:call:search_docs",
+        result: {
+          content: [{
+            type: "text",
+            text: "The invalid_grant error means the refresh token expired.",
+          }],
+        },
+      }), async () => await source.executeTool("search_docs", { query: "invalid_grant" }));
+
+    assertEquals(
+      textResult,
+      "The invalid_grant error means the refresh token expired.",
+      "successful tool text mentioning invalid_grant must pass through untouched",
+    );
+
+    const structuredResult = await withMockFetch(async () =>
+      Response.json({
+        jsonrpc: "2.0",
+        id: "docs:tools:call:search_docs",
+        result: { structuredContent: { doc: "expired_token appears in this doc" } },
+      }), async () => await source.executeTool("search_docs", { query: "expired_token" }));
+
+    assertEquals(
+      structuredResult,
+      { doc: "expired_token appears in this doc" },
+      "successful structuredContent mentioning expired_token must pass through untouched",
+    );
+  });
+
   it("preserves MCP isError when structuredContent lacks an error field", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",

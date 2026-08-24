@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ModuleNamespace, RuntimeResponse } from "./env.ts";
 import {
@@ -56,6 +56,42 @@ describe("hydration-script-builder/runtime/snapshot-modules", () => {
   });
 
   describe("importSnapshotBoundModule", () => {
+    it("returns the imported namespace untouched when the module loads", async () => {
+      const namespace = { default: { name: "Page" } } as unknown as ModuleNamespace;
+      const recoveryState: Record<string, unknown> = {};
+      let probes = 0;
+      let reloads = 0;
+
+      const { importSnapshotBoundModule } = createSnapshotModuleImporter({
+        importModule: () => Promise.resolve(namespace),
+        fetchModule: () => {
+          probes++;
+          return Promise.resolve(conflictResponse("Unknown dependency snapshot"));
+        },
+        reloadDocument: () => {
+          reloads++;
+        },
+        recoveryState,
+      });
+
+      const loaded = await importSnapshotBoundModule(
+        "/_vf_modules/_pins/on%3Asnapshot-a/app/page.js",
+      );
+
+      assertStrictEquals(
+        loaded,
+        namespace,
+        "a successful import must return the module namespace it loaded",
+      );
+      assertEquals(probes, 0, "a successful import must not probe the module server");
+      assertEquals(reloads, 0, "a successful import must not reload the document");
+      assertEquals(
+        recoveryState.__VF_DEPENDENCY_SNAPSHOT_RECOVERY_STARTED__,
+        undefined,
+        "a successful import must not arm snapshot recovery",
+      );
+    });
+
     it("reloads once when pinned page, layout, app, and error imports hit snapshot eviction", async () => {
       const importedUrls: string[] = [];
       const probedUrls: string[] = [];

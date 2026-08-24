@@ -11,10 +11,13 @@ import {
   getModuleCache,
   getModuleCacheStats,
 } from "./module-cache.ts";
+import { cacheRegistry } from "./registry.ts";
 
 describe("cache/module-cache", () => {
   afterEach(() => {
     destroyModuleCaches();
+    cacheRegistry.unregister("pod-module-cache");
+    cacheRegistry.unregister("pod-esm-cache");
   });
 
   describe("getModuleCache", () => {
@@ -44,6 +47,44 @@ describe("cache/module-cache", () => {
 
       assertEquals(cache.delete("key"), true);
       assertEquals(cache.has("key"), false);
+    });
+
+    it("should register both pod caches with the cache registry", () => {
+      getModuleCache();
+      getEsmCache();
+
+      assertEquals(
+        cacheRegistry.getStoreNames().includes("pod-module-cache"),
+        true,
+        "the module cache must be registered for project invalidation",
+      );
+      assertEquals(
+        cacheRegistry.getStoreNames().includes("pod-esm-cache"),
+        true,
+        "the ESM cache must be registered for project invalidation",
+      );
+    });
+
+    it("should be reachable from registry project invalidation", () => {
+      const cache = getModuleCache();
+      cache.set("proj1:production:file.ts", "/tmp/a.js");
+      cache.set("proj2:production:file.ts", "/tmp/b.js");
+
+      assertEquals(
+        cacheRegistry.deleteKeysForProject("proj1") >= 1,
+        true,
+        "registry invalidation must reach the pod module cache",
+      );
+      assertEquals(
+        cache.has("proj1:production:file.ts"),
+        false,
+        "an invalidated project's module entry must be evicted",
+      );
+      assertEquals(
+        cache.has("proj2:production:file.ts"),
+        true,
+        "another project's module entry must survive invalidation",
+      );
     });
   });
 
@@ -255,12 +296,25 @@ describe("cache/module-cache", () => {
 
   describe("destroyModuleCaches", () => {
     it("should destroy and nullify both caches", () => {
-      getModuleCache().set("m1", "v1");
-      getEsmCache().set("e1", "v1");
+      const moduleCache = getModuleCache();
+      const esmCache = getEsmCache();
+      moduleCache.set("m1", "v1");
+      esmCache.set("e1", "v1");
 
       destroyModuleCaches();
 
-      assertEquals(getModuleCache().size, 0);
+      assertEquals(moduleCache.size, 0, "destroy must clear the previous module cache instance");
+      assertEquals(esmCache.size, 0, "destroy must clear the previous esm cache instance");
+      assertEquals(
+        getModuleCache() === moduleCache,
+        false,
+        "the module cache singleton must be nullified",
+      );
+      assertEquals(
+        getEsmCache() === esmCache,
+        false,
+        "the esm cache singleton must be nullified",
+      );
     });
 
     it("should be safe to call multiple times", () => {

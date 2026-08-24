@@ -9,6 +9,30 @@ import {
   runWithEffectiveSourceIntegrationPolicy,
 } from "#veryfront/integrations/source-policy-context.ts";
 import type { WorkflowRun } from "./types.ts";
+import {
+  isNativeErrorWithoutHooks,
+  isProxyWithoutHooks,
+  sanitizeDiagnosticText,
+} from "#veryfront/errors/safe-diagnostics.ts";
+
+const MISSING = Symbol("missing workflow source policy property");
+const INVALID = Symbol("invalid workflow source policy property");
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwn = Object.hasOwn;
+
+function readRunProperty(
+  run: unknown,
+  key: "id" | "sourceIntegrationPolicy",
+): unknown | typeof MISSING | typeof INVALID {
+  if (typeof run !== "object" || run === null || isProxyWithoutHooks(run)) return INVALID;
+  try {
+    const descriptor = objectGetOwnPropertyDescriptor(run, key);
+    if (!descriptor) return MISSING;
+    return objectHasOwn(descriptor, "value") ? descriptor.value : INVALID;
+  } catch {
+    return INVALID;
+  }
+}
 
 /** Capture an immutable-by-value policy snapshot for a newly created workflow run. */
 export function captureWorkflowSourceIntegrationPolicy(): SourceIntegrationPolicyManifest {
@@ -21,18 +45,25 @@ export function captureWorkflowSourceIntegrationPolicy(): SourceIntegrationPolic
 export function requireWorkflowSourceIntegrationPolicy(
   run: Pick<WorkflowRun, "id" | "sourceIntegrationPolicy">,
 ): SourceIntegrationPolicyManifest {
-  const snapshot: unknown = run.sourceIntegrationPolicy;
-  if (snapshot === undefined) {
+  const id = readRunProperty(run, "id");
+  const runId = typeof id === "string" ? sanitizeDiagnosticText(id) : "unknown";
+  const snapshot = readRunProperty(run, "sourceIntegrationPolicy");
+  if (snapshot === MISSING || snapshot === undefined) {
     throw ORCHESTRATION_ERROR.create({
-      detail: `Workflow run "${run.id}" is missing its source integration policy snapshot.`,
+      detail: `Workflow run "${runId}" is missing its source integration policy snapshot.`,
+    });
+  }
+  if (snapshot === INVALID) {
+    throw ORCHESTRATION_ERROR.create({
+      detail: `Workflow run "${runId}" has an invalid source integration policy snapshot.`,
     });
   }
   try {
     return parseSourceIntegrationPolicyManifest(snapshot);
   } catch (error) {
     throw ORCHESTRATION_ERROR.create({
-      detail: `Workflow run "${run.id}" has an invalid source integration policy snapshot.`,
-      cause: error instanceof Error ? error : undefined,
+      detail: `Workflow run "${runId}" has an invalid source integration policy snapshot.`,
+      cause: isNativeErrorWithoutHooks(error) ? error : undefined,
     });
   }
 }

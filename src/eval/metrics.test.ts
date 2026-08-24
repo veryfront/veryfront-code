@@ -37,6 +37,23 @@ describe("eval/metrics", () => {
       label: "Answer matched the reference exactly",
     });
     assertEquals((await contains.evaluate(createRecord())).pass, true);
+    assertEquals(
+      (await metrics.answer.contains({ text: "paris" }).gate().evaluate(createRecord())).pass,
+      true,
+      "contains is case-insensitive by default",
+    );
+    assertEquals(
+      (await metrics.answer.contains({ text: "paris", caseSensitive: true }).gate().evaluate(
+        createRecord(),
+      )).pass,
+      false,
+      "caseSensitive:true makes the match exact",
+    );
+    const missing = await metrics.answer.contains({ text: "Berlin" }).gate().evaluate(
+      createRecord(),
+    );
+    assertEquals(missing.pass, false, "a missing substring does not match");
+    assertEquals(missing.score, 0, "a missing substring scores 0");
     assertEquals((await regex.evaluate(createRecord())).pass, true);
     assertEquals(
       (await jsonMatch.evaluate(createRecord({ output: { json: { city: "Paris" } } }))).pass,
@@ -172,6 +189,45 @@ describe("eval/metrics", () => {
     );
     assertEquals((await latency.evaluate(createRecord())).pass, true);
     assertEquals((await tokens.evaluate(createRecord())).pass, true);
+  });
+
+  it("fails operational budgets when measurements exceed the configured limits", async () => {
+    const slow = await metrics.ops.latency({ maxMs: 10 }).budget().evaluate(createRecord());
+    assertEquals(slow.pass, false, "a 42ms run must fail a maxMs of 10");
+    assertEquals(slow.explanation, undefined, "an over-budget failure is measured, not missing");
+    assertEquals(
+      slow.evidence,
+      { durationMs: 42, maxMs: 10 },
+      "evidence carries the violated budget",
+    );
+
+    const unmeasured = await metrics.ops.latency({ maxMs: 100 }).budget().evaluate(
+      createRecord({ durationMs: Number.NaN }),
+    );
+    assertEquals(unmeasured.pass, false, "an unmeasured duration fails closed");
+    assertEquals(
+      unmeasured.explanation,
+      "Eval duration was not measured.",
+      "an unmeasured duration is reported as missing",
+    );
+
+    const overTotal = await metrics.ops.tokens({ maxTotal: 10 }).budget().evaluate(createRecord());
+    assertEquals(overTotal.pass, false, "16 total tokens must fail a maxTotal of 10");
+    assertEquals(
+      overTotal.explanation,
+      undefined,
+      "an over-limit failure is measured, not missing",
+    );
+    assertEquals(
+      overTotal.evidence?.limits,
+      { maxTotal: 10 },
+      "evidence must carry the violated limit",
+    );
+
+    const overSplit = await metrics.ops.tokens({ maxInput: 1, maxOutput: 1 }).budget().evaluate(
+      createRecord(),
+    );
+    assertEquals(overSplit.pass, false, "12 input and 4 output tokens must fail limits of 1");
   });
 
   it("fails operational budgets closed when required measurements are missing", async () => {
@@ -364,6 +420,36 @@ describe("eval/metrics", () => {
     }).gate({ min: 0.8 });
 
     assertEquals((await belowThreshold.evaluate(createRecord())).pass, false);
+  });
+
+  it("enforces both ends of a metric threshold range", async () => {
+    const scored = metrics.judge.rubric({
+      rubric: "Answer must identify the correct city.",
+      judge: async () => ({ score: 0.5 }),
+    });
+
+    const aboveMax = await scored.gate({ max: 0.4 }).evaluate(createRecord());
+    assertEquals(aboveMax.pass, false, "a score above the max threshold fails");
+    assertEquals(
+      aboveMax.score,
+      0.5,
+      "the score is reported unchanged when only the max threshold fails",
+    );
+    assertEquals(
+      (await scored.gate({ max: 0.5 }).evaluate(createRecord())).pass,
+      true,
+      "a score exactly at the max threshold passes",
+    );
+    assertEquals(
+      (await scored.gate({ min: 0.4, max: 0.6 }).evaluate(createRecord())).pass,
+      true,
+      "a score inside the threshold range passes",
+    );
+    assertEquals(
+      (await scored.gate({ min: 0.6, max: 0.9 }).evaluate(createRecord())).pass,
+      false,
+      "a score below the min threshold fails",
+    );
   });
 
   it("evaluates knowledge retrieval metrics from search_knowledge traces", async () => {

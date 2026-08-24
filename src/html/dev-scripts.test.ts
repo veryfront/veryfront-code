@@ -120,7 +120,58 @@ describe("html/dev-scripts", () => {
         pageId: "pg",
         pagePath: "/app/page.tsx",
       });
-      assertEquals(scripts.includes("pagePath"), true);
+      assertEquals(
+        scripts.includes('"pagePath":"/app/page.tsx"'),
+        true,
+        "the supplied pagePath must be the value published to the bridge",
+      );
+    });
+
+    it("should fall back to pageId when pagePath is omitted", () => {
+      const scripts = getStudioScripts({ projectId: "p", pageId: "pg" });
+      assertEquals(
+        scripts.includes('"pagePath":"pg"'),
+        true,
+        "pagePath must fall back to pageId",
+      );
+    });
+
+    it("should escape angle brackets in the inline bridge config", () => {
+      const hostile = "</script><script>alert(1)</script>";
+      const scripts = getStudioScripts({
+        projectId: hostile,
+        pageId: "pg",
+        pagePath: hostile,
+      });
+      assertEquals(
+        scripts.includes("<script>alert(1)</script>"),
+        false,
+        "inline bridge JSON must not close the script element",
+      );
+      assertEquals(
+        scripts.includes("\\u003c/script"),
+        true,
+        "< in bridge config must be escaped as \\u003c",
+      );
+    });
+
+    it("should escape angle brackets in the sourceHash script", () => {
+      const hostile = "</script><script>alert(1)</script>";
+      const scripts = getStudioScripts({
+        projectId: "p",
+        pageId: "pg",
+        sourceHash: hostile,
+      });
+      assertEquals(
+        scripts.includes("<script>alert(1)</script>"),
+        false,
+        "the sourceHash literal must not close the script element",
+      );
+      assertEquals(
+        scripts.includes("\\u003c/script"),
+        true,
+        "< in the sourceHash literal must be escaped as \\u003c",
+      );
     });
   });
 });

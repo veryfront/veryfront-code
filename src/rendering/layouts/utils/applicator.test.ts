@@ -3,7 +3,7 @@ import * as ReactDOMServer from "react-dom/server";
 import "#veryfront/schemas/_test-setup.ts";
 // Node position injection needs the babel CodeParser contract registered.
 import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { renderToStringAdapter } from "#veryfront/react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -14,6 +14,7 @@ import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import { applyLayoutsESM, applyLayoutsFunctionBody } from "./applicator.ts";
 import { createLayoutComponentCache } from "./component-loader.ts";
 import {
+  __injectProjectReactForTests,
   __injectReactDOMServerForTests,
   __setServerModuleLoaderForTests,
   resetReactCache,
@@ -55,6 +56,19 @@ const LAYOUT_SOURCE =
 }
 `;
 
+/** Renders the props the layout receives, so layoutDataMap threading is visible in the HTML. */
+const LAYOUT_SOURCE_WITH_DATA =
+  `export default function RootLayout({ children, title }: { children: React.ReactNode; title?: string }) {
+  return <div id="tsx-layout"><h1>{title}</h1>{children}</div>;
+}
+`;
+
+// Sanitizers are disabled for the whole suite because two process-wide
+// singletons this suite starts outlive any single case and cannot be closed
+// from here: the esbuild bundler service child process that compiles the TSX
+// layouts, and the React 19 ReactDOMServer MessagePort that renderToString
+// keeps open. std/bdd checks leaks once per describe, not per step, so these
+// cannot be narrowed to the cases that cause them.
 describe(
   "rendering/layouts/utils/applicator",
   { sanitizeOps: false, sanitizeResources: false },
@@ -234,6 +248,60 @@ describe(
           mutableRenderer.loadModuleESM = originalLoadModuleESM;
         }
       });
+
+      it("passes layoutDataMap entries to the layout component", async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.readFile = () => Promise.resolve(LAYOUT_SOURCE_WITH_DATA);
+
+        const result = await applyLayoutsESM(
+          React.createElement("p", { id: "page-body" }, "Text"),
+          undefined,
+          [{ kind: "tsx", componentPath: "/project/app/layout.tsx" } as LayoutItem],
+          "/project",
+          {},
+          createLayoutComponentCache(),
+          adapter,
+          new Map([["/project/app/layout.tsx", { title: "From layout data" }]]),
+          "project-esm-layout-data",
+          "project-slug",
+          "content-source-id",
+          PRODUCTION_MODES,
+        );
+
+        __injectReactDOMServerForTests(ReactDOMServer);
+        const html = await renderToStringAdapter(result);
+        assertEquals(
+          html.includes("From layout data"),
+          true,
+          "layoutDataMap entries keyed by componentPath must be passed as the layout component's props",
+        );
+      });
+
+      it("propagates a failing layout instead of rendering without it", async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.readFile = () => Promise.reject(new Error("layout read exploded"));
+
+        await assertRejects(
+          () =>
+            applyLayoutsESM(
+              React.createElement("p", { id: "page-body" }, "Text"),
+              undefined,
+              [{ kind: "tsx", componentPath: "/project/app/layout.tsx" } as LayoutItem],
+              "/project",
+              {},
+              createLayoutComponentCache(),
+              adapter,
+              undefined,
+              "project-esm-failing-layout",
+              "project-slug",
+              "content-source-id",
+              PRODUCTION_MODES,
+            ),
+          Error,
+          "layout read exploded",
+          "applyLayoutsESM must propagate a broken layout rather than render without it",
+        );
+      });
     });
 
     /**
@@ -364,6 +432,97 @@ describe(
         assertEquals(html.includes("<body>"), true);
         assertEquals(html.includes('data-testid="document-layout"'), true);
         assertEquals(html.includes('id="counter"'), true);
+      });
+
+      it("builds the layout element with the project React instance", async () => {
+        const projectReact = {
+          ...React,
+          createElement: (type: unknown, props: unknown, ...children: unknown[]) => ({
+            __builtBy: "project",
+            type,
+            props,
+            children,
+          }),
+        } as unknown as typeof React;
+        __injectProjectReactForTests(projectReact);
+
+        const adapter = createMockAdapter();
+        adapter.fs.readFile = () => Promise.resolve(LAYOUT_SOURCE);
+
+        const result = await applyLayoutsFunctionBody(
+          React.createElement("p", { id: "page-body" }, "Text"),
+          undefined,
+          [{ kind: "tsx", componentPath: "/project/app/layout.tsx" } as LayoutItem],
+          {},
+          createLayoutComponentCache(),
+          "/project",
+          adapter,
+          undefined,
+          "project-fb-react-instance",
+          "project-slug",
+          "content-source-id",
+          PRODUCTION_MODES,
+        );
+
+        assertEquals(
+          (result as unknown as { __builtBy?: string }).__builtBy,
+          "project",
+          "the layout element must be created by the project React instance, not the bundled copy",
+        );
+      });
+
+      it("passes layoutDataMap entries to the layout component", async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.readFile = () => Promise.resolve(LAYOUT_SOURCE_WITH_DATA);
+
+        const result = await applyLayoutsFunctionBody(
+          React.createElement("p", { id: "page-body" }, "Text"),
+          undefined,
+          [{ kind: "tsx", componentPath: "/project/app/layout.tsx" } as LayoutItem],
+          {},
+          createLayoutComponentCache(),
+          "/project",
+          adapter,
+          new Map([["/project/app/layout.tsx", { title: "From layout data" }]]),
+          "project-fb-layout-data",
+          "project-slug",
+          "content-source-id",
+          PRODUCTION_MODES,
+        );
+
+        __injectReactDOMServerForTests(ReactDOMServer);
+        const html = await renderToStringAdapter(result);
+        assertEquals(
+          html.includes("From layout data"),
+          true,
+          "layoutDataMap entries keyed by componentPath must be passed as the layout component's props",
+        );
+      });
+
+      it("propagates a failing layout instead of rendering without it", async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.readFile = () => Promise.reject(new Error("layout read exploded"));
+
+        await assertRejects(
+          () =>
+            applyLayoutsFunctionBody(
+              React.createElement("p", { id: "page-body" }, "Text"),
+              undefined,
+              [{ kind: "tsx", componentPath: "/project/app/layout.tsx" } as LayoutItem],
+              {},
+              createLayoutComponentCache(),
+              "/project",
+              adapter,
+              undefined,
+              "project-fb-failing-layout",
+              "project-slug",
+              "content-source-id",
+              PRODUCTION_MODES,
+            ),
+          Error,
+          "layout read exploded",
+          "applyLayoutsFunctionBody must propagate a broken layout rather than render without it",
+        );
       });
     });
   },

@@ -195,6 +195,42 @@ describe("runtime-bridge", () => {
     assertEquals(dispatches, 0);
   });
 
+  it("rejects accessor-backed system content without invoking it", async () => {
+    let accessorCalls = 0;
+    let dispatches = 0;
+    const system = Object.defineProperty({ role: "system" }, "content", {
+      enumerable: true,
+      get() {
+        accessorCalls += 1;
+        return "must not run";
+      },
+    });
+    const model = createGenerateModel("test", "test/system-content", async () => {
+      dispatches += 1;
+      return {
+        content: [{ type: "text", text: "done" }],
+        finishReason: "stop",
+        usage: {},
+      };
+    });
+
+    for (const systemValue of [system, [system]]) {
+      await assertRejects(
+        async () =>
+          await generateText({
+            model,
+            system: systemValue,
+            messages: [{ role: "user", content: "Hello" }],
+          }),
+        TypeError,
+        "content must be an own enumerable data property",
+      );
+    }
+
+    assertEquals(accessorCalls, 0);
+    assertEquals(dispatches, 0);
+  });
+
   it("skips non-cloneable model context without failing model dispatch", async () => {
     const sensitiveValue = "CUSTOMER_SECRET_123";
     for (

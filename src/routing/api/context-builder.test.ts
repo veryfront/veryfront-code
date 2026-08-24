@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   type APIContext,
@@ -128,6 +133,37 @@ describe("API Context Builder", () => {
       assertExists(context.cookies);
       assertExists(context.headers);
       assertExists(context.url);
+    });
+
+    it("exposes an immutable project env snapshot", () => {
+      const request = new Request("http://localhost/api/users");
+      const context = createContext(request, createMatch("/api/users", "/api/users.ts"), mockFs);
+
+      assertEquals(
+        context.env,
+        {},
+        "env must default to an empty snapshot, never the host environment",
+      );
+      assertThrows(
+        () => {
+          (context.env as Record<string, string>).SECRET = "x";
+        },
+        TypeError,
+        undefined,
+        "env snapshot must be frozen",
+      );
+    });
+
+    it("passes a supplied project env through to handlers verbatim", () => {
+      const request = new Request("http://localhost/api/users");
+      const context = createContext(
+        request,
+        createMatch("/api/users", "/api/users.ts"),
+        mockFs,
+        Object.freeze({ API_KEY: "k" }),
+      );
+
+      assertEquals(context.env.API_KEY, "k", "supplied project env must reach handlers verbatim");
     });
 
     it("should extract route parameters from match", () => {
@@ -409,6 +445,29 @@ describe("createContext: ctx.json writes, ctx.body reads", () => {
 
     assertEquals(response.status, 422);
     assertEquals(await response.json(), { error: "nope" });
+  });
+
+  it("keeps caller headers and lets a caller Content-Type win", () => {
+    const ctx = ctxFor(new Request("http://localhost/api/echo"));
+
+    const response = ctx.json({}, { headers: { "cache-control": "no-store" } });
+    assertEquals(
+      response.headers.get("cache-control"),
+      "no-store",
+      "handler-set response headers must survive createResponse",
+    );
+    assertEquals(
+      response.headers.get("Content-Type"),
+      "application/json",
+      "the default Content-Type still applies",
+    );
+
+    const html = ctx.text("<p>", { headers: { "Content-Type": "text/html" } });
+    assertEquals(
+      html.headers.get("Content-Type"),
+      "text/html",
+      "a caller Content-Type must override the text/plain default",
+    );
   });
 
   it("reads the request body with ctx.body()", async () => {
