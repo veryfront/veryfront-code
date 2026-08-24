@@ -196,19 +196,14 @@ describe("esm-module-loader/loader", () => {
         },
       );
       assertEquals(
-        result.includes("https://esm.sh/react@18/jsx-runtime"),
-        false,
-        "react subpaths must stay bare",
-      );
-      assertEquals(
-        result.includes("https://esm.sh/react-dom@18/client"),
-        false,
-        "react-dom subpaths must stay bare",
-      );
-      assertEquals(
-        result.includes("https://esm.sh/lodash/fp"),
-        true,
-        "non-React subpaths are still applied",
+        result,
+        [
+          `import { jsx } from "react/jsx-runtime";`,
+          `import { createRoot } from "react-dom/client";`,
+          `import fp from "https://esm.sh/lodash/fp";`,
+          ``,
+        ].join("\n"),
+        "react/react-dom subpaths stay bare while other subpaths are rewritten to their mapped URL",
       );
     });
 
