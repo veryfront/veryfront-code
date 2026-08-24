@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   findVfModuleImports,
@@ -7,6 +7,7 @@ import {
   resolveProjectDir,
 } from "./loader-helpers.ts";
 import type { ESMLoaderContext } from "./types.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
@@ -35,6 +36,39 @@ describe("transforms/mdx/esm-module-loader/loader-helpers", () => {
       const result = findVfModuleImports(code);
       assertEquals(result.length, 1);
       assertEquals(result[0]!.path, "_vf_modules/lib/utils.js");
+      assertEquals(
+        result[0]!.isDynamic ?? false,
+        false,
+        "a static import must not be flagged as dynamic",
+      );
+    });
+
+    it("finds dynamic _vf_modules imports and flags them", () => {
+      const code = `const m = await import("/_vf_modules/lib/utils.js");`;
+      const result = findVfModuleImports(code);
+      assertEquals(result.length, 1, "a dynamic _vf_modules import must be found");
+      assertEquals(result[0]!.path, "_vf_modules/lib/utils.js");
+      assertEquals(
+        result[0]!.isDynamic,
+        true,
+        "a dynamic import must be flagged so processVfModuleImports defers its stub",
+      );
+    });
+
+    it("splits a query suffix off the specifier", () => {
+      const code = `import x from "/_vf_modules/lib/utils.js?ssr=true";`;
+      const result = findVfModuleImports(code);
+      assertEquals(result.length, 1);
+      assertEquals(
+        result[0]!.path,
+        "_vf_modules/lib/utils.js",
+        "the query must not leak into the module path",
+      );
+      assertEquals(
+        result[0]!.suffix,
+        "?ssr=true",
+        "the query suffix must survive for resolution",
+      );
     });
 
     it("finds _vf_modules imports without leading slash", () => {
@@ -198,13 +232,17 @@ import { bar } from "/_vf_modules/components/Button.js";
 
     it("throws when no projectDir available", () => {
       const context = makeContext({ projectSlug: "test" });
-      let threw = false;
-      try {
-        resolveProjectDir(context);
-      } catch (_) {
-        threw = true;
-      }
-      assertEquals(threw, true);
+      const error = assertThrows(
+        () => resolveProjectDir(context),
+        VeryfrontError,
+        "projectDir is required",
+      ) as VeryfrontError;
+      assertEquals(
+        error.slug,
+        "invalid-argument",
+        "a missing projectDir is classified as an invalid argument",
+      );
+      assertEquals(error.status, 400, "a missing projectDir maps to HTTP 400");
     });
   });
 });

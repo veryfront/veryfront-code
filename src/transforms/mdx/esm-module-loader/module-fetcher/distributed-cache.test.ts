@@ -1,7 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { withTempDir } from "#veryfront/testing/deno-compat.ts";
+import { remove, withTempDir } from "#veryfront/testing/deno-compat.ts";
+import { basename, join } from "#veryfront/compat/path/index.ts";
+import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { FRAMEWORK_ROOT } from "../constants.ts";
+import { buildMdxEsmModuleRecoveryCacheKey } from "../cache-format.ts";
+import { cacheModule } from "./module-cache.ts";
 import type { CacheBackend } from "#veryfront/cache/types.ts";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
@@ -156,6 +161,132 @@ describe("module-fetcher/distributed-cache", () => {
     });
   });
 
+  it("invalidates cached code whose HTTP bundles are gone", async () => {
+    await withTempDir(async (projectDir) => {
+      const cache = new FakeDistributedCache();
+      const { log, entries } = createCapturingLogger();
+      const bundlePath = join(getHttpBundleCacheDir(), "http-deadbeefdeadbeef.mjs");
+      cache.values.set(
+        "transform:stale-bundle",
+        `import bundle from "file://${bundlePath}"; export default bundle;`,
+      );
+
+      const result = await readCache(cache, "transform:stale-bundle", projectDir, log);
+
+      assertEquals(
+        result?.code,
+        null,
+        "cached code whose HTTP bundles are missing must not be reused",
+      );
+      assertEquals(
+        entries.some((entry) =>
+          entry.level === "warn" && entry.message.includes("Cached HTTP bundle validation failed")
+        ),
+        true,
+        "the failed bundle validation must be reported",
+      );
+    });
+  });
+
+  it("invalidates cached code with incompatible framework paths", async () => {
+    await withTempDir(async (projectDir) => {
+      const cache = new FakeDistributedCache();
+      const { log, entries } = createCapturingLogger();
+      cache.values.set(
+        "transform:foreign",
+        'import foo from "https://esm.sh/_vf_modules/lib.js"; export default foo;',
+      );
+
+      const result = await readCache(cache, "transform:foreign", projectDir, log);
+
+      assertEquals(
+        result?.code,
+        null,
+        "cached code from a foreign framework root must not be reused",
+      );
+      const warning = entries.find((entry) =>
+        entry.level === "warn" && entry.message.includes("incompatible framework paths")
+      );
+      assertEquals(
+        warning !== undefined,
+        true,
+        "an incompatible framework path must be reported as a warning",
+      );
+      assertEquals(
+        (warning?.metadata as { frameworkRoot?: string } | undefined)?.frameworkRoot,
+        FRAMEWORK_ROOT,
+        "the warning must name the framework root this pod expects",
+      );
+    });
+  });
+
+  it("invalidates cached code whose vfmod dependency is absent on this pod", async () => {
+    await withTempDir(async (projectDir) => {
+      const cache = new FakeDistributedCache();
+      const { log, entries } = createCapturingLogger();
+      const missingDependency = join(
+        getMdxEsmCacheDir(),
+        "project-a",
+        "preview-main",
+        `vfmod-absent-${crypto.randomUUID()}.mjs`,
+      );
+      cache.values.set(
+        "transform:missing-dep",
+        `import dep from "file://${missingDependency}"; export default dep;`,
+      );
+
+      const result = await readCache(cache, "transform:missing-dep", projectDir, log);
+
+      assertEquals(
+        result?.code,
+        null,
+        "cached code referencing a vfmod file absent on this pod is invalidated",
+      );
+      assertEquals(
+        entries.some((entry) => entry.message.includes("missing file dependencies, invalidating")),
+        true,
+        "the invalidation must be reported",
+      );
+    });
+  });
+
+  it("recovers a missing vfmod dependency from the distributed cache", async () => {
+    await withTempDir(async (projectDir) => {
+      const cache = new FakeDistributedCache();
+      const { log } = createCapturingLogger();
+      const dependencyPath = join(
+        getMdxEsmCacheDir(),
+        "project-a",
+        "preview-main",
+        `vfmod-recovered-${crypto.randomUUID()}.mjs`,
+      );
+      const cachedCode = `import dep from "file://${dependencyPath}"; export default dep;`;
+      cache.values.set("transform:recoverable", cachedCode);
+      cache.values.set(
+        buildMdxEsmModuleRecoveryCacheKey(
+          "project-a",
+          "preview-main",
+          basename(dependencyPath),
+        ),
+        "export default 1;",
+      );
+
+      try {
+        const result = await readCache(cache, "transform:recoverable", projectDir, log);
+
+        // Surviving the missing-dependency check is only possible once the
+        // recovery entry has restored the vfmod file this code imports.
+        assertEquals(
+          result?.code,
+          cachedCode,
+          "recovered cached code must survive the missing-dependency check",
+        );
+      } finally {
+        await remove(dependencyPath).catch(() => {});
+      }
+    });
+  });
+
   it("keeps the distributed cache handle when backend get fails", async () => {
     await withTempDir(async (projectDir) => {
       const cache = new FakeDistributedCache();
@@ -193,6 +324,18 @@ describe("module-fetcher/distributed-cache", () => {
 
     const primary = cache.values.get("transform:write");
     const recovery = cache.setCalls.find((call) => call.key.endsWith(":vfmod"));
+
+    // dependency-recovery.ts looks the entry up by the file name cacheModule
+    // writes locally, so the two producers must agree on that name.
+    const localPath = await withTempDir((esmCacheDir) =>
+      cacheModule("app/page.mdx", moduleCode, esmCacheDir, new Map<string, string>(), log)
+    );
+    assertEquals(typeof localPath, "string", "cacheModule must write the module locally");
+    assertEquals(
+      recovery?.key,
+      buildMdxEsmModuleRecoveryCacheKey("project-a", "preview-main", basename(localPath!)),
+      "recovery key must carry the same file name cacheModule writes locally",
+    );
 
     assertEquals(
       primary?.includes("file://__VF_CACHE_DIR__/veryfront-mdx-esm/project-a/child.mjs"),

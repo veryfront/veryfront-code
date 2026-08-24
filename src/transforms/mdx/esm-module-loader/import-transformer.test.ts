@@ -72,13 +72,49 @@ describe("transformImports", () => {
   });
 
   it("strips react from import map", () => {
-    const code = `import React from "react";\n`;
+    const code = [
+      `import React from "react";`,
+      `import ReactDOM from "react-dom";`,
+      `import { jsx } from "react/jsx-runtime";`,
+      `import { createRoot } from "react-dom/client";`,
+      `import { foo } from "my-lib";`,
+      ``,
+    ].join("\n");
     const result = transformImports(code, {
-      imports: { "react": "/mapped/react.js", "other": "/mapped/other.js" },
+      imports: {
+        "react": "/mapped/react.js",
+        "react-dom": "/mapped/react-dom.js",
+        "react/jsx-runtime": "/mapped/jsx-runtime.js",
+        "react-dom/client": "/mapped/client.js",
+        "my-lib": "/mapped/my-lib.js",
+      },
     });
-    // React should NOT be rewritten
-    assertEquals(result.includes("react"), true);
-    assertEquals(result.includes("/mapped/react.js"), false);
+    // Every React target stays bare so SSR uses a single React instance.
+    assertEquals(
+      result.includes("/mapped/react.js"),
+      false,
+      "react must stay bare so SSR uses one React instance",
+    );
+    assertEquals(
+      result.includes("/mapped/react-dom.js"),
+      false,
+      "react-dom must stay bare so SSR uses one React instance",
+    );
+    assertEquals(
+      result.includes("/mapped/jsx-runtime.js"),
+      false,
+      "react subpaths must stay bare so SSR uses one React instance",
+    );
+    assertEquals(
+      result.includes("/mapped/client.js"),
+      false,
+      "react-dom subpaths must stay bare so SSR uses one React instance",
+    );
+    assertEquals(
+      result.includes("/mapped/my-lib.js"),
+      true,
+      "non-React entries are still applied",
+    );
   });
 
   it("returns code unchanged when import map has no matching entries", () => {
@@ -258,6 +294,9 @@ describe("rewriteMdxRootDependencyImports", () => {
         { db: "https://esm.sh/knex@3.1.0" },
         ["knex"],
       ],
+      // An import map that aliases the declared external away must not smuggle
+      // it into a browser transform: the pre-import-map check catches this one.
+      [`import knex from "knex";`, { knex: "/shims/knex.js" }, ["knex"]],
     ] as const;
 
     for (const [code, imports, serverExternalPackages] of cases) {

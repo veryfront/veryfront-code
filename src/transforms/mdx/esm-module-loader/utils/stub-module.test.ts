@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { extractNamedImports, generateStubCode } from "./stub-module.ts";
 
@@ -42,6 +42,24 @@ describe("generateStubCode", () => {
     const result = generateStubCode("/path/to/module.js", ["foo", "bar"]);
     assertEquals(result.includes("export const foo"), true);
     assertEquals(result.includes("export const bar"), true);
+  });
+
+  it("generates named exports that throw a MissingModuleError when called", async () => {
+    // Evaluated straight from a data: module so the assertion stays hermetic.
+    const stub = await import(
+      `data:text/javascript,${encodeURIComponent(generateStubCode("/path/to/module.js", ["foo"]))}`
+    ) as { foo: () => unknown };
+
+    const error = assertThrows(
+      () => stub.foo(),
+      Error,
+      "/path/to/module.js",
+    ) as Error;
+    assertEquals(
+      error.name,
+      "MissingModuleError",
+      "a named stub export must throw, not resolve to undefined",
+    );
   });
 
   it("includes module path in error messages", () => {

@@ -11,6 +11,33 @@ import { join, toFileUrl } from "#veryfront/compat/path/index.ts";
 import { buildMissingModuleError } from "../missing-module.ts";
 
 describe("module-fetcher/http-fetcher", () => {
+  it("refuses to reach the dev server when the project is not local", async () => {
+    const logger = { debug: () => {}, warn: () => {} } as unknown as Logger;
+    const adapter = {
+      env: { get: (k: string) => (k === "VERYFRONT_DEV_PORT" ? "3001" : undefined) },
+    } as RuntimeAdapter;
+
+    let fetched = false;
+    const fetchFn = (() => {
+      fetched = true;
+      return Promise.resolve(new Response("export const ok = 1;"));
+    }) as unknown as typeof fetch;
+
+    const result = await fetchModuleViaHTTP(
+      "mod.js",
+      adapter,
+      async () => null,
+      logger,
+      "docs",
+      false,
+      undefined,
+      { fetchFn },
+    );
+
+    assertEquals(result, null, "a non-local project must not resolve a module over HTTP");
+    assertEquals(fetched, false, "a non-local project must never issue the fetch");
+  });
+
   it("falls back to bare localhost, carrying the project slug, when the subdomain will not resolve", async () => {
     const logger = { debug: () => {}, warn: () => {} } as unknown as Logger;
     const adapter = {
@@ -235,6 +262,46 @@ describe("module-fetcher/http-fetcher", () => {
     }
   });
 
+  it("propagates a missing statically imported module instead of swallowing it", async () => {
+    const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-http-static-missing-cache-" });
+    const source = `import missing from "./missing.js";\nexport const ok = 1;`;
+
+    try {
+      const error = await assertRejects(
+        () =>
+          fetchModuleViaHTTP(
+            "_vf_modules/pages/index.js",
+            { env: { get: () => undefined } } as unknown as RuntimeAdapter,
+            (path) => {
+              throw buildMissingModuleError({
+                modulePath: path,
+                importer: "_vf_modules/pages/index.js",
+              });
+            },
+            { debug: () => {}, warn: () => {} } as unknown as Logger,
+            "docs",
+            true,
+            undefined,
+            {
+              esmCacheDir,
+              fetchFn: (() => Promise.resolve(new Response(source))) as typeof fetch,
+              strictMissingModules: true,
+            },
+          ),
+        Error,
+        "Missing module: ./missing.js",
+      ) as Error;
+
+      assertEquals(
+        error.name,
+        "MissingModuleError",
+        "a static missing import must fail the render, not be deferred",
+      );
+    } finally {
+      await remove(esmCacheDir, { recursive: true });
+    }
+  });
+
   it("defers a typed dynamic child failure fetched through the HTTP fallback", async () => {
     const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-http-dynamic-failure-cache-" });
     const source =
@@ -321,6 +388,7 @@ describe("module-fetcher/http-fetcher", () => {
       },
     } as RuntimeAdapter;
     let requestedUrl = "";
+    let requestedInit: RequestInit | undefined;
 
     const result = await fetchModuleViaHTTP(
       "_vf_modules/shared/Absolute.js",
@@ -332,10 +400,11 @@ describe("module-fetcher/http-fetcher", () => {
       "on:pins-a",
       {
         moduleServerOrigin: "http://93.184.216.34:3000",
-        fetchFn: ((input) => {
+        fetchFn: ((input: string | URL | Request, init?: RequestInit) => {
           requestedUrl = String(input);
+          requestedInit = init;
           return Promise.resolve(new Response(`export const value = "abs";`));
-        }) as typeof fetch,
+        }) as unknown as typeof fetch,
       },
     );
 
@@ -343,6 +412,16 @@ describe("module-fetcher/http-fetcher", () => {
     assertEquals(
       requestedUrl,
       "http://93.184.216.34:3000/_vf_modules/shared/Absolute.js?ssr=true&pins=on%3Apins-a",
+    );
+    assertEquals(
+      requestedInit?.redirect,
+      "error",
+      "module fetches must not follow redirects to another origin",
+    );
+    assertEquals(
+      requestedInit?.signal instanceof AbortSignal,
+      true,
+      "module fetches carry the timeout abort signal",
     );
   });
 

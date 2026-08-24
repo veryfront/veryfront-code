@@ -125,6 +125,31 @@ describe("transforms/mdx/esm-module-loader/metadata/extractor", () => {
       assertEquals(Object.keys(result).length, 0);
     });
 
+    it("extracts single-quoted scalar values", () => {
+      // METADATA_PATTERNS accept `'…'` as well as `"…"`; ordinary JS output
+      // uses single quotes, so both halves of each pattern must hold.
+      assertEquals(
+        extractMetadata(`const title = 'My Page';`).title,
+        "My Page",
+        "single-quoted title is extracted",
+      );
+      assertEquals(
+        extractMetadata(`const description = 'My Description';`).description,
+        "My Description",
+        "single-quoted description is extracted",
+      );
+      assertEquals(
+        extractMetadata(`const date = '2024-01-01';`).date,
+        "2024-01-01",
+        "single-quoted date is extracted",
+      );
+      assertEquals(
+        extractMetadata(`const layout = 'custom-layout';`).layout,
+        "custom-layout",
+        "single-quoted layout is unquoted like the double-quoted form",
+      );
+    });
+
     it("extracts multiple metadata fields", () => {
       const code = `
 const title = "Hello";
@@ -164,6 +189,34 @@ const draft = false;
       const result = {} as any;
       mergeFrontmatter(result);
       assertEquals(result.frontmatter !== undefined, true);
+    });
+
+    it("merges every frontmatter key onto result.frontmatter", () => {
+      const result = {
+        title: "T",
+        description: "D",
+        layout: "docs",
+        headings: [{ id: "a", text: "A" }],
+        tags: ["x"],
+        date: "2026-01-01",
+        draft: true,
+        nested: { a: 1 },
+      } as any;
+      mergeFrontmatter(result);
+      assertEquals(
+        result.frontmatter,
+        {
+          title: "T",
+          description: "D",
+          layout: "docs",
+          headings: [{ id: "a", text: "A" }],
+          tags: ["x"],
+          date: "2026-01-01",
+          draft: true,
+          nested: { a: 1 },
+        },
+        "every FRONTMATTER_KEYS entry must be merged onto frontmatter unchanged",
+      );
     });
   });
 });

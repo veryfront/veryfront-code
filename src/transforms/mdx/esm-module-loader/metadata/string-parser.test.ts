@@ -88,6 +88,42 @@ describe("transforms/mdx/esm-module-loader/metadata/string-parser", () => {
       const result = extractBalancedBlock(source, 0, "[");
       assertEquals(result, "[[1, 2], [3, 4]]");
     });
+
+    it("ignores an unbalanced close brace inside a double-quoted string", () => {
+      const source = `{ key: "a } b" }`;
+      assertEquals(
+        extractBalancedBlock(source, 0, "{"),
+        `{ key: "a } b" }`,
+        "a } inside a double-quoted string must not close the block",
+      );
+    });
+
+    it("ignores an unbalanced close brace inside a single-quoted string", () => {
+      const source = `{ key: 'a } b' }`;
+      assertEquals(
+        extractBalancedBlock(source, 0, "{"),
+        `{ key: 'a } b' }`,
+        "a } inside a single-quoted string must not close the block",
+      );
+    });
+
+    it("ignores an unbalanced close brace inside a template literal", () => {
+      const source = "{ key: `a } b` }";
+      assertEquals(
+        extractBalancedBlock(source, 0, "{"),
+        "{ key: `a } b` }",
+        "a } inside a template literal must not close the block",
+      );
+    });
+
+    it("ignores an unbalanced open brace inside a string", () => {
+      const source = `{ key: "a { b" }`;
+      assertEquals(
+        extractBalancedBlock(source, 0, "{"),
+        `{ key: "a { b" }`,
+        "a { inside a string must not raise the depth",
+      );
+    });
   });
 
   describe("cleanModuleCode", () => {
@@ -178,6 +214,11 @@ describe("transforms/mdx/esm-module-loader/metadata/string-parser", () => {
 
     it("returns original string for unparseable input", () => {
       assertEquals(parseJsonish("not json at all"), "not json at all");
+      assertEquals(
+        parseJsonish("{a: 1"),
+        "{a: 1",
+        "unparseable input must return the caller's original string, not the normalized intermediate",
+      );
     });
 
     it("handles arrays", () => {

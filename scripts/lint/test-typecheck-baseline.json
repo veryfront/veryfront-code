@@ -43,6 +43,5 @@
   "src/rendering/utils/react-helpers.test.ts",
   "src/server/build-service-worker.test.ts",
   "src/transforms/import-rewriter/strategies/import-map-strategy.test.ts",
-  "src/transforms/mdx/compiler/index.test.ts",
-  "src/transforms/mdx/esm-module-loader/loader.test.ts"
+  "src/transforms/mdx/compiler/index.test.ts"
 ]
