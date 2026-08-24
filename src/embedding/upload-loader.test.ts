@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import { register, unregister } from "#veryfront/extensions/contracts.ts";
 import type { DocumentExtractor } from "#veryfront/extensions/compat/native-services.ts";
 import { loadUpload } from "./upload-loader.ts";
@@ -112,20 +113,32 @@ describe("upload-loader", () => {
     // we only assert that `loadUpload` surfaces a clear error when the
     // extension isn't installed — this is the documented fallback behavior.
 
-    it("throws an actionable error when DocumentExtractor extension is not registered", {
-      sanitizeResources: false,
-      sanitizeOps: false,
-    }, async () => {
+    it("throws an actionable error when DocumentExtractor extension is not registered", async () => {
       const html = "<html><body>Hello</body></html>";
       const err = await assertRejects(
         () => loadUpload(toBuffer(html), "text/html"),
         Error,
-      ) as Error;
+      ) as Error & { slug?: string; category?: string; status?: number };
       assertEquals(
         err.message.includes("DocumentExtractor") ||
           err.message.includes("ext-document-kreuzberg"),
         true,
         `expected actionable DocumentExtractor error, got: ${err.message}`,
+      );
+      assertEquals(
+        err.slug,
+        INITIALIZATION_ERROR.slug,
+        "the missing-extension failure must stay the registry initialization error",
+      );
+      assertEquals(
+        err.category,
+        INITIALIZATION_ERROR.category,
+        "the missing-extension failure must keep its registry category",
+      );
+      assertEquals(
+        err.status,
+        INITIALIZATION_ERROR.status,
+        "the missing-extension failure must keep its registry status",
       );
     });
 

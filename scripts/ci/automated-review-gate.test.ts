@@ -1,9 +1,15 @@
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
 import {
-  findAutomatedReview,
+  findAutomatedReview as findAutomatedReviewDecision,
   publishAutomatedReviewStatus,
+  requestAutomatedReview,
 } from "./automated-review-gate.mjs";
 
 const HEAD_SHA = "a".repeat(40);
@@ -75,7 +81,43 @@ function record(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+async function findAutomatedReview(
+  options: {
+    reviews: Array<Record<string, unknown>>;
+    comments: Array<Record<string, unknown>>;
+    resolveCommit?: (ref: string) => Promise<string | undefined>;
+  },
+  headSha: string,
+) {
+  const decision = await findAutomatedReviewDecision(options, headSha);
+  return decision.kind === "success" ? decision.review : undefined;
+}
+
 describe("automated review gate", () => {
+  it("keeps success, failure, and waiting decisions distinct", async () => {
+    assertEquals(
+      (await findAutomatedReviewDecision(
+        { reviews: [review()], comments: [] },
+        HEAD_SHA,
+      )).kind,
+      "success",
+    );
+    assertEquals(
+      (await findAutomatedReviewDecision(
+        { reviews: [review({ state: "CHANGES_REQUESTED" })], comments: [] },
+        HEAD_SHA,
+      )).kind,
+      "failure",
+    );
+    assertEquals(
+      (await findAutomatedReviewDecision(
+        { reviews: [], comments: [] },
+        HEAD_SHA,
+      )).kind,
+      "waiting",
+    );
+  });
+
   it("accepts submitted CodeRabbit and Codex reviews for the current head", async () => {
     assertEquals(
       (await findAutomatedReview(
@@ -563,14 +605,76 @@ describe("automated review gate", () => {
       headSha: STALE_SHA,
       pullUrl: "https://github.com/veryfront/veryfront-code/pull/1",
     });
-    assertEquals(missing.state, "failure");
-    assert(
-      missing.failure instanceof Error &&
-        missing.failure.message.includes(STALE_SHA.slice(0, 12)),
-      "the failure must name the unreviewed head commit",
-    );
+    assertEquals(missing.state, "pending");
+    assertEquals(missing.review, undefined);
+    assertEquals(missing.failure, undefined);
     assertEquals(statuses[1]?.sha, STALE_SHA);
-    assertEquals(statuses[1]?.state, "failure");
+    assertEquals(statuses[1]?.state, "pending");
+    assertEquals(
+      statuses[1]?.description,
+      `Waiting for an automated review of ${STALE_SHA.slice(0, 12)}`,
+    );
+  });
+
+  it("publishes failure for completed negative exact-head outcomes", async () => {
+    const negativeEvidence = [
+      { reviews: [review({ state: "CHANGES_REQUESTED" })], comments: [] },
+      {
+        reviews: [],
+        comments: [codexNoFindingComment({
+          body: [
+            "Codex Review: Found an actionable issue.",
+            `**Reviewed commit:** \`${HEAD_SHA.slice(0, 10)}\``,
+          ].join("\n\n"),
+        })],
+      },
+      {
+        reviews: [],
+        comments: [codeRabbitSummary({
+          body: [
+            "<!-- recent_review_start -->",
+            "Actionable comments were generated in the recent review.",
+            `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+            "<!-- recent_review_end -->",
+          ].join("\n"),
+        })],
+      },
+    ];
+
+    for (const evidence of negativeEvidence) {
+      const statuses: Array<Record<string, unknown>> = [];
+      const listReviews = () => Promise.resolve();
+      const listComments = () => Promise.resolve();
+      const github = {
+        paginate: (endpoint: unknown) =>
+          Promise.resolve(
+            endpoint === listReviews ? evidence.reviews : evidence.comments,
+          ),
+        rest: {
+          issues: { listComments },
+          pulls: { listReviews },
+          repos: {
+            createCommitStatus: (status: Record<string, unknown>) => {
+              statuses.push(status);
+              return Promise.resolve();
+            },
+            getCommit: () => Promise.resolve({ data: { sha: HEAD_SHA } }),
+          },
+        },
+      };
+
+      const result = await publishAutomatedReviewStatus({
+        github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        headSha: HEAD_SHA,
+        pullUrl: "https://github.com/veryfront/veryfront-code/pull/1",
+      });
+
+      assertEquals(result.state, "failure");
+      assertEquals(statuses[0]?.state, "failure");
+    }
   });
 
   it("resolves a Codex comment to the exact commit before publishing success", async () => {
@@ -617,44 +721,48 @@ describe("automated review gate", () => {
     );
   });
 
-  it("publishes failure when a Codex commit cannot be resolved exactly", async () => {
-    const statuses: Array<Record<string, unknown>> = [];
-    const listReviews = () => Promise.resolve();
-    const listComments = () => Promise.resolve();
-    const github = {
-      paginate: (endpoint: unknown) =>
-        Promise.resolve(
-          endpoint === listComments ? [codexNoFindingComment()] : [],
-        ),
-      rest: {
-        issues: { listComments },
-        pulls: { listReviews },
-        repos: {
-          createCommitStatus: (status: Record<string, unknown>) => {
-            statuses.push(status);
-            return Promise.resolve();
+  it("fails closed when Codex commit resolution is rejected", async () => {
+    for (const status of [403, 429, 500]) {
+      const statuses: Array<Record<string, unknown>> = [];
+      const listReviews = () => Promise.resolve();
+      const listComments = () => Promise.resolve();
+      const github = {
+        paginate: (endpoint: unknown) =>
+          Promise.resolve(
+            endpoint === listComments ? [codexNoFindingComment()] : [],
+          ),
+        rest: {
+          issues: { listComments },
+          pulls: { listReviews },
+          repos: {
+            createCommitStatus: (commitStatus: Record<string, unknown>) => {
+              statuses.push(commitStatus);
+              return Promise.resolve();
+            },
+            getCommit: () =>
+              Promise.reject(Object.assign(new Error(`HTTP ${status}`), {
+                status,
+              })),
           },
-          getCommit: () =>
-            Promise.reject(Object.assign(new Error("ambiguous commit"), {
-              status: 422,
-            })),
         },
-      },
-    };
+      };
 
-    const result = await publishAutomatedReviewStatus({
-      github,
-      owner: "veryfront",
-      repo: "veryfront-code",
-      pullNumber: 1,
-      headSha: HEAD_SHA,
-      pullUrl: "https://github.com/veryfront/veryfront-code/pull/1",
-    });
+      const result = await publishAutomatedReviewStatus({
+        github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        headSha: HEAD_SHA,
+        pullUrl: "https://github.com/veryfront/veryfront-code/pull/1",
+      });
 
-    assertEquals(result.state, "failure");
-    assertEquals(result.review, undefined);
-    assertEquals(statuses[0]?.state, "failure");
-    assertEquals(statuses[0]?.sha, HEAD_SHA);
+      assertEquals(result.state, "failure");
+      assertEquals(statuses[0]?.state, "failure");
+      assert(
+        result.failure instanceof Error &&
+          result.failure.message.includes(String(status)),
+      );
+    }
   });
 
   it("fails closed when the review lookup throws", async () => {
@@ -728,6 +836,145 @@ describe("automated review gate", () => {
     assertEquals(statuses[0]?.sha, HEAD_SHA);
   });
 
+  it("requests an automated review at most once per head commit", async () => {
+    const posted: Array<Record<string, unknown>> = [];
+    const existing: Array<Record<string, unknown>> = [];
+    const listComments = () => Promise.resolve();
+    const github = {
+      paginate: () => Promise.resolve(existing),
+      rest: {
+        issues: {
+          listComments,
+          createComment: (comment: Record<string, unknown>) => {
+            posted.push(comment);
+            return Promise.resolve();
+          },
+        },
+        pulls: {
+          get: () => Promise.resolve({ data: { head: { sha: HEAD_SHA } } }),
+        },
+      },
+    };
+    const request = (headSha: string) =>
+      requestAutomatedReview({
+        github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        headSha,
+      });
+
+    const first = await request(HEAD_SHA);
+    assertEquals(first.requested, true);
+    assertEquals(posted, [{
+      owner: "veryfront",
+      repo: "veryfront-code",
+      issue_number: 1,
+      body: `<!-- automated-review-request: ${HEAD_SHA} -->\n@codex review`,
+    }]);
+
+    // A participant pasting the marker text must not suppress the request:
+    // only a workflow-authored marker comment counts, pinned by login and
+    // account type the way the gate pins the Codex bot.
+    existing.push(
+      { user: { login: "maintainer", type: "User" }, body: posted[0]?.body },
+      {
+        user: { login: "github-actions[bot]", type: "User" },
+        body: posted[0]?.body,
+      },
+      { body: posted[0]?.body },
+    );
+    const impersonated = await request(HEAD_SHA);
+    assertEquals(impersonated.requested, true);
+    assertEquals(posted.length, 2);
+
+    // A rerun for the same head finds the workflow-authored marker and does
+    // not post again.
+    existing.push({
+      user: { login: "github-actions[bot]", type: "Bot" },
+      body: posted[0]?.body,
+    });
+    const second = await request(HEAD_SHA);
+    assertEquals(second.requested, false);
+    assertEquals(posted.length, 2);
+
+    // A new head commit carries a new marker and gets its own request.
+    github.rest.pulls.get = () =>
+      Promise.resolve({ data: { head: { sha: STALE_SHA } } });
+    const third = await request(STALE_SHA);
+    assertEquals(third.requested, true);
+    assertEquals(
+      posted[2]?.body,
+      `<!-- automated-review-request: ${STALE_SHA} -->\n@codex review`,
+    );
+  });
+
+  it("does not post from a stale queued synchronize event", async () => {
+    let posted = false;
+    const github = {
+      paginate: () => Promise.resolve([]),
+      rest: {
+        issues: {
+          listComments: () => Promise.resolve(),
+          createComment: () => {
+            posted = true;
+            return Promise.resolve();
+          },
+        },
+        pulls: {
+          get: () => Promise.resolve({ data: { head: { sha: STALE_SHA } } }),
+        },
+      },
+    };
+
+    const result = await requestAutomatedReview({
+      github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD_SHA,
+    });
+
+    assertEquals(result.requested, false);
+    assertEquals(result.reason, "stale-head");
+    assertEquals(posted, false);
+  });
+
+  it("refuses to request a review of a malformed head commit", async () => {
+    const github = {
+      paginate: () => Promise.resolve([]),
+      rest: {
+        issues: {
+          listComments: () => Promise.resolve(),
+          createComment: () => {
+            throw new Error("must not post for a malformed commit");
+          },
+        },
+        pulls: { get: () => Promise.resolve() },
+      },
+    };
+    for (
+      const malformed of [
+        HEAD_SHA.slice(0, 39),
+        `${HEAD_SHA} --><script>`,
+        "@codex review",
+      ]
+    ) {
+      await assertRejects(
+        () =>
+          requestAutomatedReview({
+            github,
+            owner: "veryfront",
+            repo: "veryfront-code",
+            pullNumber: 1,
+            headSha: malformed,
+          }),
+        Error,
+        "malformed head commit",
+      );
+    }
+  });
+
   it("uses trusted base code and reruns when a real review is submitted", async () => {
     const workflow = record(
       parse(await Deno.readTextFile(WORKFLOW_PATH)),
@@ -754,7 +1001,7 @@ describe("automated review gate", () => {
     assertEquals(permissions, {
       contents: "read",
       issues: "read",
-      "pull-requests": "read",
+      "pull-requests": "write",
       statuses: "write",
     });
 
@@ -827,6 +1074,49 @@ describe("automated review gate", () => {
       script.includes("Review gate is unavailable on the default branch") &&
         script.includes('state: "failure"'),
       "a gate that fails to load must publish a failure status, not no status",
+    );
+    assertEquals(
+      gate.id,
+      "publish",
+      "the request step reads the published state from this step's output",
+    );
+    assertEquals(
+      record(gate.with, "automated review gate inputs")["result-encoding"],
+      "string",
+      "the published state must land in the step output as a plain string",
+    );
+
+    const request = record(steps[2], "automated review request step");
+    assertEquals(
+      request.uses,
+      "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3",
+    );
+    const requestCondition = String(request.if);
+    for (
+      const guard of [
+        "github.event_name == 'pull_request_target'",
+        "github.event.pull_request.draft == false",
+        "github.event.action == 'synchronize'",
+        "steps.publish.outputs.result == 'pending'",
+      ]
+    ) {
+      assertStringIncludes(
+        requestCondition,
+        guard,
+        "a review request is posted only for a trusted non-draft push that left the status pending",
+      );
+    }
+    assert(
+      !requestCondition.includes("ready_for_review") &&
+        !requestCondition.includes("opened"),
+      "open and ready-for-review events are already handled by the connector",
+    );
+    const requestScript = String(
+      record(request.with, "automated review request inputs").script,
+    );
+    assert(
+      requestScript.includes("requestAutomatedReview"),
+      "the workflow must post review requests through the tested gate helper",
     );
   });
 });

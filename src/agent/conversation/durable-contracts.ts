@@ -411,6 +411,7 @@ export const getConversationRunErrorSchema = defineSchema((v) =>
   v.object({
     detail: v.string().min(1).optional(),
     error: v.string().min(1).optional(),
+    slug: v.string().min(1).optional(),
   })
 );
 

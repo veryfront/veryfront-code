@@ -365,4 +365,54 @@ describe("tool-replay-reconciliation", () => {
       assertEquals(matches.matchedToolResultParts.has(lateResult), false);
     },
   );
+
+  it(
+    "ends a pending call's window at a user message that carries only a file",
+    () => {
+      // Same fixture as above, but the user turn holds no text at all, so only
+      // the file half of the user branch in isProviderVisibleNonToolPart can
+      // close the pending-call window.
+      const staleCall = dynamicToolCall(
+        "only-call",
+        "github__get_pr_diff",
+        { pull_number: 1 },
+        "streaming",
+      );
+      const lateResult = rawToolResult(
+        "only-call",
+        { files: ["late.ts"] },
+        "github__get_pr_diff",
+      );
+
+      const matches = findProviderVisibleToolReplayMatches([
+        assistantMessage([staleCall], "assistant-1"),
+        {
+          id: "user-2",
+          role: "user",
+          parts: [{
+            type: "file",
+            mediaType: "image/png",
+            url: "https://files.example.com/shot.png",
+          }] as ChatProviderModelInputPart[],
+        },
+        assistantMessage([lateResult], "assistant-3"),
+      ]);
+
+      assertEquals(
+        matches.matchedToolCallParts.has(staleCall),
+        false,
+        "a file-only user boundary must leave the stale call unmatched",
+      );
+      assertEquals(
+        matches.preservedTransientToolParts.has(staleCall),
+        false,
+        "a file-only user boundary must not preserve the stale transient call",
+      );
+      assertEquals(
+        matches.matchedToolResultParts.has(lateResult),
+        false,
+        "a result after a file-only user boundary must not resolve the stale call",
+      );
+    },
+  );
 });

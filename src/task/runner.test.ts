@@ -1,16 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { createInMemoryHostRuntime } from "#veryfront/platform/compat/process.ts";
 import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { runTask } from "./runner.ts";
-import type { DiscoveredTask } from "./discovery.ts";
+import { type RunnableTask, runTask } from "./runner.ts";
 import type { TaskDefinition } from "./types.ts";
 
-function makeTask(definition: TaskDefinition, id = "test-task"): DiscoveredTask {
+function makeTask(definition: TaskDefinition, id = "test-task"): RunnableTask {
   return {
     id,
     name: definition.name || id,
-    filePath: `tasks/${id}.ts`,
-    exportName: "default",
     definition,
   };
 }
@@ -23,7 +21,7 @@ describe("src/task/runner", () => {
         run: () => ({ count: 42 }),
       });
 
-      const result = await runTask({ task });
+      const result = await runTask({ task }, createInMemoryHostRuntime());
 
       assertEquals(result.success, true);
       assertEquals(result.result, { count: 42 });
@@ -39,7 +37,7 @@ describe("src/task/runner", () => {
         },
       });
 
-      const result = await runTask({ task });
+      const result = await runTask({ task }, createInMemoryHostRuntime());
 
       assertEquals(result.success, true);
       assertEquals(result.result, "done");
@@ -53,7 +51,7 @@ describe("src/task/runner", () => {
         },
       });
 
-      const result = await runTask({ task });
+      const result = await runTask({ task }, createInMemoryHostRuntime());
 
       assertEquals(result.success, false);
       assertEquals(result.error, "something went wrong");
@@ -69,14 +67,13 @@ describe("src/task/runner", () => {
         },
       });
 
-      const result = await runTask({ task });
+      const result = await runTask({ task }, createInMemoryHostRuntime());
 
       assertEquals(result.success, false);
       assertEquals(result.error, "async failure");
     });
 
     it("should fail without invoking the task when injected project env is malformed", async () => {
-      const originalTaskEnvJson = Deno.env.get("VERYFRONT_TASK_ENV_JSON");
       let invoked = false;
       const task = makeTask({
         run: () => {
@@ -85,18 +82,10 @@ describe("src/task/runner", () => {
         },
       });
 
-      const result = await (async () => {
-        try {
-          Deno.env.set("VERYFRONT_TASK_ENV_JSON", "not-json");
-          return await runTask({ task });
-        } finally {
-          if (originalTaskEnvJson === undefined) {
-            Deno.env.delete("VERYFRONT_TASK_ENV_JSON");
-          } else {
-            Deno.env.set("VERYFRONT_TASK_ENV_JSON", originalTaskEnvJson);
-          }
-        }
-      })();
+      const host = createInMemoryHostRuntime({
+        env: { VERYFRONT_TASK_ENV_JSON: "not-json" },
+      });
+      const result = await runTask({ task }, host);
 
       assertEquals(invoked, false);
       assertEquals(result.success, false);
@@ -112,7 +101,10 @@ describe("src/task/runner", () => {
         },
       });
 
-      await runTask({ task, config: { key: "value" } });
+      await runTask(
+        { task, config: { key: "value" } },
+        createInMemoryHostRuntime(),
+      );
 
       assertEquals(receivedConfig, { key: "value" });
     });
@@ -126,7 +118,10 @@ describe("src/task/runner", () => {
         },
       });
 
-      await runTask({ task, projectId: "proj-123" });
+      await runTask(
+        { task, projectId: "proj-123" },
+        createInMemoryHostRuntime(),
+      );
 
       assertEquals(receivedProjectId, "proj-123");
     });
@@ -140,7 +135,10 @@ describe("src/task/runner", () => {
         },
       });
 
-      await runTask({ task, environmentId: "env-123" });
+      await runTask(
+        { task, environmentId: "env-123" },
+        createInMemoryHostRuntime(),
+      );
 
       assertEquals(receivedEnvironmentId, "env-123");
     });
@@ -155,7 +153,10 @@ describe("src/task/runner", () => {
         },
       });
 
-      const result = await runTask({ task, signal: controller.signal });
+      const result = await runTask(
+        { task, signal: controller.signal },
+        createInMemoryHostRuntime(),
+      );
 
       assertEquals(result.success, true);
       assertStrictEquals(receivedSignal, controller.signal);
@@ -172,7 +173,10 @@ describe("src/task/runner", () => {
         },
       });
 
-      const result = await runTask({ task, signal: controller.signal });
+      const result = await runTask(
+        { task, signal: controller.signal },
+        createInMemoryHostRuntime(),
+      );
 
       assertEquals(invoked, false);
       assertEquals(result.success, false);
@@ -183,9 +187,6 @@ describe("src/task/runner", () => {
 
     it("should merge injected task env into ctx.env without exposing reserved runtime env", async () => {
       let receivedEnv: Record<string, string> = {};
-      const originalTaskEnvJson = Deno.env.get("VERYFRONT_TASK_ENV_JSON");
-      const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
-      const originalTenantToken = Deno.env.get("TENANT_TOKEN");
       const task = makeTask({
         run: (ctx) => {
           receivedEnv = ctx.env;
@@ -193,38 +194,19 @@ describe("src/task/runner", () => {
         },
       });
 
-      try {
-        Deno.env.set(
-          "VERYFRONT_TASK_ENV_JSON",
-          JSON.stringify({
+      const host = createInMemoryHostRuntime({
+        env: {
+          VERYFRONT_TASK_ENV_JSON: JSON.stringify({
             SERVICENOW_USERNAME: "automation@example.com",
             AI_GATEWAY_TOKEN: "project-token",
             VERYFRONT_API_TOKEN: "should-be-filtered",
           }),
-        );
-        Deno.env.set("VERYFRONT_API_TOKEN", "tenant-token");
-        Deno.env.set("TENANT_TOKEN", "raw-tenant-token");
+          VERYFRONT_API_TOKEN: "tenant-token",
+          TENANT_TOKEN: "raw-tenant-token",
+        },
+      });
 
-        await runTask({ task });
-      } finally {
-        if (originalTaskEnvJson === undefined) {
-          Deno.env.delete("VERYFRONT_TASK_ENV_JSON");
-        } else {
-          Deno.env.set("VERYFRONT_TASK_ENV_JSON", originalTaskEnvJson);
-        }
-
-        if (originalApiToken === undefined) {
-          Deno.env.delete("VERYFRONT_API_TOKEN");
-        } else {
-          Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
-        }
-
-        if (originalTenantToken === undefined) {
-          Deno.env.delete("TENANT_TOKEN");
-        } else {
-          Deno.env.set("TENANT_TOKEN", originalTenantToken);
-        }
-      }
+      await runTask({ task }, host);
 
       assertEquals(receivedEnv.SERVICENOW_USERNAME, "automation@example.com");
       assertEquals(receivedEnv.AI_GATEWAY_TOKEN, "project-token");
@@ -235,27 +217,20 @@ describe("src/task/runner", () => {
 
     it("should ignore unsafe injected env keys", async () => {
       let receivedEnv: Record<string, string> = {};
-      const originalTaskEnvJson = Deno.env.get("VERYFRONT_TASK_ENV_JSON");
       const task = makeTask({
         run: (ctx) => {
           receivedEnv = ctx.env;
           return null;
         },
       });
-      try {
-        Deno.env.set(
-          "VERYFRONT_TASK_ENV_JSON",
-          '{"SERVICENOW_USERNAME":"automation@example.com","__proto__":"polluted","constructor":"polluted","prototype":"polluted"}',
-        );
+      const host = createInMemoryHostRuntime({
+        env: {
+          VERYFRONT_TASK_ENV_JSON:
+            '{"SERVICENOW_USERNAME":"automation@example.com","__proto__":"polluted","constructor":"polluted","prototype":"polluted"}',
+        },
+      });
 
-        await runTask({ task });
-      } finally {
-        if (originalTaskEnvJson === undefined) {
-          Deno.env.delete("VERYFRONT_TASK_ENV_JSON");
-        } else {
-          Deno.env.set("VERYFRONT_TASK_ENV_JSON", originalTaskEnvJson);
-        }
-      }
+      await runTask({ task }, host);
 
       assertEquals(receivedEnv.SERVICENOW_USERNAME, "automation@example.com");
       assertEquals(Object.keys(receivedEnv).includes("__proto__"), false);
@@ -265,8 +240,6 @@ describe("src/task/runner", () => {
 
     it("should apply envAllowlist to injected task env", async () => {
       let receivedEnv: Record<string, string> = {};
-      const originalTaskEnvJson = Deno.env.get("VERYFRONT_TASK_ENV_JSON");
-      const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
       const task = makeTask({
         run: (ctx) => {
           receivedEnv = ctx.env;
@@ -274,31 +247,21 @@ describe("src/task/runner", () => {
         },
       });
 
-      try {
-        Deno.env.set(
-          "VERYFRONT_TASK_ENV_JSON",
-          JSON.stringify({
+      const host = createInMemoryHostRuntime({
+        env: {
+          VERYFRONT_TASK_ENV_JSON: JSON.stringify({
             SERVICENOW_USERNAME: "automation@example.com",
             AI_GATEWAY_TOKEN: "project-token",
             VERYFRONT_API_TOKEN: "should-be-filtered",
           }),
-        );
-        Deno.env.set("VERYFRONT_API_TOKEN", "tenant-token");
+          VERYFRONT_API_TOKEN: "tenant-token",
+        },
+      });
 
-        await runTask({ task, envAllowlist: ["SERVICENOW_USERNAME", "AI_GATEWAY_TOKEN"] });
-      } finally {
-        if (originalTaskEnvJson === undefined) {
-          Deno.env.delete("VERYFRONT_TASK_ENV_JSON");
-        } else {
-          Deno.env.set("VERYFRONT_TASK_ENV_JSON", originalTaskEnvJson);
-        }
-
-        if (originalApiToken === undefined) {
-          Deno.env.delete("VERYFRONT_API_TOKEN");
-        } else {
-          Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
-        }
-      }
+      await runTask(
+        { task, envAllowlist: ["SERVICENOW_USERNAME", "AI_GATEWAY_TOKEN"] },
+        host,
+      );
 
       assertEquals(receivedEnv.SERVICENOW_USERNAME, "automation@example.com");
       assertEquals(receivedEnv.AI_GATEWAY_TOKEN, "project-token");
@@ -308,9 +271,6 @@ describe("src/task/runner", () => {
 
     it("should hide platform control env from ctx.env while preserving injected project env", async () => {
       let receivedEnv: Record<string, string> = {};
-      const originalProjectApiUrl = Deno.env.get("VERYFRONT_PROJECT_API_URL");
-      const originalBranchId = Deno.env.get("TENANT_BRANCH_ID");
-      const originalTaskEnvJson = Deno.env.get("VERYFRONT_TASK_ENV_JSON");
       const task = makeTask({
         run: (ctx) => {
           receivedEnv = ctx.env;
@@ -318,44 +278,39 @@ describe("src/task/runner", () => {
         },
       });
 
-      try {
-        Deno.env.set("VERYFRONT_PROJECT_API_URL", "https://api.veryfront.com");
-        Deno.env.set("TENANT_BRANCH_ID", "branch-123");
-        Deno.env.set(
-          "VERYFRONT_TASK_ENV_JSON",
-          JSON.stringify({
+      const host = createInMemoryHostRuntime({
+        env: {
+          VERYFRONT_PROJECT_API_URL: "https://api.veryfront.com",
+          TENANT_BRANCH_ID: "branch-123",
+          VERYFRONT_TASK_ENV_JSON: JSON.stringify({
             AI_GATEWAY_TOKEN: "project-token",
             SERVICENOW_PASSWORD: "servicenow-password",
             VERYFRONT_API_TOKEN: "should-be-filtered",
           }),
-        );
+        },
+      });
 
-        await runTask({ task });
-      } finally {
-        if (originalProjectApiUrl === undefined) {
-          Deno.env.delete("VERYFRONT_PROJECT_API_URL");
-        } else {
-          Deno.env.set("VERYFRONT_PROJECT_API_URL", originalProjectApiUrl);
-        }
-
-        if (originalBranchId === undefined) {
-          Deno.env.delete("TENANT_BRANCH_ID");
-        } else {
-          Deno.env.set("TENANT_BRANCH_ID", originalBranchId);
-        }
-
-        if (originalTaskEnvJson === undefined) {
-          Deno.env.delete("VERYFRONT_TASK_ENV_JSON");
-        } else {
-          Deno.env.set("VERYFRONT_TASK_ENV_JSON", originalTaskEnvJson);
-        }
-      }
+      await runTask({ task }, host);
 
       assertEquals(receivedEnv.VERYFRONT_PROJECT_API_URL, undefined);
       assertEquals(receivedEnv.TENANT_BRANCH_ID, undefined);
       assertEquals(receivedEnv.VERYFRONT_API_TOKEN, undefined);
       assertEquals(receivedEnv.AI_GATEWAY_TOKEN, "project-token");
       assertEquals(receivedEnv.SERVICENOW_PASSWORD, "servicenow-password");
+    });
+
+    it("should contain thrown values that cannot be converted to strings", async () => {
+      const thrown = Object.create(null);
+      const task = makeTask({
+        run() {
+          throw thrown;
+        },
+      });
+
+      const result = await runTask({ task }, createInMemoryHostRuntime());
+
+      assertEquals(result.success, false);
+      assertEquals(result.error, "Unknown error");
     });
   });
 });

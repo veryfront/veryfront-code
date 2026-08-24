@@ -112,19 +112,88 @@ describe("embedding/model-resolution", () => {
       );
     });
 
-    // NOTE: The compiled-binary cloud fallback (isDenoCompiled branch) cannot
-    // be tested in deno test because isDenoCompiled is false at test time.
-    // It is verified by the compiled binary integration tests.
-    // The fallback logic itself (OPENAI_API_KEY → openai/..., GOOGLE_API_KEY
-    // → google/...) is exercised indirectly through the tests below that
-    // confirm the local model is returned when no keys are set — proving the
-    // fallback path returns undefined and doesn't interfere.
+    // NOTE: Only the `isDenoCompiled` detection itself is untestable here. It
+    // is false at test time and verified by the compiled binary integration
+    // tests. The branch it guards is covered by passing `compiled` explicitly.
+
+    it("prefers a configured veryfront cloud project over API keys in a compiled binary", () => {
+      setEnv("VERYFRONT_API_TOKEN", "vf_test");
+      setEnv("VERYFRONT_PROJECT_SLUG", "test-project");
+      setEnv("OPENAI_API_KEY", "sk-test");
+
+      assertEquals(
+        resolveConfiguredEmbeddingModel(undefined, { compiled: true }),
+        "veryfront-cloud/openai/text-embedding-3-small",
+        "a configured veryfront cloud project must outrank a bare OPENAI_API_KEY even in a compiled binary",
+      );
+    });
+
+    it("falls back to the cloud API key model in a compiled binary", () => {
+      setEnv("OPENAI_API_KEY", "sk-test");
+
+      assertEquals(
+        resolveConfiguredEmbeddingModel(undefined, { compiled: true }),
+        "openai/text-embedding-3-small",
+        "a compiled binary must fall back to the cloud key instead of the unavailable local ONNX model",
+      );
+    });
 
     it("returns local model when no API keys or cloud bootstrap are set", () => {
       assertEquals(
         resolveConfiguredEmbeddingModel(),
         "local/all-MiniLM-L6-v2",
         "should use local model as final fallback",
+      );
+    });
+  });
+
+  describe("cloud fallback selection in a compiled binary", () => {
+    it("maps OPENAI_API_KEY to the OpenAI embedding model", () => {
+      setEnv("OPENAI_API_KEY", "sk-test");
+
+      assertEquals(
+        resolveConfiguredEmbeddingModel(undefined, { compiled: true }),
+        "openai/text-embedding-3-small",
+        "OPENAI_API_KEY must select the OpenAI embedding model",
+      );
+    });
+
+    it("maps GOOGLE_API_KEY to the Google embedding model", () => {
+      setEnv("GOOGLE_API_KEY", "google-test");
+
+      assertEquals(
+        resolveConfiguredEmbeddingModel(undefined, { compiled: true }),
+        "google/text-embedding-004",
+        "GOOGLE_API_KEY must select the Google embedding model",
+      );
+    });
+
+    it("maps GOOGLE_GENERATIVE_AI_API_KEY to the Google embedding model", () => {
+      setEnv("GOOGLE_GENERATIVE_AI_API_KEY", "google-test");
+
+      assertEquals(
+        resolveConfiguredEmbeddingModel(undefined, { compiled: true }),
+        "google/text-embedding-004",
+        "GOOGLE_GENERATIVE_AI_API_KEY must select the Google embedding model",
+      );
+    });
+
+    it("prefers OpenAI when both OpenAI and Google keys are set", () => {
+      setEnv("OPENAI_API_KEY", "sk-test");
+      setEnv("GOOGLE_API_KEY", "google-test");
+
+      assertEquals(
+        resolveConfiguredEmbeddingModel(undefined, { compiled: true }),
+        "openai/text-embedding-3-small",
+        "OpenAI must win when both cloud API keys are present",
+      );
+    });
+
+    it("returns undefined when no cloud API key is set", () => {
+      assertEquals(
+        resolveConfiguredEmbeddingModel(undefined, { compiled: true }),
+        "local/all-MiniLM-L6-v2",
+        "no cloud API key must leave the compiled binary on the local default",
       );
     });
   });

@@ -62,4 +62,17 @@ Deno.test("Development UI asset provider enforces canonical source and byte limi
     RangeError,
     `${MAX_DEV_UI_BUNDLE_BYTES}-byte limit`,
   );
+
+  const multiByte = "\u{1F600}".repeat(MAX_DEV_UI_BUNDLE_BYTES / 4 + 1);
+  assertEquals(
+    multiByte.length <= MAX_DEV_UI_BUNDLE_BYTES,
+    true,
+    "the multi-byte fixture must pass the UTF-16 length pre-check",
+  );
+  assertThrows(
+    () => createDevUiAssetProvider(multiByte),
+    RangeError,
+    `${MAX_DEV_UI_BUNDLE_BYTES}-byte limit`,
+    "a multi-byte bundle must be measured in UTF-8 bytes",
+  );
 });

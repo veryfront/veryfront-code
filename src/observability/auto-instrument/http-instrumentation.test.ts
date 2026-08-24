@@ -4,12 +4,15 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   _resetShimForTests,
   type AttributeValue,
+  propagation,
   setGlobalContextAccessor,
   setGlobalTracerProvider,
   type Span,
   type Tracer,
 } from "../tracing/api-shim.ts";
 import { createInstrumentedFetch, instrumentHttpHandler } from "./http-instrumentation.ts";
+
+const TEST_TRACEPARENT = `00-${"1".repeat(32)}-${"1".repeat(16)}-01`;
 
 type SpanFailure = "setAttributes" | "recordException" | "end";
 type ActiveSpanBehavior = "duplicate" | "omit" | "replace" | "throw-after";
@@ -122,6 +125,13 @@ describe("observability/auto-instrument/http-instrumentation", () => {
     installTracer(undefined, (attributes) => {
       spanAttributes = attributes;
     });
+    propagation.setGlobalPropagator({
+      inject: (_ctx, carrier, setter) => {
+        setter?.set(carrier, "traceparent", TEST_TRACEPARENT);
+      },
+      extract: (ctx) => ctx,
+      fields: () => ["traceparent"],
+    });
 
     let received: Request | undefined;
     const baseFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -143,6 +153,11 @@ describe("observability/auto-instrument/http-instrumentation", () => {
     assertEquals(received?.headers.get("authorization"), "Bearer <TOKEN>");
     assertEquals(received?.headers.get("x-request-id"), "request-1");
     assertEquals(spanAttributes["http.method"], "POST");
+    assertEquals(
+      received?.headers.get("traceparent"),
+      TEST_TRACEPARENT,
+      "outbound fetch must carry the injected trace context",
+    );
   });
 
   it("runs HTTP handlers exactly once despite adversarial active-span providers", async () => {

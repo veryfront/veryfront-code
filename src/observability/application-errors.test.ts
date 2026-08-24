@@ -13,6 +13,7 @@ import {
   setApplicationErrorReporter,
 } from "./application-errors.ts";
 import type { ApplicationErrorContext as SharedApplicationErrorContext } from "./application-error-contract.ts";
+import { MAX_APPLICATION_ERROR_CONTEXT_VALUE_LENGTH } from "./limits.ts";
 import {
   ASSET_OPTIMIZATION_ERROR,
   BUILD_FAILED,
@@ -82,6 +83,49 @@ it("application error reporter receives unexpected failures and correlation cont
   }]);
   assertEquals(await flushApplicationErrors(1_500), true);
   assertEquals(flushTimeout, 1_500);
+});
+
+it("application error context is redacted and length bounded before it reaches the reporter", () => {
+  const snapshots: SharedApplicationErrorContext[] = [];
+  setApplicationErrorReporter({
+    capture(_error, context) {
+      snapshots.push(context);
+      return "event-id";
+    },
+    flush: () => Promise.resolve(true),
+  });
+
+  captureApplicationError(new Error("boom"), {
+    boundary: "renderer.request",
+    requestId: "https://user:password@example.test/x?token=secret",
+    attributes: { apiKey: "secret", safe: "value" },
+  });
+
+  const redacted = snapshots[0];
+  assertEquals(
+    redacted?.attributes?.apiKey,
+    "[REDACTED]",
+    "credential-like attribute keys must be redacted before reaching the reporter",
+  );
+  assertEquals(
+    redacted?.attributes?.safe,
+    "value",
+    "non-sensitive attributes must survive sanitization",
+  );
+  assertEquals(
+    redacted?.requestId,
+    "https://user:[REDACTED]@example.test/x?token=[REDACTED]",
+    "URL credentials must be stripped from context values",
+  );
+
+  captureApplicationError(new Error("boom"), {
+    boundary: "b".repeat(MAX_APPLICATION_ERROR_CONTEXT_VALUE_LENGTH + 50),
+  });
+  assertEquals(
+    snapshots[1]?.boundary.length,
+    MAX_APPLICATION_ERROR_CONTEXT_VALUE_LENGTH,
+    "context values are truncated to the documented cap",
+  );
 });
 
 it("application error context exports process role from the shared contract", () => {

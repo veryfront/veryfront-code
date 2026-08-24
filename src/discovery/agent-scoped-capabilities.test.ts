@@ -328,7 +328,7 @@ Deno.test({
       await Deno.mkdir(`${root}/agents/researcher/tools`, { recursive: true });
       await Deno.writeTextFile(
         `${root}/agents/researcher/AGENT.md`,
-        `---\nname: Researcher\ntools: [fetch-paper]\n---\nResearch.\n`,
+        `---\nname: Researcher\ntools: [fetch-paper, summarize]\n---\nResearch.\n`,
       );
       await Deno.writeTextFile(
         `${root}/agents/researcher/tools/fetch-paper.ts`,
@@ -355,14 +355,56 @@ Deno.test({
 };
 `,
       );
+      // Authored the idiomatic way: `tool()` with no explicit id, so the
+      // factory stamps a generated `tool_<epoch>_<n>` id that must not become
+      // the agent-facing short name.
+      await Deno.writeTextFile(
+        `${root}/agents/researcher/tools/summarize.ts`,
+        `import { tool } from "veryfront/tool";
+
+export default tool({
+  description: "Summarize a paper",
+  inputSchema: { type: "object", properties: {} },
+  execute: () => Promise.resolve({ ok: true }),
+});
+`,
+      );
+      // A module whose explicit id namespaces into a provider-unsafe tool
+      // name is rejected at registration instead of reaching the registry.
+      await Deno.writeTextFile(
+        `${root}/agents/researcher/tools/aa-unsafe.ts`,
+        `export const unsafe = {
+  id: "fetch.paper",
+  type: "function",
+  description: "Dotted id is not provider safe",
+  inputSchema: { type: "object", properties: {} },
+  execute: () => Promise.resolve({ ok: false, unsafe: true }),
+};
+`,
+      );
 
       const result = await discoverAll({ baseDir: root });
       const duplicateErrors = result.errors.filter((entry) =>
         String(entry.error).includes('Duplicate colocated tool "fetch-paper"')
       );
       assertEquals(duplicateErrors.length, 1);
+      const unsafeErrors = result.errors.filter((entry) =>
+        String(entry.error).includes('invalid tool name "researcher--fetch.paper"')
+      );
       assertEquals(
-        result.errors.filter((entry) => !duplicateErrors.includes(entry)),
+        unsafeErrors.length,
+        1,
+        "an unsafe namespaced tool name must be reported at discovery",
+      );
+      assertEquals(
+        toolRegistry.get("researcher--fetch.paper"),
+        undefined,
+        "a provider-unsafe tool name must not reach the registry",
+      );
+      assertEquals(
+        result.errors.filter((entry) =>
+          !duplicateErrors.includes(entry) && !unsafeErrors.includes(entry)
+        ),
         [],
       );
 
@@ -384,6 +426,25 @@ Deno.test({
         assertEquals(String(error).includes("not found"), true);
       }
       assertEquals(rejected, true);
+
+      // A tool authored without an explicit id falls back to its filename for
+      // the agent-facing short name instead of leaking the generated id.
+      const generated = toolRegistry.get("researcher--summarize");
+      assertEquals(
+        generated?.shortName,
+        "summarize",
+        "a generated tool id must fall back to the filename short name",
+      );
+      assertEquals(
+        generated?.ownerAgentId,
+        "researcher",
+        "colocated tools must carry owner metadata",
+      );
+      assertEquals(
+        await executeTool("researcher--summarize", {}, { agentId: "researcher" }),
+        { ok: true },
+        "the owner must be able to execute its filename-named tool",
+      );
     } finally {
       skillRegistryInternal.clearAll();
       clearMCPRegistry();

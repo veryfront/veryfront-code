@@ -73,6 +73,40 @@ describe("capabilities", () => {
       assertEquals(perms, ["--allow-read=./src,./public"]);
     });
 
+    it("maps fs:write to a scoped --allow-write and keeps read and write flags separate", () => {
+      assertEquals(
+        mapToDenoPermissions([{ type: "fs:write", paths: ["./dist", "./cache"] }]),
+        ["--allow-write=./dist,./cache"],
+        "fs:write must emit a path-scoped --allow-write",
+      );
+      assertEquals(
+        mapToDenoPermissions([
+          { type: "fs:read", paths: ["./src"] },
+          { type: "fs:write", paths: ["./dist"] },
+        ]),
+        ["--allow-read=./src", "--allow-write=./dist"],
+        "fs:read and fs:write scopes must not merge into one flag",
+      );
+      assertEquals(
+        mapToDenoPermissions([{ type: "fs:write" }]),
+        ["--allow-write"],
+        "an unscoped fs:write stays unscoped",
+      );
+    });
+
+    it("maps native:ffi to exactly --allow-ffi", () => {
+      assertEquals(
+        mapToDenoPermissions([{ type: "native:ffi" }]),
+        ["--allow-ffi"],
+        "native:ffi must map to --allow-ffi and nothing broader",
+      );
+      assertEquals(
+        mapToDenoPermissions([{ type: "native:ffi" }, { type: "env:read", keys: ["A"] }]),
+        ["--allow-ffi", "--allow-env=A"],
+        "an unscoped ffi flag must aggregate alongside scoped flags, not replace them",
+      );
+    });
+
     it("should map net:outbound to --allow-net with hosts", () => {
       const caps: Capability[] = [{ type: "net:outbound", hosts: ["api.example.com"] }];
       const perms = mapToDenoPermissions(caps);

@@ -336,6 +336,26 @@ describe("observability/tracing/span-operations", () => {
       assertEquals(mockSpan._attributes.count, 42);
     });
 
+    it("redacts sensitive and URL credential attribute values", () => {
+      const mockSpan = createMockSpan();
+
+      ops.setAttributes(mockSpan, {
+        apiKey: "secret",
+        endpoint: "https://example.test/path?token=secret",
+      });
+
+      assertEquals(
+        mockSpan._attributes.apiKey,
+        "[REDACTED]",
+        "setAttributes must redact secret values",
+      );
+      assertEquals(
+        mockSpan._attributes.endpoint,
+        "https://example.test/path?token=[REDACTED]",
+        "setAttributes must redact URL credentials",
+      );
+    });
+
     it("should handle null span gracefully", () => {
       ops.setAttributes(null, { key: "value" });
     });
@@ -367,6 +387,23 @@ describe("observability/tracing/span-operations", () => {
       assertEquals(mockSpan._events[0]?.name, "user.action");
     });
 
+    it("redacts sensitive event attributes", () => {
+      const mockSpan = createMockSpan();
+
+      ops.addEvent(mockSpan, "user.action", { apiKey: "secret", "user.id": "123" });
+
+      assertEquals(
+        mockSpan._events[0]?.attributes?.apiKey,
+        "[REDACTED]",
+        "event attributes must be sanitized",
+      );
+      assertEquals(
+        mockSpan._events[0]?.attributes?.["user.id"],
+        "123",
+        "non-sensitive event attributes must survive sanitization",
+      );
+    });
+
     it("should add an event without attributes", () => {
       const mockSpan = createMockSpan();
       ops.addEvent(mockSpan, "checkpoint");
@@ -392,13 +429,56 @@ describe("observability/tracing/span-operations", () => {
   describe("createChildSpan", () => {
     it("should create a child span from parent", () => {
       const parentSpan = createMockSpan();
+      const expectedContext = { _type: "parent-context" } as never;
+      let setSpanArgument: unknown;
+      let receivedContext: unknown;
+      api.trace.setSpan = (_context, span) => {
+        setSpanArgument = span;
+        return expectedContext;
+      };
+      tracer = {
+        startSpan: (_name, _options, context) => {
+          receivedContext = context;
+          return createMockSpan();
+        },
+        startActiveSpan: (() => {}) as never,
+      };
+      ops = new SpanOperations(api, tracer);
+
       const child = ops.createChildSpan(parentSpan, "child.operation");
+
       assertEquals(child !== null, true);
+      assertStrictEquals(
+        setSpanArgument,
+        parentSpan,
+        "the parent span is the one handed to trace.setSpan",
+      );
+      assertStrictEquals(
+        receivedContext,
+        expectedContext,
+        "a child span must be started in the parent context produced by trace.setSpan",
+      );
     });
 
     it("should create root span when parent is null", () => {
+      let receivedContext: unknown = "unset";
+      tracer = {
+        startSpan: (_name, _options, context) => {
+          receivedContext = context;
+          return createMockSpan();
+        },
+        startActiveSpan: (() => {}) as never,
+      };
+      ops = new SpanOperations(api, tracer);
+
       const span = ops.createChildSpan(null, "root.operation");
+
       assertEquals(span !== null, true);
+      assertEquals(
+        receivedContext,
+        undefined,
+        "a span without a parent must be started with no parent context",
+      );
     });
 
     it("should accept span options for child span", () => {
@@ -429,34 +509,58 @@ describe("observability/tracing/span-operations", () => {
   });
 
   describe("mapSpanKind (via startSpan)", () => {
+    let receivedKind: unknown;
+
+    beforeEach(() => {
+      receivedKind = undefined;
+      tracer = {
+        startSpan: (_name, options) => {
+          receivedKind = options?.kind;
+          return createMockSpan();
+        },
+        startActiveSpan: (() => {}) as never,
+      };
+      ops = new SpanOperations(api, tracer);
+    });
+
     it("should map 'internal' kind", () => {
       const span = ops.startSpan("test", { kind: "internal" });
       assertEquals(span !== null, true);
+      assertEquals(receivedKind, api.SpanKind.INTERNAL, "'internal' maps to SpanKind.INTERNAL");
     });
 
     it("should map 'server' kind", () => {
       const span = ops.startSpan("test", { kind: "server" });
       assertEquals(span !== null, true);
+      assertEquals(receivedKind, api.SpanKind.SERVER, "'server' maps to SpanKind.SERVER");
     });
 
     it("should map 'client' kind", () => {
       const span = ops.startSpan("test", { kind: "client" });
       assertEquals(span !== null, true);
+      assertEquals(receivedKind, api.SpanKind.CLIENT, "'client' maps to SpanKind.CLIENT");
     });
 
     it("should map 'producer' kind", () => {
       const span = ops.startSpan("test", { kind: "producer" });
       assertEquals(span !== null, true);
+      assertEquals(receivedKind, api.SpanKind.PRODUCER, "'producer' maps to SpanKind.PRODUCER");
     });
 
     it("should map 'consumer' kind", () => {
       const span = ops.startSpan("test", { kind: "consumer" });
       assertEquals(span !== null, true);
+      assertEquals(receivedKind, api.SpanKind.CONSUMER, "'consumer' maps to SpanKind.CONSUMER");
     });
 
     it("should default to INTERNAL when kind is undefined", () => {
       const span = ops.startSpan("test", {});
       assertEquals(span !== null, true);
+      assertEquals(
+        receivedKind,
+        api.SpanKind.INTERNAL,
+        "a missing kind defaults to SpanKind.INTERNAL",
+      );
     });
   });
 });

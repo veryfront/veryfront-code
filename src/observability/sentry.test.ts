@@ -175,12 +175,20 @@ describe("observability/sentry", () => {
     const previousDsn = Deno.env.get("SENTRY_DSN");
     const previousServiceName = Deno.env.get("SENTRY_SERVICE_NAME");
     const previousOtelServiceName = Deno.env.get("OTEL_SERVICE_NAME");
+    const previousEnvironment = Deno.env.get("SENTRY_ENVIRONMENT");
+    const previousRelease = Deno.env.get("SENTRY_RELEASE");
+    const previousOtelEnvironment = Deno.env.get("OTEL_DEPLOYMENT_ENVIRONMENT");
+    const previousOtelServiceVersion = Deno.env.get("OTEL_SERVICE_VERSION");
     try {
       Deno.env.set("SENTRY_ENABLED", "true");
       Deno.env.set("VERYFRONT_ERROR_REPORTER", "sentry");
       Deno.env.set("SENTRY_DSN", "https://public@example.ingest.sentry.io/1");
       Deno.env.set("SENTRY_SERVICE_NAME", "   ");
       Deno.env.delete("OTEL_SERVICE_NAME");
+      Deno.env.delete("SENTRY_ENVIRONMENT");
+      Deno.env.delete("SENTRY_RELEASE");
+      Deno.env.delete("OTEL_DEPLOYMENT_ENVIRONMENT");
+      Deno.env.delete("OTEL_SERVICE_VERSION");
 
       assertEquals(resolveSentryConfigFromEnv("veryfront-proxy"), {
         dsn: "https://public@example.ingest.sentry.io/1",
@@ -194,6 +202,62 @@ describe("observability/sentry", () => {
       restoreEnv("SENTRY_DSN", previousDsn);
       restoreEnv("SENTRY_SERVICE_NAME", previousServiceName);
       restoreEnv("OTEL_SERVICE_NAME", previousOtelServiceName);
+      restoreEnv("SENTRY_ENVIRONMENT", previousEnvironment);
+      restoreEnv("SENTRY_RELEASE", previousRelease);
+      restoreEnv("OTEL_DEPLOYMENT_ENVIRONMENT", previousOtelEnvironment);
+      restoreEnv("OTEL_SERVICE_VERSION", previousOtelServiceVersion);
+    }
+  });
+
+  it("Sentry environment configuration resolves environment and release through the OTEL fallbacks", () => {
+    const previousEnabled = Deno.env.get("SENTRY_ENABLED");
+    const previousProvider = Deno.env.get("VERYFRONT_ERROR_REPORTER");
+    const previousDsn = Deno.env.get("SENTRY_DSN");
+    const previousEnvironment = Deno.env.get("SENTRY_ENVIRONMENT");
+    const previousRelease = Deno.env.get("SENTRY_RELEASE");
+    const previousOtelEnvironment = Deno.env.get("OTEL_DEPLOYMENT_ENVIRONMENT");
+    const previousOtelServiceVersion = Deno.env.get("OTEL_SERVICE_VERSION");
+    try {
+      Deno.env.set("SENTRY_ENABLED", "true");
+      Deno.env.set("VERYFRONT_ERROR_REPORTER", "sentry");
+      Deno.env.set("SENTRY_DSN", "https://public@example.ingest.sentry.io/1");
+      Deno.env.set("SENTRY_ENVIRONMENT", "production");
+      Deno.env.set("SENTRY_RELEASE", "v1.2.3");
+      Deno.env.set("OTEL_DEPLOYMENT_ENVIRONMENT", "staging");
+      Deno.env.set("OTEL_SERVICE_VERSION", "v9");
+
+      assertEquals(
+        resolveSentryConfigFromEnv()?.environment,
+        "production",
+        "SENTRY_ENVIRONMENT wins over the OTEL deployment environment",
+      );
+      assertEquals(
+        resolveSentryConfigFromEnv()?.release,
+        "v1.2.3",
+        "SENTRY_RELEASE wins over the OTEL service version",
+      );
+
+      Deno.env.delete("SENTRY_ENVIRONMENT");
+      Deno.env.delete("SENTRY_RELEASE");
+
+      assertEquals(
+        resolveSentryConfigFromEnv()?.environment,
+        "staging",
+        "OTEL_DEPLOYMENT_ENVIRONMENT is the environment fallback",
+      );
+      assertEquals(
+        resolveSentryConfigFromEnv()?.release,
+        "v9",
+        "OTEL_SERVICE_VERSION is the release fallback",
+      );
+    } finally {
+      restoreEnv("SENTRY_ENABLED", previousEnabled);
+      restoreEnv("VERYFRONT_ERROR_REPORTER", previousProvider);
+      restoreEnv("SENTRY_DSN", previousDsn);
+      restoreEnv("SENTRY_ENVIRONMENT", previousEnvironment);
+      restoreEnv("SENTRY_RELEASE", previousRelease);
+      restoreEnv("OTEL_DEPLOYMENT_ENVIRONMENT", previousOtelEnvironment);
+      restoreEnv("OTEL_SERVICE_VERSION", previousOtelServiceVersion);
     }
   });
 
