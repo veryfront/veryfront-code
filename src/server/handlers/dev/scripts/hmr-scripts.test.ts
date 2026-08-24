@@ -42,9 +42,6 @@ function createHMRDom(html: string): HMRDom {
   }
 
   const virtualConsole = new VirtualConsole();
-  virtualConsole.on("log", (...args: unknown[]) => {
-    logs.push(args.map(String).join(" "));
-  });
 
   const dom = new JSDOM(html, {
     url: "http://localhost/",
@@ -52,6 +49,20 @@ function createHMRDom(html: string): HMRDom {
     virtualConsole,
   });
   dom.window.localStorage.setItem("VERYFRONT_DEBUG_HMR", "1");
+  // Record through the window's own console rather than jsdom's VirtualConsole.
+  // The client calls console.log, which resolves to window.console, so replacing
+  // it captures the same calls in every runtime. VirtualConsole "log" events do
+  // not fire under the Bun runner, which silently emptied this log and made any
+  // assertion reading it pass vacuously there.
+  Object.defineProperty(dom.window, "console", {
+    configurable: true,
+    value: {
+      ...dom.window.console,
+      log: (...args: unknown[]) => {
+        logs.push(args.map(String).join(" "));
+      },
+    },
+  });
   Object.defineProperty(dom.window, "WebSocket", {
     configurable: true,
     value: FakeWebSocket,
