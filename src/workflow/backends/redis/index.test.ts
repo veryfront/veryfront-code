@@ -21,7 +21,10 @@ import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/log
 import { RedisBackend } from "./index.ts";
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
 import type { PendingApproval, WorkflowRun } from "../../types.ts";
-import { MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES } from "../../limits.ts";
+import {
+  MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES,
+  MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES,
+} from "../../limits.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { WorkflowRunManager } from "../../worker/run-manager.ts";
 import type {
@@ -200,6 +203,43 @@ class MockRedisAdapter implements RedisAdapter {
       const maxEntries = Number(args[1]);
       if (list.length > maxEntries) list.splice(0, list.length - maxEntries);
       return Promise.resolve(list.length);
+    }
+
+    if (script.includes("state-aware-approval-append")) {
+      let list = this.lists.get(key);
+      if (!list) {
+        list = [];
+        this.lists.set(key, list);
+      }
+      if (!this.retainApprovals(list, Number(args[1]), args[2]!)) return Promise.resolve(0);
+      list.push(args[0]!);
+      return Promise.resolve(1);
+    }
+
+    if (script.includes("conditional-owned-approval-append")) {
+      const expectedCount = Number(args[0]);
+      const expectedStatuses = args.slice(1, expectedCount + 1);
+      const expectedWorkerId = args[expectedCount + 1]!;
+      const storageKey = args[expectedCount + 2]!;
+      const value = args[expectedCount + 3]!;
+      const maxEntries = Number(args[expectedCount + 4]);
+      const now = args[expectedCount + 5]!;
+      const hash = this.hashes.get(key);
+      if (
+        !hash || !expectedStatuses.includes(hash.get("status") ?? "") ||
+        hash.get("workerId") !== expectedWorkerId
+      ) {
+        return Promise.resolve(0);
+      }
+
+      let list = this.lists.get(storageKey);
+      if (!list) {
+        list = [];
+        this.lists.set(storageKey, list);
+      }
+      if (!this.retainApprovals(list, maxEntries, now)) return Promise.resolve(2);
+      list.push(value);
+      return Promise.resolve(1);
     }
 
     if (script.includes("conditional-stalled-run-claim")) {
@@ -451,6 +491,31 @@ class MockRedisAdapter implements RedisAdapter {
       Number(message.id.split("-")[0]) > after
     ).slice(0, options.count);
     return Promise.resolve(messages.length > 0 ? [{ key: requested.key, messages }] : []);
+  }
+
+  /** Mirrors the retainApprovals routine in the approval append Lua scripts. */
+  private retainApprovals(list: string[], maxEntries: number, now: string): boolean {
+    while (list.length >= maxEntries) {
+      let decidedIndex = -1;
+      let expiredIndex = -1;
+      for (let i = 0; i < list.length; i++) {
+        const approval = JSON.parse(list[i]!);
+        if (approval.status !== "pending") {
+          decidedIndex = i;
+          break;
+        }
+        if (
+          expiredIndex === -1 && typeof approval.expiresAt === "string" &&
+          approval.expiresAt <= now
+        ) {
+          expiredIndex = i;
+        }
+      }
+      const evictIndex = decidedIndex !== -1 ? decidedIndex : expiredIndex;
+      if (evictIndex === -1) return false;
+      list.splice(evictIndex, 1);
+    }
+    return true;
   }
 
   private appendRunObservation(
@@ -1629,6 +1694,116 @@ describe("RedisBackend", () => {
       assertEquals(pending.length, 1);
       assertEquals(pending[0]!.id, "ap-1");
       assertEquals(pending[0]!.status, "pending");
+    });
+
+    it("bounds approval appends by evicting decided records before live ones", async () => {
+      await backend.createRun(createTestRun("run-ap-bounded"));
+      await backend.savePendingApproval("run-ap-bounded", makeApproval("ap-live-oldest"));
+      await backend.savePendingApproval("run-ap-bounded", makeApproval("ap-decided"));
+      await backend.updateApproval("run-ap-bounded", "ap-decided", {
+        approved: true,
+        approver: "admin",
+      });
+      for (let index = 2; index < MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES; index++) {
+        await backend.savePendingApproval("run-ap-bounded", makeApproval(`ap-${index}`));
+      }
+
+      await backend.savePendingApproval("run-ap-bounded", makeApproval("ap-newest"));
+
+      const stored = mockRedis.lists.get("test:schema-v1:approvals:run-ap-bounded")!;
+      assertEquals(stored.length, MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES);
+      assertEquals(stored.some((raw) => JSON.parse(raw).id === "ap-decided"), false);
+      const retained = await backend.getPendingApprovals("run-ap-bounded");
+      assertEquals(retained.length, MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES);
+      assertEquals(retained[0]?.id, "ap-live-oldest");
+      assertEquals(retained.at(-1)?.id, "ap-newest");
+    });
+
+    it("evicts an expired record when no decided record remains", async () => {
+      await backend.createRun(createTestRun("run-ap-expired"));
+      await backend.savePendingApproval("run-ap-expired", makeApproval("ap-live-oldest"));
+      await backend.savePendingApproval("run-ap-expired", {
+        ...makeApproval("ap-expired"),
+        expiresAt: new Date(Date.now() - 60_000),
+      });
+      for (let index = 2; index < MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES; index++) {
+        await backend.savePendingApproval("run-ap-expired", makeApproval(`ap-${index}`));
+      }
+
+      await backend.savePendingApproval("run-ap-expired", makeApproval("ap-newest"));
+
+      const stored = mockRedis.lists.get("test:schema-v1:approvals:run-ap-expired")!;
+      assertEquals(stored.length, MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES);
+      assertEquals(stored.some((raw) => JSON.parse(raw).id === "ap-expired"), false);
+      assertEquals(JSON.parse(stored[0]!).id, "ap-live-oldest");
+      assertEquals(JSON.parse(stored.at(-1)!).id, "ap-newest");
+    });
+
+    it("refuses the append when every retained approval is live", async () => {
+      await backend.createRun(createTestRun("run-ap-full"));
+      for (let index = 0; index < MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES; index++) {
+        await backend.savePendingApproval("run-ap-full", makeApproval(`ap-${index}`));
+      }
+
+      await assertRejects(
+        () => backend.savePendingApproval("run-ap-full", makeApproval("ap-overflow")),
+        Error,
+        "still pending",
+      );
+
+      const stored = mockRedis.lists.get("test:schema-v1:approvals:run-ap-full")!;
+      assertEquals(stored.length, MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES);
+      assertEquals(JSON.parse(stored[0]!).id, "ap-0");
+      assertEquals(stored.some((raw) => JSON.parse(raw).id === "ap-overflow"), false);
+    });
+
+    it("bounds owned approval appends with the same state-aware retention", async () => {
+      await backend.createRun(createTestRun("run-ap-owned-bounded", {
+        status: "waiting",
+        workerId: "worker-new",
+      }));
+      const saveOwned = (approval: PendingApproval) =>
+        backend.savePendingApprovalIfStatusAndWorker(
+          "run-ap-owned-bounded",
+          ["waiting"],
+          "worker-new",
+          approval,
+        );
+
+      assertEquals(await saveOwned(makeApproval("owned-live-oldest")), true);
+      assertEquals(await saveOwned(makeApproval("owned-decided")), true);
+      await backend.updateApproval("run-ap-owned-bounded", "owned-decided", {
+        approved: false,
+        approver: "admin",
+      });
+      for (let index = 2; index < MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES; index++) {
+        assertEquals(await saveOwned(makeApproval(`owned-${index}`)), true);
+      }
+
+      assertEquals(await saveOwned(makeApproval("owned-newest")), true);
+
+      const stored = mockRedis.lists.get("test:schema-v1:approvals:run-ap-owned-bounded")!;
+      assertEquals(stored.length, MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES);
+      assertEquals(stored.some((raw) => JSON.parse(raw).id === "owned-decided"), false);
+      assertEquals(JSON.parse(stored[0]!).id, "owned-live-oldest");
+
+      await assertRejects(
+        () => saveOwned(makeApproval("owned-overflow")),
+        Error,
+        "still pending",
+      );
+      assertEquals(stored.length, MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES);
+
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          "run-ap-owned-bounded",
+          ["waiting"],
+          "worker-stale",
+          makeApproval("owned-must-not-append"),
+        ),
+        false,
+      );
+      assertEquals(stored.length, MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES);
     });
 
     it("should get a specific pending approval", async () => {
