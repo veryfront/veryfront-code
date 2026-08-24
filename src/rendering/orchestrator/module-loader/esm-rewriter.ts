@@ -59,7 +59,8 @@ export function rewriteEsmPaths(code: string, urlBase: string): string {
   for (const [pattern, pathIndex, resolver] of patterns) {
     result = result.replace(pattern, (...args) => {
       const match = args[0];
-      const path = args[pathIndex - 1];
+      // args[0] is the whole match, so capture group N is args[N].
+      const path = args[pathIndex];
       const quote = pathIndex === 3 ? args[2] : args[1];
 
       const resolved = resolver(path);

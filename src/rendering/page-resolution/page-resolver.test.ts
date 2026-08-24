@@ -1,7 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { PageResolver } from "./page-resolver.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import {
+  clearRouterDetectionCacheForProject,
+  primeRouterDetectionCache,
+} from "#veryfront/rendering/router-detection.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 
@@ -55,6 +66,25 @@ function createMockConfig(overrides: Partial<VeryfrontConfig> = {}): VeryfrontCo
   } as VeryfrontConfig;
 }
 
+/** An adapter whose project holds no routable file at all. */
+function createEmptyProjectAdapter(): RuntimeAdapter {
+  return {
+    id: "memory",
+    fs: {
+      ...virtualTextRead(() => Promise.reject(fileNotFoundError())),
+      resolveFile: async () => null,
+      stat: async () => {
+        throw fileNotFoundError();
+      },
+      exists: async () => false,
+      readDir: async function* () {},
+      writeFile: async () => {},
+      mkdir: async () => {},
+    },
+    env: { get: () => undefined },
+  } as unknown as RuntimeAdapter;
+}
+
 describe("rendering/page-resolution/page-resolver", () => {
   describe("PageResolver constructor", () => {
     it("should create a resolver with required options", () => {
@@ -68,16 +98,48 @@ describe("rendering/page-resolution/page-resolver", () => {
       assertEquals(resolver instanceof PageResolver, true);
     });
 
-    it("should accept optional projectId", () => {
-      const adapter = createMockAdapter();
+    it("should accept optional projectId", async () => {
+      // The router-detection cache is keyed by projectId, so a primed entry is
+      // the observable proof that the constructor kept the identity.
+      const adapter = createMockAdapter(
+        {
+          "/project": [{ name: "pages", isFile: false, isDirectory: true }],
+          "/project/pages": [],
+        },
+        ["/project/pages"],
+      );
       const config = createMockConfig();
-      const resolver = new PageResolver({
-        projectDir: "/project",
-        projectId: "my-project",
-        config,
-        adapter,
-      });
-      assertEquals(resolver instanceof PageResolver, true);
+      clearRouterDetectionCacheForProject("my-project");
+      clearRouterDetectionCacheForProject("/project");
+      primeRouterDetectionCache("my-project", "app");
+
+      try {
+        const resolver = new PageResolver({
+          projectDir: "/project",
+          projectId: "my-project",
+          config,
+          adapter,
+        });
+        assertEquals(
+          await resolver.getRouterMode(),
+          "app",
+          "projectId must key the router-detection cache",
+        );
+
+        const withoutProjectId = new PageResolver({
+          projectDir: "/project",
+          config,
+          adapter,
+        });
+        assertEquals(
+          await withoutProjectId.getRouterMode(),
+          "pages",
+          "a resolver without projectId must not read another project's primed detection",
+        );
+      } finally {
+        clearRouterDetectionCacheForProject("my-project");
+        clearRouterDetectionCacheForProject("/project");
+      }
     });
   });
 
@@ -496,6 +558,113 @@ describe("rendering/page-resolution/page-resolver", () => {
 
       assertEquals(page.entity.path, "/project/pages/index.tsx");
       assertEquals(routerMode, "app");
+    });
+  });
+
+  describe("resolvePage failures", () => {
+    it("raises the registry file-not-found identity for an unknown slug", async () => {
+      const resolver = new PageResolver({
+        projectDir: "/project",
+        projectId: "missing-app",
+        config: createMockConfig({ router: "app" } as any),
+        adapter: createEmptyProjectAdapter(),
+      });
+
+      const error = await assertRejects(
+        () => resolver.resolvePage("does-not-exist"),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(
+        error,
+        VeryfrontError,
+        "the rejection must carry the registry error identity",
+      );
+      assertEquals(
+        error.slug,
+        "file-not-found",
+        "pageExists and the API 404 path key off this slug",
+      );
+      assertStringIncludes(
+        error.detail ?? error.message,
+        "Page not found: does-not-exist",
+        "the failure must name the slug that could not be resolved",
+      );
+      assertEquals(
+        (error.context as { router?: string } | undefined)?.router,
+        "app",
+        "the failure records the router that searched for the page",
+      );
+    });
+
+    it("records the pages router on a missing pages-router page", async () => {
+      const resolver = new PageResolver({
+        projectDir: "/project",
+        projectId: "missing-pages",
+        config: createMockConfig({ router: "pages" } as any),
+        adapter: createEmptyProjectAdapter(),
+      });
+
+      const error = await assertRejects(
+        () => resolver.resolvePage("does-not-exist"),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(
+        error,
+        VeryfrontError,
+        "the rejection must carry the registry error identity",
+      );
+      assertEquals(
+        error.slug,
+        "file-not-found",
+        "pageExists and the API 404 path key off this slug",
+      );
+      assertEquals(
+        (error.context as { router?: string } | undefined)?.router,
+        "pages",
+        "the failure records the router that searched for the page",
+      );
+    });
+  });
+
+  describe("pageExists", () => {
+    it("reports a missing page as absent", async () => {
+      const resolver = new PageResolver({
+        projectDir: "/project",
+        projectId: "exists-missing",
+        config: createMockConfig({ router: "pages" } as any),
+        adapter: createEmptyProjectAdapter(),
+      });
+
+      assertEquals(
+        await resolver.pageExists("/no-such-page"),
+        false,
+        "a missing page must resolve false",
+      );
+    });
+
+    it("propagates a resolution failure instead of reporting the page missing", async () => {
+      const resolver = new PageResolver({
+        projectDir: "/project",
+        projectId: "exists-cancelled",
+        config: createMockConfig({ router: "pages" } as any),
+        adapter: createEmptyProjectAdapter(),
+      });
+      const controller = new AbortController();
+      const reason = new Error("cancelled");
+      controller.abort(reason);
+
+      const error = await assertRejects(
+        () => resolver.pageExists("/no-such-page", { signal: controller.signal }),
+        Error,
+      );
+
+      assertStrictEquals(
+        error,
+        reason,
+        "a cancelled resolution must not be reported as a missing page",
+      );
     });
   });
 

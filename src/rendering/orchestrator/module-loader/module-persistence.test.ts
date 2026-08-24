@@ -110,6 +110,57 @@ describe("module-loader/module-persistence", () => {
     }
   });
 
+  it("gives one module the same artifact identity whatever order its unresolved imports were discovered in", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await makeTempDir({ prefix: "vf-module-persist-out-" });
+    const localAdapter = await getLocalAdapter();
+    const filePath = join(projectDir, "app/page.tsx");
+    const transformedCode = "export const page = 1;";
+
+    try {
+      // Two workers discover the same unresolved imports in different orders,
+      // one of them twice. The artifact identity must not fork.
+      const firstPath = await persistTransformedModule({
+        filePath,
+        projectDir,
+        tmpDir,
+        transformedCode,
+        localAdapter,
+        moduleCache: new Map(),
+        cacheKey: "unordered-first",
+        contentSourceId: "preview-main",
+        reactVersion: "19.1.1",
+        unresolvedSpecifiers: ["./b", "./a", "./b"],
+      });
+      const secondPath = await persistTransformedModule({
+        filePath,
+        projectDir,
+        tmpDir,
+        transformedCode,
+        localAdapter,
+        moduleCache: new Map(),
+        cacheKey: "unordered-second",
+        contentSourceId: "preview-main",
+        reactVersion: "19.1.1",
+        unresolvedSpecifiers: ["./a", "./b"],
+      });
+
+      assertEquals(
+        secondPath,
+        firstPath,
+        "discovery order and duplicates must not fork the artifact identity",
+      );
+      assertEquals(
+        await readPersistedUnresolvedSpecifiers(firstPath, localAdapter),
+        ["./a", "./b"],
+        "the sidecar must record sorted, deduplicated evidence",
+      );
+    } finally {
+      await remove(projectDir, { recursive: true }).catch(() => undefined);
+      await remove(tmpDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
   it("defers memory and path-cache publication until the graph commits", async () => {
     const projectDir = await makeTempDir({ prefix: "vf-module-persist-project-" });
     const tmpDir = await makeTempDir({ prefix: "vf-module-persist-out-" });
@@ -239,6 +290,54 @@ describe("module-loader/module-persistence", () => {
         await stagedArtifactLeftovers(cycleArtifactPath),
         [],
         "a rejected publish must leave no staged file behind",
+      );
+    } finally {
+      await remove(projectDir, { recursive: true }).catch(() => undefined);
+      await remove(tmpDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("fails closed when the artifact filesystem cannot rename", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await makeTempDir({ prefix: "vf-module-persist-out-" });
+    const localAdapter = await getLocalAdapter();
+    const cycleArtifactPath = join(tmpDir, "cycle/artifact.js");
+    // `rename` is optional on the FS adapter, so a filesystem without an
+    // atomic replacement is a real configuration, not a hypothetical one.
+    const fs = Object.create(localAdapter.fs) as typeof localAdapter.fs;
+    fs.rename = undefined;
+    const adapter = Object.create(localAdapter) as typeof localAdapter;
+    Object.defineProperty(adapter, "fs", { value: fs });
+
+    try {
+      await assertRejects(
+        () =>
+          persistTransformedModule({
+            filePath: join(projectDir, "app/page.ts"),
+            projectDir,
+            tmpDir,
+            transformedCode: "export const page = 1;",
+            localAdapter: adapter,
+            moduleCache: new Map(),
+            cacheKey: "cycle-no-rename",
+            cycleArtifactPath,
+          }),
+        Error,
+        "cannot publish an atomic replacement",
+        "a filesystem without atomic rename must fail with the classified cache error",
+      );
+
+      assertEquals(
+        await stagedArtifactLeftovers(cycleArtifactPath),
+        [],
+        "a failed publish must leave no staged .pending- file behind",
+      );
+      const published: string[] = [];
+      for await (const entry of readDir(dirname(cycleArtifactPath))) published.push(entry.name);
+      assertEquals(
+        published.includes(basename(cycleArtifactPath)),
+        false,
+        "a failed publish must not create the artifact path",
       );
     } finally {
       await remove(projectDir, { recursive: true }).catch(() => undefined);

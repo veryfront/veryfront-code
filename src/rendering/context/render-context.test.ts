@@ -178,6 +178,51 @@ describe("rendering/context/render-context", () => {
       assertEquals(localDev.cachePrefix === hostedPreview.cachePrefix, false);
     });
 
+    it("does not grant host project-code execution to a hosted render that never asked for it", () => {
+      const hostedShared = {
+        projectId: "proj_123",
+        projectSlug: "test-project",
+        releaseId: "rel_456",
+        requestContext: {
+          mode: "production" as const,
+          slug: "test-project",
+          branch: null,
+          token: "",
+        },
+      };
+
+      const hostedDefault = createRenderContext(
+        createHandlerContext({ ...hostedShared, isLocalProject: false }),
+      );
+      assertEquals(
+        hostedDefault.allowHostProjectCodeExecution,
+        false,
+        "hosted render must not inherit host project-code execution",
+      );
+
+      const hostedOptIn = createRenderContext(
+        createHandlerContext({
+          ...hostedShared,
+          isLocalProject: false,
+          allowHostProjectCodeExecution: true,
+        }),
+      );
+      assertEquals(
+        hostedOptIn.allowHostProjectCodeExecution,
+        true,
+        "an explicit host opt-in must be carried through",
+      );
+
+      const localDefault = createRenderContext(
+        createHandlerContext({ ...hostedShared, isLocalProject: true }),
+      );
+      assertEquals(
+        localDefault.allowHostProjectCodeExecution,
+        true,
+        "a local project always runs its own code",
+      );
+    });
+
     it("throws without projectSlug or projectId", () => {
       const handlerCtx: HandlerContext = createHandlerContext({
         projectId: undefined,
@@ -437,6 +482,28 @@ describe("rendering/context/render-context", () => {
       assertEquals(ctx.proxyToken, "tok-123");
       assertEquals(ctx.nonce, "abc");
       assertEquals(ctx.allowHostProjectCodeExecution, true);
+      assertEquals(
+        ctx.cachePrefix,
+        "prefix",
+        "cachePrefix is carried from the enriched context, not derived from projectId",
+      );
+      assertEquals(ctx.mode, "production", "mode is carried from the enriched context");
+    });
+
+    it("carries a development mode and its own cache prefix from the enriched context", () => {
+      const ctx = createRenderContextFromEnriched(
+        makeEnrichedContext({
+          mode: "development",
+          cachePrefix: "proj_123:preview:main",
+        }),
+      );
+
+      assertEquals(ctx.mode, "development", "mode is carried from the enriched context");
+      assertEquals(
+        ctx.cachePrefix,
+        "proj_123:preview:main",
+        "cachePrefix is carried from the enriched context, not derived from projectId",
+      );
     });
 
     it("should not infer host execution from a non-local enriched context", () => {

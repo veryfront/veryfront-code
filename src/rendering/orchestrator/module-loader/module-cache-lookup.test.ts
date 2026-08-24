@@ -237,6 +237,88 @@ describe("module-loader/module-cache-lookup", () => {
     });
   });
 
+  it("evicts in-memory entries whose cached file no longer exists", async () => {
+    const moduleCache = new Map([["cache-key", "/tmp/gone.js"]]);
+
+    assertEquals(
+      await resolveCachedModulePath({
+        cacheKey: "cache-key",
+        filePath: "/project/app/page.tsx",
+        projectDir: "/project",
+        moduleCache,
+        readTextFile: () => Promise.reject(new Deno.errors.NotFound("gone")),
+      }),
+      undefined,
+      "a cached artifact that no longer exists on disk must not be reused",
+    );
+    assertEquals(
+      moduleCache.has("cache-key"),
+      false,
+      "the stale in-memory pointer must be evicted so the next load rebuilds",
+    );
+  });
+
+  it("does not consult the MDX-ESM artifact cache without both project and content-source ids", async () => {
+    let lookups = 0;
+    const lookupMdxCache = () => {
+      lookups += 1;
+      return Promise.resolve({ status: "miss" } as const);
+    };
+
+    assertEquals(
+      await resolveCachedModulePath({
+        cacheKey: "cache-key",
+        filePath: "/project/app/page.tsx",
+        projectDir: "/project",
+        projectId: "project-id",
+        moduleCache: new Map<string, string>(),
+        lookupMdxCache,
+      }),
+      undefined,
+      "a project without a content source has no artifact directory to read",
+    );
+    assertEquals(
+      await resolveCachedModulePath({
+        cacheKey: "cache-key",
+        filePath: "/project/app/page.tsx",
+        projectDir: "/project",
+        contentSourceId: "source-id",
+        moduleCache: new Map<string, string>(),
+        lookupMdxCache,
+      }),
+      undefined,
+      "a content source without a project has no artifact directory to read",
+    );
+    assertEquals(
+      lookups,
+      0,
+      "artifact lookup must stay scoped to a project and content source",
+    );
+  });
+
+  it("percent-encodes the content-source id in the artifact cache directory", async () => {
+    let observedCacheDir = "";
+
+    await resolveCachedModulePath({
+      cacheKey: "cache-key",
+      filePath: "/project/app/page.tsx",
+      projectDir: "/project",
+      projectId: "project-id",
+      contentSourceId: "a/../b",
+      moduleCache: new Map<string, string>(),
+      lookupMdxCache: (_path, cacheDir) => {
+        observedCacheDir = cacheDir;
+        return Promise.resolve({ status: "miss" });
+      },
+    });
+
+    assertEquals(
+      observedCacheDir.endsWith("/project-id/a%2F..%2Fb"),
+      true,
+      "content-source id must not escape its project cache directory",
+    );
+  });
+
   it("promotes an MDX-ESM cache hit into the in-memory cache", async () => {
     const moduleCache = new Map<string, string>();
 

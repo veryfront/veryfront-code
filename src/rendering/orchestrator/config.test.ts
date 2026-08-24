@@ -120,18 +120,118 @@ describe("rendering/orchestrator/config", () => {
       assertEquals(cm.getCacheBaseDir(), "/project/my-cache");
     });
 
-    it("should cache the result and return same value on repeated calls", () => {
-      const adapter = createMockAdapter();
-      const config = createMockConfig({});
+    it("should return an absolute VERYFRONT_CACHE_DIR verbatim", () => {
+      const adapter = createMockAdapter({ VERYFRONT_CACHE_DIR: "/var/cache/veryfront" });
       const cm = new ConfigurationManager({
         projectDir: "/project",
         mode: "production",
         adapter,
       });
-      setConfig(cm, config);
-      const r1 = cm.getCacheBaseDir();
-      const r2 = cm.getCacheBaseDir();
-      assertEquals(r1, r2);
+      setConfig(cm, createMockConfig({}));
+      assertEquals(
+        cm.getCacheBaseDir(),
+        "/var/cache/veryfront",
+        "an absolute cache dir must not be rebased under the project",
+      );
+    });
+
+    it("should fall back to VF_CACHE_DIR", () => {
+      const adapter = createMockAdapter({ VF_CACHE_DIR: "/fallback-cache" });
+      const cm = new ConfigurationManager({
+        projectDir: "/project",
+        mode: "production",
+        adapter,
+      });
+      setConfig(cm, createMockConfig({}));
+      assertEquals(
+        cm.getCacheBaseDir(),
+        "/fallback-cache",
+        "VF_CACHE_DIR must still be honoured when VERYFRONT_CACHE_DIR is unset",
+      );
+    });
+
+    it("should prefer VERYFRONT_CACHE_DIR over VF_CACHE_DIR", () => {
+      const adapter = createMockAdapter({
+        VERYFRONT_CACHE_DIR: "/primary-cache",
+        VF_CACHE_DIR: "/fallback-cache",
+      });
+      const cm = new ConfigurationManager({
+        projectDir: "/project",
+        mode: "production",
+        adapter,
+      });
+      setConfig(cm, createMockConfig({}));
+      assertEquals(
+        cm.getCacheBaseDir(),
+        "/primary-cache",
+        "VERYFRONT_CACHE_DIR takes precedence over the legacy VF_CACHE_DIR",
+      );
+    });
+
+    it("should use config.cache.dir when no env var is set", () => {
+      const adapter = createMockAdapter();
+      const cm = new ConfigurationManager({
+        projectDir: "/project",
+        mode: "production",
+        adapter,
+      });
+      setConfig(cm, createMockConfig({ cache: { dir: "cfg-cache" } }));
+      assertEquals(
+        cm.getCacheBaseDir(),
+        "/project/cfg-cache",
+        "a relative config.cache.dir resolves under the project directory",
+      );
+    });
+
+    it("should prefer the env var over config.cache.dir", () => {
+      const adapter = createMockAdapter({ VERYFRONT_CACHE_DIR: "/env-cache" });
+      const cm = new ConfigurationManager({
+        projectDir: "/project",
+        mode: "production",
+        adapter,
+      });
+      setConfig(cm, createMockConfig({ cache: { dir: "cfg-cache" } }));
+      assertEquals(
+        cm.getCacheBaseDir(),
+        "/env-cache",
+        "an operator env override must win over config.cache.dir",
+      );
+    });
+
+    it("should recompute the cache dir when env or config changes, and reuse it otherwise", () => {
+      const envVars: Record<string, string> = {};
+      const adapter = createMockAdapter(envVars);
+      const cm = new ConfigurationManager({
+        projectDir: "/project",
+        mode: "production",
+        adapter,
+      });
+      setConfig(cm, createMockConfig({}));
+
+      assertEquals(
+        cm.getCacheBaseDir(),
+        "/project/.veryfront/cache",
+        "the default cache dir applies before any override",
+      );
+      assertEquals(
+        cm.getCacheBaseDir(),
+        "/project/.veryfront/cache",
+        "a repeated call with unchanged inputs returns the same directory",
+      );
+
+      setConfig(cm, createMockConfig({ cache: { dir: "other-cache" } }));
+      assertEquals(
+        cm.getCacheBaseDir(),
+        "/project/other-cache",
+        "a changed config.cache.dir must invalidate the memo",
+      );
+
+      envVars.VERYFRONT_CACHE_DIR = "/abs/env-cache";
+      assertEquals(
+        cm.getCacheBaseDir(),
+        "/abs/env-cache",
+        "a changed VERYFRONT_CACHE_DIR must win and invalidate the memo",
+      );
     });
   });
 

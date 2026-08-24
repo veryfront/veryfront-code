@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import { RenderPipeline, type RenderPipelineConfig } from "./pipeline.ts";
@@ -653,6 +658,67 @@ describe("RenderPipeline behavior", () => {
     assertEquals(persists, [{ slug: "", cacheKey: "index:environment-production" }]);
   });
 
+  it("returns the cached render without re-resolving or re-rendering the page", async () => {
+    let resolveCalls = 0;
+    let ssrCalls = 0;
+    let persists = 0;
+    const cachedResult = {
+      html: "<html>cached</html>",
+      frontmatter: {},
+      headings: [],
+      stream: null,
+      ssrHash: "cached-hash",
+    };
+    const pipeline = createPipeline("/project/pages/index.mdx", {
+      pageResolver: {
+        resolvePage: async () => {
+          resolveCalls += 1;
+          return {
+            entity: { path: "/project/pages/index.mdx", frontmatter: {} },
+          } as any;
+        },
+      } as any,
+      ssrOrchestrator: {
+        performSSRRendering: async () => {
+          ssrCalls += 1;
+          return {
+            fullHtml: "<html>fresh</html>",
+            finalStream: null,
+            ssrHash: "fresh-hash",
+          };
+        },
+        resolveErrorComponentPath: async () => null,
+      } as any,
+      cacheCoordinator: {
+        checkCache: async () => ({
+          cachedResult,
+          cacheStatus: "hit",
+          depAwareSlug: "",
+          moduleCacheKey: "index:environment-production",
+          lookupDurationMs: 0,
+        }),
+        persistResult: async () => {
+          persists += 1;
+        },
+      } as any,
+    } as Partial<RenderPipelineConfig>);
+
+    const result = await pipeline.renderPage("", { delivery: "string" });
+
+    assertEquals(result.html, "<html>cached</html>", "a cache hit must be served verbatim");
+    assertEquals(resolveCalls, 0, "a cache hit must not resolve the page");
+    assertEquals(ssrCalls, 0, "a cache hit must not re-render");
+    assertEquals(persists, 0, "a cache hit must not persist a new entry");
+
+    const bypassed = await pipeline.renderPage("", {
+      delivery: "string",
+      skipCacheCheck: true,
+    });
+
+    assertEquals(bypassed.html, "<html>fresh</html>", "skipCacheCheck must bypass the cache hit");
+    assertEquals(ssrCalls, 1, "skipCacheCheck must re-render the page");
+  });
+
   it("isolates preview HTML from the production render cache", () => {
     const pipeline = createPipeline("/project/pages/index.mdx");
     const buildCacheKey = (pipeline as unknown as {
@@ -694,6 +760,65 @@ describe("RenderPipeline behavior", () => {
         buildCacheKey("foo:environment-preview", { environment: "production" }, "off"),
       "preview and production route cache identities must not collide",
     );
+
+    assertEquals(
+      buildCacheKey("", {
+        request: new Request("http://localhost/", {
+          headers: { authorization: "Bearer x" },
+        }),
+      }, "off"),
+      null,
+      "a request carrying credentials must not produce a shared render cache key",
+    );
+    assertEquals(
+      buildCacheKey("", {
+        request: new Request("http://localhost/", {
+          headers: { cookie: "vf_session=abc" },
+        }),
+      }, "off"),
+      null,
+      "a request carrying a session cookie must not produce a shared render cache key",
+    );
+    assert(
+      buildCacheKey("", {
+        cacheKey: "custom",
+        request: new Request("http://localhost/", {
+          headers: { authorization: "Bearer x" },
+        }),
+      }, "off") !== null,
+      "an explicit cacheKey override stays authoritative",
+    );
+  });
+
+  it("never caches HTML rendered for a request that carries credentials", async () => {
+    const checks: Array<string | undefined> = [];
+    const persists: Array<string | undefined> = [];
+    const pipeline = createPipeline("/project/pages/index.mdx", {
+      cacheCoordinator: {
+        checkCache: async (slug, cacheKey) => {
+          checks.push(cacheKey);
+          return {
+            depAwareSlug: slug,
+            moduleCacheKey: cacheKey ?? slug,
+            cacheStatus: "miss",
+            lookupDurationMs: 0,
+          };
+        },
+        persistResult: async (_result, _slug, cacheKey) => {
+          persists.push(cacheKey);
+        },
+      },
+    } as Partial<RenderPipelineConfig>);
+
+    await pipeline.renderPage("", {
+      delivery: "string",
+      request: new Request("http://localhost/", {
+        headers: { authorization: "Bearer x" },
+      }),
+    });
+
+    assertEquals(checks, [], "personalized HTML must never be read from the shared render cache");
+    assertEquals(persists, [], "personalized HTML must never be persisted");
   });
 
   it("bounds the complete API render key for a flag-off override", () => {
@@ -1945,40 +2070,64 @@ describe("RenderPipeline behavior", () => {
     assertEquals(pageData.cssError, undefined);
   });
 
-  it("resolvePageData falls back to candidate extraction when no CSS link in HTML", async () => {
+  it("resolvePageData falls back to generated CSS when no CSS link in HTML", async () => {
+    const slug = "/behavior-css-fallback";
+    const projectId = "proj-css-fallback";
     const pipeline = createPipeline("/project/pages/behavior-css-fallback.tsx");
+    const renderedHtml =
+      `<!DOCTYPE html><html><head></head><body><div class="fallback">hello</div></body></html>`;
+    let seenHtml = "";
 
     (pipeline as any).loadModule = async () => ({});
-    (pipeline as any).renderPage = async () => ({
-      html:
-        `<!DOCTYPE html><html><head></head><body><div class="fallback">hello</div></body></html>`,
-    });
-
-    // Intercept resolveCssFromRenderedHtml to confirm it returns undefined (no hash in HTML)
-    const originalResolve = (pipeline as any).resolveCssFromRenderedHtml.bind(pipeline);
-    (pipeline as any).resolveCssFromRenderedHtml = async (html: string) => {
-      const result = await originalResolve(html);
-      assertEquals(result, undefined, "Should not find CSS hash in HTML without /_vf/css/ link");
-      return result;
+    (pipeline as any).renderPage = async () => ({ html: renderedHtml });
+    (pipeline as any).resolveCssFromRenderedHtml = async () => undefined;
+    (pipeline as any).generatePageCssFromHtml = async (_slug: string, html: string) => {
+      seenHtml = html;
+      return ".fallback{display:block}";
     };
 
-    // Pre-cache the CSS that generateTailwindCSS would produce for our candidates
-    // so we don't depend on the Tailwind compiler actually working in CI
-    const { extractCandidates } = await import("#veryfront/html/styles-builder/index.ts");
-    const html =
-      `<!DOCTYPE html><html><head></head><body><div class="fallback">hello</div></body></html>`;
-    const candidatesReceived = extractCandidates(html);
+    const pageData = await pipeline.resolvePageData(slug, {
+      projectId,
+      request: new Request(`http://localhost${slug}`),
+      url: new URL(`http://localhost${slug}`),
+      environment: "production",
+    });
 
-    // Verify candidates were actually extracted from the HTML
     assertEquals(
-      Array.isArray(candidatesReceived),
-      true,
-      "extractCandidates should return an array",
+      pageData.css,
+      ".fallback{display:block}",
+      "page data falls back to generated CSS when the HTML carries no /_vf/css link",
     );
+    assertEquals(pageData.cssAction, undefined, "the fallback path must not clear client CSS");
+    assertEquals(pageData.cssError, undefined, "a successful fallback reports no CSS error");
+    assertStringIncludes(
+      seenHtml,
+      'class="fallback"',
+      "the fallback generator receives the rendered HTML",
+    );
+  });
+
+  it("resolvePageData reports a CSS generation failure instead of swallowing it", async () => {
+    const slug = "/behavior-css-error";
+    const projectId = "proj-css-error";
+    const pipeline = createPipeline("/project/pages/behavior-css-error.tsx");
+
+    (pipeline as any).loadModule = async () => ({});
+    (pipeline as any).renderPage = () => Promise.reject(new Error("css ssr blew up"));
+
+    const pageData = await pipeline.resolvePageData(slug, {
+      projectId,
+      request: new Request(`http://localhost${slug}`),
+      url: new URL(`http://localhost${slug}`),
+      environment: "production",
+    });
+
     assertEquals(
-      candidatesReceived!.length > 0,
-      true,
-      "Should extract at least one candidate from HTML",
+      pageData.cssError,
+      "CSS generation failed: css ssr blew up",
+      "clients must be able to distinguish a CSS failure from no CSS",
     );
+    assertEquals(pageData.css, undefined, "a failed CSS render must not report CSS");
+    assertEquals(pageData.cssAction, undefined, "a failed CSS render must not clear client CSS");
   });
 });

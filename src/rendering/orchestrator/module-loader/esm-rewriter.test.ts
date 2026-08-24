@@ -40,13 +40,111 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
     it("should not rewrite veryfront module paths via from", () => {
       const code = `import { something } from "/_vf_modules/my-module.js"`;
       const result = rewriteEsmPaths(code, urlBase);
-      assertEquals(result.includes("/_vf_modules/my-module.js"), true);
+      // A substring check would still hold for "https://esm.sh/_vf_modules/...",
+      // so the oracle has to be the whole output.
+      assertEquals(
+        result,
+        code,
+        "/_vf_modules paths are served locally and must be left untouched",
+      );
+      assertEquals(
+        result.includes("esm.sh"),
+        false,
+        "a locally served module path must never be pointed at esm.sh",
+      );
+    });
+
+    it("should not rewrite veryfront module paths in the other specifier forms", () => {
+      for (
+        const code of [
+          `import "/_vf_modules/my-module.js"`,
+          `export * from "/_vf_modules/my-module.js"`,
+          `export { something } from "/_vf_modules/my-module.js"`,
+        ]
+      ) {
+        assertEquals(
+          rewriteEsmPaths(code, urlBase),
+          code,
+          "every specifier form must leave a locally served path untouched",
+        );
+      }
     });
 
     it("should not rewrite _veryfront paths via from", () => {
       const code = `import { something } from "/_veryfront/modules/component.js"`;
       const result = rewriteEsmPaths(code, urlBase);
-      assertEquals(result.includes("/_veryfront/modules/component.js"), true);
+      assertEquals(
+        result,
+        code,
+        "_veryfront virtual-module paths are served locally and must survive the rewrite untouched",
+      );
+      assertEquals(
+        result.includes("esm.sh"),
+        false,
+        "a local virtual-module path must never be pointed at esm.sh",
+      );
+    });
+
+    it("should not rewrite _veryfront paths in the other specifier forms", () => {
+      for (
+        const code of [
+          `import "/_veryfront/modules/component.js"`,
+          `export * from "/_veryfront/modules/component.js"`,
+          `export { component } from "/_veryfront/modules/component.js"`,
+        ]
+      ) {
+        assertEquals(
+          rewriteEsmPaths(code, urlBase),
+          code,
+          "every specifier form must leave a virtual-module path untouched",
+        );
+      }
+    });
+
+    it("resolves absolute specifiers through esm.sh", () => {
+      assertEquals(
+        rewriteEsmPaths(`import "/v135/react.js"`, urlBase),
+        `import "https://esm.sh/v135/react.js"`,
+        "a bare absolute path belongs to esm.sh, not to the local server",
+      );
+      assertEquals(
+        rewriteEsmPaths(`import React from "/v135/react.js"`, urlBase),
+        `import React from "https://esm.sh/v135/react.js"`,
+        "a bare absolute path belongs to esm.sh, not to the local server",
+      );
+      assertEquals(
+        rewriteEsmPaths(`export * from "/v135/a.js"`, urlBase),
+        `export * from "https://esm.sh/v135/a.js"`,
+        "a bare absolute path belongs to esm.sh, not to the local server",
+      );
+      assertEquals(
+        rewriteEsmPaths(`export { b } from "/v135/b.js"`, urlBase),
+        `export { b } from "https://esm.sh/v135/b.js"`,
+        "a bare absolute path belongs to esm.sh, not to the local server",
+      );
+    });
+
+    it("resolves relative specifiers against the module's own URL", () => {
+      assertEquals(
+        rewriteEsmPaths(`import x from "./chunk.js"`, urlBase),
+        `import x from "https://esm.sh/v135/react-dom@18.2.0/es2022/chunk.js"`,
+        "a relative specifier resolves against the fetched module's URL",
+      );
+      assertEquals(
+        rewriteEsmPaths(`import "./chunk.js"`, urlBase),
+        `import "https://esm.sh/v135/react-dom@18.2.0/es2022/chunk.js"`,
+        "a relative specifier resolves against the fetched module's URL",
+      );
+      assertEquals(
+        rewriteEsmPaths(`export * from "./chunk.js"`, urlBase),
+        `export * from "https://esm.sh/v135/react-dom@18.2.0/es2022/chunk.js"`,
+        "a relative specifier resolves against the fetched module's URL",
+      );
+      assertEquals(
+        rewriteEsmPaths(`export { b } from "../es2021/b.js"`, urlBase),
+        `export { b } from "https://esm.sh/v135/react-dom@18.2.0/es2021/b.js"`,
+        "a parent-relative specifier resolves against the fetched module's URL",
+      );
     });
 
     it("should handle code with mixed import types", () => {
