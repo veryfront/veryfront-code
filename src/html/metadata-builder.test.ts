@@ -121,6 +121,7 @@ describe("html-generation/metadata-builder", () => {
         // and links are objects. RenderMetadata still points at the narrow
         // scalar-only declaration, so the cast bridges the two.
         frontmatter: {
+          title: "Frontmatter Title",
           styles: [{ content: ".x{}" }],
           links: [{ rel: "canonical", href: "/x" }],
         } as unknown as RenderMetadata["frontmatter"],
@@ -132,8 +133,8 @@ describe("html-generation/metadata-builder", () => {
 
       assertEquals(
         titleDescriptor?.content,
-        "Doc Title",
-        "the managed head payload must carry the effective title, not the raw frontmatter title",
+        "Frontmatter Title",
+        "the managed head payload must carry the effective title with frontmatter title precedence",
       );
       assertStringIncludes(result.styleTags, ".x{}", "frontmatter styles must reach styleTags");
       assertStringIncludes(

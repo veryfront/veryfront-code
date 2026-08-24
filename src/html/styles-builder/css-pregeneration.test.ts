@@ -5,6 +5,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
+import { makeTempDir } from "#veryfront/platform/compat/fs.ts";
 import { createStyleScopeProfile } from "./style-scope-profile.ts";
 import {
   buildPreparedCSSArtifactFromFiles,
@@ -236,7 +237,7 @@ describe("styles-builder/css-pregeneration", () => {
 
   describe("local project helpers", () => {
     it("collects local source files while skipping ignored roots", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-css-pregeneration-" });
+      const projectDir = await makeTempDir({ prefix: "vf-css-pregeneration-" });
 
       try {
         await mkdir(join(projectDir, "pages"), { recursive: true });
@@ -275,7 +276,7 @@ describe("styles-builder/css-pregeneration", () => {
     });
 
     it("reads the configured stylesheet path before default globals fallbacks", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-css-pregeneration-" });
+      const projectDir = await makeTempDir({ prefix: "vf-css-pregeneration-" });
 
       try {
         await mkdir(join(projectDir, "styles"), { recursive: true });
@@ -292,7 +293,7 @@ describe("styles-builder/css-pregeneration", () => {
     });
 
     it("falls back to a convention-named globals stylesheet", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-css-pregeneration-" });
+      const projectDir = await makeTempDir({ prefix: "vf-css-pregeneration-" });
 
       try {
         await mkdir(join(projectDir, "styles"), { recursive: true });
@@ -309,7 +310,7 @@ describe("styles-builder/css-pregeneration", () => {
     });
 
     it("returns undefined when the configured stylesheet is missing", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-css-pregeneration-" });
+      const projectDir = await makeTempDir({ prefix: "vf-css-pregeneration-" });
 
       try {
         await writeTextFile(join(projectDir, "globals.css"), ".globals { color: blue; }");
