@@ -11,6 +11,7 @@ import {
   isRequestProfilingEnabled,
   markRequestProfilePhase,
   profilePhase,
+  profileSyncPhase,
   resetRequestProfiles,
   runWithRequestProfiling,
   snapshotRequestProfiles,
@@ -51,26 +52,94 @@ describe("request profiler", () => {
 
     assertEquals(isRequestProfilingEnabled("/"), true);
 
-    const result = await runWithRequestProfiling(
-      {
-        category: "html",
-        method: "GET",
-        pathname: "/",
-      },
-      async () => {
-        updateRequestProfileContext({ projectSlug: "site", requestMode: "production" });
-        await profilePhase("runtime.resolve_project", () => Promise.resolve());
-        markRequestProfilePhase("render.cache_hit");
-        return finalizeRequestProfiling(200);
-      },
-    );
+    // A controlled clock turns the measured durations into exact expectations.
+    const realNow = performance.now;
+    let clock = 0;
+    performance.now = () => clock;
 
-    assertExists(result);
-    assertEquals(result.projectSlug, "site");
-    assertEquals(result.requestMode, "production");
-    assertEquals(result.status, 200);
-    assert("runtime.resolve_project" in result.phases);
-    assertEquals(result.phases["render.cache_hit"], 0);
+    try {
+      const result = await runWithRequestProfiling(
+        {
+          category: "html",
+          method: "GET",
+          pathname: "/",
+        },
+        async () => {
+          updateRequestProfileContext({ projectSlug: "site", requestMode: "production" });
+          await profilePhase("runtime.resolve_project", () => {
+            clock += 7;
+            return Promise.resolve();
+          });
+          markRequestProfilePhase("render.cache_hit");
+          clock += 3;
+          return finalizeRequestProfiling(200);
+        },
+      );
+
+      assertExists(result);
+      assertEquals(result.projectSlug, "site");
+      assertEquals(result.requestMode, "production");
+      assertEquals(result.status, 200);
+      assertEquals(
+        result.phases["runtime.resolve_project"],
+        7,
+        "profilePhase must record the time elapsed inside the awaited callback",
+      );
+      assertEquals(result.phases["render.cache_hit"], 0);
+      assertEquals(
+        result.totalMs,
+        10,
+        "totalMs must be the time elapsed from session start to finalization",
+      );
+    } finally {
+      performance.now = realNow;
+    }
+  });
+
+  it("records synchronous phases and returns the callback result", async () => {
+    const realNow = performance.now;
+    let clock = 0;
+    performance.now = () => clock;
+
+    try {
+      const result = await runWithRequestProfiling(
+        {
+          category: "html",
+          method: "GET",
+          pathname: "/sync",
+        },
+        async () => {
+          const value = profileSyncPhase("sync.phase", () => {
+            clock += 4;
+            return "value";
+          });
+          assertEquals(value, "value", "profileSyncPhase must return the callback result");
+          return finalizeRequestProfiling(200);
+        },
+      );
+
+      assertExists(result);
+      assertEquals(
+        result.phases["sync.phase"],
+        4,
+        "profileSyncPhase must record its phase on the active session",
+      );
+    } finally {
+      performance.now = realNow;
+    }
+  });
+
+  it("passes synchronous phases through when no profiling session is active", () => {
+    assertEquals(
+      profileSyncPhase("orphan.phase", () => 7),
+      7,
+      "profileSyncPhase must pass through when no profiling session is active",
+    );
+    assertEquals(
+      snapshotRequestProfiles().records.length,
+      0,
+      "a phase recorded outside a session must not create a record",
+    );
   });
 
   it("returns detached records and normalizes explicit phase durations", async () => {
@@ -223,5 +292,24 @@ describe("request profiler", () => {
     Deno.env.set("VERYFRONT_ENABLE_SERVER_TIMING", "1");
     const withFlag = withServerTimingHeader(new Response("ok"), record);
     assertEquals(withFlag.headers.get("Server-Timing"), "total;dur=10.00");
+
+    const redirect = Response.redirect("https://example.test/", 302);
+    const timed = withServerTimingHeader(redirect, record);
+    assertEquals(
+      timed.headers.get("Server-Timing"),
+      "total;dur=10.00",
+      "immutable responses still get Server-Timing via a clone",
+    );
+    assertEquals(timed.status, 302, "the cloned response preserves the original status");
+    assertEquals(
+      timed.headers.get("location"),
+      "https://example.test/",
+      "the cloned response preserves the original headers",
+    );
+    assertEquals(
+      timed === redirect,
+      false,
+      "an immutable response must be replaced, not mutated",
+    );
   });
 });

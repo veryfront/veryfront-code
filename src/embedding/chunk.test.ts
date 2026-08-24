@@ -25,9 +25,11 @@ describe("embedding/chunk", () => {
 
   it("splits on lines when there are no paragraph breaks", async () => {
     const chunks = await chunk("line-one\nline-two\nline-three", { maxChars: 10, overlap: 0 });
-    // Each emitted chunk is within the limit and built from whole lines.
-    for (const c of chunks) assertEquals(c.length <= 10, true);
-    assertEquals(chunks.join("").includes("line-one"), true);
+    assertEquals(
+      chunks,
+      ["line-one", "line-two", "line-three"],
+      "line-level splitting must emit whole lines, never mid-word character splits",
+    );
   });
 
   it("recurses to finer separators so no chunk exceeds maxChars", async () => {

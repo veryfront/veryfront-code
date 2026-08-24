@@ -1,6 +1,11 @@
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
 import { createSkillTestAdapter } from "#veryfront/skill/testing.ts";
@@ -148,6 +153,49 @@ Use the cloud-backed skill.`,
     assertStrictEquals(
       skillRegistryInternal.get("cloud-skill")?.fsAdapter,
       adapter,
+    );
+  });
+
+  it("reports a malformed SKILL.md in result.errors while publishing the valid siblings", async () => {
+    const files = {
+      "/project/skills/good/SKILL.md": `---
+name: good
+description: A valid sibling skill
+---
+Use the valid skill.`,
+      "/project/skills/bad/SKILL.md": `---
+name: bad
+description: A skill with conflicting tool declarations
+allowed-tools: Read
+allowed_tools: Write
+---
+Use the invalid skill.`,
+    };
+
+    const result = await discoverAll({
+      baseDir: "/project",
+      toolDirs: [],
+      agentDirs: [],
+      resourceDirs: [],
+      promptDirs: [],
+      workflowDirs: [],
+      taskDirs: [],
+      skillDirs: ["skills"],
+      fsAdapter: createSkillTestAdapter(files),
+      verbose: false,
+    });
+
+    assertEquals(result.skills.has("good"), true, "a valid sibling must still publish");
+    assertEquals(
+      result.errors.length,
+      1,
+      "a SKILL.md that fails validation must surface exactly one discovery error",
+    );
+    assertEquals(result.errors[0]?.file, "/project/skills/bad/SKILL.md");
+    assertStringIncludes(
+      String(result.errors[0]?.error),
+      "must not declare both",
+      "the discovery error must carry the validation cause",
     );
   });
 });

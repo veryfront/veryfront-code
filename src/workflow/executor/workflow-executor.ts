@@ -622,6 +622,7 @@ export class WorkflowExecutor {
     executionController: AbortController,
   ): Promise<T> {
     executionController.signal.throwIfAborted();
+    const timeoutMs = timeout === undefined ? undefined : parseDuration(timeout);
     const operation = Promise.resolve().then(fn);
     const fencedOperation = operation.then((value) => {
       executionController.signal.throwIfAborted();
@@ -635,8 +636,7 @@ export class WorkflowExecutor {
       else executionController.signal.addEventListener("abort", rejectAbort, { once: true });
     });
 
-    if (timeout) {
-      const timeoutMs = parseDuration(timeout);
+    if (timeoutMs) {
       const timeoutError = TIMEOUT_ERROR.create({
         detail: `Workflow timed out after ${timeoutMs}ms`,
       });
@@ -737,19 +737,37 @@ export class WorkflowExecutor {
     const run = await this.config.backend.getRun(runId);
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
 
-    if (run.status === "completed" || run.status === "failed") {
+    const cancellableStatuses: WorkflowStatus[] = ["pending", "running", "waiting"];
+    if (!cancellableStatuses.includes(run.status)) {
       throw ORCHESTRATION_ERROR.create({
-        detail: `Cannot cancel workflow run "${runId}": run has already ${run.status}. ` +
+        status: 409,
+        detail: `Cannot cancel workflow run "${runId}": current status is "${run.status}". ` +
           `Only active runs (pending, running, waiting) can be cancelled.`,
       });
     }
 
-    const cancellationUpdate = Promise.resolve().then(() =>
-      this.config.backend.updateRun(runId, {
-        status: "cancelled",
-        completedAt: new Date(),
-      })
-    );
+    const cancellationUpdate = Promise.resolve().then(async () => {
+      const cancelled = await updateRunIfStatus(
+        this.config.backend,
+        runId,
+        cancellableStatuses,
+        {
+          status: "cancelled",
+          completedAt: new Date(),
+        },
+      );
+      if (cancelled) return;
+
+      const current = await this.config.backend.getRun(runId);
+      if (!current) {
+        throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+      }
+      throw ORCHESTRATION_ERROR.create({
+        status: 409,
+        detail: `Cannot cancel workflow run "${runId}": current status is "${current.status}". ` +
+          `Only active runs (pending, running, waiting) can be cancelled.`,
+      });
+    });
     this.cancellationUpdates.set(runId, cancellationUpdate);
 
     this.activeRunControllers.get(runId)?.abort(

@@ -11,6 +11,26 @@ import { normalizeWebhookDefinition } from "./validation.ts";
 const MAX_WEBHOOK_PAYLOAD_BYTES = 64 * 1_024;
 const PROMPT_PLACEHOLDER_PATTERN = /\{\{\s*payload(?:\.([a-zA-Z0-9_.-]+))?\s*\}\}/g;
 const UTF8_ENCODER = new TextEncoder();
+const arrayIsArray = Array.isArray;
+const arrayPop = Array.prototype.pop;
+const arrayPush = Array.prototype.push;
+const jsonStringify = JSON.stringify;
+const objectHasOwn = Object.hasOwn;
+const objectKeys = Object.keys;
+const reflectApply = Reflect.apply;
+const reflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+const reflectGetPrototypeOf = Reflect.getPrototypeOf;
+const regExpExec = RegExp.prototype.exec;
+const stringIncludes = String.prototype.includes;
+const stringRepeat = String.prototype.repeat;
+const stringSlice = String.prototype.slice;
+const stringSplit = String.prototype.split;
+const stringTrim = String.prototype.trim;
+const textEncoderEncode = TextEncoder.prototype.encode;
+const typedArrayByteLengthGetter = reflectGetOwnPropertyDescriptor(
+  reflectGetPrototypeOf(Uint8Array.prototype)!,
+  "byteLength",
+)!.get!;
 
 /** Owned, cloud-compatible inputs for one local webhook target run. */
 export interface PreparedWebhookInvocation {
@@ -33,8 +53,10 @@ function invalidPayload(detail: string): never {
 function snapshotWebhookPayload(value: unknown): BoundedJsonValue {
   const snapshot = snapshotSerializable(value ?? {}, "Webhook payload");
 
-  const serialized = JSON.stringify(snapshot);
-  if (UTF8_ENCODER.encode(serialized).byteLength > MAX_WEBHOOK_PAYLOAD_BYTES) {
+  const serialized = stringifyWebhookJson(snapshot);
+  const encoded = reflectApply(textEncoderEncode, UTF8_ENCODER, [serialized]) as Uint8Array;
+  const byteLength = reflectApply(typedArrayByteLengthGetter, encoded, []) as number;
+  if (byteLength > MAX_WEBHOOK_PAYLOAD_BYTES) {
     invalidPayload("Webhook payload must be 64 KiB or smaller.");
   }
   return snapshot;
@@ -42,15 +64,17 @@ function snapshotWebhookPayload(value: unknown): BoundedJsonValue {
 
 function readPath(payload: BoundedJsonValue, path: string): unknown {
   let current: unknown = payload;
-  for (const segment of path.split(".")) {
+  const segments = reflectApply(stringSplit, path, ["."]) as string[];
+  for (let index = 0; index < segments.length; index++) {
+    const segment = segments[index]!;
     if (
       current === null ||
       typeof current !== "object" ||
-      Array.isArray(current)
+      arrayIsArray(current)
     ) {
       return undefined;
     }
-    const descriptor = Reflect.getOwnPropertyDescriptor(current, segment);
+    const descriptor = reflectGetOwnPropertyDescriptor(current, segment);
     if (!descriptor || !("value" in descriptor)) return undefined;
     current = descriptor.value;
   }
@@ -60,9 +84,10 @@ function readPath(payload: BoundedJsonValue, path: string): unknown {
 function stableEquals(left: unknown, right: unknown): boolean {
   const pending: Array<readonly [unknown, unknown]> = [[left, right]];
   while (pending.length > 0) {
-    const pair = pending.pop();
+    const pair = reflectApply(arrayPop, pending, []) as readonly [unknown, unknown] | undefined;
     if (!pair) break;
-    const [currentLeft, currentRight] = pair;
+    const currentLeft = pair[0];
+    const currentRight = pair[1];
     if (currentLeft === currentRight) continue;
     if (
       currentLeft === null ||
@@ -73,26 +98,27 @@ function stableEquals(left: unknown, right: unknown): boolean {
       return false;
     }
 
-    const leftIsArray = Array.isArray(currentLeft);
-    if (leftIsArray !== Array.isArray(currentRight)) return false;
+    const leftIsArray = arrayIsArray(currentLeft);
+    if (leftIsArray !== arrayIsArray(currentRight)) return false;
     if (leftIsArray) {
       const leftArray = currentLeft as unknown[];
       const rightArray = currentRight as unknown[];
       if (leftArray.length !== rightArray.length) return false;
       for (let index = 0; index < leftArray.length; index++) {
-        pending.push([leftArray[index], rightArray[index]]);
+        reflectApply(arrayPush, pending, [[leftArray[index], rightArray[index]]]);
       }
       continue;
     }
 
     const leftRecord = currentLeft as Record<string, unknown>;
     const rightRecord = currentRight as Record<string, unknown>;
-    const leftKeys = Object.keys(leftRecord);
-    const rightKeys = Object.keys(rightRecord);
+    const leftKeys = objectKeys(leftRecord);
+    const rightKeys = objectKeys(rightRecord);
     if (leftKeys.length !== rightKeys.length) return false;
-    for (const key of leftKeys) {
-      if (!Object.hasOwn(rightRecord, key)) return false;
-      pending.push([leftRecord[key], rightRecord[key]]);
+    for (let index = 0; index < leftKeys.length; index++) {
+      const key = leftKeys[index]!;
+      if (!objectHasOwn(rightRecord, key)) return false;
+      reflectApply(arrayPush, pending, [[leftRecord[key], rightRecord[key]]]);
     }
   }
   return true;
@@ -108,9 +134,13 @@ function matchesCondition(
       return stableEquals(actual, condition.value);
     case "not_equals":
       return !stableEquals(actual, condition.value);
-    case "in":
-      return Array.isArray(condition.value) &&
-        condition.value.some((value) => stableEquals(actual, value));
+    case "in": {
+      if (!arrayIsArray(condition.value)) return false;
+      for (let index = 0; index < condition.value.length; index++) {
+        if (stableEquals(actual, condition.value[index])) return true;
+      }
+      return false;
+    }
     case "exists":
       return actual !== undefined;
     case "contains":
@@ -118,10 +148,13 @@ function matchesCondition(
         typeof actual === "string" &&
         typeof condition.value === "string"
       ) {
-        return actual.includes(condition.value);
+        return reflectApply(stringIncludes, actual, [condition.value]) as boolean;
       }
-      return Array.isArray(actual) &&
-        actual.some((value) => stableEquals(value, condition.value));
+      if (!arrayIsArray(actual)) return false;
+      for (let index = 0; index < actual.length; index++) {
+        if (stableEquals(actual[index], condition.value)) return true;
+      }
+      return false;
   }
 }
 
@@ -131,15 +164,75 @@ export function matchesWebhookEventFilter(
   payload: BoundedJsonValue,
 ): boolean {
   if (!filter || filter.conditions.length === 0) return true;
-  return filter.mode === "any"
-    ? filter.conditions.some((condition) => matchesCondition(condition, payload))
-    : filter.conditions.every((condition) => matchesCondition(condition, payload));
+  if (filter.mode === "any") {
+    for (let index = 0; index < filter.conditions.length; index++) {
+      if (matchesCondition(filter.conditions[index]!, payload)) return true;
+    }
+    return false;
+  }
+  for (let index = 0; index < filter.conditions.length; index++) {
+    if (!matchesCondition(filter.conditions[index]!, payload)) return false;
+  }
+  return true;
 }
 
 function toPromptValue(value: unknown): string {
   if (typeof value === "string") return value;
   if (value === null || value === undefined) return "";
-  return JSON.stringify(value, null, 2);
+  return stringifyWebhookJson(value as BoundedJsonValue, 2);
+}
+
+function stringifyWebhookJson(
+  value: BoundedJsonValue,
+  spaces = 0,
+  depth = 0,
+): string {
+  if (
+    value === null || typeof value === "string" || typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return jsonStringify(value);
+  }
+
+  const currentIndent = spaces > 0
+    ? reflectApply(stringRepeat, " ", [depth * spaces]) as string
+    : "";
+  const childIndent = spaces > 0
+    ? reflectApply(stringRepeat, " ", [(depth + 1) * spaces]) as string
+    : "";
+  const separator = spaces > 0 ? ",\n" : ",";
+  const beforeValue = spaces > 0 ? " " : "";
+
+  if (arrayIsArray(value)) {
+    if (value.length === 0) return "[]";
+    let serialized = spaces > 0 ? "[\n" : "[";
+    for (let index = 0; index < value.length; index++) {
+      if (index > 0) serialized += separator;
+      const descriptor = reflectGetOwnPropertyDescriptor(value, `${index}`);
+      serialized += childIndent + stringifyWebhookJson(
+        descriptor!.value as BoundedJsonValue,
+        spaces,
+        depth + 1,
+      );
+    }
+    return `${serialized}${spaces > 0 ? `\n${currentIndent}` : ""}]`;
+  }
+
+  const keys = objectKeys(value);
+  if (keys.length === 0) return "{}";
+  let serialized = spaces > 0 ? "{\n" : "{";
+  for (let index = 0; index < keys.length; index++) {
+    if (index > 0) serialized += separator;
+    const key = keys[index]!;
+    const descriptor = reflectGetOwnPropertyDescriptor(value, key);
+    serialized += childIndent + jsonStringify(key) + `:${beforeValue}` +
+      stringifyWebhookJson(
+        descriptor!.value as BoundedJsonValue,
+        spaces,
+        depth + 1,
+      );
+  }
+  return `${serialized}${spaces > 0 ? `\n${currentIndent}` : ""}}`;
 }
 
 /** Render an agent webhook prompt exactly as the hosted runtime does. */
@@ -147,18 +240,30 @@ export function renderWebhookPromptTemplate(
   template: string,
   payload: BoundedJsonValue,
 ): string {
+  let rendered = "";
+  let lastIndex = 0;
   let replacedPlaceholder = false;
-  const rendered = template.replace(
-    PROMPT_PLACEHOLDER_PATTERN,
-    (_match, path: string | undefined) => {
-      replacedPlaceholder = true;
-      if (!path) return JSON.stringify(payload, null, 2);
-      return toPromptValue(readPath(payload, path));
-    },
-  );
-  if (replacedPlaceholder) return rendered;
-  return `${template.trim()}\n\nWebhook payload:\n\`\`\`json\n${
-    JSON.stringify(payload, null, 2)
+  PROMPT_PLACEHOLDER_PATTERN.lastIndex = 0;
+  for (
+    let match = reflectApply(regExpExec, PROMPT_PLACEHOLDER_PATTERN, [template]) as
+      | RegExpExecArray
+      | null;
+    match;
+    match = reflectApply(regExpExec, PROMPT_PLACEHOLDER_PATTERN, [template]) as
+      | RegExpExecArray
+      | null
+  ) {
+    replacedPlaceholder = true;
+    rendered += reflectApply(stringSlice, template, [lastIndex, match.index]) as string;
+    const path = match[1];
+    rendered += path ? toPromptValue(readPath(payload, path)) : stringifyWebhookJson(payload, 2);
+    lastIndex = match.index + match[0].length;
+  }
+  if (replacedPlaceholder) {
+    return rendered + (reflectApply(stringSlice, template, [lastIndex]) as string);
+  }
+  return `${reflectApply(stringTrim, template, [])}\n\nWebhook payload:\n\`\`\`json\n${
+    stringifyWebhookJson(payload, 2)
   }\n\`\`\``;
 }
 

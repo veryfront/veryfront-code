@@ -157,6 +157,61 @@ describe("studio/schema", () => {
       });
       assertEquals(result.success, true);
     });
+
+    it("should reject a malformed nested child", () => {
+      // The tree arrives from the untrusted renderer iframe and its positions
+      // drive source edits, so the recursion has to validate every level.
+      const treeWithGrandchild = (grandchild: Record<string, unknown>) => ({
+        id: "root",
+        name: "Root",
+        type: "root",
+        path: "/",
+        parentId: "",
+        start: { line: 0, column: 0 },
+        end: { line: 100, column: 0 },
+        children: [
+          {
+            id: "child-1",
+            name: "Child",
+            type: "component",
+            path: "/child",
+            parentId: "root",
+            start: { line: 5, column: 0 },
+            end: { line: 15, column: 0 },
+            children: [grandchild],
+          },
+        ],
+      });
+      const validGrandchild = {
+        id: "grandchild",
+        name: "Grandchild",
+        type: "element",
+        path: "/child/grandchild",
+        parentId: "child-1",
+        start: { line: 7, column: 2 },
+        end: { line: 10, column: 2 },
+        children: [],
+      };
+      const { start: _start, ...withoutStart } = validGrandchild;
+
+      assertEquals(
+        NavigatorNodeSchema.safeParse(treeWithGrandchild(validGrandchild)).success,
+        true,
+        "a well-formed grandchild must still validate",
+      );
+      assertEquals(
+        NavigatorNodeSchema.safeParse(treeWithGrandchild(withoutStart)).success,
+        false,
+        "a grandchild missing start must not validate",
+      );
+      assertEquals(
+        NavigatorNodeSchema.safeParse(
+          treeWithGrandchild({ ...validGrandchild, type: "bogus" }),
+        ).success,
+        false,
+        "a grandchild with an unknown node type must not validate",
+      );
+    });
   });
 
   describe("ErrorMessageSchema", () => {
@@ -404,6 +459,43 @@ describe("studio/schema", () => {
         ],
       });
       assertEquals(result.success, true);
+    });
+
+    it("should accept onPageTransitionStart action", () => {
+      const result = MessageFromRendererSchema.safeParse({
+        action: "onPageTransitionStart",
+        url: "https://example.com/next",
+        projectId: "proj-1",
+      });
+      assertEquals(result.success, true, "the renderer must be able to report a route change");
+    });
+
+    it("should accept onPageTransitionEnd action with params", () => {
+      const result = MessageFromRendererSchema.safeParse({
+        action: "onPageTransitionEnd",
+        url: "https://example.com/next",
+        projectId: "proj-1",
+        id: "page-1",
+        params: { slug: "a" },
+      });
+      assertEquals(result.success, true, "the renderer must be able to close a route change");
+
+      const nonStringParam = MessageFromRendererSchema.safeParse({
+        action: "onPageTransitionEnd",
+        url: "https://example.com/next",
+        projectId: "proj-1",
+        id: "page-1",
+        params: { slug: 1 },
+      });
+      assertEquals(nonStringParam.success, false, "params must stay a string to string record");
+    });
+
+    it("should accept renderer colorMode action", () => {
+      const result = MessageFromRendererSchema.safeParse({
+        action: "colorMode",
+        value: "dark",
+      });
+      assertEquals(result.success, true, "the renderer must be able to report its color mode");
     });
   });
 

@@ -6,6 +6,7 @@ import {
   assertRejects,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import type { Tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { MemoryBackend } from "../backends/memory.ts";
@@ -173,6 +174,33 @@ class DelayedCancellationBackend extends MemoryBackend {
       await this.persistCancellation.promise;
     }
     await super.updateRun(runId, patch);
+  }
+}
+
+class CancellationCompletionRaceBackend extends MemoryBackend {
+  readonly cancellationWriteStarted = Promise.withResolvers<void>();
+  readonly releaseCancellationWrite = Promise.withResolvers<void>();
+  private delayCancellationWrite = true;
+
+  private async waitBeforeCancellationWrite(patch: Partial<WorkflowRun>): Promise<void> {
+    if (patch.status !== "cancelled" || !this.delayCancellationWrite) return;
+    this.delayCancellationWrite = false;
+    this.cancellationWriteStarted.resolve();
+    await this.releaseCancellationWrite.promise;
+  }
+
+  override async updateRun(runId: string, patch: Partial<WorkflowRun>): Promise<void> {
+    await this.waitBeforeCancellationWrite(patch);
+    await super.updateRun(runId, patch);
+  }
+
+  override async updateRunIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    await this.waitBeforeCancellationWrite(patch);
+    return await super.updateRunIfStatus(runId, expectedStatuses, patch);
   }
 }
 
@@ -1218,7 +1246,7 @@ describe("workflow/executor/workflow-executor", () => {
     const handle = await executor.start("cancel-after-completion", {});
     await handle.result();
 
-    await assertRejects(() => handle.cancel(), Error, "has already completed");
+    await assertRejects(() => handle.cancel(), Error, 'current status is "completed"');
 
     const run = await backend.getRun(handle.runId);
     assertEquals(
@@ -1249,7 +1277,7 @@ describe("workflow/executor/workflow-executor", () => {
     const handle = await executor.start("cancel-after-failure", {});
     await assertRejects(() => handle.result());
 
-    await assertRejects(() => handle.cancel(), Error, "has already failed");
+    await assertRejects(() => handle.cancel(), Error, 'current status is "failed"');
 
     const run = await backend.getRun(handle.runId);
     assertEquals(
@@ -1297,6 +1325,7 @@ describe("workflow/executor/workflow-executor", () => {
       },
     });
     const started = Promise.withResolvers<void>();
+    const abortObserved = Promise.withResolvers<void>();
     const blockingTool: Tool = {
       id: "delayed-cancellation",
       type: "function",
@@ -1306,7 +1335,10 @@ describe("workflow/executor/workflow-executor", () => {
         started.resolve();
         return new Promise((_resolve, reject) => {
           const signal = context?.abortSignal;
-          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+          signal?.addEventListener("abort", () => {
+            abortObserved.resolve();
+            reject(signal.reason);
+          }, { once: true });
         });
       },
     };
@@ -1321,7 +1353,8 @@ describe("workflow/executor/workflow-executor", () => {
     await started.promise;
     const cancellation = handle.cancel();
     await backend.cancellationStarted.promise;
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await abortObserved.promise;
+    await Promise.resolve();
 
     try {
       assertEquals(errorCallbacks, 0);
@@ -1365,9 +1398,94 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(cancelledRun.status, "cancelled");
   });
 
-  it("does not schedule more nodes after a workflow timeout", async () => {
+  it("does not overwrite completion when cancellation loses the status race", async () => {
+    const backend = new CancellationCompletionRaceBackend();
+    const executor = new WorkflowExecutor({ backend });
+    const run = { ...createRun("cancel-loses-completion-race"), status: "running" as const };
+    const completedAt = new Date("2026-08-24T10:00:00.000Z");
+    await backend.createRun(run);
+
+    const cancellation = assertRejects(
+      () => executor.cancel(run.id),
+      Error,
+      'current status is "completed"',
+    );
+    await backend.cancellationWriteStarted.promise;
+
+    try {
+      await backend.updateRun(run.id, {
+        status: "completed",
+        output: { winner: "completion" },
+        completedAt,
+      });
+    } finally {
+      backend.releaseCancellationWrite.resolve();
+    }
+    await cancellation;
+
+    const persisted = await backend.getRun(run.id);
+    assertExists(persisted);
+    assertEquals(persisted.status, "completed");
+    assertEquals(persisted.output, { winner: "completion" });
+    assertEquals(persisted.completedAt, completedAt);
+  });
+
+  it("does not rewrite an already cancelled terminal run", async () => {
     const backend = new MemoryBackend();
     const executor = new WorkflowExecutor({ backend });
+    const completedAt = new Date("2026-08-24T10:00:00.000Z");
+    const run = {
+      ...createRun("cancelled-is-terminal"),
+      status: "cancelled" as const,
+      completedAt,
+    };
+    await backend.createRun(run);
+
+    const conflict = await assertRejects(
+      () => executor.cancel(run.id),
+      VeryfrontError,
+      'current status is "cancelled"',
+    );
+    assertEquals((conflict as VeryfrontError).status, 409);
+
+    const persisted = await backend.getRun(run.id);
+    assertExists(persisted);
+    assertEquals(persisted.status, "cancelled");
+    assertEquals(persisted.completedAt, completedAt);
+  });
+
+  it("rejects an invalid workflow timeout before executing a node", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    let executions = 0;
+    executor.register({
+      id: "invalid-workflow-timeout",
+      timeout: "not-a-duration",
+      steps: [
+        step("side-effect", {
+          tool: createTool("side-effect", () => {
+            executions++;
+            return { shouldNotRun: true };
+          }),
+        }),
+      ],
+    });
+
+    const handle = await executor.start("invalid-workflow-timeout", {});
+    await handle.settled();
+
+    const persisted = await backend.getRun(handle.runId);
+    assertExists(persisted);
+    assertEquals(executions, 0);
+    assertEquals(persisted.status, "failed");
+    assertEquals(persisted.error?.message, "Invalid duration format: not-a-duration");
+  });
+
+  it("does not schedule more nodes after a workflow timeout", async () => {
+    using time = new FakeTime();
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend });
+    const slowStarted = Promise.withResolvers<void>();
     let receivedSignal: AbortSignal | undefined;
     let dependentExecutions = 0;
     const slowTool: Tool = {
@@ -1377,6 +1495,7 @@ describe("workflow/executor/workflow-executor", () => {
       inputSchema: defineSchema((v) => v.object({}).passthrough())(),
       execute: async (_input, context) => {
         receivedSignal = context?.abortSignal;
+        slowStarted.resolve();
         await new Promise((resolve) => setTimeout(resolve, 20));
         return { ok: true };
       },
@@ -1399,12 +1518,16 @@ describe("workflow/executor/workflow-executor", () => {
     const run = createRun("workflow-timeout");
     await backend.createRun(run);
 
-    await assertRejects(
+    const execution = assertRejects(
       () => executor.executeAsync(run.id),
       Error,
       "Workflow timed out",
     );
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    await slowStarted.promise;
+    await time.tickAsync(5);
+    assertEquals(receivedSignal?.aborted, true);
+    await time.tickAsync(15);
+    await execution;
 
     const timedOutRun = await backend.getRun(run.id);
     assertExists(timedOutRun);

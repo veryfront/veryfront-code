@@ -32,6 +32,7 @@ import { StepExecutor, type StepResult } from "../step-executor.ts";
 import { CheckpointManager } from "../checkpoint-manager.ts";
 import type { WorkflowBackend } from "../../backends/types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
 import { serializeWorkflowContext } from "../../context-serialization.ts";
 
@@ -156,6 +157,73 @@ describe("DAGExecutor", () => {
       const result = await exec.execute(nodes, createTestRun());
       assertEquals(result.completed, true);
       assertEquals(order, ["a", "b", "c"]);
+    });
+
+    it("executes a reverse-declared dependency chain in topological order", async () => {
+      const order: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          order.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+      const nodes: WorkflowNode[] = [
+        { id: "c", dependsOn: ["b"], config: { type: "step" } as never },
+        { id: "b", dependsOn: ["a"], config: { type: "step" } as never },
+        { id: "a", dependsOn: [], config: { type: "step" } as never },
+      ];
+
+      await exec.execute(nodes, createTestRun());
+
+      assertEquals(order, ["a", "b", "c"]);
+    });
+  });
+
+  describe("graph admission", () => {
+    it("rejects duplicate node IDs before executing either declaration", async () => {
+      let executions = 0;
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), () => {
+          executions++;
+          return { success: true, output: {}, executionTime: 1 };
+        }),
+      });
+      const nodes: WorkflowNode[] = [
+        { id: "duplicate", dependsOn: [], config: { type: "step" } as never },
+        { id: "duplicate", dependsOn: [], config: { type: "step" } as never },
+      ];
+
+      await assertRejects(
+        () => exec.execute(nodes, createTestRun()),
+        VeryfrontError,
+        'duplicate node ID "duplicate"',
+      );
+      assertEquals(executions, 0);
+    });
+
+    it("rejects duplicate dependencies before executing the graph", async () => {
+      let executions = 0;
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), () => {
+          executions++;
+          return { success: true, output: {}, executionTime: 1 };
+        }),
+      });
+      const nodes: WorkflowNode[] = [
+        { id: "root", dependsOn: [], config: { type: "step" } as never },
+        {
+          id: "dependent",
+          dependsOn: ["root", "root"],
+          config: { type: "step" } as never,
+        },
+      ];
+
+      await assertRejects(
+        () => exec.execute(nodes, createTestRun()),
+        VeryfrontError,
+        'node "dependent" contains duplicate dependency "root"',
+      );
+      assertEquals(executions, 0);
     });
   });
 

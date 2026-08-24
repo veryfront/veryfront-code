@@ -5,11 +5,45 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertExists } from "#veryfront/testing/assert";
-import { recordError } from "./error-instruments.ts";
+import { createErrorInstruments, recordError } from "./error-instruments.ts";
 import { CONFIG_NOT_FOUND, RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
-import type { Counter } from "#veryfront/observability/tracing/api-shim.ts";
+import type { Counter, Meter } from "#veryfront/observability/tracing/api-shim.ts";
 
 describe("error-instruments", () => {
+  describe("createErrorInstruments", () => {
+    it("names the error counter with the configured prefix", () => {
+      const recorded: Array<{ name: string; description?: string; unit?: string }> = [];
+      const counter = { add: () => {} } as Counter;
+      const meter = {
+        createCounter: (name: string, options?: { description?: string; unit?: string }) => {
+          recorded.push({ name, description: options?.description, unit: options?.unit });
+          return counter;
+        },
+      } as unknown as Meter;
+
+      const instruments = createErrorInstruments(meter, {
+        enabled: true,
+        exporter: "console",
+        prefix: "test",
+      });
+
+      assertEquals(
+        recorded,
+        [{
+          name: "test.error.count",
+          description: "Total errors by slug and category",
+          unit: "errors",
+        }],
+        "error counter name, description and unit are a dashboard contract",
+      );
+      assertEquals(
+        instruments.errorCounter,
+        counter,
+        "createErrorInstruments must return the counter the meter produced",
+      );
+    });
+  });
+
   describe("recordError", () => {
     it("should record error with slug, category, and status labels", () => {
       const calls: Array<{ value: number; attributes: Record<string, string> }> = [];

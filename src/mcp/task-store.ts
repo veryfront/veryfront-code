@@ -91,7 +91,17 @@ export class TaskStore {
 
   list(): Task[] {
     this.lazySweep();
-    return Array.from(this.tasks.values());
+    const tasks: Task[] = [];
+    for (const [id, task] of this.tasks) {
+      // Mirror get(): an expired terminal task is gone, never advertised.
+      if (this.isExpired(task)) {
+        this.tasks.delete(id);
+        this.results.delete(id);
+        continue;
+      }
+      tasks.push(task);
+    }
+    return tasks;
   }
 
   clear(): void {

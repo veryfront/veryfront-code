@@ -8,7 +8,7 @@
  */
 
 import { fromFileUrl } from "#veryfront/compat/path";
-import { assert } from "./assert.ts";
+import { assert, assertStringIncludes } from "./assert.ts";
 import { describe, it } from "./bdd.ts";
 
 const PROJECT_ROOT = fromFileUrl(new URL("../../", import.meta.url));
@@ -36,5 +36,15 @@ describe("testing/BDD cross-file environment isolation", () => {
     const stdout = new TextDecoder().decode(output.stdout);
     const stderr = new TextDecoder().decode(output.stderr);
     assert(output.success, `Cross-file environment probe failed:\n${stdout}${stderr}`);
+    assertStringIncludes(
+      stdout,
+      "4 passed (4 steps)",
+      `both env-isolation probe files must actually register and run their two tests each:\n${stdout}${stderr}`,
+    );
+    assertStringIncludes(
+      stdout,
+      "0 failed",
+      `no env-isolation probe case may be skipped or fail:\n${stdout}${stderr}`,
+    );
   });
 });

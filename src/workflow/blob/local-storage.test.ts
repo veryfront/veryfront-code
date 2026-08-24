@@ -9,13 +9,14 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { join } from "#veryfront/compat/path";
-import { remove, stat } from "#veryfront/compat/fs.ts";
+import { remove, stat, writeTextFile } from "#veryfront/compat/fs.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import {
   __registerLogRecordEmitter,
   __resetLogRecordEmitterForTests,
   type LogEntry,
 } from "#veryfront/utils/logger/logger.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { LocalBlobStorage } from "./local-storage.ts";
 
 async function withTempStorage(
@@ -68,32 +69,36 @@ describe("LocalBlobStorage", () => {
     await withTempStorage(async (storage) => {
       await assertRejects(
         () => storage.put("hello", { id: "../../outside" }),
-        Error,
+        VeryfrontError,
         "Invalid blob id",
       );
       await assertRejects(
         () => storage.getText("../secret"),
-        Error,
+        VeryfrontError,
         "Invalid blob id",
       );
       await assertRejects(
         () => storage.stat("nested/blob"),
-        Error,
+        VeryfrontError,
         "Invalid blob id",
       );
       await assertRejects(
         () => storage.delete(".."),
-        Error,
+        VeryfrontError,
         "Invalid blob id",
       );
     });
   });
 
-  it("sanitizes local read failures", async () => {
+  it("sanitizes local storage failures", async () => {
     const storage = new LocalBlobStorage(".");
     (storage as unknown as { fs: FileSystem }).fs = {
       readTextFile: () => Promise.reject(new Error("read exposed <TOKEN> at <LOCAL_PATH>")),
       readFile: () => Promise.reject(new Error("read exposed <TOKEN> at <LOCAL_PATH>")),
+      remove: (path: string) =>
+        path.endsWith(".meta.json")
+          ? Promise.resolve()
+          : Promise.reject(new Error("delete exposed <TOKEN> at <LOCAL_PATH>")),
     } as unknown as FileSystem;
     const entries: LogEntry[] = [];
     __registerLogRecordEmitter((entry) => entries.push(entry));
@@ -101,15 +106,23 @@ describe("LocalBlobStorage", () => {
     try {
       const textError = await assertRejects(() => storage.getText("blob-id"));
       const bytesError = await assertRejects(() => storage.getBytes("blob-id"));
+      const statError = await assertRejects(() => storage.stat("blob-id"));
+      const deleteError = await assertRejects(() => storage.delete("blob-id"));
       assertInstanceOf(textError, Error);
       assertInstanceOf(bytesError, Error);
+      assertInstanceOf(statError, Error);
+      assertInstanceOf(deleteError, Error);
       assertEquals(textError.message, "Failed to read blob text from local storage");
       assertEquals(bytesError.message, "Failed to read blob bytes from local storage");
+      assertEquals(statError.message, "Failed to read blob metadata from local storage");
+      assertEquals(deleteError.message, "Failed to delete blob from local storage");
     } finally {
       __resetLogRecordEmitterForTests();
     }
 
     assertEquals(entries.map((entry) => entry.context), [
+      { errorName: "Error" },
+      { errorName: "Error" },
       { errorName: "Error" },
       { errorName: "Error" },
     ]);
@@ -127,7 +140,7 @@ describe("LocalBlobStorage", () => {
     try {
       const putAt = now;
       const expiredData = "Expired content";
-      const expiredRef = await storage.put(expiredData, { ttl: 1 });
+      const expiredRef = await storage.put(expiredData, { id: "custom-expired", ttl: 1 });
       assertExists(expiredRef.expiresAt);
       assertEquals(
         expiredRef.expiresAt.getTime(),
@@ -136,7 +149,7 @@ describe("LocalBlobStorage", () => {
       );
 
       const validData = "Valid content";
-      const validRef = await storage.put(validData, { ttl: 3600 });
+      const validRef = await storage.put(validData, { id: "custom-valid", ttl: 3600 });
       assertExists(validRef.expiresAt);
       assertEquals(
         validRef.expiresAt.getTime(),
@@ -188,10 +201,20 @@ describe("LocalBlobStorage", () => {
     });
   });
 
+  it("removes metadata when the primary blob is already missing", async () => {
+    await withTempStorage(async (storage, dir) => {
+      const ref = await storage.put("orphaned metadata", { id: "custom-delete" });
+      await remove(join(dir, ref.id.slice(0, 2), ref.id));
+
+      await storage.delete(ref.id);
+
+      assertEquals(await storage.stat(ref.id), null);
+    });
+  });
+
   it("delete non-existent blob (no error)", async () => {
     await withTempStorage(async (storage) => {
       await storage.delete("non-existent-id");
-      assert(true, "Delete did not throw for non-existent blob");
     });
   });
 
@@ -204,6 +227,41 @@ describe("LocalBlobStorage", () => {
   it("exists non-existent blob", async () => {
     await withTempStorage(async (storage) => {
       assert(!await storage.exists("non-existent-id"));
+    });
+  });
+
+  it("lists custom-id partitions newest first and omits expired blobs", async () => {
+    const testDir = await makeTempDir({ prefix: "vf_blob_test_" });
+    let now = Date.parse("2026-08-24T00:00:00.000Z");
+    const storage = new LocalBlobStorage(testDir, undefined, {
+      now: () => new Date(now),
+    });
+
+    try {
+      await storage.put("first", { id: "custom-first" });
+      now += 1_000;
+      await storage.put("second", { id: "named-second" });
+      await storage.put("expired", { id: "other-expired", ttl: 1 });
+      now += 1_500;
+
+      assertEquals(
+        (await storage.list()).map((ref) => ref.id),
+        ["named-second", "custom-first"],
+      );
+    } finally {
+      await remove(testDir, { recursive: true });
+    }
+  });
+
+  it("ignores malformed metadata filenames in valid partitions", async () => {
+    await withTempStorage(async (storage, dir) => {
+      await storage.put("valid", { id: "custom-valid" });
+      const partition = join(dir, "cu");
+      await writeTextFile(join(partition, ".meta.json"), "{}");
+      await writeTextFile(join(partition, "blob.meta.json.meta.json"), "{}");
+
+      assertEquals((await storage.list()).map((ref) => ref.id), ["custom-valid"]);
+      await storage.cleanupExpiredBlobs();
     });
   });
 

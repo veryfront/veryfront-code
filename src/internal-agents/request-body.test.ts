@@ -34,4 +34,28 @@ describe("internal-agents/request-body", () => {
       "Payload too large",
     );
   });
+
+  it("rethrows transport failures instead of reporting an empty body", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.error(new Error("stream failed"));
+      },
+    });
+    const request = new Request("https://veryfront.test/api/control-plane/runs/run_1/stream", {
+      method: "POST",
+      body,
+      duplex: "half",
+    } as RequestInit);
+
+    const error = await assertRejects(
+      () => readInternalAgentRequestBody(request),
+      Error,
+      "stream failed",
+    );
+    assertEquals(
+      error instanceof InternalAgentRequestBodyTooLargeError,
+      false,
+      "a stream failure must not be reclassified as a payload-too-large error",
+    );
+  });
 });

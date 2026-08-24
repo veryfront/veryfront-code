@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   _resetShimForTests,
@@ -129,16 +135,27 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
     it("should pass env and executionCtx to the context", async () => {
       const pipeline = new MiddlewarePipeline();
       let capturedEnv: Record<string, unknown> | undefined;
+      let capturedCtx: unknown;
 
       pipeline.use((c) => {
         capturedEnv = c.env;
+        capturedCtx = c.executionCtx;
         return new Response("ok");
       });
 
       const env = { MY_VAR: "test" };
-      await pipeline.execute(new Request("http://localhost/"), env);
+      const execCtx = {
+        waitUntil: () => {},
+        passThroughOnException: () => {},
+      };
+      await pipeline.execute(new Request("http://localhost/"), env, execCtx);
 
       assertEquals(capturedEnv?.MY_VAR, "test");
+      assertStrictEquals(
+        capturedCtx,
+        execCtx,
+        "pipeline.execute must forward executionCtx to the middleware context",
+      );
     });
 
     it("should execute middlewares in the correct order", async () => {

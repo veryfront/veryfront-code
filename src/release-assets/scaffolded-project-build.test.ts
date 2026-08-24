@@ -269,8 +269,12 @@ describe("release assets: scaffolded project build", () => {
       // build succeeds either way: before the fix these scaffolds published
       // platform/compat/dynamic-import.ts as its own chunk and every test here
       // still passed.
-      const evalOffenders = rec.uploads
-        .filter((upload) => upload.contentType.includes("javascript"))
+      const jsUploads = rec.uploads.filter((upload) => upload.contentType.includes("javascript"));
+      assert(
+        jsUploads.length > 0,
+        `${templateName} published no JS assets, so the new Function guard would pass vacuously`,
+      );
+      const evalOffenders = jsUploads
         .filter((upload) => /\bnew Function\s*\(/.test(new TextDecoder().decode(upload.bytes)));
       assertEquals(
         evalOffenders.map((upload) => upload.hash),
@@ -285,6 +289,10 @@ describe("release assets: scaffolded project build", () => {
 
       const manifest = parseReleaseAssetManifest(rec.manifest);
       assertExists(manifest);
+      assert(
+        Object.keys(manifest.modules).length > 0,
+        `${templateName} manifest must list browser modules`,
+      );
       assertEquals(
         manifest.css.length,
         1,

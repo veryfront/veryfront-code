@@ -4,11 +4,7 @@ import { FakeTime } from "#std/testing/time";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import {
-  type ModelRuntime,
-  registerModelProvider,
-  runWithVeryfrontCloudContextAsync,
-} from "#veryfront/provider";
+import { registerModelProvider, runWithVeryfrontCloudContextAsync } from "#veryfront/provider";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { registerSkill } from "#veryfront/skill/registry.ts";
 import { tool } from "#veryfront/tool";
@@ -16,30 +12,8 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import { agent } from "./index.ts";
 import { agentRegistry } from "./composition/index.ts";
 import { getEffectiveAgentSystem } from "./runtime/effective-agent-system.ts";
+import { scriptedModel } from "./runtime/model-runtime.test-helpers.ts";
 import type { AgentConfig, RuntimeStateRequest } from "./types.ts";
-
-function createRuntimeStream(parts: unknown[]) {
-  return new ReadableStream<unknown>({
-    start(controller) {
-      for (const part of parts) {
-        controller.enqueue(part);
-      }
-      controller.close();
-    },
-  });
-}
-
-function extractSystemPrompt(options: unknown): string {
-  const prompt = (options as { prompt?: Array<{ role?: string; content?: unknown }> }).prompt;
-  if (!Array.isArray(prompt)) {
-    return "";
-  }
-
-  return prompt
-    .filter((entry) => entry?.role === "system" && typeof entry.content === "string")
-    .map((entry) => entry.content as string)
-    .join("\n\n");
-}
 
 /** Runs one generate() call through a stub provider and returns the system prompt it saw. */
 async function captureFactorySystemPrompt(
@@ -48,25 +22,7 @@ async function captureFactorySystemPrompt(
   mode: "generate" | "stream" = "generate",
   observeStreamBody?: (body: string) => void,
 ): Promise<string> {
-  let observed = "";
-  const model: ModelRuntime = {
-    provider: "hosted",
-    modelId: "hosted/call-context",
-    // deno-lint-ignore require-await
-    async doGenerate(options: unknown) {
-      observed = extractSystemPrompt(options);
-      return {
-        content: [{ type: "text", text: "done" }],
-        finishReason: "stop",
-        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-      };
-    },
-    // deno-lint-ignore require-await
-    async doStream(options: unknown) {
-      observed = extractSystemPrompt(options);
-      return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
-    },
-  } as unknown as ModelRuntime;
+  const model = scriptedModel([{ text: "done" }], { modelId: "hosted/call-context" });
 
   const assistant = agent({
     ...config,
@@ -84,7 +40,7 @@ async function captureFactorySystemPrompt(
     await assistant.generate({ input: "Where does this project live?", context });
   }
 
-  return observed;
+  return model.systemPrompts().at(-1) ?? "";
 }
 
 describe("agent/factory call context", () => {
@@ -210,26 +166,10 @@ describe("agent/factory call context", () => {
   });
 
   it("uses the effective runtime provider key for structured cache metadata", async () => {
-    let observedSystem: unknown;
-    const runtime: ModelRuntime = {
+    const runtime = scriptedModel([{ text: "done" }], {
       provider: "claude",
       modelId: "claude-sonnet",
-      // deno-lint-ignore require-await
-      async doGenerate(options: unknown) {
-        observedSystem = (options as {
-          prompt?: Array<{ role?: string; content?: unknown; providerOptions?: unknown }>;
-        }).prompt?.filter((message) => message.role === "system");
-        return {
-          content: [{ type: "text", text: "done" }],
-          finishReason: "stop",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
-      },
-      // deno-lint-ignore require-await
-      async doStream() {
-        return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
-      },
-    } as unknown as ModelRuntime;
+    });
     const unregister = registerModelProvider("bedrock", () => runtime);
 
     try {
@@ -251,6 +191,8 @@ describe("agent/factory call context", () => {
 
       await assistant.generate({ input: "Hello" });
 
+      const observedSystem = runtime.calls[0]?.prompt
+        .filter((message) => message.role === "system");
       if (!Array.isArray(observedSystem)) {
         throw new Error("Expected the model runtime to receive system messages");
       }

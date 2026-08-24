@@ -105,7 +105,14 @@ function sanitizeFileName(raw: string): string {
   return cleaned || "untitled";
 }
 
-function resolveStorage(config: ChatUploadHandlerConfig): BlobStorage {
+/**
+ * Select the blob backend for chat uploads: an explicitly configured storage
+ * wins, then Veryfront Cloud once deployed, then local disk.
+ *
+ * Exported so the deployment-dependent selection can be pinned by a test
+ * without performing a real upload.
+ */
+export function resolveStorage(config: ChatUploadHandlerConfig): BlobStorage {
   if (config.storage) return config.storage;
   // Cloud storage only when actually deployed. In local dev the cloud bootstrap
   // is present (you're logged in) but the project isn't, so default to disk.
