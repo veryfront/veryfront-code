@@ -9,12 +9,13 @@
 import { assertEquals } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import { fromFileUrl, join } from "#std/path";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 const REPOSITORY_ROOT = fromFileUrl(new URL("../../../../../", import.meta.url));
 
 describe("test runner environment", () => {
   it("removes inherited provider credentials before running a test file", async () => {
-    const tempDir = await Deno.makeTempDir();
+    const tempDir = await makeTempDir();
     const testPath = join(tempDir, "environment-probe.test.ts");
     try {
       await Deno.writeTextFile(

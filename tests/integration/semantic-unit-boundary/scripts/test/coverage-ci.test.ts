@@ -9,12 +9,13 @@
 import { assert, assertEquals } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import { fromFileUrl, join } from "#std/path";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 const REPOSITORY_ROOT = fromFileUrl(new URL("../../../../../", import.meta.url));
 
 describe("coverage CI runner", () => {
   it("does not treat a separate threshold value as an LCOV path", async () => {
-    const tempDir = await Deno.makeTempDir();
+    const tempDir = await makeTempDir();
     try {
       const output = await new Deno.Command(Deno.execPath(), {
         args: [
