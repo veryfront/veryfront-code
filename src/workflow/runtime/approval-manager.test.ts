@@ -4,9 +4,16 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ApprovalManager } from "./approval-manager.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
-import type { PendingApproval, WaitNodeConfig, WorkflowContext, WorkflowRun } from "../types.ts";
+import type {
+  ApprovalDecision,
+  PendingApproval,
+  WaitNodeConfig,
+  WorkflowContext,
+  WorkflowRun,
+} from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { FakeTime } from "#std/testing/time";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
@@ -70,6 +77,12 @@ class RejectOwnerBoundApprovalSaveBackend extends MemoryBackend {
   }
 }
 
+class RejectNotificationErrorUpdateBackend extends MemoryBackend {
+  override updatePendingApproval(): Promise<void> {
+    return Promise.reject(new Error("notification annotation unavailable"));
+  }
+}
+
 describe("ApprovalManager", () => {
   let backend: MemoryBackend;
   let manager: ApprovalManager;
@@ -110,6 +123,7 @@ describe("ApprovalManager", () => {
 
   describe("constructor", () => {
     it("does not auto-expire approvals when expirationCheckInterval is 0", async () => {
+      using time = new FakeTime(new Date("2026-08-24T10:00:00.000Z"));
       manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
 
       const runId = "run-no-timer";
@@ -126,8 +140,7 @@ describe("ApprovalManager", () => {
       };
       await backend.savePendingApproval(runId, expiredApproval);
 
-      // Wait briefly. Without a timer the approval must remain pending.
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await time.tickAsync(120_000);
 
       const stillPending = await backend.getPendingApproval(runId, "apr-expired");
       assertEquals(stillPending?.status, "pending");
@@ -139,10 +152,6 @@ describe("ApprovalManager", () => {
   });
 
   describe("checkExpiredApprovals", () => {
-    // NOTE: currently fails because ApprovalManager detaches `this` when calling
-    // `backend.listPendingApprovals` (approval-manager.ts:274). The same shape
-    // exists in listAllPending() at approval-manager.ts:257. Both break for any
-    // backend whose listPendingApprovals reads `this` (MemoryBackend does).
     it("expires only approvals past their expiresAt", async () => {
       manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
 
@@ -231,6 +240,94 @@ describe("ApprovalManager", () => {
   });
 
   describe("createApproval", () => {
+    it("validates the timeout before resolving a dynamic payload", async () => {
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      const run = createTestRun("run-invalid-approval-timeout");
+      let payloadCalls = 0;
+      await backend.createRun(run);
+
+      await assertRejects(
+        () =>
+          manager.createApproval(
+            run,
+            "review-node",
+            {
+              type: "wait",
+              waitType: "approval",
+              timeout: "not-a-duration",
+              payload: () => {
+                payloadCalls++;
+                return { shouldNotRun: true };
+              },
+            },
+            run.context,
+          ),
+        Error,
+        "Invalid duration format",
+      );
+
+      assertEquals(payloadCalls, 0);
+      assertEquals(await backend.getPendingApprovals(run.id), []);
+    });
+
+    it("isolates persisted approval identity and state from notifier mutation", async () => {
+      let notifiedApprovalId: string | undefined;
+      manager = new ApprovalManager({
+        backend,
+        expirationCheckInterval: 0,
+        notifier: (approval, notifiedRun) => {
+          notifiedApprovalId = approval.id;
+          approval.id = "notifier-mutated-approval";
+          approval.status = "approved";
+          notifiedRun.id = "notifier-mutated-run";
+          return Promise.resolve();
+        },
+      });
+      const run = createTestRun("run-notifier-isolation");
+      await backend.createRun(run);
+
+      const request = await manager.createApproval(
+        run,
+        "review-node",
+        { type: "wait", waitType: "approval", message: "Please approve" },
+        run.context,
+      );
+
+      assertEquals(request.runId, run.id);
+      assertEquals(request.approvalId, notifiedApprovalId);
+      const persisted = await backend.getPendingApproval(run.id, request.approvalId);
+      assertExists(persisted);
+      assertEquals(persisted.id, request.approvalId);
+      assertEquals(persisted.status, "pending");
+      assertEquals(await backend.getPendingApprovals("notifier-mutated-run"), []);
+    });
+
+    it("keeps a durable owner-bound approval when notification annotation fails", async () => {
+      backend = new RejectNotificationErrorUpdateBackend();
+      manager = new ApprovalManager({
+        backend,
+        expirationCheckInterval: 0,
+        notifier: () => Promise.reject(new Error("approval delivery unavailable")),
+      });
+      const run = createTestRun("run-notification-annotation-failure", {
+        status: "waiting",
+        workerId: "run-execution:current-owner",
+      });
+      await backend.createRun(run);
+
+      const request = await manager.createApproval(
+        run,
+        "review-node",
+        { type: "wait", waitType: "approval", message: "Please approve" },
+        run.context,
+      );
+
+      assertEquals(request.notificationError, "approval delivery unavailable");
+      const persisted = await backend.getPendingApproval(run.id, request.approvalId);
+      assertExists(persisted);
+      assertEquals(persisted.status, "pending");
+    });
+
     it("rejects a stale owner before notifying or persisting approval", async () => {
       let notifications = 0;
       manager = new ApprovalManager({
@@ -338,12 +435,12 @@ describe("ApprovalManager", () => {
     });
 
     it("persists approval with computed expiresAt and resolved payload", async () => {
+      using _time = new FakeTime(new Date("2026-08-24T10:00:00.000Z"));
       manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
 
       const runId = "run-create";
       await backend.createRun(createTestRun(runId));
 
-      const before = Date.now();
       const waitConfig: WaitNodeConfig = {
         type: "wait",
         waitType: "approval",
@@ -363,8 +460,6 @@ describe("ApprovalManager", () => {
         createContext(runId),
       );
 
-      const after = Date.now();
-
       assertExists(request.approvalId);
       assertEquals(request.runId, runId);
       assertEquals(request.nodeId, "review-node");
@@ -379,15 +474,7 @@ describe("ApprovalManager", () => {
       assertEquals(persisted.payload, { data: "resolved", inputTopic: "test" });
 
       assertExists(persisted.expiresAt);
-      const expiresMs = persisted.expiresAt.getTime();
-      // 1 hour from "before" .. "after" (small clock drift tolerance)
-      const minExpected = before + 60 * 60 * 1000;
-      const maxExpected = after + 60 * 60 * 1000;
-      if (expiresMs < minExpected || expiresMs > maxExpected) {
-        throw new Error(
-          `expiresAt ${expiresMs} not within [${minExpected}, ${maxExpected}]`,
-        );
-      }
+      assertEquals(persisted.expiresAt, new Date("2026-08-24T11:00:00.000Z"));
     });
 
     it("omits expiresAt when no timeout is supplied", async () => {
@@ -420,7 +507,139 @@ describe("ApprovalManager", () => {
     });
   });
 
+  describe("approval lookup", () => {
+    it("falls back to the pending list when direct lookup is unavailable", async () => {
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      const runId = "run-legacy-approval-lookup";
+      const approval: PendingApproval = {
+        id: "apr-legacy-lookup",
+        nodeId: "review",
+        message: "Please approve",
+        payload: {},
+        requestedAt: new Date(),
+        status: "pending",
+      };
+      await backend.createRun(createTestRun(runId));
+      await backend.savePendingApproval(runId, approval);
+      Object.defineProperty(backend, "getPendingApproval", { value: undefined });
+
+      assertEquals(await manager.getApproval(runId, approval.id), approval);
+    });
+
+    it("lists only pending approvals through the backend receiver and filters", async () => {
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      await backend.createRun(createTestRun("run-list-a", { workflowId: "workflow-a" }));
+      await backend.createRun(createTestRun("run-list-b", { workflowId: "workflow-b" }));
+      await backend.savePendingApproval("run-list-a", {
+        id: "apr-alice",
+        nodeId: "review-a",
+        message: "Alice",
+        payload: {},
+        approvers: ["alice"],
+        requestedAt: new Date(),
+        status: "pending",
+      });
+      await backend.savePendingApproval("run-list-a", {
+        id: "apr-decided",
+        nodeId: "review-decided",
+        message: "Decided",
+        payload: {},
+        requestedAt: new Date(),
+        status: "pending",
+      });
+      await backend.updateApproval("run-list-a", "apr-decided", {
+        approved: true,
+        approver: "alice",
+      });
+      await backend.savePendingApproval("run-list-b", {
+        id: "apr-bob",
+        nodeId: "review-b",
+        message: "Bob",
+        payload: {},
+        approvers: ["bob"],
+        requestedAt: new Date(),
+        status: "pending",
+      });
+
+      const all = await manager.listAllPending();
+      assertEquals(all.map(({ approval }) => approval.id), ["apr-alice", "apr-bob"]);
+      const filtered = await manager.listAllPending({
+        workflowId: "workflow-a",
+        approver: "alice",
+      });
+      assertEquals(filtered.map(({ approval }) => approval.id), ["apr-alice"]);
+    });
+  });
+
   describe("processDecision", () => {
+    it("rejects expired and unauthorized decisions without changing approvals", async () => {
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      const runId = "run-decision-guards";
+      await backend.createRun(createTestRun(runId));
+      await backend.savePendingApproval(runId, {
+        id: "apr-expired-decision",
+        nodeId: "expired-review",
+        message: "Expired",
+        payload: {},
+        requestedAt: pastDate(2_000),
+        expiresAt: pastDate(1_000),
+        status: "pending",
+      });
+      await backend.savePendingApproval(runId, {
+        id: "apr-restricted-decision",
+        nodeId: "restricted-review",
+        message: "Restricted",
+        payload: {},
+        approvers: ["alice"],
+        requestedAt: new Date(),
+        status: "pending",
+      });
+
+      await assertRejects(
+        () => manager.approve(runId, "apr-expired-decision", "alice"),
+        Error,
+        "Approval has expired",
+      );
+      await assertRejects(
+        () => manager.approve(runId, "apr-restricted-decision", "mallory"),
+        Error,
+        "Not authorized",
+      );
+
+      assertEquals(
+        (await backend.getPendingApproval(runId, "apr-expired-decision"))?.status,
+        "pending",
+      );
+      assertEquals(
+        (await backend.getPendingApproval(runId, "apr-restricted-decision"))?.status,
+        "pending",
+      );
+      assertEquals((await backend.getRun(runId))?.nodeStates, {});
+    });
+
+    it("rejects a malformed direct decision before changing the approval", async () => {
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      const runId = "run-malformed-direct-decision";
+      await backend.createRun(createTestRun(runId));
+      const request = await manager.createApproval(
+        await backend.getRun(runId) as WorkflowRun,
+        "review",
+        { type: "wait", waitType: "approval", message: "Please approve" },
+        createContext(runId),
+      );
+
+      await assertRejects(() =>
+        manager.processDecision(runId, request.approvalId, {
+          approved: "yes",
+          approver: "reviewer",
+        } as unknown as ApprovalDecision)
+      );
+
+      const persisted = await backend.getPendingApproval(runId, request.approvalId);
+      assertExists(persisted);
+      assertEquals(persisted.status, "pending");
+    });
+
     it("rejects invalid structured approval data before persisting a direct approval", async () => {
       manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
       const runId = "run-direct-invalid-data";
@@ -534,6 +753,7 @@ describe("ApprovalManager", () => {
     });
 
     it("drops a direct approval schema after expiration is persisted", async () => {
+      using time = new FakeTime(new Date("2026-08-24T10:00:00.000Z"));
       manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
       const runId = "run-expired-schema-cleanup";
       await backend.createRun(createTestRun(runId, { status: "waiting" }));
@@ -556,7 +776,7 @@ describe("ApprovalManager", () => {
       );
 
       assertExists(await backend.getPendingApproval(runId, request.approvalId));
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      await time.tickAsync(2);
 
       await manager.checkExpiredApprovals();
 
