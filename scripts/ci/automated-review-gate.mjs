@@ -10,7 +10,7 @@ const CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER =
 const CODERABBIT_REVIEW_RANGE_PATTERN =
   /(?:^|\r\n|[\r\n])Reviewing files that changed from the base of the PR and between ([0-9a-f]{40}) and ([0-9a-f]{40})\.(?=\r\n|[\r\n]|$)/;
 const CODERABBIT_REVIEW_RANGE_STATEMENT_START_PATTERN =
-  /(?:^|\r\n|[\r\n])([ \t]*(?:(?:>[ \t]*)|(?:\|[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*[\\`*_~!\[]*(?:Reviewing[ \t]+(?:files(?:[ \t]+that[ \t]+changed[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?|changed[ \t]+files(?:[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?)[ \t]+(?:and[ \t]+)?between))([^\r\n]*)/gi;
+  /(?<![A-Za-z0-9])(?=(Reviewing[ \t]+(?:files(?:[ \t]+that[ \t]+changed[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?|changed[ \t]+files(?:[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?)[ \t]+(?:and[ \t]+)?between))/gi;
 const CODERABBIT_REVIEW_RANGE_CONTINUATION_PREFIX_PATTERN =
   /^[ \t]*(?:(?:>[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*/;
 const CODERABBIT_REVIEW_RANGE_SEPARATOR_PATTERN =
@@ -361,6 +361,7 @@ function codeRabbitRangeEvidenceStatements(content) {
       markdownStructure.tableCellRanges,
     ),
   );
+  assignCodeRabbitMatchLineBounds(content, matches);
   const statementIndexes = matches.map(codeRabbitStatementIndex);
   const statements = [];
   let excludedRangeIndex = 0;
@@ -376,14 +377,17 @@ function codeRabbitRangeEvidenceStatements(content) {
       excludedRanges[excludedRangeIndex][0] <= statementIndex &&
       statementIndex < excludedRanges[excludedRangeIndex][1];
     if (insideExcludedRange) continue;
+    const nextStatementIndex = statementIndexes[matchIndex + 1] ??
+      content.length;
     const continuationEnd = Math.min(
-      statementIndexes[matchIndex + 1] ?? content.length,
+      nextStatementIndex,
       excludedRanges[excludedRangeIndex]?.[0] ?? content.length,
     );
     const statement = parseCodeRabbitRangeStatement(
       content,
       match,
       continuationEnd,
+      nextStatementIndex,
     );
     if (statement) {
       statement.insideTableCell = match.tableCell !== undefined;
@@ -440,6 +444,29 @@ function mergeCodeRabbitRangeMatches(globalMatches, tableMatches) {
     }
   }
   return matches;
+}
+
+function assignCodeRabbitMatchLineBounds(content, matches) {
+  if (matches.length === 0) return;
+  let matchIndex = 0;
+  let lineStart = 0;
+  for (const lineMatch of content.matchAll(/[^\r\n]*(?:\r\n|[\r\n]|$)/g)) {
+    const line = lineMatch[0];
+    if (line.length === 0 && lineStart >= content.length) break;
+    const lineContentEnd = lineStart +
+      line.replace(/(?:\r\n|[\r\n])$/, "").length;
+    const linePrefix = line.match(
+      CODERABBIT_REVIEW_RANGE_CONTINUATION_PREFIX_PATTERN,
+    )?.[0] ?? "";
+    while (matches[matchIndex]?.index < lineContentEnd) {
+      matches[matchIndex].lineStart = lineStart;
+      matches[matchIndex].lineEnd = lineContentEnd;
+      matches[matchIndex].linePrefix = linePrefix;
+      matchIndex += 1;
+    }
+    if (matchIndex >= matches.length) return;
+    lineStart += line.length;
+  }
 }
 
 function markdownTableRangeEvidenceMatches(content, tableCellRanges) {
@@ -2356,23 +2383,32 @@ function isEscapedMarkdownToken(content, tokenStart) {
 }
 
 function codeRabbitStatementIndex(match) {
-  return match.index + match[0].indexOf(match[1]) +
-    match[1].toLowerCase().lastIndexOf("reviewing");
+  return match.index;
 }
 
-function parseCodeRabbitRangeStatement(content, match, continuationEnd) {
-  const statementStart = match[1];
-  const firstLineTail = match.tableLocal
-    ? match[2] + content.slice(
+function parseCodeRabbitRangeStatement(
+  content,
+  match,
+  continuationEnd,
+  nextStatementIndex,
+) {
+  const statementPhrase = match[1];
+  const statementEnd = match.index + statementPhrase.length;
+  const statementDecoration = match.index === match.lineStart ? "" : " ";
+  const statementStart = statementDecoration + statementPhrase;
+  const firstLineEnd = Math.min(
+    match.tableLocal ? match.tableCell.end : match.lineEnd,
+    nextStatementIndex,
+  );
+  let firstLineTail = content.slice(statementEnd, firstLineEnd);
+  if (match.tableLocal && nextStatementIndex > match.tableCell.end) {
+    firstLineTail += content.slice(
       match.tableCell.end,
-      Math.min(match.tableCell.rowEnd, continuationEnd),
-    )
-    : match[2];
-  const statementPrefix = codeRabbitMarkdownPrefixSignature(
-    statementStart.slice(
-      0,
-      statementStart.toLowerCase().lastIndexOf("reviewing"),
-    ).replace(/[\\`*_~!\[]+$/, ""),
+      Math.min(match.tableCell.rowEnd, nextStatementIndex),
+    );
+  }
+  const statementPrefix = codeRabbitRangeContainerSignature(
+    match.tableCell === undefined ? match.linePrefix : "",
   );
   const sameLineSeparator = firstLineTail.match(
     CODERABBIT_REVIEW_RANGE_SEPARATOR_PATTERN,
@@ -2391,7 +2427,7 @@ function parseCodeRabbitRangeStatement(content, match, continuationEnd) {
 
   const baseLines = [firstLineTail];
   const statementParts = [statementStart + firstLineTail];
-  let lineEnd = match.index + match[0].length;
+  let lineEnd = match.tableLocal ? match.tableCell.end : match.lineEnd;
   let tableContinuationCell = match.tableCell?.nextRowFirstCell;
   while (true) {
     const nextLine = match.tableCell !== undefined
@@ -2412,7 +2448,7 @@ function parseCodeRabbitRangeStatement(content, match, continuationEnd) {
     if (
       continuationContent.trim().length === 0 ||
       continuationContent.trimStart().startsWith("<!--") ||
-      codeRabbitMarkdownPrefixSignature(continuationPrefix) !== statementPrefix
+      codeRabbitRangeContainerSignature(continuationPrefix) !== statementPrefix
     ) return undefined;
     statementParts.push(nextLine.separator, nextLine.content);
 
@@ -2468,6 +2504,15 @@ function codeRabbitNextTableCell(content, cell, continuationEnd) {
 
 function codeRabbitMarkdownPrefixSignature(prefix) {
   return prefix.trim().toLowerCase().replace(/[ \t]+/g, " ");
+}
+
+function codeRabbitRangeContainerSignature(prefix) {
+  return codeRabbitMarkdownPrefixSignature(
+    prefix.replace(MARKDOWN_LIST_PREFIX_PATTERN, "").replace(
+      /\[[ xX]\][ \t]+/g,
+      "",
+    ),
+  );
 }
 
 function codeRabbitBaseSegment(lines, finalLine) {

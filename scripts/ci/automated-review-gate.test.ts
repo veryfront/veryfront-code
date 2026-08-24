@@ -884,6 +884,45 @@ describe("automated review gate", () => {
       "summary",
     );
 
+    for (
+      const wrappedListCurrentRange of [
+        "- Reviewing files that changed from the base of the PR and between not-a-sha and\n" +
+        `  ${HEAD_SHA}.`,
+        "1. Reviewing files that changed from the base of the PR and between not-a-sha and\n" +
+        `   ${HEAD_SHA}.`,
+        "- [ ] Reviewing files that changed from the base of the PR and between not-a-sha and\n" +
+        `      ${HEAD_SHA}.`,
+        "> - Reviewing files that changed from the base of the PR and between not-a-sha and\n" +
+        `>   ${HEAD_SHA}.`,
+        "- 1. Reviewing files that changed from the base of the PR and between not-a-sha and\n" +
+        `     ${HEAD_SHA}.`,
+        "- Reviewing files that changed from the base of the PR and between not-a-sha and\n" +
+        `- ${HEAD_SHA}.`,
+      ]
+    ) {
+      const newerWrappedListCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          wrappedListCurrentRange,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:02:00Z",
+        updated_at: "2026-08-22T12:02:00Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerWrappedListCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+        wrappedListCurrentRange,
+      );
+    }
+
     for (const prefix of ["> ", "1. ", "- [x] ", "> 1. - [ ] "]) {
       for (
         const compatibleCurrentRange of [
@@ -948,6 +987,8 @@ describe("automated review gate", () => {
         `${STALE_SHA}\n> and ${HEAD_SHA}.`,
         "Reviewing files that changed from the base of the PR and between " +
         `not-a-sha\n<!-- evidence boundary -->\nand ${HEAD_SHA}.`,
+        "- Reviewing files that changed from the base of the PR and between " +
+        `not-a-sha and\n\n      ${HEAD_SHA}.`,
       ]
     ) {
       const newerSeparatedCurrentRange = codeRabbitSummary({
@@ -1034,6 +1075,12 @@ describe("automated review gate", () => {
       ["_", "_"],
       ["~~", "~~"],
       ["[", "](https://example.com)"],
+      ["<strong>", "</strong>"],
+      ['<span title="x > y">', "</span>"],
+      ["ordinary <!--hidden-->", ""],
+      ["ordinary <?pi?>", ""],
+      ["ordinary <!DECL>", ""],
+      ["ordinary <![CDATA[x]]>", ""],
     ].map(([prefix, suffix]) =>
       [
         "<!-- recent_review_start -->",
@@ -1075,6 +1122,18 @@ describe("automated review gate", () => {
       const newerMalformedBody of [
         ...escapedVisibleMalformedBodies,
         ...decoratedVisibleMalformedBodies,
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          `<strong>${codeRabbitReviewRange()}</strong>`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          `<span title="${MALFORMED_CURRENT_RANGE}">${MALFORMED_CURRENT_RANGE}</span>`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
         [
           "<!-- recent_review_start -->",
           "No actionable comments were generated in the recent review.",
@@ -1188,6 +1247,7 @@ describe("automated review gate", () => {
           HEAD_SHA,
         ),
         undefined,
+        newerMalformedBody,
       );
     }
     const newerExactCurrentWithMalformedBaseDuplicates = codeRabbitSummary({
@@ -1844,11 +1904,62 @@ describe("automated review gate", () => {
       undefined,
     );
 
+    const newerRangeInsideInlineHtmlAttribute = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        `<span title="${MALFORMED_CURRENT_RANGE}">ordinary text</span>`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerRangeInsideInlineHtmlAttribute],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+
+    const newerRangeInsideCommentAfterEscapedTag = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        '\\<span title="<!--">',
+        MALFORMED_CURRENT_RANGE,
+        "-->",
+        "</span>",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerRangeInsideCommentAfterEscapedTag],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+
     for (
       const visibleRangeAfterCommentLookalike of [
         ["\\<!--", MALFORMED_CURRENT_RANGE, "-->"],
         [
           '<span title="<!--">',
+          MALFORMED_CURRENT_RANGE,
+          "-->",
+          "</span>",
+        ],
+        [
+          '\\<span title="\\<!--">',
           MALFORMED_CURRENT_RANGE,
           "-->",
           "</span>",
@@ -3690,6 +3801,35 @@ describe("automated review gate", () => {
     assert(
       performance.now() - startedAt < 1_000,
       "dense malformed range parsing must stay linear",
+    );
+
+    const newerDenseSameLineCurrentRanges = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        Array.from(
+          { length: 3_000 },
+          () => MALFORMED_CURRENT_RANGE,
+        ).join(" "),
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:00Z",
+      updated_at: "2026-08-22T12:02:00Z",
+    });
+    const denseSameLineStartedAt = performance.now();
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerDenseSameLineCurrentRanges],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+    assert(
+      performance.now() - denseSameLineStartedAt < 1_000,
+      "dense same-line range parsing must stay linear",
     );
 
     const newerDenseBareCarriageReturnRanges = codeRabbitSummary({
