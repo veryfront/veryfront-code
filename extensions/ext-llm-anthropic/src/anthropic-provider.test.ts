@@ -4309,18 +4309,21 @@ describe("anthropic-provider", () => {
     );
 
     function runtimeFor(responses: (() => Response)[]) {
+      const sentBodies: Record<string, unknown>[] = [];
       let attempts = 0;
       const runtime = createAnthropicModelRuntime({
         apiKey: "test-anthropic-key",
         baseURL: "https://example.anthropic.test/v1",
-        fetch: () => {
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          sentBodies.push(raw ? JSON.parse(raw) : {});
           const next = responses[Math.min(attempts, responses.length - 1)];
           attempts++;
           if (!next) throw new Error("No stubbed response for this attempt");
           return Promise.resolve(next());
         },
       }, "claude-opus-4-6");
-      return { runtime, attemptCount: () => attempts };
+      return { runtime, attemptCount: () => attempts, sentBodies };
     }
 
     it("replays the request when the stream errors as overloaded before any output", async () => {
@@ -4397,6 +4400,85 @@ describe("anthropic-provider", () => {
 
       await assertRejects(() => collectAsync(result.stream), ProviderRequestError);
       assertEquals(attemptCount(), 1);
+    });
+
+    it("replays a pause_turn continuation that overloads before its first part", async () => {
+      const pauseTurn = sse(
+        { type: "message_start", message: { usage: { input_tokens: 3 } } },
+        { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "first" } },
+        { type: "content_block_stop", index: 0 },
+        {
+          type: "message_delta",
+          delta: { stop_reason: "pause_turn" },
+          usage: { output_tokens: 1 },
+        },
+        { type: "message_stop" },
+      );
+      const { runtime, attemptCount, sentBodies } = runtimeFor([
+        () => streamResponse(pauseTurn),
+        () => streamResponse(OVERLOADED),
+        () => streamResponse(SUCCESS),
+      ]);
+
+      const result = await runtime.doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        maxOutputTokens: 64,
+      });
+      const parts = await collectAsync(result.stream);
+
+      assertEquals(attemptCount(), 3);
+      // The replay must re-issue the continuation, not the original turn.
+      // Sending `body` again would drop the paused assistant content and
+      // silently restart the turn.
+      const messageCounts = sentBodies.map((sent) =>
+        Array.isArray((sent as { messages?: unknown[] }).messages)
+          ? (sent as { messages: unknown[] }).messages.length
+          : 0
+      );
+      assertEquals(messageCounts, [1, 2, 2]);
+      const deltas = parts
+        .filter((part) => (part as { type?: string }).type === "text-delta")
+        .map((part) => (part as { delta?: string }).delta);
+      assertEquals(deltas, ["first", "hello"]);
+      assertEquals(
+        parts.filter((part) => (part as { type?: string }).type === "finish").length,
+        1,
+      );
+    });
+
+    it("shares one replay budget across the whole call rather than resetting per request", async () => {
+      const pauseTurn = sse(
+        { type: "message_start", message: { usage: { input_tokens: 3 } } },
+        { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "first" } },
+        { type: "content_block_stop", index: 0 },
+        {
+          type: "message_delta",
+          delta: { stop_reason: "pause_turn" },
+          usage: { output_tokens: 1 },
+        },
+        { type: "message_stop" },
+      );
+      // One replay is spent before the pause_turn continuation, so the
+      // continuation may only replay once more before the budget is gone.
+      const { runtime, attemptCount } = runtimeFor([
+        () => streamResponse(OVERLOADED),
+        () => streamResponse(pauseTurn),
+        () => streamResponse(OVERLOADED),
+      ]);
+
+      const result = await runtime.doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        maxOutputTokens: 64,
+      });
+
+      await assertRejects(
+        () => collectAsync(result.stream),
+        ProviderOverloadedError,
+        "provider overloaded",
+      );
+      assertEquals(attemptCount(), 4);
     });
 
     it("bounds the replays and surfaces the provider failure when they are exhausted", async () => {

@@ -66,6 +66,7 @@ export {
   toOpenAICompatibleMessages,
   toOpenAICompatibleTools,
   unwrapToolInputSchema,
+  waitForProviderStreamRetry,
 } from "../runtime-loader.ts";
 
 export type {

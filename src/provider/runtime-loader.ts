@@ -12,6 +12,7 @@ import {
   parseRetryAfterMs,
   requestJson,
   requestStream,
+  waitForProviderStreamRetry,
 } from "./runtime-loader/provider-http.ts";
 import { readRecord } from "./runtime-loader/provider-records.ts";
 import {
@@ -43,6 +44,7 @@ export {
   readRecord,
   requestJson,
   requestStream,
+  waitForProviderStreamRetry,
 };
 export type { RuntimePromptMessage } from "./types.ts";
 export type { RuntimeUsage };

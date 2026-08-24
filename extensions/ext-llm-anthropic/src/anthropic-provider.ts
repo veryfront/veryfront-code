@@ -29,6 +29,7 @@ import {
   requestStream,
   stringifyJsonValue,
   TOOL_INPUT_PENDING_THRESHOLD_MS,
+  waitForProviderStreamRetry,
 } from "veryfront/provider/shared";
 import {
   buildAnthropicMessagesRequestWithCorrelationState,
@@ -80,21 +81,6 @@ const ANTHROPIC_STREAM_REPLAY_DELAY_MS = 1_000;
  */
 function isReplayableAnthropicStreamFailure(error: unknown): boolean {
   return error instanceof ProviderError && error.retryable;
-}
-
-function waitForAnthropicStreamReplay(delayMs: number, signal: AbortSignal): Promise<void> {
-  if (delayMs <= 0) return Promise.resolve();
-  return new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, delayMs);
-    function onAbort() {
-      clearTimeout(timer);
-      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
-    }
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
 }
 
 export {
@@ -671,9 +657,9 @@ export function createAnthropicModelRuntime(
         while (true) {
           let completion: AnthropicStreamCompletion | undefined;
           let finishPart: Record<string, unknown> | undefined;
-          // The registry is mutated as tool blocks are parsed, so a replay has
-          // to start from the entries this attempt began with.
-          const toolNamesBeforeAttempt = new Map(providerToolNamesById);
+          // Every registry mutation in the parser is immediately followed by a
+          // yield, so a replay can only happen while the registry is still
+          // untouched. No snapshot is needed to restore it.
           let yieldedThisAttempt = false;
           try {
             for await (
@@ -702,15 +688,11 @@ export function createAnthropicModelRuntime(
             ) {
               throw error;
             }
-            await waitForAnthropicStreamReplay(
+            await waitForProviderStreamRetry(
               ANTHROPIC_STREAM_REPLAY_DELAY_MS * 2 ** streamReplayCount,
               providerAbortScope.controller.signal,
             );
             streamReplayCount++;
-            providerToolNamesById.clear();
-            for (const [id, name] of toolNamesBeforeAttempt) {
-              providerToolNamesById.set(id, name);
-            }
             throwIfAnthropicRequestAborted(providerAbortScope.controller.signal);
             responseStream = await issueStream(requestBody);
             continue;

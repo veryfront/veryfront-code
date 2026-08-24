@@ -506,7 +506,12 @@ async function waitForAbortable<T>(
   });
 }
 
-async function waitForProviderStreamRetry(
+/**
+ * Wait out a retry delay, rejecting the moment the caller cancels. Shared with
+ * providers that must replay a request the SSE body failed, so every retry
+ * path honors cancellation the same way.
+ */
+export async function waitForProviderStreamRetry(
   delayMs: number,
   abortSignal: AbortSignal,
 ): Promise<void> {
