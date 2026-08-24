@@ -995,11 +995,7 @@ describe("automated review workflow", () => {
       parse(await Deno.readTextFile(WORKFLOW_PATH)),
       "workflow",
     );
-    const permissions = record(workflow.permissions, "permissions");
-    assertEquals(permissions.contents, "read");
-    assertEquals(permissions.issues, "read");
-    assertEquals(permissions["pull-requests"], "write");
-    assertEquals(permissions.statuses, "write");
+    assertEquals(record(workflow.permissions, "permissions"), {});
 
     assertEquals(workflow.concurrency, undefined);
 
@@ -1021,6 +1017,9 @@ describe("automated review workflow", () => {
     assert("status" in triggers, "completion status must have a wakeup path");
     const jobs = record(workflow.jobs, "jobs");
     const targetJob = record(jobs.target, "target job");
+    assertEquals(record(targetJob.permissions, "target permissions"), {
+      "pull-requests": "read",
+    });
     assertEquals(
       record(targetJob.outputs, "target outputs").key,
       "${{ steps.resolve.outputs.result }}",
@@ -1049,6 +1048,12 @@ describe("automated review workflow", () => {
     );
 
     const job = record(jobs.review, "review job");
+    assertEquals(record(job.permissions, "review permissions"), {
+      contents: "read",
+      issues: "write",
+      "pull-requests": "write",
+      statuses: "write",
+    });
     const publisherConcurrency = {
       group: "automated-review-${{ needs.target.outputs.key }}",
       queue: "max",
@@ -1143,6 +1148,11 @@ describe("automated review workflow", () => {
     );
 
     const statusJob = record(jobs.status_review, "status review job");
+    assertEquals(record(statusJob.permissions, "status review permissions"), {
+      contents: "read",
+      "pull-requests": "read",
+      statuses: "write",
+    });
     assertEquals(statusJob.needs, "target");
     const statusIf = String(statusJob.if);
     for (

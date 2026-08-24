@@ -9,21 +9,13 @@ on:
     types: [created, edited, deleted]
   status:
 
-permissions:
-  contents: read
-  issues: read
-  # pull-requests: write lets the gate post the "@codex review" comment when a
-  # push leaves the head commit without a review. This workflow runs with
-  # pull_request_target authority, so the write scope stays safe only because
-  # the workflow checks out the trusted default branch, never executes files
-  # from the pull request head, and the posted comment body is a fixed string
-  # plus the verified head commit SHA with no pull request controlled content.
-  pull-requests: write
-  statuses: write
+permissions: {}
 
 jobs:
   target:
     name: resolve automated review target
+    permissions:
+      pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 2
     outputs:
@@ -62,6 +54,14 @@ jobs:
 
   review:
     name: publish automated review status
+    # pull-requests and issues write let this job post the fixed "@codex
+    # review" request after verifying the current head. This job checks out
+    # only the trusted default branch and never executes pull request files.
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      statuses: write
     # issue_comment fires for issues too, so keep only pull request comments.
     # pull_request_review hands fork pull requests a read-only token that cannot
     # write a commit status, so skip it there and let the trusted
@@ -206,6 +206,10 @@ jobs:
 
   status_review:
     name: publish completed CodeRabbit review status
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
     # This SHA-scoped path publishes only durable completion success. It shares
     # the status publisher queue so it cannot race general PR reconciliation.
     # The status payload carries no creator field, so pin the sender instead:
