@@ -43,15 +43,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "removalPr": "PR 4a",
       },
     ),
-    entry("cli/auth/callback-server.test.ts", ["network"], {
-      "disposition": "integration-relocation",
-      "owner": "cli",
-      "rationale":
-        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
-      "destination":
-        "tests/integration/semantic-unit-boundary/cli/auth/callback-server.test.ts",
-      "removalPr": "PR 4a",
-    }),
     entry("cli/auth/exit-code.integration.test.ts", [
       "filesystem-write",
       "process",
