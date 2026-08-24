@@ -1020,6 +1020,15 @@ describe("automated review gate", () => {
 
   it("rejects unterminated and Markdown-prefixed current-head ranges", async () => {
     const olderSuccess = olderCodeRabbitSuccess();
+    const escapedVisibleMalformedBodies = ["\\", "\\\\", "\\\\\\"].map(
+      (slashes) =>
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          slashes + "`" + MALFORMED_CURRENT_RANGE,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+    );
 
     for (
       const unterminatedCurrentRange of [
@@ -1051,6 +1060,7 @@ describe("automated review gate", () => {
 
     for (
       const newerMalformedBody of [
+        ...escapedVisibleMalformedBodies,
         [
           "<!-- recent_review_start -->",
           "No actionable comments were generated in the recent review.",
@@ -1166,7 +1176,6 @@ describe("automated review gate", () => {
         undefined,
       );
     }
-
     const newerExactCurrentWithMalformedBaseDuplicates = codeRabbitSummary({
       body: [
         "<!-- recent_review_start -->",
@@ -1253,6 +1262,30 @@ describe("automated review gate", () => {
         HEAD_SHA,
       ))?.url,
       "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+    );
+
+    const newerEscapedInlineCodeCurrentRangeExample = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "\\\\" + "`" + MALFORMED_CURRENT_RANGE + "`",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:42Z",
+      updated_at: "2026-08-22T12:03:42Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [
+            olderSuccess,
+            newerEscapedInlineCodeCurrentRangeExample,
+          ],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
     );
 
     for (

@@ -10,7 +10,7 @@ const CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER =
 const CODERABBIT_REVIEW_RANGE_PATTERN =
   /(?:^|\r\n|[\r\n])Reviewing files that changed from the base of the PR and between ([0-9a-f]{40}) and ([0-9a-f]{40})\.(?=\r\n|[\r\n]|$)/;
 const CODERABBIT_REVIEW_RANGE_STATEMENT_START_PATTERN =
-  /(?:^|\r\n|[\r\n])([ \t]*(?:(?:>[ \t]*)|(?:\|[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*(?:`+)?(?:Reviewing[ \t]+(?:files(?:[ \t]+that[ \t]+changed[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?|changed[ \t]+files(?:[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?)[ \t]+(?:and[ \t]+)?between))([^\r\n]*)/gi;
+  /(?:^|\r\n|[\r\n])([ \t]*(?:(?:>[ \t]*)|(?:\|[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*[\\`]*(?:Reviewing[ \t]+(?:files(?:[ \t]+that[ \t]+changed[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?|changed[ \t]+files(?:[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?)[ \t]+(?:and[ \t]+)?between))([^\r\n]*)/gi;
 const CODERABBIT_REVIEW_RANGE_CONTINUATION_PREFIX_PATTERN =
   /^[ \t]*(?:(?:>[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*/;
 const CODERABBIT_REVIEW_RANGE_SEPARATOR_PATTERN =
@@ -2353,7 +2353,8 @@ function isEscapedMarkdownToken(content, tokenStart) {
 }
 
 function codeRabbitStatementIndex(match) {
-  return match.index + match[0].indexOf(match[1]);
+  return match.index + match[0].indexOf(match[1]) +
+    match[1].toLowerCase().lastIndexOf("reviewing");
 }
 
 function parseCodeRabbitRangeStatement(content, match, continuationEnd) {
@@ -2368,7 +2369,7 @@ function parseCodeRabbitRangeStatement(content, match, continuationEnd) {
     statementStart.slice(
       0,
       statementStart.toLowerCase().lastIndexOf("reviewing"),
-    ).replace(/`+$/, ""),
+    ).replace(/[\\`]+$/, ""),
   );
   const sameLineSeparator = firstLineTail.match(
     CODERABBIT_REVIEW_RANGE_SEPARATOR_PATTERN,
