@@ -19,6 +19,10 @@ import {
 } from "#veryfront/observability/application-errors.ts";
 import { createNotFoundLikeError } from "#veryfront/platform/adapters/fs/veryfront/read-operations-helpers.ts";
 import { resetMetrics, state } from "#veryfront/observability/simple-metrics/index.ts";
+import {
+  __injectDepsForTests as __injectPressureDepsForTests,
+  THRESHOLDS,
+} from "../../shared/renderer/memory/pressure.ts";
 
 function createMockAdapter(): RuntimeAdapter {
   return {
@@ -200,7 +204,34 @@ describe("server/services/rendering/ssr.service", () => {
           true,
           "heapUsedPercent must be the real ratio reported by getHeapStats",
         );
-        assertEquals(status.shouldReject, false, "a healthy test process must not be shed");
+      });
+
+      // shouldReject is derived from the live heap against the process-wide
+      // MEMORY_CRITICAL_THRESHOLD, so it is pinned through the pressure module's
+      // injection seam rather than asserted against whatever the runner's heap
+      // happens to be doing.
+      it("derives shouldReject from the configured critical threshold", () => {
+        const service = new SSRService();
+        try {
+          __injectPressureDepsForTests({
+            getHeapStats: () => ({ heapUsedPercent: THRESHOLDS.CRITICAL - 1 }),
+          });
+          assertEquals(
+            service.checkMemoryPressure().shouldReject,
+            false,
+            `heap below CRITICAL (${THRESHOLDS.CRITICAL}) must not shed the request`,
+          );
+          __injectPressureDepsForTests({
+            getHeapStats: () => ({ heapUsedPercent: THRESHOLDS.CRITICAL }),
+          });
+          assertEquals(
+            service.checkMemoryPressure().shouldReject,
+            true,
+            `heap at CRITICAL (${THRESHOLDS.CRITICAL}) must shed the request`,
+          );
+        } finally {
+          __injectPressureDepsForTests(null);
+        }
       });
     });
 
