@@ -4447,7 +4447,7 @@ describe("anthropic-provider", () => {
       );
     });
 
-    it("shares one replay budget across the whole call rather than resetting per request", async () => {
+    it("gives a pause_turn continuation its own replay budget", async () => {
       const pauseTurn = sse(
         { type: "message_start", message: { usage: { input_tokens: 3 } } },
         { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
@@ -4460,25 +4460,28 @@ describe("anthropic-provider", () => {
         },
         { type: "message_stop" },
       );
-      // One replay is spent before the pause_turn continuation, so the
-      // continuation may only replay once more before the budget is gone.
+      // The first request spends BOTH replays. The continuation is a distinct
+      // request in a new idle window, so an exhausted count must not carry
+      // into it and kill an otherwise recoverable run.
       const { runtime, attemptCount } = runtimeFor([
+        () => streamResponse(OVERLOADED),
         () => streamResponse(OVERLOADED),
         () => streamResponse(pauseTurn),
         () => streamResponse(OVERLOADED),
+        () => streamResponse(SUCCESS),
       ]);
 
       const result = await runtime.doStream({
         prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
         maxOutputTokens: 64,
       });
+      const parts = await collectAsync(result.stream);
 
-      await assertRejects(
-        () => collectAsync(result.stream),
-        ProviderOverloadedError,
-        "provider overloaded",
-      );
-      assertEquals(attemptCount(), 4);
+      assertEquals(attemptCount(), 5);
+      const deltas = parts
+        .filter((part) => (part as { type?: string }).type === "text-delta")
+        .map((part) => (part as { delta?: string }).delta);
+      assertEquals(deltas, ["first", "hello"]);
     });
 
     it("shares one header budget across initial stream requests and in-stream replays", async () => {

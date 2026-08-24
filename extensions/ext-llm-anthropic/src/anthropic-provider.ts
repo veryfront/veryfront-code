@@ -784,7 +784,16 @@ export function createAnthropicModelRuntime(
           continuationCount++;
           requestBody = createPauseTurnContinuationBody(requestBody, continuationContent);
           throwIfAnthropicRequestAborted(providerAbortScope.controller.signal);
+          // A continuation opens a new idle window, so both budgets it draws
+          // on reset here: the header deadline and the replay count. Resetting
+          // one without the other is incoherent, and starving a healthy
+          // continuation of replays because an earlier request spent them
+          // fails a run the replay exists to save
+          // (veryfront-code#4085 review). Deliberately NOT reset on the replay
+          // path above: resetting per attempt rather than per window makes the
+          // replay unbounded.
           streamHeadersBudgetStartedAt = Math.floor(performance.now());
+          streamReplayCount = 0;
           responseStream = await issueStream(requestBody);
         }
       };
