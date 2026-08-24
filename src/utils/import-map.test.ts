@@ -18,6 +18,24 @@ describe("utils/import-map", () => {
     assertEquals(importMapOwnsSpecifier("@/components/Button", { "@/": "/src/" }), true);
   });
 
+  it("does not treat a non-slash key as a prefix owner", () => {
+    assertEquals(
+      importMapOwnsSpecifier("react-router", DEFAULT_BROWSER_IMPORT_MAP_IMPORTS),
+      false,
+      "a bare key must not own a merely prefix-matching specifier",
+    );
+    assertEquals(
+      importMapOwnsSpecifier("react-dom/test-utils", DEFAULT_BROWSER_IMPORT_MAP_IMPORTS),
+      false,
+      "only trailing-slash keys grant subpath ownership",
+    );
+    assertEquals(
+      importMapOwnsSpecifier("@components/Button", { "@/": "/src/" }),
+      false,
+      "prefix ownership must require the full trailing-slash key",
+    );
+  });
+
   it("merges default browser imports with project imports", () => {
     const merged = mergeBrowserImportMapImports({ "@/": "/src/" });
     assertEquals(merged.react, DEFAULT_BROWSER_IMPORT_MAP_IMPORTS.react);

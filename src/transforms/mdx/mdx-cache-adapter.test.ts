@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { delay } from "#std/async.ts";
 import { MDXCacheAdapter, type MDXCompilationResult } from "./mdx-cache-adapter.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -92,6 +93,29 @@ describe("MDXCacheAdapter", () => {
     it("should return undefined on cache miss", async () => {
       const result = await adapter.getCachedBundle(testContent);
       expect(result).toBeUndefined();
+    });
+
+    it("treats legacy unversioned metadata as a cache miss", async () => {
+      const contentHash = await adapter.computeHash(testContent);
+      const codeHash = "legacy-code-hash";
+      await manifestStore.setBundleCode(codeHash, {
+        code: testBundle.compiledCode,
+      });
+      await manifestStore.setBundleMetadata(`mdx:development:${contentHash}`, {
+        hash: contentHash,
+        codeHash,
+        size: testBundle.compiledCode.length,
+        compiledAt: Date.now(),
+        source: "legacy.mdx",
+        mode: "development",
+        meta: { type: "mdx" },
+      });
+
+      assertEquals(
+        await adapter.getCachedBundle(testContent),
+        undefined,
+        "legacy unversioned metadata must not be served as a cache hit",
+      );
     });
 
     it("should return cached bundle on cache hit", async () => {
@@ -369,7 +393,7 @@ describe("MDXCacheAdapter", () => {
       await adapter.setCachedBundle(content, bundle, "/path/to/test.mdx");
 
       const hash = await adapter.computeHash(content);
-      const cacheKey = `mdx:development:${hash}`;
+      const cacheKey = `mdx:v2:development:${hash}`;
       const metadata = await manifestStore.getBundleMetadata(cacheKey);
 
       expect(metadata).toBeDefined();

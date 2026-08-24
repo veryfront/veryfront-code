@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  InvalidResponseBodyMetadataError,
   InvalidResponseBodyUtf8Error,
   JsonNonValueBytesTooLargeError,
   JsonStringValueTooLargeError,
@@ -9,6 +10,7 @@ import {
   readResponseJsonStringBytesWithinLimit,
   readResponseJsonStringWithinLimit,
   readResponseTextPrefix,
+  ResponseBodyTooLargeError,
 } from "./response-body.ts";
 
 describe("utils/response-body", () => {
@@ -356,6 +358,190 @@ describe("utils/response-body", () => {
         512 * 1_024,
       ),
       new TextEncoder().encode("ok"),
+    );
+  });
+
+  it("refuses a declared Content-Length before reading the response body", async () => {
+    const encoder = new TextEncoder();
+    const buildResponse = (contentLength: string) => {
+      const parts = ['{"value":', '"ok"', "}"];
+      const state = { pulls: 0, cancelled: false };
+      const response = new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            const part = parts[state.pulls];
+            state.pulls++;
+            if (part === undefined) {
+              controller.close();
+              return;
+            }
+            controller.enqueue(encoder.encode(part));
+          },
+          cancel() {
+            state.cancelled = true;
+          },
+        }),
+        { headers: { "content-length": contentLength } },
+      );
+      return { response, state };
+    };
+
+    const malformed = buildResponse("abc");
+    await assertRejects(
+      () => readResponseJsonStringBytesWithinLimit(malformed.response, "value", 8, 1_024),
+      InvalidResponseBodyMetadataError,
+      "invalid Content-Length",
+    );
+    assertEquals(
+      malformed.state.cancelled,
+      true,
+      "a malformed Content-Length must cancel the response body",
+    );
+    assertEquals(
+      malformed.state.pulls <= 1,
+      true,
+      "a malformed Content-Length must be refused before the body is read",
+    );
+
+    const unsafe = buildResponse("9007199254740993");
+    await assertRejects(
+      () => readResponseJsonStringBytesWithinLimit(unsafe.response, "value", 8, 1_024),
+      InvalidResponseBodyMetadataError,
+      "invalid Content-Length",
+    );
+    assertEquals(
+      unsafe.state.cancelled,
+      true,
+      "a non-safe-integer Content-Length must cancel the response body",
+    );
+    assertEquals(
+      unsafe.state.pulls <= 1,
+      true,
+      "a non-safe-integer Content-Length must be refused before the body is read",
+    );
+
+    const oversized = buildResponse("10000000000");
+    await assertRejects(
+      () => readResponseJsonStringBytesWithinLimit(oversized.response, "value", 8, 1_024),
+      ResponseBodyTooLargeError,
+      "Response body exceeds 1024 bytes",
+    );
+    assertEquals(
+      oversized.state.cancelled,
+      true,
+      "an oversized declared Content-Length must cancel the response body",
+    );
+    assertEquals(
+      oversized.state.pulls <= 1,
+      true,
+      "an oversized declared Content-Length must be refused before the body is read",
+    );
+  });
+
+  it("stops a streamed JSON read at the whole-body transport ceiling", async () => {
+    const encoder = new TextEncoder();
+    let pulls = 0;
+    let cancelled = false;
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pulls++;
+          if (pulls === 1) {
+            controller.enqueue(encoder.encode('{"ignored":"' + "x".repeat(1_012)));
+            return;
+          }
+          if (pulls > 16) {
+            controller.enqueue(encoder.encode('","value":"ok"}'));
+            controller.close();
+            return;
+          }
+          controller.enqueue(encoder.encode("x".repeat(1_024)));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+    );
+
+    await assertRejects(
+      () => readResponseJsonStringBytesWithinLimit(response, "value", 8, 4_096),
+      ResponseBodyTooLargeError,
+      "Response body exceeds 4096 bytes",
+    );
+    assertEquals(
+      cancelled,
+      true,
+      "the transport ceiling must cancel the unread stream",
+    );
+    assertEquals(
+      pulls <= 6,
+      true,
+      "reading must stop at the response ceiling instead of draining the body",
+    );
+  });
+
+  it("aborts a stalled JSON body read and cancels the unread stream", async () => {
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let cancelled = false;
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          streamController = controller;
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+    );
+    const abortController = new AbortController();
+    const fallbackTimer = setTimeout(() => {
+      try {
+        streamController?.close();
+      } catch {
+        // The implementation may already have cancelled the stream.
+      }
+    }, 25);
+    const read = readResponseJsonStringBytesWithinLimit(
+      response,
+      "value",
+      8,
+      1_024,
+      abortController.signal,
+    );
+    abortController.abort(new Error("json read timed out"));
+
+    try {
+      await assertRejects(() => read, Error, "json read timed out");
+      assertEquals(
+        cancelled,
+        true,
+        "aborting a JSON body read must cancel the unread stream",
+      );
+    } finally {
+      clearTimeout(fallbackTimer);
+      try {
+        streamController?.close();
+      } catch {
+        // The implementation should already have cancelled the stream.
+      }
+    }
+  });
+
+  it("refuses a JSON body read whose abort signal already fired", async () => {
+    const abortController = new AbortController();
+    abortController.abort(new Error("preflight cancelled"));
+
+    await assertRejects(
+      () =>
+        readResponseJsonStringWithinLimit(
+          new Response('{"value":"x"}'),
+          "value",
+          8,
+          1_024,
+          abortController.signal,
+        ),
+      Error,
+      "preflight cancelled",
     );
   });
 

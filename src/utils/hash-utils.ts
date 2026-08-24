@@ -13,6 +13,7 @@ const NumberPrototypeToString = Number.prototype.toString;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ReflectApply = Reflect.apply;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const StringPrototypePadStart = String.prototype.padStart;
 const SubtleCryptoDigest = crypto.subtle.digest;
 const TextEncoderPrototypeEncode = TextEncoder.prototype.encode;
@@ -72,9 +73,32 @@ export interface BundleCode {
   sourceMap?: string;
 }
 
-/** Compute code hash. */
+function appendUtf16Field(bytes: Uint8Array, offset: number, value: string): number {
+  const length = value.length;
+  bytes[offset++] = length >>> 24;
+  bytes[offset++] = length >>> 16;
+  bytes[offset++] = length >>> 8;
+  bytes[offset++] = length;
+
+  for (let index = 0; index < length; index++) {
+    const codeUnit = ReflectApply(StringPrototypeCharCodeAt, value, [index]) as number;
+    bytes[offset++] = codeUnit >>> 8;
+    bytes[offset++] = codeUnit;
+  }
+  return offset;
+}
+
+/** Compute a bundle hash from fixed-field raw UTF-16 code-unit framing. */
 export function computeCodeHash(code: BundleCode): Promise<string> {
-  return computeHash(`${code.code}${code.css ?? ""}${code.sourceMap ?? ""}`);
+  const css = code.css ?? "";
+  const sourceMap = code.sourceMap ?? "";
+  const bytes = new IntrinsicUint8Array(
+    12 + (code.code.length + css.length + sourceMap.length) * 2,
+  );
+  let offset = appendUtf16Field(bytes, 0, code.code);
+  offset = appendUtf16Field(bytes, offset, css);
+  appendUtf16Field(bytes, offset, sourceMap);
+  return computeHashBytes(bytes);
 }
 
 /** Create simple hash. */

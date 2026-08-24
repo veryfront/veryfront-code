@@ -17,6 +17,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { isNode } from "#veryfront/platform/compat/runtime.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -282,6 +283,23 @@ describe("cache-dir", () => {
 
       assertEquals(readFileSync(ignorePath, "utf8"), "!keep-me\n");
     });
+
+    it("leaves a .gitignore that appears after the exists() check intact", async () => {
+      const cacheRoot = makeNodeCacheRoot();
+      const ignorePath = join(cacheRoot, ".gitignore");
+      writeFileSync(ignorePath, "!keep-me\n");
+
+      // ensureCacheDirIgnored short-circuits on exists(), so the exclusive
+      // create is driven directly: it is what protects a file written by
+      // another process between that check and the write.
+      await __cacheDirInternals.createIgnoreMarker(createFileSystem(), ignorePath);
+
+      assertEquals(
+        readFileSync(ignorePath, "utf8"),
+        "!keep-me\n",
+        "an ignore marker written between exists() and the create must survive, not be truncated",
+      );
+    });
   });
 
   describe({ name: "ensureCacheNodeModules on Node", ignore: !isNode }, () => {
@@ -360,7 +378,11 @@ describe("cache-dir", () => {
       mkdirSync(nodeModulesDir);
       writeFileSync(marker, "keep");
 
-      await runWithCacheDir(cacheRoot, ensureCacheNodeModules);
+      assertEquals(
+        await runWithCacheDir(cacheRoot, ensureCacheNodeModules),
+        false,
+        "a preserved foreign node_modules directory must be reported as not ensured",
+      );
 
       assert(lstatSync(nodeModulesDir).isDirectory());
       assertEquals(lstatSync(nodeModulesDir).isSymbolicLink(), false);
@@ -372,7 +394,11 @@ describe("cache-dir", () => {
       const nodeModulesEntry = join(cacheRoot, "node_modules");
       writeFileSync(nodeModulesEntry, "keep");
 
-      await runWithCacheDir(cacheRoot, ensureCacheNodeModules);
+      assertEquals(
+        await runWithCacheDir(cacheRoot, ensureCacheNodeModules),
+        false,
+        "a preserved non-directory node_modules entry must be reported as not ensured",
+      );
 
       const entry = openSync(nodeModulesEntry, "r");
       try {
@@ -381,6 +407,28 @@ describe("cache-dir", () => {
       } finally {
         closeSync(entry);
       }
+    });
+
+    it("should accept a real node_modules directory that resolves framework React", async () => {
+      const cacheRoot = makeNodeCacheRoot();
+      const nodeModulesDir = join(cacheRoot, "node_modules");
+      const require = createRequire(import.meta.url);
+      const frameworkReactDir = dirname(require.resolve("react"));
+      mkdirSync(nodeModulesDir);
+      symlinkSync(frameworkReactDir, join(nodeModulesDir, "react"), "dir");
+
+      assertEquals(
+        await runWithCacheDir(cacheRoot, ensureCacheNodeModules),
+        true,
+        "a directory already resolving React to the framework copy is usable as is",
+      );
+
+      assert(lstatSync(nodeModulesDir).isDirectory());
+      assertEquals(
+        lstatSync(nodeModulesDir).isSymbolicLink(),
+        false,
+        "a usable node_modules directory must not be replaced by a symlink",
+      );
     });
   });
 });
