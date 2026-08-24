@@ -109,18 +109,65 @@ export class VirtualModuleSystem {
 
   handleRequest(request: Request): Response | null {
     const url = new URL(request.url);
-    if (!url.pathname.startsWith(this.baseUrl)) return null;
+    if (url.pathname !== this.baseUrl && !url.pathname.startsWith(`${this.baseUrl}/`)) {
+      return null;
+    }
 
-    const moduleId = decodeURIComponent(url.pathname.slice(this.baseUrl.length + 1));
+    const allowedMethods = "GET, HEAD, OPTIONS";
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": allowedMethods,
+    };
+
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          ...corsHeaders,
+          "Allow": allowedMethods,
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      return new Response("Method not allowed", {
+        status: 405,
+        headers: {
+          ...corsHeaders,
+          "Allow": allowedMethods,
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+
+    let moduleId: string;
+    try {
+      moduleId = decodeURIComponent(url.pathname.slice(this.baseUrl.length + 1));
+    } catch (error) {
+      if (!(error instanceof URIError)) throw error;
+      return new Response(request.method === "HEAD" ? null : "Malformed module identifier", {
+        status: 400,
+        headers: {
+          ...corsHeaders,
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+
     const module = this.modules.get(moduleId);
-    if (!module) return new Response("Module not found", { status: 404 });
+    if (!module) {
+      return new Response(request.method === "HEAD" ? null : "Module not found", {
+        status: 404,
+        headers: corsHeaders,
+      });
+    }
 
-    return new Response(module.transformed ?? module.source, {
+    return new Response(request.method === "HEAD" ? null : module.transformed ?? module.source, {
       headers: {
         "Content-Type": module.contentType,
         "Cache-Control": "no-cache",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        ...corsHeaders,
       },
     });
   }
