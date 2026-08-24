@@ -10,7 +10,7 @@
  * stream decoder — impossible to compile.
  */
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
-import type { RuntimeStreamPart } from "./runtime-tool-types.ts";
+import type { RuntimeStreamPart } from "#veryfront/agent/runtime/runtime-tool-types.ts";
 
 export type ScriptedUsage = NonNullable<
   Extract<RuntimeStreamPart, { type: "finish" }>["totalUsage"]
