@@ -105,6 +105,33 @@ describe("workflow source integration policy snapshots", () => {
     assertEquals(getterCalls, 0);
   });
 
+  it("does not let descriptor prototype pollution supply a policy snapshot", () => {
+    const pollutedPolicy = normalizeSourceIntegrationPolicy(undefined);
+    let getterCalls = 0;
+    const run = Object.defineProperty({ id: "polluted-descriptor" }, "sourceIntegrationPolicy", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return normalizeSourceIntegrationPolicy(undefined);
+      },
+    });
+
+    Object.defineProperty(Object.prototype, "value", {
+      value: pollutedPolicy,
+      configurable: true,
+    });
+    try {
+      assertThrows(
+        () => requireWorkflowSourceIntegrationPolicy(run as never),
+        VeryfrontError,
+        "invalid source integration policy snapshot",
+      );
+      assertEquals(getterCalls, 0);
+    } finally {
+      delete (Object.prototype as { value?: unknown }).value;
+    }
+  });
+
   it("restores a run snapshot without widening an active restriction", () => {
     const active = normalizeSourceIntegrationPolicy({
       allow: { github: { allowedTools: ["list_repos"] } },

@@ -18,6 +18,7 @@ import {
 const MISSING = Symbol("missing workflow source policy property");
 const INVALID = Symbol("invalid workflow source policy property");
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwn = Object.hasOwn;
 
 function readRunProperty(
   run: unknown,
@@ -27,7 +28,7 @@ function readRunProperty(
   try {
     const descriptor = objectGetOwnPropertyDescriptor(run, key);
     if (!descriptor) return MISSING;
-    return "value" in descriptor ? descriptor.value : INVALID;
+    return objectHasOwn(descriptor, "value") ? descriptor.value : INVALID;
   } catch {
     return INVALID;
   }

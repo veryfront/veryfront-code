@@ -6,6 +6,7 @@ const MISSING = Symbol("missing-workflow-source-authority-property");
 type AuthorityProperty = unknown | typeof MISSING;
 const NativeURL = URL;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwn = Object.hasOwn;
 const reflectApply = Reflect.apply;
 const stringCharCodeAt = String.prototype.charCodeAt;
 const stringIndexOf = String.prototype.indexOf;
@@ -62,7 +63,7 @@ function readAuthorityProperty(
   try {
     const descriptor = objectGetOwnPropertyDescriptor(authority, key);
     if (descriptor === undefined) return MISSING;
-    if (!("value" in descriptor)) {
+    if (!objectHasOwn(descriptor, "value")) {
       invalidSourceAuthority("Workflow source authority must contain only own data properties");
     }
     return descriptor.value;

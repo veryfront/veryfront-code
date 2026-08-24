@@ -130,6 +130,36 @@ describe("workflow source authority", () => {
     );
   });
 
+  it("does not let descriptor prototype pollution turn accessors into data properties", () => {
+    let getterCalls = 0;
+    const authority = Object.defineProperty(
+      { productionMode: true, environmentName: "Production" },
+      "releaseId",
+      {
+        enumerable: true,
+        get() {
+          getterCalls += 1;
+          return "release-from-getter";
+        },
+      },
+    ) as WorkflowSourceAuthority;
+
+    Object.defineProperty(Object.prototype, "value", {
+      value: "polluted-release",
+      configurable: true,
+    });
+    try {
+      assertThrows(
+        () => requireWorkflowContentSource(authority),
+        VeryfrontError,
+        "must contain only own data properties",
+      );
+      assertEquals(getterCalls, 0);
+    } finally {
+      delete (Object.prototype as { value?: unknown }).value;
+    }
+  });
+
   it("fails closed when authority descriptors cannot be inspected", () => {
     const authority = new Proxy({ productionMode: false, branch: "main" }, {
       getOwnPropertyDescriptor() {
