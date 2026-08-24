@@ -210,7 +210,29 @@ describe("upstream WebSocket client", () => {
       socket.send(buffer.subarray(2));
       socket.send(new Blob([new Uint8Array([9, 8])]));
       socket.send("after-blob");
-      await collected;
+      // Bound the wait: if the bridge drops or misorders a frame, `collected`
+      // never settles, and an unbounded await would wedge the test worker
+      // instead of failing. The timer is always cleared so the bounded wait
+      // does not itself leak an op.
+      let frameTimer: number | undefined;
+      try {
+        await Promise.race([
+          collected,
+          new Promise<void>((_, reject) => {
+            frameTimer = setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    `timed out waiting for 3 forwarded frames; received ${frames.length}`,
+                  ),
+                ),
+              5_000,
+            );
+          }),
+        ]);
+      } finally {
+        if (frameTimer !== undefined) clearTimeout(frameTimer);
+      }
 
       assertEquals(
         frames[0],
