@@ -586,6 +586,67 @@ describe("automated review gate", () => {
     );
   });
 
+  it("ignores skip and request markers inside non-rendered Markdown", async () => {
+    for (
+      const [staleMarker, hiddenCurrentMarker] of [
+        [
+          `Review skipped for current commit ${STALE_SHA}.`,
+          [
+            "```text",
+            `Review skipped for current commit ${HEAD_SHA}.`,
+            "```",
+          ],
+        ],
+        [
+          `Requested commit: ${STALE_SHA}.`,
+          ["<!--", `Requested commit: ${HEAD_SHA}.`, "-->"],
+        ],
+        [
+          `Review skipped for current commit ${STALE_SHA}.`,
+          [`\`Requested commit: ${HEAD_SHA}.\``],
+        ],
+        [
+          `Requested commit: ${STALE_SHA}.`,
+          [`<span title="Review skipped for current commit ${HEAD_SHA}.">`],
+        ],
+        [
+          `Review skipped for current commit ${STALE_SHA}.`,
+          [`<? Requested commit: ${HEAD_SHA}. ?>`],
+        ],
+        [
+          `Requested commit: ${STALE_SHA}.`,
+          [`<!DECL Review skipped for current commit ${HEAD_SHA}.>`],
+        ],
+        [
+          `Review skipped for current commit ${STALE_SHA}.`,
+          [`<![CDATA[Requested commit: ${HEAD_SHA}.]]>`],
+        ],
+      ] as const
+    ) {
+      const newerSuccessfulSummary = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          codeRabbitReviewRange(),
+          "<!-- recent_review_end -->",
+          staleMarker,
+          ...hiddenCurrentMarker,
+        ].join("\n"),
+        created_at: "2026-08-22T12:05:00Z",
+        html_url:
+          "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-visible-review",
+        updated_at: "2026-08-22T12:05:00Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          { reviews: [], comments: [newerSuccessfulSummary] },
+          HEAD_SHA,
+        ))?.url,
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-visible-review",
+      );
+    }
+  });
+
   it("classifies malformed and wrapped current-head ranges fail closed", async () => {
     const olderSuccess = olderCodeRabbitSuccess();
 
@@ -1495,9 +1556,9 @@ describe("automated review gate", () => {
     for (
       const visibleRangeAfterCommentLookalike of [
         ["\\<!--", MALFORMED_CURRENT_RANGE, "-->"],
-        ["    <!--", MALFORMED_CURRENT_RANGE, "-->"],
-        ["    example <!--", MALFORMED_CURRENT_RANGE, "-->"],
-        ["\t<!--", MALFORMED_CURRENT_RANGE, "-->"],
+        ["", "    <!--", MALFORMED_CURRENT_RANGE, "-->"],
+        ["", "    example <!--", MALFORMED_CURRENT_RANGE, "-->"],
+        ["", "\t<!--", MALFORMED_CURRENT_RANGE, "-->"],
         [">     <!--", `> ${MALFORMED_CURRENT_RANGE}`, "> -->"],
         [">     example <!--", `> ${MALFORMED_CURRENT_RANGE}`, "> -->"],
         ["`<!--`", MALFORMED_CURRENT_RANGE, "-->"],
@@ -1607,6 +1668,56 @@ describe("automated review gate", () => {
     );
   });
 
+  it("preserves paragraph context before classifying indented code", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+
+    for (
+      const paragraphContinuation of [
+        ["    <!--", MALFORMED_CURRENT_RANGE, "-->"],
+        ["    example <!--", MALFORMED_CURRENT_RANGE, "-->"],
+        ["\t<!--", MALFORMED_CURRENT_RANGE, "-->"],
+        [
+          "> paragraph text",
+          ">     <!--",
+          `> ${MALFORMED_CURRENT_RANGE}`,
+          "> -->",
+        ],
+        [
+          "> ordinary text <!--",
+          `> ${MALFORMED_CURRENT_RANGE}`,
+          "> -->",
+        ],
+        [
+          "- paragraph text",
+          "      <!--",
+          `  ${MALFORMED_CURRENT_RANGE}`,
+          "  -->",
+        ],
+      ]
+    ) {
+      const newerHiddenCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...paragraphContinuation,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerHiddenCurrentRange],
+          },
+          HEAD_SHA,
+        ))?.url,
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+      );
+    }
+  });
+
   it("does not let incomplete inline comments cross Markdown blocks", async () => {
     const olderSuccess = olderCodeRabbitSuccess();
 
@@ -1665,6 +1776,35 @@ describe("automated review gate", () => {
     );
   });
 
+  it("does not extend short inline HTML comments across later evidence", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+
+    for (const shortComment of ["<!-->", "<!--->"]) {
+      const newerVisibleCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          `ordinary ${shortComment}`,
+          MALFORMED_CURRENT_RANGE,
+          "-->",
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerVisibleCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+  });
+
   it("keeps raw-block backticks from masking later comments", async () => {
     const olderSuccess = olderCodeRabbitSuccess();
     for (
@@ -1700,6 +1840,62 @@ describe("automated review gate", () => {
         "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
       );
     }
+  });
+
+  it("keeps inline HTML backticks from masking visible evidence", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    for (
+      const inlineHtml of [
+        "ordinary text <!-- ` -->",
+        'ordinary text <span title="`">',
+      ]
+    ) {
+      const newerVisibleCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          inlineHtml,
+          MALFORMED_CURRENT_RANGE,
+          "`",
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerVisibleCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+
+    const newerCurrentRangeInsideCode = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "`code <!--",
+        MALFORMED_CURRENT_RANGE,
+        "-->`",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerCurrentRangeInsideCode],
+        },
+        HEAD_SHA,
+      ))?.url,
+      "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+    );
   });
 
   it("keeps structural review markers outside unmatched inline code", async () => {
