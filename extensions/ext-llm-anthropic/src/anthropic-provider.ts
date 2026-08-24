@@ -53,6 +53,50 @@ import { type AnthropicCitation, normalizeAnthropicCitation } from "./anthropic-
 
 const MAX_PAUSE_TURN_CONTINUATIONS = 5;
 
+/**
+ * Replays allowed when the SSE body itself reports a retryable failure.
+ *
+ * Anthropic answers HTTP 200 and then delivers `overloaded_error` or
+ * `rate_limit_error` as the first event of the stream. `requestStream` cannot
+ * retry that: it hands the body off the moment headers arrive, and past that
+ * point a reader owns the body. So the replay has to live here, where the
+ * request body is still available to re-issue. The bound and the backoff match
+ * the pre-header loop in `provider/runtime-loader/provider-http.ts`.
+ *
+ * Worst-case added wait is 3 seconds, which keeps a hosted child fork inside
+ * its 45-second idle watchdog even on top of a full header budget.
+ */
+const MAX_ANTHROPIC_STREAM_REPLAYS = 2;
+const ANTHROPIC_STREAM_REPLAY_DELAY_MS = 1_000;
+
+/**
+ * Only a typed provider failure the classifier marked retryable may be
+ * replayed. Caller cancellation surfaces as an `AbortError`, never a
+ * `ProviderError`, so it can never reach a replay.
+ *
+ * The other half of the safety condition lives at the call site: a replay is
+ * only issued while the consumer has seen nothing, because re-issuing after
+ * output would duplicate it.
+ */
+function isReplayableAnthropicStreamFailure(error: unknown): boolean {
+  return error instanceof ProviderError && error.retryable;
+}
+
+function waitForAnthropicStreamReplay(delayMs: number, signal: AbortSignal): Promise<void> {
+  if (delayMs <= 0) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, delayMs);
+    function onAbort() {
+      clearTimeout(timer);
+      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export {
   buildProviderError,
   isNumberArray,
@@ -585,9 +629,10 @@ export function createAnthropicModelRuntime(
       const enableMcpConnector = usesAnthropicMcpConnector(body);
       throwIfAnthropicRequestAborted(options.abortSignal);
       const providerAbortScope = createProviderAbortScope(options.abortSignal);
-      let firstResponseStream: ReadableStream<Uint8Array>;
-      try {
-        firstResponseStream = await requestStream({
+      const issueStream = (
+        requestBody: AnthropicRequestBody,
+      ): Promise<ReadableStream<Uint8Array>> =>
+        requestStream({
           url,
           fetchImpl,
           providerLabel: config.name ?? "anthropic",
@@ -599,10 +644,13 @@ export function createAnthropicModelRuntime(
             extraHeaders: options.headers,
             enableFineGrainedToolStreaming: true,
             enableMcpConnector,
-            body: JSON.stringify(body),
+            body: JSON.stringify(requestBody),
             signal: providerAbortScope.controller.signal,
           }),
         });
+      let firstResponseStream: ReadableStream<Uint8Array>;
+      try {
+        firstResponseStream = await issueStream(body);
       } catch (error) {
         providerAbortScope.dispose();
         throw error;
@@ -612,6 +660,7 @@ export function createAnthropicModelRuntime(
       const continuePausedStream = async function* (): AsyncIterable<unknown> {
         let responseStream = firstResponseStream;
         let continuationCount = 0;
+        let streamReplayCount = 0;
         let aggregateUsage: RuntimeUsage | undefined;
         let requestBody: AnthropicRequestBody = body;
         const rawAssistantMessages: unknown[][] = [];
@@ -622,22 +671,49 @@ export function createAnthropicModelRuntime(
         while (true) {
           let completion: AnthropicStreamCompletion | undefined;
           let finishPart: Record<string, unknown> | undefined;
-          for await (
-            const part of streamAnthropicCompatibleParts(responseStream, {
-              ...streamOptions,
-              providerLabel: providerName,
-              providerToolNamesById,
-              onCompletion(value) {
-                completion = value;
-              },
-            })
-          ) {
-            const record = readRecord(part);
-            if (record?.type === "finish") {
-              finishPart = record;
-              continue;
+          // The registry is mutated as tool blocks are parsed, so a replay has
+          // to start from the entries this attempt began with.
+          const toolNamesBeforeAttempt = new Map(providerToolNamesById);
+          let yieldedThisAttempt = false;
+          try {
+            for await (
+              const part of streamAnthropicCompatibleParts(responseStream, {
+                ...streamOptions,
+                providerLabel: providerName,
+                providerToolNamesById,
+                onCompletion(value) {
+                  completion = value;
+                },
+              })
+            ) {
+              const record = readRecord(part);
+              if (record?.type === "finish") {
+                finishPart = record;
+                continue;
+              }
+              yieldedThisAttempt = true;
+              yield part;
             }
-            yield part;
+          } catch (error) {
+            if (
+              yieldedThisAttempt ||
+              streamReplayCount >= MAX_ANTHROPIC_STREAM_REPLAYS ||
+              !isReplayableAnthropicStreamFailure(error)
+            ) {
+              throw error;
+            }
+            await waitForAnthropicStreamReplay(
+              ANTHROPIC_STREAM_REPLAY_DELAY_MS * 2 ** streamReplayCount,
+              providerAbortScope.controller.signal,
+            );
+            streamReplayCount++;
+            providerToolNamesById.clear();
+            for (const [id, name] of toolNamesBeforeAttempt) {
+              providerToolNamesById.set(id, name);
+            }
+            throwIfAnthropicRequestAborted(providerAbortScope.controller.signal);
+            responseStream = await issueStream(requestBody);
+            continue;
           }
 
           aggregateUsage = addAnthropicUsage(aggregateUsage, completion?.usage);
@@ -672,22 +748,7 @@ export function createAnthropicModelRuntime(
           continuationCount++;
           requestBody = createPauseTurnContinuationBody(requestBody, continuationContent);
           throwIfAnthropicRequestAborted(providerAbortScope.controller.signal);
-          responseStream = await requestStream({
-            url,
-            fetchImpl,
-            providerLabel: config.name ?? "anthropic",
-            providerKind: "anthropic",
-            modelId,
-            init: createAnthropicRequestInit({
-              apiKey: config.apiKey,
-              authToken: config.authToken,
-              extraHeaders: options.headers,
-              enableFineGrainedToolStreaming: true,
-              enableMcpConnector,
-              body: JSON.stringify(requestBody),
-              signal: providerAbortScope.controller.signal,
-            }),
-          });
+          responseStream = await issueStream(requestBody);
         }
       };
 

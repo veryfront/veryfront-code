@@ -1,7 +1,7 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 
-import { ProviderRequestError } from "veryfront/provider/shared";
+import { ProviderOverloadedError, ProviderRequestError } from "veryfront/provider/shared";
 
 import { MAX_ANTHROPIC_RAW_ASSISTANT_METADATA_BYTES } from "./anthropic-native-content.ts";
 import { createAnthropicModelRuntime } from "./anthropic-provider.ts";
@@ -4270,6 +4270,149 @@ describe("anthropic-provider", () => {
       });
       const body = captured as { stop_sequences?: string[] } | null;
       assertEquals(body?.stop_sequences, ["a", "b", "c", "d"]);
+    });
+  });
+  describe("Anthropic in-stream retryable errors", () => {
+    const encoder = new TextEncoder();
+
+    function sse(...events: Record<string, unknown>[]): string[] {
+      return events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+    }
+
+    function streamResponse(chunks: string[]): Response {
+      return new Response(
+        ReadableStream.from(chunks.map((chunk) => encoder.encode(chunk))),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    }
+
+    const OVERLOADED = sse({
+      type: "error",
+      error: { type: "overloaded_error", message: "Overloaded" },
+    });
+
+    const SUCCESS = sse(
+      { type: "message_start", message: { usage: { input_tokens: 3 } } },
+      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: "hello" },
+      },
+      { type: "content_block_stop", index: 0 },
+      {
+        type: "message_delta",
+        delta: { stop_reason: "end_turn" },
+        usage: { output_tokens: 2 },
+      },
+      { type: "message_stop" },
+    );
+
+    function runtimeFor(responses: (() => Response)[]) {
+      let attempts = 0;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () => {
+          const next = responses[Math.min(attempts, responses.length - 1)];
+          attempts++;
+          if (!next) throw new Error("No stubbed response for this attempt");
+          return Promise.resolve(next());
+        },
+      }, "claude-opus-4-6");
+      return { runtime, attemptCount: () => attempts };
+    }
+
+    it("replays the request when the stream errors as overloaded before any output", async () => {
+      const { runtime, attemptCount } = runtimeFor([
+        () => streamResponse(OVERLOADED),
+        () => streamResponse(SUCCESS),
+      ]);
+
+      const result = await runtime.doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        maxOutputTokens: 64,
+      });
+      const parts = await collectAsync(result.stream);
+
+      assertEquals(attemptCount(), 2);
+      assertEquals(
+        parts.some((part) =>
+          (part as { type?: string; delta?: string }).type === "text-delta" &&
+          (part as { delta?: string }).delta === "hello"
+        ),
+        true,
+      );
+      assertEquals(
+        parts.filter((part) => (part as { type?: string }).type === "finish").length,
+        1,
+      );
+    });
+
+    it("does not replay once the stream has produced output", async () => {
+      const partialThenOverloaded = [
+        ...sse(
+          { type: "message_start", message: { usage: { input_tokens: 3 } } },
+          { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+          {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "text_delta", text: "partial" },
+          },
+        ),
+        ...OVERLOADED,
+      ];
+      const { runtime, attemptCount } = runtimeFor([
+        () => streamResponse(partialThenOverloaded),
+        () => streamResponse(SUCCESS),
+      ]);
+
+      const result = await runtime.doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        maxOutputTokens: 64,
+      });
+
+      await assertRejects(
+        () => collectAsync(result.stream),
+        ProviderOverloadedError,
+        "provider overloaded",
+      );
+      assertEquals(attemptCount(), 1);
+    });
+
+    it("does not replay a non-retryable in-stream error", async () => {
+      const { runtime, attemptCount } = runtimeFor([
+        () =>
+          streamResponse(sse({
+            type: "error",
+            error: { type: "authentication_error", message: "bad key" },
+          })),
+        () => streamResponse(SUCCESS),
+      ]);
+
+      const result = await runtime.doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        maxOutputTokens: 64,
+      });
+
+      await assertRejects(() => collectAsync(result.stream), ProviderRequestError);
+      assertEquals(attemptCount(), 1);
+    });
+
+    it("bounds the replays and surfaces the provider failure when they are exhausted", async () => {
+      const { runtime, attemptCount } = runtimeFor([() => streamResponse(OVERLOADED)]);
+
+      const result = await runtime.doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        maxOutputTokens: 64,
+      });
+
+      await assertRejects(
+        () => collectAsync(result.stream),
+        ProviderOverloadedError,
+        "provider overloaded",
+      );
+      assertEquals(attemptCount(), 3);
     });
   });
 });
