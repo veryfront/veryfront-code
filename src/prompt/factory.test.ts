@@ -12,6 +12,18 @@ import {
 import { prompt } from "./factory.ts";
 import type { PromptConfig, PromptMCPConfig, PromptRenderContext } from "./types.ts";
 
+async function importWithStarvedPromptTimer(
+  load: () => Promise<typeof import("./factory.ts")>,
+): Promise<typeof import("./factory.ts")> {
+  const fakeSetTimeout = globalThis.setTimeout;
+  try {
+    globalThis.setTimeout = (() => 0) as typeof globalThis.setTimeout;
+    return await load();
+  } finally {
+    globalThis.setTimeout = fakeSetTimeout;
+  }
+}
+
 describe("prompt factory", () => {
   describe("prompt()", () => {
     it("should create a prompt with explicit id", () => {
@@ -151,7 +163,7 @@ describe("prompt factory", () => {
         () => rendering,
         DOMException,
         "Prompt rendering deadline exceeded",
-      );
+      ) as DOMException;
       assertEquals(converted, true, "interpolation crossed the live deadline");
       assertEquals(error.name, "TimeoutError");
     });
@@ -263,8 +275,8 @@ describe("prompt factory", () => {
 
     it("should reject generated content completed after its absolute deadline", async () => {
       using time = new FakeTime(0);
-      const { prompt: promptWithFakeTime } = await import(
-        "./factory.ts?generated-deadline-regression"
+      const { prompt: promptWithFakeTime } = await importWithStarvedPromptTimer(
+        () => import("./factory.ts?generated-deadline-regression"),
       );
       const deadline = Date.now() + 60_000;
       let invoked = false;
@@ -284,10 +296,14 @@ describe("prompt factory", () => {
         () => p.getContent({}, { deadline }),
         DOMException,
         "Prompt rendering deadline exceeded",
-      );
+      ) as DOMException;
       assertEquals(invoked, true, "the generator crossed the live deadline");
       assertEquals(error.name, "TimeoutError");
-      assertStrictEquals(context?.abortSignal?.reason, error);
+      assertEquals(
+        context?.abortSignal?.aborted,
+        false,
+        "the starved timer did not supply the deadline rejection",
+      );
     });
   });
 
