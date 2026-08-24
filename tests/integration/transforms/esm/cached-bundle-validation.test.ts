@@ -26,19 +26,29 @@ describe("validateCachedBundlesByManifestOrCode manifest branch", () => {
 
   // bundle-manifest resolves its distributed cache lazily and memoizes the first
   // backend it sees, so a disk backend has to be configured before the first
-  // manifest is stored or loaded anywhere in this file.
-  let originalDiskCacheDir: string | undefined;
+  // manifest is stored or loaded anywhere in this file. The factory prefers the
+  // API backend (VERYFRONT_API_BASE_URL) and Redis (REDIS_URL) over disk, so
+  // those have to be cleared too or an ambient environment sends the manifests
+  // to an external backend instead of the temp dir.
+  const originalEnv = new Map<string, string | undefined>();
+  const managedVars = ["VF_DISK_CACHE_DIR", "VERYFRONT_API_BASE_URL", "REDIS_URL"] as const;
   let distributedDir = "";
 
   beforeAll(async () => {
     distributedDir = await makeTempDir({ prefix: "vf-cached-bundle-validation-cache-" });
-    originalDiskCacheDir = getHostEnv("VF_DISK_CACHE_DIR");
+    for (const name of managedVars) {
+      originalEnv.set(name, getHostEnv(name));
+      deleteEnv(name);
+    }
     setEnv("VF_DISK_CACHE_DIR", distributedDir);
   });
 
   afterAll(async () => {
-    if (originalDiskCacheDir === undefined) deleteEnv("VF_DISK_CACHE_DIR");
-    else setEnv("VF_DISK_CACHE_DIR", originalDiskCacheDir);
+    for (const name of managedVars) {
+      const original = originalEnv.get(name);
+      if (original === undefined) deleteEnv(name);
+      else setEnv(name, original);
+    }
     await remove(distributedDir, { recursive: true });
   });
 
