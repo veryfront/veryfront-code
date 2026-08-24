@@ -159,6 +159,36 @@ describe("runs/schemas", () => {
     assertEquals(isTriggerTarget(target), true);
   });
 
+  for (const [kind, id] of [["task", "sync-helpdesk"], ["workflow", "billing/sync"]] as const) {
+    it(`maps ${kind} schedule targets without conversation fields`, () => {
+      const parsed = getScheduleReferenceListSchema().parse({
+        schedules: [
+          {
+            id: "schedule_1",
+            name: "Sync helpdesk",
+            status: "active",
+            target: { kind, id },
+            definition_source: "source",
+            source_trigger_id: "sync-helpdesk",
+            timeout_seconds: 900,
+          },
+        ],
+      });
+
+      const target = parsed.schedules[0]?.target;
+      assertEquals(
+        target,
+        { kind, id },
+        `a ${kind} target must keep its id and gain no conversation fields`,
+      );
+      assertEquals(
+        isTriggerTarget(target),
+        true,
+        `a mapped ${kind} target must stay a resolvable trigger target`,
+      );
+    });
+  }
+
   it("rejects conversation fields on non-agent schedule targets", () => {
     const result = getScheduleReferenceListSchema().safeParse({
       schedules: [

@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert";
+import { assertEquals, assertMatch, assertRejects } from "#veryfront/testing/assert";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { resource } from "./factory.ts";
 
@@ -10,11 +10,17 @@ describe("resource factory", () => {
       const r = resource({
         pattern: "/users/:userId",
         description: "Get user",
+        title: "Get user",
         paramsSchema: defineSchema((v) => v.object({ userId: v.string() }))(),
         load: async ({ userId }) => ({ id: userId }),
       });
       assertEquals(r.pattern, "/users/:userId");
       assertEquals(r.description, "Get user");
+      assertEquals(
+        r.title,
+        "Get user",
+        "resource() must preserve the authored title so MCP resources/list can surface it",
+      );
     });
 
     it("should derive id from pattern", () => {
@@ -27,13 +33,32 @@ describe("resource factory", () => {
       assertEquals(r.id, "users_userId_profile");
     });
 
+    it("should leave title undefined when not authored", () => {
+      const r = resource({
+        pattern: "/users/:userId/profile",
+        description: "User profile",
+        paramsSchema: defineSchema((v) => v.object({ userId: v.string() }))(),
+        load: async () => ({}),
+      });
+      assertEquals(r.title, undefined, "resource() must not invent a title");
+    });
+
     it("should auto-generate pattern when not provided", () => {
       const r = resource({
         description: "Auto pattern",
         paramsSchema: defineSchema((v) => v.object({}))(),
         load: async () => ({}),
       });
-      assertStringIncludes(r.pattern, "/resource_");
+      assertMatch(
+        r.pattern,
+        /^\/resource_\d+$/,
+        "the fallback pattern must be /resource_ plus a timestamp",
+      );
+      assertMatch(
+        r.id,
+        /^resource_\d+$/,
+        "the fallback id must be derived from the generated pattern",
+      );
     });
 
     it("should preserve paramsSchema", () => {

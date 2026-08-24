@@ -19,7 +19,7 @@ import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront
 import { runWithProjectEnv } from "../server/project-env/storage.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import type { ExecStreamEvent } from "./sandbox.ts";
-import { Sandbox } from "./sandbox.ts";
+import { Sandbox, waitForSandboxReady } from "./sandbox.ts";
 import { resolveDefaultSandboxRuntimeEndpoint } from "./lazy-sandbox.ts";
 import { logger } from "#veryfront/utils";
 
@@ -208,10 +208,15 @@ describe("Sandbox", () => {
         textResponse("Forbidden", 403),
       ]);
 
-      await assertRejects(
+      const error = await assertRejects(
         () => Sandbox.create({ authToken: "bad-token", apiUrl: "https://api.test.com" }),
-        Error,
+        VeryfrontError,
         "Failed to create sandbox",
+      );
+      assertEquals(
+        (error as VeryfrontError).slug,
+        "request-error",
+        "sandbox creation failures use the request error contract",
       );
     });
 
@@ -236,10 +241,75 @@ describe("Sandbox", () => {
         jsonResponse({ id: "session-3", status: "error" }),
       ]);
 
-      await assertRejects(
+      const error = await assertRejects(
         () => Sandbox.create({ authToken: "test-token", apiUrl: "https://api.test.com" }),
-        Error,
+        VeryfrontError,
         "Sandbox failed to start",
+      );
+      assertEquals(
+        (error as VeryfrontError).slug,
+        "initialization-error",
+        "sandbox startup failures use the initialization error contract",
+      );
+    });
+
+    it("should throw when the sandbox never becomes ready within the maximum wait", async () => {
+      mockTimers({ advanceTimeByMs: true });
+      mockFetch([
+        jsonResponse({ id: "session-timeout", status: "pending" }),
+        jsonResponse({ id: "session-timeout", status: "pending" }),
+      ]);
+
+      const error = await assertRejects(
+        () =>
+          waitForSandboxReady({
+            apiUrl: "https://api.test.com",
+            id: "session-timeout",
+            authToken: "test-token",
+            maxWaitMs: 10,
+            pollIntervalMs: 5,
+          }),
+        VeryfrontError,
+        "Sandbox did not become ready within timeout",
+      );
+      assertEquals(
+        (error as VeryfrontError).slug,
+        "timeout-error",
+        "readiness polling that runs out of time uses the timeout error contract",
+      );
+      assertEquals(
+        fetchCalls.length,
+        2,
+        "readiness polling stops once the maximum wait has elapsed",
+      );
+    });
+
+    it("should keep polling when a readiness check responds with a non-OK status", async () => {
+      mockTimers();
+      mockFetch([
+        jsonResponse({
+          id: "session-flaky",
+          endpoint: "https://sandbox.example.com",
+          status: "pending",
+        }),
+        textResponse("unavailable", 503),
+        jsonResponse({
+          id: "session-flaky",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
+      ]);
+
+      const sandbox = await Sandbox.create({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+      });
+
+      assertEquals(sandbox.id, "session-flaky");
+      assertEquals(
+        fetchCalls.length,
+        3,
+        "a non-OK readiness response is retried instead of failing the creation",
       );
     });
 
@@ -466,6 +536,85 @@ describe("Sandbox", () => {
       assertEquals(result.exitCode, 1);
       assertEquals(jsonBody(fetchCalls, 1), { command: "failing-cmd" });
     });
+
+    it("should fail closed when the stream ends without an exit event", async () => {
+      mockFetch([
+        jsonResponse({ id: "s3", endpoint: "https://sb.test", status: "running" }),
+        ndjsonResponse([
+          { type: "stdout", data: "partial" },
+        ]),
+      ]);
+
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      const result = await sandbox.executeCommand("truncated-cmd");
+
+      assertEquals(
+        result.stdout,
+        "partial",
+        "output received before the stream ended is still returned",
+      );
+      assertEquals(
+        result.exitCode,
+        1,
+        "a stream that ends without an exit event must fail closed",
+      );
+    });
+
+    it("should fail closed when the exit event carries no exit code", async () => {
+      mockFetch([
+        jsonResponse({ id: "s4", endpoint: "https://sb.test", status: "running" }),
+        ndjsonResponse([
+          { type: "stdout", data: "done\n" },
+          { type: "exit" },
+        ]),
+      ]);
+
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      const result = await sandbox.executeCommand("exitless-cmd");
+
+      assertEquals(
+        result.exitCode,
+        1,
+        "an exit event without an exitCode must fail closed",
+      );
+    });
+
+    it("should fail closed for a lazy sandbox stream that ends without an exit event", async () => {
+      mockFetch([
+        jsonResponse({
+          id: "sandbox-1",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+        ndjsonResponse([
+          { type: "stdout", data: "partial" },
+        ]),
+        jsonResponse({ ok: true }),
+      ]);
+
+      const sandbox = Sandbox.createLazy({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+      });
+
+      try {
+        const result = await sandbox.executeCommand("truncated-cmd");
+
+        assertEquals(
+          result.stdout,
+          "partial",
+          "output received before the lazy stream ended is still returned",
+        );
+        assertEquals(
+          result.exitCode,
+          1,
+          "a lazy stream that ends without an exit event must fail closed",
+        );
+      } finally {
+        await sandbox.close();
+      }
+    });
   });
 
   describe("executeStream()", () => {
@@ -546,6 +695,24 @@ describe("Sandbox", () => {
       assertEquals(events[1]!.type, "stderr");
       assertEquals(events[2]!.type, "exit");
       assertEquals(jsonBody(fetchCalls, 1), { command: "cmd" });
+    });
+
+    it("should skip malformed NDJSON lines and keep delivering events", async () => {
+      const body = '{"type":"stdout","data":"a\\n"}\n' +
+        "<<garbage>>\n" +
+        '{"type":"exit","exitCode":0}\n' +
+        "{truncated";
+
+      mockFetch([
+        jsonResponse({ id: "stream-malformed", endpoint: "https://sb.test", status: "running" }),
+        new Response(body, { status: 200 }),
+      ]);
+
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      const result = await sandbox.executeCommand("cmd");
+
+      assertEquals(result.stdout, "a\n", "buffered stdout survives a malformed NDJSON line");
+      assertEquals(result.exitCode, 0, "events after a malformed line are still delivered");
     });
 
     it("should cancel the response body when stream iteration stops early", async () => {

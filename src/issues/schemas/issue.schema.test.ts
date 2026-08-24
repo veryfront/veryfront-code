@@ -1,12 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   generateIssueId,
   ISSUE_PREFIXES,
+  type IssueMetadata,
   isValidIssueId,
   parseIssueId,
   parseState,
+  validateMetadata,
 } from "./issue.schema.ts";
 
 describe("issues/schema", () => {
@@ -100,6 +102,59 @@ describe("issues/schema", () => {
 
     it("should handle numbers beyond 3 digits", () => {
       assertEquals(generateIssueId("ISSUE", ["ISSUE-999"]), "ISSUE-1000");
+    });
+  });
+
+  describe("validateMetadata", () => {
+    const baseMetadata = {
+      id: "ISSUE-001",
+      title: "Fix login",
+      state: "open",
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    };
+
+    it("should reject an id that does not match the issue id pattern", () => {
+      assertThrows(
+        () => validateMetadata({ ...baseMetadata, id: "bug 1" }),
+        Error,
+        undefined,
+        "frontmatter with a malformed issue id must be rejected",
+      );
+    });
+
+    it("should reject a timestamp that is not a parseable date", () => {
+      assertThrows(
+        () => validateMetadata({ ...baseMetadata, created_at: "not a date" }),
+        Error,
+        undefined,
+        "frontmatter with an unparseable created_at must be rejected",
+      );
+    });
+
+    it("should reject a label longer than 50 characters", () => {
+      assertThrows(
+        () => validateMetadata({ ...baseMetadata, labels: ["x".repeat(51)] }),
+        Error,
+        undefined,
+        "frontmatter with an oversized label must be rejected",
+      );
+    });
+
+    it("should reject an empty title", () => {
+      assertThrows(
+        () => validateMetadata({ ...baseMetadata, title: "" }),
+        Error,
+        undefined,
+        "frontmatter with an empty title must be rejected",
+      );
+    });
+
+    it("should default labels and assignees to empty arrays", () => {
+      const metadata: IssueMetadata = validateMetadata(baseMetadata);
+      assertEquals(metadata.labels, [], "labels must default to an empty array");
+      assertEquals(metadata.assignees, [], "assignees must default to an empty array");
+      assertEquals(metadata.id, "ISSUE-001", "a valid id is preserved by validation");
     });
   });
 
