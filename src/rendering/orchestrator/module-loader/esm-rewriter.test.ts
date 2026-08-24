@@ -417,6 +417,52 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       );
     });
 
+    it("leaves a failed lazy URL intact when a fetched URL is its prefix", async () => {
+      // "https://esm.sh/react" fetches and enters the replacement map;
+      // "https://esm.sh/react-dom" is only imported lazily and fails, so it is
+      // absent from the map and longest-first ordering cannot protect it. The
+      // replacement must still match whole specifiers, or the failed URL
+      // becomes the shorter dependency's path with "-dom" glued on.
+      const esmCache = new Map<string, string>();
+      globalThis.fetch = ((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "https://esm.sh/react") {
+          return Promise.resolve(jsonResponse(`export const react = 1;`));
+        }
+        if (url === "https://esm.sh/react-dom") {
+          return Promise.resolve(new Response("upstream broken", { status: 500 }));
+        }
+        if (url === "https://esm.sh/root") {
+          return Promise.resolve(jsonResponse(
+            `import { react } from "https://esm.sh/react";\n` +
+              `const dom = () => import("https://esm.sh/react-dom");`,
+          ));
+        }
+        return Promise.resolve(new Response("not found", { status: 404 }));
+      }) as typeof fetch;
+
+      const result = await fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache);
+      const rootContent = files.get(result) ?? "";
+      const reactPath = esmCache.get("https://esm.sh/react") ?? "";
+
+      assertEquals(
+        rootContent,
+        `import { react } from "file://${reactPath}";\n` +
+          `const dom = () => import("https://esm.sh/react-dom");`,
+        "the failed lazy URL must survive verbatim for runtime resolution",
+      );
+      assertEquals(
+        rootContent.includes(`file://${reactPath}-dom`),
+        false,
+        "a fetched prefix URL must not be substituted inside the failed longer URL",
+      );
+      assertEquals(
+        esmCache.has("https://esm.sh/react-dom"),
+        false,
+        "a failed lazy URL must not be cached as resolved",
+      );
+    });
+
     it("does not cache a cycle member when an ancestor of the cycle fails", async () => {
       // The back edge points at the entry module's predicted path, which the
       // entry module only writes on its way out. A static dependency failing

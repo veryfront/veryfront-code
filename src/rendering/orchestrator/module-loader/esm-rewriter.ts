@@ -193,19 +193,29 @@ async function fetchEsmModuleWithin(
     }
 
     if (replacementMap.size) {
-      // Regex alternation commits to the first branch that matches, so a URL
+      // Every key was collected from a quoted position above, so a match is
+      // only accepted between the same pair of quotes. That is what keeps a URL
       // that is a prefix of another one — `https://esm.sh/react` inside
-      // `https://esm.sh/react-dom` — would swallow the longer URL's head and
-      // leave its tail dangling off a foreign file path. Longest-first
-      // ordering makes every branch match the complete URL it stands for.
+      // `https://esm.sh/react-dom` — from swallowing the longer URL's head:
+      // longest-first ordering alone cannot help when the longer URL failed to
+      // fetch and so never entered the map, yet it must stay verbatim for the
+      // runtime to resolve.
       const combinedPattern = new RegExp(
-        Array.from(replacementMap.keys())
-          .sort((a, b) => b.length - a.length)
-          .map(escapeRegExp)
-          .join("|"),
+        `(["'])(${
+          Array.from(replacementMap.keys())
+            .sort((a, b) => b.length - a.length)
+            .map(escapeRegExp)
+            .join("|")
+        })\\1`,
         "g",
       );
-      code = code.replace(combinedPattern, (m) => replacementMap.get(m) ?? m);
+      code = code.replace(
+        combinedPattern,
+        (m, quote: string, url: string) => {
+          const replacement = replacementMap.get(url);
+          return replacement ? `${quote}${replacement}${quote}` : m;
+        },
+      );
     }
   }
 
