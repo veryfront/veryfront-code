@@ -1,12 +1,18 @@
 import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { assertEquals } from "./assert.ts";
 import { afterEach, describe, it } from "./bdd.ts";
-import { scaleMs } from "./timing.ts";
+import { getTestTimeScale, scaleMs } from "./timing.ts";
 
 const TEST_TIME_SCALE_ENV = "VF_TEST_TIME_SCALE";
 
 describe("testing/timing", () => {
   afterEach(() => deleteEnv(TEST_TIME_SCALE_ENV));
+
+  it("keeps getTestTimeScale on the public testing barrel", async () => {
+    const testing = await import("./index.ts");
+
+    assertEquals(testing.getTestTimeScale, getTestTimeScale);
+  });
 
   it("uses the default scale when the environment value is absent or invalid", () => {
     deleteEnv(TEST_TIME_SCALE_ENV);
@@ -20,9 +26,11 @@ describe("testing/timing", () => {
 
   it("reads the current positive scale on every call", () => {
     setEnv(TEST_TIME_SCALE_ENV, "0.25");
+    assertEquals(getTestTimeScale(), 0.25);
     assertEquals(scaleMs(100), 25);
 
     setEnv(TEST_TIME_SCALE_ENV, "2");
+    assertEquals(getTestTimeScale(), 2);
     assertEquals(scaleMs(100), 200);
   });
 

@@ -84,6 +84,6 @@ export {
   writeTextFile,
 } from "./deno-compat.ts";
 
-export { scaleMs, testDelay } from "./timing.ts";
+export { getTestTimeScale, scaleMs, testDelay } from "./timing.ts";
 
 export { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
