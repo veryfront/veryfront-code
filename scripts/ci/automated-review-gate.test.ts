@@ -1514,6 +1514,32 @@ describe("automated review gate", () => {
     );
   });
 
+  it("excludes indented code from range evidence", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    const newerIndentedMalformedCurrentRange = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "",
+        `    ${MALFORMED_CURRENT_RANGE}`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:43Z",
+      updated_at: "2026-08-22T12:03:43Z",
+    });
+
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerIndentedMalformedCurrentRange],
+        },
+        HEAD_SHA,
+      ))?.url,
+      olderSuccess.html_url,
+    );
+  });
+
   it("scopes HTML comments and validates fence openers", async () => {
     const olderSuccess = olderCodeRabbitSuccess();
 

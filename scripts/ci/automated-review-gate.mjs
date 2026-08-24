@@ -656,6 +656,13 @@ function scanMarkdownStructure(content) {
       continue;
     }
 
+    if (indentedCodeLine) {
+      ranges.push([lineStart, lineEnd]);
+      openParagraph = undefined;
+      lineStart = lineEnd;
+      continue;
+    }
+
     const fenceMatch = line.match(MARKDOWN_FENCE_LINE_PATTERN);
     if (fenceMatch && hasValidMarkdownBlockquoteSpacing(fenceMatch[1])) {
       const marker = fenceMatch[2];
