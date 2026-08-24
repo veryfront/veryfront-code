@@ -247,6 +247,26 @@ describe("resource registry", () => {
         { id: "42" },
       );
 
+      const nestedFile = resource({
+        pattern: "custom:collections/:collection/file-:id",
+        description: "Collection file",
+        paramsSchema: defineSchema((v) => v.object({ collection: v.string(), id: v.string() }))(),
+        load: async () => ({}),
+      });
+      resourceRegistry.clearAll();
+      resourceRegistry.register(nestedFile.id, nestedFile);
+      assertEquals(
+        resourceRegistry.findByPattern("custom:collections/books/file-42"),
+        nestedFile,
+      );
+      assertEquals(
+        resourceRegistry.extractParams(
+          "custom:collections/books/file-42",
+          nestedFile.pattern,
+        ),
+        { collection: "books", id: "42" },
+      );
+
       const hostedFile = resource({
         pattern: "custom://host/files/file-:id",
         description: "Hosted file",

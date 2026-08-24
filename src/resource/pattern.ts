@@ -46,6 +46,31 @@ function isUrnScheme(pattern: string, schemeDelimiter: number): boolean {
   return first === 117 && second === 114 && third === 110;
 }
 
+/**
+ * Decide whether a rootless scheme-specific path is a template. It is when a
+ * parameter starts at a boundary in the first component, or a later segment
+ * begins with one; otherwise every colon in the path stays literal.
+ */
+function hasRootlessTemplateBoundary(
+  pattern: string,
+  schemeDelimiter: number,
+  firstSchemeComponentEnd: number,
+): boolean {
+  for (let index = schemeDelimiter + 1; index < pattern.length; index++) {
+    const character = pattern[index];
+    if (character === "?" || character === "#") return false;
+    if (character !== ":") continue;
+    if (!isParameterNameStart(pattern.charCodeAt(index + 1))) continue;
+    if (index < firstSchemeComponentEnd) {
+      const previousCode = pattern.charCodeAt(index - 1);
+      if (!isAsciiLetter(previousCode) && !isAsciiDigit(previousCode)) return true;
+    } else if (pattern[index - 1] === "/") {
+      return true;
+    }
+  }
+  return false;
+}
+
 type ResourceComponent = "path" | "query" | "fragment";
 
 type ResourcePatternToken =
@@ -72,27 +97,19 @@ function parseResourcePattern(pattern: string): ParsedResourcePattern {
   const urnScheme = isUrnScheme(pattern, schemeDelimiter);
   const hierarchicalScheme = schemeDelimiter >= 0 &&
     pattern[schemeDelimiter + 1] === "/" && pattern[schemeDelimiter + 2] === "/";
-  let segmentParameterized = false;
+  const rootlessTemplatePath = schemeDelimiter >= 0 && !urnScheme && !hierarchicalScheme &&
+    hasRootlessTemplateBoundary(pattern, schemeDelimiter, firstSchemeComponentEnd);
   let component: ResourceComponent = "path";
 
   for (let index = 0; index < pattern.length; index++) {
     const character = pattern[index];
-    if (character === "/") segmentParameterized = false;
-    if (character === "?" && component === "path") {
-      segmentParameterized = false;
-      component = "query";
-    } else if (character === "#") {
-      segmentParameterized = false;
-      component = "fragment";
-    }
-    if (character === "&" && component === "query") segmentParameterized = false;
-    if (pattern[index] !== ":") continue;
+    if (character === "?" && component === "path") component = "query";
+    else if (character === "#") component = "fragment";
+    if (character !== ":") continue;
     if (index === schemeDelimiter) continue;
     const firstNameCode = pattern.charCodeAt(index + 1);
     if (!isParameterNameStart(firstNameCode)) continue;
 
-    const inFirstSchemeComponent = schemeDelimiter >= 0 &&
-      index > schemeDelimiter && index < firstSchemeComponentEnd;
     const previousCode = index === 0 ? -1 : pattern.charCodeAt(index - 1);
     const legacyParameterContext = index === 0 ||
       (!isAsciiLetter(previousCode) && !isAsciiDigit(previousCode));
@@ -100,9 +117,7 @@ function parseResourcePattern(pattern: string): ParsedResourcePattern {
       ? false
       : schemeDelimiter < 0 || component !== "path" || hierarchicalScheme
       ? legacyParameterContext
-      : inFirstSchemeComponent
-      ? !urnScheme && legacyParameterContext
-      : pattern[index - 1] === "/" || segmentParameterized;
+      : rootlessTemplatePath && legacyParameterContext;
     if (!parameterContext) continue;
 
     let end = index + 2;
@@ -128,7 +143,6 @@ function parseResourcePattern(pattern: string): ParsedResourcePattern {
     parameterNames.push(name);
     literalStart = end;
     index = end - 1;
-    segmentParameterized = true;
   }
   if (literalStart < pattern.length) {
     tokens.push({ kind: "literal", value: pattern.slice(literalStart) });

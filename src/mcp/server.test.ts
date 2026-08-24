@@ -1064,6 +1064,13 @@ describe("mcp/server", () => {
         paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
         load: async () => ({}),
       });
+      registerResource("test:nested-file", {
+        id: "test:nested-file",
+        pattern: "custom:collections/:collection/file-:id",
+        description: "Collection file",
+        paramsSchema: defineSchema((v) => v.object({ collection: v.string(), id: v.string() }))(),
+        load: async () => ({}),
+      });
 
       const response = await server.handleRequest({
         jsonrpc: "2.0",
@@ -1089,6 +1096,10 @@ describe("mcp/server", () => {
       assertEquals(
         templates.find((entry) => entry.name === "test:hosted-file")?.uriTemplate,
         "custom://host/files/file-{id}",
+      );
+      assertEquals(
+        templates.find((entry) => entry.name === "test:nested-file")?.uriTemplate,
+        "custom:collections/{collection}/file-{id}",
       );
     });
 
