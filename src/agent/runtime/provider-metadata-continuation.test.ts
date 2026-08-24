@@ -261,14 +261,9 @@ describe("agent provider metadata continuation", () => {
       provider: "google",
       modelId: "gemini-3.5-flash",
       only: "stream",
-      properties: {
-        _reconcileProviderMetadata({ providerMetadata: metadata, suppressedToolCalls }: {
-          providerMetadata: Record<string, unknown>;
-          suppressedToolCalls: readonly { id: string; name: string }[];
-        }) {
-          reconciledSuppressions = suppressedToolCalls;
-          return metadata;
-        },
+      reconcileProviderMetadata({ providerMetadata: metadata, suppressedToolCalls }) {
+        reconciledSuppressions = suppressedToolCalls;
+        return metadata;
       },
     });
     const assistant = agent({
@@ -450,13 +445,8 @@ describe("agent provider metadata continuation", () => {
       provider: "google",
       modelId: "gemini-3.5-flash",
       only: "stream",
-      properties: {
-        _reconcileProviderMetadata({ providerMetadata, suppressedToolCalls }: {
-          providerMetadata: Record<string, unknown>;
-          suppressedToolCalls: readonly { id: string; name: string }[];
-        }) {
-          return reconcileGoogleProviderMetadata(providerMetadata, suppressedToolCalls);
-        },
+      reconcileProviderMetadata({ providerMetadata, suppressedToolCalls }) {
+        return reconcileGoogleProviderMetadata(providerMetadata, suppressedToolCalls);
       },
     });
     const assistant = agent({

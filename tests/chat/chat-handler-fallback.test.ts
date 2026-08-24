@@ -7,7 +7,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd";
 import { assertEquals } from "#veryfront/testing/assert";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/testing/deno-compat";
-import { scriptedModel } from "../../src/agent/runtime/model-runtime.test-helpers.ts";
+import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
 
 import { createError, fromError, toError } from "#veryfront/errors";
 

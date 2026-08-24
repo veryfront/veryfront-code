@@ -1,8 +1,8 @@
 /**
  * Shared scripted {@link ModelRuntime} fake for agent runtime tests.
  *
- * Tests script the model as a list of turns (the last turn repeats on further
- * calls) instead of hand-writing `doGenerate`/`doStream` literals. Both hooks
+ * Tests script the model as a list of turns instead of hand-writing
+ * `doGenerate`/`doStream` literals. Both hooks
  * derive from the same script: `doGenerate` returns content parts and
  * `doStream` emits {@link RuntimeStreamPart}s ending in a well-formed
  * `finish` part. Typing the stream parts makes the historical
@@ -46,6 +46,11 @@ export type ScriptedTurnScript =
   | ScriptedTurn
   | ((options: ModelRuntimeCallOptions, call: number) => ScriptedTurn);
 
+export type ScriptedProviderMetadataReconciler = (input: {
+  providerMetadata: Record<string, unknown>;
+  suppressedToolCalls: readonly { id: string; name: string }[];
+}) => Record<string, unknown> | undefined;
+
 export interface ScriptedModelOptions {
   provider?: string;
   modelId?: string;
@@ -54,8 +59,10 @@ export interface ScriptedModelOptions {
   usage?: ScriptedUsage;
   /** Restrict which hook the run may use; the other rejects loudly. */
   only?: "generate" | "stream";
-  /** Extra runtime properties, e.g. `_reconcileProviderMetadata`. */
-  properties?: Record<string, unknown>;
+  /** Explicitly repeat the final scripted turn after the script is exhausted. */
+  repeatLastTurn?: boolean;
+  /** Reconcile provider metadata after the runtime suppresses tool calls. */
+  reconcileProviderMetadata?: ScriptedProviderMetadataReconciler;
 }
 
 export interface ScriptedModel extends ModelRuntime<ModelRuntimeCallOptions> {
@@ -138,12 +145,19 @@ export function scriptedModel(
   const nextTurn = (callOptions: ModelRuntimeCallOptions): ScriptedTurn => {
     const call = calls.length;
     calls.push(callOptions);
-    const scripted = turns[Math.min(call, turns.length - 1)]!;
+    const scripted = turns[call] ?? (options.repeatLastTurn ? turns.at(-1) : undefined);
+    if (scripted === undefined) {
+      throw new Error(
+        `scripted model: exhausted ${turns.length} turn(s); unexpected call ${call + 1}`,
+      );
+    }
     return typeof scripted === "function" ? scripted(callOptions, call) : scripted;
   };
 
   return {
-    ...options.properties,
+    ...(options.reconcileProviderMetadata === undefined
+      ? {}
+      : { _reconcileProviderMetadata: options.reconcileProviderMetadata }),
     provider: options.provider ?? "hosted",
     modelId: options.modelId ?? "hosted/scripted-model",
     ...(options.specificationVersion === undefined
