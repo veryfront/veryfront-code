@@ -191,6 +191,45 @@ function deferred(): {
   return { promise, reject, resolve };
 }
 
+const SENTINEL_EVENT_ID = "sentinel-event";
+
+/**
+ * Publishes a well-formed invalidation and waits until the replica applies it.
+ *
+ * A rejected envelope produces no observable signal, so a negative assertion
+ * made after a single event-loop turn passes even when the guard under test is
+ * gone and the event is merely applied a few turns later. Draining a sentinel
+ * that must be applied proves the subscriber finished the asynchronous
+ * signature pipeline for everything published before it.
+ */
+async function drainInvalidationsWithSentinel(
+  redis: ReturnType<typeof createFakeRedisServer>,
+  integritySecret: string,
+  observed: ProxyRoutingInvalidationEvent[],
+): Promise<void> {
+  await redis.publishRaw(
+    ROUTING_INVALIDATION_CHANNEL,
+    await signTestEnvelope(
+      EVENT_SIGNATURE_DOMAIN,
+      JSON.stringify(createEvent(SENTINEL_EVENT_ID)),
+      integritySecret,
+    ),
+  );
+  for (let turn = 0; turn < 200; turn++) {
+    if (observed.some((event) => event.eventId === SENTINEL_EVENT_ID)) {
+      // Let any straggling delivery surface before the caller asserts.
+      for (let settle = 0; settle < 5; settle++) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+      return;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error(
+    "the sentinel invalidation was never applied within 200 event-loop turns",
+  );
+}
+
 describe("proxy routing invalidation Redis bus", () => {
   it("warns for a managed socket recycle and reports successful resubscription", async () => {
     const redis = createFakeRedisServer();
@@ -563,9 +602,13 @@ describe("proxy routing invalidation Redis bus", () => {
         integritySecret,
       ),
     );
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await drainInvalidationsWithSentinel(redis, integritySecret, replicaEvents);
 
-    assertEquals(replicaEvents, []);
+    assertEquals(
+      replicaEvents.map((event) => event.eventId),
+      [SENTINEL_EVENT_ID],
+      "an envelope signed for the acknowledgement domain must not be applied",
+    );
     await bus?.close();
   });
 
@@ -595,9 +638,13 @@ describe("proxy routing invalidation Redis bus", () => {
         TEST_NOW_MS - 61_000,
       ),
     );
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await drainInvalidationsWithSentinel(redis, integritySecret, replicaEvents);
 
-    assertEquals(replicaEvents, []);
+    assertEquals(
+      replicaEvents.map((event) => event.eventId),
+      [SENTINEL_EVENT_ID],
+      "an envelope issued beyond the maximum age must not be applied",
+    );
     await bus?.close();
   });
 
@@ -627,11 +674,11 @@ describe("proxy routing invalidation Redis bus", () => {
         TEST_NOW_MS + 6_000,
       ),
     );
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await drainInvalidationsWithSentinel(redis, integritySecret, replicaEvents);
 
     assertEquals(
-      replicaEvents,
-      [],
+      replicaEvents.map((event) => event.eventId),
+      [SENTINEL_EVENT_ID],
       "an envelope issued beyond the clock-skew allowance must not be applied",
     );
     await bus?.close();
