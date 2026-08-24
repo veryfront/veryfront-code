@@ -71,12 +71,22 @@ function createFakeRedisServer() {
     | ((channel: string, message: string) => void | Promise<void>)
     | undefined;
 
+  const deliveredPerChannel = new Map<string, number>();
+
   const publishRaw = async (channel: string, message: string): Promise<number> => {
     await onPublish?.(channel, message);
     const listeners = [...subscriptions.values()]
       .map((channels) => channels.get(channel))
       .filter((listener): listener is RedisListener => Boolean(listener));
-    for (const listener of listeners) queueMicrotask(() => listener(message, channel));
+    for (const listener of listeners) {
+      queueMicrotask(() => {
+        try {
+          listener(message, channel);
+        } finally {
+          deliveredPerChannel.set(channel, (deliveredPerChannel.get(channel) ?? 0) + 1);
+        }
+      });
+    }
     return listeners.length;
   };
 
@@ -118,6 +128,17 @@ function createFakeRedisServer() {
   return {
     clients,
     createClient,
+    /**
+     * Number of listener invocations that have already returned for a channel.
+     *
+     * A subscriber listener is synchronous up to its first suspension point, so
+     * an increment here means every synchronous step that listener performs for
+     * that message - including dispatching its WebCrypto verification - has
+     * already happened.
+     */
+    deliveredCount(channel: string): number {
+      return deliveredPerChannel.get(channel) ?? 0;
+    },
     emitClientEvent(clientIndex: number, event: string, value?: unknown) {
       const client = clients[clientIndex];
       if (!client) throw new Error(`Missing Redis client ${clientIndex}`);
@@ -193,41 +214,105 @@ function deferred(): {
 
 const SENTINEL_EVENT_ID = "sentinel-event";
 
+async function spinUntil(
+  predicate: () => boolean,
+  failure: string,
+  turns = 200,
+): Promise<void> {
+  for (let turn = 0; turn < turns; turn++) {
+    if (predicate()) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+  if (predicate()) return;
+  throw new Error(`${failure} within ${turns} event-loop turns`);
+}
+
+async function settleEventLoop(turns = 5): Promise<void> {
+  for (let turn = 0; turn < turns; turn++) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+}
+
 /**
- * Publishes a well-formed invalidation and waits until the replica applies it.
+ * Publishes an envelope the bus must reject, then a sentinel it must apply, and
+ * returns only once both listener pipelines have finished.
  *
  * A rejected envelope produces no observable signal, so a negative assertion
- * made after a single event-loop turn passes even when the guard under test is
- * gone and the event is merely applied a few turns later. Draining a sentinel
- * that must be applied proves the subscriber finished the asynchronous
- * signature pipeline for everything published before it.
+ * made a few turns after publishing passes even when the guard under test is
+ * gone and the event is merely applied later. Waiting for a sentinel is not
+ * sufficient on its own either: the fake server queues every listener
+ * independently and the production subscriber starts `verifySignedEnvelope`
+ * without awaiting it, so the sentinel's WebCrypto verification can settle
+ * before the rejected envelope's and prove nothing about it.
+ *
+ * The two are therefore serialised. `verifySignedEnvelope` reaches
+ * `crypto.subtle.verify` before its first suspension, so once the fake server
+ * reports the rejected envelope's listener invocation as returned, any
+ * verification that envelope triggers is already counted in
+ * `pendingVerifications`; draining that counter to zero and settling the queued
+ * continuations means the rejected envelope has been fully processed before the
+ * sentinel is even published.
  */
-async function drainInvalidationsWithSentinel(
+async function publishRejectedEnvelopeAndDrain(
   redis: ReturnType<typeof createFakeRedisServer>,
   integritySecret: string,
   observed: ProxyRoutingInvalidationEvent[],
+  rejectedEnvelope: string,
 ): Promise<void> {
-  await redis.publishRaw(
-    ROUTING_INVALIDATION_CHANNEL,
-    await signTestEnvelope(
-      EVENT_SIGNATURE_DOMAIN,
-      JSON.stringify(createEvent(SENTINEL_EVENT_ID)),
-      integritySecret,
-    ),
-  );
-  for (let turn = 0; turn < 200; turn++) {
-    if (observed.some((event) => event.eventId === SENTINEL_EVENT_ID)) {
-      // Let any straggling delivery surface before the caller asserts.
-      for (let settle = 0; settle < 5; settle++) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      }
-      return;
+  const originalVerify = crypto.subtle.verify.bind(crypto.subtle);
+  const originalVerifyDescriptor = Object.getOwnPropertyDescriptor(crypto.subtle, "verify");
+  let pendingVerifications = 0;
+  Object.defineProperty(crypto.subtle, "verify", {
+    configurable: true,
+    value: (...args: Parameters<SubtleCrypto["verify"]>) => {
+      pendingVerifications++;
+      return originalVerify(...args).finally(() => {
+        pendingVerifications--;
+      });
+    },
+  });
+
+  try {
+    const deliveredBefore = redis.deliveredCount(ROUTING_INVALIDATION_CHANNEL);
+    await redis.publishRaw(ROUTING_INVALIDATION_CHANNEL, rejectedEnvelope);
+    await spinUntil(
+      () => redis.deliveredCount(ROUTING_INVALIDATION_CHANNEL) > deliveredBefore,
+      "the rejected envelope was never delivered to the subscriber",
+    );
+    await spinUntil(
+      () => pendingVerifications === 0,
+      "the rejected envelope's signature verification never settled",
+    );
+    await settleEventLoop();
+
+    await redis.publishRaw(
+      ROUTING_INVALIDATION_CHANNEL,
+      await signTestEnvelope(
+        EVENT_SIGNATURE_DOMAIN,
+        JSON.stringify(createEvent(SENTINEL_EVENT_ID)),
+        integritySecret,
+      ),
+    );
+    await spinUntil(
+      () => observed.some((event) => event.eventId === SENTINEL_EVENT_ID),
+      "the sentinel invalidation was never applied",
+    );
+    await spinUntil(
+      () => pendingVerifications === 0,
+      "the sentinel's signature verification never settled",
+    );
+    // Let any straggling delivery surface before the caller asserts.
+    await settleEventLoop();
+  } finally {
+    if (originalVerifyDescriptor) {
+      Object.defineProperty(crypto.subtle, "verify", originalVerifyDescriptor);
+    } else {
+      Object.defineProperty(crypto.subtle, "verify", {
+        configurable: true,
+        value: originalVerify,
+      });
     }
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
-  throw new Error(
-    "the sentinel invalidation was never applied within 200 event-loop turns",
-  );
 }
 
 describe("proxy routing invalidation Redis bus", () => {
@@ -594,15 +679,16 @@ describe("proxy routing invalidation Redis bus", () => {
       },
     });
 
-    await redis.publishRaw(
-      ROUTING_INVALIDATION_CHANNEL,
+    await publishRejectedEnvelopeAndDrain(
+      redis,
+      integritySecret,
+      replicaEvents,
       await signTestEnvelope(
         ACK_SIGNATURE_DOMAIN,
         JSON.stringify(createEvent()),
         integritySecret,
       ),
     );
-    await drainInvalidationsWithSentinel(redis, integritySecret, replicaEvents);
 
     assertEquals(
       replicaEvents.map((event) => event.eventId),
@@ -629,8 +715,10 @@ describe("proxy routing invalidation Redis bus", () => {
       },
     });
 
-    await redis.publishRaw(
-      ROUTING_INVALIDATION_CHANNEL,
+    await publishRejectedEnvelopeAndDrain(
+      redis,
+      integritySecret,
+      replicaEvents,
       await signTestEnvelope(
         EVENT_SIGNATURE_DOMAIN,
         JSON.stringify(createEvent()),
@@ -638,7 +726,6 @@ describe("proxy routing invalidation Redis bus", () => {
         TEST_NOW_MS - 61_000,
       ),
     );
-    await drainInvalidationsWithSentinel(redis, integritySecret, replicaEvents);
 
     assertEquals(
       replicaEvents.map((event) => event.eventId),
@@ -665,8 +752,10 @@ describe("proxy routing invalidation Redis bus", () => {
       },
     });
 
-    await redis.publishRaw(
-      ROUTING_INVALIDATION_CHANNEL,
+    await publishRejectedEnvelopeAndDrain(
+      redis,
+      integritySecret,
+      replicaEvents,
       await signTestEnvelope(
         EVENT_SIGNATURE_DOMAIN,
         JSON.stringify(createEvent()),
@@ -674,7 +763,6 @@ describe("proxy routing invalidation Redis bus", () => {
         TEST_NOW_MS + 6_000,
       ),
     );
-    await drainInvalidationsWithSentinel(redis, integritySecret, replicaEvents);
 
     assertEquals(
       replicaEvents.map((event) => event.eventId),
