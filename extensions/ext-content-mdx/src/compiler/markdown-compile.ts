@@ -89,11 +89,25 @@ export async function compileMarkdown(
     pipeline.use(rehypeNodePositions, { filePath });
   }
 
+  // Starry Night marks every token with a `pl-*` class on a <span>. The default
+  // schema permits a class only on `code[class^="language-"]`, so without this
+  // entry the sanitizer strips the highlighter's entire output back to bare
+  // `<span>const</span>` markup that no theme CSS can target. The allowance is
+  // prefix-scoped to the class names Starry Night emits.
+  const starryNightTokenClass: [string, RegExp] = ["className", /^pl-/];
+  const highlightSchema = {
+    ...defaultSchema,
+    attributes: {
+      ...defaultSchema.attributes,
+      span: [...(defaultSchema.attributes?.span ?? []), starryNightTokenClass],
+    },
+  };
+
   const sanitizeSchema = studioEmbed
     ? {
-      ...defaultSchema,
+      ...highlightSchema,
       attributes: {
-        ...defaultSchema.attributes,
+        ...highlightSchema.attributes,
         "*": [
           ...(defaultSchema.attributes?.["*"] ?? []),
           "data-node-file",
@@ -104,7 +118,7 @@ export async function compileMarkdown(
         ],
       },
     }
-    : defaultSchema;
+    : highlightSchema;
 
   const result = await pipeline
     .use(rehypeSanitize, sanitizeSchema)

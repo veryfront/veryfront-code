@@ -225,9 +225,14 @@ describe(
           "code fence keeps its language class",
         );
         assertEquals(
-          result.rawHtml!.includes("<span>const</span>"),
+          result.rawHtml!.includes('<span class="pl-k">const</span>'),
           true,
-          "starry-night must tokenize the code block",
+          "starry-night must tokenize the code block and its token classes must survive sanitization",
+        );
+        assertEquals(
+          result.rawHtml!.includes("<span>const</span>"),
+          false,
+          "a class-less token span means the sanitizer stripped the highlighting",
         );
       });
 

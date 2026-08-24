@@ -84,13 +84,31 @@ describe("transforms/esm/import-rewriter", () => {
       );
     });
 
-    it("strips a pinned version before building the esm.sh URL", async () => {
+    it("preserves a pinned version when building the esm.sh URL", async () => {
       const code = `import l from "lodash@4.17.21";`;
       const result = await rewriteBareImports(code);
       assertEquals(
         result,
-        `import l from "https://esm.sh/lodash?external=react&target=es2022";`,
-        "a pinned bare specifier must produce the documented esm.sh URL",
+        `import l from "https://esm.sh/lodash@4.17.21?external=react&target=es2022";`,
+        "an inline pin must survive into the esm.sh URL so the output stays reproducible",
+      );
+    });
+
+    it("preserves a pinned version on a subpath import", async () => {
+      const result = await rewriteBareImports(`import d from "lodash@4.17.21/debounce";`);
+      assertEquals(
+        result,
+        `import d from "https://esm.sh/lodash@4.17.21/debounce?external=react&target=es2022";`,
+        "a pinned subpath import must keep both the pin and the subpath",
+      );
+    });
+
+    it("preserves a dist-tag version", async () => {
+      const result = await rewriteBareImports(`import l from "lodash@next";`);
+      assertEquals(
+        result,
+        `import l from "https://esm.sh/lodash@next?external=react&target=es2022";`,
+        "a dist-tag pin must reach esm.sh unchanged",
       );
     });
 
