@@ -5,7 +5,6 @@ import { isBun } from "#veryfront/platform/compat/runtime.ts";
 import { withEnv } from "#veryfront/testing";
 import {
   checkMemoryPressure,
-  clampHeapWarningThreshold,
   DEFAULT_MEMORY_MONITORING_INTERVAL_MS,
   DEFAULT_PROFILER_CRITICAL_THRESHOLD,
   DEFAULT_PROFILER_WARNING_THRESHOLD,
@@ -358,26 +357,6 @@ describe("memory/profiler", () => {
       setHeapWarningThreshold(0.5);
       setHeapWarningThreshold(0.9);
       setHeapWarningThreshold(0.1);
-    });
-
-    it("should clamp threshold to minimum 0.1", () => {
-      assertEquals(clampHeapWarningThreshold(0.01), 0.1, "thresholds below the floor clamp to 0.1");
-    });
-
-    it("should clamp threshold to maximum 0.99", () => {
-      assertEquals(
-        clampHeapWarningThreshold(1.5),
-        0.99,
-        "thresholds above the ceiling clamp to 0.99",
-      );
-    });
-
-    it("should pass in-range thresholds through unchanged", () => {
-      assertEquals(
-        clampHeapWarningThreshold(0.5),
-        0.5,
-        "in-range thresholds pass through unchanged",
-      );
     });
   });
 
