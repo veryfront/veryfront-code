@@ -12,6 +12,18 @@ Install the extension and its optional runtime peer:
 npm install @veryfront/ext-llm-onnx @huggingface/transformers
 ```
 
+Until `@huggingface/transformers` adopts the patched transitive releases,
+applications using npm should pin them at the application root:
+
+```json
+{
+  "overrides": {
+    "adm-zip": "0.6.0",
+    "sharp": "0.35.3"
+  }
+}
+```
+
 ## Register
 
 ```ts

@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { ModelRuntime } from "#veryfront/provider";
+import { type ModelRuntime, registerModelProvider } from "#veryfront/provider";
 import type { AgentConfig, ModelTransportRequest } from "../types.ts";
 import { resolveAgentModelTransport } from "./model-transport.ts";
 
@@ -24,22 +24,27 @@ function createModel(modelId: string): ModelRuntime {
 
 describe("resolveAgentModelTransport", () => {
   it("resolves the configured runtime model when no host transport hook is present", async () => {
+    const dispose = registerModelProvider("local", (modelId) => createModel(`local/${modelId}`));
     const config: AgentConfig = {
       model: "local/qwen3.5-0.8b",
       system: "You are a helpful assistant.",
     };
 
-    const transport = await resolveAgentModelTransport({
-      agentId: "agent-1",
-      config,
-      context: undefined,
-      mode: "generate",
-      modelOverride: undefined,
-    });
+    try {
+      const transport = await resolveAgentModelTransport({
+        agentId: "agent-1",
+        config,
+        context: undefined,
+        mode: "generate",
+        modelOverride: undefined,
+      });
 
-    assertEquals(transport.requestedModel, "local/qwen3.5-0.8b");
-    assertEquals(transport.resolvedModelString, "local/qwen3.5-0.8b");
-    assertEquals(transport.languageModel.modelId, "local/qwen3.5-0.8b");
+      assertEquals(transport.requestedModel, "local/qwen3.5-0.8b");
+      assertEquals(transport.resolvedModelString, "local/qwen3.5-0.8b");
+      assertEquals(transport.languageModel.modelId, "local/qwen3.5-0.8b");
+    } finally {
+      dispose();
+    }
   });
 
   it("lets the host override model runtime, headers, provider options, and reasoning", async () => {

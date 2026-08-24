@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import {
@@ -64,13 +64,6 @@ describe("embedding/model-resolution", () => {
   });
 
   describe("resolveConfiguredEmbeddingModel", () => {
-    it("uses the local default embedding model without cloud bootstrap", () => {
-      assertEquals(
-        resolveConfiguredEmbeddingModel(),
-        "local/all-MiniLM-L6-v2",
-      );
-    });
-
     it("uses the veryfront cloud embedding default when cloud bootstrap is active", () => {
       setEnv("VERYFRONT_API_TOKEN", "vf_embedding_test");
       setEnv("VERYFRONT_PROJECT_SLUG", "embedding-test-project");
@@ -138,12 +131,9 @@ describe("embedding/model-resolution", () => {
       );
     });
 
-    it("returns local model when no API keys or cloud bootstrap are set", () => {
-      assertEquals(
-        resolveConfiguredEmbeddingModel(),
-        "local/all-MiniLM-L6-v2",
-        "should use local model as final fallback",
-      );
+    it("does not silently select the optional local extension", () => {
+      const error = assertThrows(() => resolveConfiguredEmbeddingModel()) as Error;
+      assertEquals(error.message, "No default embedding provider is available");
     });
   });
 
@@ -189,12 +179,11 @@ describe("embedding/model-resolution", () => {
       );
     });
 
-    it("returns undefined when no cloud API key is set", () => {
-      assertEquals(
-        resolveConfiguredEmbeddingModel(undefined, { compiled: true }),
-        "local/all-MiniLM-L6-v2",
-        "no cloud API key must leave the compiled binary on the local default",
-      );
+    it("fails when no compiled-compatible provider is available", () => {
+      const error = assertThrows(() =>
+        resolveConfiguredEmbeddingModel(undefined, { compiled: true })
+      ) as Error;
+      assertEquals(error.message, "No default embedding provider is available");
     });
   });
 });

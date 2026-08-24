@@ -127,19 +127,12 @@ describe("provider/model-registry", () => {
     });
   });
 
-  it("resolves local models without credentials or an explicit registration", () => {
+  it("fails actionably when the optional local provider is not installed", () => {
     assertEquals(hasModelProvider("local"), true);
-
-    const model = resolveModel("local/qwen3.5-0.8b");
-    assertEquals(model.provider, "local");
-    assertEquals(model.modelId, "local/qwen3.5-0.8b");
-    // The runtime is only prepared, never invoked: the local engine loads its
-    // ONNX pipeline lazily and is not available in CI.
-    assertEquals(typeof model.prepare, "function");
-
+    const error = assertThrows(() => resolveModel("local/qwen3.5-0.8b")) as Error;
     assertEquals(
-      runWithCacheKeyContext(PROJECT_A, () => resolveModel("local/demo").provider),
-      "local",
+      error.message,
+      "Local ONNX provider not installed. Add @veryfront/ext-llm-onnx to use local/* models.",
     );
   });
 

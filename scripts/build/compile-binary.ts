@@ -54,6 +54,7 @@ export const DEFAULT_INCLUDES = [
   "extensions/ext-eval-report-http/src/index.ts",
   "extensions/ext-eval-report-mlflow/src/index.ts",
   "extensions/ext-image-sharp/src/index.ts",
+  "extensions/ext-llm-onnx/src/index.ts",
   "extensions/ext-observability-opentelemetry/src/index.ts",
   "extensions/ext-observability-sentry/src/index.ts",
   "extensions/ext-parser-babel/src/index.ts",
