@@ -203,6 +203,47 @@ describe(
       assertEquals(workflow?.exportName, "pingWorkflow");
     });
 
+    it("does not evaluate tenant workflow files without trusted-local execution", async () => {
+      const adapter = createRuntimeAdapter({
+        "/project/workflows/ping.ts": [
+          'import { workflow } from "veryfront/workflow";',
+          "export default workflow({",
+          '  id: "ping",',
+          '  description: "Ping workflow",',
+          "  steps: [],",
+          "});",
+        ].join("\n"),
+      });
+
+      const result = await discoverWorkflowsRaw({
+        projectDir: "/project",
+        adapter,
+        config: { fs: { type: "veryfront-api" } } as never,
+      });
+
+      assertEquals(
+        result.workflows,
+        [],
+        "tenant workflow files must not be evaluated without trusted-local execution",
+      );
+      assertStringIncludes(
+        result.errors[0]?.error ?? "",
+        "requires explicit trusted-local execution",
+      );
+
+      const found = await findWorkflowByIdRaw("ping", {
+        projectDir: "/project",
+        adapter,
+        config: { fs: { type: "veryfront-api" } } as never,
+      });
+
+      assertEquals(
+        found,
+        null,
+        "findWorkflowById must not resolve a definition it was never allowed to evaluate",
+      );
+    });
+
     it("does not discover legacy app/workflows files by default", async () => {
       const adapter = createRuntimeAdapter({
         "/project/app/workflows/legacy-ping.ts": [

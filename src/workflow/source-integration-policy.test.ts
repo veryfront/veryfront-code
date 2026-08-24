@@ -8,6 +8,7 @@ import {
   runWithWorkflowSourceIntegrationPolicy,
 } from "./source-integration-policy.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
+import type { WorkflowRun } from "./types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import {
   getActiveSourceIntegrationPolicy,
@@ -59,6 +60,30 @@ describe("workflow source integration policy snapshots", () => {
       VeryfrontError,
       "invalid source integration policy snapshot",
     );
+  });
+
+  it("refuses a run whose policy snapshot is missing rather than defaulting to unrestricted", () => {
+    const runWithoutPolicy = { id: "run-no-policy" } as unknown as Pick<
+      WorkflowRun,
+      "id" | "sourceIntegrationPolicy"
+    >;
+
+    assertThrows(
+      () => requireWorkflowSourceIntegrationPolicy(runWithoutPolicy),
+      Error,
+      "missing its source integration policy snapshot",
+    );
+
+    let ran = false;
+    assertThrows(
+      () =>
+        runWithWorkflowSourceIntegrationPolicy(runWithoutPolicy, () => {
+          ran = true;
+        }),
+      Error,
+      "missing its source integration policy snapshot",
+    );
+    assertEquals(ran, false, "a run with no policy snapshot must not execute");
   });
 
   it("captures the default and active policies by value", () => {

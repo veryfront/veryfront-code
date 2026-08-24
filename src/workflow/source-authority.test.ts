@@ -45,6 +45,7 @@ describe("workflow source authority", () => {
       "source ",
       "source\u0000suffix",
       "source\u0085suffix",
+      "release\u0301-1",
       "x".repeat(MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS + 1),
     ];
 
@@ -75,6 +76,14 @@ describe("workflow source authority", () => {
         "branch must be a bounded non-empty canonical identifier",
       );
     }
+  });
+
+  it("accepts the NFC-composed twin of a rejected decomposed identifier", () => {
+    assertEquals(
+      requireWorkflowContentSource({ productionMode: true, releaseId: "releasé-1" }),
+      { type: "release", releaseId: "releasé-1" },
+      "NFC-composed identifiers stay valid",
+    );
   });
 
   it("accepts a source identifier at the shared opaque-ID limit", () => {

@@ -46,7 +46,9 @@ function makeStorageKey(projectSlug: string, path: string): string {
   return `${projectSlug}:${path}`;
 }
 
-function createMockUploadService() {
+function createMockUploadService(
+  options: { failMetadataSidecarUpload?: boolean } = {},
+) {
   const uploads = new Map<string, StoredUpload>();
   const pendingUploads = new Map<string, PendingUpload>();
   const fetchCalls: FetchCallRecord[] = [];
@@ -168,6 +170,10 @@ function createMockUploadService() {
           return new Response("Missing pending upload", { status: 404 });
         }
 
+        if (options.failMetadataSidecarUpload && path.endsWith(".meta.json")) {
+          return new Response("Sidecar storage unavailable", { status: 500 });
+        }
+
         const bytes = new Uint8Array(await request.arrayBuffer());
         assertEquals(bytes.byteLength, pending.size);
 
@@ -274,15 +280,43 @@ describe("VeryfrontCloudBlobStorage", () => {
     }
   });
 
-  it("lists stored blobs (newest first) with sidecar filenames", async () => {
-    const service = createMockUploadService();
-    let now = FIXED_NOW.getTime();
+  it("deletes the primary upload when the metadata sidecar fails", async () => {
+    const service = createMockUploadService({ failMetadataSidecarUpload: true });
     const storage = new VeryfrontCloudBlobStorage({
       apiBaseUrl: "https://93.184.216.34",
       apiToken: "vf_config_token",
       projectSlug: "demo-project",
       prefix: ".vf-test/",
-      now: () => new Date(now),
+      now: () => FIXED_NOW,
+    });
+
+    try {
+      await assertRejects(
+        () => storage.put("Hello cloud blob", { mimeType: "text/plain" }),
+        Error,
+        undefined,
+        "put must not resolve when the sidecar upload fails",
+      );
+
+      assertEquals(
+        service.uploads.size,
+        0,
+        "the primary blob must be cleaned up after a sidecar failure",
+      );
+    } finally {
+      service.restore();
+    }
+  });
+
+  it("lists stored blobs (newest first) with sidecar filenames", async () => {
+    const service = createMockUploadService();
+    let clock = FIXED_NOW;
+    const storage = new VeryfrontCloudBlobStorage({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "vf_config_token",
+      projectSlug: "demo-project",
+      prefix: ".vf-test/",
+      now: () => clock,
     });
 
     try {
@@ -290,7 +324,7 @@ describe("VeryfrontCloudBlobStorage", () => {
         mimeType: "text/plain",
         metadata: { filename: "first.txt" },
       });
-      now += 1_000;
+      clock = new Date(FIXED_NOW.getTime() + 60_000);
       const second = await storage.put("two", {
         mimeType: "text/plain",
         metadata: { filename: "second.txt" },
@@ -301,7 +335,11 @@ describe("VeryfrontCloudBlobStorage", () => {
       // Both data blobs surface (the `.meta.json` sidecars are filtered out),
       // enriched with the original filename from each sidecar.
       assertEquals(refs.length, 2);
-      assertEquals(refs.map((ref) => ref.id), [second.id, first.id]);
+      assertEquals(
+        refs.map((ref) => ref.id),
+        [second.id, first.id],
+        "list must return the newest blob first",
+      );
       const byId = new Map(refs.map((ref) => [ref.id, ref]));
       assertEquals(byId.get(first.id)?.metadata?.filename, "first.txt");
       assertEquals(byId.get(second.id)?.metadata?.filename, "second.txt");

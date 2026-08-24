@@ -136,15 +136,16 @@ describe("dag()", () => {
     assertEquals(nodes[1]?.dependsOn, ["fetch"]);
   });
 
-  it("rejects duplicate node ids", () => {
+  it("should reject duplicate node ids", () => {
     assertThrows(
       () =>
         dag({
-          first: step("duplicate", { tool: "first" }),
-          second: step("duplicate", { tool: "second" }),
+          a: step("fetch", { tool: "fetcher" }),
+          b: step("fetch", { tool: "other-fetcher" }),
         }),
       VeryfrontError,
       "Duplicate node ID",
+      "two record keys resolving to the same node id must be rejected at build time",
     );
   });
 });

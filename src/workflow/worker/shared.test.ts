@@ -115,6 +115,8 @@ describe("workflow worker shared helpers", () => {
     Deno.env.set("TENANT_PRODUCTION_MODE", "1");
     Deno.env.set("TENANT_RELEASE_ID", "release-1");
     Deno.env.set("TENANT_BRANCH_ID", "branch-123");
+    Deno.env.set("TENANT_ENVIRONMENT_NAME", "Development");
+    Deno.env.delete("VERYFRONT_ENVIRONMENT_NAME");
 
     assertEquals(getTenantFromEnv(), {
       projectSlug: "acme",
@@ -123,7 +125,30 @@ describe("workflow worker shared helpers", () => {
       productionMode: true,
       releaseId: "release-1",
       branch: "branch-123",
+      environmentName: "Development",
     });
+
+    Deno.env.set("VERYFRONT_ENVIRONMENT_NAME", "Preview");
+    assertEquals(
+      getTenantFromEnv()?.environmentName,
+      "Preview",
+      "VERYFRONT_ENVIRONMENT_NAME must win over TENANT_ENVIRONMENT_NAME",
+    );
+
+    Deno.env.delete("TENANT_TOKEN");
+    assertEquals(
+      getTenantFromEnv(),
+      undefined,
+      "a slug without a token must not produce a tenant",
+    );
+
+    Deno.env.set("TENANT_TOKEN", "secret");
+    Deno.env.delete("TENANT_PROJECT_SLUG");
+    assertEquals(
+      getTenantFromEnv(),
+      undefined,
+      "a token without a slug must not produce a tenant",
+    );
   });
 
   it("prefers the explicit Veryfront branch ref over the tenant branch id", () => {
