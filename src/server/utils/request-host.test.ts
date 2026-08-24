@@ -97,5 +97,65 @@ describe("server/utils/request-host", () => {
 
       assertEquals(getEffectiveRequestOrigin(req, undefined, true), null);
     });
+
+    it("fails closed when a trusted forwarded host carries a path", () => {
+      const req = new Request("http://runtime.internal/test", {
+        headers: {
+          "x-forwarded-host": "app.example.com/@victim.example.com",
+          "x-forwarded-proto": "https",
+        },
+      });
+
+      assertEquals(
+        getEffectiveRequestOrigin(req, undefined, true),
+        null,
+        "a redirect or CSP decision must not be made against an attacker shaped origin with a path",
+      );
+    });
+
+    it("fails closed when a trusted forwarded host carries credentials", () => {
+      const req = new Request("http://runtime.internal/test", {
+        headers: {
+          "x-forwarded-host": "user:pass@app.example.com",
+          "x-forwarded-proto": "https",
+        },
+      });
+
+      assertEquals(
+        getEffectiveRequestOrigin(req, undefined, true),
+        null,
+        "embedded credentials must not yield an origin for redirect or CSP policy",
+      );
+    });
+
+    it("fails closed when a trusted forwarded host carries a query", () => {
+      const req = new Request("http://runtime.internal/test", {
+        headers: {
+          "x-forwarded-host": "app.example.com?x=1",
+          "x-forwarded-proto": "https",
+        },
+      });
+
+      assertEquals(
+        getEffectiveRequestOrigin(req, undefined, true),
+        null,
+        "a query in the forwarded host must not yield an origin for redirect or CSP policy",
+      );
+    });
+
+    it("fails closed when a trusted forwarded host exceeds the length limit", () => {
+      const req = new Request("http://runtime.internal/test", {
+        headers: {
+          "x-forwarded-host": "a".repeat(3_000),
+          "x-forwarded-proto": "https",
+        },
+      });
+
+      assertEquals(
+        getEffectiveRequestOrigin(req, undefined, true),
+        null,
+        "an oversized forwarded host must not yield an origin for redirect or CSP policy",
+      );
+    });
   });
 });

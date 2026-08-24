@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ErrorOverlay } from "./overlay-renderer.ts";
 
@@ -73,7 +73,11 @@ describe("server/dev-server/error-overlay/overlay-renderer", () => {
         column: 7,
       });
 
-      assertEquals(html.includes("42"), true);
+      assertStringIncludes(
+        html,
+        "/test.ts:42:7",
+        "the overlay file line must render path, line and column as one location",
+      );
     });
 
     it("should forward nonce to inline error HTML", () => {

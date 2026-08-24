@@ -33,7 +33,13 @@ type RendererCallCounts = {
   destroy: number;
 };
 
-function createMockRenderer(): Renderer & { calls: RendererCallCounts } {
+type MockRenderer = Renderer & {
+  calls: RendererCallCounts;
+  // deno-lint-ignore no-explicit-any
+  lastCtx: any;
+};
+
+function createMockRenderer(): MockRenderer {
   const calls: RendererCallCounts = {
     renderPage: 0,
     resolvePageData: 0,
@@ -42,8 +48,9 @@ function createMockRenderer(): Renderer & { calls: RendererCallCounts } {
     destroy: 0,
   };
 
-  return {
+  const mock = {
     calls,
+    lastCtx: undefined,
     // deno-lint-ignore no-explicit-any
     async renderPage(_slug: string, _ctx: any, _opts?: any) {
       calls.renderPage++;
@@ -55,7 +62,8 @@ function createMockRenderer(): Renderer & { calls: RendererCallCounts } {
       return { data: {} } as any; // deno-lint-ignore no-explicit-any
     },
     // deno-lint-ignore no-explicit-any
-    async getAllPages(_ctx: any) {
+    async getAllPages(ctx: any) {
+      mock.lastCtx = ctx;
       calls.getAllPages++;
       return ["/"];
     },
@@ -68,7 +76,8 @@ function createMockRenderer(): Renderer & { calls: RendererCallCounts } {
     },
     // deno-lint-ignore no-explicit-any
     async initialize(_opts?: any) {},
-  } as unknown as Renderer & { calls: RendererCallCounts };
+  };
+  return mock as unknown as MockRenderer;
 }
 
 /**
@@ -181,7 +190,7 @@ function stubHostedRenderContext(): any {
 }
 
 describe("RendererAdapter with RendererInitializer", () => {
-  let mockRenderer: Renderer & { calls: Record<string, number> };
+  let mockRenderer: MockRenderer;
   let mockInit: RendererInitializer & { initCount: number; destroyCount: number };
 
   beforeEach(() => {
@@ -394,6 +403,38 @@ describe("RendererAdapter with RendererInitializer", () => {
       // Adapter should work
       const pages = await adapter.getAllPages();
       assertEquals(pages, ["/"]);
+      assertEquals(
+        mockRenderer.lastCtx.allowHostProjectCodeExecution,
+        true,
+        "a local project keeps host execution",
+      );
+    });
+
+    it("does not grant host code execution to a hosted enriched context", async () => {
+      const ctx = stubHandlerContext();
+      ctx.isLocalProject = false;
+      ctx.enriched.isLocalProject = false;
+      const adapter = await getRendererForProject(ctx);
+      await adapter.getAllPages();
+      assertEquals(
+        mockRenderer.lastCtx.allowHostProjectCodeExecution,
+        false,
+        "a shared hosted render context must not claim the host code-execution capability",
+      );
+    });
+
+    it("propagates an explicit host code execution grant on the fast path", async () => {
+      const ctx = stubHandlerContext();
+      ctx.isLocalProject = false;
+      ctx.enriched.isLocalProject = false;
+      ctx.allowHostProjectCodeExecution = true;
+      const adapter = await getRendererForProject(ctx);
+      await adapter.getAllPages();
+      assertEquals(
+        mockRenderer.lastCtx.allowHostProjectCodeExecution,
+        true,
+        "an explicit host-execution grant must reach the render context",
+      );
     });
 
     it("builds enriched context when not pre-populated", async () => {
@@ -464,6 +505,71 @@ describe("RendererAdapter with RendererInitializer", () => {
       await getRendererForProject(ctx);
       assertEquals(ctx.enriched !== undefined, true);
       assertEquals(ctx.enriched.environment, "preview");
+    });
+
+    it("resolves production environment from a production domain", async () => {
+      const ctx = stubHandlerContext();
+      ctx.enriched = undefined;
+      ctx.resolvedEnvironment = undefined;
+      ctx.parsedDomain = {
+        slug: null,
+        branch: null,
+        environment: "production",
+        isVeryfrontDomain: false,
+        isDraft: false,
+        allowIframeEmbed: false,
+      } as any;
+      ctx.config = { pages: { include: ["**/*.mdx"] } };
+      ctx.adapter = {
+        fs: {
+          exists: () => Promise.resolve(false),
+          readFile: () => Promise.resolve(""),
+          readDir: async function* () {},
+          stat: () => Promise.resolve({ isFile: false, isDirectory: false }),
+        },
+        env: { get: () => undefined, set: () => {}, delete: () => {}, toObject: () => ({}) },
+      } as unknown as any;
+
+      await getRendererForProject(ctx);
+      assertEquals(ctx.enriched !== undefined, true);
+      assertEquals(
+        ctx.enriched.environment,
+        "production",
+        "a production domain resolves production when no explicit environment is set",
+      );
+    });
+
+    it("falls back to the request context mode when the domain has no environment", async () => {
+      const ctx = stubHandlerContext();
+      ctx.enriched = undefined;
+      ctx.resolvedEnvironment = undefined;
+      ctx.parsedDomain = {
+        slug: null,
+        branch: null,
+        environment: null,
+        isVeryfrontDomain: false,
+        isDraft: false,
+        allowIframeEmbed: false,
+      } as any;
+      ctx.requestContext = { mode: "production" };
+      ctx.config = { pages: { include: ["**/*.mdx"] } };
+      ctx.adapter = {
+        fs: {
+          exists: () => Promise.resolve(false),
+          readFile: () => Promise.resolve(""),
+          readDir: async function* () {},
+          stat: () => Promise.resolve({ isFile: false, isDirectory: false }),
+        },
+        env: { get: () => undefined, set: () => {}, delete: () => {}, toObject: () => ({}) },
+      } as unknown as any;
+
+      await getRendererForProject(ctx);
+      assertEquals(ctx.enriched !== undefined, true);
+      assertEquals(
+        ctx.enriched.environment,
+        "production",
+        "the request context mode decides when the domain carries no environment",
+      );
     });
 
     it("loads config when not provided and enriched is absent", async () => {

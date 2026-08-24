@@ -21,7 +21,12 @@ const SOURCE = [{
  */
 function createHostedAdapter(options: { requireInitialization: boolean }) {
   let initialized = false;
-  const calls = { ensureFresh: 0, listSource: 0, ranInContext: 0 };
+  const calls = {
+    ensureFresh: 0,
+    listSource: 0,
+    ranInContext: 0,
+    lastOptions: undefined as { waitForWarmup?: boolean } | undefined,
+  };
 
   const underlying = {
     ensureSourceSnapshotFresh: (_reason?: string) => {
@@ -29,8 +34,12 @@ function createHostedAdapter(options: { requireInitialization: boolean }) {
       initialized = true;
       return Promise.resolve();
     },
-    getAllSourceFiles: () => {
+    getAllSourceFiles: (readOptions?: { waitForWarmup?: boolean }) => {
       calls.listSource += 1;
+      calls.lastOptions = readOptions;
+      // Like the real adapter, the in-flight file-list fetch is only awaited
+      // when the caller asks for it; otherwise the read answers empty.
+      if (readOptions?.waitForWarmup !== true) return Promise.resolve([]);
       if (options.requireInitialization && !initialized) return Promise.resolve([]);
       return Promise.resolve(SOURCE);
     },
@@ -76,6 +85,11 @@ describe("server/runtime-handler/deriveProjectCspOrigins", () => {
     const derived = await deriveProjectCspOrigins({ adapter, ...PRODUCTION });
 
     assertEquals(derived?.["img-src"], ["https://images.unsplash.com"]);
+    assertEquals(
+      calls.lastOptions?.waitForWarmup,
+      true,
+      "the source read must wait for the in-flight file-list fetch",
+    );
     assert(calls.ensureFresh > 0, "the adapter must be initialized before its source is read");
     assertEquals(calls.ranInContext, 1, "the read stays inside the tenant context");
   });

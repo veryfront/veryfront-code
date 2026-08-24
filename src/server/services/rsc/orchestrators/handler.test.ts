@@ -15,7 +15,6 @@ import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 
 describe(
   "RSCDevServerHandler",
-  { sanitizeResources: false, sanitizeOps: false },
   () => {
     let handler: RSCDevServerHandler;
 
@@ -28,7 +27,7 @@ describe(
       handler = new RSCDevServerHandler("/tmp/test-project");
     });
 
-    describe("constructor", { sanitizeOps: false, sanitizeResources: false }, () => {
+    describe("constructor", () => {
       it("should create handler with project directory", () => {
         expect(handler).toBeDefined();
       });
@@ -52,7 +51,7 @@ describe(
       });
     });
 
-    describe("handlePage", { sanitizeOps: false, sanitizeResources: false }, () => {
+    describe("handlePage", () => {
       it("should return page response for valid pathname", async () => {
         const response = await handler.handlePage("/test", new URLSearchParams());
 
@@ -98,7 +97,7 @@ describe(
       });
     });
 
-    describe("handleManifest", { sanitizeOps: false, sanitizeResources: false }, () => {
+    describe("handleManifest", () => {
       it("should return manifest response", async () => {
         const response = await handler.handleManifest();
 
@@ -110,7 +109,20 @@ describe(
         const response = await handler.handleManifest();
         const text = await response.text();
 
-        expect(() => JSON.parse(text)).not.toThrow();
+        const body = JSON.parse(text) as {
+          components: Record<string, string>;
+          modules: unknown[];
+        };
+        assertEquals(
+          body.components,
+          {},
+          "an uninitialized renderer must not publish any client component entries",
+        );
+        assertEquals(
+          body.modules,
+          [],
+          "an uninitialized renderer must not publish any client module refs",
+        );
       });
 
       it("keeps render, React, and manifest module URLs on historical snapshot A after B is current", async () => {

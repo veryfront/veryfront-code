@@ -276,12 +276,40 @@ describe("createRequestContext", () => {
     });
 
     it("defaults token to empty string when no header and no env", () => {
-      const req = makeRequest("https://example.com/page", {
-        host: "example.com",
-      });
-      const ctx = createRequestContext(req);
-      // Token could be empty string or from env; at minimum it should be a string
-      assertEquals(typeof ctx.token, "string");
+      const previousToken = Deno.env.get("VERYFRONT_API_TOKEN");
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      try {
+        const req = makeRequest("https://example.com/page", {
+          host: "example.com",
+        });
+        const ctx = createRequestContext(req);
+        assertEquals(
+          ctx.token,
+          "",
+          "with no x-token header and no host token the context token is the empty string",
+        );
+      } finally {
+        if (previousToken !== undefined) Deno.env.set("VERYFRONT_API_TOKEN", previousToken);
+      }
+    });
+
+    it("uses the host API token when no request credential and fallback is not disabled", () => {
+      const previousToken = Deno.env.get("VERYFRONT_API_TOKEN");
+      Deno.env.set("VERYFRONT_API_TOKEN", "host-fallback-secret");
+      try {
+        const req = makeRequest("https://example.com/page", {
+          host: "example.com",
+        });
+        const ctx = createRequestContext(req);
+        assertEquals(
+          ctx.token,
+          "host-fallback-secret",
+          "a standalone request must inherit the host API credential",
+        );
+      } finally {
+        if (previousToken !== undefined) Deno.env.set("VERYFRONT_API_TOKEN", previousToken);
+        else Deno.env.delete("VERYFRONT_API_TOKEN");
+      }
     });
 
     it("disables host-token fallback for shared proxy admission", () => {

@@ -91,6 +91,29 @@ describe("StreamHandler", () => {
         expect(parsed.id).toBeDefined();
         expect(parsed.html).toBeDefined();
       }
+
+      const slots = lines.filter((line) => line.trim()).map((line) => JSON.parse(line));
+      const rootSlots = slots.filter((slot) => slot.id === "root");
+      expect(rootSlots.length).toBe(2);
+      expect(rootSlots[0].html).toBe("<p>Loading...</p>");
+      expect(rootSlots.at(-1)?.html).toBe("<div>Test Content</div>");
+    });
+
+    it("streams the rendered payload html rather than the fallback", async () => {
+      mockRenderHandler.setHandler(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ html: "<main>DISTINCT-PAYLOAD</main>" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        )
+      );
+
+      const response = await streamHandler.handle("/", new URLSearchParams());
+      const text = await response.text();
+
+      expect(text).toContain("DISTINCT-PAYLOAD");
+      expect(text).not.toContain("OK");
     });
 
     it("exposes the exact dependency snapshot captured by the render payload", async () => {
@@ -140,12 +163,29 @@ describe("StreamHandler", () => {
       expect(handleCalls[0]?.[0]).toBe("/my-page");
     });
 
-    it("should handle render handler returning non-ok response", async () => {
+    it("should handle render handler returning non-ok response with an empty body", async () => {
       mockRenderHandler.setHandler(() => Promise.resolve(new Response(null, { status: 500 })));
 
       const response = await streamHandler.handle("/", new URLSearchParams());
 
       expect(await response.text()).toContain("OK");
+    });
+
+    it("does not stream a non-ok render payload", async () => {
+      mockRenderHandler.setHandler(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ html: "<div>LEAKED-ERROR-DETAIL</div>" }), {
+            status: 500,
+            headers: { "content-type": "application/json" },
+          }),
+        )
+      );
+
+      const response = await streamHandler.handle("/", new URLSearchParams());
+      const text = await response.text();
+
+      expect(text).toContain("OK");
+      expect(text).not.toContain("LEAKED-ERROR-DETAIL");
     });
 
     it("should handle invalid JSON from render handler", async () => {

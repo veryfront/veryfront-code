@@ -226,6 +226,34 @@ describe("ProjectMiddlewareRuntime", () => {
     assertEquals(loadCount, 4);
   });
 
+  it("evicts cached production middleware for the invalidated project", async () => {
+    const adapter = createAdapter();
+    let loadCount = 0;
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => {
+        loadCount++;
+        return Promise.resolve([]);
+      },
+    });
+
+    await execute(runtime, createContext(adapter));
+    assertEquals(loadCount, 1);
+    assertEquals(runtime.size, 1);
+
+    assertEquals(runtime.invalidateProject("nope"), 0, "a non-matching identity must not evict");
+    assertEquals(runtime.size, 1, "a non-matching identity must leave the cache intact");
+
+    assertEquals(
+      runtime.invalidateProject("project-a"),
+      1,
+      "invalidation must evict the compiled middleware entry",
+    );
+    assertEquals(runtime.size, 0, "the invalidated project must have no cached middleware");
+
+    await execute(runtime, createContext(adapter));
+    assertEquals(loadCount, 2, "a request after invalidation must reload the middleware");
+  });
+
   it("does not cache shared middleware without a canonical project ID", async () => {
     const adapter = createAdapter();
     let loadCount = 0;

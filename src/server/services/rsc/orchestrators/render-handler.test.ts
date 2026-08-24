@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/transforms/mdx/compiler/__tests__/content-processor-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RenderHandler } from "./render-handler.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
@@ -25,13 +25,25 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
       );
 
       const response = await handler.handle("/nonexistent", new URLSearchParams());
-      // Should get an error response (component not found or renderer not initialized)
-      assertEquals(response.status >= 400, true);
+      assertEquals(
+        response.status,
+        404,
+        "a missing component is a route miss, not a platform fault",
+      );
+      const body = await response.json();
+      assertStringIncludes(
+        body.type ?? "",
+        "page-not-found",
+        "the problem type must identify PAGE_NOT_FOUND",
+      );
+      assertEquals(
+        body.detail,
+        "The requested component could not be found",
+        "the not-found branch must produce the PAGE_NOT_FOUND detail",
+      );
     });
 
-    it("returns error response when renderer is null", async () => {
-      // RenderHandler with a getRenderer that returns null
-      // The component path won't resolve, so we get "Component not found"
+    it("returns the component-not-found problem when the component path does not resolve", async () => {
       const handler = new RenderHandler(
         "/tmp/nonexistent",
         () => null,
@@ -39,10 +51,79 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
       );
 
       const response = await handler.handle("/some-page", new URLSearchParams());
-      assertEquals(response.status >= 400, true);
-      const body = await response.text();
-      // Should include error information
-      assertEquals(body.length > 0, true);
+      assertEquals(response.status, 404, "an unresolvable component path is a route miss");
+      const body = await response.json();
+      assertStringIncludes(body.type ?? "", "page-not-found");
+    });
+
+    it("returns error response when renderer is null", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-rsc-null-renderer-" });
+      const pagePath = `${projectDir}/app/page.tsx`;
+      const pageSource = "export default function Page() { return null; }";
+      await Deno.mkdir(`${projectDir}/app`);
+      await Deno.writeTextFile(pagePath, pageSource);
+
+      try {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set(pagePath, pageSource);
+        const handler = new RenderHandler(projectDir, () => null, "production", "app", {
+          runtimeAdapter: () => Promise.resolve(adapter),
+          moduleLoader: () => Promise.resolve({ default: () => null }),
+        });
+
+        const response = await handler.handle("/", new URLSearchParams());
+        assertEquals(
+          response.status,
+          500,
+          "an uninitialized renderer is a render failure, not a missing page",
+        );
+        const body = await response.json();
+        assertStringIncludes(
+          body.type ?? "",
+          "render-error",
+          "the problem type must identify RENDER_ERROR rather than PAGE_NOT_FOUND",
+        );
+        assertEquals(
+          body.detail,
+          "Renderer not initialized",
+          "the null-renderer guard must produce the RENDER_ERROR detail",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("returns the component error when the module does not export a component", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-rsc-invalid-component-" });
+      const pagePath = `${projectDir}/app/page.tsx`;
+      const pageSource = "export default 'not a component';";
+      await Deno.mkdir(`${projectDir}/app`);
+      await Deno.writeTextFile(pagePath, pageSource);
+
+      try {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set(pagePath, pageSource);
+        const handler = new RenderHandler(projectDir, () => null, "production", "app", {
+          runtimeAdapter: () => Promise.resolve(adapter),
+          moduleLoader: () => Promise.resolve({ default: "not a component" }),
+        });
+
+        const response = await handler.handle("/", new URLSearchParams());
+        assertEquals(response.status, 500, "an invalid component export is a component fault");
+        const body = await response.json();
+        assertStringIncludes(
+          body.type ?? "",
+          "component-error",
+          "the problem type must identify COMPONENT_ERROR",
+        );
+        assertEquals(
+          body.detail,
+          "Component module must export a valid React component",
+          "the invalid-component branch must produce the COMPONENT_ERROR detail",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
     });
 
     it("returns error response as JSON with proper content type", async () => {

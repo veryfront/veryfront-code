@@ -185,6 +185,23 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(status.heapLimitMB >= 0, true);
         assertEquals(status.heapUsedPercent >= 0, true);
       });
+
+      it("reports the live heap statistics", () => {
+        const service = new SSRService();
+        const status = service.checkMemoryPressure();
+        assertEquals(
+          status.heapLimitMB > 0,
+          true,
+          "heapLimitMB must come from getHeapStats, not a hardcoded zero",
+        );
+        assertEquals(status.heapUsedMB > 0, true, "heapUsedMB must come from getHeapStats");
+        assertEquals(
+          Math.abs(status.heapUsedPercent - (status.heapUsedMB / status.heapLimitMB) * 100) < 1,
+          true,
+          "heapUsedPercent must be the real ratio reported by getHeapStats",
+        );
+        assertEquals(status.shouldReject, false, "a healthy test process must not be shed");
+      });
     });
 
     describe("createMemoryPressureResult", () => {

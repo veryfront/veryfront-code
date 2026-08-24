@@ -36,7 +36,8 @@ export const DISPATCH_JWS_HEADER = "x-veryfront-dispatch-jws";
 /** The one route that accepts a signed channel dispatch envelope. */
 export const CHANNEL_INVOKE_PATH = "/channels/invoke";
 
-const CONTROL_PLANE_RUN_OPERATION_PATH =
+/** Matches the signed run operation routes (`execute`, `stream`, `resume`) of a control-plane run. */
+export const CONTROL_PLANE_RUN_OPERATION_PATH =
   /^\/api\/control-plane\/runs\/[^/]+\/(?:execute|stream|resume)$/u;
 const CONTROL_PLANE_RUN_PATH = /^\/api\/control-plane\/runs\/[^/]+$/u;
 

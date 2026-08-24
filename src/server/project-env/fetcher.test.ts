@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { createMockServer } from "../../../tests/_helpers/utils.ts";
 import {
@@ -142,13 +147,41 @@ describe("project-env/fetcher", () => {
     }
   });
 
-  it("throws on non-200 response", async () => {
+  it("classifies a 401 as a rejected credential", async () => {
     const { server, port } = createMockServer(() => {
       return new Response("Unauthorized", { status: 401 });
     });
 
     try {
-      await assertRejects(() => fetchFromMockApi(port));
+      const error = await assertRejects(() => fetchFromMockApi(port));
+      assertEquals(
+        (error as { slug?: string }).slug,
+        "authentication-required",
+        "a 401 is a rejected credential, not a transient network fault",
+      );
+      assertEquals((error as { status?: number }).status, 401, "the error keeps the 401 status");
+      assertEquals(
+        (error as Error).message,
+        "Project credential was rejected",
+        "the error message names the rejected credential",
+      );
+    } finally {
+      await server.shutdown();
+    }
+  });
+
+  it("classifies a 404 as a permission failure", async () => {
+    const { server, port } = createMockServer(() => {
+      return new Response("Not Found", { status: 404 });
+    });
+
+    try {
+      const error = await assertRejects(() => fetchFromMockApi(port));
+      assertEquals(
+        (error as { slug?: string }).slug,
+        "permission-denied",
+        "a 404 is folded into the permission-denied branch",
+      );
     } finally {
       await server.shutdown();
     }
@@ -588,32 +621,90 @@ describe("project-env/fetcher", () => {
   });
 
   it("bounds streamed environment responses before JSON parsing", async () => {
+    // Served through an in-process stream rather than the mock server so the
+    // emitted byte count measures exactly what the reader pulled, not what the
+    // HTTP server buffered ahead of the client.
     const chunk = new Uint8Array(64 * 1024).fill(0x20);
     let emittedBytes = 0;
-    const { server, port } = createMockServer(() => {
-      return new Response(
-        new ReadableStream<Uint8Array>({
-          pull(controller) {
-            if (emittedBytes > PROJECT_ENV_RESPONSE_MAX_BYTES) {
-              controller.close();
-              return;
-            }
-            emittedBytes += chunk.byteLength;
-            controller.enqueue(chunk);
-          },
-        }),
-        {
-          headers: { "content-type": "application/json" },
-        },
-      );
-    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              // Self-closes well past the cap so a missing bound fails the byte
+              // ceiling assertion instead of hanging or exhausting memory.
+              if (emittedBytes > PROJECT_ENV_RESPONSE_MAX_BYTES * 3) {
+                controller.close();
+                return;
+              }
+              emittedBytes += chunk.byteLength;
+              controller.enqueue(chunk);
+            },
+          }),
+          { headers: { "content-type": "application/json" } },
+        ),
+      )) as typeof fetch;
 
     try {
-      const error = await assertRejects(() => fetchFromMockApi(port));
+      const error = await assertRejects(() =>
+        fetchProjectEnvVars("https://api.veryfront.test", "my-project", "env-123", "test-token")
+      );
       assertEquals((error as { slug?: string }).slug, "network-error");
-      assertEquals(emittedBytes <= PROJECT_ENV_RESPONSE_MAX_BYTES + chunk.byteLength * 2, true);
+      assertStringIncludes(
+        String((error as Error).message),
+        "Project environment response exceeded its size limit",
+        "an oversized body must be refused by the size bound, not incidentally by JSON.parse",
+      );
+      assertEquals(
+        emittedBytes <= PROJECT_ENV_RESPONSE_MAX_BYTES + chunk.byteLength * 2,
+        true,
+        "reading must stop once the size bound is exceeded",
+      );
     } finally {
-      await server.shutdown();
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("refuses a declared content-length above the cap without reading the body", async () => {
+    let bodyReads = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(
+          // highWaterMark 0 so pull only runs when a reader actually reads.
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              bodyReads += 1;
+              controller.enqueue(new TextEncoder().encode('{"data":[]}'));
+              controller.close();
+            },
+          }, { highWaterMark: 0 }),
+          {
+            headers: {
+              "content-type": "application/json",
+              "content-length": String(PROJECT_ENV_RESPONSE_MAX_BYTES + 1),
+            },
+          },
+        ),
+      )) as typeof fetch;
+
+    try {
+      const error = await assertRejects(() =>
+        fetchProjectEnvVars("https://api.veryfront.test", "my-project", "env-123", "test-token")
+      );
+      assertStringIncludes(
+        String((error as Error).message),
+        "Project environment response exceeded its size limit",
+        "a declared length above the cap must be refused by the size bound",
+      );
+      assertEquals(
+        bodyReads,
+        0,
+        "the body must never be read once the declared length is over the cap",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
     }
   });
 });

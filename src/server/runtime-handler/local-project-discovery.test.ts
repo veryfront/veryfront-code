@@ -110,6 +110,28 @@ describe("local-project-discovery", () => {
       assertEquals(localProjectCache.has("myproject"), false);
     });
 
+    it("falls through to standard discovery after an invalid headerPath override", async () => {
+      const adapter = createMockAdapter({
+        "/custom/path": { isDirectory: true },
+        // Missing app/pages/components
+        "data/projects/myproject": { isDirectory: true },
+        "data/projects/myproject/app": { isDirectory: true },
+      });
+
+      const path = await findLocalProjectPath("myproject", adapter, "/custom/path");
+
+      assertEquals(
+        path?.endsWith("data/projects/myproject"),
+        true,
+        "an invalid x-project-path override must fall through to standard discovery",
+      );
+      assertEquals(
+        localProjectCache.get("myproject")?.endsWith("data/projects/myproject"),
+        true,
+        "the standard-directory result must still be cached",
+      );
+    });
+
     it("returns cached path if available", async () => {
       const adapter = createMockAdapter({});
       localProjectCache.set("cached-project", "/cached/path");
@@ -229,6 +251,13 @@ describe("local-project-discovery", () => {
       cache.projects.set("c", "/c"); // should evict "a"
       assertEquals(cache.projects.has("a"), false);
       assertEquals(cache.projects.has("c"), true);
+
+      const adapterA = {} as RuntimeAdapter;
+      const adapterB = {} as RuntimeAdapter;
+      cache.adapters.set("/a", adapterA);
+      cache.adapters.set("/b", adapterB);
+      assertEquals(cache.adapters.has("/a"), false, "maxAdapters: 1 must evict the older adapter");
+      assertEquals(cache.adapters.has("/b"), true, "the most recent adapter is retained");
     });
 
     it("injected cache isolates state from default singleton", () => {

@@ -5,16 +5,23 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ManifestHandler } from "./manifest-handler.ts";
 import type { CacheRepository } from "#veryfront/repositories/types.ts";
 import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
+import { RSC_MANIFEST_CACHE_TTL_MS } from "#veryfront/utils";
 
-function createMockCacheRepo(): CacheRepository<string> & { store: Map<string, string> } {
+function createMockCacheRepo(): CacheRepository<string> & {
+  store: Map<string, string>;
+  ttls: Map<string, number | undefined>;
+} {
   const store = new Map<string, string>();
+  const ttls = new Map<string, number | undefined>();
   return {
     store,
+    ttls,
     async get(key: string) {
       return store.get(key) ?? null;
     },
-    async set(key: string, value: string, _ttl?: number) {
+    async set(key: string, value: string, ttl?: number) {
       store.set(key, value);
+      ttls.set(key, ttl);
     },
     async delete(key: string) {
       store.delete(key);
@@ -22,7 +29,10 @@ function createMockCacheRepo(): CacheRepository<string> & { store: Map<string, s
     async has(key: string) {
       return store.has(key);
     },
-  } as CacheRepository<string> & { store: Map<string, string> };
+  } as CacheRepository<string> & {
+    store: Map<string, string>;
+    ttls: Map<string, number | undefined>;
+  };
 }
 
 describe("server/services/rsc/orchestrators/manifest-handler", () => {
@@ -38,6 +48,11 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
 
       assertEquals(response.headers.get("content-type"), "application/json");
       assertEquals(response.headers.get("vary"), RSC_DEPENDENCY_PINNING_HEADER);
+      assertEquals(
+        response.headers.get("cache-control"),
+        "private, no-cache, must-revalidate",
+        "a per-tenant client-component manifest must never be shared-cacheable",
+      );
       const body = await response.json();
       assertEquals(body.components.Button, "/app/components/Button.tsx");
       assertEquals(body.components.Card, "/app/components/Card.tsx");
@@ -258,6 +273,12 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
       await handler.handle(manifest as any);
 
       assertEquals(cacheRepo.store.size, 1);
+      const key = [...cacheRepo.store.keys()][0]!;
+      assertEquals(
+        cacheRepo.ttls.get(key),
+        Math.floor(RSC_MANIFEST_CACHE_TTL_MS / 1000),
+        "the external manifest TTL is written in seconds, not milliseconds",
+      );
     });
 
     it("should return cached data from injected cache", async () => {
@@ -373,6 +394,33 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
       const body = await response.json();
       assertEquals(body.components.W, "/w.tsx");
       assertEquals(body.components.Z, undefined);
+    });
+
+    it("purges tracked keys from the injected cache repository", async () => {
+      const cacheRepo = createMockCacheRepo();
+      const handler = new ManifestHandler("/project", { cacheRepo, isLocalProject: true });
+      await handler.handle(new Map([["Z", { path: "/z.tsx", exports: [] }]]) as any);
+      assertEquals(cacheRepo.store.size, 1, "the first build is written to the repository");
+
+      handler.clearCache();
+      // clearCache enqueues the purge with void, so await the private queue.
+      await (handler as unknown as { cacheMutation: Promise<void> }).cacheMutation;
+
+      assertEquals(
+        cacheRepo.store.size,
+        0,
+        "clearCache must purge every tracked key from the external cache repository",
+      );
+      const response = await handler.handle(
+        new Map([["W", { path: "/w.tsx", exports: [] }]]) as any,
+      );
+      const body = await response.json();
+      assertEquals(
+        body.components.Z,
+        undefined,
+        "a cleared manifest must not be re-read from the injected repository",
+      );
+      assertEquals(body.components.W, "/w.tsx", "the post-clear build is served");
     });
 
     it("does not let a pre-invalidation build republish stale manifest data", async () => {

@@ -1042,11 +1042,48 @@ describe("adapter-factory", () => {
       const base = createMockAdapter({});
 
       // Non-extended adapter (no runWithContext) takes the direct getConfig path.
-      // Config loading may succeed or throw — either outcome is valid.
-      let succeeded = false;
-      let threw = false;
-      try {
-        const result = await resolveAdapter({
+      const result = await resolveAdapter({
+        projectDir: "/base/project",
+        adapter: base,
+        config: undefined,
+        projectSlug: "proxy-slug",
+        projectId: "proj_proxy",
+        proxyToken: "tok-123",
+        releaseId: undefined,
+        proxyEnv: "preview",
+        branch: null,
+        environmentName: undefined,
+        parsedDomain: {
+          slug: null,
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        req: await makeReq(),
+        isProxyMode: true,
+        prepareHostedConfigContext: preparePreviewHostedConfigContext,
+      });
+
+      assertEquals(
+        result.configOutcome,
+        "hosted",
+        "a non-extended adapter still loads the project config",
+      );
+      assertEquals(
+        result.config?.title,
+        "Veryfront App",
+        "the loaded config, not a default, is returned",
+      );
+    });
+
+    it("surfaces a missing evaluation context for a non-extended adapter", async () => {
+      const base = createMockAdapter({});
+      const req = await makeReq();
+
+      const error = await assertRejects(() =>
+        resolveAdapter({
           projectDir: "/base/project",
           adapter: base,
           config: undefined,
@@ -1065,19 +1102,53 @@ describe("adapter-factory", () => {
             isDraft: false,
             allowIframeEmbed: false,
           },
-          req: await makeReq(),
+          req,
           isProxyMode: true,
-        });
-        succeeded = true;
-        // If it succeeds, verify the result has the expected shape
-        assertEquals("projectDir" in result, true);
-        assertEquals("adapter" in result, true);
-      } catch {
-        threw = true;
-      }
+        })
+      );
+      assertEquals(
+        (error as { slug?: string }).slug,
+        "cache-invariant-violation",
+        "a missing evaluation context must surface, not be swallowed",
+      );
+    });
 
-      // One of the two paths must have been taken
-      assertEquals(succeeded || threw, true);
+    it("defers config for a production proxy request with no resolved release", async () => {
+      const { adapter } = createExtendedMockAdapter();
+
+      const result = await resolveAdapter({
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "proxy-slug",
+        projectId: "proj_proxy",
+        proxyToken: "tok-123",
+        releaseId: undefined,
+        proxyEnv: "production",
+        branch: null,
+        environmentName: undefined,
+        parsedDomain: {
+          slug: null,
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        req: new Request("http://example.com/"),
+        pathname: "/",
+        isProxyMode: true,
+        prepareHostedConfigContext: () => {
+          throw new Error("hosted config must not be prepared before a release is resolved");
+        },
+      });
+
+      assertEquals(result.config, undefined, "no config is loaded before a release is resolved");
+      assertEquals(
+        result.configOutcome,
+        "deferred",
+        "a production proxy request with no resolved releaseId must defer, not attempt a hosted config load",
+      );
     });
   });
 

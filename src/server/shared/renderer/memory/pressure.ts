@@ -16,19 +16,25 @@
 
 import { rendererLogger } from "#veryfront/utils";
 import { getHeapStats } from "#veryfront/utils/memory/index.ts";
-import { getEnvNumber, getEnvString } from "#veryfront/compat/process.ts";
+import { getEnvString } from "#veryfront/compat/process.ts";
 
 const memoryPressureLog = rendererLogger.component("memory-pressure");
 const rendererLog = rendererLogger.component("renderer");
 
 type MemoryPressureLevel = "normal" | "warning" | "high" | "critical";
 
-function parseEnvThreshold(name: string, fallback: number): number {
-  const value = getEnvString(name);
+/** Parses a percentage threshold from the environment, falling back on missing or invalid values. */
+export function parseEnvThreshold(
+  name: string,
+  fallback: number,
+  read: (name: string) => string | undefined = getEnvString,
+): number {
+  const value = read(name);
   if (!value) return fallback;
 
-  const parsed = getEnvNumber(name);
-  if (parsed !== undefined && !Number.isNaN(parsed) && parsed >= 0 && parsed <= 100) {
+  const normalized = value.trim();
+  const parsed = /^[+-]?\d+$/.test(normalized) ? Number(normalized) : Number.NaN;
+  if (Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= 100) {
     return parsed;
   }
 
@@ -46,14 +52,28 @@ const THRESHOLDS = {
   CRITICAL: parseEnvThreshold("MEMORY_CRITICAL_THRESHOLD", 80),
 };
 
+/** Classifies a heap usage percentage against the configured thresholds. */
+export function classifyMemoryPressure(
+  heapUsedPercent: number,
+  thresholds: typeof THRESHOLDS = THRESHOLDS,
+): MemoryPressureLevel {
+  if (heapUsedPercent >= thresholds.CRITICAL) return "critical";
+  if (heapUsedPercent >= thresholds.HIGH) return "high";
+  if (heapUsedPercent >= thresholds.WARNING) return "warning";
+  return "normal";
+}
+
+type PressureDeps = { getHeapStats: () => { heapUsedPercent: number } };
+let injectedDeps: PressureDeps | null = null;
+
+/** Test-only seam for substituting heap statistics. */
+export function __injectDepsForTests(deps: PressureDeps | null): void {
+  injectedDeps = deps;
+}
+
 function getMemoryPressure(): { level: MemoryPressureLevel; heapUsedPercent: number } {
-  const { heapUsedPercent } = getHeapStats();
-
-  if (heapUsedPercent >= THRESHOLDS.CRITICAL) return { level: "critical", heapUsedPercent };
-  if (heapUsedPercent >= THRESHOLDS.HIGH) return { level: "high", heapUsedPercent };
-  if (heapUsedPercent >= THRESHOLDS.WARNING) return { level: "warning", heapUsedPercent };
-
-  return { level: "normal", heapUsedPercent };
+  const { heapUsedPercent } = (injectedDeps?.getHeapStats ?? getHeapStats)();
+  return { level: classifyMemoryPressure(heapUsedPercent), heapUsedPercent };
 }
 
 export function shouldRejectDueToMemory(): boolean {
