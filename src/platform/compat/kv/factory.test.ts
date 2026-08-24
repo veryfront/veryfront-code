@@ -56,14 +56,35 @@ describe("kv/factory", () => {
       assertEquals(typeof polyfillDenoKv, "function");
     });
 
-    it("leaves the native Deno namespace untouched on the Deno lane", () => {
+    it("never clobbers a native Deno namespace and installs openKv only when absent", () => {
+      // polyfillDenoKv returns early under Deno and otherwise fills in the gaps with
+      // ??=, so the contract differs by lane. Assert the contract of whichever lane
+      // this run is on: exactly one branch executes and both assert real behaviour.
       const g = globalThis as { Deno?: { openKv?: unknown } };
       const originalDeno = g.Deno;
+      const originalOpenKv = g.Deno?.openKv;
       polyfillDenoKv();
-      assertStrictEquals(
+      if (originalDeno !== undefined) {
+        assertStrictEquals(
+          g.Deno,
+          originalDeno,
+          "a native Deno namespace must never be replaced",
+        );
+        assertStrictEquals(
+          g.Deno?.openKv,
+          originalOpenKv,
+          "a native Deno.openKv must never be overwritten",
+        );
+        return;
+      }
+      assertExists(
         g.Deno,
-        originalDeno,
-        "the Deno lane leaves the native namespace untouched",
+        "a lane without Deno must have the namespace installed by the polyfill",
+      );
+      assertEquals(
+        typeof g.Deno.openKv,
+        "function",
+        "the polyfill must install openKv where the lane has none",
       );
     });
   });
