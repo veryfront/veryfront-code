@@ -148,6 +148,11 @@ defineConfig({
 });
 ```
 
+Layout rendering now always uses the secure ESM path. If an existing
+configuration contains `experimental.esmLayouts: false`, remove that setting;
+the `false` value is no longer supported. `experimental.esmLayouts: true` may
+remain during migration, but is optional.
+
 ### AI discovery
 
 Control which directories are scanned for AI primitives:
