@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { makeTempDir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import type { CacheBackend } from "#veryfront/cache/types.ts";
 import {
   extractBundleDeps,
@@ -141,7 +142,7 @@ describe("transforms/esm/bundle-deps-validator", () => {
     }
 
     async function assertRecoveryRejected(recoveredCode: string, why: string): Promise<void> {
-      const cacheDir = await Deno.makeTempDir();
+      const cacheDir = await makeTempDir();
       __setDistributedCacheAccessorForTests(() =>
         Promise.resolve(createBundleCacheBackend({ [`code:${depHash}`]: recoveredCode }, []))
       );
@@ -158,7 +159,7 @@ describe("transforms/esm/bundle-deps-validator", () => {
           "a rejected recovery must never be written to the local cache",
         );
       } finally {
-        await Deno.remove(cacheDir, { recursive: true });
+        await remove(cacheDir, { recursive: true });
       }
     }
 
@@ -188,7 +189,7 @@ describe("transforms/esm/bundle-deps-validator", () => {
     });
 
     it("fails the graph closed for an invalid bundle hash", async () => {
-      const cacheDir = await Deno.makeTempDir();
+      const cacheDir = await makeTempDir();
       const reads: string[] = [];
       __setDistributedCacheAccessorForTests(() =>
         Promise.resolve(createBundleCacheBackend({}, reads))
@@ -209,20 +210,20 @@ describe("transforms/esm/bundle-deps-validator", () => {
           "an invalid bundle hash must never reach the distributed cache",
         );
       } finally {
-        await Deno.remove(cacheDir, { recursive: true });
+        await remove(cacheDir, { recursive: true });
       }
     });
   });
 
   it("finds SHA-256-named parent bundles during local recovery", async () => {
-    const cacheDir = await Deno.makeTempDir();
+    const cacheDir = await makeTempDir();
     const parentHash = "d9daafa3b706faf7af89c03417596d23beed4c1ae964d7ee7ead5d335b683412";
     const targetHash = "915c2e2f2105f33640de7ae9d5252b1edb798614e5958f63cd7acef23e501124";
     const parentPath = join(cacheDir, `http-${parentHash}.mjs`);
     const sourceUrl = "https://modules.example.com/parent.js";
 
     try {
-      await Deno.writeTextFile(
+      await writeTextFile(
         parentPath,
         embedSourceUrl(`import "./http-${targetHash}.mjs";`, sourceUrl),
       );
@@ -232,7 +233,7 @@ describe("transforms/esm/bundle-deps-validator", () => {
         { path: parentPath, sourceUrl },
       );
     } finally {
-      await Deno.remove(cacheDir, { recursive: true });
+      await remove(cacheDir, { recursive: true });
     }
   });
 });

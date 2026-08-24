@@ -94,7 +94,7 @@ export async function compileMarkdown(
   // entry the sanitizer strips the highlighter's entire output back to bare
   // `<span>const</span>` markup that no theme CSS can target. The allowance is
   // prefix-scoped to the class names Starry Night emits.
-  const starryNightTokenClass: [string, RegExp] = ["className", /^pl-/];
+  const starryNightTokenClass: [string, RegExp] = ["className", /^pl-[\w-]+$/];
   const highlightSchema = {
     ...defaultSchema,
     attributes: {

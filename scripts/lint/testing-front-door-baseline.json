@@ -232,8 +232,7 @@
     "src/rendering/layouts/utils/component-loader.test.ts": 1,
     "src/transforms/esm/cached-bundle-validation.test.ts": 1,
     "src/workflow/react/use-workflow-start.test.tsx": 1,
-    "tests/integration/api-file-access.test.ts": 1,
-    "tests/integration/transforms/esm/cached-bundle-validation.test.ts": 1
+    "tests/integration/api-file-access.test.ts": 1
   },
   "temp-dir": {
     "cli/app/operations/project-creation.test.ts": 4,
@@ -391,8 +390,6 @@
     "src/skill/skill-owner-scope.test.ts": 2,
     "src/skill/tools.test.ts": 3,
     "src/testing/cwd.test.ts": 5,
-    "src/transforms/esm/bundle-deps-validator.test.ts": 2,
-    "src/transforms/esm/bundle-recovery.test.ts": 9,
     "src/transforms/esm/import-parser.test.ts": 1,
     "src/transforms/esm/package-registry.test.ts": 5,
     "src/transforms/import-rewriter/core.test.ts": 2,

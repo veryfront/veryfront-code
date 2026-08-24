@@ -62,10 +62,6 @@ function warnUnversionedImport(specifier: string, projectId?: string): void {
   });
 }
 
-function normalizeVersionedSpecifier(specifier: string): string {
-  return specifier.replace(/@[\d^~x][\d.x^~-]*(?=\/|$)/, "");
-}
-
 function shouldSkipRewrite(specifier: string): boolean {
   return (
     specifier.startsWith("http://") ||
@@ -96,20 +92,14 @@ export function rewriteBareImports(
 
         if (shouldSkipRewrite(specifier)) return null;
 
-        // The pin-less package name is only used to recognise the tailwindcss
-        // special case, which pins the framework's own supported version. Every
-        // other specifier keeps the author's inline pin in the emitted URL:
-        // esm.sh resolves `lodash@4.17.21` directly, and stripping it would both
-        // make the output non-reproducible — the very thing
-        // `warnUnversionedImport` below asks authors to avoid — and disagree
-        // with the canonical `BareStrategy`, which preserves inline versions for
-        // browser targets.
-        const unpinned = normalizeVersionedSpecifier(specifier);
-
+        const hasExplicitVersion = hasVersionSpecifier(specifier);
         let finalSpecifier = specifier;
-        if (unpinned === "tailwindcss" || unpinned.startsWith("tailwindcss/")) {
-          finalSpecifier = unpinned.replace(/^tailwindcss/, `tailwindcss@${TAILWIND_VERSION}`);
-        } else if (!hasVersionSpecifier(specifier)) {
+        if (
+          !hasExplicitVersion &&
+          (specifier === "tailwindcss" || specifier.startsWith("tailwindcss/"))
+        ) {
+          finalSpecifier = specifier.replace(/^tailwindcss/, `tailwindcss@${TAILWIND_VERSION}`);
+        } else if (!hasExplicitVersion) {
           warnUnversionedImport(specifier, projectId);
         }
 

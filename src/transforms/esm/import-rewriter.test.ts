@@ -112,6 +112,16 @@ describe("transforms/esm/import-rewriter", () => {
       );
     });
 
+    it("preserves pinned scoped package versions and subpaths", async () => {
+      const code = `import parser from "@babel/parser@7.25.0/lib/index.js";`;
+      const result = await rewriteBareImports(code);
+      assertEquals(
+        result,
+        `import parser from "https://esm.sh/@babel/parser@7.25.0/lib/index.js?external=react&target=es2022";`,
+        "a scoped package pin and its subpath must both survive rewriting",
+      );
+    });
+
     it("does not rewrite relative imports", async () => {
       const code = `import { foo } from "./foo.js";`;
       const result = await rewriteBareImports(code);

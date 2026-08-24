@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
-import { makeTempDir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
+import { makeTempDir, remove, withTempDir, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { validateCachedBundlesByManifestOrCode } from "#veryfront/transforms/esm/cached-bundle-validation.ts";
 import {
@@ -15,15 +15,6 @@ import {
 // That process effect is why these cases live in the integration suite while the
 // hermetic code-fallback cases stay colocated with the source.
 describe("validateCachedBundlesByManifestOrCode manifest branch", () => {
-  async function withTempDir(fn: (dir: string) => Promise<void>): Promise<void> {
-    const dir = await makeTempDir({ prefix: "vf-cached-bundle-validation-" });
-    try {
-      await fn(dir);
-    } finally {
-      await remove(dir, { recursive: true });
-    }
-  }
-
   // bundle-manifest resolves its distributed cache lazily and memoizes the first
   // backend it sees, so a disk backend has to be configured before the first
   // manifest is stored or loaded anywhere in this file. The factory prefers the
@@ -73,7 +64,7 @@ describe("validateCachedBundlesByManifestOrCode manifest branch", () => {
         { valid: true, failedHashes: [], source: "manifest" },
         "a manifest whose bundles exist validates through the manifest path",
       );
-    });
+    }, { prefix: "vf-cached-bundle-validation-" });
   });
 
   it("reports an unrecoverable manifest instead of masking it with a code scan", async () => {
@@ -95,6 +86,6 @@ describe("validateCachedBundlesByManifestOrCode manifest branch", () => {
       assertEquals(result.valid, false, "a manifest with a missing bundle is not valid");
       assertEquals(result.reason, "bundle_missing", "the missing bundle is the stated reason");
       assertEquals(result.failedHashes, [hash], "the missing bundle hash is reported");
-    });
+    }, { prefix: "vf-cached-bundle-validation-" });
   });
 });

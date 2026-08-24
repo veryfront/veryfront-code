@@ -236,6 +236,18 @@ describe(
         );
       });
 
+      it("allows only Starry Night class names on highlighted spans", async () => {
+        const result = await compileMarkdownRuntime(
+          markdownCompilationMode,
+          "/tmp/project",
+          '<span class="pl-k attacker-class" onclick="alert(1)">const</span>',
+        );
+
+        assertEquals(result.rawHtml!.includes('class="pl-k"'), true);
+        assertEquals(result.rawHtml!.includes("attacker-class"), false);
+        assertEquals(result.rawHtml!.includes("onclick"), false);
+      });
+
       it("uses preview wrapper for non-routable files", async () => {
         const result = await compileMarkdownRuntime(
           markdownCompilationMode,
