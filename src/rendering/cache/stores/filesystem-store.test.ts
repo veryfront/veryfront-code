@@ -1,10 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { FilesystemCacheStore } from "./filesystem-store.ts";
 import type { CachePayload } from "../types.ts";
+
+/**
+ * Allocate a cache root through the platform filesystem adapter so the suite
+ * never hard-codes a host-specific layout such as `/tmp`.
+ */
+async function makeCacheRoot(prefix: string): Promise<string> {
+  return await (await getLocalAdapter()).fs.makeTempDir(prefix);
+}
 
 function makePayload(html = "<p>x</p>"): CachePayload {
   return {
@@ -16,7 +24,7 @@ function makePayload(html = "<p>x</p>"): CachePayload {
 describe("rendering/cache/stores/filesystem-store", () => {
   describe("FilesystemCacheStore constructor", () => {
     it("should write entries under the configured base directory", async () => {
-      const dir = "/tmp/veryfront-test-fs-cache-ctor-" + Date.now();
+      const dir = await makeCacheRoot("veryfront-fs-cache-ctor-");
       const store = new FilesystemCacheStore({ baseDir: dir });
 
       try {
@@ -32,10 +40,11 @@ describe("rendering/cache/stores/filesystem-store", () => {
     });
 
     it("keeps stores with different baseDirs isolated", async () => {
-      const suffix = Date.now();
-      const first = new FilesystemCacheStore({ baseDir: `/tmp/veryfront-test-fs-iso-a-${suffix}` });
+      const first = new FilesystemCacheStore({
+        baseDir: await makeCacheRoot("veryfront-fs-cache-iso-a-"),
+      });
       const second = new FilesystemCacheStore({
-        baseDir: `/tmp/veryfront-test-fs-iso-b-${suffix}`,
+        baseDir: await makeCacheRoot("veryfront-fs-cache-iso-b-"),
       });
 
       try {
@@ -59,7 +68,17 @@ describe("rendering/cache/stores/filesystem-store", () => {
   });
 
   describe("operations (using local adapter)", () => {
-    const baseDir = "/tmp/veryfront-test-fs-cache-" + Date.now();
+    let root = "";
+    let baseDir = "";
+
+    beforeAll(async () => {
+      root = await makeCacheRoot("veryfront-fs-cache-ops-");
+      baseDir = join(root, "default");
+    });
+
+    afterAll(async () => {
+      await (await getLocalAdapter()).fs.remove(root, { recursive: true });
+    });
 
     it("should return undefined for missing key", async () => {
       const store = new FilesystemCacheStore({ baseDir });
@@ -84,7 +103,7 @@ describe("rendering/cache/stores/filesystem-store", () => {
     });
 
     it("preserves Dates through an actual file round-trip", async () => {
-      const dir = baseDir + "-dates";
+      const dir = join(root, "dates");
       const store = new FilesystemCacheStore({ baseDir: dir });
       const publishedAt = new Date("2026-07-24T08:30:00.000Z");
       const payload: CachePayload = {
@@ -128,7 +147,7 @@ describe("rendering/cache/stores/filesystem-store", () => {
     });
 
     it("should clear all entries", async () => {
-      const dir = baseDir + "-clear";
+      const dir = join(root, "clear");
       const store = new FilesystemCacheStore({ baseDir: dir });
 
       try {
@@ -158,7 +177,7 @@ describe("rendering/cache/stores/filesystem-store", () => {
     });
 
     it("should destroy (same as clear)", async () => {
-      const dir = baseDir + "-destroy";
+      const dir = join(root, "destroy");
       const store = new FilesystemCacheStore({ baseDir: dir });
 
       await store.set("a", makePayload());
@@ -177,7 +196,7 @@ describe("rendering/cache/stores/filesystem-store", () => {
     });
 
     it("should deleteByPrefix", async () => {
-      const dir = baseDir + "-prefix";
+      const dir = join(root, "prefix");
       const store = new FilesystemCacheStore({ baseDir: dir });
 
       try {
