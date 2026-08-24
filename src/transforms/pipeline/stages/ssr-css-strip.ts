@@ -66,6 +66,56 @@ function parseNamedImportBindings(namedClause: string): NamedImportBinding[] {
   return bindings;
 }
 
+function cssBindingValue(imported: string, cssModuleKey: string | undefined): string {
+  if (imported === "default") {
+    return cssModuleKey ? scopedCssModuleProxyExpression(cssModuleKey) : cssModuleProxyExpression();
+  }
+  const className = cssModuleKey ? toScopedCssModuleClass(cssModuleKey, imported) : imported;
+  return `"${className}"`;
+}
+
+/**
+ * Generate a replacement for a CSS re-export statement.
+ *
+ * SSR modules are linked as real ES modules, so a re-export that is stripped
+ * to a comment silently drops the binding and every importer of it fails to
+ * link. Enumerable clauses therefore keep exporting the same names through the
+ * stubs the import path already uses. `export * from` carries no static names,
+ * so it stays stripped.
+ */
+function generateCSSReExportStub(trimmed: string, specifier: string): string {
+  const stripped = `/* css re-export stripped: ${specifier} */`;
+  const fromIndex = trimmed.lastIndexOf(" from ");
+  if (fromIndex === -1) return stripped;
+
+  const cssModuleKey = isCssModuleImport(specifier) ? specifier : undefined;
+  const clause = trimmed.slice("export".length, fromIndex).trim();
+
+  // Namespace re-export: export * as styles from "./X.module.css"
+  const nsMatch = clause.match(/^\*\s+as\s+([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
+  if (nsMatch?.[1]) {
+    return `export const ${nsMatch[1]} = ${
+      cssBindingValue("default", cssModuleKey)
+    }; /* css re-export: ${specifier} */`;
+  }
+
+  // Named re-export: export { default as styles, container as c } from "./X.module.css"
+  const namedMatch = clause.match(/^\{([^}]*)\}$/);
+  if (!namedMatch?.[1]) return stripped;
+
+  const bindings = parseNamedImportBindings(namedMatch[1]);
+  if (bindings.length === 0) return stripped;
+
+  const statements = bindings.map((binding) => {
+    const value = cssBindingValue(binding.imported, cssModuleKey);
+    return binding.local === "default"
+      ? `export default ${value};`
+      : `export const ${binding.local} = ${value};`;
+  });
+
+  return `${statements.join(" ")} /* css re-export: ${specifier} */`;
+}
+
 /**
  * Generate a replacement for a static CSS import statement.
  *
@@ -77,9 +127,8 @@ function generateCSSStub(statement: string, specifier: string): string {
   const trimmed = statement.trim();
 
   // Re-export from CSS: export { default as styles } from './module.css'
-  // → strip entirely, the CSS is collected separately
   if (/^export\s/.test(trimmed)) {
-    return `/* css re-export stripped: ${specifier} */`;
+    return generateCSSReExportStub(trimmed, specifier);
   }
 
   // Side-effect import: import "./globals.css"

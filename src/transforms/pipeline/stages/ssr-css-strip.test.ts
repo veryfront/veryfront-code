@@ -86,20 +86,25 @@ describe("css-strip plugin", () => {
     assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
   });
 
-  it("strips a css re-export without turning it into a local const", async () => {
+  it("keeps a css re-export exporting the bindings it re-exported", async () => {
     const ctx = createContext(
-      `export { default as styles } from "./Button.module.css";`,
+      `export { default as styles, container as root } from "./Button.module.css";`,
     );
 
     const result = await cssStripPlugin.transform(ctx);
 
     assertStringIncludes(
       result,
-      "css re-export stripped",
-      "a css re-export must be replaced by the re-export comment",
+      "export const styles = new Proxy({},",
+      "a re-exported css default must stay exported as a scoped proxy stub",
+    );
+    assertStringIncludes(
+      result,
+      `export const root = "${toScopedCssModuleClass(MODULE_KEY, "container")}";`,
+      "a re-exported named css binding must stay exported as its scoped class",
     );
     assertEquals(
-      /\bconst\s+styles\s*=/.test(result),
+      /(?<!export\s)\bconst\s+styles\s*=/.test(result),
       false,
       "a css re-export must not degrade into a non-exported const binding",
     );
@@ -109,6 +114,24 @@ describe("css-strip plugin", () => {
       "no live .module.css specifier may survive",
     );
     assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
+  });
+
+  it("strips a star css re-export, which carries no static names", async () => {
+    const ctx = createContext(`export * from "./globals.css";`);
+
+    const result = await cssStripPlugin.transform(ctx);
+
+    assertStringIncludes(
+      result,
+      "css re-export stripped",
+      "a star css re-export has no static names to stub and must be stripped",
+    );
+    assertEquals(
+      result.includes(`"./globals.css"`),
+      false,
+      "no live .css specifier may survive",
+    );
+    assertEquals(ctx.metadata.get("cssImports"), ["./globals.css"]);
   });
 
   it("keeps dynamic non-css imports untouched", async () => {
