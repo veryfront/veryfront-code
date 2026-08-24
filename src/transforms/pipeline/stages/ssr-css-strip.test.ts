@@ -329,6 +329,22 @@ describe("css-strip plugin", () => {
     assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
   });
 
+  it("does not treat `from` inside a quoted css export name as the keyword", async () => {
+    const ctx = createContext(
+      `export { "foo-from" as fooFrom } from "./Button.module.css";`,
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+    const namespace = await evaluateModule(result);
+
+    assertEquals(
+      namespace.fooFrom,
+      toScopedCssModuleClass(MODULE_KEY, "foo-from"),
+      "a quoted export name containing `from` must remain available through its alias",
+    );
+    assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
+  });
+
   it("resolves a named `default` css import to the class map, not the literal name", async () => {
     const ctx = createContext(
       `import { default as styles } from "./Button.module.css"; export const cls = styles.container;`,

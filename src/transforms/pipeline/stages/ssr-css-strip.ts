@@ -180,11 +180,41 @@ function exportBindingStatement(
  * `" from "` misses every one of those, strips the statement to a bare comment
  * and leaves the module's own `export {...}` clause referencing bindings that
  * no longer exist, which fails to link. The keyword is therefore matched on its
- * identifier boundary. The first match is the module-introducing keyword; a
- * later match may be text inside the quoted CSS specifier.
+ * identifier boundary while quoted regions are skipped. This excludes `from`
+ * text inside either an arbitrary export name or the CSS specifier.
  */
 function findFromKeywordIndex(statement: string): number {
-  return statement.match(/\bfrom\s*['"`]/)?.index ?? -1;
+  let quote: '"' | "'" | "`" | undefined;
+  let escaped = false;
+
+  for (let index = 0; index < statement.length; index++) {
+    const char = statement[index];
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        quote = undefined;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'" || char === "`") {
+      quote = char;
+      continue;
+    }
+
+    if (
+      statement.startsWith("from", index) &&
+      !/[\w$]/.test(statement[index - 1] ?? "") &&
+      /^from\s*['"`]/.test(statement.slice(index))
+    ) {
+      return index;
+    }
+  }
+
+  return -1;
 }
 
 /**
