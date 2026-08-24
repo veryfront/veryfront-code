@@ -1360,21 +1360,10 @@ describe("agent/hosted-chat-execution-runtime", () => {
     const finalizeRequestStatuses: string[] = [];
     const errorLogs: string[] = [];
     const observedTerminalStatuses: string[] = [];
-    const resourceNotFoundFetch: typeof globalThis.fetch = async () => {
+    const appendResponse = Promise.withResolvers<Response>();
+    const resourceNotFoundFetch: typeof globalThis.fetch = () => {
       appendRequestCount += 1;
-      return Response.json(
-        {
-          type: "https://api.veryfront.com/errors/resource-not-found",
-          title: "Resource Not Found",
-          status: 404,
-          slug: "resource-not-found",
-          category: "RESOURCE",
-          detail: "Run not found",
-          instance: "/conversations/conversation-1/runs/root-run-1/events",
-          suggestion: "Verify the resource ID exists and you have access to it.",
-        },
-        { status: 404 },
-      );
+      return appendResponse.promise;
     };
 
     const durableRunMirror = createHostedConversationRunChunkMirror({
@@ -1383,6 +1372,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
       conversationId: "conversation-1",
       runId: "root-run-1",
       latestEventId: 0,
+      batchSize: 1,
       fetch: resourceNotFoundFetch,
       instrumentation: {
         error: (message) => {
@@ -1438,15 +1428,31 @@ describe("agent/hosted-chat-execution-runtime", () => {
       id: "reasoning-1",
       delta: "late reasoning",
     });
-    await streamOptions.onFinish?.({
+    assertEquals(appendRequestCount, 1);
+    streamOptions.onFinish?.({
       messages: [],
       isContinuation: false,
       responseMessage: createResponseMessage({ parts: [{ type: "text", text: "done" }] }),
       isAborted: false,
       finishReason: "stop",
     });
+    appendResponse.resolve(
+      Response.json(
+        {
+          type: "https://api.veryfront.com/errors/resource-not-found",
+          title: "Resource Not Found",
+          status: 404,
+          slug: "resource-not-found",
+          category: "RESOURCE",
+          detail: "Run not found",
+          instance: "/conversations/conversation-1/runs/root-run-1/events",
+          suggestion: "Verify the resource ID exists and you have access to it.",
+        },
+        { status: 404 },
+      ),
+    );
     await runtime.waitForFinish();
-    const drainedMirror = await durableRunMirror.flush();
+    const drainedMirror = durableRunMirror.getSnapshot();
     durableRunMirror.dispose();
 
     assertEquals(
