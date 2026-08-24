@@ -44,6 +44,32 @@ describe("CSSProcessor contract", () => {
     assertEquals(compiler.build(["alpha", "beta"]), "captured:input.css:alpha,beta");
   });
 
+  it("captures a prototype-defined compile from a class implementation", async () => {
+    // The first-party Tailwind processor is a class instance: `compile` lives on
+    // the prototype, so an own-property lookup would reject it outright.
+    class ClassCSSProcessor {
+      cacheIdentity = "class-css-processor@1";
+      defaultStylesheet = '@import "test";';
+      marker = "captured";
+      compile(stylesheet: string) {
+        const marker = this.marker;
+        return Promise.resolve({
+          build: (candidates: string[]) => `${marker}:${stylesheet}:${candidates.join(",")}`,
+        });
+      }
+    }
+
+    const instance = new ClassCSSProcessor();
+    const captured = captureCSSProcessor(instance);
+    const compiler = await captured.compile("input.css");
+
+    assertEquals(
+      compiler.build(["alpha"]),
+      "captured:input.css:alpha",
+      "a prototype-defined compile must be captured and invoked with the instance as this",
+    );
+  });
+
   it("rejects property accessors and Proxies without invoking their hooks", () => {
     let identityReads = 0;
     const accessor = Object.defineProperty(

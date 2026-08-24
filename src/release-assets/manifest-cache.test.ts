@@ -5,6 +5,8 @@ import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/log
 import {
   clearCachedReleaseAssetManifests,
   clearReleaseAssetManifestCache,
+  getReadyManifestForBrowserModuleAdmission,
+  getReadyManifestForRender,
   getReadyManifestForRenderAsync,
   registerManifestFetcherForRelease,
 } from "./manifest-cache.ts";
@@ -182,6 +184,37 @@ describe("release asset manifest fetcher ownership", () => {
     assertEquals((await getReadyManifestForRenderAsync("release"))?.releaseId, "release");
     assertEquals((await getReadyManifestForRenderAsync("release:1"))?.releaseId, "release:1");
     assertEquals(calls, ["release", "release:1"]);
+
+    // A non-ready result for the delimiter-shaped sibling writes to its own
+    // plain cache slot. Under a delimiter-joined key that slot is the same
+    // string as `release` at manifestVersion 1, so the sibling would evict it.
+    registerManifestFetcherForRelease("release:1", () => Promise.resolve(null));
+    await getReadyManifestForRenderAsync("release:1");
+    assertEquals(
+      getReadyManifestForRender("release")?.manifestVersion,
+      1,
+      "a delimiter-shaped sibling release must not evict this release's cached ready manifest",
+    );
+  });
+
+  it("admits browser modules regardless of the release-manifest rollout flag", async () => {
+    clearReleaseAssetManifestCache();
+    Deno.env.delete("VERYFRONT_RELEASE_ASSET_MANIFEST");
+    registerManifestFetcherForRelease(
+      "release-1",
+      () => Promise.resolve(readyManifestResponse("release-1", 1)),
+    );
+
+    assertEquals(
+      (await getReadyManifestForBrowserModuleAdmission("release-1"))?.releaseId,
+      "release-1",
+      "browser-module admission must never be gated by the rollout flag",
+    );
+    assertEquals(
+      await getReadyManifestForRenderAsync("release-1"),
+      null,
+      "render reads stay gated by the rollout flag",
+    );
   });
 
   it("does not let a superseded in-flight fetch publish stale state", async () => {

@@ -167,6 +167,29 @@ describe("release-assets/dependency-artifact-builder", () => {
     assertEquals((rootCode.match(/\/_vf\/assets\/[0-9a-f]{64}\.js/g) ?? []).length, 2);
   });
 
+  it("fails an import of a package outside the profile's declared externals", async () => {
+    const rootUrl = dependencyArtifactUpstreamUrl(standardIdentity);
+    const calls: string[] = [];
+    const { client, events } = recordingClient();
+    const result = await runDependencyArtifactBuild(buildTaskInput(), client, {
+      fetch: fixtureFetch({
+        [rootUrl]: response('import _ from "lodash"; export const value = 1;'),
+      }, calls),
+    });
+
+    assertEquals(
+      failureCodeOf(result),
+      "undeclared_external",
+      "a bare import outside the profile externals must fail the build",
+    );
+    assertEquals(calls, [rootUrl], "no further upstream fetch after an undeclared external");
+    assertEquals(
+      events.map((event) => event.kind),
+      ["result"],
+      "no asset upload for a rejected closure",
+    );
+  });
+
   it("rejects foreign hosts before fetching them", async () => {
     const rootUrl = dependencyArtifactUpstreamUrl(standardIdentity);
     const calls: string[] = [];
@@ -335,16 +358,27 @@ describe("release-assets/dependency-artifact-builder", () => {
     for (
       const [body, contentType, failureCode, maxAssetBytes] of [
         ["<!DOCTYPE html><title>ESM build failed</title>", "text/html", "upstream_html", 1024],
+        [
+          "<!DOCTYPE html><title>ESM build failed</title>",
+          "text/javascript",
+          "upstream_html",
+          1024,
+        ],
         ["export const value = 'too large';", "text/javascript", "asset_size_limit", 8],
       ] as const
     ) {
-      const { client } = recordingClient();
+      const { client, events } = recordingClient();
       const result = await runDependencyArtifactBuild(buildTaskInput(), client, {
         fetch: fixtureFetch({ [rootUrl]: response(body, contentType) }),
         limits: { maxAssetBytes },
       });
       assertEquals(result.success, false);
       assertEquals(failureCodeOf(result), failureCode);
+      assertEquals(
+        events.filter((event) => event.kind === "upload").length,
+        0,
+        "an upstream HTML body must never be uploaded as a dependency asset",
+      );
     }
   });
 
@@ -656,5 +690,48 @@ describe("release-assets/dependency-artifact-builder", () => {
         "Invalid dependency artifact build input",
       );
     }
+
+    for (const exactVersion of ["latest", "1.2"]) {
+      try {
+        parseDependencyArtifactBuildTaskInput({
+          ...buildTaskInput(),
+          identity: { ...standardIdentity, exact_version: exactVersion },
+        });
+        throw new Error("expected validation failure");
+      } catch (error) {
+        assertStringIncludes(
+          error instanceof Error ? error.message : String(error),
+          "Invalid dependency artifact build input",
+        );
+      }
+    }
+
+    try {
+      parseDependencyArtifactBuildTaskInput({
+        ...buildTaskInput(),
+        identity: { ...standardIdentity, package_name: "react" },
+      });
+      throw new Error("expected validation failure");
+    } catch (error) {
+      assertStringIncludes(
+        error instanceof Error ? error.message : String(error),
+        "Invalid dependency artifact build input",
+      );
+    }
+
+    try {
+      parseDependencyArtifactBuildTaskInput({
+        ...buildTaskInput(),
+        artifact_id: "not-a-uuid",
+      });
+      throw new Error("expected validation failure");
+    } catch (error) {
+      assertStringIncludes(
+        error instanceof Error ? error.message : String(error),
+        "Invalid dependency artifact build input",
+      );
+    }
+
+    assertEquals(parsed.identity.profile, "standard-v1");
   });
 });

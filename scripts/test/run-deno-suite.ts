@@ -1,22 +1,124 @@
 import { parseArgs } from "#std/flags";
 import { planSuiteFiles, type SuitePlanId } from "./run-suite.ts";
+import { DENO_TEST_ENV, PROVIDER_EGRESS_DENY_NET } from "./suites.ts";
 
 type DenoSuitePlanId = Exclude<
   SuitePlanId,
   "runtime:node" | "runtime:bun"
 >;
 
-const DENO_SUITES = new Set<DenoSuitePlanId>([
-  "unit:parallel",
-  "unit:cwd",
-  "unit:cwd-exclusion",
-  "integration:legacy-tests-root",
-  "integration:cli",
-  "coverage:unit",
-]);
+/**
+ * How one Deno suite executes. Every flag decision is an explicit field so a
+ * new lane cannot silently inherit less isolation than the others: the prior
+ * hand-written flag branches had already drifted (integration:cli ran with no
+ * preload, no deny-net, and no trace-leaks; the legacy tests root skipped
+ * deny-net; coverage skipped trace-leaks) and nothing noticed.
+ */
+export interface DenoSuiteProfile {
+  /** Merged over the parent env when the runner spawns `deno test`. */
+  readonly env: Readonly<Record<string, string>>;
+  /** Install src/testing/preload.ts (test isolation + unpinned transport). */
+  readonly preload: boolean;
+  /** Deny egress to live inference providers. */
+  readonly denyNet: boolean;
+  /** Required when denyNet is false: why this lane may reach live services. */
+  readonly denyNetOptOutReason?: string;
+  /** Leaks are load-dependent; the first failure must carry the stack. */
+  readonly traceLeaks: boolean;
+  readonly parallel: boolean;
+  /** Raise the V8 old-space ceiling for memory-heavy lanes. */
+  readonly heap: boolean;
+  /** Collect coverage into --coverage-dir (default "coverage"). */
+  readonly coverage: boolean;
+  /** Genuinely suite-specific flags, rendered before the file list. */
+  readonly extraFlags: readonly string[];
+}
 
-const PROVIDER_EGRESS_DENY_NET =
-  "--deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai";
+const UNIT_PROFILE: DenoSuiteProfile = {
+  env: DENO_TEST_ENV,
+  preload: true,
+  denyNet: true,
+  traceLeaks: true,
+  parallel: true,
+  heap: true,
+  coverage: false,
+  extraFlags: [],
+};
+
+export const DENO_SUITE_PROFILES: Readonly<
+  Record<DenoSuitePlanId, DenoSuiteProfile>
+> = Object.freeze({
+  "unit:parallel": UNIT_PROFILE,
+  // Working-directory assertions cannot share a process with parallel peers.
+  "unit:cwd": { ...UNIT_PROFILE, parallel: false },
+  "unit:cwd-exclusion": UNIT_PROFILE,
+  "integration:legacy-tests-root": {
+    env: DENO_TEST_ENV,
+    preload: true,
+    denyNet: true,
+    traceLeaks: true,
+    parallel: true,
+    heap: false,
+    coverage: false,
+    // Belt and braces: the planner already excludes these, and the ignore
+    // keeps a stray positional path from pulling them back in.
+    extraFlags: [
+      "--ignore=tests/e2e,tests/integration/compiled-binary-e2e.test.ts",
+    ],
+  },
+  "integration:cli": {
+    env: DENO_TEST_ENV,
+    preload: true,
+    denyNet: true,
+    traceLeaks: true,
+    parallel: true,
+    heap: false,
+    coverage: false,
+    extraFlags: [],
+  },
+  "coverage:unit": {
+    ...UNIT_PROFILE,
+    coverage: true,
+    extraFlags: ["--fail-fast", "--ignore=tests,src/workflow/__tests__"],
+  },
+  "coverage:integration": {
+    env: DENO_TEST_ENV,
+    preload: true,
+    denyNet: true,
+    traceLeaks: true,
+    parallel: true,
+    heap: true,
+    coverage: true,
+    extraFlags: ["--fail-fast"],
+  },
+  // Spawns real servers and a Chromium page per test; not parallel and not
+  // memory-bound, but the harness itself is a framework test process.
+  "e2e:rsc-browser": {
+    env: DENO_TEST_ENV,
+    preload: true,
+    denyNet: true,
+    traceLeaks: true,
+    parallel: false,
+    heap: false,
+    coverage: false,
+    extraFlags: [],
+  },
+  // The compiled binary under test inherits this process env, and the lane
+  // has always exercised it with a clean production-like environment, so the
+  // shared test prefix stays off. VERYFRONT_BINARY* passthrough still works
+  // because the spawned `deno test` inherits the parent env. The preload and
+  // deny-net apply to the harness process only, never to the binary.
+  "e2e:binary": {
+    env: {},
+    preload: true,
+    denyNet: true,
+    traceLeaks: true,
+    parallel: false,
+    heap: false,
+    coverage: false,
+    extraFlags: [],
+  },
+});
 
 interface DenoSuiteCommandOptions {
   readonly coverageDir?: string;
@@ -63,63 +165,21 @@ export function buildDenoSuiteCommandArgs(
   files: readonly string[],
   options: DenoSuiteCommandOptions = {},
 ): string[] {
+  const profile = DENO_SUITE_PROFILES[suite];
   const passthroughArgs = options.passthroughArgs ?? [];
-  if (suite === "coverage:unit") {
-    return [
-      "test",
-      "--preload=src/testing/preload.ts",
-      "--no-check",
-      "--parallel",
-      "--fail-fast",
-      "--allow-all",
-      PROVIDER_EGRESS_DENY_NET,
-      "--v8-flags=--max-old-space-size=8192",
-      `--coverage=${options.coverageDir ?? "coverage"}`,
-      "--ignore=tests,src/workflow/__tests__",
-      "--unstable-worker-options",
-      "--unstable-net",
-      ...passthroughArgs,
-      ...files,
-    ];
-  }
-
-  if (suite === "integration:cli") {
-    return [
-      "test",
-      "--no-check",
-      "--parallel",
-      "--allow-all",
-      "--unstable-worker-options",
-      "--unstable-net",
-      ...passthroughArgs,
-      ...files,
-    ];
-  }
-
-  if (suite === "integration:legacy-tests-root") {
-    return [
-      "test",
-      "--preload=src/testing/preload.ts",
-      "--no-check",
-      "--parallel",
-      "--allow-all",
-      "--ignore=tests/e2e,tests/integration/compiled-binary-e2e.test.ts",
-      "--unstable-worker-options",
-      "--unstable-net",
-      ...passthroughArgs,
-      ...files,
-    ];
-  }
-
   return [
     "test",
-    "--preload=src/testing/preload.ts",
+    ...(profile.preload ? ["--preload=src/testing/preload.ts"] : []),
     "--no-check",
-    "--trace-leaks",
-    ...(suite === "unit:cwd" ? [] : ["--parallel"]),
+    ...(profile.traceLeaks ? ["--trace-leaks"] : []),
+    ...(profile.parallel ? ["--parallel"] : []),
     "--allow-all",
-    PROVIDER_EGRESS_DENY_NET,
-    "--v8-flags=--max-old-space-size=8192",
+    ...(profile.denyNet ? [PROVIDER_EGRESS_DENY_NET] : []),
+    ...(profile.heap ? ["--v8-flags=--max-old-space-size=8192"] : []),
+    ...(profile.coverage
+      ? [`--coverage=${options.coverageDir ?? "coverage"}`]
+      : []),
+    ...profile.extraFlags,
     "--unstable-worker-options",
     "--unstable-net",
     ...passthroughArgs,
@@ -129,7 +189,7 @@ export function buildDenoSuiteCommandArgs(
 
 if (import.meta.main) {
   const flags = parseDenoSuiteArgs(Deno.args);
-  if (!flags.suite || !DENO_SUITES.has(flags.suite as DenoSuitePlanId)) {
+  if (!flags.suite || !(flags.suite in DENO_SUITE_PROFILES)) {
     console.error("Usage: run-deno-suite.ts --suite=<Deno suite profile>");
     Deno.exit(2);
   }
@@ -141,6 +201,7 @@ if (import.meta.main) {
       ...(flags.coverageDir ? { coverageDir: flags.coverageDir } : {}),
       passthroughArgs: flags.passthroughArgs,
     }),
+    env: { ...DENO_SUITE_PROFILES[suite].env },
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",

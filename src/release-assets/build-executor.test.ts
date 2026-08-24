@@ -633,6 +633,44 @@ describe("release asset build executor", () => {
     assertEquals(manifest.modules["pages/scratch.tsx"], undefined);
   });
 
+  it("drops a route whose layout is missing from the manifest instead of publishing a hole", async () => {
+    // An App Router layout is an extra closure entrypoint the page never
+    // imports, so a page can be admitted while its closure still has a hole.
+    // Shipping that route would hand the browser an import map pointing at a
+    // module the admission boundary refuses.
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const client = makeClient([
+      { path: "app/page.tsx", content: "export default () => null;" },
+      {
+        path: "app/layout.tsx",
+        content: "export default function Layout({ children }) { return children; }",
+      },
+      { path: "pages/ok.tsx", content: "export default () => null;" },
+    ], rec);
+    const transform = (source: string, sourceFile: string) => {
+      if (sourceFile.endsWith("app/layout.tsx")) {
+        return Promise.reject(new Error("Invalid left-hand side in prefix operation. (1:2)"));
+      }
+      return Promise.resolve(source);
+    };
+
+    const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    assertEquals(result.success, true, "one unbuildable layout must not fail the release");
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(
+      manifest.routes["/"],
+      undefined,
+      "a route whose closure member has no manifest entry must be omitted, not published without it",
+    );
+    // The page itself was admitted, so the route really was a candidate and
+    // the drop came from the closure gap rather than from the page failing.
+    assertExists(manifest.modules["app/page.tsx"]);
+    assertEquals(manifest.modules["app/layout.tsx"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"], "healthy routes still publish");
+  });
+
   it("still fails closed when every page fails to transform", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const client = makeClient([

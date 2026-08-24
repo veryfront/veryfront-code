@@ -52,5 +52,12 @@ describe("part-field-access", () => {
   it("converts values into JSON-safe values", () => {
     assertEquals(toJsonValue({ a: [1, "b"] }), { a: [1, "b"] });
     assertEquals(toJsonValue(null), null);
+    const cyclic: Record<string, unknown> = { a: 1 };
+    cyclic.self = cyclic;
+    assertEquals(
+      toJsonValue(cyclic),
+      { a: 1, self: "[Circular]" },
+      "toJsonValue must route through chat JSON normalization",
+    );
   });
 });

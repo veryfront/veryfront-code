@@ -106,9 +106,20 @@ describe("observability/tracing/manager", () => {
     });
 
     it("should skip duplicate initialization", async () => {
+      installGlobalTelemetryAPI({ tracerProvider: createProvider("A", []) });
       await manager.initialize({ enabled: false });
-      await manager.initialize({ enabled: true });
-      assertEquals(manager.isEnabled(), false);
+      await manager.initialize({ enabled: true, serviceName: "second" });
+      assertEquals(manager.isEnabled(), false, "a duplicate initialize must not enable tracing");
+      assertEquals(
+        manager.getState().api,
+        null,
+        "a duplicate initialize must not build a tracer runtime",
+      );
+      assertEquals(
+        manager.getState().tracer,
+        null,
+        "a duplicate initialize must not create a tracer",
+      );
     });
 
     it("shares one readiness promise across concurrent initialization", async () => {
@@ -170,6 +181,33 @@ describe("observability/tracing/manager", () => {
     it("should return false when disabled config", async () => {
       await manager.initialize({ enabled: false });
       assertEquals(manager.isDegraded(), false);
+    });
+
+    it("reports degraded mode instead of throwing when a provider's getTracer fails", async () => {
+      installGlobalTelemetryAPI({ tracerProvider: createProvider("A", []) });
+      await manager.initialize({ enabled: true, serviceName: "test" });
+      assertEquals(manager.isEnabled(), true, "a healthy provider enables tracing");
+
+      installGlobalTelemetryAPI({
+        tracerProvider: {
+          getTracer: () => {
+            throw new Error("provider failed");
+          },
+        },
+      });
+
+      assertEquals(
+        manager.isEnabled(),
+        false,
+        "a failing getTracer must not report tracing as enabled",
+      );
+      assertEquals(manager.getSpanOperations(), null, "a failed refresh clears span operations");
+      assertEquals(
+        manager.getContextPropagation(),
+        null,
+        "a failed refresh clears context propagation",
+      );
+      assertEquals(manager.isDegraded(), true, "a failing getTracer must be reported as degraded");
     });
   });
 

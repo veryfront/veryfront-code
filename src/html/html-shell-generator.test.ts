@@ -605,6 +605,28 @@ describe("html-generation/html-shell-generator", () => {
       assertStringIncludes(result, "veryfront-error-overlay");
     });
 
+    it("escapes the overlay project slug so it cannot close the inline script", async () => {
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        createOptions({
+          isLocalProject: true,
+          projectId: "</script><script>alert(1)</script>",
+        }),
+      );
+
+      assertStringIncludes(
+        result,
+        'window.__VF_PROJECT_SLUG__="\\u003c/script',
+        "the overlay slug must be emitted with < escaped",
+      );
+      assertEquals(
+        result.includes("</script><script>alert(1)"),
+        false,
+        "the overlay slug must not close the inline script",
+      );
+    });
+
     it("should include production scripts in prod mode", async () => {
       const result = await wrapInHTMLShell(
         "<div>Content</div>",
@@ -648,6 +670,76 @@ describe("html-generation/html-shell-generator", () => {
       );
 
       assert(!result.includes("preview-hmr.js"));
+    });
+
+    it("emits the preview hmr script for a preview render", async () => {
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        createOptions({
+          mode: "production",
+          environment: "preview",
+          isLocalProject: true,
+        }),
+      );
+
+      assertStringIncludes(
+        result,
+        '<script src="/_veryfront/preview-hmr.js"',
+        "preview renders must load preview-hmr.js",
+      );
+    });
+
+    it("ships the markdown preview styles and mermaid bootstrap for an md page", async () => {
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        createOptions({ pageType: "md", pagePath: "README.md" }),
+      );
+
+      assertStringIncludes(
+        result,
+        "https://cdn.veryfront.com/styles/github-markdown.min.css",
+        "md previews must ship the prose stylesheet",
+      );
+      assertStringIncludes(
+        result,
+        "https://cdn.veryfront.com/styles/github-syntax-highlighting.min.css",
+        "md previews must ship the syntax highlighting stylesheet",
+      );
+      assertStringIncludes(
+        result,
+        "https://cdn.veryfront.com/styles/mermaid.min.css",
+        "md previews must ship the mermaid stylesheet",
+      );
+      assertStringIncludes(
+        result,
+        "https://esm.sh/mermaid@11",
+        "md previews must bootstrap mermaid",
+      );
+    });
+
+    it("opts an md page out of the markdown preview assets when prose is false", async () => {
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        createOptions({
+          pageType: "md",
+          pagePath: "README.md",
+          frontmatter: { prose: false },
+        }),
+      );
+
+      assertEquals(
+        result.includes("cdn.veryfront.com/styles/github-markdown.min.css"),
+        false,
+        "prose:false must opt out of the markdown preview styles",
+      );
+      assertEquals(
+        result.includes("https://esm.sh/mermaid@11"),
+        false,
+        "prose:false must opt out of the mermaid bootstrap",
+      );
     });
 
     it("should handle layout disabled", async () => {

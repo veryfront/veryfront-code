@@ -14,6 +14,7 @@ describe("workflow/blob/guards", () => {
         createdAt: new Date(),
       };
       expect(isBlobRef(ref)).toBe(true);
+      expect(isBlobRef({ ...ref, mimeType: "" })).toBe(true);
     });
 
     it("rejects objects missing required fields", () => {
@@ -30,6 +31,72 @@ describe("workflow/blob/guards", () => {
     it("rejects primitives, null, undefined, arrays, functions", () => {
       for (const v of [null, undefined, "blob", 1, true, [], () => {}]) {
         expect(isBlobRef(v)).toBe(false);
+      }
+    });
+
+    it("rejects unsafe identities, sizes, and dates", () => {
+      const valid = {
+        __kind: "blob",
+        id: "blob-id",
+        size: 1,
+        mimeType: "text/plain",
+        createdAt: new Date(),
+      };
+
+      for (
+        const ref of [
+          { ...valid, id: "../blob" },
+          { ...valid, size: -1 },
+          { ...valid, size: 1.5 },
+          { ...valid, size: Number.NaN },
+          { ...valid, createdAt: new Date(Number.NaN) },
+        ]
+      ) {
+        expect(isBlobRef(ref)).toBe(false);
+      }
+    });
+
+    it("does not invoke accessors while checking a reference", () => {
+      let getterCalls = 0;
+      const ref = Object.defineProperty(
+        {
+          __kind: "blob",
+          size: 1,
+          mimeType: "text/plain",
+          createdAt: new Date(),
+        },
+        "id",
+        {
+          enumerable: true,
+          get() {
+            getterCalls++;
+            return "blob-id";
+          },
+        },
+      );
+
+      expect(isBlobRef(ref)).toBe(false);
+      expect(getterCalls).toBe(0);
+    });
+
+    it("rejects malformed optional fields", () => {
+      const valid = {
+        __kind: "blob",
+        id: "blob-id",
+        size: 1,
+        mimeType: "text/plain",
+        createdAt: new Date(),
+      };
+
+      for (
+        const ref of [
+          { ...valid, expiresAt: "tomorrow" },
+          { ...valid, url: 1 },
+          { ...valid, metadata: [] },
+          { ...valid, metadata: { source: 1 } },
+        ]
+      ) {
+        expect(isBlobRef(ref)).toBe(false);
       }
     });
   });

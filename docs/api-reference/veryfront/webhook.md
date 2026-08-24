@@ -44,15 +44,15 @@ export default webhook({
 | -------------------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | `discoverWebhooks`         | Discover and validate source-defined webhooks across configured directories.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/discovery.ts#L29)   |
 | `isWebhookDefinition`      | Return true only when every webhook field and nested invariant is valid.      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L85)       |
-| `isWebhookId`              | Return true for source webhook identifiers accepted by hosted reconciliation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/validation.ts#L246) |
-| `prepareWebhookInvocation` | Revalidate and own a definition and payload before local webhook execution.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/runtime.ts#L168)    |
+| `isWebhookId`              | Return true for source webhook identifiers accepted by hosted reconciliation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/validation.ts#L248) |
+| `prepareWebhookInvocation` | Revalidate and own a definition and payload before local webhook execution.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/runtime.ts#L273)    |
 | `webhook`                  | Validate and normalize a source-defined webhook configuration.                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/factory.ts#L10)     |
 
 ### Types
 
 | Name                           | Description                                                          | Source                                                                                       |
 | ------------------------------ | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `PreparedWebhookInvocation`    | Owned, cloud-compatible inputs for one local webhook target run.     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/runtime.ts#L16)   |
+| `PreparedWebhookInvocation`    | Owned, cloud-compatible inputs for one local webhook target run.     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/runtime.ts#L36)   |
 | `WebhookAgentConversationMode` | Hosted conversation behavior for an agent-target webhook.            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L38)     |
 | `WebhookAgentMessageMapping`   | Prompt and optional hosted conversation mapping for an agent target. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L41)     |
 | `WebhookConfig`                | Author-facing webhook configuration accepted by `webhook`.           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L79)     |

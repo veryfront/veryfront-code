@@ -1,10 +1,15 @@
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
 import {
   findAutomatedReview,
   publishAutomatedReviewStatus,
   publishCodeRabbitCompletionStatus,
+  requestAutomatedReview,
 } from "./automated-review-gate.mjs";
 
 const HEAD = "a4804e5b9a0c9c45da7c4866d9eb317c878b029c";
@@ -470,6 +475,26 @@ describe("automated review publication", () => {
     assertEquals(result.state, "success");
   });
 
+  it("holds an unreviewed head at pending until proof arrives", async () => {
+    const fixture = githubFixture();
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(result.state, "pending");
+    assertEquals(result.review, undefined);
+    assertEquals(result.failure, undefined);
+    assertEquals(fixture.published[0]?.state, "pending");
+    assertEquals(
+      fixture.published[0]?.description,
+      `Waiting for an automated review of ${HEAD.slice(0, 12)}`,
+    );
+  });
+
   it("fails closed on partial pagination and the 500-item cap", async () => {
     const partialPages = ["reviews", "comments", "statuses"].map((source) =>
       githubFixture({
@@ -608,7 +633,7 @@ describe("CodeRabbit completion status wakeup", () => {
     assertEquals(fixture.published[0]?.sha, HEAD);
   });
 
-  it("monotonically repairs an earlier general failure", async () => {
+  it("resolves an earlier waiting publication into success", async () => {
     const fixture = githubFixture({
       pages: { associatedPulls: [[associatedPull()]] },
     });
@@ -627,15 +652,15 @@ describe("CodeRabbit completion status wakeup", () => {
       headSha: HEAD,
       status: status(),
     });
-    assertEquals(beforeCompletion.state, "failure");
+    assertEquals(beforeCompletion.state, "pending");
     assertEquals(completion.state, "success");
     assertEquals(fixture.published.map((value) => value.state), [
-      "failure",
+      "pending",
       "success",
     ]);
   });
 
-  it("repairs a delayed general failure after status success", async () => {
+  it("repairs a delayed pending publication after status success", async () => {
     const fixture = githubFixture({
       pages: { associatedPulls: [[associatedPull()]] },
       pagesByCall: { statuses: [[[]], [[status()]]] },
@@ -659,12 +684,12 @@ describe("CodeRabbit completion status wakeup", () => {
     assertEquals(delayedGeneral.state, "success");
     assertEquals(fixture.published.map((value) => value.state), [
       "success",
-      "failure",
+      "pending",
       "success",
     ]);
   });
 
-  it("repairs completion that appears between failure publication and repair", async () => {
+  it("repairs completion that appears between pending publication and repair", async () => {
     const fixture = githubFixture({
       pages: { associatedPulls: [[associatedPull()]] },
       pagesByCall: { statuses: [[[]], [[status()]]] },
@@ -679,12 +704,12 @@ describe("CodeRabbit completion status wakeup", () => {
     });
     assertEquals(result.state, "success");
     assertEquals(fixture.published.map((value) => value.state), [
-      "failure",
+      "pending",
       "success",
     ]);
   });
 
-  it("leaves failure when repair has no proof, fails, or binds another PR", async () => {
+  it("leaves pending when repair has no proof, fails, or binds another PR", async () => {
     for (
       const fixture of [
         githubFixture(),
@@ -706,8 +731,8 @@ describe("CodeRabbit completion status wakeup", () => {
         headSha: HEAD,
         pullUrl: "https://example.test/pr/1",
       });
-      assertEquals(result.state, "failure");
-      assertEquals(fixture.published.map((value) => value.state), ["failure"]);
+      assertEquals(result.state, "pending");
+      assertEquals(fixture.published.map((value) => value.state), ["pending"]);
     }
   });
 
@@ -766,6 +791,139 @@ describe("CodeRabbit completion status wakeup", () => {
   });
 });
 
+function requestFixture(options: {
+  comments?: Record<string, unknown>[];
+  currentHead?: string;
+} = {}) {
+  const posted: Record<string, unknown>[] = [];
+  const state = {
+    comments: options.comments ?? [],
+    currentHead: options.currentHead ?? HEAD,
+  };
+  const listComments = () => undefined;
+  const github = {
+    paginate: {
+      async *iterator(endpoint: unknown) {
+        if (endpoint !== listComments) throw new Error("unknown endpoint");
+        yield { data: state.comments };
+      },
+    },
+    rest: {
+      issues: {
+        listComments,
+        createComment: (comment: Record<string, unknown>) => {
+          posted.push(comment);
+          return Promise.resolve();
+        },
+      },
+      pulls: {
+        get: () =>
+          Promise.resolve({ data: { head: { sha: state.currentHead } } }),
+      },
+    },
+  };
+  return { github, posted, state };
+}
+
+describe("automated review request", () => {
+  it("requests an automated review at most once per head commit", async () => {
+    const fixture = requestFixture();
+    const request = (headSha: string) =>
+      requestAutomatedReview({
+        github: fixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        headSha,
+      });
+
+    const first = await request(HEAD);
+    assertEquals(first.requested, true);
+    assertEquals(fixture.posted, [{
+      owner: "veryfront",
+      repo: "veryfront-code",
+      issue_number: 1,
+      body: `<!-- automated-review-request: ${HEAD} -->\n@codex review`,
+    }]);
+
+    // A participant pasting the marker text must not suppress the request:
+    // only a workflow-authored marker comment counts, pinned by login and
+    // account type the way the gate pins the Codex bot.
+    fixture.state.comments.push(
+      {
+        user: { login: "maintainer", type: "User" },
+        body: fixture.posted[0]?.body,
+      },
+      {
+        user: { login: "github-actions[bot]", type: "User" },
+        body: fixture.posted[0]?.body,
+      },
+      { body: fixture.posted[0]?.body },
+    );
+    const impersonated = await request(HEAD);
+    assertEquals(impersonated.requested, true);
+    assertEquals(fixture.posted.length, 2);
+
+    // A rerun for the same head finds the workflow-authored marker and does
+    // not post again.
+    fixture.state.comments.push({
+      user: { login: "github-actions[bot]", type: "Bot" },
+      body: fixture.posted[0]?.body,
+    });
+    const second = await request(HEAD);
+    assertEquals(second.requested, false);
+    assertEquals(fixture.posted.length, 2);
+
+    // A new head commit carries a new marker and gets its own request.
+    fixture.state.currentHead = OTHER_HEAD;
+    const third = await request(OTHER_HEAD);
+    assertEquals(third.requested, true);
+    assertEquals(
+      fixture.posted[2]?.body,
+      `<!-- automated-review-request: ${OTHER_HEAD} -->\n@codex review`,
+    );
+  });
+
+  it("does not post from a stale queued synchronize event", async () => {
+    const fixture = requestFixture({ currentHead: OTHER_HEAD });
+    const result = await requestAutomatedReview({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+    });
+    assertEquals(result.requested, false);
+    assertEquals(result.reason, "stale-head");
+    assertEquals(fixture.posted.length, 0);
+  });
+
+  it("refuses to request a review of a malformed head commit", async () => {
+    const fixture = requestFixture();
+    for (
+      const malformed of [
+        HEAD.slice(0, 39),
+        `${HEAD} --><script>`,
+        "@codex review",
+      ]
+    ) {
+      await assertRejects(
+        () =>
+          requestAutomatedReview({
+            github: fixture.github,
+            owner: "veryfront",
+            repo: "veryfront-code",
+            pullNumber: 1,
+            headSha: malformed,
+          }),
+        Error,
+        "malformed head commit",
+      );
+    }
+    assertEquals(fixture.posted.length, 0);
+  });
+});
+
 describe("automated review workflow", () => {
   it("uses the tested gate from the trusted default branch", async () => {
     const workflow = record(
@@ -775,7 +933,7 @@ describe("automated review workflow", () => {
     const permissions = record(workflow.permissions, "permissions");
     assertEquals(permissions.contents, "read");
     assertEquals(permissions.issues, "read");
-    assertEquals(permissions["pull-requests"], "read");
+    assertEquals(permissions["pull-requests"], "write");
     assertEquals(permissions.statuses, "write");
 
     assertEquals(workflow.concurrency, undefined);
@@ -826,9 +984,8 @@ describe("automated review workflow", () => {
       record(checkout.with, "checkout inputs").ref,
       "${{ github.event.repository.default_branch }}",
     );
-    const script = String(
-      record(record(steps[1], "gate").with, "gate inputs").script,
-    );
+    const gate = record(steps[1], "gate");
+    const script = String(record(gate.with, "gate inputs").script);
     assert(script.includes("publishAutomatedReviewStatus"));
     assert(script.includes("github.rest.pulls.get"));
     assert(!script.includes("listPullRequestsAssociatedWithCommit"));
@@ -842,6 +999,44 @@ describe("automated review workflow", () => {
       "deleted comments must reconcile from current API evidence, not comment payload data",
     );
     assert(script.includes("Review gate is unavailable on the default branch"));
+    assertEquals(
+      gate.id,
+      "publish",
+      "the request step reads the published state from this step's output",
+    );
+    assertEquals(
+      record(gate.with, "gate inputs")["result-encoding"],
+      "string",
+      "the published state must land in the step output as a plain string",
+    );
+
+    const request = record(steps[2], "request step");
+    const requestCondition = String(request.if);
+    for (
+      const guard of [
+        "github.event_name == 'pull_request_target'",
+        "github.event.pull_request.draft == false",
+        "github.event.action == 'synchronize'",
+        "steps.publish.outputs.result == 'pending'",
+      ]
+    ) {
+      assert(
+        requestCondition.includes(guard),
+        "a review request is posted only for a trusted non-draft push that left the status pending",
+      );
+    }
+    assert(
+      !requestCondition.includes("ready_for_review") &&
+        !requestCondition.includes("opened"),
+      "open and ready-for-review events are already handled by the connector",
+    );
+    const requestScript = String(
+      record(request.with, "request inputs").script,
+    );
+    assert(
+      requestScript.includes("requestAutomatedReview"),
+      "the workflow must post review requests through the tested gate helper",
+    );
 
     const statusJob = record(jobs.status_review, "status review job");
     const statusIf = String(statusJob.if);

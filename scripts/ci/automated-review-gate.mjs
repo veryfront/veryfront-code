@@ -9,6 +9,7 @@ const CODEX_REVIEWED_COMMIT = /\*\*Reviewed commit:\*\* `([0-9a-f]{10})`/i;
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 const SUBMITTED_REVIEW_STATES = new Set(["APPROVED", "COMMENTED"]);
 const MAX_ITEMS_PER_SOURCE = 500;
+const WORKFLOW_COMMENT_LOGIN = "github-actions[bot]";
 /** @type {(ref: string) => Promise<string | undefined>} */
 const NO_COMMIT = () => Promise.resolve(undefined);
 
@@ -187,6 +188,9 @@ export async function publishCodeRabbitCompletionStatus({
     }
     const pullUrl = current.data.html_url ?? pull.html_url;
     const state = current.data.draft === true ? "pending" : "success";
+    const description = state === "success"
+      ? `Reviewed by ${CODERABBIT_LOGIN}`
+      : "Draft pull request waits for ready for review";
     const review = state === "success"
       ? {
         reviewer: CODERABBIT_LOGIN,
@@ -201,12 +205,10 @@ export async function publishCodeRabbitCompletionStatus({
       sha: headSha,
       state,
       context: AUTOMATED_REVIEW_STATUS_CONTEXT,
-      description: state === "success"
-        ? `Reviewed by ${CODERABBIT_LOGIN}`
-        : "Draft pull request waits for ready for review",
+      description,
       target_url: pullUrl,
     });
-    return { state, review, failure: undefined };
+    return { state, review, failure: undefined, description };
   } catch (error) {
     const failure = error instanceof Error ? error : new Error(String(error));
     return { state: "failure", review: undefined, failure };
@@ -275,9 +277,6 @@ export async function publishAutomatedReviewStatus({
           );
         }
       }
-      if (!review) {
-        throw new Error("No automated review proof for captured head");
-      }
     } catch (error) {
       review = undefined;
       failure = error instanceof Error ? error : new Error(String(error));
@@ -301,21 +300,30 @@ export async function publishAutomatedReviewStatus({
     failure = error instanceof Error ? error : new Error(String(error));
   }
 
-  const state = failure ? "failure" : isDraft ? "pending" : "success";
+  // No proof for the captured head is the normal state right after a push,
+  // while the review bots are still working. Publish pending only for that
+  // absent-evidence case: a required pending status blocks merging exactly
+  // like a failure and resolves once proof for the head arrives. Malformed
+  // heads, pagination caps, ambiguous status ownership, head drift, and API
+  // failures stay failures so they are looked at, not waited out.
+  const state = failure ? "failure" : review ? "success" : "pending";
+  const description = failure
+    ? "Could not determine the automated review status"
+    : review
+    ? `Reviewed by ${review.reviewer}`
+    : isDraft
+    ? "Draft pull request waits for ready for review"
+    : `Waiting for an automated review of ${headSha.slice(0, 12)}`;
   await github.rest.repos.createCommitStatus({
     owner,
     repo,
     sha: headSha,
     state,
     context: AUTOMATED_REVIEW_STATUS_CONTEXT,
-    description: state === "success"
-      ? `Reviewed by ${review.reviewer}`
-      : state === "pending"
-      ? "Draft pull request waits for ready for review"
-      : "No authenticated review proof for current commit",
+    description,
     target_url: review?.url ?? pullUrl,
   });
-  const result = { state, review, failure };
+  const result = { state, review, failure, description };
   if (state === "success") return result;
 
   try {
@@ -341,4 +349,79 @@ export async function publishAutomatedReviewStatus({
   } catch {
     return result;
   }
+}
+
+/**
+ * Ask Codex to review the current head commit, at most once per commit.
+ *
+ * The Codex connector reviews a pull request when it opens or leaves draft,
+ * but a push to an open pull request does not trigger a new review. Posting
+ * the literal "@codex review" comment is how a new review is requested. The
+ * marker comment keeps the request idempotent: a rerun for the same head
+ * finds the marker in an existing comment and does not post again, while a
+ * new head carries a new marker and gets its own request.
+ *
+ * Only marker comments authored by the workflow itself count. A pull request
+ * participant can paste the marker text into their own comment, and letting
+ * that suppress the request would let anyone silence the review nudge for a
+ * head commit.
+ *
+ * Immediately before posting, re-fetch the pull request and require its
+ * current head to match the event head. That prevents a queued synchronize
+ * run from marking an old SHA while its unqualified request targets a newer
+ * current head.
+ */
+export async function requestAutomatedReview({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  headSha,
+}) {
+  // The comment body must stay a fixed instruction plus a verified commit
+  // SHA. Never interpolate pull request controlled content here: this runs
+  // with pull_request_target authority.
+  if (typeof headSha !== "string" || !FULL_SHA.test(headSha)) {
+    throw new Error(
+      "Refusing to request an automated review of a malformed head commit",
+    );
+  }
+  const marker = `<!-- automated-review-request: ${headSha.toLowerCase()} -->`;
+  const comments = await collectAll(
+    github,
+    github.rest.issues.listComments,
+    { owner, repo, issue_number: pullNumber },
+    "request comments",
+  );
+  const alreadyRequested = comments.some((comment) =>
+    comment?.user?.login === WORKFLOW_COMMENT_LOGIN &&
+    comment?.user?.type === "Bot" &&
+    typeof comment?.body === "string" &&
+    comment.body.includes(marker)
+  );
+  if (alreadyRequested) {
+    return { requested: false, marker };
+  }
+  const response = await github.rest.pulls.get({
+    owner,
+    repo,
+    pull_number: pullNumber,
+  });
+  const currentHeadSha = response?.data?.head?.sha;
+  if (
+    typeof currentHeadSha !== "string" ||
+    !FULL_SHA.test(currentHeadSha)
+  ) {
+    throw new Error("Could not verify the current pull request head commit");
+  }
+  if (currentHeadSha.toLowerCase() !== headSha.toLowerCase()) {
+    return { requested: false, marker, reason: "stale-head" };
+  }
+  await github.rest.issues.createComment({
+    owner,
+    repo,
+    issue_number: pullNumber,
+    body: `${marker}\n@codex review`,
+  });
+  return { requested: true, marker };
 }

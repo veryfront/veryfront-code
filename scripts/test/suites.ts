@@ -1,3 +1,38 @@
+/**
+ * Environment every Deno-run test process receives. This prefix used to be
+ * retyped on roughly ten deno.json task lines and again as object literals in
+ * run-test-file.ts and coverage-ci.ts; the copies had already started to
+ * drift, so the runners now read this single constant and the task lines
+ * carry no environment at all.
+ */
+export const DENO_TEST_ENV: Readonly<Record<string, string>> = Object.freeze({
+  DENO_TESTING: "1",
+  VF_DISABLE_LRU_INTERVAL: "1",
+  SSR_TRANSFORM_PER_PROJECT_LIMIT: "0",
+  REVALIDATION_PER_PROJECT_LIMIT: "0",
+  NODE_ENV: "production",
+  LOG_FORMAT: "text",
+});
+
+/**
+ * Live inference providers no test process may reach. Lanes that record
+ * against live services on purpose (test:record, test:tool-search-live,
+ * test:local-inference) do not run through the suite runner and stay exempt.
+ */
+export const PROVIDER_EGRESS_HOSTS: readonly string[] = Object.freeze([
+  "api.openai.com",
+  "api.anthropic.com",
+  "generativelanguage.googleapis.com",
+  "api.mistral.ai",
+  "api.groq.com",
+  "api.deepseek.com",
+  "openrouter.ai",
+]);
+
+export const PROVIDER_EGRESS_DENY_NET = `--deny-net=${
+  PROVIDER_EGRESS_HOSTS.join(",")
+}`;
+
 export type TestLevel = "unit" | "integration" | "e2e";
 
 export type TestRunner = "deno" | "node" | "bun" | "playwright";
@@ -102,7 +137,14 @@ export function validateLeafSuiteRegistry(
   const seenSelectors = new Set<string>();
 
   for (const suite of suites) {
-    for (const selector of suite.pathSelectors) {
+    readOwnDataProperty(suite, "id");
+    readOwnDataProperty(suite, "level");
+    readOwnDataProperty(suite, "runner");
+    readOwnDataProperty(suite, "prOwner");
+    const pathSelectors = readOwnDataProperty(suite, "pathSelectors");
+    readOwnDataProperty(suite, "supportExclusions");
+
+    for (const selector of pathSelectors) {
       const normalized = normalizeSelector(selector);
       if (seenSelectors.has(normalized)) {
         throw new Error(
@@ -124,6 +166,23 @@ export function validateLeafSuiteRegistry(
       }
     }
   }
+}
+
+function readOwnDataProperty<K extends keyof LeafTestSuite>(
+  suite: LeafTestSuite,
+  key: K,
+): LeafTestSuite[K] {
+  const descriptor = Object.getOwnPropertyDescriptor(suite, key);
+  if (!descriptor || !Object.hasOwn(descriptor, "value")) {
+    throw new Error(`Leaf suite record must own ${String(key)}`);
+  }
+  if (
+    (key === "pathSelectors" || key === "supportExclusions") &&
+    !Array.isArray(descriptor.value)
+  ) {
+    throw new Error(`Leaf suite record ${String(key)} must be an array`);
+  }
+  return descriptor.value as unknown as LeafTestSuite[K];
 }
 
 function normalizeSelector(selector: string): string {

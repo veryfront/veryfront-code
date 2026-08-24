@@ -276,12 +276,13 @@ describe("VeryfrontCloudBlobStorage", () => {
 
   it("lists stored blobs (newest first) with sidecar filenames", async () => {
     const service = createMockUploadService();
+    let now = FIXED_NOW.getTime();
     const storage = new VeryfrontCloudBlobStorage({
       apiBaseUrl: "https://93.184.216.34",
       apiToken: "vf_config_token",
       projectSlug: "demo-project",
       prefix: ".vf-test/",
-      now: () => FIXED_NOW,
+      now: () => new Date(now),
     });
 
     try {
@@ -289,6 +290,7 @@ describe("VeryfrontCloudBlobStorage", () => {
         mimeType: "text/plain",
         metadata: { filename: "first.txt" },
       });
+      now += 1_000;
       const second = await storage.put("two", {
         mimeType: "text/plain",
         metadata: { filename: "second.txt" },
@@ -299,6 +301,7 @@ describe("VeryfrontCloudBlobStorage", () => {
       // Both data blobs surface (the `.meta.json` sidecars are filtered out),
       // enriched with the original filename from each sidecar.
       assertEquals(refs.length, 2);
+      assertEquals(refs.map((ref) => ref.id), [second.id, first.id]);
       const byId = new Map(refs.map((ref) => [ref.id, ref]));
       assertEquals(byId.get(first.id)?.metadata?.filename, "first.txt");
       assertEquals(byId.get(second.id)?.metadata?.filename, "second.txt");
