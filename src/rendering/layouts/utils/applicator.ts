@@ -196,6 +196,7 @@ export async function applyLayoutsFunctionBody(
   moduleServerOrigin?: string,
   config?: VeryfrontConfig,
   signal?: AbortSignal,
+  isLocalProject?: boolean,
 ): Promise<BundledReact.ReactElement> {
   return await applyLayoutsESM(
     pageElement,
@@ -217,7 +218,7 @@ export async function applyLayoutsFunctionBody(
     dependencyPinningSource,
     moduleServerOrigin,
     config,
-    undefined,
+    isLocalProject,
     signal,
   );
 }

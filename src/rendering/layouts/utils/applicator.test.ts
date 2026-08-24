@@ -336,6 +336,14 @@ describe(
             "project-slug",
             "content-source-id",
             scenario.modes,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            scenario.name === "local development",
           );
 
           __injectReactDOMServerForTests(ReactDOMServer);
