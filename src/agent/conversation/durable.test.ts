@@ -583,6 +583,50 @@ describe("agent/durable", () => {
     });
   });
 
+  it("retains RFC 9457 append error detail and machine slug", async () => {
+    const error = await assertRejects(
+      () =>
+        appendConversationRunEvents({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          runId: "run_deleted",
+          events: [{ type: "STATE_DELTA" }],
+          fetch: async () =>
+            Response.json(
+              {
+                type: "https://api.veryfront.com/errors/resource-not-found",
+                title: "Resource Not Found",
+                status: 404,
+                slug: "resource-not-found",
+                category: "RESOURCE",
+                detail: "Run not found",
+                instance: `/conversations/${CONVERSATION_ID}/runs/run_deleted/events`,
+                suggestion: "Verify the resource ID exists and you have access to it.",
+              },
+              { status: 404 },
+            ),
+        }),
+      AppendConversationRunEventsError,
+    );
+    if (!(error instanceof AppendConversationRunEventsError)) {
+      throw new Error("expected an append conversation run events error");
+    }
+
+    assertEquals(
+      {
+        status: error.status,
+        detail: error.detail,
+        slug: error.slug,
+      },
+      {
+        status: 404,
+        detail: "Run not found",
+        slug: "resource-not-found",
+      },
+    );
+  });
+
   it("forces durable event-id cursor mode for model-call context and mixed batches", async () => {
     const event = modelCallContextEvent("exact");
     const fetchCalls = stubFetchSequence(jsonResponse({
@@ -1958,7 +2002,8 @@ describe("agent/durable", () => {
       await recoverConversationRunAppendFailure({
         error: new AppendConversationRunEventsError({
           status: 404,
-          detail: "resource-not-found",
+          detail: "Run not found",
+          slug: "resource-not-found",
         }),
         authToken: AUTH_TOKEN,
         apiUrl: API_URL,
@@ -2002,6 +2047,7 @@ describe("agent/durable", () => {
         error: new AppendConversationRunEventsError({
           status: 404,
           detail: "conversation-not-found",
+          slug: "conversation-not-found",
         }),
         authToken: AUTH_TOKEN,
         apiUrl: API_URL,

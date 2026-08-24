@@ -7,6 +7,7 @@ import {
   isIgnorableConversationRunAppendError,
   isPayloadTooLargeConversationRunAppendError,
   isTerminalRunConversationRunAppendError,
+  parseAppendConversationRunEventsError,
   parseAppendConversationRunEventsErrorBody,
 } from "./durable-append-errors.ts";
 
@@ -21,6 +22,25 @@ describe("agent/durable-append-errors", () => {
     assertEquals(
       parseAppendConversationRunEventsErrorBody(JSON.stringify({ error: "append failed" })),
       "append failed",
+    );
+    assertEquals(
+      parseAppendConversationRunEventsError(
+        JSON.stringify({
+          detail: "Run not found",
+          slug: "resource-not-found",
+        }),
+      ),
+      {
+        detail: "Run not found",
+        slug: "resource-not-found",
+      },
+    );
+    assertEquals(
+      parseAppendConversationRunEventsError(JSON.stringify({ error: "resource-not-found" })),
+      {
+        detail: "resource-not-found",
+        slug: "resource-not-found",
+      },
     );
     assertEquals(parseAppendConversationRunEventsErrorBody("plain text"), "plain text");
     assertEquals(parseAppendConversationRunEventsErrorBody(""), null);
@@ -65,6 +85,11 @@ describe("agent/durable-append-errors", () => {
     });
     const deletedRun = new AppendConversationRunEventsError({
       status: 404,
+      detail: "Run not found",
+      slug: "resource-not-found",
+    });
+    const humanDetailCollision = new AppendConversationRunEventsError({
+      status: 404,
       detail: "resource-not-found",
     });
     const waitingForTool = new AppendConversationRunEventsError({
@@ -75,10 +100,12 @@ describe("agent/durable-append-errors", () => {
     const otherMissingResource = new AppendConversationRunEventsError({
       status: 404,
       detail: "conversation-not-found",
+      slug: "conversation-not-found",
     });
     const similarMissingResource = new AppendConversationRunEventsError({
       status: 404,
       detail: "run-resource-not-found",
+      slug: "run-resource-not-found",
     });
     const cursorMismatch = new AppendConversationRunEventsError({
       status: 400,
@@ -95,6 +122,7 @@ describe("agent/durable-append-errors", () => {
 
     assertEquals(isTerminalRunConversationRunAppendError(terminal), true);
     assertEquals(isTerminalRunConversationRunAppendError(deletedRun), true);
+    assertEquals(isTerminalRunConversationRunAppendError(humanDetailCollision), false);
     assertEquals(isTerminalRunConversationRunAppendError(waitingForTool), false);
     assertEquals(isTerminalRunConversationRunAppendError(missingRun), false);
     assertEquals(isTerminalRunConversationRunAppendError(otherMissingResource), false);
@@ -107,6 +135,7 @@ describe("agent/durable-append-errors", () => {
         Object.assign(new Error("resource-not-found"), {
           status: 404,
           detail: "resource-not-found",
+          slug: "resource-not-found",
         }),
       ),
       false,

@@ -1362,7 +1362,19 @@ describe("agent/hosted-chat-execution-runtime", () => {
     const observedTerminalStatuses: string[] = [];
     const resourceNotFoundFetch: typeof globalThis.fetch = async () => {
       appendRequestCount += 1;
-      return Response.json({ error: "resource-not-found" }, { status: 404 });
+      return Response.json(
+        {
+          type: "https://api.veryfront.com/errors/resource-not-found",
+          title: "Resource Not Found",
+          status: 404,
+          slug: "resource-not-found",
+          category: "RESOURCE",
+          detail: "Run not found",
+          instance: "/conversations/conversation-1/runs/root-run-1/events",
+          suggestion: "Verify the resource ID exists and you have access to it.",
+        },
+        { status: 404 },
+      );
     };
 
     const durableRunMirror = createHostedConversationRunChunkMirror({
@@ -1434,19 +1446,31 @@ describe("agent/hosted-chat-execution-runtime", () => {
       finishReason: "stop",
     });
     await runtime.waitForFinish();
+    const drainedMirror = await durableRunMirror.flush();
     durableRunMirror.dispose();
 
     assertEquals(
       {
         appendRequestCount,
-        disableReason: durableRunMirror.getSnapshot().disableReason,
+        mirror: drainedMirror,
         finalizeRequestStatuses,
         errorLogs,
         observedTerminalStatuses,
       },
       {
         appendRequestCount: 1,
-        disableReason: "run_terminal",
+        mirror: {
+          latestEventId: 0,
+          latestExternalEventSequence: 0,
+          pendingEventCount: 0,
+          consecutiveFailures: 0,
+          disabled: true,
+          hasFlushTimer: false,
+          hasRetryTimer: false,
+          inFlight: false,
+          appendRequestCount: 1,
+          disableReason: "run_terminal",
+        },
         finalizeRequestStatuses: [],
         errorLogs: [],
         observedTerminalStatuses: ["completed"],

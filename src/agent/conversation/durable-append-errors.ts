@@ -4,10 +4,12 @@ import { getConversationRunErrorSchema } from "./durable-contracts.ts";
 export class AppendConversationRunEventsError extends Error {
   readonly status: number;
   readonly detail: string | null;
+  readonly slug: string | null;
 
   constructor(input: {
     status: number;
     detail?: string | null;
+    slug?: string | null;
     statusText?: string;
   }) {
     const detail = input.detail?.trim() || input.statusText || `HTTP ${input.status}`;
@@ -15,25 +17,42 @@ export class AppendConversationRunEventsError extends Error {
     this.name = "AppendConversationRunEventsError";
     this.status = input.status;
     this.detail = input.detail?.trim() || null;
+    this.slug = input.slug?.trim() || null;
   }
 }
 
-/** Parses append conversation run events error body. */
-export function parseAppendConversationRunEventsErrorBody(bodyText: string): string | null {
+/** Parsed append conversation run events problem details. */
+export interface ParsedAppendConversationRunEventsErrorBody {
+  detail: string | null;
+  slug: string | null;
+}
+
+/** Parses append conversation run events problem details without losing machine identity. */
+export function parseAppendConversationRunEventsError(
+  bodyText: string,
+): ParsedAppendConversationRunEventsErrorBody {
   if (!bodyText) {
-    return null;
+    return { detail: null, slug: null };
   }
 
   try {
     const parsed = getConversationRunErrorSchema().safeParse(JSON.parse(bodyText));
     if (parsed.success) {
-      return parsed.data.detail ?? parsed.data.error ?? null;
+      return {
+        detail: parsed.data.detail ?? parsed.data.error ?? parsed.data.slug ?? null,
+        slug: parsed.data.slug ?? parsed.data.error ?? null,
+      };
     }
   } catch {
-    return bodyText;
+    return { detail: bodyText, slug: null };
   }
 
-  return bodyText;
+  return { detail: bodyText, slug: null };
+}
+
+/** Parses append conversation run events error body. */
+export function parseAppendConversationRunEventsErrorBody(bodyText: string): string | null {
+  return parseAppendConversationRunEventsError(bodyText).detail;
 }
 
 const TERMINAL_RUN_APPEND_REJECTION_DETAIL = "Cannot append external events to a terminal run";
@@ -42,7 +61,7 @@ const DELETED_RUN_APPEND_REJECTION_DETAIL = "resource-not-found";
 /**
  * The run already reached a terminal status server-side, so it will never accept
  * another event -- nor a terminal transition. Cancelling a project's in-flight runs
- * before deleting it is the common source. An exact `resource-not-found` response
+ * before deleting it is the common source. An exact `resource-not-found` slug
  * for the captured conversation/run pair also means that pair can no longer accept
  * a terminal transition. This is deliberately narrower than
  * {@link isIgnorableConversationRunAppendError}: other missing resources and a run
@@ -55,7 +74,7 @@ export function isTerminalRunConversationRunAppendError(
   return (
     error instanceof AppendConversationRunEventsError &&
     ((error.status === 400 && error.detail === TERMINAL_RUN_APPEND_REJECTION_DETAIL) ||
-      (error.status === 404 && error.detail === DELETED_RUN_APPEND_REJECTION_DETAIL))
+      (error.status === 404 && error.slug === DELETED_RUN_APPEND_REJECTION_DETAIL))
   );
 }
 

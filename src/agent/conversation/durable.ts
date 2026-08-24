@@ -26,7 +26,7 @@ import {
   isPayloadTooLargeConversationRunAppendError,
   isPermanentAuthConversationRunAppendError,
   isTerminalRunConversationRunAppendError,
-  parseAppendConversationRunEventsErrorBody,
+  parseAppendConversationRunEventsError,
 } from "./durable-append-errors.ts";
 
 export {
@@ -1253,9 +1253,11 @@ export async function appendConversationRunEvents(input: {
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
+      const parsedError = parseAppendConversationRunEventsError(body);
       throw new AppendConversationRunEventsError({
         status: response.status,
-        detail: parseAppendConversationRunEventsErrorBody(body),
+        detail: parsedError.detail,
+        slug: parsedError.slug,
         statusText: response.statusText,
       });
     }
