@@ -67,6 +67,21 @@ function settleResumes(): Promise<void> {
 }
 
 describe("workflow/worker/workflow-worker", () => {
+  for (const concurrency of [0, -1]) {
+    it(`rejects concurrency ${concurrency}`, () => {
+      assertThrows(
+        () =>
+          new WorkflowWorker({
+            backend: new MemoryBackend(),
+            concurrency,
+            resumeFn: () => Promise.resolve(),
+          }),
+        Error,
+        "concurrency",
+      );
+    });
+  }
+
   it("rejects backends that cannot fence owner-bound persistence", () => {
     const backend = new MemoryBackend();
     Object.defineProperty(backend, "saveCheckpointIfStatusAndWorker", {

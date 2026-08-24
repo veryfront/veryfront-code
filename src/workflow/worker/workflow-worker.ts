@@ -119,6 +119,15 @@ export class WorkflowWorker {
       });
     }
 
+    if (
+      config.concurrency !== undefined &&
+      (!Number.isSafeInteger(config.concurrency) || config.concurrency <= 0)
+    ) {
+      throw CONFIG_INVALID.create({
+        detail: "Worker concurrency must be a positive safe integer.",
+      });
+    }
+
     this.config = {
       pollInterval: DEFAULT_POLL_INTERVAL_MS,
       stalledThreshold: DEFAULT_STALLED_THRESHOLD_MS,
@@ -279,6 +288,9 @@ export class WorkflowWorker {
 
       // Try to claim and resume stalled runs (up to concurrency limit)
       const availableSlots = this.config.concurrency - this.activeResumes.size;
+      if (availableSlots <= 0) {
+        return;
+      }
 
       for (const run of stalledRuns.slice(0, availableSlots)) {
         // Skip if already being resumed by this worker
