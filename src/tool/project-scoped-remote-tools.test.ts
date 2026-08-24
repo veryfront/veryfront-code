@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertRejects, assertStrictEquals, assertThrows } from "@std/assert";
 import {
   createProjectScopedRemoteToolCatalog,
@@ -31,7 +32,7 @@ function toolDefinition(input: {
   };
 }
 
-Deno.test("filterProjectScopedRemoteToolDefinitions hides project-bound tools when no active project exists", () => {
+it("filterProjectScopedRemoteToolDefinitions hides project-bound tools when no active project exists", () => {
   const tools = [
     toolDefinition({ name: "list_projects" }),
     toolDefinition({ name: "list_files", required: ["project_reference"] }),
@@ -44,7 +45,7 @@ Deno.test("filterProjectScopedRemoteToolDefinitions hides project-bound tools wh
   );
 });
 
-Deno.test("filterProjectScopedRemoteToolDefinitions preserves project-bound tools when an active project exists", () => {
+it("filterProjectScopedRemoteToolDefinitions preserves project-bound tools when an active project exists", () => {
   const tools = [
     toolDefinition({ name: "list_projects" }),
     toolDefinition({ name: "list_files", required: ["project_reference"] }),
@@ -56,7 +57,7 @@ Deno.test("filterProjectScopedRemoteToolDefinitions preserves project-bound tool
   );
 });
 
-Deno.test("filterProjectScopedRemoteToolDefinitions does not infer project scope without required fields", () => {
+it("filterProjectScopedRemoteToolDefinitions does not infer project scope without required fields", () => {
   const tools = [
     toolDefinition({ name: "list_agents" }),
     toolDefinition({ name: "list_workflows" }),
@@ -68,7 +69,7 @@ Deno.test("filterProjectScopedRemoteToolDefinitions does not infer project scope
   );
 });
 
-Deno.test("filterProjectScopedRemoteToolDefinitions hides optional project_reference tools without an active project", () => {
+it("filterProjectScopedRemoteToolDefinitions hides optional project_reference tools without an active project", () => {
   const projectTool = toolDefinition({ name: "generate_agent_avatar" });
   projectTool.parameters = {
     type: "object",
@@ -88,7 +89,7 @@ Deno.test("filterProjectScopedRemoteToolDefinitions hides optional project_refer
   );
 });
 
-Deno.test("filterProjectScopedRemoteToolDefinitions allows configured navigation tools without an active project", () => {
+it("filterProjectScopedRemoteToolDefinitions allows configured navigation tools without an active project", () => {
   const tools = [
     toolDefinition({ name: "open_project", required: ["project_id"] }),
     toolDefinition({ name: "delete_project", required: ["project_id"] }),
@@ -102,7 +103,7 @@ Deno.test("filterProjectScopedRemoteToolDefinitions allows configured navigation
   );
 });
 
-Deno.test("isProjectNavigationRemoteTool checks configured navigation tools", () => {
+it("isProjectNavigationRemoteTool checks configured navigation tools", () => {
   assertEquals(
     isProjectNavigationRemoteTool("open_project", { projectNavigationToolNames: ["open_project"] }),
     true,
@@ -116,7 +117,7 @@ Deno.test("isProjectNavigationRemoteTool checks configured navigation tools", ()
   assertEquals(isProjectNavigationRemoteTool("", { projectNavigationToolNames: [""] }), false);
 });
 
-Deno.test("hydrateProjectScopedRemoteToolInput injects project_reference when required", () => {
+it("hydrateProjectScopedRemoteToolInput injects project_reference when required", () => {
   assertEquals(
     hydrateProjectScopedRemoteToolInput({
       toolDefinition: toolDefinition({ name: "list_files", required: ["project_reference"] }),
@@ -127,7 +128,7 @@ Deno.test("hydrateProjectScopedRemoteToolInput injects project_reference when re
   );
 });
 
-Deno.test("hydrateProjectScopedRemoteToolInput injects project_reference when optional but declared", () => {
+it("hydrateProjectScopedRemoteToolInput injects project_reference when optional but declared", () => {
   const definition = toolDefinition({ name: "generate_agent_avatar" });
   definition.parameters = {
     type: "object",
@@ -153,7 +154,7 @@ Deno.test("hydrateProjectScopedRemoteToolInput injects project_reference when op
   );
 });
 
-Deno.test("hydrateProjectScopedRemoteToolInput preserves explicit project_reference", () => {
+it("hydrateProjectScopedRemoteToolInput preserves explicit project_reference", () => {
   const toolInput = { project_reference: "explicit-project", pattern: "src" };
 
   assertStrictEquals(
@@ -166,7 +167,7 @@ Deno.test("hydrateProjectScopedRemoteToolInput preserves explicit project_refere
   );
 });
 
-Deno.test("hydrateProjectScopedRemoteToolInput leaves non-project-reference tools unchanged", () => {
+it("hydrateProjectScopedRemoteToolInput leaves non-project-reference tools unchanged", () => {
   const toolInput = { limit: 5 };
 
   assertStrictEquals(
@@ -179,7 +180,7 @@ Deno.test("hydrateProjectScopedRemoteToolInput leaves non-project-reference tool
   );
 });
 
-Deno.test("hydrateProjectScopedRemoteToolInput leaves inputs unchanged without active project", () => {
+it("hydrateProjectScopedRemoteToolInput leaves inputs unchanged without active project", () => {
   const toolInput = { pattern: "src" };
 
   assertStrictEquals(
@@ -192,7 +193,7 @@ Deno.test("hydrateProjectScopedRemoteToolInput leaves inputs unchanged without a
   );
 });
 
-Deno.test("resolveProjectScopedRemoteToolProjectId prefers context project ids", () => {
+it("resolveProjectScopedRemoteToolProjectId prefers context project ids", () => {
   assertEquals(
     resolveProjectScopedRemoteToolProjectId({ projectId: "context-project" }, "default-project"),
     "context-project",
@@ -205,13 +206,13 @@ Deno.test("resolveProjectScopedRemoteToolProjectId prefers context project ids",
   );
 });
 
-Deno.test("isRemoteToolNameAllowed applies optional allowlists", () => {
+it("isRemoteToolNameAllowed applies optional allowlists", () => {
   assertEquals(isRemoteToolNameAllowed("list_files", null), true);
   assertEquals(isRemoteToolNameAllowed("list_files", new Set(["list_files"])), true);
   assertEquals(isRemoteToolNameAllowed("delete_file", new Set(["list_files"])), false);
 });
 
-Deno.test("createProjectScopedRemoteToolCatalog filters, revalidates, and hydrates project tools", async () => {
+it("createProjectScopedRemoteToolCatalog filters, revalidates, and hydrates project tools", async () => {
   const listContexts: (ToolExecutionContext | undefined)[] = [];
   const source: RemoteToolSource = {
     id: "api",
@@ -269,7 +270,7 @@ Deno.test("createProjectScopedRemoteToolCatalog filters, revalidates, and hydrat
   ]);
 });
 
-Deno.test("createProjectScopedRemoteToolCatalog detaches and validates advertised MCP metadata", async () => {
+it("createProjectScopedRemoteToolCatalog detaches and validates advertised MCP metadata", async () => {
   function createCatalog(definition: ToolDefinition) {
     const source: RemoteToolSource = {
       id: "api",
@@ -317,7 +318,7 @@ Deno.test("createProjectScopedRemoteToolCatalog detaches and validates advertise
   );
 });
 
-Deno.test("createProjectScopedRemoteToolCatalog does not reuse definitions across credential contexts", async () => {
+it("createProjectScopedRemoteToolCatalog does not reuse definitions across credential contexts", async () => {
   const source: RemoteToolSource = {
     id: "api",
     async listTools(context) {
@@ -344,7 +345,7 @@ Deno.test("createProjectScopedRemoteToolCatalog does not reuse definitions acros
   assertEquals(prepared.toolDefinition.name, "write_file");
 });
 
-Deno.test("createProjectScopedRemoteToolCatalog resolves dynamic default project ids", async () => {
+it("createProjectScopedRemoteToolCatalog resolves dynamic default project ids", async () => {
   const listContexts: (ToolExecutionContext | undefined)[] = [];
   let defaultProjectId: string | null = null;
   const source: RemoteToolSource = {
@@ -383,7 +384,7 @@ Deno.test("createProjectScopedRemoteToolCatalog resolves dynamic default project
   assertEquals(listContexts, [undefined, { projectId: "project-2" }]);
 });
 
-Deno.test("createProjectScopedRemoteToolCatalog rejects disallowed execution", async () => {
+it("createProjectScopedRemoteToolCatalog rejects disallowed execution", async () => {
   const source: RemoteToolSource = {
     id: "api",
     async listTools() {
@@ -409,7 +410,7 @@ Deno.test("createProjectScopedRemoteToolCatalog rejects disallowed execution", a
   );
 });
 
-Deno.test("createProjectScopedRemoteToolCatalog rejects tools absent from remote discovery", async () => {
+it("createProjectScopedRemoteToolCatalog rejects tools absent from remote discovery", async () => {
   const source: RemoteToolSource = {
     id: "api",
     async listTools() {
@@ -427,7 +428,7 @@ Deno.test("createProjectScopedRemoteToolCatalog rejects tools absent from remote
   );
 });
 
-Deno.test("createProjectScopedRemoteToolCatalog rejects missing required remote tool input", async () => {
+it("createProjectScopedRemoteToolCatalog rejects missing required remote tool input", async () => {
   const source: RemoteToolSource = {
     id: "api",
     async listTools() {
@@ -449,7 +450,7 @@ Deno.test("createProjectScopedRemoteToolCatalog rejects missing required remote 
   );
 });
 
-Deno.test("createProjectScopedRemoteToolCatalog rejects duplicate advertised names", async () => {
+it("createProjectScopedRemoteToolCatalog rejects duplicate advertised names", async () => {
   const source: RemoteToolSource = {
     id: "api",
     async listTools() {
@@ -470,7 +471,7 @@ Deno.test("createProjectScopedRemoteToolCatalog rejects duplicate advertised nam
   );
 });
 
-Deno.test("required input checks do not invoke accessors or accept inherited values", async () => {
+it("required input checks do not invoke accessors or accept inherited values", async () => {
   const source: RemoteToolSource = {
     id: "api",
     async listTools() {
@@ -511,7 +512,7 @@ Deno.test("required input checks do not invoke accessors or accept inherited val
   );
 });
 
-Deno.test("project schema inspection does not execute accessors", () => {
+it("project schema inspection does not execute accessors", () => {
   let getterCalls = 0;
   const definition = toolDefinition({ name: "search" });
   definition.parameters = Object.defineProperty({}, "required", {
@@ -530,7 +531,7 @@ Deno.test("project schema inspection does not execute accessors", () => {
   assertEquals(getterCalls, 0);
 });
 
-Deno.test("listProjectScopedRemoteToolNames returns sorted unique visible names", async () => {
+it("listProjectScopedRemoteToolNames returns sorted unique visible names", async () => {
   const sourceA: RemoteToolSource = {
     id: "api",
     async listTools(context) {
