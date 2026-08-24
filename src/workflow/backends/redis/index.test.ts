@@ -266,11 +266,16 @@ class MockRedisAdapter implements RedisAdapter {
       list.push(args[0]!);
       const hash = this.hashes.get(key);
       if (!hash) return Promise.resolve(0);
-      this.appendRunObservation(
+      const revision = this.appendRunObservation(
         hash,
         args[2]!,
         Number(args[3]),
+      );
+      this.appendApprovalProjection(
+        keys[2]!,
+        revision,
         this.pendingApprovalProjection(list),
+        Number(args[3]),
       );
       return Promise.resolve(1);
     }
@@ -298,11 +303,16 @@ class MockRedisAdapter implements RedisAdapter {
       }
       if (!this.retainApprovals(list, maxEntries)) return Promise.resolve(2);
       list.push(value);
-      this.appendRunObservation(
+      const revision = this.appendRunObservation(
         hash,
         streamKey,
         maxLength,
+      );
+      this.appendApprovalProjection(
+        keys[2]!,
+        revision,
         this.pendingApprovalProjection(list),
+        maxLength,
       );
       return Promise.resolve(1);
     }
@@ -553,7 +563,6 @@ class MockRedisAdapter implements RedisAdapter {
     hash: Map<string, string>,
     streamKey: string,
     maxLength: number,
-    approvals?: Array<{ id: string; nodeId: string; message?: string }>,
   ): number {
     const revision = Number(hash.get("__runObservationRevision") ?? "0") + 1;
     hash.set("__runObservationRevision", String(revision));
@@ -576,7 +585,6 @@ class MockRedisAdapter implements RedisAdapter {
       status: hash.get("status") ?? "",
       nodes: JSON.stringify(nodes),
     };
-    if (approvals !== undefined) data.approvals = JSON.stringify(approvals);
     const rawError = hash.get("error");
     if (rawError) {
       const error = JSON.parse(rawError) as { message?: string };
@@ -590,6 +598,24 @@ class MockRedisAdapter implements RedisAdapter {
     stream.push({ id: `${this.nextStreamSequence++}-0`, data });
     if (stream.length > maxLength) stream.splice(0, stream.length - maxLength);
     return revision;
+  }
+
+  private appendApprovalProjection(
+    key: string,
+    revision: number,
+    approvals: Array<{ id: string; nodeId: string; message?: string }>,
+    maxLength: number,
+  ): void {
+    let journal = this.hashes.get(key);
+    if (!journal) {
+      journal = new Map();
+      this.hashes.set(key, journal);
+    }
+    journal.set(String(revision), JSON.stringify(approvals));
+    const oldestRetainedRevision = revision - maxLength;
+    for (const storedRevision of journal.keys()) {
+      if (Number(storedRevision) <= oldestRetainedRevision) journal.delete(storedRevision);
+    }
   }
 
   xreadgroup(
@@ -792,8 +818,9 @@ describe("RedisBackend", () => {
       });
       await writer.updateRun(run.id, { status: "running" });
 
-      // The approval save must journal its own observation record, and that
-      // record must carry only the reduced projection, never the payload.
+      // The approval save must keep the schema-v1 observation record readable
+      // by older processes. The reduced projection belongs in its separately
+      // versioned companion journal, never in the legacy stream record.
       const stream = mockRedis.streams.get(
         "test:schema-v1:run-observation:run-approval-observed",
       );
@@ -801,10 +828,16 @@ describe("RedisBackend", () => {
       assertEquals(stream.length, 4);
       const approvalRecord = stream[2]!.data;
       assertEquals(approvalRecord.revision, "2");
-      assertEquals(JSON.parse(approvalRecord.approvals ?? "null"), [
+      assertEquals(Object.keys(approvalRecord).sort(), ["nodes", "revision", "status"]);
+
+      const approvalJournal = mockRedis.hashes.get(
+        "test:schema-v1:run-observation-approvals-v1:run-approval-observed",
+      );
+      assertExists(approvalJournal);
+      assertEquals(JSON.parse(approvalJournal.get("2") ?? "null"), [
         { id: "apr-1", nodeId: "review", message: "Please review" },
       ]);
-      assertEquals(approvalRecord.approvals?.includes("approval-payload"), false);
+      assertEquals(approvalJournal.get("2")?.includes("approval-payload"), false);
 
       const iterator = observation.changes[Symbol.asyncIterator]();
       assertEquals((await iterator.next()).value, {
