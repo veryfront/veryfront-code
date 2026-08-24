@@ -140,6 +140,49 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
     assertEquals(await result.response.json(), { error: "Missing control-plane signature" });
   });
 
+  it("rejects a signature minted for a different surface", async () => {
+    let discoveryCalls = 0;
+    const handler = new InternalAgentsListHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
+      },
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+    });
+
+    const body = JSON.stringify({
+      requestId: "agents-1",
+      projectId: "proj-1",
+      surface: "channels",
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "agents-1",
+      surface: "studio",
+    });
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/agents/list", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertEquals(
+      result.response.status,
+      401,
+      "a signature minted for another surface must not list agents",
+    );
+    assertEquals(await result.response.json(), { error: "Invalid control-plane signature" });
+    assertEquals(discoveryCalls, 0, "agent discovery must not run for a cross-surface replay");
+  });
+
   it("returns 401 when the signed claims do not match the request body", async () => {
     const handler = new InternalAgentsListHandler({
       ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),

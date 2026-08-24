@@ -97,6 +97,55 @@ describe("server/handlers/dev/files/dev-file.handler", () => {
     assertEquals(body.includes("local"), true);
   });
 
+  it("binds contextual filesystem reads to the request token, branch, and non-production mode", async () => {
+    const handler = new DevFileHandler(() => Promise.resolve("export default 'bound';"));
+    const tokens: string[] = [];
+    const branches: (string | null)[] = [];
+    const modes: [boolean, string | undefined][] = [];
+    const mock = createMockAdapter();
+    mock.fs.files.set("/project/app/page.tsx", "export default function Page() { return null; }");
+    const adapter = {
+      ...mock,
+      fs: {
+        ...mock.fs,
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => true,
+        isContextualMode: () => true,
+        setRequestToken: (token: string) => {
+          tokens.push(token);
+        },
+        setRequestBranch: (branch: string | null) => {
+          branches.push(branch);
+        },
+        setProductionMode: (production: boolean, releaseId?: string) => {
+          modes.push([production, releaseId]);
+        },
+      },
+    } as unknown as HandlerContext["adapter"];
+
+    const encodedPath = base64urlEncode("app/page.tsx");
+    const req = createLoopbackRequest(`http://localhost/_veryfront/fs/${encodedPath}.js`);
+    const ctx = makeCtx({
+      adapter,
+      isLocalProject: true,
+      proxyToken: "req-token",
+      releaseId: "rel-1",
+      parsedDomain: { branch: "feature" } as HandlerContext["parsedDomain"],
+    });
+
+    const result = await handler.handle(req, ctx);
+
+    assertEquals(result.response?.status, 200);
+    assertEquals(tokens, ["req-token"], "the dev file read must be bound to the request token");
+    assertEquals(branches, ["feature"], "the dev file read must be bound to the request branch");
+    assertEquals(
+      modes,
+      [[false, "rel-1"]],
+      "dev file reads must never use the production snapshot",
+    );
+  });
+
   it("keeps browser import-map exact specifiers in local bundles", async () => {
     const handler = new DevFileHandler();
     const adapter = createMockAdapter();

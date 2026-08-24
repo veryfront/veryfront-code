@@ -3,6 +3,7 @@ import { ChannelInvokeRequestSchema } from "#veryfront/channels/invoke.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "#veryfront/types";
+import { INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES } from "#veryfront/internal-agents/request-body.ts";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { readSignedChannelDispatchRequest } from "./channel-dispatch-request.ts";
@@ -233,6 +234,42 @@ describe("server/handlers/request/channel-dispatch-request", () => {
       assertEquals(invalidSignature.response.status, 401);
       assertEquals(await invalidSignature.response.json(), { error: "Invalid dispatch signature" });
     }
+  });
+
+  it("rejects an oversized body with 413 before verifying the signature", async () => {
+    const body = JSON.stringify({
+      padding: "a".repeat(INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES + 1),
+    });
+    const warnings: string[] = [];
+
+    const result = await readSignedChannelDispatchRequest(
+      new Request("https://example.com/channels/invoke", {
+        method: "POST",
+        headers: { "x-veryfront-dispatch-jws": "invalid.signature.value" },
+        body,
+      }),
+      createCtx("-----BEGIN PUBLIC KEY-----\nZmFrZQ==\n-----END PUBLIC KEY-----"),
+      {
+        builder: new ResponseBuilder(),
+        endpointName: "channel invoke",
+        invalidRequestError: "Invalid channel invoke request",
+        schema: ChannelInvokeRequestSchema,
+        logWarn: (message) => {
+          warnings.push(message);
+        },
+      },
+    );
+
+    assertEquals(result.ok, false, "an oversized body must be rejected");
+    if (!result.ok) {
+      assertEquals(result.response.status, 413, "an oversized body must answer 413");
+      assertEquals(await result.response.json(), { error: "Request body too large" });
+    }
+    assertEquals(
+      warnings.some((message) => message.includes("signature verification failed")),
+      false,
+      "the body cap must fire before any signature verification is attempted",
+    );
   });
 
   it("preserves caller-specific schema error responses", async () => {

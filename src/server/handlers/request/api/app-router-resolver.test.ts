@@ -399,23 +399,30 @@ describe("resolveAppRouteFile", () => {
   });
 
   it("prefers exact match over dynamic segment", async () => {
+    // Both candidates are genuinely resolvable so only precedence decides.
     const ctx = createMockCtx({
       statMap: {
         "/project/app": { isFile: false, isDirectory: true },
         "/project/app/api/users/me/route.ts": { isFile: true, isDirectory: false },
+        "/project/app/api/users/[id]/route.ts": { isFile: true, isDirectory: false },
       },
       dirMap: {
         "/project/app": [dir("api")],
         "/project/app/api": [dir("users")],
         "/project/app/api/users": [dir("me"), dir("[id]")],
         "/project/app/api/users/me": [],
+        "/project/app/api/users/[id]": [],
       },
     });
     const result = await resolveAppRouteFile("/api/users/me", ctx);
-    assertEquals(result, {
-      file: "/project/app/api/users/me/route.ts",
-      params: {},
-    });
+    assertEquals(
+      result,
+      {
+        file: "/project/app/api/users/me/route.ts",
+        params: {},
+      },
+      "an exact segment must win over a resolvable [id] route",
+    );
   });
 
   it("returns null when no route file exists in directory", async () => {

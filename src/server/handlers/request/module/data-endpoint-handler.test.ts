@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
 import type { HandlerContext, HandlerResult } from "../../types.ts";
@@ -359,6 +359,19 @@ describe("server/handlers/request/module/data-endpoint-handler", () => {
         ),
         true,
       );
+
+      const etag = response.headers.get("etag");
+      assertExists(etag, "the data endpoint must return a validator");
+      const second = await callDataEndpoint(
+        new Request(
+          "http://localhost/_veryfront/data/docs.json?view=full&pins=app-value",
+          { headers: { "if-none-match": etag } },
+        ),
+        makeCtx(projectDir),
+      );
+      assertEquals(second.status, 304, "a matching if-none-match must short-circuit");
+      assertEquals(await second.text(), "", "304 must carry no body");
+      assertEquals(second.headers.get("etag"), etag, "304 must echo the validator");
     } finally {
       restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
       clearReactVersionCache();

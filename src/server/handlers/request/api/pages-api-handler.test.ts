@@ -354,6 +354,50 @@ describe("server/handlers/request/api/pages-api-handler", () => {
       assertEquals(responseAfterRelease?.status, 404);
     });
 
+    it("destroys an uncached preview handler once the callback returns", async () => {
+      const cache = createMockCache();
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/project-dir/pages/api/status.ts",
+        "export function GET() { return new Response('ok'); }",
+      );
+      __injectCacheForTests(cache as any);
+      __injectApiRouteDepsForTests({
+        loadHandlerModule: () =>
+          Promise.resolve({
+            GET: () => new Response("ok"),
+          }),
+      });
+      const ctx = createHandlerContext({
+        adapter,
+        projectSlug: "my-project",
+        mode: "preview",
+      });
+      let used: Awaited<ReturnType<typeof getApiHandler>> | undefined;
+
+      const response = await withApiHandler(ctx, (handler) => {
+        used = handler;
+        return handler.handle(new Request("http://localhost/api/status"), ctx);
+      });
+      assertEquals(response?.status, 200);
+      assertEquals(await response?.text(), "ok");
+
+      assertEquals(
+        cache.store.size,
+        0,
+        "an uncached preview handler must never be written to the cache",
+      );
+      const responseAfterUse = await used!.handle(
+        new Request("http://localhost/api/status"),
+        ctx,
+      );
+      assertEquals(
+        responseAfterUse?.status,
+        404,
+        "an uncached handler must be destroyed once the callback returns",
+      );
+    });
+
     it("should not reuse stale preview route maps after source changes", async () => {
       const adapter = createMockAdapter();
       let refreshCalls = 0;

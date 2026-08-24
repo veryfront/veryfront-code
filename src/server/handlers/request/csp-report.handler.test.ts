@@ -138,6 +138,25 @@ describe("server/handlers/request/csp-report", () => {
     assertEquals(violation?.effectiveDirective, "img-srcWARN forged log line");
   });
 
+  it("caps every logged field at the documented maximum length", () => {
+    // The endpoint is unauthenticated; without the cap a poster could write
+    // the whole body budget into the log stream one field at a time.
+    const [violation] = normalizeReports({
+      "csp-report": { "violated-directive": "a".repeat(2000) },
+    });
+
+    assertEquals(
+      violation?.effectiveDirective?.length,
+      513,
+      "a logged field must be capped at MAX_FIELD_LENGTH plus the ellipsis",
+    );
+    assertEquals(
+      violation?.effectiveDirective?.endsWith("\u2026"),
+      true,
+      "a truncated field must be marked with the ellipsis",
+    );
+  });
+
   it("takes the first violations in a mixed batch rather than the first entries", () => {
     // Slicing before filtering would discard real violations queued behind
     // other report types a browser batches into the same request.

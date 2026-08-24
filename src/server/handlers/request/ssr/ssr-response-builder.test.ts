@@ -158,11 +158,25 @@ describe("server/handlers/request/ssr/ssr-response-builder", () => {
         headers: { "if-none-match": etag },
       });
       const ctx = makeCtx({ isLocalProject: false });
-      const result = makeResult({ etag });
+      const result = makeResult({
+        etag,
+        headers: { "x-page-state": "fresh" },
+        cookies: [{ name: "session", value: "abc", path: "/", httpOnly: true }],
+      });
       const builder = new ResponseBuilder({ nonce: "" });
 
       const response = await buildSSRResponse(req, ctx, result, builder);
       assertEquals(response.status, 304);
+      assertEquals(
+        response.headers.get("x-page-state"),
+        "fresh",
+        "304 responses must keep page-supplied headers",
+      );
+      assertEquals(
+        response.headers.getSetCookie(),
+        ["session=abc; Path=/; HttpOnly"],
+        "304 responses must keep page-supplied cookies",
+      );
     });
 
     it("returns fresh HTML without granting its application tags the response nonce", async () => {
@@ -225,12 +239,24 @@ describe("server/handlers/request/ssr/ssr-response-builder", () => {
         isStreaming: true,
         stream,
         html: undefined,
+        headers: { "x-page-state": "fresh" },
+        cookies: [{ name: "session", value: "abc", path: "/", httpOnly: true }],
       });
       const builder = new ResponseBuilder();
 
       const response = await buildSSRResponse(req, ctx, result, builder);
 
       assertEquals(response.headers.get("cache-control"), "public, max-age=0");
+      assertEquals(
+        response.headers.get("x-page-state"),
+        "fresh",
+        "streamed pages must keep page-supplied headers",
+      );
+      assertEquals(
+        response.headers.getSetCookie(),
+        ["session=abc; Path=/; HttpOnly"],
+        "streamed pages must keep page-supplied cookies",
+      );
     });
 
     it("preserves streaming without granting application tags the response nonce", async () => {

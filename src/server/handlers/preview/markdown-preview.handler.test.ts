@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import "#veryfront/transforms/mdx/compiler/__tests__/content-processor-setup.ts";
+import { assertEquals, assertNotEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import type { HandlerContext } from "../types.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MarkdownPreviewHandler } from "./markdown-preview.handler.ts";
@@ -147,10 +148,20 @@ describe("MarkdownPreviewHandler host-execution capability", () => {
       ctx,
     );
 
-    assertNotEquals(
+    assertEquals(
       result.response?.status,
-      503,
-      "a granted shared executor must not return project-execution-unavailable",
+      200,
+      "a granted shared executor must serve the rendered preview",
+    );
+    assertEquals(
+      result.response?.headers.get("content-type"),
+      "text/html; charset=utf-8",
+      "the granted preview must be served as HTML",
+    );
+    assertStringIncludes(
+      await result.response!.text(),
+      "Readme",
+      "the rendered HTML must carry the markdown heading",
     );
     // Not merely "did not 503": the granted request has to actually reach the
     // shared filesystem, otherwise a fallthrough returning no response passes.

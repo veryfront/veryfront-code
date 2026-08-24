@@ -284,12 +284,21 @@ describe("Dashboard API - GET endpoints", () => {
   });
 
   it("/_dev/api/file-content returns text file content", async () => {
+    const readFilePaths: string[] = [];
     const ctx = createMockCtxWithFs({
-      readFile: async () => "const x = 1;\n",
+      readFile: async (path: string) => {
+        readFilePaths.push(path);
+        return "const x = 1;\n";
+      },
     });
     const req = new Request("http://localhost/_dev/api/file-content?path=src/index.ts");
     const res = await handleDashboardAPI(req, ctx);
     assertEquals(res?.status, 200);
+    assertEquals(
+      readFilePaths,
+      ["/project/src/index.ts"],
+      "file content must be read from the validated path under the project directory",
+    );
     const body = await res!.json();
     assertEquals(body.extension, "ts");
     assertEquals(body.content, "const x = 1;\n");
@@ -734,10 +743,30 @@ describe("Dashboard API path validation (VULN-FS-2)", () => {
     const req = new Request(
       "http://localhost/_dev/api/files?path=%252e%252e%252F%252e%252e%252Fetc%252Fpasswd",
     );
-    const res = await handleDashboardAPI(req, createMockCtx());
-    // Must never leak the sensitive file — either 200 with empty listing or
-    // 400 is acceptable, but never 200 with /etc/passwd contents.
-    assertEquals(res?.status === 200 || res?.status === 400, true);
+    const readDirPaths: string[] = [];
+    const ctx = createMockCtxWithFs({
+      readDir: (path: string) => {
+        readDirPaths.push(path);
+        return (async function* () {})();
+      },
+    });
+    const res = await handleDashboardAPI(req, ctx);
+    assertEquals(
+      res?.status,
+      200,
+      "a double-encoded segment is a literal filename, not a traversal",
+    );
+    assertEquals(readDirPaths.length, 1, "the listing must reach the adapter exactly once");
+    assertEquals(
+      readDirPaths[0]?.startsWith("/project/"),
+      true,
+      "resolved listing path must stay under the project directory",
+    );
+    assertEquals(
+      readDirPaths[0]?.includes("/etc/passwd"),
+      false,
+      "a double-decoded path must never resolve to /etc/passwd",
+    );
   });
 
   it("unicode NFC form in relative path is accepted", async () => {

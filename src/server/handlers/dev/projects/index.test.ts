@@ -46,6 +46,51 @@ describe("ProjectsHandler", () => {
     assertEquals(result.continue, true);
   });
 
+  it("keeps the chooser off slugged and non-veryfront hosts", async () => {
+    const handler = new ProjectsHandler(PROVIDER);
+
+    for (
+      const [label, ctx] of [
+        ["slugged project", { ...projectsContext(), projectSlug: "my-app" }],
+        [
+          "non-veryfront host",
+          { ...projectsContext(), parsedDomain: { isVeryfrontDomain: false } },
+        ],
+      ] as const
+    ) {
+      const result = await handler.handle(projectsRequest("/"), ctx as HandlerContext);
+      assertEquals(result.continue, true, `${label} must fall through to the next handler`);
+      assertEquals(
+        result.response,
+        undefined,
+        `a ${label} must keep its own homepage`,
+      );
+    }
+
+    const chooser = (await handler.handle(projectsRequest("/"), projectsContext())).response!;
+    assertEquals(chooser.status, 200, "an unslugged veryfront host must get the chooser");
+  });
+
+  it("serves a boolean token flag in the config payload, never the token", async () => {
+    const ctx = { ...projectsContext(), proxyToken: "sentinel-proxy-token" } as HandlerContext;
+    const response = (await new ProjectsHandler(PROVIDER).handle(
+      projectsRequest("/_projects/api/config"),
+      ctx,
+    )).response!;
+
+    assertEquals(response.status, 200);
+    assertEquals(
+      await response.clone().json(),
+      { domain: "localhost", port: "", hasToken: true },
+      "the config payload contract",
+    );
+    assertEquals(
+      (await response.text()).includes("sentinel-proxy-token"),
+      false,
+      "the raw proxy token must never be serialized into the config body",
+    );
+  });
+
   it("serves its shell and exact captured bundle", async () => {
     const handler = new ProjectsHandler(PROVIDER);
     const shell = (await handler.handle(

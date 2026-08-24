@@ -16,7 +16,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../../html/styles-builder/__tests__/css-processor-setup.ts";
 
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -237,6 +242,29 @@ describe("server/handlers/dev/styles-css error responses", () => {
       "a quote in diagnostic text must not close the content string",
     );
     assertEquals((effectiveCSS(css).match(/\{/g) ?? []).length, 1, "exactly one rule block");
+    // forCSSString escapes only the double quote, so the declaration it feeds
+    // must be a double-quoted string or the escape protects nothing.
+    assertStringIncludes(
+      css,
+      'content: "CSS Error: ',
+      "the diagnostic must use a double-quoted CSS string, which is the only quote forCSSString escapes",
+    );
+
+    const apostrophe = renderCSSDiagnostic("HEADING", {
+      title: "T",
+      message: "a';}body{display:none}{content:'",
+      suggestion: "s",
+    });
+    assertEquals(
+      effectiveCSS(apostrophe).includes("display:none"),
+      false,
+      "an apostrophe in diagnostic text must not close the content string",
+    );
+    assertEquals(
+      (effectiveCSS(apostrophe).match(/\{/g) ?? []).length,
+      1,
+      "exactly one rule block",
+    );
   });
 
   it("escapes a backslash so it cannot neutralize the escape added to a quote", () => {
@@ -262,10 +290,17 @@ describe("server/handlers/dev/styles-css error responses", () => {
       message: "line\u0000one\u2028two",
       suggestion: "s",
     });
-    const content = /content: "([^"]*)"/.exec(css)?.[1] ?? "";
+    const match = /content: "([^"]*)"/.exec(css);
+    assertExists(match, "the diagnostic must emit a quoted content declaration");
+    const content = match[1] ?? "";
 
     // deno-lint-ignore no-control-regex -- asserting control characters are absent.
     assertEquals(/[\u0000-\u001f\u2028\u2029]/.test(content), false);
+    assertStringIncludes(
+      content,
+      "line one two",
+      "control characters must be replaced by spaces, not drop the message",
+    );
   });
 
   it("bounds diagnostic text so a pathological error cannot inline a huge stylesheet", () => {

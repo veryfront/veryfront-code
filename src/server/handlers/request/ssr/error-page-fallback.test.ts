@@ -16,6 +16,7 @@ import type { HandlerContext } from "../../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { withTestContext } from "../../../../../tests/_helpers/context.ts";
 import {
+  __injectProjectReactForTests,
   __injectReactDOMServerForTests,
   __setServerModuleLoaderForTests,
   resetReactCache,
@@ -480,8 +481,12 @@ describe("server/handlers/request/ssr/error-page-fallback", () => {
     });
 
     it("returns null for 403 (only tries _error fallback)", async () => {
+      // Without resolveFile the candidates are probed through stat, so the
+      // recorded paths show exactly which error pages were considered.
+      const probed: string[] = [];
       const adapter = createMockAdapter({
         stat: (path: string) => {
+          probed.push(path);
           if (path.endsWith("/pages")) {
             return Promise.resolve({
               isFile: false,
@@ -493,7 +498,13 @@ describe("server/handlers/request/ssr/error-page-fallback", () => {
           return Promise.reject(new Error("not found"));
         },
       });
-      const ctx = makeCtx({ adapter });
+      // A fresh identity so the module-level path cache from earlier tests
+      // cannot suppress the probes this test observes.
+      const ctx = makeCtx({
+        adapter,
+        projectId: "probe-403",
+        projectDir: "/tmp/test-project-403",
+      });
       const req = new Request("http://localhost/");
       const builder = new ResponseBuilder();
 
@@ -501,6 +512,16 @@ describe("server/handlers/request/ssr/error-page-fallback", () => {
         statusCode: 403,
       });
       assertEquals(result, null);
+      assertEquals(
+        probed.some((path) => path.includes("/pages/_error.")),
+        true,
+        "a 403 must fall back to the generic _error page",
+      );
+      assertEquals(
+        probed.some((path) => /\/pages\/(404|500)\./.test(path)),
+        false,
+        "a 403 must never probe the 404 or 500 page",
+      );
     });
   });
 
@@ -555,6 +576,9 @@ describe("server/handlers/request/ssr/error-page-fallback", () => {
       };
       __injectCacheForTests(mockRepo as any);
 
+      // The filesystem WOULD find an error page, so a null result can only
+      // come from honouring the cached miss without probing.
+      let probes = 0;
       const adapter = createMockAdapter({
         stat: (path: string) => {
           if (path.endsWith("/pages")) {
@@ -565,7 +589,12 @@ describe("server/handlers/request/ssr/error-page-fallback", () => {
               mtime: null,
             });
           }
-          return Promise.reject(new Error("not found"));
+          probes++;
+          return Promise.resolve({ isFile: true, isDirectory: false, size: 0, mtime: null });
+        },
+        resolveFile: (path: string) => {
+          probes++;
+          return Promise.resolve(path.endsWith("404") ? "pages/404.tsx" : null);
         },
       });
       const ctx = makeCtx({ adapter });
@@ -575,7 +604,8 @@ describe("server/handlers/request/ssr/error-page-fallback", () => {
       const result = await tryErrorPageFallback(req, ctx, builder, {
         statusCode: 404,
       });
-      assertEquals(result, null);
+      assertEquals(result, null, "a cached NOT_FOUND must answer without an error page");
+      assertEquals(probes, 0, "a cached miss must not re-probe the filesystem");
     });
 
     it("sanitizes custom error page load failures", async () => {
@@ -650,11 +680,42 @@ describe("server/handlers/request/ssr/error-page-fallback", () => {
   });
 
   describe("pathname in error options", () => {
-    it("passes pathname through options", async () => {
-      const adapter = createMockAdapter({
-        stat: () => Promise.reject(new Error("not found")),
+    /** An adapter whose pages directory holds a 404 page the loader can find. */
+    function adapterWith404Page(): RuntimeAdapter {
+      return createMockAdapter({
+        stat: (path: string) =>
+          Promise.resolve({
+            isFile: false,
+            isDirectory: path.endsWith("pages"),
+            size: 0,
+            mtime: null,
+          }),
+        readFile: () => Promise.resolve("export default function E(p) { return p.pathname; }"),
+        resolveFile: (path: string) =>
+          Promise.resolve(path.endsWith("404") ? "pages/404.tsx" : null),
       });
-      const ctx = makeCtx({ adapter });
+    }
+
+    function ErrorPageProbe(props: { pathname?: string }): string | null {
+      return props.pathname ?? null;
+    }
+
+    it("passes pathname through options", async () => {
+      __setComponentSourceLoaderForTests(() =>
+        Promise.resolve(ErrorPageProbe as unknown as React.ComponentType<unknown>)
+      );
+      __injectProjectReactForTests(React);
+      // Renders the element's props so the response body exposes exactly what
+      // the custom error page received.
+      __injectReactDOMServerForTests({
+        renderToString: (element: unknown) => JSON.stringify((element as { props: unknown }).props),
+        renderToStaticMarkup: () => "",
+      } as never);
+      const ctx = makeCtx({
+        adapter: adapterWith404Page(),
+        projectId: "pathname-props",
+        isLocalProject: true,
+      });
       const req = new Request("http://localhost/missing-page");
       const builder = new ResponseBuilder();
 
@@ -662,7 +723,47 @@ describe("server/handlers/request/ssr/error-page-fallback", () => {
         statusCode: 404,
         pathname: "/missing-page",
       });
-      assertEquals(result, null);
+
+      assertExists(result, "the custom 404 page must render");
+      assertEquals(result.status, 404);
+      assertStringIncludes(
+        await result.text(),
+        '"pathname":"/missing-page"',
+        "the custom error page must receive the request pathname",
+      );
+    });
+
+    it("names the pathname in the fallback body when the custom page fails to render", async () => {
+      __setComponentSourceLoaderForTests(() =>
+        Promise.resolve(ErrorPageProbe as unknown as React.ComponentType<unknown>)
+      );
+      __injectProjectReactForTests(React);
+      __injectReactDOMServerForTests({
+        renderToString: () => {
+          throw new Error("custom error page exploded");
+        },
+        renderToStaticMarkup: () => "",
+      } as never);
+      const ctx = makeCtx({
+        adapter: adapterWith404Page(),
+        projectId: "pathname-fallback",
+        isLocalProject: true,
+      });
+      const req = new Request("http://localhost/missing-page");
+      const builder = new ResponseBuilder();
+
+      const result = await tryErrorPageFallback(req, ctx, builder, {
+        statusCode: 404,
+        pathname: "/missing-page",
+      });
+
+      assertExists(result, "a broken custom page must still produce a fallback response");
+      assertEquals(result.status, 404);
+      assertStringIncludes(
+        await result.text(),
+        "/missing-page",
+        "the fallback body must name the page that could not be found",
+      );
     });
   });
 
@@ -781,14 +882,46 @@ describe("server/handlers/request/ssr/error-page-fallback", () => {
   });
 
   describe("__injectCacheForTests", () => {
-    it("can inject and reset cache repo", () => {
+    it("can inject and reset cache repo", async () => {
+      let gets = 0;
       const mockRepo = {
-        get: () => Promise.resolve(null),
+        get: () => {
+          gets++;
+          return Promise.resolve(null);
+        },
         set: () => Promise.resolve(),
         delete: () => Promise.resolve(),
       };
+      const adapter = createMockAdapter({
+        stat: (path: string) =>
+          Promise.resolve({
+            isFile: false,
+            isDirectory: path.endsWith("pages"),
+            size: 0,
+            mtime: null,
+          }),
+        resolveFile: () => Promise.resolve(null),
+      });
+      const runFallback = () =>
+        tryErrorPageFallback(
+          new Request("http://localhost/boom"),
+          makeCtx({ adapter, projectId: "inject-reset", isLocalProject: true }),
+          new ResponseBuilder(),
+          { statusCode: 500, pathname: "/boom" },
+        );
+
       __injectCacheForTests(mockRepo as any);
+      await runFallback();
+      assertEquals(
+        gets > 0,
+        true,
+        "an injected cache repo must receive the fallback's cache lookups",
+      );
+
       __injectCacheForTests(null);
+      gets = 0;
+      await runFallback();
+      assertEquals(gets, 0, "resetting with null must detach the injected repo");
     });
   });
 });

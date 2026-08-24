@@ -392,6 +392,16 @@ describe("ApiHandlerWrapper", () => {
     await handler.handle(new Request("http://localhost/api/test"), createCtx(captured));
 
     assertEquals(captured.options?.environmentName, "Staging");
+    assertEquals(
+      captured.options?.productionMode,
+      true,
+      "production requests must enter production context",
+    );
+    assertEquals(
+      captured.options?.branch,
+      null,
+      "production must not carry a preview branch into the project context",
+    );
   });
 
   it("forwards preview branch into multi-project request context", async () => {
@@ -404,5 +414,10 @@ describe("ApiHandlerWrapper", () => {
     await handler.handle(new Request("http://localhost/api/test"), ctx);
 
     assertEquals(captured.options?.branch, "feature-branch");
+    assertEquals(
+      captured.options?.productionMode,
+      false,
+      "preview requests must not enter production context",
+    );
   });
 });

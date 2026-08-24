@@ -186,6 +186,16 @@ describe("dashboard access policy", () => {
       [DASHBOARD_CSRF_HEADER_NAME]: "A".repeat(43),
     });
     assertEquals(hasValidDashboardMutationSession(forged), false);
+
+    const wrongCookie = dashboardRequest("http://localhost/_dev/api/hmr-trigger", {
+      cookie: `${cookieName}=${"B".repeat(43)}`,
+      [DASHBOARD_CSRF_HEADER_NAME]: token,
+    });
+    assertEquals(
+      hasValidDashboardMutationSession(wrongCookie),
+      false,
+      "a pattern-shaped but wrong cookie must not satisfy the double-submit credential",
+    );
   });
 
   it("isolates dashboard session cookies across listener ports", () => {

@@ -91,11 +91,32 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
     });
 
     it("continues for dot-segment paths in production", async () => {
-      const handler = new SSRHandler();
-      const req = new Request("http://localhost/.env");
+      // An extensionless dot route: the file-extension guard does not catch it,
+      // so only the production route-visibility policy can hide it.
+      const handler = new SSRHandler(createMockSSRService());
+      const req = new Request("http://localhost/.veryfront/secrets");
       const ctx = makeCtx({ resolvedEnvironment: "production" });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, true);
+      assertEquals(result.continue, true, "extensionless dot routes must be hidden in production");
+      assertEquals(result.response, undefined);
+    });
+
+    it("still renders dot-segment paths outside production", async () => {
+      const handler = new SSRHandler(createMockSSRService());
+      const req = new Request("http://localhost/.veryfront/secrets");
+      const ctx = makeCtx({
+        isLocalProject: true,
+        projectSlug: "preview-project",
+        resolvedEnvironment: "preview",
+        requestContext: {
+          token: "",
+          slug: "preview-project",
+          branch: "main",
+          mode: "preview",
+        },
+      });
+      const result = await handler.handle(req, ctx);
+      assertEquals(result.response?.status, 200, "dot routes must still render outside production");
     });
 
     it("continues for /_veryfront/ deeply nested paths", async () => {

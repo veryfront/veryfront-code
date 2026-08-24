@@ -436,12 +436,57 @@ describe("server/handlers/preview/hmr.handler", () => {
         }),
       });
 
+      const before = HMRHandler.getClientCount();
       const result = await handler.handle(req, ctx);
 
       assertEquals(result.continue, false);
       assertEquals(Object.is(result.response, upgradeResponse), true);
       assertEquals(result.response instanceof Response, false);
       assertEquals(result.response!.status, 101);
+      assertEquals(
+        HMRHandler.getClientCount(),
+        before + 1,
+        "an upgraded socket must register a client",
+      );
+
+      mock.emit("close", {});
+      assertEquals(
+        HMRHandler.getClientCount(),
+        before,
+        "closing a socket must unregister the client",
+      );
+    });
+
+    it("unregisters the client when the socket errors", async () => {
+      const handler = new HMRHandler();
+      const mock = createMockSocket();
+      const req = new Request("http://localhost/_ws", {
+        headers: { upgrade: "websocket" },
+      });
+      const ctx = makeCtx({
+        isLocalProject: true,
+        adapter: createMockAdapter({
+          upgradeWebSocket: () => ({
+            socket: mock.socket,
+            response: createWebSocketUpgradeResponse(),
+          }),
+        }),
+      });
+
+      const before = HMRHandler.getClientCount();
+      await handler.handle(req, ctx);
+      assertEquals(
+        HMRHandler.getClientCount(),
+        before + 1,
+        "an upgraded socket must register a client",
+      );
+
+      mock.emit("error", {});
+      assertEquals(
+        HMRHandler.getClientCount(),
+        before,
+        "a socket error must unregister the client",
+      );
     });
 
     it("disables runtime idle timeout for upstream HMR WebSocket upgrades", async () => {
@@ -557,7 +602,7 @@ describe("server/handlers/preview/hmr.handler", () => {
         projectId: "proj_123",
         resolvedEnvironment: "preview",
         environmentName: "Development",
-        requestContext: { branch: "main" },
+        requestContext: { branch: "feature-x" },
         adapter: {
           fs: {
             isVeryfrontAdapter: () => true,
@@ -583,6 +628,53 @@ describe("server/handlers/preview/hmr.handler", () => {
       }).ensureAdapterInitialized(ctx);
 
       assertEquals(observed?.environmentName, "Development");
+      assertEquals(
+        observed?.branch,
+        "feature-x",
+        "HMR must warm the adapter for the request's branch, not the default",
+      );
+      assertEquals(
+        observed?.productionMode,
+        false,
+        "preview HMR must warm a non-production adapter",
+      );
+    });
+
+    it("falls back to the main branch when the request carries no branch", async () => {
+      let observed: Record<string, unknown> | undefined;
+      const handler = new HMRHandler();
+      const ctx = {
+        projectSlug: "demo-project",
+        proxyToken: "test-token",
+        projectId: "proj_123",
+        resolvedEnvironment: "preview",
+        environmentName: "Development",
+        requestContext: undefined,
+        adapter: {
+          fs: {
+            isVeryfrontAdapter: () => true,
+            getUnderlyingAdapter: () => undefined,
+            isMultiProjectMode: () => true,
+            runWithContext: (
+              _slug: string,
+              _token: string,
+              run: () => Promise<void>,
+              _projectId: string,
+              options: Record<string, unknown>,
+            ) => {
+              observed = options;
+              return run();
+            },
+            exists: () => Promise.resolve(true),
+          },
+        },
+      } as unknown as HandlerContext;
+
+      await (handler as unknown as {
+        ensureAdapterInitialized(ctx: HandlerContext): Promise<void>;
+      }).ensureAdapterInitialized(ctx);
+
+      assertEquals(observed?.branch, "main", "a request without a branch must warm main");
     });
   });
 });

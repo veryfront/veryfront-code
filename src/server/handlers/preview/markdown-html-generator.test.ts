@@ -135,6 +135,23 @@ describe("generateMarkdownHtml", () => {
     assert(html.includes("studio-bridge.js"));
   });
 
+  it("falls back to the server-resolved project id when vf_project_id is malformed", () => {
+    const html = generateMarkdownHtml(
+      makeOptions({
+        url: new URL('http://localhost/test.md?studio_embed=true&vf_project_id=bad"/id'),
+      }),
+    );
+
+    assert(
+      html.includes('"projectId":"test-project"'),
+      "a malformed vf_project_id must fall back to the server-resolved project id",
+    );
+    assert(
+      !html.includes("bad"),
+      "a rejected vf_project_id must not reach the bridge config",
+    );
+  });
+
   it("adds nonce attributes to inline preview scripts when provided", () => {
     const html = generateMarkdownHtml(
       makeOptions({

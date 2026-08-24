@@ -221,4 +221,38 @@ describe("server/handlers/request/prod-hydration-module.handler", () => {
     assertEquals(response.status, 200);
     assertEquals(await response.text(), "", "HEAD responses carry no body");
   });
+
+  it("serves the current versioned runtime on HEAD requests without a body", async () => {
+    const handler = new ProdHydrationModuleHandler();
+    const result = await handler.handle(
+      new Request(`http://localhost${getProdHydrationModulePath()}`, { method: "HEAD" }),
+      makeCtx(),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(
+      await result.response.text(),
+      "",
+      "HEAD must not carry the hydration runtime body",
+    );
+    assertEquals(result.response.headers.get("cache-control"), IMMUTABLE_CACHE_CONTROL);
+  });
+
+  it("serves the legacy runtime path on HEAD requests without a body", async () => {
+    const handler = new ProdHydrationModuleHandler();
+    const result = await handler.handle(
+      new Request(`http://localhost${PROD_HYDRATION_MODULE_PATH}`, { method: "HEAD" }),
+      makeCtx(),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(
+      await result.response.text(),
+      "",
+      "HEAD must not carry the hydration runtime body",
+    );
+    assertEquals(result.response.headers.get("cache-control"), NO_CACHE_CONTROL);
+  });
 });
