@@ -63,13 +63,16 @@ describe("proxy release asset handler", () => {
 
   it("serves a JS asset with immutable + nosniff headers (happy path)", async () => {
     const source = "export const x = 1;";
-    const fetchImpl = makeFetch(() =>
-      new Response(source, {
+    let requestedUrl = "";
+    const fetchImpl = makeFetch((url) => {
+      requestedUrl = url;
+      return new Response(source, {
         status: 200,
         headers: { "Content-Type": "text/javascript" },
-      })
-    );
-    const url = await assetUrl(source, "js");
+      });
+    });
+    const hash = await computeHashBytes(textEncoder.encode(source));
+    const url = new URL(`https://site.example/_vf/assets/${hash}.js`);
 
     const res = await handle(url, { apiBaseUrl: API_BASE, fetchImpl });
 
@@ -81,6 +84,56 @@ describe("proxy release asset handler", () => {
     );
     assertEquals(res?.headers.get("X-Content-Type-Options"), "nosniff");
     assertEquals(await res?.text(), "export const x = 1;");
+    assertEquals(
+      requestedUrl,
+      `https://api.example.com/release-assets/${hash}`,
+      "a cold asset load must hit the public release-assets endpoint",
+    );
+  });
+
+  it("keeps the path prefix of a based asset API URL", async () => {
+    const source = "export const based = 1;";
+    let requestedUrl = "";
+    const fetchImpl = makeFetch((url) => {
+      requestedUrl = url;
+      return new Response(source, {
+        status: 200,
+        headers: { "Content-Type": "text/javascript" },
+      });
+    });
+    const hash = await computeHashBytes(textEncoder.encode(source));
+    const url = new URL(`https://site.example/_vf/assets/${hash}.js`);
+
+    const res = await handle(url, { apiBaseUrl: "https://api.example.com/v1", fetchImpl });
+
+    assertEquals(res?.status, 200);
+    assertEquals(
+      requestedUrl,
+      `https://api.example.com/v1/release-assets/${hash}`,
+      "a based API URL must keep its path prefix",
+    );
+  });
+
+  it("fails closed on an unsafe asset API base URL", async () => {
+    for (
+      const apiBaseUrl of [
+        "https://user:pass@api.example.com",
+        "https://user@api.example.com",
+        "file:///etc",
+      ]
+    ) {
+      let fetches = 0;
+      const fetchImpl = makeFetch(() => {
+        fetches++;
+        return new Response("never");
+      });
+      const url = new URL(`https://site.example/_vf/assets/${HASH}.js`);
+
+      const res = await handle(url, { apiBaseUrl, fetchImpl });
+
+      assertEquals(res?.status, 502, `${apiBaseUrl} must fail closed with 502`);
+      assertEquals(fetches, 0, `${apiBaseUrl} must not reach the asset origin`);
+    }
   });
 
   it("serves a CSS asset with the css content type", async () => {

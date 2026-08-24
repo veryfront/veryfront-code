@@ -1,4 +1,4 @@
-import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { Context, Span } from "#veryfront/observability/tracing/api-shim.ts";
 import { runProxyRequestLifecycle } from "./request-lifecycle.ts";
@@ -73,25 +73,31 @@ describe("proxy request lifecycle", () => {
     const span = {} as Span;
     const ended: string[] = [];
 
-    try {
-      await runProxyRequestLifecycle({
-        req,
-        url: new URL(req.url),
-        extractContext: () => undefined,
-        startServerSpan: () => ({ span, context: {} as Context }),
-        withContext: (_context, fn) => fn(),
-        endSpan(_span, statusCode, error) {
-          ended.push(`${statusCode}:${error?.message ?? ""}`);
-        },
-        handle: () => {
-          throw new Error("boom");
-        },
-      });
-    } catch (error) {
-      assertEquals(error instanceof Error ? error.message : String(error), "boom");
-    }
+    const error = await assertRejects(
+      () =>
+        runProxyRequestLifecycle({
+          req,
+          url: new URL(req.url),
+          extractContext: () => undefined,
+          startServerSpan: () => ({ span, context: {} as Context }),
+          withContext: (_context, fn) => fn(),
+          endSpan(_span, statusCode, spanError) {
+            ended.push(`${statusCode}:${spanError?.message ?? ""}`);
+          },
+          handle: () => {
+            throw new Error("boom");
+          },
+        }),
+      Error,
+      "boom",
+    );
 
-    assertEquals(ended, ["500:boom"]);
+    assertEquals(
+      error instanceof Error ? error.message : String(error),
+      "boom",
+      "the original handler error must propagate to the caller",
+    );
+    assertEquals(ended, ["500:boom"], "the span must be ended once with the thrown error");
   });
 
   it("contains hostile non-Error throws while preserving the original rejection", async () => {

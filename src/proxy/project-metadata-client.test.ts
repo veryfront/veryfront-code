@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import {
   createProjectMetadataClient,
@@ -24,6 +24,18 @@ function routingMetadata() {
       name: "production",
       domains: ["STORE.example.com."],
       active_release_id: "release-1",
+    }],
+  };
+}
+
+function accessMetadata() {
+  return {
+    id: "project-1",
+    slug: "storefront",
+    environments: [{
+      id: "environment-1",
+      name: "production",
+      protected: false,
     }],
   };
 }
@@ -75,6 +87,35 @@ describe("proxy project metadata client", () => {
     );
     assertEquals((failure as ProxyLookupFailure).publicStatus, 502);
     assertEquals((failure as ProxyLookupFailure).upstreamStatus, 500);
+
+    const forbidden = createProjectMetadataClient({
+      apiBaseUrl: "https://api.example.com",
+      fetchImpl: makeFetch(() => new Response(null, { status: 403 })),
+    });
+    const forbiddenError = await assertRejects(
+      () => forbidden.lookupRouting("storefront", "token"),
+      ProxyLookupAuthError,
+    );
+    assertEquals(
+      (forbiddenError as ProxyLookupAuthError).status,
+      403,
+      "a forbidden metadata response is an authorization rejection, not an upstream outage",
+    );
+
+    const rateLimited = createProjectMetadataClient({
+      apiBaseUrl: "https://api.example.com",
+      fetchImpl: makeFetch(() => new Response(null, { status: 429 })),
+    });
+    const rateLimitFailure = await assertRejects(
+      () => rateLimited.lookupRouting("storefront", "token"),
+      ProxyLookupFailure,
+    );
+    assertEquals(
+      (rateLimitFailure as ProxyLookupFailure).publicStatus,
+      503,
+      "an upstream rate limit must surface with retry semantics, not as a bad gateway",
+    );
+    assertEquals((rateLimitFailure as ProxyLookupFailure).upstreamStatus, 429);
   });
 
   it("records only non-sensitive upstream diagnostics", async () => {
@@ -200,6 +241,63 @@ describe("proxy project metadata client", () => {
     );
   });
 
+  it("requests the member list only when the caller asks for it", async () => {
+    let requestedUrl: URL | undefined;
+    const client = createProjectMetadataClient({
+      apiBaseUrl: "https://api.example.com",
+      fetchImpl: makeFetch((url) => {
+        requestedUrl = url;
+        return Response.json(accessMetadata());
+      }),
+    });
+
+    await client.lookupAccess("storefront", "token", true);
+    assertEquals(
+      requestedUrl?.searchParams.get("include_users"),
+      "true",
+      "an access lookup that needs the member list must request it",
+    );
+
+    await client.lookupAccess("storefront", "token", false);
+    assertEquals(
+      requestedUrl?.searchParams.get("include_users"),
+      "false",
+      "the member-list flag must round-trip rather than being hard-coded",
+    );
+  });
+
+  it("rejects member lists that cannot gate a protected-access decision", async () => {
+    const duplicateUsers = createProjectMetadataClient({
+      apiBaseUrl: "https://api.example.com",
+      fetchImpl: makeFetch(() =>
+        Response.json({
+          ...accessMetadata(),
+          users: [{ id: "usr_1" }, { id: "usr_1" }],
+        })
+      ),
+    });
+    await assertRejects(
+      () => duplicateUsers.lookupAccess("storefront", "token", true),
+      ProxyLookupFailure,
+      "invalid response",
+    );
+
+    const missingUserId = createProjectMetadataClient({
+      apiBaseUrl: "https://api.example.com",
+      fetchImpl: makeFetch(() =>
+        Response.json({
+          ...accessMetadata(),
+          users: [{}],
+        })
+      ),
+    });
+    await assertRejects(
+      () => missingUserId.lookupAccess("storefront", "token", true),
+      ProxyLookupFailure,
+      "invalid response",
+    );
+  });
+
   it("enforces the deadline even when an injected fetch ignores abort", async () => {
     let calls = 0;
     const client = createProjectMetadataClient({
@@ -290,6 +388,24 @@ describe("proxy project metadata client", () => {
         ),
       TypeError,
       "HTTP(S)",
+    );
+
+    // A base URL carrying credentials, a query or a fragment would leak into or
+    // mis-resolve every metadata fetch URL.
+    assertThrows(
+      () => createProjectMetadataClient({ apiBaseUrl: "https://svc:s3cret@api.example.com" }),
+      TypeError,
+      "without credentials",
+    );
+    assertThrows(
+      () => createProjectMetadataClient({ apiBaseUrl: "https://api.example.com/?x=1" }),
+      TypeError,
+      "without credentials",
+    );
+    assertThrows(
+      () => createProjectMetadataClient({ apiBaseUrl: "https://api.example.com/#frag" }),
+      TypeError,
+      "without credentials",
     );
 
     const client = createProjectMetadataClient({

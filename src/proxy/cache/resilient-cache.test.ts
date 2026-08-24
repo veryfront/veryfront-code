@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
+import { waitFor } from "#veryfront/testing";
 import { ResilientCache } from "./resilient-cache.ts";
 import type { CacheStats, TokenCache, TokenCacheEntry } from "./types.ts";
 
@@ -398,6 +399,53 @@ describe("ResilientCache", () => {
 
     assertEquals((await cache.get("key"))?.token, "original");
     assertEquals(cache.getStatus().pendingMutations, 0);
+    await cache.close();
+  });
+
+  it("deletes rather than replays a journaled write that expired while the circuit was open", async () => {
+    let now = 0;
+    const primary = new FakeCache("extension");
+    const fallback = new FakeCache("memory");
+    primary.failures.add("set");
+    const cache = new ResilientCache(primary, fallback, {
+      openDurationMs: 10,
+      now: () => now,
+    });
+    // The replay's expiry check reads the real clock, so the journaled entry
+    // needs a real short TTL rather than the injected test clock.
+    const expiresAt = Date.now() + 25;
+
+    await cache.set("key", { token: "stale", expiresAt, scope: "production" });
+    assertEquals(
+      cache.getStatus().state,
+      "open",
+      "the failed primary write must open the circuit",
+    );
+
+    primary.failures.delete("set");
+    await waitFor(() => Date.now() >= expiresAt, {
+      interval: 5,
+      timeout: 1_000,
+      message: "the journaled entry never reached its expiry",
+    });
+    now = 10;
+    await cache.get("key");
+
+    assertEquals(
+      primary.entries.has("key"),
+      false,
+      "an entry that expired while the circuit was open must be deleted, not replayed, on recovery",
+    );
+    assertEquals(
+      primary.calls.get("delete"),
+      1,
+      "recovery must issue exactly one delete for the expired journal entry",
+    );
+    assertEquals(
+      cache.getStatus().pendingMutations,
+      0,
+      "the journal must be drained once the replay completes",
+    );
     await cache.close();
   });
 

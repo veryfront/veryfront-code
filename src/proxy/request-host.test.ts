@@ -42,6 +42,7 @@ describe("proxy request host normalization", () => {
   });
 
   it("rejects credentials and non-authority components", () => {
+    assertEquals(normalizeProxyRequestHost("example.com"), "example.com");
     for (
       const authority of [
         "",
@@ -51,12 +52,17 @@ describe("proxy request host normalization", () => {
         "example.com?query",
         "example.com#fragment",
         "example.com\\path",
+        "exam" + String.fromCharCode(9) + "ple.com",
+        "example.com" + String.fromCharCode(0),
+        "exam" + String.fromCharCode(13, 10) + "ple.com",
+        "a".repeat(1025) + ".example",
       ]
     ) {
       assertThrows(
         () => normalizeProxyRequestHost(authority),
         TypeError,
         "Host header is invalid",
+        "a Host authority with embedded control characters or over the length bound must be rejected, not silently normalized",
       );
     }
   });

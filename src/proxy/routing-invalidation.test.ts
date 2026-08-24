@@ -189,6 +189,82 @@ describe("proxy routing invalidation ingress", () => {
     });
   });
 
+  it("rejects publisher results whose convergence contradicts its counts", async () => {
+    // A bus that claims convergence while no replica acknowledged would tell the
+    // deploying control plane the old release is no longer being served.
+    const body = createBody();
+    const { jws, publicKeyPem } = await createDispatchSignature(body);
+    const contradictoryResults = [
+      { acknowledged: 0, converged: true, recipients: 0 },
+      { acknowledged: 1, converged: true, recipients: 2 },
+      { acknowledged: 3, converged: false, recipients: 2 },
+    ];
+
+    for (const result of contradictoryResults) {
+      const label = JSON.stringify(result);
+      const response = await handleProxyRoutingInvalidationRequest(
+        new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+          method: "POST",
+          headers: { "x-veryfront-dispatch-jws": jws },
+          body,
+        }),
+        {
+          publicKeyPem,
+          publisher: {
+            publish: () => Promise.resolve(result),
+          },
+        },
+      );
+
+      assertEquals(
+        response.status,
+        503,
+        `an inconsistent publisher result must not be reported as success: ${label}`,
+      );
+      assertEquals(
+        await response.json(),
+        { error: "Routing invalidation did not converge" },
+        `an invalid publisher result must return the generic failure body, not the raw counts: ${label}`,
+      );
+    }
+  });
+
+  it("rejects malformed invalidation input before it reaches the publisher", async () => {
+    // The 400 gate runs before the signature gate, so it is what stands between
+    // an unauthenticated caller and caller-shaped audience/project claims.
+    const { publicKeyPem } = await createDispatchSignature(createBody());
+    const valid = JSON.parse(createBody()) as Record<string, unknown>;
+    const malformedBodies: Array<[string, string]> = [
+      ["a body that is not JSON at all", "{ not json"],
+      ["an unsupported version", JSON.stringify({ ...valid, version: 2 })],
+      ["an uppercase project slug", JSON.stringify({ ...valid, projectSlug: "Demo-Project" })],
+      ["a project slug with a leading hyphen", JSON.stringify({ ...valid, projectSlug: "-demo" })],
+      ["an empty release id", JSON.stringify({ ...valid, releaseId: "" })],
+    ];
+    const published: ProxyRoutingInvalidationEvent[] = [];
+
+    for (const [label, malformed] of malformedBodies) {
+      const response = await handleProxyRoutingInvalidationRequest(
+        new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+          method: "POST",
+          body: malformed,
+        }),
+        {
+          publicKeyPem,
+          publisher: {
+            publish: (event) => {
+              published.push(event);
+              return Promise.resolve({ acknowledged: 1, converged: true, recipients: 1 });
+            },
+          },
+        },
+      );
+
+      assertEquals(response.status, 400, `${label} must be rejected as malformed input`);
+      assertEquals(published.length, 0, `${label} must never reach the publisher`);
+    }
+  });
+
   it("fails closed when signing verification is not configured", async () => {
     const response = await handleProxyRoutingInvalidationRequest(
       new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
@@ -349,6 +425,53 @@ describe("proxy routing invalidation ingress", () => {
     assertStringIncludes(String(warnings[0]?.extra?.reason), "missing");
   });
 
+  it("keeps a failing log sink from upgrading a rejection into a 500", async () => {
+    // Diagnosability must not cost availability: a transport or serialization
+    // failure in the warning sink cannot be allowed to rewrite the answer.
+    const body = createBody();
+    const { jws, publicKeyPem } = await createDispatchSignature(body);
+    const tampered = jws.slice(0, -4) + (jws.endsWith("AAAA") ? "BBBB" : "AAAA");
+    const logger = {
+      warn: (): void => {
+        throw new Error("sink down");
+      },
+    };
+    const publisher = {
+      publish: () => Promise.resolve({ acknowledged: 1, converged: true, recipients: 1 }),
+    };
+
+    const rejected = await handleProxyRoutingInvalidationRequest(
+      new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+        method: "POST",
+        headers: { "x-veryfront-dispatch-jws": tampered },
+        body,
+      }),
+      { publicKeyPem, logger, publisher },
+    );
+
+    assertEquals(rejected.status, 401, "a throwing log sink must not change the rejection status");
+    assertEquals(
+      await rejected.json(),
+      { error: "Invalid routing invalidation signature" },
+      "the generic rejection body must be preserved",
+    );
+
+    const accepted = await handleProxyRoutingInvalidationRequest(
+      new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+        method: "POST",
+        headers: { "x-veryfront-dispatch-jws": jws },
+        body,
+      }),
+      { publicKeyPem, logger, publisher },
+    );
+
+    assertEquals(
+      accepted.status,
+      200,
+      "a throwing log sink must not poison a later valid invalidation",
+    );
+  });
+
   it("coalesces repeated rejections of one class into a counted warning", async () => {
     // Unauthenticated callers reach this path, so one log write per request is
     // an amplification lever. The first rejection must still warn immediately —
@@ -390,6 +513,44 @@ describe("proxy routing invalidation ingress", () => {
     assertEquals(warnings.length, 2);
     assertEquals(warnings[1]?.extra?.coalescedSincePreviousWarning, 4);
     assertStringIncludes(String(warnings[1]?.extra?.reason), "missing");
+
+    // An NTP step backwards must not silence the class until the clock catches up.
+    clockMs -= 300_000;
+    assertEquals((await reject()).status, 401);
+    assertEquals(
+      warnings.length,
+      3,
+      "a backwards clock step must expire the window instead of silencing the class",
+    );
+  });
+
+  it("buckets unforeseen rejection classes into a shared overflow class", () => {
+    // Mirrors MAX_TRACKED_REJECTION_CLASSES in routing-invalidation.ts: the map
+    // is capped so an error type carrying a dynamic name cannot grow it forever.
+    const maxTrackedRejectionClasses = 32;
+    const throttle = createProxyRoutingInvalidationRejectionThrottle({
+      nowMs: () => 0,
+      windowMs: 60_000,
+    });
+
+    for (let index = 0; index < maxTrackedRejectionClasses; index += 1) {
+      assertEquals(
+        throttle.admit(`class-${index}`),
+        0,
+        `the first rejection of class-${index} must warn immediately`,
+      );
+    }
+
+    assertEquals(
+      throttle.admit("class-overflow-a"),
+      0,
+      "the first overflow-class rejection still warns",
+    );
+    assertEquals(
+      throttle.admit("class-overflow-b"),
+      null,
+      "a second distinct unforeseen class must coalesce into the shared overflow bucket rather than grow the map",
+    );
   });
 
   // Deliberately no in-process "missing SchemaValidator" test. One was written

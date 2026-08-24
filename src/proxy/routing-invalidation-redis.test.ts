@@ -228,6 +228,51 @@ describe("proxy routing invalidation Redis bus", () => {
     await bus?.close();
   });
 
+  it("force-destroys a Redis client whose close rejects at shutdown", async () => {
+    const redis = createFakeRedisServer();
+    const destroyed: string[] = [];
+    const warnings: Array<{ message: string; extra?: Record<string, unknown> }> = [];
+    let created = 0;
+    const bus = await startProxyRoutingInvalidationBus({
+      redisUrl: "redis://example.test:6379",
+      replicaId: "replica-a",
+      integritySecret: createIntegritySecret(),
+      createClient: () => {
+        const client = redis.createClient();
+        const role = created++ === 0 ? "publisher" : "subscriber";
+        return {
+          ...client,
+          close: () => Promise.reject(new Error("close failed")),
+          destroy: () => {
+            destroyed.push(role);
+            client.destroy();
+          },
+        };
+      },
+      logger: {
+        info: () => {},
+        warn: (message, extra) => warnings.push({ message, extra }),
+        error: () => {},
+      },
+      onInvalidate: () => {},
+    });
+
+    await bus?.close();
+
+    assertEquals(
+      destroyed.length,
+      2,
+      "both the publisher and the subscriber must be force-destroyed when close() rejects",
+    );
+    assertEquals(
+      warnings.some((entry) =>
+        entry.message.includes("Failed to close routing invalidation Redis client cleanly")
+      ),
+      true,
+      "a failed shutdown close must be reported, not swallowed",
+    );
+  });
+
   it("fans out to every replica and waits for a distinct acknowledgement from each", async () => {
     const redis = createFakeRedisServer();
     const integritySecret = createIntegritySecret();
@@ -267,6 +312,57 @@ describe("proxy routing invalidation Redis bus", () => {
     await busA?.close();
     await busB?.close();
     assertEquals(redis.clients.length, 4);
+  });
+
+  it("counts distinct replicas, not acknowledgement messages", async () => {
+    const redis = createFakeRedisServer();
+    const integritySecret = createIntegritySecret();
+    // Redis redelivery, or one buggy replica, can repeat an acknowledgement.
+    redis.setOnPublish(async (channel) => {
+      if (channel !== ROUTING_INVALIDATION_CHANNEL) return;
+      const acknowledgement = await signTestEnvelope(
+        ACK_SIGNATURE_DOMAIN,
+        JSON.stringify({ eventId: "event-1", replicaId: "replica-b" }),
+        integritySecret,
+      );
+      await redis.publishRaw(`${ROUTING_INVALIDATION_ACK_PREFIX}event-1`, acknowledgement);
+      await redis.publishRaw(`${ROUTING_INVALIDATION_ACK_PREFIX}event-1`, acknowledgement);
+    });
+    const busA = await startProxyRoutingInvalidationBus({
+      redisUrl: "redis://example.test:6379",
+      expectedReplicas: 2,
+      replicaId: "replica-a",
+      acknowledgementTimeoutMs: 10,
+      createClient: redis.createClient,
+      integritySecret,
+      now: () => TEST_NOW_MS,
+      onInvalidate: () => {
+        throw new Error("replica-a did not apply the event");
+      },
+    });
+    const busB = await startProxyRoutingInvalidationBus({
+      redisUrl: "redis://example.test:6379",
+      expectedReplicas: 2,
+      replicaId: "replica-b",
+      acknowledgementTimeoutMs: 10,
+      createClient: redis.createClient,
+      integritySecret,
+      now: () => TEST_NOW_MS,
+      onInvalidate: () => {
+        throw new Error("replica-b did not apply the event");
+      },
+    });
+
+    const result = await busA?.publish(createEvent());
+
+    assertEquals(
+      result,
+      { acknowledged: 1, converged: false, recipients: 2 },
+      "two acknowledgements from one replica must count once",
+    );
+
+    await busA?.close();
+    await busB?.close();
   });
 
   it("does not claim convergence when a subscribed replica fails to apply the event", async () => {
@@ -433,6 +529,42 @@ describe("proxy routing invalidation Redis bus", () => {
     await bus?.close();
   });
 
+  it("ignores future-dated Redis invalidation events", async () => {
+    const redis = createFakeRedisServer();
+    const integritySecret = createIntegritySecret();
+    const replicaEvents: ProxyRoutingInvalidationEvent[] = [];
+    const bus = await startProxyRoutingInvalidationBus({
+      redisUrl: "redis://example.test:6379",
+      expectedReplicas: 1,
+      replicaId: "replica-a",
+      acknowledgementTimeoutMs: 10,
+      createClient: redis.createClient,
+      integritySecret,
+      now: () => TEST_NOW_MS,
+      onInvalidate: (event) => {
+        replicaEvents.push(event);
+      },
+    });
+
+    await redis.publishRaw(
+      ROUTING_INVALIDATION_CHANNEL,
+      await signTestEnvelope(
+        EVENT_SIGNATURE_DOMAIN,
+        JSON.stringify(createEvent()),
+        integritySecret,
+        TEST_NOW_MS + 6_000,
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assertEquals(
+      replicaEvents,
+      [],
+      "an envelope issued beyond the clock-skew allowance must not be applied",
+    );
+    await bus?.close();
+  });
+
   it("ignores forged Redis acknowledgements", async () => {
     const redis = createFakeRedisServer();
     const integritySecret = createIntegritySecret();
@@ -497,6 +629,44 @@ describe("proxy routing invalidation Redis bus", () => {
     const result = await bus?.publish(createEvent());
 
     assertEquals(result, { acknowledged: 0, converged: false, recipients: 1 });
+    await bus?.close();
+  });
+
+  it("ignores future-dated Redis acknowledgements", async () => {
+    const redis = createFakeRedisServer();
+    const integritySecret = createIntegritySecret();
+    redis.setOnPublish(async (channel) => {
+      if (channel !== ROUTING_INVALIDATION_CHANNEL) return;
+      await redis.publishRaw(
+        `${ROUTING_INVALIDATION_ACK_PREFIX}event-1`,
+        await signTestEnvelope(
+          ACK_SIGNATURE_DOMAIN,
+          JSON.stringify({ eventId: "event-1", replicaId: "replica-b" }),
+          integritySecret,
+          TEST_NOW_MS + 6_000,
+        ),
+      );
+    });
+    const bus = await startProxyRoutingInvalidationBus({
+      redisUrl: "redis://example.test:6379",
+      expectedReplicas: 1,
+      replicaId: "replica-a",
+      acknowledgementTimeoutMs: 10,
+      createClient: redis.createClient,
+      integritySecret,
+      now: () => TEST_NOW_MS,
+      onInvalidate: () => {
+        throw new Error("no legitimate acknowledgement");
+      },
+    });
+
+    const result = await bus?.publish(createEvent());
+
+    assertEquals(
+      result,
+      { acknowledged: 0, converged: false, recipients: 1 },
+      "a future-dated acknowledgement must not count toward convergence",
+    );
     await bus?.close();
   });
 
