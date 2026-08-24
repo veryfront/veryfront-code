@@ -4641,7 +4641,17 @@ describe("anthropic-provider", () => {
           const signal = init && "signal" in init ? init.signal : undefined;
           if (signal instanceof AbortSignal) signals.push(signal);
           if (attempts === 1) return Promise.resolve(streamResponse(OVERLOADED));
-          return new Promise<Response>(() => {});
+          // Headers never arrive; only the deadline can end this. Reject on
+          // abort the way a real fetch does, rather than leaving a promise
+          // pending forever - `--trace-leaks` fails a shard on that, and a
+          // test should not plant one.
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener(
+              "abort",
+              () => reject(new DOMException("Aborted", "AbortError")),
+              { once: true },
+            );
+          });
         },
       }, "claude-opus-4-6");
 
