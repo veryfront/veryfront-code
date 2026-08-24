@@ -2,12 +2,12 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
-import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
+import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "#veryfront/chat/types.ts";
 import type { HostedAgentRunSpan, HostedAgentRunTracer } from "./agent-run-lifecycle.ts";
 import {
   type ConversationRunChunkMirror,
   createHostedConversationRunChunkMirror,
-} from "../conversation/run-chunk-mirror.ts";
+} from "#veryfront/agent/conversation/run-chunk-mirror.ts";
 import type { ConversationRunMirrorDisableReason } from "../conversation/run-mirror.ts";
 import type {
   HostedChatRuntimeAgent,
@@ -1429,13 +1429,16 @@ describe("agent/hosted-chat-execution-runtime", () => {
       delta: "late reasoning",
     });
     assertEquals(appendRequestCount, 1);
-    streamOptions.onFinish?.({
+    const finishPromise = streamOptions.onFinish?.({
       messages: [],
       isContinuation: false,
       responseMessage: createResponseMessage({ parts: [{ type: "text", text: "done" }] }),
       isAborted: false,
       finishReason: "stop",
     });
+    if (!finishPromise) {
+      throw new Error("finish callback did not return its completion promise");
+    }
     appendResponse.resolve(
       Response.json(
         {
@@ -1451,6 +1454,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
         { status: 404 },
       ),
     );
+    await finishPromise;
     await runtime.waitForFinish();
     const drainedMirror = durableRunMirror.getSnapshot();
     durableRunMirror.dispose();
