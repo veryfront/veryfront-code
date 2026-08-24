@@ -527,8 +527,39 @@ describe("State Bridge", () => {
   describe("beforeunload Event", () => {
     it("should save state on beforeunload", () => {
       // The listener is only registered when `window` exists, so install it before
-      // the bridge is constructed.
-      (globalThis as any).window = {};
+      // the bridge is constructed. Node's global scope is not an EventTarget, so
+      // the listener surface is stubbed rather than borrowed from the runtime.
+      const eventGlobals = [
+        "window",
+        "addEventListener",
+        "removeEventListener",
+        "dispatchEvent",
+      ] as const;
+      const previousGlobals = new Map(
+        eventGlobals.map(
+          (key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const,
+        ),
+      );
+      const listeners = new Map<string, Set<(event: Event) => void>>();
+      const defineGlobal = (key: string, value: unknown): void => {
+        Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+      };
+      defineGlobal("window", {});
+      defineGlobal("addEventListener", (type: string, listener: (event: Event) => void) => {
+        let callbacks = listeners.get(type);
+        if (!callbacks) {
+          callbacks = new Set();
+          listeners.set(type, callbacks);
+        }
+        callbacks.add(listener);
+      });
+      defineGlobal("removeEventListener", (type: string, listener: (event: Event) => void) => {
+        listeners.get(type)?.delete(listener);
+      });
+      defineGlobal("dispatchEvent", (event: Event) => {
+        for (const listener of listeners.get(event.type) ?? []) listener(event);
+        return true;
+      });
       __resetBridgeForTests();
 
       try {
@@ -554,7 +585,11 @@ describe("State Bridge", () => {
         );
       } finally {
         __resetBridgeForTests();
-        delete (globalThis as any).window;
+        for (const key of eventGlobals) {
+          const descriptor = previousGlobals.get(key);
+          if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+          else Reflect.deleteProperty(globalThis, key);
+        }
       }
     });
   });
