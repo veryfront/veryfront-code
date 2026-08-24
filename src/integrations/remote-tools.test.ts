@@ -146,10 +146,11 @@ describe("integrations/remote-tools", () => {
         fetchCalls++;
         const authorization = request.headers.get("Authorization");
         const tenant = authorization === "Bearer tenant-a-token" ? "a" : "b";
+        const project = request.headers.get("x-veryfront-project-slug") ?? "none";
         return Response.json({
           tools: [{
-            name: `github__tenant_${tenant}`,
-            description: `Tenant ${tenant}`,
+            name: `github__tenant_${tenant}_${project}`,
+            description: `Tenant ${tenant} ${project}`,
             inputSchema: {},
           }],
         });
@@ -167,17 +168,21 @@ describe("integrations/remote-tools", () => {
           const repeatFetchCalls = fetchCalls;
           const tenantB = await getRemoteIntegrationToolDiscovery({
             authToken: "tenant-b-token",
+            projectSlug: "project-a",
+          });
+          const projectB = await getRemoteIntegrationToolDiscovery({
+            authToken: "tenant-a-token",
             projectSlug: "project-b",
           });
-          return { tenantA, tenantARepeat, repeatFetchCalls, tenantB };
+          return { tenantA, tenantARepeat, repeatFetchCalls, tenantB, projectB };
         }),
     );
 
     const tenantACatalog: RemoteIntegrationToolDiscoveryResult = {
       status: "ok",
       tools: [{
-        name: "github__tenant_a",
-        description: "Tenant a",
+        name: "github__tenant_a_project-a",
+        description: "Tenant a project-a",
         parameters: { type: "object", properties: {} },
       }],
     };
@@ -189,8 +194,8 @@ describe("integrations/remote-tools", () => {
     );
     assertEquals(
       fetchCalls,
-      2,
-      "a different credential and project must miss the per-run cache",
+      3,
+      "different credentials and projects must independently miss the per-run cache",
     );
     assertEquals(results.tenantA, tenantACatalog, "tenant A must receive its own catalog");
     assertEquals(
@@ -203,12 +208,24 @@ describe("integrations/remote-tools", () => {
       {
         status: "ok",
         tools: [{
-          name: "github__tenant_b",
-          description: "Tenant b",
+          name: "github__tenant_b_project-a",
+          description: "Tenant b project-a",
           parameters: { type: "object", properties: {} },
         }],
       },
-      "tenant B must never be served tenant A's catalog",
+      "a different credential with the same project must never be served tenant A's catalog",
+    );
+    assertEquals(
+      results.projectB,
+      {
+        status: "ok",
+        tools: [{
+          name: "github__tenant_a_project-b",
+          description: "Tenant a project-b",
+          parameters: { type: "object", properties: {} },
+        }],
+      },
+      "the same credential with a different project must miss the per-run cache",
     );
   });
 
