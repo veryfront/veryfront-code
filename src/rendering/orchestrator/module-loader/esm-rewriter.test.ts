@@ -8,38 +8,38 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
   describe("rewriteEsmPaths", () => {
     const urlBase = "https://esm.sh/v135/react-dom@18.2.0/es2022/";
 
-    it("should not modify code with no imports or exports", () => {
+    it("should not modify code with no imports or exports", async () => {
       const code = `console.log("no imports here");`;
-      assertEquals(rewriteEsmPaths(code, urlBase), code);
+      assertEquals(await rewriteEsmPaths(code, urlBase), code);
     });
 
-    it("should not modify non-path strings", () => {
+    it("should not modify non-path strings", async () => {
       const code = `const x = "hello world";`;
-      assertEquals(rewriteEsmPaths(code, urlBase), code);
+      assertEquals(await rewriteEsmPaths(code, urlBase), code);
     });
 
-    it("should not modify import of bare specifiers", () => {
+    it("should not modify import of bare specifiers", async () => {
       const code = `import "react"`;
-      assertEquals(rewriteEsmPaths(code, urlBase), code);
+      assertEquals(await rewriteEsmPaths(code, urlBase), code);
     });
 
-    it("should not modify from of bare specifiers", () => {
+    it("should not modify from of bare specifiers", async () => {
       const code = `import { useState } from "react"`;
-      assertEquals(rewriteEsmPaths(code, urlBase), code);
+      assertEquals(await rewriteEsmPaths(code, urlBase), code);
     });
 
-    it("should return same string for empty input", () => {
-      assertEquals(rewriteEsmPaths("", urlBase), "");
+    it("should return same string for empty input", async () => {
+      assertEquals(await rewriteEsmPaths("", urlBase), "");
     });
 
-    it("should preserve non-import code lines around imports", () => {
+    it("should preserve non-import code lines around imports", async () => {
       const code = `const x = 1;\nconst y = 2;`;
-      assertEquals(rewriteEsmPaths(code, urlBase), code);
+      assertEquals(await rewriteEsmPaths(code, urlBase), code);
     });
 
-    it("should not rewrite veryfront module paths via from", () => {
+    it("should not rewrite veryfront module paths via from", async () => {
       const code = `import { something } from "/_vf_modules/my-module.js"`;
-      const result = rewriteEsmPaths(code, urlBase);
+      const result = await rewriteEsmPaths(code, urlBase);
       // A substring check would still hold for "https://esm.sh/_vf_modules/...",
       // so the oracle has to be the whole output.
       assertEquals(
@@ -54,7 +54,7 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       );
     });
 
-    it("should not rewrite veryfront module paths in the other specifier forms", () => {
+    it("should not rewrite veryfront module paths in the other specifier forms", async () => {
       for (
         const code of [
           `import "/_vf_modules/my-module.js"`,
@@ -63,16 +63,16 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
         ]
       ) {
         assertEquals(
-          rewriteEsmPaths(code, urlBase),
+          await rewriteEsmPaths(code, urlBase),
           code,
           "every specifier form must leave a locally served path untouched",
         );
       }
     });
 
-    it("should not rewrite _veryfront paths via from", () => {
+    it("should not rewrite _veryfront paths via from", async () => {
       const code = `import { something } from "/_veryfront/modules/component.js"`;
-      const result = rewriteEsmPaths(code, urlBase);
+      const result = await rewriteEsmPaths(code, urlBase);
       assertEquals(
         result,
         code,
@@ -85,7 +85,7 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       );
     });
 
-    it("should not rewrite _veryfront paths in the other specifier forms", () => {
+    it("should not rewrite _veryfront paths in the other specifier forms", async () => {
       for (
         const code of [
           `import "/_veryfront/modules/component.js"`,
@@ -94,64 +94,101 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
         ]
       ) {
         assertEquals(
-          rewriteEsmPaths(code, urlBase),
+          await rewriteEsmPaths(code, urlBase),
           code,
           "every specifier form must leave a virtual-module path untouched",
         );
       }
     });
 
-    it("resolves absolute specifiers through esm.sh", () => {
+    it("resolves absolute specifiers through esm.sh", async () => {
       assertEquals(
-        rewriteEsmPaths(`import "/v135/react.js"`, urlBase),
+        await rewriteEsmPaths(`import "/v135/react.js"`, urlBase),
         `import "https://esm.sh/v135/react.js"`,
         "a bare absolute path belongs to esm.sh, not to the local server",
       );
       assertEquals(
-        rewriteEsmPaths(`import React from "/v135/react.js"`, urlBase),
+        await rewriteEsmPaths(`import React from "/v135/react.js"`, urlBase),
         `import React from "https://esm.sh/v135/react.js"`,
         "a bare absolute path belongs to esm.sh, not to the local server",
       );
       assertEquals(
-        rewriteEsmPaths(`export * from "/v135/a.js"`, urlBase),
+        await rewriteEsmPaths(`export * from "/v135/a.js"`, urlBase),
         `export * from "https://esm.sh/v135/a.js"`,
         "a bare absolute path belongs to esm.sh, not to the local server",
       );
       assertEquals(
-        rewriteEsmPaths(`export { b } from "/v135/b.js"`, urlBase),
+        await rewriteEsmPaths(`export { b } from "/v135/b.js"`, urlBase),
         `export { b } from "https://esm.sh/v135/b.js"`,
         "a bare absolute path belongs to esm.sh, not to the local server",
       );
     });
 
-    it("resolves relative specifiers against the module's own URL", () => {
+    it("resolves relative specifiers against the module's own URL", async () => {
       assertEquals(
-        rewriteEsmPaths(`import x from "./chunk.js"`, urlBase),
+        await rewriteEsmPaths(`import x from "./chunk.js"`, urlBase),
         `import x from "https://esm.sh/v135/react-dom@18.2.0/es2022/chunk.js"`,
         "a relative specifier resolves against the fetched module's URL",
       );
       assertEquals(
-        rewriteEsmPaths(`import "./chunk.js"`, urlBase),
+        await rewriteEsmPaths(`import "./chunk.js"`, urlBase),
         `import "https://esm.sh/v135/react-dom@18.2.0/es2022/chunk.js"`,
         "a relative specifier resolves against the fetched module's URL",
       );
       assertEquals(
-        rewriteEsmPaths(`export * from "./chunk.js"`, urlBase),
+        await rewriteEsmPaths(`export * from "./chunk.js"`, urlBase),
         `export * from "https://esm.sh/v135/react-dom@18.2.0/es2022/chunk.js"`,
         "a relative specifier resolves against the fetched module's URL",
       );
       assertEquals(
-        rewriteEsmPaths(`export { b } from "../es2021/b.js"`, urlBase),
+        await rewriteEsmPaths(`export { b } from "../es2021/b.js"`, urlBase),
         `export { b } from "https://esm.sh/v135/react-dom@18.2.0/es2021/b.js"`,
         "a parent-relative specifier resolves against the fetched module's URL",
       );
     });
 
-    it("should handle code with mixed import types", () => {
+    it("should handle code with mixed import types", async () => {
       const code = `import React from "react"\nconst x = 42;`;
-      const result = rewriteEsmPaths(code, urlBase);
+      const result = await rewriteEsmPaths(code, urlBase);
       // Bare specifiers should be untouched
       assertEquals(result.includes('"react"'), true);
+    });
+
+    it("leaves specifier-shaped text inside ordinary string data alone", async () => {
+      // A pattern-matching rewrite cannot tell a module specifier from the same
+      // text inside a string literal, and would turn this program's data into an
+      // esm.sh URL. Only a position the lexer calls a specifier may be edited.
+      for (
+        const code of [
+          `const message = 'from "/v135/help"';`,
+          `const message = 'import "/v135/help"';`,
+          `const message = 'export * from "./help.js"';`,
+        ]
+      ) {
+        assertEquals(
+          await rewriteEsmPaths(code, urlBase),
+          code,
+          "string data that merely reads like an import must survive untouched",
+        );
+      }
+    });
+
+    it("rewrites a real specifier that sits beside specifier-shaped string data", async () => {
+      const code = `const doc = 'see from "/v135/help"';\nimport React from "/v135/react.js";`;
+      assertEquals(
+        await rewriteEsmPaths(code, urlBase),
+        `const doc = 'see from "/v135/help"';\nimport React from "https://esm.sh/v135/react.js";`,
+        "skipping string data must not cost the genuine specifier its rewrite",
+      );
+    });
+
+    it("leaves a specifier-shaped path inside a comment alone", async () => {
+      const code = `// import "/v135/react.js"\nconst x = 1;`;
+      assertEquals(
+        await rewriteEsmPaths(code, urlBase),
+        code,
+        "a commented-out import is not part of the module graph",
+      );
     });
   });
 
@@ -251,6 +288,80 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       await assertRejects(
         () => fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache),
         Error,
+      );
+    });
+
+    it("terminates on a dependency cycle instead of fetching forever", async () => {
+      // A and B import each other. Nothing enters `esmCache` until a fetch has
+      // finished, so re-entering a URL already on the stack never terminates.
+      // The fetch budget turns that runaway into a failure rather than a hang.
+      const esmCache = new Map<string, string>();
+      let fetchCount = 0;
+      globalThis.fetch = ((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        fetchCount++;
+        if (fetchCount > 8) throw new Error(`runaway fetch of ${url}`);
+        if (url === "https://esm.sh/cycle-a") {
+          return Promise.resolve(
+            jsonResponse(`import { b } from "https://esm.sh/cycle-b";\nexport const a = 1;`),
+          );
+        }
+        if (url === "https://esm.sh/cycle-b") {
+          return Promise.resolve(
+            jsonResponse(`import { a } from "https://esm.sh/cycle-a";\nexport const b = 2;`),
+          );
+        }
+        return Promise.resolve(new Response("not found", { status: 404 }));
+      }) as typeof fetch;
+
+      const result = await fetchEsmModule("https://esm.sh/cycle-a", tmpDir, localAdapter, esmCache);
+
+      assertEquals(fetchCount, 2, "each module in the cycle is fetched exactly once");
+      assertEquals(files.size, 2, "both modules in the cycle are written");
+
+      const bPaths = [...files.keys()].filter((path) => path !== result);
+      assertEquals(bPaths.length, 1);
+      const bPath = bPaths[0] ?? "";
+
+      assertEquals(
+        files.get(result)?.includes(`file://${bPath}`),
+        true,
+        "the entry module points at the local copy of its cyclic dependency",
+      );
+      assertEquals(
+        files.get(bPath)?.includes(`file://${result}`),
+        true,
+        "the back edge resolves to the path the entry module is actually written to",
+      );
+      assertEquals(
+        /esm\.sh\/cycle-/.test(`${files.get(result)}${files.get(bPath)}`),
+        false,
+        "no remote esm.sh reference survives in either side of the cycle",
+      );
+    });
+
+    it("terminates on a self-referencing module", async () => {
+      const esmCache = new Map<string, string>();
+      let fetchCount = 0;
+      globalThis.fetch = ((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        fetchCount++;
+        if (fetchCount > 8) throw new Error(`runaway fetch of ${url}`);
+        if (url === "https://esm.sh/self") {
+          return Promise.resolve(
+            jsonResponse(`export { x } from "https://esm.sh/self";\nexport const x = 1;`),
+          );
+        }
+        return Promise.resolve(new Response("not found", { status: 404 }));
+      }) as typeof fetch;
+
+      const result = await fetchEsmModule("https://esm.sh/self", tmpDir, localAdapter, esmCache);
+
+      assertEquals(fetchCount, 1, "a module that imports itself is fetched once");
+      assertEquals(
+        files.get(result)?.includes(`file://${result}`),
+        true,
+        "the self edge resolves to the module's own local path",
       );
     });
 

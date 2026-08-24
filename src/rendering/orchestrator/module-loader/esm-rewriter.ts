@@ -2,11 +2,9 @@ import { rendererLogger } from "#veryfront/utils";
 import { MODULE_NOT_FOUND } from "#veryfront/errors";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { generateHash } from "./cache.ts";
-import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
+import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 
 const logger = rendererLogger.component("module-loader");
-
-type PathResolver = (path: string) => string;
 
 /**
  * Specifiers `code` imports statically, as opposed to through `import(...)` or
@@ -34,42 +32,41 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export function rewriteEsmPaths(code: string, urlBase: string): string {
-  // Skip veryfront module paths - they're served locally, not via esm.sh
-  const resolveAbsolute: PathResolver = (path) =>
-    path.startsWith("/_vf_modules/") || path.startsWith("/_veryfront/")
-      ? path
-      : `https://esm.sh${path}`;
-  const resolveRelative: PathResolver = (path) => new URL(path, urlBase).href;
-
-  const patterns: Array<[RegExp, number, PathResolver]> = [
-    [/import\s*(["'])(\/[^"']+)\1/g, 2, resolveAbsolute],
-    [/from\s*(["'])(\/[^"']+)\1/g, 2, resolveAbsolute],
-    [/export\s*\*\s*from\s*(["'])(\/[^"']+)\1/g, 2, resolveAbsolute],
-    [/export\s*\{([^}]+)\}\s*from\s*(["'])(\/[^"']+)\2/g, 3, resolveAbsolute],
-
-    [/import\s*(["'])(\.\.?\/[^"']+)\1/g, 2, resolveRelative],
-    [/from\s*(["'])(\.\.?\/[^"']+)\1/g, 2, resolveRelative],
-    [/export\s*\*\s*from\s*(["'])(\.\.?\/[^"']+)\1/g, 2, resolveRelative],
-    [/export\s*\{([^}]+)\}\s*from\s*(["'])(\.\.?\/[^"']+)\2/g, 3, resolveRelative],
-  ];
-
-  let result = code;
-
-  for (const [pattern, pathIndex, resolver] of patterns) {
-    result = result.replace(pattern, (...args) => {
-      const match = args[0];
-      // args[0] is the whole match, so capture group N is args[N].
-      const path = args[pathIndex];
-      const quote = pathIndex === 3 ? args[2] : args[1];
-
-      const resolved = resolver(path);
-      const pathPattern = new RegExp(`${quote}${escapeRegExp(path)}${quote}`);
-      return match.replace(pathPattern, `${quote}${resolved}${quote}`);
+/**
+ * Point an esm.sh bundle's server-absolute and relative specifiers at absolute
+ * esm.sh URLs, so the module still resolves once it is written to a temp file.
+ *
+ * The rewrite is driven by the module lexer rather than by pattern matching:
+ * only a position the lexer reports as a specifier is edited, so ordinary
+ * string data that happens to read like an import statement — say
+ * `const help = 'from "/v135/help"'` — is left alone. A bundle the lexer
+ * cannot read keeps its specifiers verbatim; guessing with a regex there would
+ * reintroduce exactly the string-versus-specifier confusion this avoids.
+ */
+export async function rewriteEsmPaths(code: string, urlBase: string): Promise<string> {
+  try {
+    return await replaceSpecifiers(code, (specifier) => {
+      if (specifier.startsWith("./") || specifier.startsWith("../")) {
+        return new URL(specifier, urlBase).href;
+      }
+      if (!specifier.startsWith("/")) return null;
+      // veryfront module paths are served locally, not via esm.sh.
+      if (specifier.startsWith("/_vf_modules/") || specifier.startsWith("/_veryfront/")) {
+        return null;
+      }
+      return `https://esm.sh${specifier}`;
     });
+  } catch (error) {
+    logger.debug("Could not lex a fetched module; leaving its specifiers unrewritten", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return code;
   }
+}
 
-  return result;
+/** Where `url`'s rewritten source is written. Depends only on `url` and `tmpDir`. */
+async function esmTempFilePath(url: string, tmpDir: string): Promise<string> {
+  return `${tmpDir}/esm-${await generateHash(url)}.js`;
 }
 
 export async function fetchEsmModule(
@@ -77,6 +74,21 @@ export async function fetchEsmModule(
   tmpDir: string,
   localAdapter: RuntimeAdapter,
   esmCache: Map<string, string>,
+): Promise<string> {
+  return await fetchEsmModuleWithin(url, tmpDir, localAdapter, esmCache, new Set());
+}
+
+/**
+ * @param pending URLs whose fetch is still unwinding further up this call
+ * stack. A dependency graph with a cycle would otherwise recurse forever,
+ * because a URL only reaches `esmCache` once its own nested fetches finish.
+ */
+async function fetchEsmModuleWithin(
+  url: string,
+  tmpDir: string,
+  localAdapter: RuntimeAdapter,
+  esmCache: Map<string, string>,
+  pending: ReadonlySet<string>,
 ): Promise<string> {
   const cached = esmCache.get(url);
   if (cached) return cached;
@@ -91,7 +103,7 @@ export async function fetchEsmModule(
   let code = await response.text();
 
   const urlBase = url.substring(0, url.lastIndexOf("/") + 1);
-  code = rewriteEsmPaths(code, urlBase);
+  code = await rewriteEsmPaths(code, urlBase);
 
   const allEsmUrls = new Set<string>();
   const urlPattern = /["'](https:\/\/esm\.sh\/[^"']+)["']/g;
@@ -102,6 +114,8 @@ export async function fetchEsmModule(
 
   const urlArray = Array.from(allEsmUrls);
   const staticUrls = await staticImportSpecifiers(code);
+  const tempFilePath = await esmTempFilePath(url, tmpDir);
+  const nested = new Set(pending).add(url);
   // Nested pre-fetches of a URL this module only reaches lazily are
   // best-effort: a broken esm.sh build for one package logs a warning and the
   // URL stays in the emitted code for the runtime to resolve at call time. A
@@ -110,7 +124,15 @@ export async function fetchEsmModule(
   // local. See `transforms/esm/specifier-resolver.ts` for the same rule on the
   // SSR transform path.
   const settledPaths = await Promise.allSettled(
-    urlArray.map((esmUrl) => fetchEsmModule(esmUrl, tmpDir, localAdapter, esmCache)),
+    urlArray.map((esmUrl) =>
+      // A URL already on this stack is mid-fetch, so re-entering it would never
+      // terminate. Its temp path is fixed by `esmTempFilePath`, and the frame
+      // that owns it writes the file before the top-level fetch resolves, so a
+      // cyclic edge can point at that path without being fetched again.
+      nested.has(esmUrl)
+        ? esmTempFilePath(esmUrl, tmpDir)
+        : fetchEsmModuleWithin(esmUrl, tmpDir, localAdapter, esmCache, nested)
+    ),
   );
 
   if (urlArray.length) {
@@ -143,8 +165,6 @@ export async function fetchEsmModule(
     }
   }
 
-  const hash = await generateHash(url);
-  const tempFilePath = `${tmpDir}/esm-${hash}.js`;
   await localAdapter.fs.writeFile(tempFilePath, code);
 
   esmCache.set(url, tempFilePath);
