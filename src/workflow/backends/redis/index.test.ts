@@ -211,7 +211,7 @@ class MockRedisAdapter implements RedisAdapter {
         list = [];
         this.lists.set(key, list);
       }
-      if (!this.retainApprovals(list, Number(args[1]), args[2]!)) return Promise.resolve(0);
+      if (!this.retainApprovals(list, Number(args[1]))) return Promise.resolve(0);
       list.push(args[0]!);
       return Promise.resolve(1);
     }
@@ -223,7 +223,6 @@ class MockRedisAdapter implements RedisAdapter {
       const storageKey = args[expectedCount + 2]!;
       const value = args[expectedCount + 3]!;
       const maxEntries = Number(args[expectedCount + 4]);
-      const now = args[expectedCount + 5]!;
       const hash = this.hashes.get(key);
       if (
         !hash || !expectedStatuses.includes(hash.get("status") ?? "") ||
@@ -237,7 +236,7 @@ class MockRedisAdapter implements RedisAdapter {
         list = [];
         this.lists.set(storageKey, list);
       }
-      if (!this.retainApprovals(list, maxEntries, now)) return Promise.resolve(2);
+      if (!this.retainApprovals(list, maxEntries)) return Promise.resolve(2);
       list.push(value);
       return Promise.resolve(1);
     }
@@ -494,26 +493,20 @@ class MockRedisAdapter implements RedisAdapter {
   }
 
   /** Mirrors the retainApprovals routine in the approval append Lua scripts. */
-  private retainApprovals(list: string[], maxEntries: number, now: string): boolean {
-    while (list.length >= maxEntries) {
-      let decidedIndex = -1;
-      let expiredIndex = -1;
-      for (let i = 0; i < list.length; i++) {
-        const approval = JSON.parse(list[i]!);
-        if (approval.status !== "pending") {
-          decidedIndex = i;
-          break;
-        }
-        if (
-          expiredIndex === -1 && typeof approval.expiresAt === "string" &&
-          approval.expiresAt <= now
-        ) {
-          expiredIndex = i;
-        }
+  private retainApprovals(list: string[], maxEntries: number): boolean {
+    const evictionsRequired = list.length - maxEntries + 1;
+    if (evictionsRequired <= 0) return true;
+    const decidedIndexes: number[] = [];
+    for (let index = 0; index < list.length; index++) {
+      const approval = JSON.parse(list[index]!);
+      if (approval.status !== "pending") {
+        decidedIndexes.push(index);
+        if (decidedIndexes.length === evictionsRequired) break;
       }
-      const evictIndex = decidedIndex !== -1 ? decidedIndex : expiredIndex;
-      if (evictIndex === -1) return false;
-      list.splice(evictIndex, 1);
+    }
+    if (decidedIndexes.length < evictionsRequired) return false;
+    for (let index = decidedIndexes.length - 1; index >= 0; index--) {
+      list.splice(decidedIndexes[index]!, 1);
     }
     return true;
   }
@@ -1719,7 +1712,7 @@ describe("RedisBackend", () => {
       assertEquals(retained.at(-1)?.id, "ap-newest");
     });
 
-    it("evicts an expired record when no decided record remains", async () => {
+    it("retains expired pending records until expiration reconciliation decides them", async () => {
       await backend.createRun(createTestRun("run-ap-expired"));
       await backend.savePendingApproval("run-ap-expired", makeApproval("ap-live-oldest"));
       await backend.savePendingApproval("run-ap-expired", {
@@ -1730,12 +1723,28 @@ describe("RedisBackend", () => {
         await backend.savePendingApproval("run-ap-expired", makeApproval(`ap-${index}`));
       }
 
-      await backend.savePendingApproval("run-ap-expired", makeApproval("ap-newest"));
+      await assertRejects(
+        () => backend.savePendingApproval("run-ap-expired", makeApproval("ap-newest")),
+        Error,
+        "pending approval",
+      );
 
       const stored = mockRedis.lists.get("test:schema-v1:approvals:run-ap-expired")!;
       assertEquals(stored.length, MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES);
-      assertEquals(stored.some((raw) => JSON.parse(raw).id === "ap-expired"), false);
+      assertEquals(stored.some((raw) => JSON.parse(raw).id === "ap-expired"), true);
       assertEquals(JSON.parse(stored[0]!).id, "ap-live-oldest");
+      assertEquals(stored.some((raw) => JSON.parse(raw).id === "ap-newest"), false);
+
+      assertEquals(
+        await backend.updateApproval("run-ap-expired", "ap-expired", {
+          approved: false,
+          approver: "system",
+          comment: "Approval expired",
+        }),
+        true,
+      );
+      await backend.savePendingApproval("run-ap-expired", makeApproval("ap-newest"));
+      assertEquals(stored.some((raw) => JSON.parse(raw).id === "ap-expired"), false);
       assertEquals(JSON.parse(stored.at(-1)!).id, "ap-newest");
     });
 
@@ -1748,13 +1757,39 @@ describe("RedisBackend", () => {
       await assertRejects(
         () => backend.savePendingApproval("run-ap-full", makeApproval("ap-overflow")),
         Error,
-        "still pending",
+        "pending approval",
       );
 
       const stored = mockRedis.lists.get("test:schema-v1:approvals:run-ap-full")!;
       assertEquals(stored.length, MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES);
       assertEquals(JSON.parse(stored[0]!).id, "ap-0");
       assertEquals(stored.some((raw) => JSON.parse(raw).id === "ap-overflow"), false);
+    });
+
+    it("does not partially prune legacy overflow when too few records are decided", async () => {
+      const storageKey = "test:schema-v1:approvals:run-ap-legacy-overflow";
+      const legacy = [
+        JSON.stringify({ ...makeApproval("decided-a"), status: "approved" }),
+        JSON.stringify({ ...makeApproval("decided-b"), status: "rejected" }),
+        ...Array.from(
+          { length: MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES },
+          (_, index) => JSON.stringify(makeApproval(`live-${index}`)),
+        ),
+      ];
+      const before = [...legacy];
+      mockRedis.lists.set(storageKey, legacy);
+
+      await assertRejects(
+        () =>
+          backend.savePendingApproval(
+            "run-ap-legacy-overflow",
+            makeApproval("ap-overflow"),
+          ),
+        Error,
+        "pending approval",
+      );
+
+      assertEquals(mockRedis.lists.get(storageKey), before);
     });
 
     it("bounds owned approval appends with the same state-aware retention", async () => {
@@ -1790,7 +1825,7 @@ describe("RedisBackend", () => {
       await assertRejects(
         () => saveOwned(makeApproval("owned-overflow")),
         Error,
-        "still pending",
+        "pending approval",
       );
       assertEquals(stored.length, MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES);
 

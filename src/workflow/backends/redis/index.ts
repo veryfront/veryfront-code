@@ -352,35 +352,32 @@ return 1`;
  * append scripts. The list is append-only (decisions rewrite records in
  * place), so a live pending approval must never be evicted: a run waiting on
  * an evicted ID could never be decided or expired and would wait forever. At
- * the bound this evicts the oldest decided record first, then the oldest
- * expired one (ISO timestamps compare lexicographically), and reports failure
- * when every retained record is still live so the caller can reject the
- * append instead of silently dropping a live approval.
+ * the bound this evicts the oldest decided record. An expired record remains
+ * pending until expiration reconciliation decides it, so it cannot be evicted
+ * safely. The routine reports failure when there are not enough decided
+ * records to make room, so the caller can reject the append without changing
+ * existing history instead of silently dropping a decidable approval.
  */
-const RETAIN_APPROVALS_LUA = `local function retainApprovals(key, maxEntries, now)
-  while redis.call('llen', key) >= maxEntries do
-    local len = redis.call('llen', key)
-    local decidedIndex = -1
-    local expiredIndex = -1
-    for i = 0, len - 1 do
-      local raw = redis.call('lindex', key, i)
-      if raw then
-        local approval = cjson.decode(raw)
-        if approval.status ~= 'pending' then
-          decidedIndex = i
-          break
-        end
-        if expiredIndex == -1 and type(approval.expiresAt) == 'string' and approval.expiresAt <= now then
-          expiredIndex = i
-        end
+const RETAIN_APPROVALS_LUA = `local function retainApprovals(key, maxEntries)
+  local len = redis.call('llen', key)
+  local evictionsRequired = len - maxEntries + 1
+  if evictionsRequired <= 0 then return true end
+  local decidedIndexes = {}
+  for i = 0, len - 1 do
+    local raw = redis.call('lindex', key, i)
+    if raw then
+      local approval = cjson.decode(raw)
+      if approval.status ~= 'pending' then
+        table.insert(decidedIndexes, i)
+        if #decidedIndexes == evictionsRequired then break end
       end
     end
-    local evictIndex = decidedIndex
-    if evictIndex == -1 then evictIndex = expiredIndex end
-    if evictIndex == -1 then return false end
-    redis.call('lset', key, evictIndex, '__vf_evicted__')
-    redis.call('lrem', key, 1, '__vf_evicted__')
   end
+  if #decidedIndexes < evictionsRequired then return false end
+  for _, index in ipairs(decidedIndexes) do
+    redis.call('lset', key, index, '__vf_evicted__')
+  end
+  redis.call('lrem', key, 0, '__vf_evicted__')
   return true
 end`;
 
@@ -390,13 +387,12 @@ end`;
  * KEYS[1] = approvals list key
  * ARGV[1] = serialized approval
  * ARGV[2] = max entries
- * ARGV[3] = now (ISO string)
  *
- * Returns 1 when appended, 0 when every retained record is still live.
+ * Returns 1 when appended, 0 when insufficient decided history can be evicted.
  */
 const APPEND_RETAINED_APPROVAL_SCRIPT = `-- state-aware-approval-append
 ${RETAIN_APPROVALS_LUA}
-if not retainApprovals(KEYS[1], tonumber(ARGV[2]), ARGV[3]) then return 0 end
+if not retainApprovals(KEYS[1], tonumber(ARGV[2])) then return 0 end
 redis.call('rpush', KEYS[1], ARGV[1])
 return 1`;
 
@@ -410,10 +406,9 @@ return 1`;
  * ARGV[n + 3] = approvals list key
  * ARGV[n + 4] = serialized approval
  * ARGV[n + 5] = max entries
- * ARGV[n + 6] = now (ISO string)
  *
- * Returns 1 when appended, 0 when the ownership fence fails, 2 when every
- * retained record is still live.
+ * Returns 1 when appended, 0 when the ownership fence fails, and 2 when
+ * insufficient decided history can be evicted.
  */
 const APPEND_APPROVAL_IF_STATUS_AND_WORKER_SCRIPT = `-- conditional-owned-approval-append
 ${RETAIN_APPROVALS_LUA}
@@ -430,7 +425,7 @@ if not allowed then return 0 end
 local expectedWorkerId = ARGV[expectedCount + 2]
 if redis.call('hget', KEYS[1], 'workerId') ~= expectedWorkerId then return 0 end
 local storageKey = ARGV[expectedCount + 3]
-if not retainApprovals(storageKey, tonumber(ARGV[expectedCount + 5]), ARGV[expectedCount + 6]) then
+if not retainApprovals(storageKey, tonumber(ARGV[expectedCount + 5])) then
   return 2
 end
 redis.call('rpush', storageKey, ARGV[expectedCount + 4])
@@ -1119,7 +1114,6 @@ export class RedisBackend implements WorkflowBackend {
       [
         this.serializeApproval(approval),
         String(MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES),
-        new Date().toISOString(),
       ],
     );
     if (Number(result) !== 1) {
@@ -1130,7 +1124,8 @@ export class RedisBackend implements WorkflowBackend {
   private approvalListFullError(approvalId: string): Error {
     return ORCHESTRATION_ERROR.create({
       detail: `Approval list full (max: ${MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES}) and ` +
-        `every retained approval is still pending. Cannot append approval: ${approvalId}`,
+        `not enough decided records can be evicted without dropping a pending approval. ` +
+        `Cannot append approval: ${approvalId}`,
     });
   }
 
@@ -1151,7 +1146,6 @@ export class RedisBackend implements WorkflowBackend {
         this.approvalsKey(runId),
         this.serializeApproval(approval),
         String(MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES),
-        new Date().toISOString(),
       ],
     );
     if (Number(result) === 2) {

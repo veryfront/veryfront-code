@@ -67,7 +67,7 @@ describe("workflow approval retention", () => {
     assertEquals(history.at(-1)?.id, "newest");
   });
 
-  it("evicts an expired record when no decided record remains", () => {
+  it("retains expired pending records until expiration reconciliation decides them", () => {
     const history = [
       approval("live-oldest"),
       approval("expired", { expiresAt: new Date(Date.now() - 60_000) }),
@@ -76,10 +76,19 @@ describe("workflow approval retention", () => {
       history.push(approval(`live-${history.length}`));
     }
 
-    appendRetainedPendingApproval(history, approval("newest"));
+    assertThrows(
+      () => appendRetainedPendingApproval(history, approval("newest")),
+      Error,
+      "pending approval",
+    );
 
     assertEquals(history.length, MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES);
     assertEquals(history[0]?.id, "live-oldest");
+    assertEquals(history.some(({ id }) => id === "expired"), true);
+    assertEquals(history.some(({ id }) => id === "newest"), false);
+
+    history.find(({ id }) => id === "expired")!.status = "rejected";
+    appendRetainedPendingApproval(history, approval("newest"));
     assertEquals(history.some(({ id }) => id === "expired"), false);
     assertEquals(history.at(-1)?.id, "newest");
   });
@@ -93,12 +102,32 @@ describe("workflow approval retention", () => {
     assertThrows(
       () => appendRetainedPendingApproval(history, approval("overflow")),
       Error,
-      "still pending",
+      "pending approval",
     );
 
     assertEquals(history.length, MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES);
     assertEquals(history[0]?.id, "live-0");
     assertEquals(history.some(({ id }) => id === "overflow"), false);
+  });
+
+  it("does not partially prune legacy overflow when too few records are decided", () => {
+    const history = [
+      approval("decided-a", { status: "approved" }),
+      approval("decided-b", { status: "rejected" }),
+      ...Array.from(
+        { length: MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES },
+        (_, index) => approval(`live-${index}`),
+      ),
+    ];
+    const before = history.map(({ id }) => id);
+
+    assertThrows(
+      () => appendRetainedPendingApproval(history, approval("overflow")),
+      Error,
+      "pending approval",
+    );
+
+    assertEquals(history.map(({ id }) => id), before);
   });
 
   it("leaves existing history unchanged when approval capture fails", () => {
@@ -142,7 +171,7 @@ describe("workflow approval retention", () => {
     await assertRejects(
       () => backend.savePendingApproval("full", approval("overflow")),
       Error,
-      "still pending",
+      "pending approval",
     );
 
     const retained = await backend.getPendingApprovals("full");
@@ -176,7 +205,7 @@ describe("workflow approval retention", () => {
     await assertRejects(
       () => saveOwned(approval("overflow")),
       Error,
-      "still pending",
+      "pending approval",
     );
     const beforeFailedFence = await backend.getPendingApprovals("owned");
     assertEquals(beforeFailedFence.length, MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES);
