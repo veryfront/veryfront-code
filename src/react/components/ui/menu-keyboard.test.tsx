@@ -85,6 +85,7 @@ function Harness(): React.ReactElement {
   const handleKeyDown = useMenuContentKeyboard({ setOpen, triggerRef });
   return (
     <div>
+      <button id="before" type="button">Before</button>
       <button id="trigger" ref={triggerRef} type="button">Open</button>
       {open
         ? (
@@ -125,6 +126,26 @@ describe("menu keyboard behaviour", () => {
       assertEquals(document.activeElement, cut);
       keydown(menu, "End");
       assertEquals(document.activeElement, paste);
+
+      keydown(menu, "ArrowUp");
+      assertEquals(document.activeElement, copy, "ArrowUp moves to the previous enabled item");
+      keydown(menu, "ArrowUp");
+      assertEquals(document.activeElement, cut, "ArrowUp keeps stepping backwards");
+      keydown(menu, "ArrowUp");
+      assertEquals(
+        document.activeElement,
+        paste,
+        "ArrowUp wraps past the aria-disabled item to the last enabled one",
+      );
+
+      after.focus();
+      keydown(menu, "ArrowUp");
+      assertEquals(
+        document.activeElement,
+        paste,
+        "ArrowUp with nothing focused inside the menu lands on the last item",
+      );
+
       keydown(menu, "c");
       assertEquals(document.activeElement, cut);
       keydown(menu, "o");
@@ -133,6 +154,40 @@ describe("menu keyboard behaviour", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
       assertEquals(document.querySelector('[role="menu"]'), null);
       assertEquals(document.activeElement, after);
+    } finally {
+      flushSync(() => root.unmount());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      restore();
+    }
+  });
+
+  it("closes on Shift+Tab and lands on the focusable before the trigger", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/", pretendToBeVisual: true },
+    );
+    const restore = installDom(dom);
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Harness />));
+      const menu = document.querySelector<HTMLElement>('[role="menu"]');
+      const cut = document.getElementById("cut");
+      const before = document.getElementById("before");
+      assert(menu && cut && before);
+
+      cut.focus();
+      keydown(menu, "Tab", true);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(
+        document.querySelector('[role="menu"]'),
+        null,
+        "Shift+Tab closes the menu",
+      );
+      assertEquals(
+        document.activeElement?.id,
+        before.id,
+        "Shift+Tab lands on the focusable before the trigger",
+      );
     } finally {
       flushSync(() => root.unmount());
       await new Promise((resolve) => setTimeout(resolve, 0));

@@ -139,15 +139,27 @@ function runDisclosureConformance(
     });
 
     it("honours disabled state and a consumer-cancelled trigger event", async () => {
+      // Disabled ALONE, with no consumer preventDefault to lean on - otherwise
+      // the cancelled event would keep the surface closed even for an engine
+      // that ignores `disabled` entirely.
       const { host, unmount } = render(
         <Wrap>
-          <DisclosureProbe disabled preventToggle />
+          <DisclosureProbe disabled />
         </Wrap>,
       );
       try {
         const trigger = host.querySelector("button")!;
+        const content = host.querySelector<HTMLElement>("[data-vf-content]")!;
+        assert(
+          trigger.hasAttribute("disabled"),
+          "a disabled plain-button trigger carries the native disabled attribute",
+        );
         click(trigger);
-        assert(trigger.getAttribute("aria-expanded") === "false", "disabled trigger stays closed");
+        assert(
+          trigger.getAttribute("aria-expanded") === "false",
+          "the disabled guard blocks the toggle for a plain button trigger",
+        );
+        assert(content.hidden, "disabled trigger leaves the content hidden");
       } finally {
         await unmount();
       }

@@ -122,6 +122,20 @@ function replaceFetch(
   };
 }
 
+/** A response whose body arrives in several chunks, so accumulation is observable. */
+function chunkedResponse(parts: string[]): Response {
+  const encoder = new TextEncoder();
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const part of parts) controller.enqueue(encoder.encode(part));
+        controller.close();
+      },
+    }),
+    { status: 200 },
+  );
+}
+
 /** Error boundary that captures a render error (so React doesn't re-report it). */
 class Boundary extends React.Component<
   { onError: (e: Error) => void; children: React.ReactNode },
@@ -294,7 +308,7 @@ describe("veryfront/chat hook behavior", () => {
     let finished = "";
     const restoreFetch = replaceFetch(async (_input, init) => {
       requestBody = JSON.parse(String(observeFetchRequestInit(init).body));
-      return new Response("Generated answer", { status: 200 });
+      return chunkedResponse(["Generated ", "answer"]);
     });
     try {
       await exerciseAsync(
@@ -307,7 +321,11 @@ describe("veryfront/chat hook behavior", () => {
         async (current) => {
           await current().complete("Write an answer");
           await waitFor(() => !current().isLoading, "completion did not settle");
-          assertEquals(current().completion, "Generated answer");
+          assertEquals(
+            current().completion,
+            "Generated answer",
+            "the completion accumulates every chunk rather than holding only the last one",
+          );
           assertEquals(finished, "Generated answer");
           assertEquals(requestBody, {
             prompt: "Write an answer",
@@ -323,7 +341,7 @@ describe("veryfront/chat hook behavior", () => {
   it("useStreaming accumulates chunks and reports completion", async () => {
     const chunks: string[] = [];
     let completions = 0;
-    const restoreFetch = replaceFetch(async () => new Response("streamed value", { status: 200 }));
+    const restoreFetch = replaceFetch(async () => chunkedResponse(["streamed ", "value"]));
     try {
       await exerciseAsync(
         () =>
@@ -335,8 +353,16 @@ describe("veryfront/chat hook behavior", () => {
         async (current) => {
           await current().start({ topic: "composition" });
           await waitFor(() => !current().isStreaming, "stream did not settle");
-          assertEquals(current().data, "streamed value");
-          assertEquals(chunks.join(""), "streamed value");
+          assertEquals(
+            current().data,
+            "streamed value",
+            "data accumulates every chunk rather than holding only the last one",
+          );
+          assertEquals(
+            chunks,
+            ["streamed ", "value"],
+            "each stream chunk is delivered separately to onChunk",
+          );
           assertEquals(completions, 1);
           const stream = current();
           flushSync(() => stream.reset());
@@ -424,6 +450,34 @@ describe("veryfront/chat hook behavior", () => {
         assertEquals(current().error, null);
         assertEquals(requestBody, { input: "Help me", messages: [] });
       });
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("useAgent surfaces a non-ok response as an error state", async () => {
+    const errors: Error[] = [];
+    const restoreFetch = replaceFetch(() => Promise.resolve(new Response("nope", { status: 500 })));
+    try {
+      await exerciseAsync(
+        () => useAgent({ agent: "support", onError: (error) => errors.push(error) }),
+        async (current) => {
+          await current().invoke("Help me");
+          await waitFor(() => !current().isLoading, "agent invocation did not settle");
+          assertEquals(
+            current().status,
+            "error",
+            "a 500 must leave the agent in the error status",
+          );
+          const failure = current().error;
+          assert(failure instanceof Error, "the failure is published on error");
+          assert(
+            failure.message.includes("500"),
+            "the status code reaches the consumer",
+          );
+          assertEquals(errors.length, 1, "onError fires exactly once");
+        },
+      );
     } finally {
       restoreFetch();
     }

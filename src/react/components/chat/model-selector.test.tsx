@@ -35,7 +35,16 @@ describe("ModelSelector preset", () => {
         variant="icon"
       />,
     );
-    assertStringIncludes(html, "GPT-4o");
+    assertStringIncludes(
+      html,
+      'aria-label="GPT-4o"',
+      "the icon-only trigger exposes the selected model as its accessible name",
+    );
+    assertEquals(
+      html.includes(">GPT-4o<"),
+      false,
+      "the icon variant renders no visible label text",
+    );
   });
 
   it("accepts the canonical collection item renderer", () => {

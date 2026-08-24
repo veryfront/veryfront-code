@@ -189,6 +189,39 @@ describe("Calendar behaviour", () => {
     }
   });
 
+  it("moves the displayed month with the previous and next buttons", () => {
+    const { host, click, unmount } = render(
+      <Calendar value={new Date(2026, 0, 15)} defaultMonth={new Date(2026, 0, 1)} />,
+    );
+    try {
+      click(host.querySelector('[aria-label="Next month"]')!);
+      assert(host.textContent?.includes("February 2026"), "Next month advances the caption");
+      assertEquals(
+        host.textContent?.includes("January 2026"),
+        false,
+        "the previous caption is replaced",
+      );
+
+      const tabbable = Array.from(
+        host.querySelectorAll<HTMLButtonElement>('td[role="gridcell"] button'),
+      ).filter((button) => button.tabIndex === 0);
+      assertEquals(tabbable.length, 1, "the grid still exposes one tab stop after paging");
+      assertEquals(
+        tabbable[0]?.textContent,
+        "15",
+        "paging carries the active day into the new month",
+      );
+
+      click(host.querySelector('[aria-label="Previous month"]')!);
+      assert(
+        host.textContent?.includes("January 2026"),
+        "Previous month steps back to the original month",
+      );
+    } finally {
+      unmount();
+    }
+  });
+
   it("clicking a day fires onChange with that day's Date", () => {
     let picked: Date | undefined;
     const { host, click, unmount } = render(

@@ -189,6 +189,58 @@ describe("Slot", () => {
     }
   });
 
+  it("applies native disabled to slottable elements and strips it elsewhere", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { pretendToBeVisual: true, url: "https://example.com/start" },
+    );
+    const restore = installDom(dom);
+    const rootElement = document.getElementById("root");
+    assert(rootElement);
+    const root = createRoot(rootElement);
+
+    try {
+      flushSync(() => {
+        root.render(
+          <>
+            <Slot disabled>
+              <button type="button">Native</button>
+            </Slot>
+            <Slot disabled>
+              <input readOnly />
+            </Slot>
+            <Slot disabled>
+              <a href="/target">Link</a>
+            </Slot>
+          </>,
+        );
+      });
+
+      const button = document.querySelector("button");
+      const input = document.querySelector("input");
+      const link = document.querySelector("a");
+      assert(button);
+      assert(input);
+      assert(link);
+      assertEquals(
+        button.disabled,
+        true,
+        "a slotted native button gets the real disabled attribute",
+      );
+      assertEquals(button.getAttribute("aria-disabled"), "true");
+      assertEquals(input.disabled, true, "every natively disableable element is disabled");
+      assertEquals(
+        link.hasAttribute("disabled"),
+        false,
+        "a non-native child never receives the disabled attribute",
+      );
+      assertEquals(link.getAttribute("aria-disabled"), "true");
+    } finally {
+      await unmountReactRoot(root);
+      restore();
+    }
+  });
+
   it("blocks disabled activation, handlers, and propagation", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',

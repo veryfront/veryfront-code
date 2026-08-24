@@ -136,7 +136,7 @@ describe("ContextMenu behaviour (builtin)", () => {
     const { scope, rightClickTrigger, cleanup } = mountInScope(<Menu />);
     try {
       assertEquals(scope.querySelector('[role="menu"]'), null, "closed initially");
-      rightClickTrigger();
+      rightClickTrigger(24, 40);
       const content = scope.querySelector('[role="menu"]');
       assert(content, "content with role=menu renders after right-click");
       assertEquals(
@@ -144,6 +144,11 @@ describe("ContextMenu behaviour (builtin)", () => {
         scope,
         "portalled surface stays within the token scope, not document.body",
       );
+      const anchor = scope.querySelector<HTMLElement>('span[aria-hidden="true"]');
+      assert(anchor, "the virtual anchor span renders inside the token scope");
+      assertEquals(anchor!.style.position, "fixed", "the anchor is viewport-positioned");
+      assertEquals(anchor!.style.left, "24px", "the anchor tracks the right-click clientX");
+      assertEquals(anchor!.style.top, "40px", "the anchor tracks the right-click clientY");
     } finally {
       await cleanup();
     }

@@ -10,6 +10,7 @@ import { Head } from "../Head.tsx";
 import { ChatStyleProvider } from "./chat-style-provider.tsx";
 import { ChatRoot } from "./chat/composition/chat-root.tsx";
 import { ColorModeScript } from "../ui/color-mode.tsx";
+import { getDocumentNonce } from "../ui/csp-nonce.ts";
 import { DesignTokenStyle } from "../ui/tokens.tsx";
 import { runWithHeadCollector } from "../../head-collector.ts";
 import { setupSSRGlobals } from "#veryfront/rendering/ssr-globals.ts";
@@ -236,6 +237,38 @@ describe("getDocumentNonce hydration behavior", () => {
     );
 
     assert(html.startsWith(`<script nonce="${TEST_NONCE}">`));
+  });
+
+  it("recovers the document nonce from an existing nonced element in the browser", () => {
+    const nonced = new JSDOM(
+      `<!doctype html><html><head><style nonce="${TEST_NONCE}">.seed{color:black}</style></head><body></body></html>`,
+      { url: "https://example.com/" },
+    );
+    const restoreNonced = installDomGlobals(nonced);
+    try {
+      assertEquals(
+        getDocumentNonce(),
+        TEST_NONCE,
+        "the client recovers the CSP nonce from a framework-generated element",
+      );
+    } finally {
+      restoreNonced();
+    }
+
+    const bare = new JSDOM(
+      `<!doctype html><html><head><style>.seed{color:black}</style></head><body></body></html>`,
+      { url: "https://example.com/" },
+    );
+    const restoreBare = installDomGlobals(bare);
+    try {
+      assertEquals(
+        getDocumentNonce(),
+        undefined,
+        "no nonce is invented when the document carries none",
+      );
+    } finally {
+      restoreBare();
+    }
   });
 
   it("preserves nonces on ChatStyleProvider style tags after hydration re-renders", async () => {

@@ -89,6 +89,31 @@ function Harness(): React.ReactElement {
   );
 }
 
+/** Three tabs where the middle one is taken out of the roving order. */
+function SkipHarness(
+  { off }: { off: { disabled?: boolean; "aria-disabled"?: "true" } },
+): React.ReactElement {
+  const [tab, setTab] = React.useState("a");
+  return (
+    <Tabs value={tab} onValueChange={setTab}>
+      <TabsItem value="a">A</TabsItem>
+      <TabsItem value="b" {...off}>B</TabsItem>
+      <TabsItem value="c">C</TabsItem>
+    </Tabs>
+  );
+}
+
+/** A caller that cancels its own click, vetoing the tab's activation. */
+function VetoHarness(): React.ReactElement {
+  const [tab, setTab] = React.useState("a");
+  return (
+    <Tabs value={tab} onValueChange={setTab}>
+      <TabsItem value="a">A</TabsItem>
+      <TabsItem value="b" onClick={(event) => event.preventDefault()}>B</TabsItem>
+    </Tabs>
+  );
+}
+
 function runTabsConformance(label: string, Wrap: React.FC<{ children: React.ReactNode }>): void {
   describe(`Tabs adapter conformance - ${label}`, () => {
     it("role=tablist/tab; clicking a tab selects it (aria-selected + data-state)", async () => {
@@ -143,6 +168,88 @@ describe("Tabs adapter conformance - builtin keyboard navigation", () => {
       assert(a!.getAttribute("aria-selected") === "true", "Home selects the first tab");
       key(a!, "End");
       assert(b!.getAttribute("aria-selected") === "true", "End selects the last tab");
+
+      // Backwards travel and the wrap at both ends - the modulo arithmetic that
+      // ArrowRight/Home/End alone never evaluate.
+      key(b!, "ArrowRight");
+      assert(
+        a!.getAttribute("aria-selected") === "true",
+        "ArrowRight wraps from the last tab to the first",
+      );
+      key(a!, "ArrowLeft");
+      assert(
+        b!.getAttribute("aria-selected") === "true",
+        "ArrowLeft wraps from the first tab to the last",
+      );
+      key(b!, "ArrowUp");
+      assert(
+        a!.getAttribute("aria-selected") === "true",
+        "ArrowUp navigates backwards like ArrowLeft",
+      );
+      assert(host.ownerDocument.activeElement === a, "backwards navigation moves focus too");
+    } finally {
+      await unmount();
+    }
+  });
+
+  for (
+    const [label, off] of [
+      ["disabled", { disabled: true }],
+      ["aria-disabled", { "aria-disabled": "true" }],
+    ] as const
+  ) {
+    it(`roving navigation steps over a ${label} tab`, async () => {
+      const { host, unmount } = render(
+        <Identity>
+          <SkipHarness off={off} />
+        </Identity>,
+      );
+      try {
+        const [a, b, c] = Array.from(host.querySelectorAll<HTMLElement>('[role="tab"]'));
+        assert(a && b && c, "three tabs render");
+
+        key(a!, "ArrowRight");
+        assert(
+          c!.getAttribute("aria-selected") === "true",
+          `ArrowRight skips the ${label} tab`,
+        );
+        assert(
+          b!.getAttribute("aria-selected") === "false",
+          `the ${label} tab is never selected by roving navigation`,
+        );
+
+        key(c!, "ArrowLeft");
+        assert(
+          a!.getAttribute("aria-selected") === "true",
+          `ArrowLeft also skips the ${label} tab`,
+        );
+      } finally {
+        await unmount();
+      }
+    });
+  }
+});
+
+describe("Tabs adapter conformance - builtin click composition", () => {
+  it("lets a caller that cancels its own click veto the selection", async () => {
+    const { host, unmount } = render(
+      <Identity>
+        <VetoHarness />
+      </Identity>,
+    );
+    try {
+      const [a, b] = Array.from(host.querySelectorAll<HTMLElement>('[role="tab"]'));
+      assert(a && b, "two tabs render");
+
+      click(b!);
+      assert(
+        a!.getAttribute("aria-selected") === "true",
+        "a caller that preventDefaults its onClick vetoes selection",
+      );
+      assert(
+        b!.getAttribute("aria-selected") === "false",
+        "the vetoed tab does not activate",
+      );
     } finally {
       await unmount();
     }

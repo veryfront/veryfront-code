@@ -76,6 +76,8 @@ describe("Meter - semantics (role=meter · clamped aria-valuenow)", () => {
       assertEquals(node.getAttribute("aria-valuemin"), "0");
       assertEquals(node.getAttribute("aria-valuemax"), "100");
       assertEquals(node.getAttribute("aria-valuetext"), "30 of 100");
+      const fill = node.firstElementChild as HTMLElement;
+      assertEquals(fill.style.width, "30%", "the fill reflects the clamped percentage");
     } finally {
       unmount();
     }
@@ -86,6 +88,8 @@ describe("Meter - semantics (role=meter · clamped aria-valuenow)", () => {
     try {
       const node = host.querySelector('[role="meter"]') as HTMLElement;
       assertEquals(node.getAttribute("aria-valuenow"), "100", "over-max value clamps to max");
+      const fill = node.firstElementChild as HTMLElement;
+      assertEquals(fill.style.width, "100%", "the fill saturates at the clamped maximum");
     } finally {
       unmount();
     }
@@ -96,8 +100,41 @@ describe("Meter - semantics (role=meter · clamped aria-valuenow)", () => {
     try {
       const node = host.querySelector('[role="meter"]') as HTMLElement;
       assertEquals(node.getAttribute("aria-valuenow"), "0", "under-min value clamps to min");
+      const fill = node.firstElementChild as HTMLElement;
+      assertEquals(fill.style.width, "0%", "the fill empties at the clamped minimum");
     } finally {
       unmount();
+    }
+  });
+
+  it("guards a non-finite value and a zero-width range", () => {
+    const nonFinite = render(<Meter value={Number.NaN} min={0} max={100} />);
+    try {
+      const node = nonFinite.host.querySelector('[role="meter"]') as HTMLElement;
+      assertEquals(
+        node.getAttribute("aria-valuenow"),
+        "0",
+        "a non-finite value falls back to min",
+      );
+      assertEquals(
+        (node.firstElementChild as HTMLElement).style.width,
+        "0%",
+        "a non-finite value renders an empty fill",
+      );
+    } finally {
+      nonFinite.unmount();
+    }
+
+    const zeroRange = render(<Meter value={5} min={5} max={5} />);
+    try {
+      const node = zeroRange.host.querySelector('[role="meter"]') as HTMLElement;
+      assertEquals(
+        (node.firstElementChild as HTMLElement).style.width,
+        "0%",
+        "a zero-width range renders an empty fill instead of NaN%",
+      );
+    } finally {
+      zeroRange.unmount();
     }
   });
 });

@@ -10,9 +10,11 @@
  *      (props / variants / live examples live with the component, not in a
  *      separate hand-maintained doc);
  *   3. has an **Overview tile** - a `ui-<name>--docs` entry on the landing grid;
- *   4. has a **test** - its name is referenced by some `*.test.tsx` under the
- *      `ui/` tree (its own behaviour/conformance test, or the shared
- *      `conformance.test.tsx` composition-contract suite).
+ *   4. has a **test** - some `*.test.tsx` under the `ui/` tree both declares
+ *      cases (`it(`) and imports the component, either by name or from its own
+ *      module (its behaviour/conformance test, or the shared
+ *      `conformance.test.tsx` composition-contract suite). A bare mention in a
+ *      comment or in unrelated prose does not count.
  *
  * A new primitive that skips any of these fails CI here - which is the point:
  * the docs and tests cannot silently fall behind the code again. Never satisfy
@@ -44,28 +46,41 @@ function storySource(name: string): string {
   return Deno.readTextFileSync(`${STORIES_DIR}${name}.stories.tsx`);
 }
 
+/** One `*.test.tsx` under the ui/ tree, kept whole so the gate can scan per file. */
+interface TestFile {
+  path: string;
+  source: string;
+}
+
 /**
- * Concatenate every `*.test.tsx` under the ui/ tree EXCEPT this file - so "has a
- * test" means referenced by some OTHER test, never by this manifest itself.
+ * Collect every `*.test.tsx` under the ui/ tree EXCEPT this file - so "has a
+ * test" means covered by some OTHER test, never by this manifest itself. Files
+ * stay separate rather than concatenated: the gate below requires the import
+ * and the `it(` to live in the SAME file, which a single blob cannot express.
  */
-function collectTestSources(dir: string): string {
-  let out = "";
+function collectTestSources(dir: string): TestFile[] {
+  const out: TestFile[] = [];
   for (const entry of Deno.readDirSync(dir)) {
     const path = `${dir}${entry.name}`;
     if (entry.isDirectory) {
-      out += collectTestSources(`${path}/`);
+      out.push(...collectTestSources(`${path}/`));
     } else if (
       entry.isFile && entry.name.endsWith(".test.tsx") && entry.name !== "coverage.test.tsx"
     ) {
-      out += "\n" + Deno.readTextFileSync(path);
+      out.push({ path, source: Deno.readTextFileSync(path) });
     }
   }
   return out;
 }
 
+/** `ScrollArea` -> `scroll-area`, the module file the skin lives in. */
+function moduleName(name: string): string {
+  return name.replace(/(?<!^)(?=[A-Z])/g, "-").toLowerCase();
+}
+
 const COMPONENTS = storyComponents();
 const OVERVIEW_SRC = Deno.readTextFileSync(OVERVIEW);
-const UI_TEST_SRC = collectTestSources(UI_DIR);
+const UI_TEST_FILES = collectTestSources(UI_DIR);
 
 describe("veryfront/ui coverage - to-spec gate", () => {
   it("has at least the full shipped primitive set storied", () => {
@@ -96,9 +111,24 @@ describe("veryfront/ui coverage - to-spec gate", () => {
     });
 
     it(`${name}: has a test`, () => {
+      // A bare `\bName\b` match would be satisfied by a comment or by an
+      // unrelated component's prose (`Field`, `Label`, `Input`, `Status` are all
+      // ordinary English). Require instead that ONE file both pulls the
+      // component in - by name, or from its own module for suites that import
+      // only its sub-parts - and declares cases.
+      const importsByName = new RegExp(
+        `import\\s*(?:type\\s*)?\\{[^}]*\\b${name}\\b[^}]*\\}\\s*from\\s*["']\\.{1,2}/`,
+      );
+      const importsModule = new RegExp(
+        `from\\s*["']\\.{1,2}/${moduleName(name)}\\.tsx["']`,
+      );
+      const covering = UI_TEST_FILES.find((file) =>
+        file.source.includes("it(") &&
+        (importsByName.test(file.source) || importsModule.test(file.source))
+      );
       assert(
-        new RegExp(`\\b${name}\\b`).test(UI_TEST_SRC),
-        `${name} is not referenced by any *.test.tsx under ui/ - add a behaviour ` +
+        covering !== undefined,
+        `${name} is not exercised by any *.test.tsx under ui/ - add a behaviour ` +
           `test or reference it in conformance.test.tsx`,
       );
     });

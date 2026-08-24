@@ -7,8 +7,19 @@ import { walk } from "@std/fs/walk";
 // silently reintroduce the dependency (regression guard for PR #2798).
 const UI_DIR = new URL(".", import.meta.url).pathname;
 
-/** Matches specifiers from static import and export declarations. */
-const STATIC_MODULE_SPECIFIER = /from\s+["']([^"']*)["']/g;
+/**
+ * Matches specifiers from static import/export declarations, bare side-effect
+ * imports, and dynamic `import(...)` calls, so none of the three can slip a
+ * forbidden dependency past the guards below.
+ */
+const MODULE_SPECIFIER = /(?:from\s+|import\s*\(\s*|^\s*import\s+)["']([^"']*)["']/gm;
+
+/** Collect every module specifier a source file references. */
+function moduleSpecifiers(source: string): string[] {
+  return [...source.matchAll(MODULE_SPECIFIER)]
+    .map((match) => match[1])
+    .filter((specifier): specifier is string => specifier !== undefined);
+}
 
 function referencesChat(specifier: string): boolean {
   return (
@@ -26,6 +37,29 @@ const ENGINE_SPECIFIER =
   /@base-ui|@base-ui-components|(^|\/)react-aria|react-aria-components|@react-aria|@react-stately|@radix-ui|(^|\/)radix-ui|@ariakit|@zag-js|@ark-ui/;
 
 describe("veryfront/ui module boundary", () => {
+  it("scans static, side-effect, and dynamic import specifiers", () => {
+    assertEquals(
+      moduleSpecifiers('import { a } from "../chat/x.ts";'),
+      ["../chat/x.ts"],
+      "static imports are scanned",
+    );
+    assertEquals(
+      moduleSpecifiers('const m = import("../chat/x.ts");'),
+      ["../chat/x.ts"],
+      "dynamic imports are scanned",
+    );
+    assertEquals(
+      moduleSpecifiers('import "../chat/x.ts";'),
+      ["../chat/x.ts"],
+      "side-effect imports are scanned",
+    );
+    assertEquals(
+      moduleSpecifiers('export { a } from "../chat/x.ts";'),
+      ["../chat/x.ts"],
+      "re-exports are scanned",
+    );
+  });
+
   it("does not import anything from the chat module", async () => {
     const offenders: string[] = [];
 
@@ -37,9 +71,8 @@ describe("veryfront/ui module boundary", () => {
     ) {
       if (/\.(test|spec)\.tsx?$/.test(entry.name)) continue;
       const source = await Deno.readTextFile(entry.path);
-      for (const match of source.matchAll(STATIC_MODULE_SPECIFIER)) {
-        const specifier = match[1];
-        if (specifier && referencesChat(specifier)) {
+      for (const specifier of moduleSpecifiers(source)) {
+        if (referencesChat(specifier)) {
           offenders.push(`${entry.name} -> ${specifier}`);
         }
       }
@@ -63,9 +96,8 @@ describe("veryfront/ui module boundary", () => {
     ) {
       if (/\.(test|spec)\.tsx?$/.test(entry.name)) continue;
       const source = await Deno.readTextFile(entry.path);
-      for (const match of source.matchAll(STATIC_MODULE_SPECIFIER)) {
-        const specifier = match[1];
-        if (specifier && ENGINE_SPECIFIER.test(specifier)) {
+      for (const specifier of moduleSpecifiers(source)) {
+        if (ENGINE_SPECIFIER.test(specifier)) {
           offenders.push(`${entry.name} -> ${specifier}`);
         }
       }

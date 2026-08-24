@@ -299,6 +299,47 @@ export function runComboboxConformance(
       }
     });
 
+    it("the input element's own handlers drive focus, query, and keyboard navigation", () => {
+      const h = mount();
+      try {
+        // Read the handlers off the rendered element instead of the captured
+        // adapter state, so the skin's own wiring is what runs.
+        const inputProps = () => {
+          const node = h.input();
+          const key = Object.keys(node).find((name) => name.startsWith("__reactProps$"));
+          assert(key, "the rendered input exposes its React props");
+          return (node as unknown as Record<string, {
+            onChange?: (event: unknown) => void;
+            onKeyDown?: (event: unknown) => void;
+            onFocus?: (event: unknown) => void;
+          }>)[key]!;
+        };
+
+        assertEquals(h.input().getAttribute("aria-expanded"), "false", "closed before focus");
+        flushSync(() => inputProps().onFocus?.({}));
+        assertEquals(
+          h.input().getAttribute("aria-expanded"),
+          "true",
+          "the input's own onFocus opens the listbox",
+        );
+
+        flushSync(() => inputProps().onChange?.({ target: { value: "re" } }));
+        assertEquals(
+          h.options().map((option) => option.textContent),
+          ["Remix"],
+          "the input's own onChange feeds setQuery",
+        );
+
+        flushSync(() => inputProps().onKeyDown?.(keyEvent("ArrowDown")));
+        assert(
+          h.input().getAttribute("aria-activedescendant"),
+          "the input's own onKeyDown feeds onInputKeyDown",
+        );
+      } finally {
+        h.cleanup();
+      }
+    });
+
     it("ArrowDown sets aria-activedescendant to a rendered option", () => {
       const h = mount();
       try {

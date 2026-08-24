@@ -331,7 +331,20 @@ describe("Floating SSR and hydration", () => {
       replacement.dispatchEvent(
         new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true }),
       );
-      assert(document.querySelector("[data-reanchored-surface]"));
+      // The dismissal listener is a native (non-React) handler, so its setOpen
+      // lands on a scheduler task: drain it before asserting the surface stayed.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert(
+        document.querySelector("[data-reanchored-surface]"),
+        "mousedown on the replacement trigger does not dismiss the surface",
+      );
+
+      // Negative control: an outside pointer still dismisses, which proves the
+      // listener was rebound to the new anchor rather than left dead.
+      document.body.dispatchEvent(
+        new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true }),
+      );
+      await waitFor(() => document.querySelector("[data-reanchored-surface]") === null);
     } finally {
       await unmountReactRoot(root);
       restore();

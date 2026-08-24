@@ -17,7 +17,12 @@ import { createRoot, hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
-import { assert, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ToastProvider, ToastViewport, useToast } from "../toast.tsx";
 import { UIAdapterProvider } from "./context.tsx";
@@ -750,7 +755,14 @@ describe("Toast adapter switching", () => {
   it("remounts the adapter hook bridge when hook implementations differ", async () => {
     const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
     const restore = installDomGlobals(dom);
-    const root = createRoot(document.getElementById("root")!);
+    // React 19 reports render errors through the root callbacks rather than
+    // rethrowing out of flushSync, so a hook-order violation is only visible
+    // if the test collects them.
+    const errors: unknown[] = [];
+    const root = createRoot(document.getElementById("root")!, {
+      onUncaughtError: (error: unknown) => errors.push(error),
+      onCaughtError: (error: unknown) => errors.push(error),
+    });
     let api: ToastState | null = null;
 
     function Probe(): null {
@@ -780,8 +792,18 @@ describe("Toast adapter switching", () => {
       assert(api, "initial adapter state is available");
       const button = document.querySelector("button");
       assert(button, "adapter switch is rendered");
+      // Clear the captured state so the post-switch assertion cannot be
+      // satisfied by the value the first render published.
+      api = null;
       flushSync(() => button.click());
-      assert(api, "replacement adapter state is available");
+      assert(api, "the bridge re-renders and republishes the toast state after the adapter swap");
+      flushSync(() => api!.toast({ title: "after", duration: Infinity }));
+      assertStringIncludes(
+        document.body.textContent ?? "",
+        "after",
+        "the post-swap toast API drives the live viewport",
+      );
+      assertEquals(errors, [], "the adapter swap must not raise a React hook-order error");
     } finally {
       await unmountReactRoot(root);
       restore();

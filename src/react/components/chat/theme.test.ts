@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "#std/assert";
+import { assert, assertEquals, assertStrictEquals } from "#std/assert";
 import { chatTokens, getChatTokensCSS } from "./chat-tokens.ts";
 import * as theme from "./theme.ts";
 
@@ -62,37 +62,82 @@ Deno.test("every chat cva variant resolves to classes", () => {
   for (const options of messageRoleExamples) {
     assert(theme.messageVariants(options).length > 0, `message role="${options.role}"`);
   }
-  // chat button variants + sizes
+  // chat button variants + sizes. The base class string is non-empty, so each
+  // key is pinned to a class only that key contributes: a deleted key resolves
+  // to `undefined`, which clsx drops without shortening the result.
   const buttonVariantExamples = [
-    { variant: "primary" },
-    { variant: "ghost" },
-    { variant: "outline" },
-    { variant: "icon-ghost" },
+    [{ variant: "primary" }, "bg-[var(--primary)]"],
+    [{ variant: "ghost" }, "hover:bg-[var(--accent)]"],
+    [{ variant: "outline" }, "border-[var(--outline-border)]"],
+    [{ variant: "icon-ghost" }, "!p-0"],
   ] as const;
-  for (const options of buttonVariantExamples) {
-    assert(theme.chatButtonVariants(options).length > 0, `button variant="${options.variant}"`);
+  for (const [options, expected] of buttonVariantExamples) {
+    assert(
+      theme.chatButtonVariants(options).includes(expected),
+      `button variant="${options.variant}" resolves to ${expected}`,
+    );
   }
   const buttonSizeExamples = [
-    { size: "sm" },
-    { size: "default" },
-    { size: "icon-xs" },
-    { size: "icon-sm" },
-    { size: "icon-default" },
-    { size: "icon-lg" },
+    [{ size: "sm" }, "h-[32px]"],
+    [{ size: "default" }, "h-[38px]"],
+    [{ size: "icon-xs" }, "size-7"],
+    [{ size: "icon-sm" }, "size-7"],
+    [{ size: "icon-default" }, "size-8"],
+    [{ size: "icon-lg" }, "size-9"],
   ] as const;
-  for (const options of buttonSizeExamples) {
-    assert(theme.chatButtonVariants(options).length > 0, `button size="${options.size}"`);
+  for (const [options, expected] of buttonSizeExamples) {
+    assert(
+      theme.chatButtonVariants(options).includes(expected),
+      `button size="${options.size}" resolves to ${expected}`,
+    );
   }
   // chat container layouts
   const containerVariantExamples = [
-    { variant: "default" },
-    { variant: "embedded" },
-    { variant: "floating" },
+    [{ variant: "default" }, "h-full bg-[var(--background)]"],
+    [{ variant: "embedded" }, "bg-transparent"],
+    [{ variant: "floating" }, "h-[600px]"],
   ] as const;
-  for (const options of containerVariantExamples) {
+  for (const [options, expected] of containerVariantExamples) {
     assert(
-      theme.chatContainerVariants(options).length > 0,
-      `container variant="${options.variant}"`,
+      theme.chatContainerVariants(options).includes(expected),
+      `container variant="${options.variant}" resolves to ${expected}`,
     );
   }
+});
+
+Deno.test("mergeThemes overlays user values without discarding sibling defaults", () => {
+  const merged = theme.mergeThemes(theme.defaultChatTheme, {
+    message: { user: "custom" },
+    input: undefined,
+  } as never);
+
+  const defaults = theme.defaultChatTheme.message!;
+  const mergedMessage = merged.message!;
+  assertEquals(mergedMessage.user, "custom", "a user value overrides its default");
+  assertEquals(
+    mergedMessage.assistant,
+    defaults.assistant,
+    "sibling keys of a nested object survive the merge",
+  );
+  assertEquals(
+    mergedMessage.system,
+    defaults.system,
+    "the system style survives a partial nested override",
+  );
+  assertEquals(
+    mergedMessage.tool,
+    defaults.tool,
+    "the tool style survives a partial nested override",
+  );
+  assertEquals(
+    merged.input,
+    theme.defaultChatTheme.input,
+    "an explicit undefined is skipped, not written over the default",
+  );
+
+  assertStrictEquals(
+    theme.mergeThemes(theme.defaultChatTheme),
+    theme.defaultChatTheme,
+    "no user theme returns the default object unchanged",
+  );
 });

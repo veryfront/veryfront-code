@@ -110,6 +110,62 @@ describe("Breadcrumb behaviour", () => {
     }
   });
 
+  it("keeps the ellipsis wrapper in the accessibility tree and hides only its glyph", () => {
+    const { host, unmount } = render(<Trail />);
+    try {
+      const ellipsis = host.querySelector('[data-slot="breadcrumb-ellipsis"]')!;
+      assert(ellipsis, "the collapsed-trail indicator renders");
+      assertEquals(
+        ellipsis.getAttribute("aria-hidden"),
+        null,
+        "the ellipsis wrapper stays in the accessibility tree",
+      );
+      assertEquals(
+        ellipsis.querySelector('[aria-hidden="true"]')?.textContent,
+        "…",
+        "only the glyph is hidden",
+      );
+      assertEquals(
+        ellipsis.querySelector(".sr-only")?.textContent,
+        "More",
+        "the sr-only label names the collapsed trail",
+      );
+    } finally {
+      unmount();
+    }
+  });
+
+  it("renders custom separator children in place of the default glyph", () => {
+    const { host, unmount } = render(
+      <Breadcrumb>
+        <BreadcrumbList>
+          <BreadcrumbItem>
+            <BreadcrumbLink href="/">Home</BreadcrumbLink>
+          </BreadcrumbItem>
+          <BreadcrumbSeparator data-testid="default" />
+          <BreadcrumbItem>
+            <BreadcrumbPage>Billing</BreadcrumbPage>
+          </BreadcrumbItem>
+          <BreadcrumbSeparator data-testid="custom">&gt;</BreadcrumbSeparator>
+        </BreadcrumbList>
+      </Breadcrumb>,
+    );
+    try {
+      assertEquals(
+        host.querySelector('[data-testid="default"]')?.textContent,
+        "/",
+        "a childless separator falls back to /",
+      );
+      assertEquals(
+        host.querySelector('[data-testid="custom"]')?.textContent,
+        ">",
+        "custom separator children replace the default glyph",
+      );
+    } finally {
+      unmount();
+    }
+  });
+
   it("forwards ref to the root <nav>", () => {
     const ref = React.createRef<HTMLElement>();
     const { unmount } = render(

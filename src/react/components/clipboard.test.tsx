@@ -2,6 +2,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { assert, assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type ClipboardFeedback, copyTextToClipboard, useClipboardFeedback } from "./clipboard.ts";
@@ -260,6 +261,49 @@ describe("useClipboardFeedback", () => {
       await settle();
       assertEquals(rootElement.textContent, "copied:second");
       assertEquals(fallbackCalls, 0);
+
+      await unmountReactRoot(root);
+    } finally {
+      restore();
+    }
+  });
+
+  it("clears the feedback outcome once the bounded window elapses", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+    );
+    const restore = installDom(dom);
+    defineClipboard(dom.window, () => Promise.resolve());
+    let feedback: ClipboardFeedback | undefined;
+
+    function Harness(): React.ReactElement {
+      feedback = useClipboardFeedback(10);
+      return (
+        <output>
+          {feedback.outcome ? `${feedback.outcome.status}:${feedback.outcome.text}` : "idle"}
+        </output>
+      );
+    }
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "root fixture exists");
+      const root = createRoot(rootElement);
+      flushSync(() => root.render(<Harness />));
+      assert(feedback, "hook result is available");
+
+      assertStrictEquals(await feedback.copy("text", document), true);
+      await settle();
+      assertEquals(
+        rootElement.textContent,
+        "copied:text",
+        "a resolved copy publishes the outcome",
+      );
+
+      await waitFor(() => rootElement.textContent === "idle", {
+        interval: 5,
+        message: "the feedback window clears the outcome after the timeout",
+      });
 
       await unmountReactRoot(root);
     } finally {

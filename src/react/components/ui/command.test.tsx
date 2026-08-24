@@ -393,6 +393,84 @@ describe("Command", () => {
     assertEquals(composing.defaultPrevented, false);
   });
 
+  it("filters rendered items as the query narrows", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installDom(dom);
+    const root = createRoot(document.getElementById("root")!);
+
+    try {
+      flushSync(() => {
+        root.render(
+          <Command>
+            <CommandInput />
+            <CommandList>
+              <CommandEmpty data-empty="">Nothing found</CommandEmpty>
+              <CommandItem value="Alpha">Alpha</CommandItem>
+              <CommandItem value="Beta">Beta</CommandItem>
+            </CommandList>
+          </Command>,
+        );
+      });
+
+      const input = document.querySelector<HTMLInputElement>("input");
+      assert(input);
+      await waitFor(() => input.getAttribute("aria-activedescendant") !== null);
+
+      const propsKey = Object.keys(input).find((name) => name.startsWith("__reactProps$"));
+      assert(propsKey, "the rendered input exposes its React props");
+      const inputProps = (input as unknown as Record<string, {
+        onChange?: (event: unknown) => void;
+      }>)[propsKey]!;
+      const type = (value: string) => {
+        flushSync(() =>
+          inputProps.onChange?.({
+            currentTarget: { value },
+            defaultPrevented: false,
+            preventDefault() {},
+          })
+        );
+      };
+
+      type("bet");
+      const [alpha, beta] = [...document.querySelectorAll<HTMLElement>("[data-command-item]")];
+      assert(alpha);
+      assert(beta);
+      assertEquals(
+        alpha.hasAttribute("hidden"),
+        true,
+        "non-matching items are hidden from the listbox",
+      );
+      assertEquals(beta.hasAttribute("hidden"), false, "the matching item stays visible");
+      assertEquals(
+        input.getAttribute("aria-activedescendant"),
+        beta.id,
+        "the active option follows the filtered set",
+      );
+      assertEquals(
+        document.querySelector("[data-empty]"),
+        null,
+        "a matching query keeps the empty state hidden",
+      );
+
+      type("zzz");
+      assertEquals(
+        [alpha, beta].map((item) => item.hasAttribute("hidden")),
+        [true, true],
+        "a no-match query hides every item",
+      );
+      assert(
+        document.querySelector("[data-empty]"),
+        "a no-match query announces the empty state",
+      );
+    } finally {
+      await unmount(root);
+      restore();
+    }
+  });
+
   it("suppresses the empty state while value-less items are registered", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
@@ -442,6 +520,11 @@ describe("Command", () => {
         );
       });
 
+      assertEquals(
+        document.querySelector("[data-empty]"),
+        null,
+        "the empty state is withheld until the item registry settles",
+      );
       await waitFor(() => document.querySelector("[data-empty]") !== null);
       const empty = document.querySelector<HTMLElement>("[data-empty]");
       assert(empty);

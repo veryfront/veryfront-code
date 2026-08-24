@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { useAttachments } from "./use-uploads-registry.ts";
@@ -406,7 +406,53 @@ describe("react/components/chat/hooks/useAttachments", () => {
       const oversized = mount("test-oversized-cache");
       assertEquals(oversized.get().items, []);
       assert(oversized.get().storageError instanceof Error);
+      assertStringIncludes(
+        oversized.get().storageError!.message,
+        "exceeds",
+        "an over-cap payload is rejected by the byte guard, not by its shape",
+      );
       await unmountReactRoot(oversized.root);
+
+      // A syntactically VALID registry that is simply too large: the shape
+      // checks all pass, so only the byte cap can reject it.
+      localStorage.setItem(
+        "test-oversized-array-cache",
+        JSON.stringify(
+          Array.from({ length: 300 }, (_unused, index) => ({
+            id: `i${index}`,
+            name: "x".repeat(4_000),
+            url: `/u/${index}`,
+          })),
+        ),
+      );
+      const oversizedArray = mount("test-oversized-array-cache");
+      assertEquals(oversizedArray.get().items, []);
+      assertStringIncludes(
+        oversizedArray.get().storageError!.message,
+        "exceeds",
+        "a well-formed but over-cap registry array is rejected by the byte guard",
+      );
+      await unmountReactRoot(oversizedArray.root);
+
+      // Small enough in bytes, but past the item cap.
+      localStorage.setItem(
+        "test-too-many-cache",
+        JSON.stringify(
+          Array.from({ length: 1_001 }, (_unused, index) => ({
+            id: `i${index}`,
+            name: "a.txt",
+            url: `/u/${index}`,
+          })),
+        ),
+      );
+      const tooMany = mount("test-too-many-cache");
+      assertEquals(tooMany.get().items, []);
+      assertStringIncludes(
+        tooMany.get().storageError!.message,
+        "bounded array",
+        "a registry past the item cap is rejected even when its bytes fit",
+      );
+      await unmountReactRoot(tooMany.root);
 
       localStorage.setItem(
         "test-duplicate-cache",
@@ -568,6 +614,86 @@ describe("react/components/chat/hooks/useAttachments", () => {
       await flush(() => {});
       assertEquals(reg.get().items, []);
       assert(reg.get().refreshError instanceof Error);
+      await unmountReactRoot(reg.root);
+    } finally {
+      globalThis.fetch = previousFetch;
+      restoreDom();
+    }
+  });
+
+  it("rejects a declared oversized upload response", async () => {
+    const restoreDom = installDom();
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        return Promise.resolve(
+          new Response('{"id":"x"}', {
+            headers: { "content-length": String(70_000) },
+          }),
+        );
+      }
+      return Promise.resolve(Response.json({ items: [] }));
+    }) as typeof fetch;
+
+    try {
+      const reg = mount("test-oversized-upload-response");
+      await flush(() => {});
+      await flush(() => reg.get().upload([fakeFile("a.txt")]));
+      assertEquals(
+        reg.get().items,
+        [],
+        "an oversized upload response must not add an item",
+      );
+      assert(reg.get().uploadError instanceof Error, "the upload failure is published");
+      assertStringIncludes(
+        reg.get().uploadError!.message,
+        "exceeds 65536 bytes",
+        "the upload response bound is reported",
+      );
+      await unmountReactRoot(reg.root);
+    } finally {
+      globalThis.fetch = previousFetch;
+      restoreDom();
+    }
+  });
+
+  it("rejects a streamed upload response that crosses the bound mid-read", async () => {
+    const restoreDom = installDom();
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        // No content-length, so the header pre-check is skipped and the
+        // byte accumulation branch (plus reader.cancel()) is what rejects it.
+        const chunk = new Uint8Array(10_000);
+        return Promise.resolve(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                for (let i = 0; i < 7; i += 1) controller.enqueue(chunk);
+                controller.close();
+              },
+            }),
+          ),
+        );
+      }
+      return Promise.resolve(Response.json({ items: [] }));
+    }) as typeof fetch;
+
+    try {
+      const reg = mount("test-streamed-upload-response");
+      await flush(() => {});
+      await flush(() => reg.get().upload([fakeFile("a.txt")]));
+      assertEquals(
+        reg.get().items,
+        [],
+        "a streamed over-cap upload response must not add an item",
+      );
+      assert(reg.get().uploadError instanceof Error, "the upload failure is published");
+      assertStringIncludes(
+        reg.get().uploadError!.message,
+        "exceeds 65536 bytes",
+        "the bound is enforced while the body streams, not only from its header",
+      );
       await unmountReactRoot(reg.root);
     } finally {
       globalThis.fetch = previousFetch;

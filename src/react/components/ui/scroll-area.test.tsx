@@ -59,7 +59,10 @@ describe("ScrollArea - leaf conformance (one node · ref · {...props} · classN
       const node = host.children[0] as HTMLElement;
       assertEquals(node.getAttribute("data-probe"), "x", "must spread {...props} (data-probe)");
       assert(node.className.includes("vf-probe"), "must merge consumer className");
-      assert(node.className.includes("overflow"), "must keep a base overflow class");
+      assert(
+        node.classList.contains("overflow-y-auto"),
+        "must keep the default vertical scroll class",
+      );
       assertEquals(ref.current, node, "must forward ref to its node");
       assert(node.textContent?.includes("scrollable content"), "renders its children");
     } finally {
@@ -67,6 +70,20 @@ describe("ScrollArea - leaf conformance (one node · ref · {...props} · classN
     }
   });
 });
+
+/** The overflow classes that actually implement each scroll axis. */
+const AXIS_CLASSES = {
+  vertical: ["overflow-y-auto", "overflow-x-hidden"],
+  horizontal: ["overflow-x-auto", "overflow-y-hidden"],
+  both: ["overflow-auto"],
+} as const;
+
+/** Classes that would scroll the wrong axis for each orientation. */
+const FORBIDDEN_AXIS_CLASSES = {
+  vertical: ["overflow-x-auto", "overflow-y-hidden"],
+  horizontal: ["overflow-y-auto", "overflow-x-hidden"],
+  both: ["overflow-x-hidden", "overflow-y-hidden"],
+} as const;
 
 describe("ScrollArea - data-orientation reflects the orientation prop", () => {
   for (const orientation of ["vertical", "horizontal", "both"] as const) {
@@ -83,6 +100,19 @@ describe("ScrollArea - data-orientation reflects the orientation prop", () => {
           orientation,
           `data-orientation must reflect "${orientation}"`,
         );
+        for (const cls of AXIS_CLASSES[orientation]) {
+          assert(
+            node.classList.contains(cls),
+            `orientation="${orientation}" must apply ${cls}`,
+          );
+        }
+        for (const cls of FORBIDDEN_AXIS_CLASSES[orientation]) {
+          assertEquals(
+            node.classList.contains(cls),
+            false,
+            `orientation="${orientation}" must not apply ${cls}`,
+          );
+        }
       } finally {
         unmount();
       }

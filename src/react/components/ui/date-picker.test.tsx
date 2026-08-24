@@ -93,6 +93,7 @@ describe("DatePicker behaviour", () => {
         defaultOpen
         defaultMonth={new Date(2026, 0, 1)}
         onChange={(d) => (picked = d)}
+        format={(d) => `Y${d.getFullYear()}-D${d.getDate()}`}
       >
         <DatePickerTrigger />
         <DatePickerContent />
@@ -129,6 +130,58 @@ describe("DatePicker behaviour", () => {
       const after = host.querySelector("button")!;
       assert(after.getAttribute("data-empty") == null, "trigger is no longer empty");
       assert(!after.textContent?.includes("Pick a date"), "placeholder replaced by the date");
+      assert(
+        after.textContent?.includes("Y2026-D15"),
+        "the trigger label is produced by the format prop",
+      );
+    } finally {
+      unmount();
+    }
+  });
+
+  it("honours a controlled value: the parent owns the label, the picker only reports", () => {
+    const picks: Date[] = [];
+    const controlled = new Date(2026, 0, 20);
+    const { host, doc, click, unmount } = render(
+      <DatePicker
+        value={controlled}
+        defaultOpen
+        defaultMonth={new Date(2026, 0, 1)}
+        onChange={(date) => picks.push(date)}
+      >
+        <DatePickerTrigger />
+        <DatePickerContent />
+      </DatePicker>,
+    );
+    try {
+      const trigger = host.querySelector("button")!;
+      assertEquals(
+        trigger.getAttribute("data-empty"),
+        null,
+        "a controlled value leaves the trigger non-empty",
+      );
+      // No `format` prop here, so this also pins the documented default.
+      assertEquals(
+        trigger.querySelector("span")!.textContent,
+        controlled.toLocaleDateString(),
+        "the controlled value drives the label through the default toLocaleDateString format",
+      );
+
+      const grid = doc.querySelector('[role="grid"]');
+      assert(grid, "the Calendar grid appears while open");
+      const fifteenth = Array.from(grid!.querySelectorAll("button")).find(
+        (b) => b.textContent?.trim() === "15",
+      );
+      assert(fifteenth, "day button 15 renders");
+      click(fifteenth!);
+
+      assertEquals(picks.length, 1, "picking a day reports exactly once through onChange");
+      assertEquals(picks[0]!.getDate(), 15, "onChange carries the day that was clicked");
+      assertEquals(
+        host.querySelector("button")!.querySelector("span")!.textContent,
+        controlled.toLocaleDateString(),
+        "a controlled DatePicker must not move its own value - the parent still owns it",
+      );
     } finally {
       unmount();
     }
