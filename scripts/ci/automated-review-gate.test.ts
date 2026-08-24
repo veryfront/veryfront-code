@@ -621,6 +621,14 @@ describe("automated review gate", () => {
           `Review skipped for current commit ${STALE_SHA}.`,
           [`<![CDATA[Requested commit: ${HEAD_SHA}.]]>`],
         ],
+        [
+          `Review skipped for current commit ${STALE_SHA}.`,
+          ["Requested commit:", "", `    ${HEAD_SHA}.`],
+        ],
+        [
+          `Requested commit: ${STALE_SHA}.`,
+          ["Review skipped for current commit", "", `    ${HEAD_SHA}.`],
+        ],
       ] as const
     ) {
       const newerSuccessfulSummary = codeRabbitSummary({
@@ -1133,6 +1141,7 @@ describe("automated review gate", () => {
       const paragraphBoundary of [
         "> quoted block",
         "- list item",
+        "--",
         "---",
         "===",
         "# heading",
@@ -1733,6 +1742,13 @@ describe("automated review gate", () => {
           "-->",
         ],
         ["ordinary text <!--", "<!xml>", MALFORMED_CURRENT_RANGE, "-->"],
+        ["ordinary text <!--", MALFORMED_CURRENT_RANGE, "--->"],
+        [
+          "ordinary text <!--",
+          '<source src="movie.mp4">',
+          MALFORMED_CURRENT_RANGE,
+          "-->",
+        ],
         [
           "ordinary text <!--",
           "<!DoCtYpE html>",
@@ -1794,6 +1810,49 @@ describe("automated review gate", () => {
       ))?.url,
       "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
     );
+
+    for (
+      const hiddenInlineComment of [
+        [
+          "ordinary text <!--",
+          "2. lazy continuation",
+          MALFORMED_CURRENT_RANGE,
+          "-->",
+        ],
+        [
+          "ordinary text <!-- invalid -- text",
+          MALFORMED_CURRENT_RANGE,
+          "-->",
+        ],
+        [
+          "ordinary text <!--",
+          "<plaintext>",
+          MALFORMED_CURRENT_RANGE,
+          "-->",
+        ],
+      ]
+    ) {
+      const newerHiddenCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...hiddenInlineComment,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerHiddenCurrentRange],
+          },
+          HEAD_SHA,
+        ))?.url,
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+      );
+    }
   });
 
   it("does not extend short inline HTML comments across later evidence", async () => {
@@ -2159,6 +2218,24 @@ describe("automated review gate", () => {
           codeRabbitReviewRange(),
           "> -->",
         ],
+        [
+          "- ordinary <!--",
+          "  2. lazy continuation",
+          codeRabbitReviewRange(),
+          "-->",
+        ],
+        [
+          "- ordinary <!--",
+          "  2) lazy continuation",
+          codeRabbitReviewRange(),
+          "-->",
+        ],
+        [
+          "- ordinary <!--",
+          "0000000001. lazy continuation",
+          codeRabbitReviewRange(),
+          "-->",
+        ],
       ]
     ) {
       const newerHiddenExactRange = codeRabbitSummary({
@@ -2195,6 +2272,9 @@ describe("automated review gate", () => {
         "",
         "# next block",
         "- next item",
+        "2. next item",
+        "2) next item",
+        "000000001. next item",
         "<div>",
         "<script></script>",
       ]

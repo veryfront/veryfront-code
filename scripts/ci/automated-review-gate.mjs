@@ -10,9 +10,9 @@ const CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER =
 const CODERABBIT_REVIEW_RANGE_PATTERN =
   /(?:^|\r\n|[\r\n])Reviewing files that changed from the base of the PR and between ([0-9a-f]{40}) and ([0-9a-f]{40})\.(?=\r\n|[\r\n]|$)/;
 const CODERABBIT_REVIEW_RANGE_STATEMENT_START_PATTERN =
-  /(?:^|\r\n|[\r\n])([ \t]*(?:(?:>[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*(?:Reviewing[ \t]+(?:files(?:[ \t]+that[ \t]+changed[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?|changed[ \t]+files(?:[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?)[ \t]+(?:and[ \t]+)?between))([^\r\n]*)/gi;
+  /(?:^|\r\n|[\r\n])([ \t]*(?:(?:>[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*(?:Reviewing[ \t]+(?:files(?:[ \t]+that[ \t]+changed[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?|changed[ \t]+files(?:[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?)[ \t]+(?:and[ \t]+)?between))([^\r\n]*)/gi;
 const CODERABBIT_REVIEW_RANGE_CONTINUATION_PREFIX_PATTERN =
-  /^[ \t]*(?:(?:>[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*/;
+  /^[ \t]*(?:(?:>[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*/;
 const CODERABBIT_REVIEW_RANGE_SEPARATOR_PATTERN =
   /(^|[ \t])and[ \t]+([0-9a-f]{40})(?![0-9a-f])/i;
 const CODERABBIT_REVIEW_RANGE_WRAPPED_TIP_PATTERN =
@@ -21,26 +21,26 @@ const CODERABBIT_REVIEW_RANGE_WRAPPED_SEPARATOR_PATTERN =
   /^[ \t]*and[ \t]+([0-9a-f]{40})(?![0-9a-f])/i;
 const FULL_COMMIT_TOKEN_PATTERN = /(^|[^0-9a-f])([0-9a-f]{40})(?![0-9a-f])/gi;
 const MARKDOWN_FENCE_LINE_PATTERN =
-  /^( {0,3}(?:(?:>[ \t]*)|(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*)(`{3,}|~{3,})/;
+  /^( {0,3}(?:(?:>[ \t]*)|(?:(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*)(`{3,}|~{3,})/;
 const MARKDOWN_HTML_COMMENT_BLOCK_START_PATTERN =
-  /^( {0,3}(?:(?:>[ \t]*)|(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*)<!--/;
+  /^( {0,3}(?:(?:>[ \t]*)|(?:(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*)<!--/;
 const MARKDOWN_LIST_PREFIX_PATTERN =
-  /([-*+]|\d+[.)])([ \t]+)(?:\[[ xX]\][ \t]+)?/g;
+  /([-*+]|\d{1,9}[.)])([ \t]+)(?:\[[ xX]\][ \t]+)?/g;
 const MARKDOWN_PARAGRAPH_LIST_PREFIX_PATTERN =
-  /^(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?/;
+  /^(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[ xX]\][ \t]+)?/;
 const MARKDOWN_RAW_HTML_BLOCK_START_PATTERN =
   /^<(script|pre|style|textarea)(?:[ \t]|>|$)/i;
 const MARKDOWN_PARAGRAPH_INTERRUPTING_HTML_TAG_PATTERN =
-  /^ {0,3}<\/?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[ \t]|\/?>|$)/i;
+  /^ {0,3}<\/?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|source|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[ \t]|\/?>|$)/i;
 const MARKDOWN_PARAGRAPH_INTERRUPTING_RAW_HTML_PATTERN =
   /^ {0,3}<(?:script|pre|style|textarea)(?:[ \t]|>|$)/i;
 const MARKDOWN_PARAGRAPH_INTERRUPTING_HTML_SYNTAX_PATTERN =
   /^ {0,3}(?:<!--|<\?|<![A-Za-z]|<!\[CDATA\[)/;
 const MARKDOWN_FENCE_CONTAINER_CONTINUATION_PATTERN = /^[ \t]*(?:>[ \t]*)*/;
 const CODERABBIT_REQUESTED_COMMIT_PATTERN =
-  /Requested commit:\s*([0-9a-f]{40})/gi;
+  /Requested commit:[ \t]*([0-9a-f]{40})/gi;
 const CODERABBIT_SKIPPED_COMMIT_PATTERN =
-  /Review skipped for current commit\s*([0-9a-f]{40})/gi;
+  /Review skipped for current commit[ \t]*([0-9a-f]{40})/gi;
 const CODEX_LOGIN = "chatgpt-codex-connector[bot]";
 const CODEX_BOT_ID = 199175422;
 const CODEX_NO_FINDING_PREFIX = "Codex Review: Didn't find any major issues.";
@@ -522,7 +522,12 @@ function scanMarkdownStructure(content) {
         continue;
       }
       const closeStart = lineStart + relativeCloseStart;
-      ranges.push([openHtmlComment.start, closeStart + 3]);
+      if (
+        !inlineComment ||
+        markdownInlineHtmlCommentHasValidEnd(content, closeStart)
+      ) {
+        ranges.push([openHtmlComment.start, closeStart + 3]);
+      }
       openHtmlComment = scanMarkdownHtmlComments(
         content,
         lineWithoutEnding,
@@ -702,6 +707,9 @@ function markdownParagraphLineContext(line) {
       ? remainingLine
       : remainingLine.slice(listPrefix.length),
     indentation,
+    listInterruptsParagraph: listPrefix === undefined
+      ? false
+      : markdownListMarkerInterruptsParagraph(listPrefix),
     listContinuationIndent: listPrefix === undefined
       ? undefined
       : markdownContainerIndentColumns(containerPrefix + listPrefix),
@@ -710,8 +718,13 @@ function markdownParagraphLineContext(line) {
 }
 
 function markdownLineContinuesParagraph(line, paragraph) {
-  if (paragraph === undefined || line.listContinuationIndent !== undefined) {
-    return false;
+  if (paragraph === undefined) return false;
+  if (line.listContinuationIndent !== undefined) {
+    if (line.listInterruptsParagraph) return false;
+    if (
+      paragraph.isListItem &&
+      line.indentation < paragraph.continuationIndent
+    ) return false;
   }
   const sameContainer = line.structuralPrefix === paragraph.structuralPrefix;
   const lazyBlockquoteContinuation = paragraph.blockquoteDepth > 0 &&
@@ -722,13 +735,21 @@ function markdownLineContinuesParagraph(line, paragraph) {
     line.indentation < paragraph.continuationIndent &&
     !lazyBlockquoteContinuation && !lazyListContinuation
   ) return false;
+  if (line.listContinuationIndent !== undefined) return true;
   return line.indentation - paragraph.continuationIndent >= 4 ||
     isMarkdownNonInterruptingHtmlLine(line.content) ||
     !isMarkdownInlineCodeBarrier(line.content);
 }
 
+function markdownListMarkerInterruptsParagraph(listPrefix) {
+  const marker = listPrefix.match(/^([-*+]|\d{1,9}[.)])/)?.[1];
+  if (marker === undefined || /^[-*+]$/.test(marker)) return true;
+  return Number(marker.slice(0, -1)) === 1;
+}
+
 function isMarkdownNonInterruptingHtmlLine(line) {
-  // CommonMark HTML block types 1–6 interrupt paragraphs; type 7 does not.
+  // GitHub Flavored Markdown HTML block types 1–6 interrupt paragraphs;
+  // type 7 does not.
   return /^ {0,3}<(?:[A-Za-z!?/])/.test(line) &&
     !MARKDOWN_PARAGRAPH_INTERRUPTING_HTML_TAG_PATTERN.test(line) &&
     !MARKDOWN_PARAGRAPH_INTERRUPTING_RAW_HTML_PATTERN.test(line) &&
@@ -847,20 +868,33 @@ function scanMarkdownHtmlComments(
       searchStart = shortCommentEnd;
       continue;
     }
+    const container = markdownHtmlCommentBlockContainer(
+      line,
+      relativeCommentStart,
+    );
     const relativeCloseStart = line.indexOf("-->", relativeCommentStart + 4);
     if (relativeCloseStart < 0) {
       return {
         start: commentStart,
-        container: markdownHtmlCommentBlockContainer(
-          line,
-          relativeCommentStart,
-        ),
+        container,
       };
     }
-    ranges.push([commentStart, lineStart + relativeCloseStart + 3]);
+    if (
+      container !== undefined ||
+      markdownInlineHtmlCommentHasValidEnd(
+        content,
+        lineStart + relativeCloseStart,
+      )
+    ) {
+      ranges.push([commentStart, lineStart + relativeCloseStart + 3]);
+    }
     searchStart = relativeCloseStart + 3;
   }
   return undefined;
+}
+
+function markdownInlineHtmlCommentHasValidEnd(content, closeStart) {
+  return content[closeStart - 1] !== "-";
 }
 
 function markdownHtmlCommentBlockContainer(line, commentStart) {
@@ -940,10 +974,10 @@ function isMarkdownInlineCodeBarrier(line) {
   if (
     line.trim().length === 0 ||
     /^ {0,3}<(?:[A-Za-z!?/])/.test(line) ||
-    /^ {0,3}(?:>|#{1,6}(?:[ \t]|$)|(?:[-+*]|\d+[.)])(?:[ \t]|$))/.test(
+    /^ {0,3}(?:>|#{1,6}(?:[ \t]|$)|(?:[-+*]|\d{1,9}[.)])(?:[ \t]|$))/.test(
       line,
     ) ||
-    /^ {0,3}=+[ \t]*$/.test(line) ||
+    /^ {0,3}(?:=+|-+)[ \t]*$/.test(line) ||
     /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(
       line,
     )
