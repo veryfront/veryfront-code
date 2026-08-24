@@ -74,14 +74,21 @@ describe("rendering/layouts/utils/app-resolver", () => {
     });
 
     it("should reject absolute config.app paths outside the project", async () => {
-      const files = new Set(["/absolute/app.tsx"]);
+      const absoluteAppPath = "/sensitive/home/project/app.tsx";
+      const files = new Set([absoluteAppPath]);
       const adapter = createMockAdapter(files);
-      const config = { app: "/absolute/app.tsx" } as unknown as VeryfrontConfig;
-      await assertRejects(
+      const config = { app: absoluteAppPath } as unknown as VeryfrontConfig;
+      const error = await assertRejects(
         () => resolveAppComponentPath("/project", adapter, config),
         VeryfrontError,
         "must stay inside the project directory",
       );
+      assertEquals(
+        (error as Error).message.includes(absoluteAppPath),
+        false,
+        "app containment errors must not expose machine-specific absolute paths",
+      );
+      assertEquals((error as Error).message.includes("<absolute path>"), true);
     });
 
     it("should use absolute config.app paths inside the project", async () => {

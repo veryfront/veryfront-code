@@ -1,4 +1,5 @@
 import {
+  awaitAbortable,
   computeHash,
   rendererLogger as logger,
   throwIfAborted,
@@ -394,8 +395,8 @@ export interface MDXLayoutModuleOptions {
   isLocalProject?: boolean;
   /**
    * Request cancellation. The import-map preloader and ESM module loader do
-   * not take a signal themselves, so the load checks it between stages and
-   * stops before starting the next one.
+   * not take a signal themselves, so each stage is guarded and the module wait
+   * is raced against cancellation.
    */
   signal?: AbortSignal;
 }
@@ -453,21 +454,24 @@ export function loadMDXLayout(
         codeLength: code.length,
       });
 
-      const mod = (await mdxRenderer.loadModuleESM(code, {
-        adapter,
-        projectId,
-        projectDir,
-        projectSlug,
-        contentSourceId,
-        mode: modes.compileMode,
-        reactVersion,
-        dependencyPinningCacheKey,
-        dependencyPinningDependencies,
-        dependencyPinningSource,
-        moduleServerOrigin,
-        isLocalProject,
-        serverExternalPackages: config?.build?.serverExternalPackages,
-      })) as MDXModule;
+      const mod = (await awaitAbortable(
+        mdxRenderer.loadModuleESM(code, {
+          adapter,
+          projectId,
+          projectDir,
+          projectSlug,
+          contentSourceId,
+          mode: modes.compileMode,
+          reactVersion,
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
+          dependencyPinningSource,
+          moduleServerOrigin,
+          isLocalProject,
+          serverExternalPackages: config?.build?.serverExternalPackages,
+        }),
+        signal,
+      )) as MDXModule;
       throwIfAborted(signal);
 
       loadMdxLayoutLog.debug("loadModuleESM DONE", {

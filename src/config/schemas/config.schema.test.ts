@@ -49,6 +49,11 @@ describe("configSchema", () => {
     // user to remove it and where the migration is documented.
     assertStringIncludes(error.message, "Remove the setting");
     assertStringIncludes(error.message, "docs/guides/configuration.md");
+    assertEquals(
+      error.message.includes("—"),
+      false,
+      "public configuration guidance must use ASCII punctuation",
+    );
   });
 
   it("keeps CSS asset-pipeline schema constraints aligned with runtime", () => {

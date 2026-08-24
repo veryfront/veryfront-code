@@ -1157,7 +1157,7 @@ export function validateVeryfrontConfig(input: unknown): VeryfrontConfig {
     : "";
   const esmLayoutsHint = path === "experimental.esmLayouts"
     ? " The esmLayouts opt-out was removed; layout rendering always uses the ESM path." +
-      " Remove the setting — see the Experimental features section in docs/guides/configuration.md."
+      " Remove the setting. See the Experimental features section in docs/guides/configuration.md."
     : "";
   const expectedWithHint = expected + corsHint + esmLayoutsHint;
 

@@ -67,10 +67,11 @@ export async function resolveAppComponentPath(
   }
 
   if (configApp) {
+    const displayPath = isAbsolute(configApp) ? "<absolute path>" : configApp;
     if (!isValidComponentPath(configApp)) {
       throw CONFIG_INVALID.create({
         detail:
-          `Invalid app component path: "${configApp}". Check your veryfront.config.ts 'app' setting.`,
+          `Invalid app component path: "${displayPath}". Check your veryfront.config.ts 'app' setting.`,
       });
     }
 
@@ -82,17 +83,17 @@ export async function resolveAppComponentPath(
     if (!isPathContainedBy(appPath, projectRoot)) {
       throw CONFIG_INVALID.create({
         detail:
-          `Configured app component must stay inside the project directory: "${configApp}". Check your veryfront.config.ts 'app' setting.`,
+          `Configured app component must stay inside the project directory: "${displayPath}". Check your veryfront.config.ts 'app' setting.`,
       });
     }
 
     if (!(await adapter.fs.exists(appPath))) {
       throw CONFIG_INVALID.create({
         detail:
-          `Configured app component does not exist: "${configApp}". Check your veryfront.config.ts 'app' setting.`,
+          `Configured app component does not exist: "${displayPath}". Check your veryfront.config.ts 'app' setting.`,
       });
     }
-    await assertCanonicalContainment(appPath, projectRoot, configApp, adapter);
+    await assertCanonicalContainment(appPath, projectRoot, displayPath, adapter);
 
     logger.debug("Using config.app", { path: appPath });
     return appPath;

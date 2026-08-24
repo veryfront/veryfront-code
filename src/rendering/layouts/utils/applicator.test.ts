@@ -3,7 +3,7 @@ import * as ReactDOMServer from "react-dom/server";
 import "#veryfront/schemas/_test-setup.ts";
 // Node position injection needs the babel CodeParser contract registered.
 import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { renderToStringAdapter } from "#veryfront/react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -43,6 +43,13 @@ const PREVIEW_MODES = {
   compileMode: "production",
   environment: "preview",
 } as const;
+
+/** Drain promise continuations without advancing timer-backed work. */
+async function flushMicrotasks(): Promise<void> {
+  for (let index = 0; index < 25; index += 1) {
+    await Promise.resolve();
+  }
+}
 
 /** Local development: dev compile, preview instrumentation. */
 const DEVELOPMENT_MODES = {
@@ -709,14 +716,82 @@ describe(
           );
 
           await moduleLoadStarted;
-          controller.abort(new Error("request canceled during module load"));
-          resolveModule({ default: () => null });
+          const reason = new Error("request canceled during module load");
+          controller.abort(reason);
 
-          await assertRejects(
-            () => layoutResult,
-            Error,
-            "request canceled during module load",
-            "an abort while the module loader is pending must stop layout application",
+          const outcome = await Promise.race([
+            layoutResult.then((): unknown => "resolved", (error: unknown) => error),
+            flushMicrotasks().then((): unknown => "still pending"),
+          ]);
+
+          assertStrictEquals(
+            outcome,
+            reason,
+            "an abort must settle layout application without waiting for a stalled module loader",
+          );
+        } finally {
+          resolveModule({ default: () => null });
+          mutableRenderer.loadModuleESM = originalLoadModuleESM;
+        }
+      });
+
+      it("preserves cancellation when an aborted MDX module load later rejects", async () => {
+        const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+        const mutableRenderer = mdxRenderer as unknown as {
+          loadModuleESM: typeof mdxRenderer.loadModuleESM;
+        };
+        let rejectModule!: (error: Error) => void;
+        const moduleLoad = new Promise<never>((_resolve, reject) => {
+          rejectModule = reject;
+        });
+        let markModuleLoadStarted!: () => void;
+        const moduleLoadStarted = new Promise<void>((resolve) => {
+          markModuleLoadStarted = resolve;
+        });
+        mutableRenderer.loadModuleESM = () => {
+          markModuleLoadStarted();
+          return moduleLoad;
+        };
+
+        const controller = new AbortController();
+        const cancellation = new Error("request canceled before module failure");
+
+        try {
+          const layoutResult = applyLayoutsESM(
+            React.createElement("p", { id: "page-body" }, "Text"),
+            {
+              compiledCode: "export default function Layout() { return null; }",
+            } as MdxBundle,
+            [],
+            "/project",
+            {},
+            createLayoutComponentCache(),
+            createMockAdapter(),
+            undefined,
+            "project-esm-aborted-before-rejection",
+            "project-slug",
+            "content-source-id",
+            PRODUCTION_MODES,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            controller.signal,
+          );
+
+          await moduleLoadStarted;
+          controller.abort(cancellation);
+          rejectModule(new Error("module loader failed after cancellation"));
+
+          const error = await assertRejects(() => layoutResult);
+          assertStrictEquals(
+            error,
+            cancellation,
+            "request cancellation must take precedence over a later module-loader rejection",
           );
         } finally {
           mutableRenderer.loadModuleESM = originalLoadModuleESM;
