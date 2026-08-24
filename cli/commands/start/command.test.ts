@@ -53,21 +53,17 @@ describe("commands/start/command", () => {
   });
 
   describe("global error logging", () => {
-    it("withholds stacks unless verbose output is enabled", () => {
+    it("withholds stacks from user-facing start output", () => {
       const error = new Error("render failed");
       error.stack = "Error: render failed\n    at <PROJECT_ROOT>/app.ts:1:1";
 
       assertEquals(
-        createGlobalErrorLogContext(error, "unhandledRejection", false, false),
+        createGlobalErrorLogContext(error, "unhandledRejection", false),
         {
           message: "render failed",
           type: "unhandledRejection",
           fatal: false,
         },
-      );
-      assertEquals(
-        createGlobalErrorLogContext(error, "unhandledRejection", false, true).stack,
-        error.stack,
       );
     });
   });

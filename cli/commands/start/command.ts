@@ -1,7 +1,7 @@
 import { cwd, getEnv, onGlobalError } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
 import { isAbsolute, join, resolve } from "veryfront/platform/path";
-import { cliLogger, isVerbose } from "#cli/utils";
+import { cliLogger } from "#cli/utils";
 import { exitProcess, registerTerminationSignals } from "#cli/utils";
 import { generateDefaultProjectId } from "../../utils/project.ts";
 import { clearAllLocalCaches } from "veryfront/transforms/mdx-cache";
@@ -36,13 +36,11 @@ export function createGlobalErrorLogContext(
   error: Error,
   type: string,
   fatal: boolean,
-  includeStack: boolean,
 ): { message: string; type: string; fatal: boolean; stack?: string } {
   return {
     message: error.message,
     type,
     fatal,
-    ...(includeStack && error.stack ? { stack: error.stack } : {}),
   };
 }
 
@@ -215,7 +213,7 @@ export async function startCommand(options: StartOptions): Promise<void> {
 
     logger.error(
       `${type}: Application error caught`,
-      createGlobalErrorLogContext(error, type, isFatal, isVerbose()),
+      createGlobalErrorLogContext(error, type, isFatal),
     );
 
     if (isFatal) {

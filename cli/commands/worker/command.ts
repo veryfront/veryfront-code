@@ -16,8 +16,7 @@ export function formatRedisLogTarget(redisUrl: string): string {
   try {
     const url = new URL(redisUrl);
     if (url.protocol !== "redis:" && url.protocol !== "rediss:") return "<configured>";
-    const databasePath = /^\/\d+$/.test(url.pathname) ? url.pathname : "";
-    return `${url.protocol}//${url.host}${databasePath}`;
+    return "<configured>";
   } catch {
     return "<configured>";
   }
