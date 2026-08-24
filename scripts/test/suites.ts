@@ -27,11 +27,52 @@ export const PROVIDER_EGRESS_HOSTS: readonly string[] = Object.freeze([
   "api.groq.com",
   "api.deepseek.com",
   "openrouter.ai",
+  "mcp.context7.com",
 ]);
 
 export const PROVIDER_EGRESS_DENY_NET = `--deny-net=${
   PROVIDER_EGRESS_HOSTS.join(",")
 }`;
+
+/** Provider credentials and endpoint overrides ordinary test lanes must not inherit. */
+export const PROVIDER_ENV_KEYS: readonly string[] = Object.freeze([
+  "VERYFRONT_API_TOKEN",
+  "VERYFRONT_API_BASE_URL",
+  "VERYFRONT_API_URL",
+  "VERYFRONT_PROJECT_SLUG",
+  "AG_UI_EVAL_PROJECT_SLUG",
+  "TENANT_PROJECT_SLUG",
+  "OPENAI_API_KEY",
+  "OPENAI_BASE_URL",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_BASE_URL",
+  "GOOGLE_API_KEY",
+  "GOOGLE_GENERATIVE_AI_API_KEY",
+  "GOOGLE_GEMINI_BASE_URL",
+  "MISTRAL_API_KEY",
+  "MISTRAL_BASE_URL",
+  "GROQ_API_KEY",
+  "GROQ_BASE_URL",
+  "DEEPSEEK_API_KEY",
+  "DEEPSEEK_BASE_URL",
+  "OPENROUTER_API_KEY",
+  "OPENROUTER_BASE_URL",
+  "CONTEXT7_API_KEY",
+]);
+
+export function buildTestProcessEnv(
+  parentEnv: Readonly<Record<string, string>>,
+  overrides: Readonly<Record<string, string>> = {},
+): Record<string, string> {
+  const env = { ...parentEnv, ...overrides };
+  // Windows environment names are case-insensitive, so a credential inherited
+  // as OpenAI_Api_Key would survive an exact-case delete. Match by folded name.
+  const scrubbed = new Set<string>(PROVIDER_ENV_KEYS);
+  for (const key of Object.keys(env)) {
+    if (scrubbed.has(key.toUpperCase())) delete env[key];
+  }
+  return env;
+}
 
 export type TestLevel = "unit" | "integration" | "e2e";
 

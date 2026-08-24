@@ -1,12 +1,42 @@
-import { assertEquals, assertThrows } from "#std/assert";
-import { describe, it } from "#std/testing/bdd";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  buildTestProcessEnv,
+  DENO_TEST_ENV,
   LEAF_TEST_SUITES,
+  PROVIDER_ENV_KEYS,
   resolveLeafSuiteOwners,
   validateLeafSuiteRegistry,
 } from "./suites.ts";
 
 describe("leaf test suite registry", () => {
+  it("removes every provider credential while preserving benign parent values", () => {
+    const parentEnv = Object.fromEntries([
+      ...PROVIDER_ENV_KEYS.map((key) => [key, "test-only-value"]),
+      ["PATH", "/test/bin"],
+    ]);
+
+    const env = buildTestProcessEnv(parentEnv, DENO_TEST_ENV);
+
+    assertEquals(env.PATH, "/test/bin");
+    assertEquals(env.DENO_TESTING, "1");
+    for (const key of PROVIDER_ENV_KEYS) assertEquals(env[key], undefined);
+  });
+
+  it("scrubs credentials whose inherited names differ only by case", () => {
+    // Windows environment names are case-insensitive, so an exact-case delete
+    // would leave OpenAI_Api_Key readable through Deno.env.get("OPENAI_API_KEY").
+    const env = buildTestProcessEnv({
+      OpenAI_Api_Key: "test-only-value",
+      anthropic_api_key: "test-only-value",
+      PATH: "/test/bin",
+    });
+
+    assertEquals(env.OpenAI_Api_Key, undefined);
+    assertEquals(env.anthropic_api_key, undefined);
+    assertEquals(env.PATH, "/test/bin");
+  });
+
   it("records runtime as one suite with variants, ownership, and support exclusions", () => {
     // Production break caught: node and bun runtime tests can drift into
     // competing leaf owners instead of one runtime suite with runner variants.

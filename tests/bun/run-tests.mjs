@@ -6,6 +6,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { ensureNpmNodeModulesLinks } from "../ensure-npm-links.mjs";
 import { loadSuitePlan } from "../load-suite-plan.mjs";
+import { buildRuntimeTestProcessEnv } from "../../scripts/test/runtime-env.mjs";
 import { buildIsolatedBunTestRuns, registerBunWorkspaceCleanup } from "./runner-args.mjs";
 import { prepareBunWorkspacePackages } from "./workspace-packages.mjs";
 
@@ -99,7 +100,10 @@ function runBunProcess(file, bunArgs) {
       resolvePromise(code);
     }
 
-    child.on("error", (error) => finish(1, `Failed to start Bun tests: ${error.message}`));
+    child.on(
+      "error",
+      (error) => finish(1, `Failed to start Bun tests: ${error.message}`),
+    );
     child.on("close", (code) => finish(code ?? 1));
   });
 }
@@ -132,29 +136,11 @@ async function runIsolatedTests(files) {
   return failed.length === 0;
 }
 
-const env = { ...process.env };
-env.DENO_TESTING = "1";
-// Bun's runtime transpiler cache is global across worktrees. Cached source maps
-// can carry another checkout's tsconfig paths into this isolated test process.
-env.BUN_RUNTIME_TRANSPILER_CACHE_PATH = "0";
-if (!env.VF_DISABLE_LRU_INTERVAL) env.VF_DISABLE_LRU_INTERVAL = "1";
-if (!env.NODE_ENV) env.NODE_ENV = "production";
-if (!env.LOG_FORMAT) env.LOG_FORMAT = "text";
-// Don't scale time by default - many tests have timing-sensitive operations
-if (!env.VF_TEST_TIME_SCALE) env.VF_TEST_TIME_SCALE = "1";
-for (
-  const key of [
-    "OPENAI_API_KEY",
-    "OPENAI_BASE_URL",
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_BASE_URL",
-    "GOOGLE_API_KEY",
-    "GOOGLE_GENERATIVE_AI_API_KEY",
-    "GOOGLE_GEMINI_BASE_URL",
-  ]
-) {
-  delete env[key];
-}
+const env = buildRuntimeTestProcessEnv(process.env, {
+  // Bun's runtime transpiler cache is global across worktrees. Cached source maps
+  // can carry another checkout's tsconfig paths into this isolated test process.
+  BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
+});
 
 async function main() {
   const files = selectedTestFiles();

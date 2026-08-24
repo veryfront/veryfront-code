@@ -18,6 +18,7 @@
 
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { fromFileUrl } from "#veryfront/compat/path";
 import { DENO_ONLY_TESTS } from "./deno-only-tests.mjs";
 import {
   filterTestFiles,
@@ -42,6 +43,30 @@ const ELIGIBLE_FILES = [
 ];
 
 describe("runtime test filters", () => {
+  it("fails loudly when Node filters select no files", async () => {
+    const output = await new Deno.Command("node", {
+      args: [
+        fromFileUrl(new URL("./node/run-tests.mjs", import.meta.url)),
+        "--suite=runtime:node",
+      ],
+      cwd: fromFileUrl(new URL("../", import.meta.url)),
+      env: {
+        NODE_TEST_INCLUDE: "missing-node-fixture.test.ts",
+        VF_TEST_SHARDS: "1",
+      },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const stderr = new TextDecoder().decode(output.stderr);
+
+    assertEquals(output.code, 1);
+    assert(
+      stderr.includes("Node test runner selected no test files"),
+      stderr,
+    );
+    assertEquals(stderr.includes("run-tests.mjs:"), false, stderr);
+  });
+
   it("rejects malformed planner output before a runtime can silently pass", () => {
     assertEquals(
       validateSuitePlan({

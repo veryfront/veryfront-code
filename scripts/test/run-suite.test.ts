@@ -99,7 +99,8 @@ describe("suite planning parity", () => {
   });
 
   it("runs the sandbox runtime guard in the Node and Bun suites", async () => {
-    const guardFile = "tests/integration/security/sandbox-runtime-guard.test.ts";
+    const guardFile =
+      "tests/integration/security/sandbox-runtime-guard.test.ts";
 
     for (const suite of ["runtime:node", "runtime:bun"] as const) {
       const plan = await planSuiteFiles({ suite });
@@ -174,7 +175,7 @@ describe("suite planning parity", () => {
     );
   });
 
-  it("retains Node's filtered empty-selection compatibility only", async () => {
+  it("returns filtered empty Node plans for the runtime adapter to reject", async () => {
     const root = await Deno.makeTempDir();
     try {
       assertEquals(
@@ -364,6 +365,12 @@ describe("migration command surface", () => {
         false,
         `${task} must inherit its env from the suite record`,
       );
+      if (command.includes("run-deno-suite.ts")) {
+        assert(
+          command.includes("--allow-env"),
+          `${task} must let the suite runner sanitize its inherited environment`,
+        );
+      }
     }
 
     for (

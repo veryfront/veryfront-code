@@ -7,6 +7,7 @@
  * @module testing/preload
  */
 
+import "./sanitize-process-env.ts";
 import "./bdd.ts";
 import "../schemas/_test-setup.ts";
 import { __installUnpinnedHostTransportForTests } from "../security/http/outbound-fetch.ts";
