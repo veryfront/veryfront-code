@@ -64,12 +64,13 @@ export function getTenantFromEnv(): CapturedTenantContext | undefined {
   };
 }
 
+/** Hydrate injected project env into the run context. Returns null when the run no longer exists. */
 export async function hydrateRunContextEnv(
   backend: WorkflowBackend,
   runId: string,
   run: WorkflowRun,
   expectedWorkerId?: string,
-): Promise<WorkflowRun> {
+): Promise<WorkflowRun | null> {
   const injectedEnv = mergeInjectedWorkflowEnv(run.context.env, getProcessEnv());
   if (!injectedEnv) {
     return run;
@@ -90,7 +91,8 @@ export async function hydrateRunContextEnv(
       expectedWorkerId,
     },
   });
-  return outcome.run ?? (await backend.getRun(runId)) ?? run;
+  if (outcome.run) return outcome.run;
+  return await backend.getRun(runId);
 }
 
 export function getFinalRunExitCode(

@@ -55,6 +55,18 @@ function createMockTool(name: string, handler: (input: unknown) => unknown): Too
   };
 }
 
+class DeleteOnHydrateBackend extends MemoryBackend {
+  override async updateRunIfStatusAndWorker(
+    runId: string,
+    _expectedStatuses: WorkflowRun["status"][],
+    _expectedWorkerId: string,
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.context?.env) await this.deleteRun(runId);
+    return false;
+  }
+}
+
 class MissingPolicyOnReadBackend extends MemoryBackend {
   override async getRun(runId: string): Promise<WorkflowRun | null> {
     const run = await super.getRun(runId);
@@ -341,6 +353,46 @@ describe("runWorkflowRun", () => {
     assertEquals(persisted?.workerId, "run-execution:new-owner");
     assertEquals(persisted?.error, undefined);
     assertEquals(persisted?.context.env, undefined);
+  });
+
+  it("stops without resuming when the run is deleted during env hydration", async () => {
+    rememberEnv();
+
+    const backend = new DeleteOnHydrateBackend();
+    const run: WorkflowRun = {
+      id: "run-hydrate-deleted",
+      workflowId: "test-workflow",
+      status: "running",
+      input: {},
+      nodeStates: {},
+      currentNodes: [],
+      context: { input: {} },
+      checkpoints: [],
+      pendingApprovals: [],
+      createdAt: new Date(),
+      sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+      workerId: "run-execution:hydrate-deleted",
+    };
+    await backend.createRun(run);
+
+    Deno.env.set("WORKFLOW_RUN_ID", run.id);
+    Deno.env.set("RUN_EXECUTION_ID", "hydrate-deleted");
+    Deno.env.set("VERYFRONT_TASK_ENV_JSON", JSON.stringify({ MODE: "new" }));
+
+    let resumed = false;
+    const exitCode = await runWorkflowRun({
+      backend,
+      executor: {
+        resume: () => {
+          resumed = true;
+          return Promise.resolve();
+        },
+      } as never,
+    });
+
+    assertEquals(exitCode, EXIT_CODES.NOT_FOUND);
+    assertEquals(resumed, false);
+    assertEquals(await backend.getRun(run.id), null);
   });
 
   it("executes workflow runs already marked running by the run manager", async () => {
