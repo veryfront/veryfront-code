@@ -361,7 +361,7 @@ async function readNextStreamPartWithTimeout(
       }),
     ]);
   } finally {
-    if (timeoutId) {
+    if (timeoutId !== undefined) {
       clearTimeoutFn(timeoutId);
     }
   }

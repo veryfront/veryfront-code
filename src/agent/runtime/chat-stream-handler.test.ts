@@ -849,7 +849,7 @@ describe("chat-stream-handler", () => {
     it("cuts off a local tool input that idles past the configured timeout", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();
-      let nextTimerId = 0;
+      let nextTimerId = -1;
       const clearedTimeouts: number[] = [];
       let resolveLocalDeadline: (deadline: {
         callback: () => void;
@@ -904,6 +904,11 @@ describe("chat-stream-handler", () => {
       );
       deadline.callback();
       await processing;
+      assertEquals(
+        clearedTimeouts.filter((id) => id === 0).length,
+        1,
+        "the initial stream deadline must clear the valid zero timer handle",
+      );
       assertEquals(
         clearedTimeouts.filter((id) => id === deadline.id).length,
         1,
