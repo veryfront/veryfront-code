@@ -37,6 +37,15 @@ describe("eval/datasets", () => {
         ]),
       );
       await Deno.writeTextFile(
+        `${root}/datasets/wrapped.json`,
+        JSON.stringify({
+          examples: [
+            { id: "json-1", input: "alpha", reference: "A" },
+            { id: "json-2", input: "beta", metadata: { split: "regression" } },
+          ],
+        }),
+      );
+      await Deno.writeTextFile(
         `${root}/datasets/cases.jsonl`,
         [
           JSON.stringify({ id: "jsonl-1", input: "gamma", reference: "G" }),
@@ -49,6 +58,11 @@ describe("eval/datasets", () => {
         { id: "json-1", input: "alpha", reference: "A" },
         { id: "json-2", input: "beta", metadata: { split: "regression" } },
       ]);
+      assertEquals(
+        await datasets.json("datasets/wrapped.json").load({ baseDir: root }),
+        await datasets.json("datasets/cases.json").load({ baseDir: root }),
+        "the examples-object form normalizes to the same examples as the array form",
+      );
       assertEquals(await datasets.jsonl("datasets/cases.jsonl").load({ baseDir: root }), [
         { id: "jsonl-1", input: "gamma", reference: "G" },
         { id: "jsonl-2", input: "delta" },
@@ -91,11 +105,20 @@ describe("eval/datasets", () => {
         `${root}/bad.jsonl`,
         JSON.stringify({ id: "bad", reference: "missing input" }),
       );
+      await Deno.writeTextFile(
+        `${root}/bad.json`,
+        JSON.stringify({ rows: [] }),
+      );
 
       await assertRejects(
         () => datasets.jsonl("bad.jsonl").load({ baseDir: root }),
         Error,
         "input",
+      );
+      await assertRejects(
+        () => datasets.json("bad.json").load({ baseDir: root }),
+        Error,
+        "must contain an array or an object with examples",
       );
     } finally {
       await Deno.remove(root, { recursive: true });

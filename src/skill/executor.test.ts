@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import {
   type FetchCall,
@@ -91,8 +92,17 @@ describe("src/skill/executor", () => {
 
     it("should detect TypeScript files", () => {
       const result = detectRuntime("scripts/run.ts");
-      // Either deno or npx tsx depending on runtime
-      assertEquals(result.args.includes("scripts/run.ts"), true);
+      if (isDeno) {
+        assertEquals(result.command, "deno", "TypeScript runs under deno");
+        assertEquals(
+          result.args,
+          ["run", "--allow-read", "--allow-env", "--allow-net", "--allow-write", "scripts/run.ts"],
+          "deno runs the script with the bounded permission set",
+        );
+        return;
+      }
+      assertEquals(result.command, "npx", "TypeScript runs under npx outside Deno");
+      assertEquals(result.args, ["tsx", "scripts/run.ts"], "npx runs the script through tsx");
     });
 
     it("should use direct execution for unknown extensions", () => {
@@ -221,6 +231,22 @@ describe("src/skill/executor", () => {
           }),
         TypeError,
         "canonical scripts/ paths",
+      );
+    });
+
+    it("rejects a script snapshot entry that does not match scriptContent", async () => {
+      await assertRejects(
+        () =>
+          new LocalScriptExecutor().execute({
+            scriptPath: "scripts/run.sh",
+            scriptContent: "echo validated",
+            scriptSnapshot: {
+              entryPath: "scripts/run.sh",
+              files: [{ path: "scripts/run.sh", content: "echo tampered" }],
+            },
+          }),
+        TypeError,
+        "does not match scriptContent",
       );
     });
 
