@@ -55,10 +55,20 @@ function slowTool(id: string): Tool {
     type: "function",
     description: `Slow test tool: ${id}`,
     inputSchema: defineSchema((v) => v.object({}).passthrough())(),
-    execute: async () => {
-      await delay(5_000);
-      return { ok: true };
-    },
+    execute: (_input, context) =>
+      new Promise((resolve, reject) => {
+        const signal = context?.abortSignal;
+        const timeoutId = setTimeout(() => {
+          signal?.removeEventListener("abort", abort);
+          resolve({ ok: true });
+        }, 5_000);
+        const abort = () => {
+          clearTimeout(timeoutId);
+          reject(signal?.reason);
+        };
+        if (signal?.aborted) abort();
+        else signal?.addEventListener("abort", abort, { once: true });
+      }),
   };
 }
 
@@ -162,9 +172,8 @@ describe("createWorkflowHandler", () => {
     // useWorkflowStart reads `runId` (falling back to `id`) off this body.
     const body = await response.json() as { runId?: string };
     expect(typeof body.runId).toBe("string");
-
-    // The route's whole job is forwarding the posted input into the run.
-    const runId = body.runId as string;
+    if (!body.runId) throw new Error("expected a workflow run ID");
+    const runId = body.runId;
     await until(
       async () => (await client.getRun(runId))?.status === "completed",
       `run ${runId} to finish`,
@@ -308,6 +317,7 @@ describe("createWorkflowHandler", () => {
 
     const response = await handlers.POST(post(`/api/workflows/runs/${runId}/cancel`));
     expect(response.status).toBe(200);
+    await delay(0);
   });
 
   it("answers a refused retry instead of throwing out of the route", async () => {
@@ -322,6 +332,7 @@ describe("createWorkflowHandler", () => {
     expect(response.status).toBe(409);
     const body = await response.json() as { message?: string };
     expect(body.message).toContain("cancelled");
+    await delay(0);
   });
 
   it("retries a failed run instead of using paused-run resume", async () => {
@@ -453,6 +464,11 @@ describe("createWorkflowHandler", () => {
 
     const response = await mounted.POST(post("/api/flows/pipeline/start", { input: {} }));
     expect(response.status).toBe(200);
+    const { runId } = await response.json() as { runId: string };
+    await until(
+      async () => (await client.getRun(runId))?.status === "completed",
+      `run ${runId} to finish`,
+    );
 
     // The default mount point must not answer once basePath moved.
     expect((await mounted.GET(get("/api/workflows/runs"))).status).toBe(404);
@@ -502,6 +518,12 @@ describe("createWorkflowHandler", () => {
 
     const invalidLimit = await handlers.GET(get("/api/workflows/runs?limit=1001"));
     expect(invalidLimit.status).toBe(400);
+
+    const exponentLimit = await handlers.GET(get("/api/workflows/runs?limit=1e2"));
+    expect(exponentLimit.status).toBe(400);
+
+    const hexadecimalCursor = await handlers.GET(get("/api/workflows/runs?cursor=0x10"));
+    expect(hexadecimalCursor.status).toBe(400);
   });
 
   it("rejects an invalid approval decision shape", async () => {
@@ -909,12 +931,58 @@ describe("createWorkflowHandler", () => {
       expect(closeCalls).toBe(1);
     });
 
+    it("sends a sanitized error and closes when the snapshot cannot be encoded", async () => {
+      const runId = await startRun();
+      const persisted = await client.getRun(runId);
+      if (!persisted) throw new Error("expected the run to exist");
+      let nextCalls = 0;
+      let returnCalls = 0;
+      let closeCalls = 0;
+      replaceObservation({
+        supported: true,
+        initial: {
+          ...persisted,
+          status: "running",
+          input: 1n,
+        },
+        events: {
+          [Symbol.asyncIterator]: () => ({
+            next: () => {
+              nextCalls++;
+              return Promise.resolve({ value: undefined, done: true as const });
+            },
+            return: () => {
+              returnCalls++;
+              return Promise.resolve({ value: undefined, done: true as const });
+            },
+          }),
+        },
+        close: () => {
+          closeCalls++;
+          return Promise.resolve();
+        },
+      });
+
+      const response = await handlers.GET(get(`/api/workflows/runs/${runId}/events`));
+      const frames = await readStream(response);
+
+      expect(frames).toEqual([["error", {
+        code: "workflow_observation_failed",
+        message: "Workflow event observation failed",
+        retryable: true,
+      }]]);
+      expect(nextCalls).toBe(0);
+      expect(returnCalls).toBe(1);
+      expect(closeCalls).toBe(1);
+    });
+
     it("pulls at most one backend event while the consumer is backpressured", async () => {
       const runId = await startRun();
       const persisted = await client.getRun(runId);
       if (!persisted) throw new Error("expected the run to exist");
       const initial = { ...persisted, status: "running" as const };
       const pending = Promise.withResolvers<IteratorResult<never>>();
+      const nextCalled = Promise.withResolvers<void>();
       let nextCalls = 0;
       let returnCalls = 0;
       replaceObservation({
@@ -924,6 +992,7 @@ describe("createWorkflowHandler", () => {
           [Symbol.asyncIterator]: () => ({
             next: () => {
               nextCalls++;
+              nextCalled.resolve();
               return pending.promise;
             },
             return: () => {
@@ -940,8 +1009,8 @@ describe("createWorkflowHandler", () => {
       if (!reader) throw new Error("expected an SSE response body");
 
       expect(await readFrame(reader)).toContain("event: snapshot");
-      await until(() => Promise.resolve(nextCalls === 1), "one backend event pull");
-      await delay(20);
+      await nextCalled.promise;
+      await Promise.resolve();
       expect(nextCalls).toBe(1);
 
       await reader.cancel();

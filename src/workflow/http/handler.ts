@@ -51,6 +51,13 @@ const logger = baseLogger.component("workflow-http");
 
 class WorkflowRequestError extends Error {}
 
+function readDecimalInteger(value: string): number {
+  if (!/^[0-9]+$/.test(value)) {
+    throw new WorkflowRequestError("Invalid workflow run filter");
+  }
+  return Number(value);
+}
+
 function toSegments(path: string): string[] {
   return path.split("/").filter(Boolean).map((segment) => {
     try {
@@ -119,13 +126,13 @@ function readFilter(url: URL): RunFilter {
   if (createdBefore) filter.createdBefore = new Date(createdBefore);
 
   const limit = params.get("limit");
-  if (limit !== null) filter.limit = Number(limit);
+  if (limit !== null) filter.limit = readDecimalInteger(limit);
 
   // The hook round-trips an opaque `cursor`; this backend paginates by offset,
   // so the cursor is the offset. Keeping it opaque on the wire leaves room to
   // change that without touching the hook.
   const cursor = params.get("cursor");
-  if (cursor !== null) filter.offset = Number(cursor);
+  if (cursor !== null) filter.offset = readDecimalInteger(cursor);
 
   try {
     return RunFilterSchema.parse(filter);
@@ -245,6 +252,21 @@ function runEventStream(
   const encode = (event: string, data: unknown): Uint8Array =>
     encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 
+  const failStream = (
+    controller: ReadableStreamDefaultController<Uint8Array>,
+    error: unknown,
+  ): void => {
+    logger.error("Workflow event observation failed", {
+      runId: observation.initial.id,
+    }, error);
+    controller.enqueue(encode("error", {
+      code: "workflow_observation_failed",
+      message: "Workflow event observation failed",
+      retryable: true,
+    }));
+    close();
+  };
+
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
       streamController = controller;
@@ -259,8 +281,12 @@ function runEventStream(
 
       if (snapshotPending) {
         snapshotPending = false;
-        controller.enqueue(encode("snapshot", projectRun(observation.initial)));
-        if (isTerminalRunStatus(observation.initial.status)) close();
+        try {
+          controller.enqueue(encode("snapshot", projectRun(observation.initial)));
+          if (isTerminalRunStatus(observation.initial.status)) close();
+        } catch (error) {
+          failStream(controller, error);
+        }
         return;
       }
 
@@ -278,15 +304,7 @@ function runEventStream(
         ) close();
       } catch (error) {
         if (closed) return;
-        logger.error("Workflow event observation failed", {
-          runId: observation.initial.id,
-        }, error);
-        controller.enqueue(encode("error", {
-          code: "workflow_observation_failed",
-          message: "Workflow event observation failed",
-          retryable: true,
-        }));
-        close();
+        failStream(controller, error);
       }
     },
     cancel() {
