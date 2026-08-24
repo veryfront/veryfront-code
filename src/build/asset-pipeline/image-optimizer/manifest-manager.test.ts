@@ -3,6 +3,7 @@ import { join } from "#veryfront/compat/path";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, readTextFile } from "#veryfront/testing/deno-compat.ts";
+import { remove, symlink, writeTextFile } from "#veryfront/platform/compat/fs.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import { MAX_IMAGE_MANIFEST_BYTES } from "./constants.ts";
 import { loadManifest, writeManifest } from "./manifest-manager.ts";
@@ -49,7 +50,7 @@ describe("manifest-manager", () => {
       assertEquals(loaded.size, 1);
       assertEquals(loaded.get("logo.png")?.defaultFormat, "webp");
     } finally {
-      await Deno.remove(tmpDir, { recursive: true });
+      await remove(tmpDir, { recursive: true });
     }
   });
 
@@ -58,8 +59,8 @@ describe("manifest-manager", () => {
     try {
       assertEquals((await loadManifest(tmpDir)).size, 0);
 
-      await Deno.writeTextFile(join(tmpDir, "real-manifest.json"), "{}");
-      await Deno.symlink(
+      await writeTextFile(join(tmpDir, "real-manifest.json"), "{}");
+      await symlink(
         join(tmpDir, "real-manifest.json"),
         join(tmpDir, "image-manifest.json"),
       );
@@ -70,7 +71,7 @@ describe("manifest-manager", () => {
         "a symlinked manifest must fail loudly instead of loading as empty",
       );
     } finally {
-      await Deno.remove(tmpDir, { recursive: true });
+      await remove(tmpDir, { recursive: true });
     }
   });
 
@@ -98,10 +99,10 @@ describe("manifest-manager", () => {
     const tmpDir = await makeTempDir();
     const manifestPath = join(tmpDir, "image-manifest.json");
     try {
-      await Deno.writeTextFile(manifestPath, "{");
+      await writeTextFile(manifestPath, "{");
       await assertRejects(() => loadManifest(tmpDir), SyntaxError);
 
-      await Deno.writeTextFile(
+      await writeTextFile(
         manifestPath,
         JSON.stringify({
           "../logo.png": {
@@ -118,14 +119,14 @@ describe("manifest-manager", () => {
         "malformed",
       );
     } finally {
-      await Deno.remove(tmpDir, { recursive: true });
+      await remove(tmpDir, { recursive: true });
     }
   });
 
   it("loads legacy entries without originalSize", async () => {
     const tmpDir = await makeTempDir();
     try {
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(tmpDir, "image-manifest.json"),
         JSON.stringify({
           "logo.png": {
@@ -147,7 +148,7 @@ describe("manifest-manager", () => {
       const loaded = await loadManifest(tmpDir);
       assertEquals(loaded.get("logo.png")?.originalSize, undefined);
     } finally {
-      await Deno.remove(tmpDir, { recursive: true });
+      await remove(tmpDir, { recursive: true });
     }
   });
 
@@ -162,7 +163,7 @@ describe("manifest-manager", () => {
       fileSize: 1234,
     };
     try {
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(tmpDir, "image-manifest.json"),
         JSON.stringify({
           "logo.png": {
@@ -177,14 +178,14 @@ describe("manifest-manager", () => {
       const loaded = await loadManifest(tmpDir);
       assertEquals(loaded.get("logo.png")?.variants, [variant]);
     } finally {
-      await Deno.remove(tmpDir, { recursive: true });
+      await remove(tmpDir, { recursive: true });
     }
   });
 
   it("rejects conflicting duplicate variants instead of normalizing them", async () => {
     const tmpDir = await makeTempDir();
     try {
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(tmpDir, "image-manifest.json"),
         JSON.stringify({
           "logo.png": {
@@ -219,7 +220,7 @@ describe("manifest-manager", () => {
         "malformed",
       );
     } finally {
-      await Deno.remove(tmpDir, { recursive: true });
+      await remove(tmpDir, { recursive: true });
     }
   });
 });

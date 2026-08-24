@@ -6,6 +6,13 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  makeTempDir,
+  mkdir,
+  remove,
+  symlink,
+  writeTextFile,
+} from "#veryfront/platform/compat/fs.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { runtime } from "#veryfront/platform/adapters/registry.ts";
 import { installTestCSSOptimizationEngine } from "../../../../tests/_helpers/css-optimization-engine.ts";
@@ -23,28 +30,28 @@ describe("build/asset-pipeline/tailwind-processor/batch-processor", () => {
     });
 
     it("should return empty array for directory with no CSS files", async () => {
-      const tmpDir = await Deno.makeTempDir();
+      const tmpDir = await makeTempDir();
       try {
-        await Deno.mkdir(`${tmpDir}/styles`, { recursive: true });
-        await Deno.writeTextFile(`${tmpDir}/styles/readme.md`, "# Styles");
+        await mkdir(`${tmpDir}/styles`, { recursive: true });
+        await writeTextFile(`${tmpDir}/styles/readme.md`, "# Styles");
 
         const result = await processTailwindCSSInDirectory(tmpDir, "styles", ".veryfront/css");
         assertEquals(result, []);
       } finally {
-        await Deno.remove(tmpDir, { recursive: true });
+        await remove(tmpDir, { recursive: true });
       }
     });
 
     it("should return empty array for CSS files without tailwind imports", async () => {
-      const tmpDir = await Deno.makeTempDir();
+      const tmpDir = await makeTempDir();
       try {
-        await Deno.mkdir(`${tmpDir}/styles`, { recursive: true });
-        await Deno.writeTextFile(`${tmpDir}/styles/global.css`, "body { color: red; }");
+        await mkdir(`${tmpDir}/styles`, { recursive: true });
+        await writeTextFile(`${tmpDir}/styles/global.css`, "body { color: red; }");
 
         const result = await processTailwindCSSInDirectory(tmpDir, "styles", ".veryfront/css");
         assertEquals(result, []);
       } finally {
-        await Deno.remove(tmpDir, { recursive: true });
+        await remove(tmpDir, { recursive: true });
       }
     });
 
@@ -56,12 +63,12 @@ describe("build/asset-pipeline/tailwind-processor/batch-processor", () => {
     // host filesystem back.
     it("should process a Tailwind v4 stylesheet and write it to the output directory", async () => {
       const source = '@import "tailwindcss";\n.btn { color: red; }';
-      const tmpDir = await Deno.makeTempDir();
+      const tmpDir = await makeTempDir();
       const restoreEngine = installTestCSSOptimizationEngine();
       const memoryAdapter = createMockAdapter();
       try {
-        await Deno.mkdir(`${tmpDir}/styles`, { recursive: true });
-        await Deno.writeTextFile(`${tmpDir}/styles/app.css`, source);
+        await mkdir(`${tmpDir}/styles`, { recursive: true });
+        await writeTextFile(`${tmpDir}/styles/app.css`, source);
         await memoryAdapter.fs.mkdir(`${tmpDir}/styles`, { recursive: true });
         await memoryAdapter.fs.writeFile(`${tmpDir}/styles/app.css`, source);
         await runtime.set(memoryAdapter);
@@ -84,18 +91,18 @@ describe("build/asset-pipeline/tailwind-processor/batch-processor", () => {
       } finally {
         await runtime.reset();
         restoreEngine();
-        await Deno.remove(tmpDir, { recursive: true });
+        await remove(tmpDir, { recursive: true });
       }
     });
 
     it("should reject a symlinked CSS source directory", async () => {
-      const root = await Deno.makeTempDir();
+      const root = await makeTempDir();
       try {
         const realStyles = `${root}/real-styles`;
         const projectDir = `${root}/project`;
-        await Deno.mkdir(realStyles, { recursive: true });
-        await Deno.mkdir(projectDir, { recursive: true });
-        await Deno.symlink(realStyles, `${projectDir}/styles`);
+        await mkdir(realStyles, { recursive: true });
+        await mkdir(projectDir, { recursive: true });
+        await symlink(realStyles, `${projectDir}/styles`);
 
         await assertRejects(
           () => processTailwindCSSInDirectory(projectDir, "styles", ".veryfront/css"),
@@ -103,7 +110,7 @@ describe("build/asset-pipeline/tailwind-processor/batch-processor", () => {
           "Tailwind CSS source path must be a real directory",
         );
       } finally {
-        await Deno.remove(root, { recursive: true });
+        await remove(root, { recursive: true });
       }
     });
   });

@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir, remove, writeTextFile } from "#veryfront/platform/compat/fs.ts";
 import { createTestCSSOptimizationEngine } from "../../../../tests/_helpers/css-optimization-engine.ts";
 import { createTestCSSPurgingEngine } from "../../../../tests/_helpers/css-purging-engine.ts";
 import type { CSSPurgingRequest } from "#veryfront/extensions/css/index.ts";
@@ -25,12 +26,12 @@ const optimizationEngine = createTestCSSOptimizationEngine((request) => ({
 describe("build/asset-pipeline/css-optimizer/critical-css", () => {
   describe("extractCriticalCSS", () => {
     it("should separate critical from non-critical CSS", async () => {
-      const tmpDir = await Deno.makeTempDir();
+      const tmpDir = await makeTempDir();
       const cssPath = `${tmpDir}/style.css`;
       const cssContent = `.header { color: red; }
 .footer { color: blue; }
 .sidebar { color: green; }`;
-      await Deno.writeTextFile(cssPath, cssContent);
+      await writeTextFile(cssPath, cssContent);
 
       try {
         const html = `<div class="header"><p>Hello</p></div>`;
@@ -52,14 +53,14 @@ describe("build/asset-pipeline/css-optimizer/critical-css", () => {
         assertEquals(result.remaining.includes("footer"), true);
         assertEquals(result.remaining.includes("sidebar"), true);
       } finally {
-        await Deno.remove(tmpDir, { recursive: true });
+        await remove(tmpDir, { recursive: true });
       }
     });
 
     it("should apply minification when minify is true", async () => {
-      const tmpDir = await Deno.makeTempDir();
+      const tmpDir = await makeTempDir();
       const cssPath = `${tmpDir}/style.css`;
-      await Deno.writeTextFile(cssPath, `.header { color: red; }`);
+      await writeTextFile(cssPath, `.header { color: red; }`);
 
       try {
         const html = `<div class="header">Hi</div>`;
@@ -82,14 +83,14 @@ describe("build/asset-pipeline/css-optimizer/critical-css", () => {
         );
         assertEquals(result.remainingSize, 0, "no CSS remains outside the critical set");
       } finally {
-        await Deno.remove(tmpDir, { recursive: true });
+        await remove(tmpDir, { recursive: true });
       }
     });
 
     it("should return the CSS untouched when minify is false", async () => {
-      const tmpDir = await Deno.makeTempDir();
+      const tmpDir = await makeTempDir();
       const cssPath = `${tmpDir}/style.css`;
-      await Deno.writeTextFile(cssPath, `.header { color: red; }`);
+      await writeTextFile(cssPath, `.header { color: red; }`);
 
       try {
         const html = `<div class="header">Hi</div>`;
@@ -106,14 +107,14 @@ describe("build/asset-pipeline/css-optimizer/critical-css", () => {
           "minify: false must return the CSS untouched",
         );
       } finally {
-        await Deno.remove(tmpDir, { recursive: true });
+        await remove(tmpDir, { recursive: true });
       }
     });
 
     it("should default minify to true when not specified", async () => {
-      const tmpDir = await Deno.makeTempDir();
+      const tmpDir = await makeTempDir();
       const cssPath = `${tmpDir}/style.css`;
-      await Deno.writeTextFile(cssPath, `.a { color: red; }`);
+      await writeTextFile(cssPath, `.a { color: red; }`);
 
       try {
         const html = `<div class="a">Test</div>`;
@@ -126,14 +127,14 @@ describe("build/asset-pipeline/css-optimizer/critical-css", () => {
 
         assertEquals(result.critical, ".a{color:red;}", "minify defaults to true");
       } finally {
-        await Deno.remove(tmpDir, { recursive: true });
+        await remove(tmpDir, { recursive: true });
       }
     });
 
     it("should handle empty CSS file", async () => {
-      const tmpDir = await Deno.makeTempDir();
+      const tmpDir = await makeTempDir();
       const cssPath = `${tmpDir}/empty.css`;
-      await Deno.writeTextFile(cssPath, "");
+      await writeTextFile(cssPath, "");
 
       try {
         const result = await extractCriticalCSS(
@@ -145,14 +146,14 @@ describe("build/asset-pipeline/css-optimizer/critical-css", () => {
         assertEquals(result.criticalSize, 0);
         assertEquals(result.remainingSize, 0);
       } finally {
-        await Deno.remove(tmpDir, { recursive: true });
+        await remove(tmpDir, { recursive: true });
       }
     });
 
     it("should handle HTML with tag selectors", async () => {
-      const tmpDir = await Deno.makeTempDir();
+      const tmpDir = await makeTempDir();
       const cssPath = `${tmpDir}/style.css`;
-      await Deno.writeTextFile(
+      await writeTextFile(
         cssPath,
         `p { font-size: 16px; }
 h1 { font-size: 32px; }`,
@@ -168,15 +169,15 @@ h1 { font-size: 32px; }`,
         );
         assertEquals(result.critical.includes("p"), true);
       } finally {
-        await Deno.remove(tmpDir, { recursive: true });
+        await remove(tmpDir, { recursive: true });
       }
     });
 
     it("should report correct byte sizes", async () => {
-      const tmpDir = await Deno.makeTempDir();
+      const tmpDir = await makeTempDir();
       const cssPath = `${tmpDir}/style.css`;
       const css = `.crit { color: red; }\n.noncrit { color: blue; }`;
-      await Deno.writeTextFile(cssPath, css);
+      await writeTextFile(cssPath, css);
 
       try {
         const html = `<div class="crit">test</div>`;
@@ -194,7 +195,7 @@ h1 { font-size: 32px; }`,
         assertEquals(result.criticalSize > 0, true);
         assertEquals(result.remainingSize > 0, true);
       } finally {
-        await Deno.remove(tmpDir, { recursive: true });
+        await remove(tmpDir, { recursive: true });
       }
     });
 
@@ -222,10 +223,10 @@ h1 { font-size: 32px; }`,
     });
 
     it("forwards the validated safelist and requests rejected CSS", async () => {
-      const tmpDir = await Deno.makeTempDir();
+      const tmpDir = await makeTempDir();
       const cssPath = `${tmpDir}/style.css`;
       const cssContent = `.dynamic { color: red; }`;
-      await Deno.writeTextFile(cssPath, cssContent);
+      await writeTextFile(cssPath, cssContent);
       let captured: CSSPurgingRequest | undefined;
 
       try {
@@ -258,7 +259,7 @@ h1 { font-size: 32px; }`,
           "HTML is passed as raw html content",
         );
       } finally {
-        await Deno.remove(tmpDir, { recursive: true });
+        await remove(tmpDir, { recursive: true });
       }
     });
   });

@@ -6,7 +6,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join, resolve } from "#veryfront/compat/path";
-import { remove, writeTextFile } from "#veryfront/compat/fs.ts";
+import { isNotFoundError, makeTempDir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { ensureDir } from "#veryfront/compat/std/fs.ts";
 import {
   calculateSavings,
@@ -47,12 +47,12 @@ describe("CSS Optimizer Utils", () => {
     });
 
     it("rejects a missing directory", async () => {
-      await assertRejects(
-        () => findCSSFiles(`${TEST_DIR}-${crypto.randomUUID()}`),
-        Deno.errors.NotFound,
-        undefined,
-        "a missing CSS root must reject as NotFound",
-      );
+      try {
+        await findCSSFiles(`${TEST_DIR}-${crypto.randomUUID()}`);
+        throw new Error("a missing CSS root must reject");
+      } catch (error) {
+        assertEquals(isNotFoundError(error), true, "a missing CSS root must reject as NotFound");
+      }
     });
   });
 
@@ -272,7 +272,7 @@ describe("CSS Optimizer Utils", () => {
     });
 
     it("rejects patterns outside the project boundary", async () => {
-      const baseDir = await Deno.makeTempDir();
+      const baseDir = await makeTempDir();
       try {
         await assertRejects(
           () => globFiles("../outside/**/*.ts", { baseDir }),
@@ -280,12 +280,12 @@ describe("CSS Optimizer Utils", () => {
           "outside the project",
         );
       } finally {
-        await Deno.remove(baseDir, { recursive: true });
+        await remove(baseDir, { recursive: true });
       }
     });
 
     it("treats only a missing static glob root as no matches", async () => {
-      const baseDir = await Deno.makeTempDir();
+      const baseDir = await makeTempDir();
       try {
         assertEquals(
           await globFiles("optional/**/*.tsx", { baseDir }),
@@ -297,14 +297,15 @@ describe("CSS Optimizer Utils", () => {
               baseDir,
               fs: {
                 readDir() {
-                  throw new Deno.errors.PermissionDenied("blocked");
+                  throw new Error("blocked");
                 },
               },
             }),
-          Deno.errors.PermissionDenied,
+          Error,
+          "blocked",
         );
       } finally {
-        await Deno.remove(baseDir, { recursive: true });
+        await remove(baseDir, { recursive: true });
       }
     });
   });

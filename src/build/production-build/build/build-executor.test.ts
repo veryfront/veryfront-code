@@ -16,12 +16,26 @@ import type { BuildExecutorOptions, BuildResult } from "./build-executor.ts";
 import { executeBuild } from "./build-executor.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { makeTempDir, remove, writeTextFile } from "#veryfront/platform/compat/fs.ts";
 import {
   clearReactVersionCache,
   getDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
+import { DEPENDENCY_PINNING_ROLLOUT_PERCENT_ENV } from "#veryfront/transforms/esm/dependency-pinning-cohort.ts";
 
 const baseConfig: VeryfrontConfig = {};
+
+async function updateMtime(path: string, atime: Date, mtime: Date): Promise<void> {
+  const deno =
+    (globalThis as { Deno?: { utime?: (path: string, atime: Date, mtime: Date) => Promise<void> } })
+      .Deno;
+  if (deno?.utime) {
+    await deno.utime(path, atime, mtime);
+    return;
+  }
+  const fs = await import("node:fs/promises");
+  await fs.utimes(path, atime, mtime);
+}
 
 function restoreEnv(name: string, value: string | undefined): void {
   if (value === undefined) {
@@ -196,9 +210,15 @@ describe("BuildExecutor", () => {
             enablePrefetch: false,
             chunkManifest: null,
             baseUrl: "",
-            dryRun: true,
+            dryRun: false,
           },
         );
+        const pageHtml = adapter.fs.files.get("/output/index.html");
+        const appHtml = adapter.fs.files.get("/output/app-only/index.html");
+        assertExists(pageHtml);
+        assertExists(appHtml);
+        const expectedTotalSize = new TextEncoder().encode(pageHtml).length +
+          new TextEncoder().encode(appHtml).length;
 
         assertEquals(result.pages, 2, "executeBuild must sum pages and app route stats");
         assertEquals(
@@ -207,8 +227,8 @@ describe("BuildExecutor", () => {
           "ssgPaths must concatenate both sources",
         );
         assertEquals(
-          result.totalSize > 0,
-          true,
+          result.totalSize,
+          expectedTotalSize,
           "totalSize must sum the bytes of both sources",
         );
       } finally {
@@ -220,9 +240,10 @@ describe("BuildExecutor", () => {
 
   describe("build-wide dependency snapshot", () => {
     it("uses one immutable package snapshot across the route fanout", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-build-snapshot-" });
+      const projectDir = await makeTempDir({ prefix: "vf-build-snapshot-" });
       const packageJsonPath = `${projectDir}/package.json`;
       const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      const originalRolloutPercent = getHostEnv(DEPENDENCY_PINNING_ROLLOUT_PERCENT_ENV);
       const observed: Array<{
         cacheKey?: string;
         dependencies?: Readonly<Record<string, string>>;
@@ -230,8 +251,9 @@ describe("BuildExecutor", () => {
 
       try {
         setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        setEnv(DEPENDENCY_PINNING_ROLLOUT_PERCENT_ENV, "100");
         clearReactVersionCache();
-        await Deno.writeTextFile(
+        await writeTextFile(
           packageJsonPath,
           JSON.stringify({ dependencies: { react: "18.3.1", lodash: "1.0.0" } }),
         );
@@ -249,14 +271,14 @@ describe("BuildExecutor", () => {
               dependencies: options?.dependencyPinningDependencies,
             });
             if (observed.length === 1) {
-              await Deno.writeTextFile(
+              await writeTextFile(
                 packageJsonPath,
                 JSON.stringify({
                   dependencies: { react: "19.2.4", lodash: "2.0.0" },
                 }),
               );
               const future = new Date(Date.now() + 2_000);
-              await Deno.utime(packageJsonPath, future, future);
+              await updateMtime(packageJsonPath, future, future);
               await getDependencyPinningSnapshot(projectDir);
             }
             return {
@@ -282,6 +304,7 @@ describe("BuildExecutor", () => {
             chunkManifest: null,
             baseUrl: "",
             dryRun: true,
+            isLocalProject: true,
           },
         );
 
@@ -299,8 +322,9 @@ describe("BuildExecutor", () => {
         assertEquals(Object.isFrozen(observed[0]?.dependencies), true);
       } finally {
         restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
+        restoreEnv(DEPENDENCY_PINNING_ROLLOUT_PERCENT_ENV, originalRolloutPercent);
         clearReactVersionCache();
-        await Deno.remove(projectDir, { recursive: true });
+        await remove(projectDir, { recursive: true });
       }
     });
 
@@ -308,6 +332,7 @@ describe("BuildExecutor", () => {
       const projectDir = "/virtual/build-project";
       const packageJsonPath = `${projectDir}/package.json`;
       const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      const originalRolloutPercent = getHostEnv(DEPENDENCY_PINNING_ROLLOUT_PERCENT_ENV);
       const adapter = createMockAdapter();
       const stableMtime = new Date(1_000);
       const stat = adapter.fs.stat.bind(adapter.fs);
@@ -320,6 +345,7 @@ describe("BuildExecutor", () => {
 
       try {
         setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        setEnv(DEPENDENCY_PINNING_ROLLOUT_PERCENT_ENV, "100");
         clearReactVersionCache();
         await adapter.fs.writeFile(
           packageJsonPath,
@@ -372,6 +398,7 @@ describe("BuildExecutor", () => {
         assertEquals(observedDependencies?.lodash, "1.0.0");
       } finally {
         restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
+        restoreEnv(DEPENDENCY_PINNING_ROLLOUT_PERCENT_ENV, originalRolloutPercent);
         clearReactVersionCache();
       }
     });

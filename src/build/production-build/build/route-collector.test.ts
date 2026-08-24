@@ -82,7 +82,7 @@ describe("build/production-build/build/route-collector", () => {
         adapter,
         "/tmp/project",
         true,
-        ["/about"],
+        ["/about", "/dashboard"],
         ["/dashboard"],
         {
           directories: {
