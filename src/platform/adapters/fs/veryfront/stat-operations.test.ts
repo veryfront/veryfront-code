@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import type { ProjectFile, VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
@@ -162,6 +162,45 @@ describe("StatOperations", () => {
       }
     });
 
+    it("should recover a file missing from a stale index via API search", async () => {
+      let searchCalls = 0;
+      const client = createMockClient({
+        searchFiles: (pattern: string) => {
+          searchCalls++;
+          return Promise.resolve(
+            pattern === "components/Late.tsx"
+              ? [{ id: "late-1", path: "components/Late.tsx" }]
+              : [],
+          );
+        },
+      });
+      const statOps = createStatOps(
+        client,
+        new PathNormalizer(),
+        createBranchContextWithFiles([makeFile("pages/index.tsx")]),
+      );
+
+      await statOps.stat("pages/index.tsx");
+      (statOps as unknown as { indexBuiltAt: number }).indexBuiltAt = Date.now() -
+        (5 * 60 * 1000 + 1);
+
+      const info = await statOps.stat("components/Late.tsx");
+      assertEquals(
+        info.isFile,
+        true,
+        "a file missing from a stale index must be recovered via searchFiles",
+      );
+      assertEquals(info.isDirectory, false, "the recovered entry is a file, not a directory");
+      assertEquals(searchCalls, 1, "the stale index must fall back to exactly one API search");
+
+      await statOps.stat("components/Late.tsx");
+      assertEquals(
+        searchCalls,
+        1,
+        "the recovered file must be inserted into the index, not re-searched",
+      );
+    });
+
     it("should normalize paths with project dir", async () => {
       const statOps = createStatOps(
         createMockClient(),
@@ -246,6 +285,28 @@ describe("StatOperations", () => {
       );
 
       assertEquals(await statOps.exists("nonexistent.tsx"), false);
+    });
+
+    it("should propagate non-not-found failures instead of reporting absence", async () => {
+      const statOps = createStatOps(createMockClient(), new PathNormalizer(), {
+        isProductionMode: () => false,
+        getReleaseId: () => null,
+        getContentContext: () => ({
+          sourceType: "branch" as const,
+          projectSlug: "test",
+          branch: "main",
+        }),
+        getFileList: () => Promise.reject(new Error("upstream down")),
+        hasCachedFileList: () => Promise.resolve(false),
+        isPersistentCacheInvalidated: () => false,
+      });
+
+      await assertRejects(
+        () => statOps.exists("pages/index.tsx"),
+        Error,
+        "upstream down",
+        "an upstream listing failure must surface, not be reported as absence",
+      );
     });
 
     it("should not route existence misses through the public stat span", async () => {
@@ -753,6 +814,52 @@ describe("StatOperations", () => {
         // First request exhausts 4 patterns, second request trips the breaker on its first pattern,
         // and the post-cooldown request gets another full 4-pattern attempt.
         assertEquals(searchCallCount, 9);
+      } finally {
+        Date.now = originalNow;
+      }
+    });
+
+    it("should not negatively cache a path it could not search while the breaker was open", async () => {
+      const originalNow = Date.now;
+      let now = originalNow();
+      Date.now = () => now;
+
+      try {
+        let failing = true;
+        const client = createMockClient({
+          searchFiles: (pattern: string) => {
+            if (failing) return Promise.reject(new Error("API error"));
+            return Promise.resolve(
+              pattern === "pages/late.*" ? [{ path: "pages/late.tsx" }] : [],
+            );
+          },
+        });
+
+        const statOps = new StatOperations(
+          client,
+          new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 }),
+          new PathNormalizer(),
+          createBranchContextWithFiles([makeFile("pages/index.tsx")]),
+        );
+
+        for (let i = 0; i < 5; i++) {
+          await statOps.resolveFile(`missing-trip-${i}`);
+        }
+
+        assertEquals(
+          await statOps.resolveFile("pages/late"),
+          null,
+          "a path that could not be searched while the breaker was open resolves to null",
+        );
+
+        failing = false;
+        now += 30_001;
+
+        assertEquals(
+          await statOps.resolveFile("pages/late"),
+          "pages/late.tsx",
+          "a path probed while the breaker was open must not be negatively cached",
+        );
       } finally {
         Date.now = originalNow;
       }

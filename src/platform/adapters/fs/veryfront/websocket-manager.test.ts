@@ -59,6 +59,13 @@ class MockWebSocket {
   }
 }
 
+function deliverPoke(socket: MockWebSocket, data: Record<string, unknown>): void {
+  socket.onmessage?.call(
+    socket as unknown as WebSocket,
+    new MessageEvent("message", { data: JSON.stringify({ type: "poke", data }) }),
+  );
+}
+
 function captureConsoleMethod(
   method: "debug" | "log" | "warn",
 ): { getOutput: () => string; reset: () => void; restore: () => void } {
@@ -100,6 +107,8 @@ function withJsonLogFormat<T>(fn: () => T): T {
 
 function createWebSocketManager(options: {
   apiBaseUrl?: string;
+  /** Branch this preview is pinned to; `null` previews the default branch. */
+  branch?: string | null;
   client?: Partial<VeryfrontApiClient>;
   invalidationCallbacks?: InvalidationCallbacks;
   pregenerateStyles?: (
@@ -125,6 +134,7 @@ function createWebSocketManager(options: {
   } as unknown as VeryfrontApiClient;
 
   const invalidationCallbacks: InvalidationCallbacks = options.invalidationCallbacks ?? {};
+  const branch = options.branch === null ? undefined : options.branch ?? "main";
 
   return new WebSocketManager({
     apiBaseUrl: options.apiBaseUrl ?? "https://api.example.com/api",
@@ -136,9 +146,9 @@ function createWebSocketManager(options: {
     getContentContext: () => ({
       sourceType: "branch",
       projectSlug: "test-project",
-      branch: "main",
+      branch,
     }),
-    getContentSource: () => ({ type: "branch", branch: "main" }),
+    getContentSource: () => ({ type: "branch", branch }),
     getProjectDir: () => undefined,
     clearMemoryCaches: options.clearMemoryCaches ?? (() => {}),
     getSourceSnapshotVersion: options.getSourceSnapshotVersion,
@@ -227,6 +237,8 @@ describe("WebSocketManager", () => {
   let originalWebSocket: typeof WebSocket;
   let originalSetTimeout: typeof setTimeout;
   let originalClearTimeout: typeof clearTimeout;
+  let originalSetInterval: typeof setInterval;
+  let heartbeatCallback: (() => void) | undefined;
   let nextTimerId = 1;
   let scheduledTimers = new Map<ReturnType<typeof setTimeout>, TimerEntry>();
 
@@ -250,6 +262,13 @@ describe("WebSocketManager", () => {
     originalWebSocket = globalThis.WebSocket;
     originalSetTimeout = globalThis.setTimeout;
     originalClearTimeout = globalThis.clearTimeout;
+    originalSetInterval = globalThis.setInterval;
+    heartbeatCallback = undefined;
+
+    globalThis.setInterval = ((handler: TimerHandler): ReturnType<typeof setInterval> => {
+      heartbeatCallback = typeof handler === "function" ? handler as () => void : () => {};
+      return 999 as unknown as ReturnType<typeof setInterval>;
+    }) as typeof setInterval;
 
     (globalThis as typeof globalThis & { WebSocket: typeof WebSocket }).WebSocket =
       MockWebSocket as unknown as typeof WebSocket;
@@ -279,6 +298,7 @@ describe("WebSocketManager", () => {
       originalWebSocket;
     globalThis.setTimeout = originalSetTimeout;
     globalThis.clearTimeout = originalClearTimeout;
+    globalThis.setInterval = originalSetInterval;
   });
 
   it("should not add an extra retry delay after reaching reconnect failure cap", () => {
@@ -358,6 +378,35 @@ describe("WebSocketManager", () => {
 
     const metrics = manager.getPokeMetrics();
     assertExists(metrics.connectionId);
+
+    manager.dispose();
+  });
+
+  it("closes and replaces a socket whose pong is older than the heartbeat timeout", () => {
+    const manager = createWebSocketManager();
+    manager.connect("project-1");
+
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    socket.onopen?.call(socket as unknown as WebSocket, new Event("open"));
+
+    const runHeartbeat = heartbeatCallback;
+    assertExists(runHeartbeat, "connecting must arm the heartbeat interval");
+
+    (manager as unknown as { wsLastPong: number }).wsLastPong = Date.now() - (300_000 + 1);
+    runHeartbeat();
+
+    assertEquals(
+      socket.onclose,
+      null,
+      "onclose is detached before closing so it cannot double-reconnect",
+    );
+    assertEquals(socket.readyState, MockWebSocket.CLOSED, "the dead socket is closed");
+    assertEquals(
+      MockWebSocket.instances.length,
+      2,
+      "exactly one replacement socket is opened",
+    );
 
     manager.dispose();
   });
@@ -862,6 +911,115 @@ describe("WebSocketManager", () => {
 
     // IPv6 loopback should stay as ws://
     assertEquals(socket.url.startsWith("ws://"), true);
+
+    manager.dispose();
+  });
+
+  it("ignores pokes scoped to a different branch", () => {
+    let clearCalls = 0;
+    let reloadCalls = 0;
+    const manager = createWebSocketManager({
+      branch: "feature-x",
+      clearMemoryCaches: () => {
+        clearCalls++;
+      },
+      invalidationCallbacks: {
+        triggerReload: () => {
+          reloadCalls++;
+        },
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+
+    deliverPoke(socket, { changedPaths: ["app/page.tsx"], branchName: "main" });
+
+    assertEquals(clearCalls, 0, "a poke for another branch must not flush the preview caches");
+    assertEquals(reloadCalls, 0, "a poke for another branch must not republish a reload");
+
+    manager.dispose();
+  });
+
+  it("ignores branchId-only pokes on the default-branch preview", () => {
+    let clearCalls = 0;
+    let reloadCalls = 0;
+    const manager = createWebSocketManager({
+      branch: null,
+      clearMemoryCaches: () => {
+        clearCalls++;
+      },
+      invalidationCallbacks: {
+        triggerReload: () => {
+          reloadCalls++;
+        },
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+
+    deliverPoke(socket, { changedPaths: ["app/page.tsx"], branchId: "br-1" });
+
+    assertEquals(
+      clearCalls,
+      0,
+      "a branchId-only poke must not flush the default-branch preview caches",
+    );
+    assertEquals(reloadCalls, 0, "a branchId-only poke must not republish a reload");
+
+    manager.dispose();
+  });
+
+  it("ignores unscoped pokes while previewing a named branch", () => {
+    let clearCalls = 0;
+    let reloadCalls = 0;
+    const manager = createWebSocketManager({
+      branch: "feature-x",
+      clearMemoryCaches: () => {
+        clearCalls++;
+      },
+      invalidationCallbacks: {
+        triggerReload: () => {
+          reloadCalls++;
+        },
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+
+    deliverPoke(socket, { changedPaths: ["app/page.tsx"] });
+
+    assertEquals(
+      clearCalls,
+      0,
+      "an unscoped poke targets the default branch, not a named branch preview",
+    );
+    assertEquals(reloadCalls, 0, "an unscoped poke must not republish a reload on a named branch");
+
+    manager.dispose();
+  });
+
+  it("accepts a poke scoped to the previewed branch", () => {
+    let clearCalls = 0;
+    const manager = createWebSocketManager({
+      branch: "feature-x",
+      clearMemoryCaches: () => {
+        clearCalls++;
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+
+    deliverPoke(socket, { changedPaths: ["app/page.tsx"], branchName: "feature-x" });
+
+    assertEquals(clearCalls, 1, "a poke for the previewed branch must flush the preview caches");
 
     manager.dispose();
   });

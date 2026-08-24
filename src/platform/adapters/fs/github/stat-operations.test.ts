@@ -79,6 +79,54 @@ describe("GitHubStatOperations", () => {
     });
   });
 
+  describe("resolveFile", () => {
+    function createOpsWithTree(): GitHubStatOperations {
+      const client = {
+        getTree: () =>
+          Promise.resolve({
+            tree: [
+              { path: "pages/about.tsx", type: "blob", sha: "a", size: 1 },
+              { path: "lib/utils.ts", type: "blob", sha: "b", size: 1 },
+            ],
+            truncated: false,
+          }),
+        repoId: "test-owner/test-repo",
+      } as any;
+      // A fresh cache per instance keeps one lookup's resolve entry out of the next.
+      return new GitHubStatOperations(mockConfig, client, new FileCache());
+    }
+
+    it("should resolve a bare page name through the pages prefix", async () => {
+      const ops = createOpsWithTree();
+      await ops.buildIndex();
+      assertEquals(
+        await ops.resolveFile("about"),
+        "pages/about.tsx",
+        "resolves a bare page name through the pages prefix",
+      );
+    });
+
+    it("should suppress the pages fallback when allowPagesPrefix is false", async () => {
+      const ops = createOpsWithTree();
+      await ops.buildIndex();
+      assertEquals(
+        await ops.resolveFile("about", { allowPagesPrefix: false }),
+        null,
+        "allowPagesPrefix:false suppresses the pages fallback",
+      );
+    });
+
+    it("should still resolve a direct hit when the pages fallback is disabled", async () => {
+      const ops = createOpsWithTree();
+      await ops.buildIndex();
+      assertEquals(
+        await ops.resolveFile("lib/utils", { allowPagesPrefix: false }),
+        "lib/utils.ts",
+        "the opt-out still resolves a direct hit",
+      );
+    });
+  });
+
   describe("initial state", () => {
     it("should return undefined for getFileEntry before index is built", () => {
       assertEquals(createOps().getFileEntry("test.ts"), undefined);

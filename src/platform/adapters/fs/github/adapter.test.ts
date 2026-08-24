@@ -120,6 +120,34 @@ describe("GitHubFSAdapter", () => {
       assertEquals(treeRequested, true);
     });
 
+    it("re-initializes against the current tree after dispose", async () => {
+      globalThis.fetch = createTreeFetch(mockTreeResponse);
+
+      const adapter = createAdapter();
+      await adapter.initialize();
+      assertEquals(await adapter.exists("src/index.ts"), true, "the first tree is indexed");
+
+      adapter.dispose();
+      assertEquals(adapter.getCacheStats().cache.size, 0, "dispose clears the blob cache");
+
+      globalThis.fetch = createTreeFetch({
+        sha: "def456",
+        tree: [{ path: "docs/new.md", type: "blob", sha: "sha9", size: 5 }],
+        truncated: false,
+      });
+
+      assertEquals(
+        await adapter.exists("docs/new.md"),
+        true,
+        "a disposed adapter re-fetches the tree",
+      );
+      assertEquals(
+        await adapter.exists("src/index.ts"),
+        false,
+        "the pre-dispose tree index must not survive dispose",
+      );
+    });
+
     it("admits ordinary files through the real wrapper while excluding Git symlinks", async () => {
       globalThis.fetch = createTreeFetch({
         sha: "abc123",

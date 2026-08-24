@@ -122,6 +122,49 @@ describe("platform/adapters/file-system-capabilities", () => {
     );
   });
 
+  it("enforces each capture site's declared byte ceiling", async () => {
+    const overByOne = captureByteReadCapabilities({
+      maxWholeFileReadBytes: 2,
+      readFileBytes: () => Promise.resolve(new Uint8Array(3)),
+      readFileBytesBounded: () => Promise.resolve(new Uint8Array(3)),
+      readFileBytesWithinLimit: () => Promise.resolve(new Uint8Array(3)),
+    });
+
+    await assertRejects(
+      () => overByOne.whole!.read("/a"),
+      RangeError,
+      "exceeds 2 bytes",
+      "the whole-file ceiling must be enforced at the capture site",
+    );
+    await assertRejects(
+      () => overByOne.prefix!("/a", 2),
+      RangeError,
+      "exceeds 2 bytes",
+      "the prefix ceiling must be enforced at the capture site",
+    );
+    await assertRejects(
+      () => overByOne.exact!("/a", 2),
+      RangeError,
+      "exceeds 2 bytes",
+      "the exact ceiling must be enforced at the capture site",
+    );
+
+    const staticCaptured = captureStaticReadCapabilities({
+      symlinkSemantics: "none" as const,
+      readFileSnapshotWithinLimit: () => Promise.resolve(new Uint8Array([1])),
+      getSourceSnapshotVersion: () => 7,
+      readFileBytes: () => Promise.resolve(new Uint8Array(5)),
+      maxWholeFileReadBytes: 4,
+    });
+
+    await assertRejects(
+      () => staticCaptured.virtual!.whole!.read("/b"),
+      RangeError,
+      "exceeds 4 bytes",
+      "the virtual whole-file ceiling must be enforced at the capture site",
+    );
+  });
+
   it("captures byte readers without inspecting an unrelated malformed writer", async () => {
     const captured = captureByteReadCapabilities({
       readFileBytesWithinLimit: () => Promise.resolve(new Uint8Array([4])),

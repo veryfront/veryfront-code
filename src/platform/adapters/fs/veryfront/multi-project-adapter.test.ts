@@ -94,6 +94,17 @@ describe("MultiProjectFSAdapter", () => {
       });
     });
 
+    it("rejects a context-less read with an actionable initialization error", async () => {
+      await withAdapterAsync(async (adapter) => {
+        await assertRejects(
+          () => adapter.readTextFile("a.ts"),
+          Error,
+          "No request context available",
+          "a read with neither a request context nor a default adapter must name runWithContext",
+        );
+      });
+    });
+
     it("forwards exact reads only to the selected captured authority", async () => {
       await withAdapterAsync(async (adapter) => {
         let exactCalls = 0;
@@ -120,6 +131,53 @@ describe("MultiProjectFSAdapter", () => {
         assertEquals([...result], [1, 2, 3]);
         assertEquals(exactCalls, 1);
         assertEquals(unboundedCalls, 0);
+      });
+    });
+
+    it("refuses a whole-file reader whose ceiling exceeds the requested limit", async () => {
+      await withAdapterAsync(async (adapter) => {
+        let reads = 0;
+        adapter.setDefaultAdapter(
+          {
+            maxWholeFileReadBytes: 64,
+            readFileBytes() {
+              reads++;
+              return Promise.resolve(new Uint8Array(3));
+            },
+            dispose() {},
+          } as unknown as Parameters<MultiProjectFSAdapter["setDefaultAdapter"]>[0],
+        );
+
+        await assertRejects(
+          () => adapter.readFileBytesWithinLimit("asset.css", 3),
+          TypeError,
+          "whole-file ceiling no larger than 3 bytes",
+          "a whole-file ceiling above the requested limit must not satisfy a bounded read",
+        );
+        assertEquals(reads, 0, "an over-ceiling whole-file reader must not be read from");
+      });
+    });
+
+    it("uses a whole-file reader whose ceiling fits inside the requested limit", async () => {
+      await withAdapterAsync(async (adapter) => {
+        let reads = 0;
+        adapter.setDefaultAdapter(
+          {
+            maxWholeFileReadBytes: 3,
+            readFileBytes() {
+              reads++;
+              return Promise.resolve(new Uint8Array([1, 2, 3]));
+            },
+            dispose() {},
+          } as unknown as Parameters<MultiProjectFSAdapter["setDefaultAdapter"]>[0],
+        );
+
+        assertEquals(
+          [...await adapter.readFileBytesWithinLimit("asset.css", 3)],
+          [1, 2, 3],
+          "a within-ceiling whole-file reader satisfies the bounded read",
+        );
+        assertEquals(reads, 1, "the whole-file reader is the one consulted");
       });
     });
 
@@ -367,6 +425,7 @@ describe("MultiProjectFSAdapter", () => {
         let capturedProductionMode: boolean | undefined;
         let capturedReleaseId: string | null | undefined;
         let capturedEnvironmentName: string | null | undefined;
+        let capturedBranch: string | null | undefined;
 
         (adapter as any).manager = {
           getAdapter(
@@ -376,6 +435,7 @@ describe("MultiProjectFSAdapter", () => {
             productionMode?: boolean,
             releaseId?: string | null,
             environmentName?: string | null,
+            branch?: string | null,
           ) {
             getAdapterCalled = true;
             capturedProjectSlug = projectSlug;
@@ -383,6 +443,7 @@ describe("MultiProjectFSAdapter", () => {
             capturedProductionMode = productionMode;
             capturedReleaseId = releaseId;
             capturedEnvironmentName = environmentName;
+            capturedBranch = branch;
             return Promise.resolve({});
           },
           getStats: () => ({ adapters: 0, stats: [] }),
@@ -401,6 +462,7 @@ describe("MultiProjectFSAdapter", () => {
               productionMode: true,
               releaseId: "rel-first-hit",
               environmentName: "production",
+              branch: "main",
             },
           );
         } finally {
@@ -413,6 +475,58 @@ describe("MultiProjectFSAdapter", () => {
         assertEquals(capturedProductionMode, true);
         assertEquals(capturedReleaseId, "rel-first-hit");
         assertEquals(capturedEnvironmentName, "production");
+        assertEquals(
+          capturedBranch,
+          null,
+          "a production release request must not forward a branch",
+        );
+      });
+    });
+
+    it("does not forward a releaseId for a preview branch request", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        let capturedReleaseId: string | null | undefined;
+        let capturedBranch: string | null | undefined;
+
+        (adapter as any).manager = {
+          getAdapter(
+            _projectSlug: string,
+            _token: string,
+            _projectId?: string,
+            _productionMode?: boolean,
+            releaseId?: string | null,
+            _environmentName?: string | null,
+            branch?: string | null,
+          ) {
+            capturedReleaseId = releaseId;
+            capturedBranch = branch;
+            return Promise.resolve({
+              readOptionalTextFile: () => Promise.resolve("preview stylesheet"),
+            });
+          },
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+
+        try {
+          await adapter.runWithContext(
+            "project-preview",
+            "test-token",
+            () => adapter.readOptionalTextFile("app/globals.css"),
+            "project-id-preview",
+            {
+              productionMode: false,
+              releaseId: "rel-x",
+              branch: "feature-x",
+            },
+          );
+        } finally {
+          (adapter as any).manager = originalManager;
+        }
+
+        assertEquals(capturedReleaseId, null, "a preview request must not forward a releaseId");
+        assertEquals(capturedBranch, "feature-x", "a preview request forwards its branch");
       });
     });
   });

@@ -495,6 +495,70 @@ describe("Distributed cache functions", () => {
       });
     });
 
+    it("forwards prefix invalidation to the distributed backend", async () => {
+      const distributedModule = await import(
+        "./file-cache.ts?distributed-prefix-invalidation-regression"
+      );
+      const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
+      assertExists(descriptor);
+      const patterns: string[] = [];
+      Object.defineProperty(CacheBackends, "file", {
+        ...descriptor,
+        value: () =>
+          Promise.resolve({
+            type: "redis",
+            size: 0,
+            get: () => Promise.resolve(null),
+            set: () => Promise.resolve(),
+            del: () => Promise.resolve(false),
+            clear: () => Promise.resolve(),
+            delByPattern: (pattern: string) => {
+              patterns.push(pattern);
+              return Promise.resolve(0);
+            },
+          } as never),
+      });
+
+      try {
+        assertEquals(await distributedModule.initializeFileCacheBackend(), true);
+      } finally {
+        Object.defineProperty(CacheBackends, "file", descriptor);
+      }
+
+      const distributedCache = new distributedModule.FileCache();
+
+      distributedCache.deleteByPrefix("file:release:p:r1:");
+      // deleteByPrefix dispatches the backend deletion fire-and-forget.
+      await Promise.resolve();
+      assertEquals(
+        patterns,
+        ["file:release:p:r1:*"],
+        "deleteByPrefix must forward a wildcard pattern to the distributed backend",
+      );
+
+      await distributedCache.deleteByPrefixAsync("file:release:p:r2:");
+      assertEquals(
+        patterns,
+        ["file:release:p:r1:*", "file:release:p:r2:*"],
+        "deleteByPrefixAsync must await the same wildcard pattern on the backend",
+      );
+
+      distributedCache.deleteByPrefixAndSuffix("file:release:p:r3:", "s");
+      await Promise.resolve();
+      assertEquals(
+        patterns[2],
+        "file:release:p:r3:*:s",
+        "deleteByPrefixAndSuffix must forward a suffix-qualified pattern",
+      );
+
+      await distributedCache.deleteByPrefixAndSuffixAsync("file:release:p:r4:", "s");
+      assertEquals(
+        patterns[3],
+        "file:release:p:r4:*:s",
+        "deleteByPrefixAndSuffixAsync must await a suffix-qualified pattern",
+      );
+    });
+
     it("should return boolean", async () => {
       assertEquals(typeof (await initializeFileCacheBackend()), "boolean");
     });
