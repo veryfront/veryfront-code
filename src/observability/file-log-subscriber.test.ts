@@ -275,9 +275,11 @@ describe("observability/file-log-subscriber", () => {
     it("should rotate when file exceeds maxSize", async () => {
       const dir = await makeTempDir();
       const logPath = `${dir}/test.log`;
+      // Comfortably above three records so a rotated file must retain a run,
+      // not a single entry.
       const sub = new FileLogSubscriber(makeConfig({
         path: logPath,
-        maxSize: 100,
+        maxSize: 400,
         maxFiles: 3,
       }));
 
@@ -292,8 +294,32 @@ describe("observability/file-log-subscriber", () => {
       const mainExists = await fileExists(logPath);
       assertEquals(mainExists, true);
 
-      const rotated1 = await fileExists(`${logPath}.1`);
-      assertEquals(rotated1, true);
+      const rotated1Exists = await fileExists(`${logPath}.1`);
+      assertEquals(rotated1Exists, true);
+
+      const rotated1 = await readLoggedMessages(`${logPath}.1`);
+      assertEquals(
+        rotated1.length > 1,
+        true,
+        "a rotated file must hold every record written before the size limit, not one per entry",
+      );
+
+      const combined = [
+        ...(await fileExists(`${logPath}.2`) ? await readLoggedMessages(`${logPath}.2`) : []),
+        ...rotated1,
+        ...await readLoggedMessages(logPath),
+      ];
+      const oldestIndex = Number(combined[0]?.slice("message-".length));
+      assertEquals(
+        combined,
+        Array.from({ length: combined.length }, (_, offset) => `message-${oldestIndex + offset}`),
+        "rotation must not drop records mid-run",
+      );
+      assertEquals(
+        combined.at(-1),
+        "message-9",
+        "rotation must retain the newest record in the active file",
+      );
 
       await sub.close();
     });
@@ -880,6 +906,14 @@ describe("observability/file-log-subscriber", () => {
     });
   });
 });
+
+async function readLoggedMessages(path: string): Promise<string[]> {
+  const content = await Deno.readTextFile(path);
+  return content
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => (JSON.parse(line) as { message: string }).message);
+}
 
 async function fileExists(path: string): Promise<boolean> {
   try {

@@ -85,8 +85,38 @@ describe("observability/tracing/context-propagation", () => {
       const headers = new Headers({
         traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
       });
-      const result = ctx.extractContext(headers);
-      assertEquals(result !== undefined, true);
+      const extracted = { _type: "extracted-context" } as unknown as Context;
+      let seenContext: unknown;
+      let seenCarrier: Record<string, string> | undefined;
+      const apiWithCapture: OpenTelemetryAPI = {
+        ...api,
+        propagation: {
+          ...api.propagation,
+          extract: (context: Context, carrier: Record<string, string>) => {
+            seenContext = context;
+            seenCarrier = carrier;
+            return extracted;
+          },
+        },
+      };
+
+      const result = new ContextPropagation(apiWithCapture, propagator).extractContext(headers);
+
+      assertEquals(
+        seenCarrier,
+        { traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" },
+        "incoming headers must be converted into the propagator carrier",
+      );
+      assertEquals(
+        seenContext,
+        api.context.active(),
+        "extraction must start from the active context",
+      );
+      assertStrictEquals(
+        result,
+        extracted,
+        "extractContext must return the propagator's context",
+      );
     });
 
     it("should extract context from empty headers", () => {
@@ -279,6 +309,53 @@ describe("observability/tracing/context-propagation", () => {
       });
 
       assertEquals(executed, true);
+    });
+
+    it("activates the started span on the context handed to the provider", async () => {
+      const span = createMockSpan();
+      const spanContext = { _type: "span-context" } as unknown as Context;
+      let setSpanContext: Context | null = null;
+      let setSpanSpan: Span | null = null;
+      let withContext: Context | null = null;
+      const apiWithCapture: OpenTelemetryAPI = {
+        ...api,
+        trace: {
+          ...api.trace,
+          setSpan: (context: Context, activated: Span) => {
+            setSpanContext = context;
+            setSpanSpan = activated;
+            return spanContext;
+          },
+        },
+        context: {
+          ...api.context,
+          with: <T>(context: Context, fn: () => T): T => {
+            withContext = context;
+            return fn();
+          },
+        },
+      };
+
+      await new ContextPropagation(apiWithCapture, propagator).withActiveSpan(
+        span,
+        () => Promise.resolve(),
+      );
+
+      assertStrictEquals(
+        withContext,
+        spanContext,
+        "withActiveSpan must run the callback in the span context",
+      );
+      assertStrictEquals(
+        setSpanSpan,
+        span,
+        "setSpan must receive the exact span passed in",
+      );
+      assertEquals(
+        setSpanContext,
+        { _type: "active-context" },
+        "setSpan must extend the active context",
+      );
     });
 
     it("should return function result", async () => {
