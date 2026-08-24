@@ -849,6 +849,20 @@ describe("chat-stream-handler", () => {
     it("cuts off a local tool input that idles past the configured timeout", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();
+      let nextTimerId = 0;
+      const clearedTimeouts: number[] = [];
+      let resolveLocalDeadline: (deadline: {
+        callback: () => void;
+        id: number;
+        timeoutMs: number;
+      }) => void = () => {};
+      const localDeadline = new Promise<{
+        callback: () => void;
+        id: number;
+        timeoutMs: number;
+      }>((resolve) => {
+        resolveLocalDeadline = resolve;
+      });
       const result = {
         fullStream: {
           async *[Symbol.asyncIterator]() {
@@ -868,9 +882,33 @@ describe("chat-stream-handler", () => {
         textStream: emptyAsyncIterable(),
       };
 
-      await processStream(result, state, controller, encoder, "t", {
+      const processing = processStream(result, state, controller, encoder, "t", {
         localToolInputIdleTimeoutMs: 10,
+        setTimeoutFn: ((callback: () => void, timeoutMs?: number) => {
+          const id = ++nextTimerId;
+          if (state.toolCalls.has("tc-slow")) {
+            resolveLocalDeadline({ callback, id, timeoutMs: timeoutMs ?? 0 });
+          }
+          return id;
+        }) as typeof setTimeout,
+        clearTimeoutFn: ((id: number) => {
+          clearedTimeouts.push(id);
+        }) as typeof clearTimeout,
       });
+
+      const deadline = await localDeadline;
+      assertEquals(
+        deadline.timeoutMs,
+        10,
+        "the active local tool input must schedule the configured 10ms idle deadline",
+      );
+      deadline.callback();
+      await processing;
+      assertEquals(
+        clearedTimeouts.filter((id) => id === deadline.id).length,
+        1,
+        "the settled idle deadline must be cleared exactly once",
+      );
 
       assertEquals(
         state.toolCalls.get("tc-slow")?.inputAvailable,
