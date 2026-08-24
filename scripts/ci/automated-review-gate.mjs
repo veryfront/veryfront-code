@@ -448,8 +448,8 @@ function scanMarkdownStructure(content) {
     return range?.[0] <= index && index < range[1];
   };
   let openFence;
+  let openHtmlBlock;
   let openHtmlComment;
-  let openRawHtmlBlock;
   let openParagraph;
   let lineStart = 0;
   for (const lineMatch of content.matchAll(/[^\r\n]*(?:\r\n|[\r\n]|$)/g)) {
@@ -471,25 +471,27 @@ function scanMarkdownStructure(content) {
       indentedCodeLine,
     );
 
-    if (
-      openRawHtmlBlock !== undefined &&
-      !continuesMarkdownFenceContainer(
-        lineWithoutEnding,
-        openRawHtmlBlock.container,
-      )
-    ) {
-      ranges.push([openRawHtmlBlock.start, lineStart]);
-      openRawHtmlBlock = undefined;
-    }
-
-    if (openRawHtmlBlock !== undefined) {
-      if (markdownRawHtmlBlockCloses(lineWithoutEnding, openRawHtmlBlock.tag)) {
-        ranges.push([openRawHtmlBlock.start, lineEnd]);
-        openRawHtmlBlock = undefined;
+    if (openHtmlBlock !== undefined) {
+      if (markdownHtmlBlockCloses(lineWithoutEnding, openHtmlBlock)) {
+        ranges.push([openHtmlBlock.start, lineEnd]);
+        openHtmlBlock = undefined;
+        openParagraph = undefined;
+        lineStart = lineEnd;
+        continue;
       }
-      openParagraph = undefined;
-      lineStart = lineEnd;
-      continue;
+      if (
+        !continuesMarkdownFenceContainer(
+          lineWithoutEnding,
+          openHtmlBlock.container,
+        )
+      ) {
+        ranges.push([openHtmlBlock.start, lineStart]);
+        openHtmlBlock = undefined;
+      } else {
+        openParagraph = undefined;
+        lineStart = lineEnd;
+        continue;
+      }
     }
 
     if (
@@ -579,16 +581,16 @@ function scanMarkdownStructure(content) {
       }
     }
 
-    const rawHtmlBlock = markdownRawHtmlBlockStart(
+    const htmlBlock = markdownHtmlBlockStart(
       lineWithoutEnding,
       indentedCodeLine,
     );
-    if (rawHtmlBlock !== undefined) {
-      if (markdownRawHtmlBlockCloses(lineWithoutEnding, rawHtmlBlock.tag)) {
+    if (htmlBlock !== undefined) {
+      if (markdownHtmlBlockCloses(lineWithoutEnding, htmlBlock)) {
         ranges.push([lineStart, lineEnd]);
       } else {
-        openRawHtmlBlock = {
-          ...rawHtmlBlock,
+        openHtmlBlock = {
+          ...htmlBlock,
           start: lineStart,
         };
       }
@@ -612,8 +614,8 @@ function scanMarkdownStructure(content) {
       : undefined;
     lineStart = lineEnd;
   }
-  if (openRawHtmlBlock !== undefined) {
-    ranges.push([openRawHtmlBlock.start, content.length]);
+  if (openHtmlBlock !== undefined) {
+    ranges.push([openHtmlBlock.start, content.length]);
   } else if (openHtmlComment?.container !== undefined) {
     ranges.push([openHtmlComment.start, content.length]);
   } else if (openFence !== undefined) {
@@ -751,7 +753,7 @@ function markdownParagraphAfterLine(
   };
 }
 
-function markdownRawHtmlBlockStart(line, indentedCodeLine) {
+function markdownHtmlBlockStart(line, indentedCodeLine) {
   if (indentedCodeLine) return undefined;
   const containerPrefix = line.match(
     MARKDOWN_FENCE_CONTAINER_CONTINUATION_PATTERN,
@@ -761,18 +763,51 @@ function markdownRawHtmlBlockStart(line, indentedCodeLine) {
   const listPrefix = remainingLine.match(
     MARKDOWN_PARAGRAPH_LIST_PREFIX_PATTERN,
   )?.[0] ?? "";
-  const tag = remainingLine.slice(listPrefix.length).match(
+  const blockContent = remainingLine.slice(listPrefix.length);
+  const tag = blockContent.match(
     MARKDOWN_RAW_HTML_BLOCK_START_PATTERN,
   )?.[1];
-  if (tag === undefined) return undefined;
+  if (tag !== undefined) {
+    return {
+      caseInsensitive: true,
+      container: markdownFenceContainer(containerPrefix + listPrefix),
+      terminator: `</${tag.toLowerCase()}>`,
+    };
+  }
+  let terminator;
+  if (blockContent.startsWith("<?")) terminator = "?>";
+  else if (blockContent.startsWith("<![CDATA[")) terminator = "]]>";
+  else if (/^<![A-Za-z]/.test(blockContent)) terminator = ">";
+  if (terminator === undefined) return undefined;
   return {
+    caseInsensitive: false,
     container: markdownFenceContainer(containerPrefix + listPrefix),
-    tag: tag.toLowerCase(),
+    terminator,
   };
 }
 
-function markdownRawHtmlBlockCloses(line, tag) {
-  return line.toLowerCase().includes(`</${tag}>`);
+function markdownHtmlBlockCloses(line, block) {
+  const content = markdownContainerContent(line, block.container);
+  if (content === undefined) return false;
+  return (block.caseInsensitive ? content.toLowerCase() : content).includes(
+    block.terminator,
+  );
+}
+
+function markdownContainerContent(line, container) {
+  let index = 0;
+  while (line[index] === " " || line[index] === "\t") index += 1;
+  for (let depth = 0; depth < container.blockquoteDepth; depth += 1) {
+    if (line[index] !== ">") return undefined;
+    index += 1;
+    while (line[index] === " " || line[index] === "\t") index += 1;
+  }
+  const prefix = line.slice(0, index);
+  if (
+    !hasValidMarkdownBlockquoteSpacing(prefix) ||
+    markdownContainerIndentColumns(prefix) < container.continuationIndent
+  ) return undefined;
+  return line.slice(index);
 }
 
 function scanMarkdownHtmlComments(
@@ -1310,6 +1345,8 @@ function codeRabbitNextLine(content, lineEnd, continuationEnd) {
 function markdownFenceContainer(prefix) {
   const listPrefixes = [...prefix.matchAll(MARKDOWN_LIST_PREFIX_PATTERN)];
   return {
+    blockquoteDepth:
+      [...prefix].filter((character) => character === ">").length,
     structuralPrefix: codeRabbitMarkdownPrefixSignature(
       prefix.replace(MARKDOWN_LIST_PREFIX_PATTERN, ""),
     ),

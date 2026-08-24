@@ -1999,6 +1999,75 @@ describe("automated review gate", () => {
     }
   });
 
+  it("excludes multiline delimited HTML block bodies from review evidence", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+
+    for (
+      const hiddenHtmlBlock of [
+        ["<!DECL", MALFORMED_CURRENT_RANGE, ">"],
+        ["<!decl", MALFORMED_CURRENT_RANGE, ">"],
+        ["<!Decl", MALFORMED_CURRENT_RANGE, ">"],
+        ["- <!DECL", `  ${MALFORMED_CURRENT_RANGE}`, "  >"],
+        ["> <!DECL", `> ${MALFORMED_CURRENT_RANGE}`, "> >"],
+        ["<?process", MALFORMED_CURRENT_RANGE, "?>"],
+        ["> <?process", `> ${MALFORMED_CURRENT_RANGE}`, "> ?>"],
+        ["<![CDATA[", MALFORMED_CURRENT_RANGE, "]]>"],
+        ["- <![CDATA[", `  ${MALFORMED_CURRENT_RANGE}`, "  ]]>"],
+      ]
+    ) {
+      const newerHiddenCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...hiddenHtmlBlock,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerHiddenCurrentRange],
+          },
+          HEAD_SHA,
+        ))?.url,
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+        hiddenHtmlBlock.join("\n"),
+      );
+    }
+
+    for (
+      const visibleRangeOutsideContainer of [
+        ["- <!DECL", MALFORMED_CURRENT_RANGE, "  >"],
+        ["> <![CDATA[", MALFORMED_CURRENT_RANGE, "> ]]>"],
+      ]
+    ) {
+      const newerVisibleCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...visibleRangeOutsideContainer,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerVisibleCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+        visibleRangeOutsideContainer.join("\n"),
+      );
+    }
+  });
+
   it("preserves lazy blockquote paragraphs for inline HTML comments", async () => {
     const olderSuccess = olderCodeRabbitSuccess();
 
