@@ -9,9 +9,15 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module agent/composition/composition.test
  */
 
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { Agent, AgentResponse, AgentStreamResult } from "../types.ts";
+import type { ToolExecutionContext } from "#veryfront/tool";
 
 // Side-effect import: registers the globalThis bridges
 import { agentAsTool, agentRegistry, registerAgent } from "./composition.ts";
@@ -151,6 +157,7 @@ describe("agentAsTool", () => {
   it("executes child agents through the streaming path", async () => {
     let generated = false;
     let streamedInput: string | undefined;
+    let streamedAbortSignal: AbortSignal | undefined;
 
     const childResponse: AgentResponse = {
       text: "streamed child result",
@@ -171,6 +178,7 @@ describe("agentAsTool", () => {
       }),
       async stream(input): Promise<AgentStreamResult> {
         streamedInput = input.input;
+        streamedAbortSignal = input.abortSignal;
         input.onFinish?.(childResponse);
         return {
           toDataStreamResponse() {
@@ -194,15 +202,31 @@ describe("agentAsTool", () => {
     };
 
     const tool = agentAsTool(childAgent, "Review with child agent");
-    const result = await tool.execute({ input: "Review article 30" });
+    const controller = new AbortController();
+    const result = await tool.execute(
+      { input: "Review article 30" },
+      { abortSignal: controller.signal } as ToolExecutionContext,
+    );
 
     assertEquals(generated, false);
     assertEquals(streamedInput, "Review article 30");
+    assertStrictEquals(
+      streamedAbortSignal,
+      controller.signal,
+      "the parent tool abortSignal must reach the child agent stream unchanged",
+    );
     assertEquals(result, {
       text: "streamed child result",
       toolCalls: 0,
       status: "completed",
     });
+
+    controller.abort();
+    assertEquals(
+      streamedAbortSignal?.aborted,
+      true,
+      "aborting the parent run must abort the child stream signal",
+    );
   });
 
   it("preserves the child stream error when no final response is produced", async () => {

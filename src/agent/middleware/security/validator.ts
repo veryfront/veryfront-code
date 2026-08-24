@@ -129,6 +129,10 @@ export class InputValidator {
     }
 
     for (const pattern of this.config.blockedPatterns ?? []) {
+      // Blocked pattern groups are shared module-level objects reused across
+      // requests; a /g pattern carries lastIndex forward and would skip every
+      // second identical match, so reset the match position before testing.
+      pattern.lastIndex = 0;
       if (!pattern.test(input)) continue;
 
       violations.push({
@@ -199,6 +203,9 @@ export class OutputFilter {
     let filtered = output;
 
     for (const pattern of this.config.blockedPatterns ?? []) {
+      // See InputValidator.validate: shared /g patterns must not carry
+      // lastIndex across calls, otherwise a repeat match is skipped.
+      pattern.lastIndex = 0;
       if (!pattern.test(filtered)) continue;
 
       violations.push({

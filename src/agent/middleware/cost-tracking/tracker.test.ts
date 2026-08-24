@@ -166,7 +166,11 @@ describe("costTrackingMiddleware", () => {
 
     // First call costs $1, exceeds $0.50 user daily limit
     await middleware(context, next);
-    assertEquals(exceeded.length, 1);
+    assertEquals(
+      exceeded,
+      [1],
+      "the limit callback must receive the summary for the single tracked request",
+    );
 
     middleware.destroy();
   });
@@ -319,6 +323,76 @@ describe("createCostTracker", () => {
 
     assertEquals(tracker.getTrackedUserCount(), 2);
     assertEquals(tracker.isOverBudget("user-c"), "Per-user daily cost limit exceeded");
+
+    tracker.destroy();
+  });
+
+  it("evicts the oldest tracked user, not the newest", () => {
+    const tracker = createCostTracker({
+      pricing: { openai: { input: 1, output: 0 } },
+      limits: { userDaily: 1.5 },
+      maxTrackedUsers: 2,
+    });
+
+    // user-a accumulates $2 across two calls, user-b is tracked once at $1.
+    tracker.track("agent", "openai/gpt-4.1", createResponse(), "user-a");
+    tracker.track("agent", "openai/gpt-4.1", createResponse(), "user-a");
+    tracker.track("agent", "openai/gpt-4.1", createResponse(), "user-b");
+    assertEquals(
+      tracker.isOverBudget("user-a"),
+      "Per-user daily cost limit exceeded",
+      "user-a's accumulated total is over the per-user limit before eviction",
+    );
+
+    tracker.track("agent", "openai/gpt-4.1", createResponse(), "user-c");
+
+    assertEquals(
+      tracker.isOverBudget("user-a"),
+      null,
+      "the oldest entry (user-a) is the one evicted, so its accumulated total is gone",
+    );
+    assertEquals(tracker.getTrackedUserCount(), 2, "the cap still holds after eviction");
+
+    tracker.destroy();
+  });
+
+  it("reports per-provider request, token and cost totals in the usage summary", () => {
+    const tracker = createCostTracker({
+      pricing: { openai: { input: 1, output: 2 }, anthropic: { input: 3, output: 4 } },
+    });
+
+    tracker.track("agent", "openai/gpt-4.1", {
+      text: "ok",
+      messages: [],
+      toolCalls: [],
+      status: "completed",
+      usage: { promptTokens: 1_000_000, completionTokens: 500_000, totalTokens: 1_500_000 },
+    });
+    tracker.track("agent", "anthropic/claude", {
+      text: "ok",
+      messages: [],
+      toolCalls: [],
+      status: "completed",
+      usage: { promptTokens: 2_000_000, completionTokens: 250_000, totalTokens: 2_250_000 },
+    });
+
+    const summary = tracker.getSummary();
+
+    assertEquals(summary.requests, 2, "every tracked call must be counted as a request");
+    assertEquals(
+      summary.tokens,
+      { prompt: 3_000_000, completion: 750_000, total: 3_750_000 },
+      "prompt and completion totals must not be swapped",
+    );
+    assertEquals(summary.cost, 9, "reported cost must be the sum of the per-record costs");
+    assertEquals(
+      summary.byProvider,
+      {
+        openai: { requests: 1, tokens: 1_500_000, cost: 2 },
+        anthropic: { requests: 1, tokens: 2_250_000, cost: 7 },
+      },
+      "per-provider breakdown must be reported",
+    );
 
     tracker.destroy();
   });

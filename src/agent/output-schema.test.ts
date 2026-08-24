@@ -99,6 +99,39 @@ describe("agent output schema", () => {
       );
     });
 
+    it("should parse a conforming payload against a raw JSON Schema", async () => {
+      const resolved = resolveAgentOutputSchema(
+        { type: "object", properties: { headline: { type: "string" } }, required: ["headline"] },
+        "news",
+      );
+      assertEquals(
+        await resolved!.parseOutput('{"headline":"ok"}'),
+        { headline: "ok" },
+        "a conforming raw JSON Schema payload round-trips",
+      );
+    });
+
+    it("should reject a payload that violates a raw JSON Schema", async () => {
+      const resolved = resolveAgentOutputSchema(
+        { type: "object", properties: { headline: { type: "string" } }, required: ["headline"] },
+        "news",
+      );
+      const error = (await assertRejects(
+        () => resolved!.parseOutput('{"headline":42}'),
+        Error,
+      )) as Error;
+      assertStringIncludes(
+        error.message,
+        "failed outputSchema validation",
+        "a raw JSON Schema violation is reported, not passed through",
+      );
+      assertStringIncludes(
+        error.message,
+        "/headline",
+        "the issue path from formatValidationIssues survives",
+      );
+    });
+
     it("should return undefined when no schema was requested", () => {
       assertEquals(resolveAgentOutputSchema(undefined, "plain"), undefined);
     });

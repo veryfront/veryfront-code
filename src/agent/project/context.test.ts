@@ -80,6 +80,52 @@ Deno.test("applyAgentProjectContextChange leaves context unchanged when project 
   });
 });
 
+Deno.test("applyAgentProjectContextChange fails closed on unsafe project identities", () => {
+  for (const unsafeProjectId of [" project-2", "project-\n2"]) {
+    const context: MutableAgentProjectContext = {
+      projectId: "project-1",
+      projectSlug: "project-one",
+      branchId: "branch-1",
+    };
+
+    const changed = applyAgentProjectContextChange(context, unsafeProjectId);
+
+    assertEquals(changed, false, "an unsafe project reference must not switch the active project");
+    assertEquals(
+      context,
+      {
+        projectId: "project-1",
+        projectSlug: "project-one",
+        branchId: "branch-1",
+      },
+      "a rejected switch must leave the context object untouched",
+    );
+  }
+});
+
+Deno.test("applyAgentProjectContextChange refreshes a newly proved slug for the active project", () => {
+  const context: MutableAgentProjectContext = {
+    projectId: "project-1",
+    projectSlug: "old-slug",
+    branchId: "branch-1",
+    availableSkillIds: ["skill-a"],
+  };
+
+  const changed = applyAgentProjectContextChange(context, "project-1", " new-slug ");
+
+  assertEquals(changed, true, "a newly proved slug for the active project is a change");
+  assertEquals(
+    context,
+    {
+      projectId: "project-1",
+      projectSlug: "new-slug",
+      branchId: "branch-1",
+      availableSkillIds: ["skill-a"],
+    },
+    "a slug refresh normalizes the slug without resetting branch or skill state",
+  );
+});
+
 Deno.test("getConfirmedProjectContextSwitchId reads matching successful structured content", () => {
   assertEquals(
     getConfirmedProjectContextSwitchId(

@@ -96,6 +96,7 @@ describe("react/agent/useChat status lifecycle", () => {
     globalThis.fetch = () => new Promise((resolve) => setTimeout(() => resolve(sseResponse()), 5));
 
     const statuses: UseChatResult["status"][] = [];
+    const loadingFlags: boolean[] = [];
     const streamingIds: (string | null)[] = [];
     let latest: UseChatResult | null = null;
 
@@ -103,6 +104,7 @@ describe("react/agent/useChat status lifecycle", () => {
       const chat = useChat({ api: "/api/ag-ui" });
       latest = chat;
       statuses.push(chat.status);
+      loadingFlags.push(chat.isLoading);
       streamingIds.push(chat.streamingMessageId);
       return null;
     }
@@ -116,8 +118,22 @@ describe("react/agent/useChat status lifecycle", () => {
       await latest!.sendMessage({ text: "Hello" });
       await settle();
 
-      assert(statuses.includes("submitted"), "should pass through submitted");
-      assert(statuses.includes("streaming"), "should pass through streaming");
+      const deduped = statuses.filter((status, index) => status !== statuses[index - 1]);
+      assertEquals(
+        deduped,
+        ["ready", "submitted", "streaming", "ready"],
+        "status must advance ready -> submitted -> streaming -> ready in order",
+      );
+      assertEquals(
+        streamingIds[statuses.indexOf("submitted")],
+        null,
+        "streamingMessageId must stay null until the stream opens",
+      );
+      assertEquals(
+        statuses.filter((status, index) => status === "ready" && loadingFlags[index]),
+        [],
+        "the turn must never report ready while the request is still in flight",
+      );
       assert(
         streamingIds.includes("msg-1"),
         "streamingMessageId should surface the live assistant id",
@@ -154,7 +170,47 @@ describe("react/agent/useChat status lifecycle", () => {
       assertEquals(latest!.status, "error", "failed turn reports error status");
       assertEquals(latest!.streamingMessageId, null);
       assertEquals(latest!.isLoading, false);
-      assert(latest!.error !== null, "error is populated");
+      assertEquals(
+        latest!.error?.message,
+        "boom",
+        "surfaces the server-supplied failure reason instead of a generic status message",
+      );
+    } finally {
+      flushSync(() => root.unmount());
+      await settle();
+      globalThis.fetch = originalFetch;
+      restoreDom();
+    }
+  });
+
+  it("falls back to the status code when the error body is not JSON", async () => {
+    const restoreDom = installDom();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = () =>
+      Promise.resolve(new Response("<html>gateway timeout</html>", { status: 500 }));
+
+    let latest: UseChatResult | null = null;
+    function Capture(): null {
+      latest = useChat({ api: "/api/ag-ui" });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+      await latest!.sendMessage({ text: "Hello" });
+      await settle();
+
+      assertEquals(
+        latest!.status,
+        "error",
+        "non-JSON failures still report error status",
+      );
+      assertEquals(
+        latest!.error?.message,
+        "API error: 500",
+        "non-JSON error bodies fall back to the status-code message",
+      );
     } finally {
       flushSync(() => root.unmount());
       await settle();
@@ -266,6 +322,77 @@ describe("react/agent/useChat status lifecycle", () => {
       assertEquals(part.state, "output-available");
       assertEquals(part.output, { matches: 1 });
       assertEquals(Object.hasOwn(part, "errorText"), false);
+    } finally {
+      flushSync(() => root.unmount());
+      await settle();
+      restoreDom();
+    }
+  });
+
+  it("routes client tool output to the matching dynamic tool part only", async () => {
+    const restoreDom = installDom();
+    let latest: UseChatResult | null = null;
+
+    function Capture(): null {
+      latest = useChat({
+        initialMessages: [{
+          id: "assistant-tool",
+          role: "assistant",
+          parts: [
+            {
+              type: "dynamic-tool",
+              toolCallId: "call-2",
+              toolName: "mcp__docs__search",
+              state: "input-available",
+              input: {},
+            },
+            {
+              type: "tool-search",
+              toolCallId: "call-1",
+              toolName: "search",
+              state: "input-available",
+              input: { query: "Veryfront" },
+            },
+          ],
+        }],
+      });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+      flushSync(() =>
+        latest!.addToolOutput({
+          tool: "mcp__docs__search",
+          toolCallId: "call-2",
+          output: { matches: 1 },
+        })
+      );
+
+      const parts = latest!.messages[0]?.parts ?? [];
+      const dynamicPart = parts[0] as { state?: string; output?: unknown };
+      const searchPart = parts[1] as { state?: string };
+      assertEquals(
+        dynamicPart.state,
+        "output-available",
+        "a dynamic-tool part receives its client output",
+      );
+      assertEquals(
+        dynamicPart.output,
+        { matches: 1 },
+        "the dynamic-tool part carries the client output payload",
+      );
+      assertEquals(
+        searchPart.state,
+        "input-available",
+        "a non-matching toolCallId is left untouched",
+      );
+      assertEquals(
+        Object.hasOwn(searchPart, "output"),
+        false,
+        "concurrent tool calls do not overwrite each other's results",
+      );
     } finally {
       flushSync(() => root.unmount());
       await settle();

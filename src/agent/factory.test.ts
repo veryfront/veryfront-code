@@ -23,6 +23,7 @@ import { registerSkill } from "#veryfront/skill/registry.ts";
 import { reset as resetExtensionContracts, tryResolve } from "#veryfront/extensions/contracts.ts";
 import { createSkillTestAdapter } from "#veryfront/skill/testing.ts";
 import type { ModelRuntime } from "#veryfront/provider";
+import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 
 function createSkill(id: string, description: string) {
   return {
@@ -587,5 +588,87 @@ description: Excluded skill
       VeryfrontError,
       "reserved integration tool namespace",
     );
+  });
+  describe("agent respond request parsing", () => {
+    it("rejects a body larger than the configured limit before buffering it", async () => {
+      const assistant = agent({ id: "respond-parsing-too-large", system: "Stay helpful." });
+
+      const response = await assistant.respond(
+        new Request("http://localhost/agent", {
+          method: "POST",
+          body: "x".repeat(DEFAULT_MAX_BODY_SIZE_BYTES + 1),
+        }),
+      );
+
+      assertEquals(
+        response.status,
+        413,
+        "a body over DEFAULT_MAX_BODY_SIZE_BYTES is rejected before buffering",
+      );
+      assertEquals(
+        (await response.json()).error,
+        "Request body too large",
+        "the oversize rejection names the body size limit",
+      );
+    });
+
+    it("rejects a malformed JSON body", async () => {
+      const assistant = agent({ id: "respond-parsing-malformed", system: "Stay helpful." });
+
+      const response = await assistant.respond(
+        new Request("http://localhost/agent", { method: "POST", body: "{not json" }),
+      );
+
+      assertEquals(response.status, 400, "an unparseable body is a client error");
+      assertEquals(
+        (await response.json()).error,
+        "Malformed JSON request body",
+        "the malformed body rejection is distinguished from a schema rejection",
+      );
+    });
+
+    it("rejects well-formed JSON that fails the respond request schema", async () => {
+      const assistant = agent({ id: "respond-parsing-schema", system: "Stay helpful." });
+
+      const response = await assistant.respond(
+        new Request("http://localhost/agent", {
+          method: "POST",
+          body: JSON.stringify({ messages: 5 }),
+        }),
+      );
+
+      assertEquals(response.status, 400, "a schema violation is a client error");
+      assertEquals(
+        (await response.json()).error,
+        "Invalid agent request",
+        "the schema rejection is reported separately from malformed JSON",
+      );
+    });
+
+    it("rejects a model override outside the configured allowlist", async () => {
+      const assistant = agent({
+        id: "respond-parsing-allowlist",
+        system: "Stay helpful.",
+        allowedModels: ["hosted/approved-model"],
+      });
+
+      const response = await assistant.respond(
+        new Request("http://localhost/agent", {
+          method: "POST",
+          body: JSON.stringify({ messages: [], model: "hosted/expensive-model" }),
+        }),
+      );
+
+      assertEquals(
+        response.status,
+        403,
+        "a client-supplied model outside allowedModels must not reach the runtime",
+      );
+      assertStringIncludes(
+        (await response.json()).error,
+        'Model "hosted/expensive-model" is not allowed',
+        "the refusal names the rejected model",
+      );
+    });
   });
 });

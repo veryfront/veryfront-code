@@ -136,4 +136,49 @@ describe("react/agent/useChat CSRF double-submit", () => {
       restoreDom();
     }
   });
+
+  it("does not leak the token to a scheme downgrade on the same host", async () => {
+    const restoreDom = installDom();
+    try {
+      document.cookie = "__Host-vf_csrf=production-token; Path=/; Secure";
+      const headers = await captureSendHeaders({ api: "http://example.test/api/ag-ui" });
+      assertEquals(
+        headers.get("x-csrf-token"),
+        null,
+        "a scheme downgrade to the same host must not receive the token",
+      );
+    } finally {
+      restoreDom();
+    }
+  });
+
+  it("does not leak the token to a different port on the same host", async () => {
+    const restoreDom = installDom();
+    try {
+      document.cookie = "__Host-vf_csrf=production-token; Path=/; Secure";
+      const headers = await captureSendHeaders({ api: "https://example.test:8443/api/ag-ui" });
+      assertEquals(
+        headers.get("x-csrf-token"),
+        null,
+        "a different port on the same host must not receive the token",
+      );
+    } finally {
+      restoreDom();
+    }
+  });
+
+  it("sends the token to a same-origin absolute URL", async () => {
+    const restoreDom = installDom();
+    try {
+      document.cookie = "__Host-vf_csrf=production-token; Path=/; Secure";
+      const headers = await captureSendHeaders({ api: "https://example.test/api/ag-ui" });
+      assertEquals(
+        headers.get("x-csrf-token"),
+        "production-token",
+        "a same-origin absolute URL must still receive the token",
+      );
+    } finally {
+      restoreDom();
+    }
+  });
 });

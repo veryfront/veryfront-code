@@ -358,17 +358,36 @@ describe("agent/factory call context", () => {
       rootPath: "/test/skills/support-triage",
     });
 
-    const prompt = await captureFactorySystemPrompt({
+    const authoredTools = {
+      create_file: tool({
+        id: "create_file",
+        description: "Create a file",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => ({ ok: true }),
+      }),
+    };
+    const assistant = agent({
       id: "skill-agent",
       system: "You are a support agent.",
-      tools: {
-        create_file: tool({
-          id: "create_file",
-          description: "Create a file",
-          inputSchema: defineSchema((v) => v.object({}))(),
-          execute: () => ({ ok: true }),
-        }),
-      },
+      tools: authoredTools,
+    });
+    const toolNames = Object.keys(assistant.config.tools ?? {});
+
+    assertEquals(
+      toolNames.includes("create_file"),
+      true,
+      "the authored tool must survive skill-tool merging",
+    );
+    assertEquals(
+      toolNames.includes("load_skill"),
+      true,
+      "an agent advertising a skill must still carry load_skill so the model can load it",
+    );
+
+    const prompt = await captureFactorySystemPrompt({
+      id: "skill-agent-prompt",
+      system: "You are a support agent.",
+      tools: authoredTools,
     });
 
     assertStringIncludes(

@@ -8,7 +8,12 @@ import {
   wrapHostToolSetWithMcpPolicy,
   wrapRemoteToolSourceWithMcpPolicy,
 } from "./mcp-tool-policy.ts";
-import type { HostToolSet, RemoteToolSource, ToolDefinition } from "#veryfront/tool";
+import type {
+  HostToolSet,
+  RemoteToolSource,
+  ToolDefinition,
+  ToolExecutionContext,
+} from "#veryfront/tool";
 
 const emptyParameters = { type: "object" as const, properties: {} };
 
@@ -51,12 +56,16 @@ function remoteSourceWithNonEnumerableId(
   return source;
 }
 
-function hostToolSet(calls: string[] = []): HostToolSet {
+function hostToolSet(
+  calls: string[] = [],
+  execContexts: Array<ToolExecutionContext | undefined> = [],
+): HostToolSet {
   return {
     search_docs: {
       description: "Search docs",
-      execute: (input: unknown) => {
+      execute: (input: unknown, execOptions?: ToolExecutionContext) => {
         calls.push(`search_docs:${String((input as Record<string, unknown>).value)}`);
+        execContexts.push(execOptions);
         return { ok: true, toolName: "search_docs" };
       },
     },
@@ -253,16 +262,30 @@ describe("agent/mcp-tool-policy", () => {
 
   it("wrapHostToolSetWithMcpPolicy filters visible Tools and blocks execution after policy mutation", async () => {
     const calls: string[] = [];
+    const execContexts: Array<ToolExecutionContext | undefined> = [];
+    const abortSignal = new AbortController().signal;
     const policy: AgentMcpToolPolicy = { allow: ["search_docs", "hidden_without_execute"] };
-    const wrapped = wrapHostToolSetWithMcpPolicy(hostToolSet(calls), policy, {
+    const wrapped = wrapHostToolSetWithMcpPolicy(hostToolSet(calls, execContexts), policy, {
       deniedDetail: (toolName) => `Host tool ${toolName} denied`,
     });
 
     assertEquals(Object.keys(wrapped), ["search_docs", "hidden_without_execute"]);
-    assertEquals(await wrapped.search_docs?.execute?.({ value: "first" }), {
-      ok: true,
-      toolName: "search_docs",
-    });
+    assertEquals(
+      await wrapped.search_docs?.execute?.({ value: "first" }, {
+        projectId: "project-1",
+        authToken: "token-1",
+        abortSignal,
+      }),
+      {
+        ok: true,
+        toolName: "search_docs",
+      },
+    );
+    assertEquals(
+      execContexts,
+      [{ projectId: "project-1", authToken: "token-1", abortSignal }],
+      "the policy wrapper must forward the caller's tool execution context unchanged",
+    );
 
     policy.deny = ["search_docs"];
 
