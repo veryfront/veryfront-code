@@ -6,6 +6,7 @@ import process from "node:process";
 import { splitIntoShards } from "../test-file-utils.mjs";
 import { ensureNpmNodeModulesLinks } from "../ensure-npm-links.mjs";
 import { loadSuitePlan } from "../load-suite-plan.mjs";
+import { buildRuntimeTestProcessEnv } from "../runtime-env.mjs";
 
 function resolveConcurrency(envKeys) {
   for (const key of envKeys) {
@@ -41,7 +42,10 @@ if (suite && suite !== "runtime:node") {
   throw new Error(`Unsupported Node suite profile: ${suite}`);
 }
 const patterns = rawArgs.filter((arg) => arg !== suiteArg);
-const concurrency = resolveConcurrency(["VF_TEST_CONCURRENCY", "NODE_TEST_CONCURRENCY"]);
+const concurrency = resolveConcurrency([
+  "VF_TEST_CONCURRENCY",
+  "NODE_TEST_CONCURRENCY",
+]);
 const shardOverride = resolveShardCount(["VF_TEST_SHARDS", "NODE_TEST_SHARDS"]);
 const autoShards = concurrency >= 4 ? Math.min(4, Math.floor(concurrency / 2)) : 1;
 const shardCount = shardOverride ?? autoShards;
@@ -62,7 +66,9 @@ function selectedTestFiles() {
     exclude: envExcludePatterns,
   });
   if (files.length === 0) {
-    console.error("Node test runner selected no test files for the active filters.");
+    console.error(
+      "Node test runner selected no test files for the active filters.",
+    );
     process.exit(1);
   }
   return files;
@@ -79,56 +85,25 @@ function buildNodeArgs(files, perShardConcurrency) {
   ];
 }
 
-const env = { ...process.env };
-// Match the Deno test tasks' explicit host-test contract. This keeps guarded
-// outbound consumers on deterministic injected transports in Node tests while
-// production processes, which never run through this harness, remain pinned.
-env.DENO_TESTING = "1";
-if (!env.VF_DISABLE_LRU_INTERVAL) env.VF_DISABLE_LRU_INTERVAL = "1";
-if (!env.NODE_ENV) env.NODE_ENV = "production";
-if (!env.LOG_FORMAT) env.LOG_FORMAT = "text";
-// Don't scale time by default - many tests have timing-sensitive operations
-if (!env.VF_TEST_TIME_SCALE) env.VF_TEST_TIME_SCALE = "1";
-for (
-  const key of [
-    "OPENAI_API_KEY",
-    "OPENAI_BASE_URL",
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_BASE_URL",
-    "GOOGLE_API_KEY",
-    "GOOGLE_GENERATIVE_AI_API_KEY",
-    "GOOGLE_GEMINI_BASE_URL",
-    "VERYFRONT_API_TOKEN",
-    "VERYFRONT_API_BASE_URL",
-    "VERYFRONT_API_URL",
-    "VERYFRONT_PROJECT_SLUG",
-    "AG_UI_EVAL_PROJECT_SLUG",
-    "TENANT_PROJECT_SLUG",
-    "MISTRAL_API_KEY",
-    "MISTRAL_BASE_URL",
-    "GROQ_API_KEY",
-    "GROQ_BASE_URL",
-    "DEEPSEEK_API_KEY",
-    "DEEPSEEK_BASE_URL",
-    "OPENROUTER_API_KEY",
-    "OPENROUTER_BASE_URL",
-    "CONTEXT7_API_KEY",
-  ]
-) {
-  delete env[key];
-}
+const env = buildRuntimeTestProcessEnv(process.env);
 
 async function runShardedTests() {
   const files = selectedTestFiles();
   ensureNpmNodeModulesLinks();
 
   const shards = splitIntoShards(files, shardCount);
-  const perShardConcurrency = Math.max(1, Math.floor(concurrency / shards.length));
+  const perShardConcurrency = Math.max(
+    1,
+    Math.floor(concurrency / shards.length),
+  );
 
   const runs = shards.map((shardFiles) =>
     new Promise((resolvePromise) => {
       const nodeArgs = buildNodeArgs(shardFiles, perShardConcurrency);
-      const child = spawn(process.execPath, nodeArgs, { stdio: "inherit", env });
+      const child = spawn(process.execPath, nodeArgs, {
+        stdio: "inherit",
+        env,
+      });
       child.on("error", (error) => {
         console.error("Failed to start node tests:", error);
         resolvePromise(1);
