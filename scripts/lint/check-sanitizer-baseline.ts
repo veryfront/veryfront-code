@@ -26,7 +26,7 @@ import {
 // 396 after moving the dev-server-handlers, api-handler, and RSC
 // hydration/isolation suites onto the in-process request harness, which closes
 // what the old socket servers leaked.
-export const SANITIZER_OPT_OUT_BASELINE = 392;
+export const SANITIZER_OPT_OUT_BASELINE = 396;
 
 const OPT_OUT_PATTERN = /sanitize(?:Resources|Ops|Exit)\s*:\s*false/g;
 
