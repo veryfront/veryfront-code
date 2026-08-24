@@ -195,7 +195,7 @@ function assertESMLayoutBundle(compiledCode: string | undefined, source: string)
  *
  * Accepts the same bundle format as {@link applyLayoutsESM}: compiled layout
  * code must be an ES module. Legacy function-body bundles (top-level
- * `return { default: Layout }`) are rejected with a migration error — their
+ * `return { default: Layout }`) are rejected with a migration error; their
  * synchronous evaluator was removed for security reasons and pre-dates this
  * alias delegating to the ESM path.
  *
