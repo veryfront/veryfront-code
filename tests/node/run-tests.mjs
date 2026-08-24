@@ -6,7 +6,7 @@ import process from "node:process";
 import { splitIntoShards } from "../test-file-utils.mjs";
 import { ensureNpmNodeModulesLinks } from "../ensure-npm-links.mjs";
 import { loadSuitePlan } from "../load-suite-plan.mjs";
-import { buildRuntimeTestProcessEnv } from "../runtime-env.mjs";
+import { buildRuntimeTestProcessEnv } from "../../scripts/test/runtime-env.mjs";
 
 function resolveConcurrency(envKeys) {
   for (const key of envKeys) {

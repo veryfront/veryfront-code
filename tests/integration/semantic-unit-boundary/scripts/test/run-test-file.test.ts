@@ -6,9 +6,9 @@
  * runner in scripts/test/run-test-file.test.ts.
  */
 
-import { assertEquals } from "#std/assert";
-import { describe, it } from "#std/testing/bdd";
 import { fromFileUrl, join } from "#std/path";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 const REPOSITORY_ROOT = fromFileUrl(new URL("../../../../../", import.meta.url));

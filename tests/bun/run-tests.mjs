@@ -6,7 +6,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { ensureNpmNodeModulesLinks } from "../ensure-npm-links.mjs";
 import { loadSuitePlan } from "../load-suite-plan.mjs";
-import { buildRuntimeTestProcessEnv } from "../runtime-env.mjs";
+import { buildRuntimeTestProcessEnv } from "../../scripts/test/runtime-env.mjs";
 import { buildIsolatedBunTestRuns, registerBunWorkspaceCleanup } from "./runner-args.mjs";
 import { prepareBunWorkspacePackages } from "./workspace-packages.mjs";
 

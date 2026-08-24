@@ -6,9 +6,9 @@
  * unit-tested next to the runner in scripts/test/coverage-ci.test.ts.
  */
 
-import { assert, assertEquals } from "#std/assert";
-import { describe, it } from "#std/testing/bdd";
 import { fromFileUrl, join } from "#std/path";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 const REPOSITORY_ROOT = fromFileUrl(new URL("../../../../../", import.meta.url));

@@ -1,3 +1,4 @@
+/** Provider credentials and endpoint overrides runtime test lanes must not inherit. */
 export const PROVIDER_ENV_KEYS = Object.freeze([
   "OPENAI_API_KEY",
   "OPENAI_BASE_URL",

@@ -1,9 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import {
-  buildRuntimeTestProcessEnv,
-  PROVIDER_ENV_KEYS,
-} from "../../tests/runtime-env.mjs";
+import { buildRuntimeTestProcessEnv, PROVIDER_ENV_KEYS } from "./runtime-env.mjs";
 
 describe("runtime test process environment", () => {
   it("scrubs provider env names case-insensitively", () => {

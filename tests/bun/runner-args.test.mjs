@@ -10,7 +10,7 @@ import {
   buildIsolatedBunTestRuns,
   registerBunWorkspaceCleanup,
 } from "./runner-args.mjs";
-import { buildRuntimeTestProcessEnv } from "../runtime-env.mjs";
+import { buildRuntimeTestProcessEnv } from "../../scripts/test/runtime-env.mjs";
 
 const runTestsPath = fileURLToPath(new URL("./run-tests.mjs", import.meta.url));
 const nodeRunTestsPath = fileURLToPath(
@@ -133,7 +133,7 @@ test("Node and Bun runners pass scrubbed env objects to child processes", () => 
 
   assert.match(
     nodeSource,
-    /import \{ buildRuntimeTestProcessEnv \} from "\.\.\/runtime-env\.mjs";/,
+    /import \{ buildRuntimeTestProcessEnv \} from "\.\.\/\.\.\/scripts\/test\/runtime-env\.mjs";/,
   );
   assert.match(
     nodeSource,
@@ -143,7 +143,7 @@ test("Node and Bun runners pass scrubbed env objects to child processes", () => 
 
   assert.match(
     bunSource,
-    /import \{ buildRuntimeTestProcessEnv \} from "\.\.\/runtime-env\.mjs";/,
+    /import \{ buildRuntimeTestProcessEnv \} from "\.\.\/\.\.\/scripts\/test\/runtime-env\.mjs";/,
   );
   assert.match(
     bunSource,
