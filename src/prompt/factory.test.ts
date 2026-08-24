@@ -1,5 +1,4 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { FakeTime } from "#std/testing/time";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   assertEquals,
@@ -9,19 +8,27 @@ import {
   assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
-import { prompt } from "./factory.ts";
+import {
+  prompt,
+  resetPromptDeadlineRuntimeForTests,
+  setPromptDeadlineRuntimeForTests,
+} from "./factory.ts";
 import type { PromptConfig, PromptMCPConfig, PromptRenderContext } from "./types.ts";
 
-async function importWithStarvedPromptTimer(
-  load: () => Promise<typeof import("./factory.ts")>,
-): Promise<typeof import("./factory.ts")> {
-  const fakeSetTimeout = globalThis.setTimeout;
-  try {
-    globalThis.setTimeout = (() => 0) as typeof globalThis.setTimeout;
-    return await load();
-  } finally {
-    globalThis.setTimeout = fakeSetTimeout;
-  }
+function installInertPromptClock(): { advanceTo(time: number): void } {
+  let currentTime = 0;
+  setPromptDeadlineRuntimeForTests({
+    now: () => currentTime,
+    // Inert timers keep the deadline watchdog silent, so only the
+    // post-completion guard can supply a deadline rejection.
+    setTimer: () => 0 as unknown as ReturnType<typeof setTimeout>,
+    clearTimer: () => {},
+  });
+  return {
+    advanceTo(time: number) {
+      currentTime = time;
+    },
+  };
 }
 
 describe("prompt factory", () => {
@@ -134,38 +141,39 @@ describe("prompt factory", () => {
     });
 
     it("should reject static content completed after its deadline", async () => {
-      using time = new FakeTime(0);
-      const { prompt: promptWithFakeTime } = await import(
-        "./factory.ts?static-deadline-regression"
-      );
-      const p = promptWithFakeTime({
-        id: "late-static",
-        description: "desc",
-        content: "{value}",
-      });
-      const deadline = Date.now() + 60_000;
-      let converted = false;
+      const clock = installInertPromptClock();
+      try {
+        const p = prompt({
+          id: "late-static",
+          description: "desc",
+          content: "{value}",
+        });
+        const deadline = 60_000;
+        let converted = false;
 
-      const rendering = p.getContent(
-        {
-          value: {
-            toString() {
-              converted = true;
-              time.tick(60_001);
-              return "late";
+        const rendering = p.getContent(
+          {
+            value: {
+              toString() {
+                converted = true;
+                clock.advanceTo(deadline + 1);
+                return "late";
+              },
             },
           },
-        },
-        { deadline },
-      );
+          { deadline },
+        );
 
-      const error = await assertRejects(
-        () => rendering,
-        DOMException,
-        "Prompt rendering deadline exceeded",
-      ) as DOMException;
-      assertEquals(converted, true, "interpolation crossed the live deadline");
-      assertEquals(error.name, "TimeoutError");
+        const error = await assertRejects(
+          () => rendering,
+          DOMException,
+          "Prompt rendering deadline exceeded",
+        ) as DOMException;
+        assertEquals(converted, true, "interpolation crossed the live deadline");
+        assertEquals(error.name, "TimeoutError");
+      } finally {
+        resetPromptDeadlineRuntimeForTests();
+      }
     });
   });
 
@@ -274,36 +282,37 @@ describe("prompt factory", () => {
     });
 
     it("should reject generated content completed after its absolute deadline", async () => {
-      using time = new FakeTime(0);
-      const { prompt: promptWithFakeTime } = await importWithStarvedPromptTimer(
-        () => import("./factory.ts?generated-deadline-regression"),
-      );
-      const deadline = Date.now() + 60_000;
-      let invoked = false;
-      let context: Readonly<PromptRenderContext> | undefined;
-      const p = promptWithFakeTime({
-        id: "late-generated",
-        description: "desc",
-        generate: (_variables, renderContext) => {
-          invoked = true;
-          context = renderContext;
-          time.tick(60_001);
-          return "late";
-        },
-      });
+      const clock = installInertPromptClock();
+      try {
+        const deadline = 60_000;
+        let invoked = false;
+        let context: Readonly<PromptRenderContext> | undefined;
+        const p = prompt({
+          id: "late-generated",
+          description: "desc",
+          generate: (_variables, renderContext) => {
+            invoked = true;
+            context = renderContext;
+            clock.advanceTo(deadline + 1);
+            return "late";
+          },
+        });
 
-      const error = await assertRejects(
-        () => p.getContent({}, { deadline }),
-        DOMException,
-        "Prompt rendering deadline exceeded",
-      ) as DOMException;
-      assertEquals(invoked, true, "the generator crossed the live deadline");
-      assertEquals(error.name, "TimeoutError");
-      assertEquals(
-        context?.abortSignal?.aborted,
-        false,
-        "the starved timer did not supply the deadline rejection",
-      );
+        const error = await assertRejects(
+          () => p.getContent({}, { deadline }),
+          DOMException,
+          "Prompt rendering deadline exceeded",
+        ) as DOMException;
+        assertEquals(invoked, true, "the generator crossed the live deadline");
+        assertEquals(error.name, "TimeoutError");
+        assertEquals(
+          context?.abortSignal?.aborted,
+          false,
+          "the inert timer did not supply the deadline rejection",
+        );
+      } finally {
+        resetPromptDeadlineRuntimeForTests();
+      }
     });
   });
 
