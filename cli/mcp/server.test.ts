@@ -303,6 +303,27 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       }
     });
 
+    it("should omit local skill directories from the skills resource", async () => {
+      const portNum = 19903;
+      server = new MCPDevServer({ httpPort: portNum });
+      server.start();
+      await waitForServerBind();
+
+      const response = await postMcp(portNum, {
+        jsonrpc: "2.0",
+        id: 42,
+        method: "resources/read",
+        params: { uri: "veryfront://skills" },
+      });
+      const data = await response.json();
+      const skills = JSON.parse(data.result.contents[0].text);
+
+      assertEquals(skills.length > 0, true);
+      for (const skill of skills) {
+        assertEquals(Object.hasOwn(skill, "directory"), false);
+      }
+    });
+
     it("should return prompts list", async () => {
       const portNum = 19880;
       server = new MCPDevServer({ httpPort: portNum });

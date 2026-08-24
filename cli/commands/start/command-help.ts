@@ -29,10 +29,10 @@ export const startHelp: CommandHelp = {
   notes: [
     "Veryfront supports two modes:",
     "",
-    "  Single project — run inside a project directory, or use --project <path>.",
+    "  Single project: run inside a project directory, or use --project <path>.",
     "  A project is any folder with an app/, pages/, or components/ directory.",
     "",
-    "  Workspace — run from a parent directory containing a projects/ folder.",
+    "  Workspace: run from a parent directory containing a projects/ folder.",
     "  Each subfolder in projects/ that has app/, pages/, or components/ is",
     "  auto-discovered and served. A project picker UI is shown at the root URL.",
     "",

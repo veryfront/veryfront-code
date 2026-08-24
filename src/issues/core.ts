@@ -50,7 +50,7 @@ export function parseFrontmatter(content: string): { frontmatter: string; body: 
  * block arrays (`-` items). Keys may contain letters, digits, `_` and `-`.
  * Values may contain colons (e.g. URLs) since only the first `:` splits the
  * line. Nested maps, multi-line/block scalars, anchors, and quoted keys are
- * NOT supported — use a real YAML parser if the schema grows beyond this.
+ * NOT supported. Use a real YAML parser if the schema grows beyond this.
  */
 export function parseYaml(yaml: string): Record<string, unknown> {
   const result: Record<string, unknown> = {};

@@ -503,7 +503,6 @@ export class MCPDevServer {
             name: s.metadata.name,
             description: s.metadata.description,
             allowedTools: s.metadata.allowedTools,
-            directory: s.directory,
           }));
           return {
             contents: [{
