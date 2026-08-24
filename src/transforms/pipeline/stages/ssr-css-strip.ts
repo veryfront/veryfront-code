@@ -75,6 +75,39 @@ function cssBindingValue(imported: string, cssModuleKey: string | undefined): st
 }
 
 /**
+ * A namespace-shaped stub for `export * as styles from "./X.module.css"`.
+ *
+ * A namespace re-export binds the whole module namespace, not its default
+ * export, so importers reach the class map through `styles.default.container`
+ * as well as `styles.container`. Exporting the bare default proxy answers
+ * `styles.default` with a synthesized class string and breaks the first form,
+ * so the stub keeps both: `default` yields the proxy, every other key yields
+ * the class name the proxy would have produced.
+ */
+function cssNamespaceExpression(cssModuleKey: string | undefined): string {
+  const defaultExpr = cssBindingValue("default", cssModuleKey);
+  return `(() => { const d = ${defaultExpr}; return new Proxy({}, { get: (_, p) => p === "default" ? d : d[p] }); })()`;
+}
+
+const CSS_EXPORT_LOCAL_PREFIX = "__vfCssExport_";
+
+/**
+ * A `__vfCssExport_` prefix that no text in `code` already contains.
+ *
+ * The generated locals share the module scope with the module's own bindings,
+ * so a source that already declares `__vfCssExport_styles` would be redeclared
+ * by a fixed prefix and stop parsing. `$` is a valid identifier character, so
+ * lengthening the prefix until it appears nowhere in the source makes every
+ * derived name unique against the module rather than merely against its
+ * siblings.
+ */
+function cssExportLocalPrefix(code: string): string {
+  let prefix = CSS_EXPORT_LOCAL_PREFIX;
+  while (code.includes(prefix)) prefix += "$";
+  return prefix;
+}
+
+/**
  * Export `value` under `exportName` without declaring `exportName` locally.
  *
  * A re-export never introduces a local binding, so the stub must not either:
@@ -82,12 +115,38 @@ function cssBindingValue(imported: string, cssModuleKey: string | undefined): st
  * is a valid module, and emitting `export const styles` would redeclare it.
  * Reserved words such as `class` are legal export names but illegal `const`
  * names, so the same indirection keeps those parseable as well. Export names
- * are unique per module, which makes the derived local name collision-free.
+ * are unique per module, and `localPrefix` is unique against the module's own
+ * source, so the derived local name collides with nothing.
  */
-function exportBindingStatement(exportName: string, value: string): string {
+function exportBindingStatement(
+  localPrefix: string,
+  exportName: string,
+  value: string,
+): string {
   if (exportName === "default") return `export default ${value};`;
-  const localName = `__vfCssExport_${exportName}`;
+  const localName = `${localPrefix}${exportName}`;
   return `const ${localName} = ${value}; export { ${localName} as ${exportName} };`;
+}
+
+/**
+ * Index of the `from` keyword that introduces the module specifier.
+ *
+ * esbuild minifies this code immediately before this stage whenever `dev` is
+ * false, so production statements arrive without spaces around the keyword
+ * (`export{default as styles}from"./x.module.css"`). Matching the literal
+ * `" from "` misses every one of those, strips the statement to a bare comment
+ * and leaves the module's own `export {...}` clause referencing bindings that
+ * no longer exist, which fails to link. The keyword is therefore matched on its
+ * identifier boundary; the last match wins so an import-attribute clause after
+ * the specifier cannot shift the split point.
+ */
+function findFromKeywordIndex(statement: string): number {
+  const pattern = /\bfrom\s*['"`]/g;
+  let index = -1;
+  for (let match = pattern.exec(statement); match; match = pattern.exec(statement)) {
+    index = match.index;
+  }
+  return index;
 }
 
 /**
@@ -99,19 +158,23 @@ function exportBindingStatement(exportName: string, value: string): string {
  * stubs the import path already uses. `export * from` carries no static names,
  * so it stays stripped.
  */
-function generateCSSReExportStub(trimmed: string, specifier: string): string {
+function generateCSSReExportStub(
+  trimmed: string,
+  specifier: string,
+  localPrefix: string,
+): string {
   const stripped = `/* css re-export stripped: ${specifier} */`;
-  const fromIndex = trimmed.lastIndexOf(" from ");
+  const fromIndex = findFromKeywordIndex(trimmed);
   if (fromIndex === -1) return stripped;
 
   const cssModuleKey = isCssModuleImport(specifier) ? specifier : undefined;
   const clause = trimmed.slice("export".length, fromIndex).trim();
 
   // Namespace re-export: export * as styles from "./X.module.css"
-  const nsMatch = clause.match(/^\*\s+as\s+([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
+  const nsMatch = clause.match(/^\*\s*as\s+([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
   if (nsMatch?.[1]) {
     return `${
-      exportBindingStatement(nsMatch[1], cssBindingValue("default", cssModuleKey))
+      exportBindingStatement(localPrefix, nsMatch[1], cssNamespaceExpression(cssModuleKey))
     } /* css re-export: ${specifier} */`;
   }
 
@@ -123,7 +186,11 @@ function generateCSSReExportStub(trimmed: string, specifier: string): string {
   if (bindings.length === 0) return stripped;
 
   const statements = bindings.map((binding) =>
-    exportBindingStatement(binding.local, cssBindingValue(binding.imported, cssModuleKey))
+    exportBindingStatement(
+      localPrefix,
+      binding.local,
+      cssBindingValue(binding.imported, cssModuleKey),
+    )
   );
 
   return `${statements.join(" ")} /* css re-export: ${specifier} */`;
@@ -136,20 +203,21 @@ function generateCSSReExportStub(trimmed: string, specifier: string): string {
  * - Default import: `import styles from "./X.module.css"` → Proxy stub
  * - Named imports: `import { a } from "./X.css"` → null stubs
  */
-function generateCSSStub(statement: string, specifier: string): string {
+function generateCSSStub(statement: string, specifier: string, localPrefix: string): string {
   const trimmed = statement.trim();
 
   // Re-export from CSS: export { default as styles } from './module.css'
-  if (/^export\s/.test(trimmed)) {
-    return generateCSSReExportStub(trimmed, specifier);
+  // Minified output drops the space: `export{default as styles}from"..."`.
+  if (/^export(?![\w$])/.test(trimmed)) {
+    return generateCSSReExportStub(trimmed, specifier, localPrefix);
   }
 
   // Side-effect import: import "./globals.css"
-  if (/^import\s+['"`]/.test(trimmed)) {
+  if (/^import\s*['"`]/.test(trimmed)) {
     return `/* css import: ${specifier} */`;
   }
 
-  const fromIndex = trimmed.lastIndexOf(" from ");
+  const fromIndex = findFromKeywordIndex(trimmed);
   if (fromIndex === -1) {
     return `/* css import: ${specifier} */`;
   }
@@ -168,26 +236,25 @@ function generateCSSStub(statement: string, specifier: string): string {
   }
 
   // Namespace import: import * as styles from "./X.module.css"
-  const nsMatch = importClause.match(/^\*\s+as\s+([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
+  // esbuild lowers `export * as styles from "./X.module.css"` to this form, so
+  // the stub must carry the same namespace shape the re-export promises.
+  const nsMatch = importClause.match(/^\*\s*as\s+([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
   if (nsMatch) {
-    const expr = cssModuleKey
-      ? scopedCssModuleProxyExpression(cssModuleKey)
-      : cssModuleProxyExpression();
-    return `const ${nsMatch[1]} = ${expr}; /* css module: ${specifier} */`;
+    return `const ${nsMatch[1]} = ${
+      cssNamespaceExpression(cssModuleKey)
+    }; /* css module: ${specifier} */`;
   }
 
   // Named imports: import { container, header } from "./X.module.css"
+  // `default` is a legal named import, and esbuild lowers every CSS re-export
+  // to this form, so it must resolve to the class-map proxy rather than to the
+  // literal class name `"default"`.
   const namedMatch = importClause.match(/^\{([^}]+)\}$/);
   if (namedMatch?.[1]) {
     const bindings = parseNamedImportBindings(namedMatch[1]);
     if (bindings.length > 0) {
       const stubs = bindings
-        .map((binding) => {
-          const value = cssModuleKey
-            ? toScopedCssModuleClass(cssModuleKey, binding.imported)
-            : binding.imported;
-          return `${binding.local} = "${value}"`;
-        })
+        .map((binding) => `${binding.local} = ${cssBindingValue(binding.imported, cssModuleKey)}`)
         .join(", ");
       return `const ${stubs}; /* css module: ${specifier} */`;
     }
@@ -199,12 +266,7 @@ function generateCSSStub(statement: string, specifier: string): string {
     const defaultName = mixedMatch[1];
     const bindings = parseNamedImportBindings(mixedMatch[2]);
     const namedStubs = bindings
-      .map((binding) => {
-        const value = cssModuleKey
-          ? toScopedCssModuleClass(cssModuleKey, binding.imported)
-          : binding.imported;
-        return `${binding.local} = "${value}"`;
-      })
+      .map((binding) => `${binding.local} = ${cssBindingValue(binding.imported, cssModuleKey)}`)
       .join(", ");
     const defaultExpr = cssModuleKey
       ? scopedCssModuleProxyExpression(cssModuleKey)
@@ -242,6 +304,7 @@ export const cssStripPlugin: TransformPlugin = {
     if (!hasCssImports) return ctx.code;
 
     const cssSpecifiers: string[] = [];
+    const localPrefix = cssExportLocalPrefix(ctx.code);
 
     const result = await rewriteImports(ctx.code, (imp, statement) => {
       if (!isCSSImport(imp.n)) return null;
@@ -251,7 +314,7 @@ export const cssStripPlugin: TransformPlugin = {
         : undefined;
       const specifierForStub = moduleKey ?? imp.n!;
       if (imp.d > -1) return generateDynamicCSSStub(specifierForStub);
-      return generateCSSStub(statement, specifierForStub);
+      return generateCSSStub(statement, specifierForStub, localPrefix);
     });
 
     if (cssSpecifiers.length > 0) {

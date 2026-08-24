@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { stop as stopEsbuild } from "#veryfront/platform/compat/esbuild.ts";
+import { compilePlugin } from "./compile.ts";
 import type { TransformContext } from "../types.ts";
 import { cssStripPlugin } from "./ssr-css-strip.ts";
 import {
@@ -16,7 +18,7 @@ const MODULE_KEY = resolveCssModuleKey(
   "/project",
 );
 
-function createContext(code: string): TransformContext {
+function createContext(code: string, dev = true): TransformContext {
   return {
     code,
     originalSource: code,
@@ -24,7 +26,7 @@ function createContext(code: string): TransformContext {
     projectDir: "/project",
     projectId: "project",
     target: "ssr",
-    dev: true,
+    dev,
     contentHash: "hash",
     jsxImportSource: "react",
     timing: new Map(),
@@ -46,6 +48,18 @@ async function assertParsesAsModule(source: string, message: string): Promise<vo
     parseError = error instanceof Error ? error.message : String(error);
   }
   assertEquals(parseError, undefined, `${message} (got: ${parseError})`);
+}
+
+/**
+ * Link and evaluate a stubbed SSR module and hand back its export namespace.
+ *
+ * Whether a stub still *carries* a binding is only half the contract: an
+ * importer reads through it, so the shape it hands back has to be checked by
+ * running the module rather than by matching its text.
+ */
+async function evaluateModule(source: string): Promise<Record<string, unknown>> {
+  const namespace = await import(`data:text/javascript,${encodeURIComponent(source)}`);
+  return namespace as Record<string, unknown>;
 }
 
 describe("css-strip plugin", () => {
@@ -209,8 +223,8 @@ describe("css-strip plugin", () => {
     );
     assertStringIncludes(
       result,
-      "const __vfCssExport_class = new Proxy({},",
-      "the reserved namespace export must be backed by a safe local proxy stub",
+      "const __vfCssExport_class = ",
+      "the reserved namespace export must be backed by a safe local binding",
     );
     assertStringIncludes(
       result,
@@ -220,6 +234,95 @@ describe("css-strip plugin", () => {
     await assertParsesAsModule(
       result,
       "a reserved-word css namespace re-export must still produce a parseable SSR module",
+    );
+    assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
+  });
+
+  it("gives a css namespace re-export the shape of a module namespace", async () => {
+    const ctx = createContext(`export * as styles from "./Button.module.css";`);
+
+    const result = await cssStripPlugin.transform(ctx);
+    const namespace = await evaluateModule(result);
+    const styles = namespace.styles as Record<string, Record<string, string>>;
+
+    assertEquals(
+      styles.default?.container,
+      toScopedCssModuleClass(MODULE_KEY, "container"),
+      "a namespace re-export binds the module namespace, so `styles.default` must be the class map",
+    );
+    assertEquals(
+      styles.container as unknown as string,
+      toScopedCssModuleClass(MODULE_KEY, "container"),
+      "a css module namespace also exposes each class as a named export",
+    );
+    assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
+  });
+
+  it("keeps a minified css re-export exporting its bindings", async () => {
+    // esbuild minifies immediately before this stage whenever `dev` is false,
+    // so production statements carry no spaces around `from`.
+    const ctx = createContext(
+      `export{default as styles,container as root}from"./Button.module.css";`,
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+
+    assertEquals(
+      result.includes("css re-export stripped"),
+      false,
+      "a minified css re-export must not be stripped to a comment, which drops the binding",
+    );
+    const namespace = await evaluateModule(result);
+    assertEquals(
+      (namespace.styles as Record<string, string>)?.container,
+      toScopedCssModuleClass(MODULE_KEY, "container"),
+      "a minified re-exported css default must still resolve to the scoped class map",
+    );
+    assertEquals(
+      namespace.root,
+      toScopedCssModuleClass(MODULE_KEY, "container"),
+      "a minified re-exported named css binding must still resolve to its scoped class",
+    );
+    assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
+  });
+
+  it("resolves a named `default` css import to the class map, not the literal name", async () => {
+    const ctx = createContext(
+      `import { default as styles } from "./Button.module.css"; export const cls = styles.container;`,
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+    const namespace = await evaluateModule(result);
+
+    assertEquals(
+      namespace.cls,
+      toScopedCssModuleClass(MODULE_KEY, "container"),
+      '`default` is the class map, so a named `default` import must not stub the string "default"',
+    );
+  });
+
+  it("does not redeclare a source binding that already uses the generated local prefix", async () => {
+    const ctx = createContext(
+      `const __vfCssExport_styles = "own"; export { default as styles } from "./Button.module.css"; export const own = __vfCssExport_styles;`,
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+
+    assertEquals(
+      (result.match(/\bconst\s+__vfCssExport_styles\s*=/g) ?? []).length,
+      1,
+      "the module's own `__vfCssExport_styles` must stay the only declaration of that name",
+    );
+    const namespace = await evaluateModule(result);
+    assertEquals(
+      namespace.own,
+      "own",
+      "the module's own binding must keep its value rather than be shadowed by the stub",
+    );
+    assertEquals(
+      (namespace.styles as Record<string, string>)?.container,
+      toScopedCssModuleClass(MODULE_KEY, "container"),
+      "the css re-export must still resolve through a collision-free local",
     );
     assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
   });
@@ -250,5 +353,49 @@ describe("css-strip plugin", () => {
 
     assertEquals(result, code);
     assertEquals(ctx.metadata.has("cssImports"), false);
+  });
+});
+
+/**
+ * The production ordering: `compilePlugin` runs with `minify: !ctx.dev`
+ * immediately before this stage, so the statements the stub generator sees in a
+ * production build are whatever esbuild emits — not the spaced source form.
+ */
+describe("css-strip after a production compile", () => {
+  afterAll(async () => {
+    await stopEsbuild();
+  });
+
+  it("keeps css re-exports linkable through the minified compile output", async () => {
+    const source = `export { default as styles, container as root } from "./Button.module.css";
+export * as ns from "./Button.module.css";
+`;
+    const compileCtx = createContext(source, false);
+    const compiled = await compilePlugin.transform(compileCtx);
+
+    const stripCtx = createContext(compiled, false);
+    const result = await cssStripPlugin.transform(stripCtx);
+
+    assertEquals(
+      result.includes('.module.css"'),
+      false,
+      "no live .module.css specifier may survive a production build",
+    );
+    const namespace = await evaluateModule(result);
+    assertEquals(
+      (namespace.styles as Record<string, string>)?.container,
+      toScopedCssModuleClass(MODULE_KEY, "container"),
+      "a production css re-export must still resolve to the scoped class map",
+    );
+    assertEquals(
+      namespace.root,
+      toScopedCssModuleClass(MODULE_KEY, "container"),
+      "a production named css re-export must still resolve to its scoped class",
+    );
+    assertEquals(
+      (namespace.ns as Record<string, Record<string, string>>)?.default?.container,
+      toScopedCssModuleClass(MODULE_KEY, "container"),
+      "a production css namespace re-export must keep its module-namespace shape",
+    );
   });
 });
