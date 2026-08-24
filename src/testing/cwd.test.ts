@@ -6,6 +6,7 @@ import {
   assertRejects,
 } from "#veryfront/testing/assert.ts";
 import { VeryfrontError } from "#veryfront/errors";
+import { fromFileUrl } from "#veryfront/compat/path";
 import { withCwd } from "./cwd.ts";
 
 /**
@@ -60,6 +61,15 @@ describe("testing/cwd", () => {
       // call: reading the directory outside a turn is the unsafe move this
       // helper exists to remove, since a sibling test file may own it then.
       assertNotEquals(currentDirOrUnreadable(), entered, "the turn is handed back");
+      // Where the turn goes back *to* is the documented contract, not merely
+      // "somewhere else". Safe to read inline: the unit:cwd suite runs without
+      // `--parallel`, so no sibling file can hold the directory right now.
+      const repoRoot = await Deno.realPath(fromFileUrl(new URL("../../", import.meta.url)));
+      assertEquals(
+        await Deno.realPath(Deno.cwd()),
+        repoRoot,
+        "the turn is handed back to the repository root, not just out of the entered directory",
+      );
     } finally {
       await Deno.remove(temp, { recursive: true });
     }
@@ -136,6 +146,7 @@ describe("testing/cwd", () => {
 
   it("releases the queue when a caller throws", async () => {
     const temp = await Deno.makeTempDir();
+    const entered = await Deno.realPath(temp);
     try {
       await assertRejects(
         () =>
@@ -144,6 +155,13 @@ describe("testing/cwd", () => {
           }),
         Error,
         "boom",
+      );
+      // Asserted before the follow-up turn, which would chdir into `temp`
+      // itself and so mask a directory the throwing caller never left.
+      assertNotEquals(
+        currentDirOrUnreadable(),
+        entered,
+        "the turn is handed back even when the callback throws",
       );
       await withCwd(temp, () => assertEquals(typeof Deno.cwd(), "string"));
     } finally {

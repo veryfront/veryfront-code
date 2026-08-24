@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { fromError } from "#veryfront/errors";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { assertGreaterOrEqual } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
@@ -625,7 +630,13 @@ describe("provider/runtime-loader", () => {
 
       await openai.doGenerate({ prompt: [userPrompt] });
 
-      assertEquals("user" in (openaiBody ?? {}), false);
+      const capturedBody = openaiBody as Record<string, unknown> | null;
+      assertExists(capturedBody, "expected the OpenAI request body to be captured");
+      assertEquals(
+        "user" in capturedBody,
+        false,
+        "no userId must mean no user field on the OpenAI request",
+      );
     });
   });
 });

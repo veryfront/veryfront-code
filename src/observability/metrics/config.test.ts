@@ -17,7 +17,11 @@ describe("observability/metrics/config", () => {
       assertEquals(DEFAULT_CONFIG.enabled, false);
       assertEquals(DEFAULT_CONFIG.exporter, "console");
       assertEquals(DEFAULT_CONFIG.prefix, "veryfront");
-      assertEquals(typeof DEFAULT_CONFIG.collectInterval, "number");
+      assertEquals(
+        DEFAULT_CONFIG.collectInterval,
+        60000,
+        "default metrics collection interval must stay at 60s",
+      );
       assertEquals(DEFAULT_CONFIG.debug, false);
     });
   });
@@ -28,6 +32,11 @@ describe("observability/metrics/config", () => {
       assertEquals(result.enabled, false);
       assertEquals(result.exporter, "console");
       assertEquals(result.prefix, "veryfront");
+      assertEquals(
+        result.collectInterval,
+        60000,
+        "empty config must resolve to the 60s default interval",
+      );
     });
 
     it("should merge user config", () => {
@@ -53,6 +62,32 @@ describe("observability/metrics/config", () => {
       assertEquals(result.enabled, true);
       assertEquals(result.endpoint, "http://localhost:4318");
       assertEquals(result.exporter, "otlp");
+    });
+
+    it("treats only the literal true as an enabling value", () => {
+      for (const value of ["false", "0", ""]) {
+        assertEquals(
+          loadConfig(
+            {},
+            adapterWithEnv({
+              get: (key) => (key === "OTEL_METRICS_ENABLED" ? value : undefined),
+            }),
+          ).enabled,
+          false,
+          `OTEL_METRICS_ENABLED=${JSON.stringify(value)} must not enable metrics`,
+        );
+      }
+
+      assertEquals(
+        loadConfig(
+          {},
+          adapterWithEnv({
+            get: (key) => (key === "OTEL_METRICS_ENABLED" ? " TRUE " : undefined),
+          }),
+        ).enabled,
+        true,
+        "OTEL_METRICS_ENABLED must be trimmed and matched case-insensitively",
+      );
     });
 
     it("should enable via VERYFRONT_OTEL=1", () => {
@@ -121,8 +156,22 @@ describe("observability/metrics/config", () => {
         }),
       );
 
-      assertEquals(result.enabled, false);
-      assertEquals(result.prefix, "configured");
+      assertEquals(
+        result.enabled,
+        false,
+        "an adapter env failure must leave enabled at the caller value",
+      );
+      assertEquals(
+        result.exporter,
+        "console",
+        "an adapter env failure must leave the exporter at the default",
+      );
+      assertEquals(
+        result.endpoint,
+        undefined,
+        "an adapter env failure must leave the endpoint unset",
+      );
+      assertEquals(result.prefix, "configured", "caller config is preserved");
     });
   });
 });

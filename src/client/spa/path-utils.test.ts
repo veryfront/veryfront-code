@@ -73,6 +73,26 @@ function withReleaseAssetModules<T>(value: unknown, fn: () => T): T {
   }
 }
 
+function withGlobalFlag<T>(
+  key: "__veryfrontStudioEmbed" | "__veryfrontHMRRefreshTimestamp",
+  value: boolean | string,
+  fn: () => T,
+): T {
+  const globalRecord = globalThis as unknown as MutableTestGlobal;
+  const previous = globalRecord[key];
+  (globalRecord as Record<string, unknown>)[key] = value;
+
+  try {
+    return fn();
+  } finally {
+    if (previous === undefined) {
+      delete globalRecord[key];
+    } else {
+      (globalRecord as Record<string, unknown>)[key] = previous;
+    }
+  }
+}
+
 describe("client/spa/path-utils", () => {
   describe("getModuleServerUrl", () => {
     it("uses the browser-configured module server url when available", () => {
@@ -152,6 +172,38 @@ describe("client/spa/path-utils", () => {
           );
         },
       );
+    });
+
+    it("never pins release assets during Studio embed or HMR sessions", () => {
+      const assetUrl = "/_vf/assets/" + "d".repeat(64) + ".js";
+
+      withReleaseAssetModules({ "pages/index.tsx": assetUrl }, () => {
+        withGlobalFlag("__veryfrontStudioEmbed", true, () => {
+          assertEquals(
+            pathToModuleUrl("pages/index.tsx"),
+            "/_vf_modules/pages/index.js",
+            "Studio embed loads freshly compiled modules, not pinned release assets",
+          );
+          assertEquals(
+            runGeneratedPathToModuleUrl("pages/index.tsx"),
+            "/_vf_modules/pages/index.js",
+            "the generated helper also skips pinned release assets during Studio embed",
+          );
+        });
+
+        withGlobalFlag("__veryfrontHMRRefreshTimestamp", "42", () => {
+          assertEquals(
+            pathToModuleUrl("pages/index.tsx"),
+            "/_vf_modules/pages/index.js",
+            "HMR sessions load freshly compiled modules, not pinned release assets",
+          );
+          assertEquals(
+            runGeneratedPathToModuleUrl("pages/index.tsx"),
+            "/_vf_modules/pages/index.js",
+            "the generated helper also skips pinned release assets during HMR sessions",
+          );
+        });
+      });
     });
 
     it("does not fall back to a sibling release asset for an explicit source path", () => {

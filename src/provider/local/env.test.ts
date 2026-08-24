@@ -46,6 +46,20 @@ describe("provider/local/env", () => {
     assertEquals(isLocalAIDisabled(), true);
   });
 
+  it("treats non-1 values as enabled", () => {
+    for (const value of ["0", "false", ""]) {
+      Deno.env.set(DISABLE_LOCAL_AI_ENV, value);
+      assertEquals(
+        isLocalAIDisabled(),
+        false,
+        `VERYFRONT_DISABLE_LOCAL_AI=${value} must not disable local AI`,
+      );
+    }
+
+    Deno.env.set(DISABLE_LOCAL_AI_ENV, "0");
+    throwIfLocalAIDisabled();
+  });
+
   it("throws a no_ai_available error when local AI is disabled", () => {
     Deno.env.set(DISABLE_LOCAL_AI_ENV, "1");
 

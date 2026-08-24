@@ -121,6 +121,23 @@ describe("chat/provider-errors", () => {
       code: "CONTEXT_LENGTH_EXCEEDED",
       message: "Conversation is too long",
     });
+    assertEquals(
+      parseProviderError(new Error("429 Too Many Requests")),
+      {
+        code: "RATE_LIMITED",
+        message: "Too many requests. Please wait a moment and try again.",
+        status: 429,
+      },
+      "a rate limit named only in the message text must still carry status 429",
+    );
+    assertEquals(
+      parseProviderError("Provider is over capacity"),
+      {
+        code: "OVERLOADED_ERROR",
+        message: "The LLM provider is currently overloaded",
+      },
+      "an overload named only in the message text must classify as OVERLOADED_ERROR",
+    );
   });
 
   it("classifies provider spend limits separately from user credit balance", () => {

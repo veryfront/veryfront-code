@@ -69,6 +69,7 @@ class FakeSpan {
 function createHarness() {
   let activeContext: FakeContext = {};
   const startedSpans: FakeSpan[] = [];
+  const startContexts: FakeContext[] = [];
   const contextApi = {
     active: () => activeContext,
     with: <T>(context: FakeContext, fn: () => T): T => {
@@ -86,10 +87,11 @@ function createHarness() {
       startSpan: (
         name: string,
         _options: FakeSpanOptions | undefined,
-        _context: FakeContext,
+        context: FakeContext,
       ): FakeSpan => {
         const span = new FakeSpan(name);
         startedSpans.push(span);
+        startContexts.push(context);
         return span;
       },
       startActiveSpan: <T>(name: string, fn: (span: FakeSpan) => T): T => {
@@ -106,6 +108,7 @@ function createHarness() {
     contextApi,
     traceApi,
     startedSpans,
+    startContexts,
   };
 }
 
@@ -244,8 +247,17 @@ describe("observability/tracing/service-tracer", () => {
     }
   });
 
-  it("runs traced code once despite adversarial active-span providers", () => {
-    for (const behavior of ["duplicate", "omit", "replace", "throw-after"] as const) {
+  it("runs traced code once despite adversarial active-span providers", async () => {
+    for (
+      const behavior of [
+        "duplicate",
+        "omit",
+        "replace",
+        "throw-after",
+        "replace-with-rejected-promise",
+        "replace-with-resolved-promise",
+      ] as const
+    ) {
       const harness = createHarness();
       const baseTracer = harness.traceApi.getTracer("test-service");
       harness.traceApi.getTracer = () => ({
@@ -258,6 +270,12 @@ describe("observability/tracing/service-tracer", () => {
           if (behavior === "duplicate") callback(span);
           if (behavior === "throw-after") throw new Error("provider failed after callback");
           if (behavior === "replace") return "provider replacement" as T;
+          if (behavior === "replace-with-rejected-promise") {
+            return Promise.reject(new Error("provider promise")) as T;
+          }
+          if (behavior === "replace-with-resolved-promise") {
+            return Promise.resolve("provider replacement") as T;
+          }
           return applicationResult;
         },
       });
@@ -275,8 +293,16 @@ describe("observability/tracing/service-tracer", () => {
         return expected;
       });
 
-      assertStrictEquals(result, expected);
-      assertEquals(calls, 1);
+      assertStrictEquals(
+        result,
+        expected,
+        `a discarded ${behavior} provider result does not replace the application result`,
+      );
+      assertEquals(calls, 1, `the traced callback runs exactly once under ${behavior}`);
+      // Surface any provider promise the tracer discarded without settling it:
+      // an unattached rejection would reach the runtime as an unhandled rejection.
+      await Promise.resolve();
+      await Promise.resolve();
     }
   });
 
@@ -541,6 +567,55 @@ describe("observability/tracing/service-tracer", () => {
       number: 1,
       undefinedValue: "",
     });
+  });
+
+  it("starts a childOf span in its declared parent's context", () => {
+    const harness = createHarness();
+    const serviceTracer = createOpenTelemetryServiceTracer({
+      serviceName: "test-service",
+      context: harness.contextApi,
+      trace: harness.traceApi,
+      errorStatusCode: 2,
+    });
+
+    const parent = serviceTracer.tracer.startSpan("parent-operation");
+    serviceTracer.tracer.startSpan("child-operation", { childOf: parent });
+
+    assertStrictEquals(
+      harness.startContexts[0]?.span,
+      undefined,
+      "a span without childOf starts in the ambient context",
+    );
+    assertStrictEquals(
+      harness.startContexts[1]?.span,
+      harness.startedSpans[0],
+      "a childOf span starts in its declared parent's context, not the ambient one",
+    );
+  });
+
+  it("creates the span anyway when a childOf accessor throws", () => {
+    const harness = createHarness();
+    const serviceTracer = createOpenTelemetryServiceTracer({
+      serviceName: "test-service",
+      context: harness.contextApi,
+      trace: harness.traceApi,
+      errorStatusCode: 2,
+    });
+    const hostileOptions = {
+      get childOf(): never {
+        throw new Error("hostile childOf accessor");
+      },
+    };
+
+    const span = serviceTracer.tracer.startSpan("hostile-operation", hostileOptions as never);
+
+    assertEquals(span.context()?.toSpanId(), "hostile-operation-span");
+    assertEquals(harness.startedSpans.length, 1, "a hostile parent option still creates a span");
+    assertStrictEquals(
+      harness.startContexts[0]?.span,
+      undefined,
+      "a hostile childOf accessor leaves the span in the ambient context",
+    );
   });
 
   it("bounds manual span names, attribute names, and attribute cardinality", () => {

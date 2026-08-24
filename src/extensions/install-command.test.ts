@@ -129,6 +129,25 @@ describe("extensions/install-command", () => {
     });
   });
 
+  it("finds the workspace-root lockfile from the deepest documented member nesting", async () => {
+    // The documented reach is `<root>/<group>/<scope>/<member>`; a member that
+    // deep must still resolve to the workspace client, not print `npm install`
+    // into a pnpm workspace.
+    await withTempDir(async (root) => {
+      await writeTextFile(join(root, "package.json"), `{"name":"root"}`);
+      await writeTextFile(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+      const member = join(root, "group", "scope", "member");
+      await mkdir(member, { recursive: true });
+      await writeTextFile(join(member, "package.json"), `{"name":"member"}`);
+
+      assertEquals(
+        detectProjectInstallTarget(member),
+        "pnpm",
+        "a pnpm member three directories below the workspace root must resolve to pnpm",
+      );
+    });
+  });
+
   it("does not let an enclosing deno.lock claim a Node package", async () => {
     // A `--runtime node` scaffold checked out inside a Deno repository is still
     // a Node project. `deno add` there writes a deno.json its own `npm ci`

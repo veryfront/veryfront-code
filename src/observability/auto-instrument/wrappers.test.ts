@@ -1,7 +1,91 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  _resetShimForTests,
+  installGlobalTelemetryAPI,
+  type Span,
+  SpanKind,
+  SpanStatusCode,
+  type Tracer,
+  type TracerProvider,
+} from "../tracing/api-shim.ts";
+import { initTracing, shutdownTracing } from "../tracing/index.ts";
 import { instrument, instrumentBatch, instrumentSync } from "./wrappers.ts";
+
+interface RecordedSpan {
+  name: string;
+  kind: unknown;
+  attributes: Record<string, unknown>;
+  exceptions: unknown[];
+  status: { code: number; message?: string } | undefined;
+  ended: boolean;
+}
+
+function createRecordingProvider(recorded: RecordedSpan[]): TracerProvider {
+  const tracer: Tracer = {
+    startSpan(name, options) {
+      const entry: RecordedSpan = {
+        name,
+        kind: options?.kind,
+        attributes: { ...(options?.attributes ?? {}) },
+        exceptions: [],
+        status: undefined,
+        ended: false,
+      };
+      recorded.push(entry);
+      const span: Span = {
+        setAttribute(key, value) {
+          entry.attributes[key] = value;
+          return span;
+        },
+        setAttributes(attrs) {
+          Object.assign(entry.attributes, attrs);
+          return span;
+        },
+        setStatus(status) {
+          entry.status = status;
+          return span;
+        },
+        recordException(error) {
+          entry.exceptions.push(error);
+        },
+        addEvent: () => span,
+        end() {
+          entry.ended = true;
+        },
+        spanContext: () => ({ traceId: "0".repeat(32), spanId: "0".repeat(16), traceFlags: 1 }),
+        updateName: () => {},
+      };
+      return span;
+    },
+    startActiveSpan: ((_name: string, ...args: unknown[]) => {
+      const callback = args.find((arg) => typeof arg === "function") as (span: Span) => unknown;
+      return callback(tracer.startSpan(_name));
+    }) as Tracer["startActiveSpan"],
+  };
+  return { getTracer: () => tracer };
+}
+
+/** Run `body` against a live tracer that records every span the wrappers emit. */
+async function withRecordingTracer(
+  body: (recorded: RecordedSpan[]) => void | Promise<void>,
+): Promise<void> {
+  const recorded: RecordedSpan[] = [];
+  installGlobalTelemetryAPI({ tracerProvider: createRecordingProvider(recorded) });
+  try {
+    await initTracing({ enabled: true, serviceName: "wrappers-test" });
+    await body(recorded);
+  } finally {
+    shutdownTracing();
+    _resetShimForTests();
+  }
+}
 
 describe("observability/auto-instrument/wrappers", () => {
   describe("instrument (async wrapper)", () => {
@@ -38,19 +122,77 @@ describe("observability/auto-instrument/wrappers", () => {
     });
 
     it("should accept instrument options with kind", async () => {
-      const fn = (): Promise<string> => Promise.resolve("ok");
-      const wrapped = instrument(fn, "test.server", { kind: "server" });
-      const result = await wrapped();
-      assertEquals(result, "ok");
+      await withRecordingTracer(async (recorded) => {
+        const fn = (): Promise<string> => Promise.resolve("ok");
+        const wrapped = instrument(fn, "test.server", { kind: "server" });
+        const result = await wrapped();
+        assertEquals(result, "ok");
+        assertEquals(recorded.length, 1, "the wrapped call starts exactly one span");
+        assertEquals(recorded[0]?.name, "test.server", "the span name reaches the tracer");
+        assertEquals(
+          recorded[0]?.kind,
+          SpanKind.SERVER,
+          "options.kind must reach startSpan as SpanKind.SERVER",
+        );
+      });
+    });
+
+    it("defaults the span kind to internal when no kind is supplied", async () => {
+      await withRecordingTracer(async (recorded) => {
+        const wrapped = instrument(() => Promise.resolve("ok"), "test.default-kind");
+        assertEquals(await wrapped(), "ok");
+        assertEquals(
+          recorded[0]?.kind,
+          SpanKind.INTERNAL,
+          "a missing kind must reach startSpan as SpanKind.INTERNAL",
+        );
+      });
     });
 
     it("should accept instrument options with attributes factory", async () => {
-      const fn = (userId: string): Promise<string> => Promise.resolve(userId);
-      const wrapped = instrument(fn, "test.user", {
-        attributes: (args) => ({ userId: args[0] as string }),
+      await withRecordingTracer(async (recorded) => {
+        const fn = (userId: string): Promise<string> => Promise.resolve(userId);
+        const wrapped = instrument(fn, "test.user", {
+          attributes: (args) => ({ userId: args[0] as string }),
+        });
+        const result = await wrapped("u-123");
+        assertEquals(result, "u-123");
+        assertEquals(
+          recorded[0]?.attributes.userId,
+          "u-123",
+          "the attributes factory output must reach the started span",
+        );
+        assertEquals(
+          typeof recorded[0]?.attributes.duration_ms,
+          "number",
+          "instrument must record duration_ms on the span",
+        );
+        assertEquals(
+          (recorded[0]?.attributes.duration_ms as number) >= 0,
+          true,
+          "duration_ms must be a non-negative measurement",
+        );
       });
-      const result = await wrapped("u-123");
-      assertEquals(result, "u-123");
+    });
+
+    it("records the thrown error on the span before rethrowing", async () => {
+      await withRecordingTracer(async (recorded) => {
+        const boom = new Error("async failure");
+        const wrapped = instrument((): Promise<never> => {
+          throw boom;
+        }, "test.fail-span");
+        await assertRejects(() => wrapped(), Error, "async failure");
+        assertStrictEquals(
+          (recorded[0]?.exceptions[0] as Error | undefined)?.message,
+          boom.message,
+          "a failed span must record the thrown error",
+        );
+        assertEquals(
+          recorded[0]?.status?.code,
+          SpanStatusCode.ERROR,
+          "a failed span must close with error status",
+        );
+      });
     });
 
     it("should handle functions that return resolved promises", async () => {
@@ -103,6 +245,26 @@ describe("observability/auto-instrument/wrappers", () => {
       const fn = (): string => "ok";
       const wrapped = instrumentSync(fn, "test.internal", { kind: "internal" });
       assertEquals(wrapped(), "ok");
+    });
+
+    it("records the thrown error on the span before rethrowing", async () => {
+      await withRecordingTracer((recorded) => {
+        const boom = new Error("sync failure");
+        const wrapped = instrumentSync((): never => {
+          throw boom;
+        }, "test.fail-span");
+        assertThrows(() => wrapped(), Error, "sync failure");
+        assertStrictEquals(
+          (recorded[0]?.exceptions[0] as Error | undefined)?.message,
+          boom.message,
+          "a failed span must record the thrown error",
+        );
+        assertEquals(
+          recorded[0]?.status?.code,
+          SpanStatusCode.ERROR,
+          "a failed span must close with error status",
+        );
+      });
     });
 
     it("should accept instrument options with attributes factory", () => {
@@ -162,27 +324,39 @@ describe("observability/auto-instrument/wrappers", () => {
     it("should respect custom batch size", async () => {
       const items = Array.from({ length: 15 }, (_, i) => i);
       const processed: number[] = [];
+      let inFlight = 0;
+      let peak = 0;
       await instrumentBatch(
         "test.sized",
         items,
-        // deno-lint-ignore require-await
         async (item) => {
+          inFlight++;
+          peak = Math.max(peak, inFlight);
           processed.push(item);
+          await Promise.resolve();
+          inFlight--;
         },
         { batchSize: 5 },
       );
       assertEquals(processed.length, 15);
       assertEquals(processed, items);
+      assertEquals(peak, 5, "batchSize 5 must cap concurrent processors at 5");
     });
 
     it("should default to batch size of 10", async () => {
       const items = Array.from({ length: 25 }, (_, i) => i);
       const processed: number[] = [];
-      // deno-lint-ignore require-await
+      let inFlight = 0;
+      let peak = 0;
       await instrumentBatch("test.default-size", items, async (item) => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
         processed.push(item);
+        await Promise.resolve();
+        inFlight--;
       });
       assertEquals(processed.length, 25);
+      assertEquals(peak, 10, "the default batchSize must cap concurrent processors at 10");
     });
 
     it("should rethrow errors from processor", async () => {
@@ -198,8 +372,23 @@ describe("observability/auto-instrument/wrappers", () => {
     });
 
     it("should accept batch attributes", async () => {
-      await instrumentBatch("test.attrs", [1], async () => {}, {
-        attributes: { operation: "test", source: "unit" },
+      await withRecordingTracer(async (recorded) => {
+        await instrumentBatch("test.attrs", [1], async () => {}, {
+          attributes: { operation: "test", source: "unit" },
+        });
+
+        const batchSpan = recorded.find((span) => span.name === "test.attrs");
+        assertEquals(
+          batchSpan?.attributes,
+          {
+            "batch.total_items": 1,
+            "batch.size": 10,
+            "batch.total_batches": 1,
+            operation: "test",
+            source: "unit",
+          },
+          "caller batch attributes merge into the batch span",
+        );
       });
     });
 

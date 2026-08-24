@@ -46,7 +46,7 @@ export default {
 | `formatProjectRuntimeDiscoveryErrors` | Format project-runtime discovery failures for CLI and operator diagnostics.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/project-runtime.ts#L40) |
 | `isTaskDefinition`                    | Return true only when the runnable and every declared task metadata field match the public `TaskDefinition` contract. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/types.ts#L52)           |
 | `listProjectRuntimeTasks`             | List project-runtime tasks in deterministic ID order.                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/project-runtime.ts#L99) |
-| `runTask`                             | Run a task with the given options                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/runner.ts#L96)          |
+| `runTask`                             | Run a task with the given options                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/runner.ts#L100)         |
 
 ### Types
 
@@ -55,10 +55,10 @@ export default {
 | `DiscoveredTask`              | Discovered task info.                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/discovery.ts#L59)       |
 | `ProjectTaskRuntimeDiscovery` | Project runtime discovery result used by task lookup and execution helpers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/project-runtime.ts#L13) |
 | `ProjectTaskRuntimeOptions`   | Options for discovering tasks through the unified project runtime.          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/project-runtime.ts#L16) |
-| `RunnableTask`                |                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/runner.ts#L17)          |
-| `RunTaskOptions`              | Options for running a task                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/runner.ts#L31)          |
+| `RunnableTask`                |                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/runner.ts#L18)          |
+| `RunTaskOptions`              | Options for running a task                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/runner.ts#L32)          |
 | `TaskContext`                 | Context passed to task run() function                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/types.ts#L15)           |
 | `TaskDefinition`              | Task definition exported from a tasks/ file                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/types.ts#L31)           |
 | `TaskDiscoveryOptions`        | Options for file-based task discovery.                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/discovery.ts#L81)       |
 | `TaskDiscoveryResult`         | Result of file-based task discovery.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/discovery.ts#L106)      |
-| `TaskRunResult`               | Result of running a task                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/runner.ts#L57)          |
+| `TaskRunResult`               | Result of running a task                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/runner.ts#L58)          |

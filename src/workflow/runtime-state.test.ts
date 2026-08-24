@@ -3,6 +3,8 @@ import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { WorkflowContext } from "./types.ts";
 import {
+  captureWorkflowContextProjection,
+  captureWorkflowProjectionPaths,
   FRAMEWORK_CONTEXT_PROJECTION_KIND,
   getWorkflowContextRootProjection,
   replaceWorkflowContextRootProjection,
@@ -232,5 +234,41 @@ describe("workflow/runtime-state", () => {
       path: [],
     }]);
     assertEquals(Object.getPrototypeOf(projection), Object.prototype);
+  });
+
+  it("does not invoke accessors while capturing projection metadata", () => {
+    let getterCalls = 0;
+    const path = Object.defineProperty({ path: [] }, "kind", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return FRAMEWORK_CONTEXT_PROJECTION_KIND;
+      },
+    });
+    const contextProjection = Object.defineProperty({}, "nested", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return [{ kind: FRAMEWORK_CONTEXT_PROJECTION_KIND, path: [] }];
+      },
+    });
+
+    assertEquals(captureWorkflowProjectionPaths([path]), []);
+    assertEquals(captureWorkflowContextProjection(contextProjection), {});
+    assertEquals(getterCalls, 0);
+  });
+
+  it("does not invoke projection root accessors while reading", () => {
+    let getterCalls = 0;
+    const projection = Object.defineProperty({}, "nested", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return [{ kind: FRAMEWORK_CONTEXT_PROJECTION_KIND, path: [] }];
+      },
+    }) as WorkflowContextProjection;
+
+    assertEquals(getWorkflowContextRootProjection(projection, "nested"), []);
+    assertEquals(getterCalls, 0);
   });
 });

@@ -1,14 +1,8 @@
-export const PROVIDER_EGRESS_DENY_NET =
-  "--deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai";
+import { DENO_TEST_ENV, PROVIDER_EGRESS_DENY_NET } from "./suites.ts";
 
-export const TEST_FILE_ENV = {
-  DENO_TESTING: "1",
-  VF_DISABLE_LRU_INTERVAL: "1",
-  SSR_TRANSFORM_PER_PROJECT_LIMIT: "0",
-  REVALIDATION_PER_PROJECT_LIMIT: "0",
-  NODE_ENV: "production",
-  LOG_FORMAT: "text",
-};
+export { PROVIDER_EGRESS_DENY_NET };
+
+export const TEST_FILE_ENV = DENO_TEST_ENV;
 
 export function buildTestFileCommandArgs(rawArgs: string[]): string[] {
   const usesScriptsConfig = rawArgs.some(isScriptsPath);
@@ -39,7 +33,7 @@ function isScriptsPath(arg: string): boolean {
 async function main(): Promise<void> {
   const command = new Deno.Command("deno", {
     args: buildTestFileCommandArgs(Deno.args),
-    env: TEST_FILE_ENV,
+    env: { ...TEST_FILE_ENV },
     stdout: "inherit",
     stderr: "inherit",
   });

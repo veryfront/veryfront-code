@@ -237,4 +237,32 @@ describe("provider/veryfront-cloud/shared", () => {
     assertEquals(seen.length, 1);
     assertEquals(seen[0]?.headers.get("authorization"), "Bearer vf_test_provider");
   });
+
+  it("blocks a request to an origin other than the gateway base", async () => {
+    const seen: Request[] = [];
+    const wrappedFetch = createVeryfrontCloudFetch(
+      "vf_test_provider",
+      "https://93.184.216.34/ai/gateway/openai/v1",
+    );
+
+    await withMockFetch(
+      async (input: URL | Request | string, init?: RequestInit) => {
+        seen.push(new Request(input, init));
+        return new Response(null, { status: 204 });
+      },
+      async () => {
+        await assertRejects(
+          () => wrappedFetch("https://93.184.216.35/v1/chat/completions"),
+          Error,
+          "not authorized",
+          "a non-gateway origin must be rejected by the authorizeUrl guard",
+        );
+      },
+    );
+    assertEquals(
+      seen.length,
+      0,
+      "the bearer credential must never leave the process for an unauthorized origin",
+    );
+  });
 });

@@ -505,7 +505,7 @@ describe("orchestrateExtensions()", () => {
   it("does not activate a retry while timed-out setup is still running", async () => {
     const firstStarted = Promise.withResolvers<void>();
     const releaseFirst = Promise.withResolvers<void>();
-    const retryStarted = Promise.withResolvers<void>();
+    const order: string[] = [];
     const first = orchestrateExtensions({
       projectDir: "/fake",
       config: {
@@ -513,6 +513,7 @@ describe("orchestrateExtensions()", () => {
           async setup() {
             firstStarted.resolve();
             await releaseFirst.promise;
+            order.push("late-setup-done");
           },
         })],
       },
@@ -528,23 +529,29 @@ describe("orchestrateExtensions()", () => {
       config: {
         extensions: [stubExt("replacement", {
           setup() {
-            retryStarted.resolve();
+            order.push("retry-setup");
           },
         })],
       },
       logger: noopLogger,
       discovery: emptyDiscovery(),
     });
-    const retryStartedBeforeLateSetupSettled = await Promise.race([
-      retryStarted.promise.then(() => true),
-      new Promise<false>((resolve) => setTimeout(() => resolve(false), 20)),
-    ]);
+    for (let index = 0; index < 100; index++) await Promise.resolve();
+    assertEquals(
+      order,
+      [],
+      "the retry must not run setup while the timed-out setup is still pending",
+    );
 
     releaseFirst.resolve();
     const retryLoader = await retry;
     await retryLoader.teardownAll();
 
-    assertEquals(retryStartedBeforeLateSetupSettled, false);
+    assertEquals(
+      order,
+      ["late-setup-done", "retry-setup"],
+      "the replacement generation must activate only after the late setup and its cleanup settle",
+    );
   });
 
   it("filters disable directives from config.extensions", async () => {

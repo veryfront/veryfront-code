@@ -537,6 +537,76 @@ describe("trigger runtime", () => {
     assertEquals(result.output, { nested: { value: "captured" } });
   });
 
+  it("propagates live cancellation into task execution", async () => {
+    const startupWatchdogMs = 30_000;
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/cancellable.ts": [
+        "export default {",
+        "  async run({ signal, config }) {",
+        '    if (!signal) throw new Error("task did not receive a cancellation signal");',
+        "    const channel = new BroadcastChannel(config.channelName);",
+        "    try {",
+        '      channel.postMessage("task-started");',
+        "      return await new Promise((resolve) => {",
+        "        signal.addEventListener(",
+        '          "abort",',
+        '          () => resolve("task observed cancellation"),',
+        "          { once: true },",
+        "        );",
+        "      });",
+        "    } finally {",
+        "      channel.close();",
+        "    }",
+        "  },",
+        "};",
+        "",
+      ].join("\n"),
+    });
+    const controller = new AbortController();
+    const channelName = `veryfront-trigger-cancellation-${crypto.randomUUID()}`;
+    const channel = new BroadcastChannel(channelName);
+    const taskStarted = Promise.withResolvers<void>();
+    channel.addEventListener("message", (event) => {
+      if (event.data === "task-started") taskStarted.resolve();
+    });
+    const run = runTriggerTarget({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } },
+      target: { kind: "task", id: "cancellable" },
+      input: { channelName },
+      signal: controller.signal,
+    });
+    let startupWatchdog: number | undefined;
+
+    try {
+      const startState = await Promise.race([
+        taskStarted.promise.then(() => "started" as const),
+        run.then(() => "finished" as const),
+        new Promise<never>((_, reject) => {
+          startupWatchdog = setTimeout(
+            () => reject(new Error("Task startup handshake exceeded its test safety watchdog")),
+            startupWatchdogMs,
+          );
+        }),
+      ]);
+      if (startState !== "started") {
+        throw new Error("Task execution finished before announcing its start");
+      }
+      controller.abort(new Error("task trigger cancelled"));
+      const result = await run;
+      assertEquals(result.output, "task observed cancellation");
+    } finally {
+      if (startupWatchdog !== undefined) {
+        clearTimeout(startupWatchdog);
+      }
+      if (!controller.signal.aborted) {
+        controller.abort(new Error("task cancellation test cleanup"));
+      }
+      channel.close();
+    }
+  });
+
   it("propagates cooperative cancellation into agent generation", async () => {
     const adapter = createRuntimeAdapter({
       "/project/agents/signal-aware.ts": [

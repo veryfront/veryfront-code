@@ -3,6 +3,7 @@ import { API_CLIENT_ERROR } from "#veryfront/errors";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  LOG_PREVIEW_MAX_LENGTH_CHARS,
   MAX_STRING_DISPLAY_LENGTH,
   MAX_TRACE_ATTRIBUTE_VALUE_SIZE,
 } from "#veryfront/utils/constants/index.ts";
@@ -15,6 +16,7 @@ import {
   sanitizeErrorForTelemetry,
   sanitizeStructuredTelemetryData,
   sanitizeTelemetryAttributes,
+  sanitizeTelemetryAttributeValue,
   type TelemetryAttributeValue,
   telemetryErrorType,
 } from "./telemetry-error.ts";
@@ -145,6 +147,20 @@ describe("observability/telemetry-error", () => {
 
     assertEquals(telemetryErrorType(accessorBacked), "Error");
     assertEquals(accessorCalls, 0);
+  });
+
+  it("classifies non-Error throws as Unknown", () => {
+    assertEquals(
+      telemetryErrorType("boom"),
+      "Unknown",
+      "a bare string throw must not be labelled an Error",
+    );
+    assertEquals(telemetryErrorType(null), "Unknown", "a null throw must be classified Unknown");
+    assertEquals(
+      telemetryErrorType({ code: "ECONNRESET" }),
+      "Unknown",
+      "a plain object must not be classified by its code field",
+    );
   });
 
   it("classifies error codes through a captured RegExp matcher", () => {
@@ -410,6 +426,63 @@ describe("observability/telemetry-error", () => {
     assertEquals(sanitized.message, "stack round trip");
     assertEquals(typeof sanitized.stack, "string");
     assertEquals(sanitized.stack?.includes("telemetryStackProbeFrame"), true);
+  });
+
+  it("suppresses the stack when the error only classifies the failure", () => {
+    function telemetryStackProbeFrame(): never {
+      throw new Error("stack suppression");
+    }
+
+    let thrown: unknown;
+    try {
+      telemetryStackProbeFrame();
+    } catch (error) {
+      thrown = error;
+    }
+
+    assertEquals(
+      sanitizeErrorForTelemetry(thrown, "withoutStack").stack,
+      undefined,
+      "withoutStack must not export reporting-site frames",
+    );
+    assertEquals(
+      typeof sanitizeErrorForTelemetry(thrown).stack,
+      "string",
+      "withStack must keep the failure frames",
+    );
+    assertEquals(
+      sanitizeErrorForTelemetry(thrown).stack?.includes("telemetryStackProbeFrame"),
+      true,
+      "withStack must keep the probe frame",
+    );
+  });
+
+  it("names non-Error telemetry snapshots from the supplied classification", () => {
+    assertEquals(
+      sanitizeErrorForTelemetry("boom", "withoutStack", "ECONNRESET").name,
+      "ECONNRESET",
+      "safeName becomes the snapshot name for non-Error values",
+    );
+    assertEquals(
+      sanitizeErrorForTelemetry("boom", "withoutStack").name,
+      "Unknown",
+      "an omitted safeName still falls back to Unknown",
+    );
+    assertEquals(
+      sanitizeErrorForTelemetry(
+        "boom",
+        "withoutStack",
+        "x".repeat(LOG_PREVIEW_MAX_LENGTH_CHARS + 50),
+      )
+        .name.length,
+      LOG_PREVIEW_MAX_LENGTH_CHARS,
+      "safeName is truncated to the preview cap",
+    );
+    assertEquals(
+      sanitizeErrorForTelemetry(new Error("real"), "withoutStack", "ECONNRESET").name,
+      "Error",
+      "a real error keeps its own name over safeName",
+    );
   });
 
   it("bounds a real thrown error's stack", () => {
@@ -743,6 +816,32 @@ describe("observability/telemetry-error", () => {
       MAX_TRACE_ATTRIBUTE_VALUE_SIZE,
     );
     assertEquals(snapshot.array, "[REDACTED]");
+  });
+
+  it("redacts credentials inside under-cap array attribute values", () => {
+    const result = sanitizeTelemetryAttributeValue("urls", [
+      "https://user:password@example.test/path?token=secret",
+      "plain",
+    ]);
+
+    assertEquals(Array.isArray(result), true, "under-cap arrays stay arrays");
+    const values = result as readonly string[];
+    assertEquals(
+      values[0]?.includes("password"),
+      false,
+      "URL credentials in array elements are redacted",
+    );
+    assertEquals(
+      values[0]?.includes("secret"),
+      false,
+      "query-string secrets in array elements are redacted",
+    );
+    assertEquals(values[1], "plain", "safe elements pass through");
+    assertEquals(
+      sanitizeTelemetryAttributeValue("sizes", [1, Number.NaN]),
+      "[REDACTED]",
+      "non-finite numbers force the whole array to be redacted",
+    );
   });
 
   it("bounds structured telemetry returned by custom serializers", () => {
