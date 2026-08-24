@@ -275,8 +275,12 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
 
       const result = await fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache);
       const rootContent = files.get(result) ?? "";
-      assertMatch(rootContent, /file:\/\//);
-      assertEquals(rootContent.includes("https://esm.sh/a"), false);
+      assertEquals(
+        /^const load = \(\) => import\(`file:\/\/\/tmp\/esm-rewriter-test\/esm-[a-f0-9]+\.js`\);$/
+          .test(rootContent),
+        true,
+        "the template dynamic import must be rewritten to a local cache file",
+      );
     });
 
     it("does not abort the render when a nested URL fetch fails", async () => {
