@@ -93,21 +93,28 @@ export class MemoryCacheBackend implements CacheBackend {
   async set(key: string, value: string, ttlSeconds = DEFAULT_TTL_SECONDS): Promise<void> {
     const resolvedTtlSeconds = resolveCacheTtlSeconds(ttlSeconds, DEFAULT_TTL_SECONDS);
 
-    // Remove existing entry for clean size tracking
-    const existing = this.store.get(key);
-    if (existing) {
-      this.currentSizeBytes -= existing.sizeBytes;
-      this.store.delete(key);
-    }
-
     // A non-positive TTL expires immediately: the existing entry is gone and
     // nothing replaces it, so the slot is not retained until the next read.
-    if (expiresImmediately(resolvedTtlSeconds)) return;
+    if (expiresImmediately(resolvedTtlSeconds)) {
+      const existing = this.store.get(key);
+      if (existing) {
+        this.currentSizeBytes -= existing.sizeBytes;
+        this.store.delete(key);
+      }
+      return;
+    }
 
     const entrySize = this.estimateSize(key, value);
 
     // Reject single entries that exceed the byte limit on their own
     if (entrySize > this.maxSizeBytes) return;
+
+    // Replace the existing entry only after the replacement is admissible.
+    const existing = this.store.get(key);
+    if (existing) {
+      this.currentSizeBytes -= existing.sizeBytes;
+      this.store.delete(key);
+    }
 
     // Evict oldest entries while over count or size limits
     while (
@@ -133,17 +140,24 @@ export class MemoryCacheBackend implements CacheBackend {
     for (const { key, value, ttl } of entries) {
       const resolvedTtlSeconds = resolveCacheTtlSeconds(ttl, DEFAULT_TTL_SECONDS);
 
+      if (expiresImmediately(resolvedTtlSeconds)) {
+        const existing = this.store.get(key);
+        if (existing) {
+          this.currentSizeBytes -= existing.sizeBytes;
+          this.store.delete(key);
+        }
+        continue;
+      }
+
+      const entrySize = this.estimateSize(key, value);
+
+      if (entrySize > this.maxSizeBytes) continue;
+
       const existing = this.store.get(key);
       if (existing) {
         this.currentSizeBytes -= existing.sizeBytes;
         this.store.delete(key);
       }
-
-      if (expiresImmediately(resolvedTtlSeconds)) continue;
-
-      const entrySize = this.estimateSize(key, value);
-
-      if (entrySize > this.maxSizeBytes) continue;
 
       while (
         this.store.size > 0 && (

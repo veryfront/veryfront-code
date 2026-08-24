@@ -293,6 +293,16 @@ Deno.test("MemoryCacheBackend setBatch expires oversized non-positive TTL overwr
   assertEquals(await cache.get("k"), null, "the old value must not survive batch size admission");
 });
 
+Deno.test("MemoryCacheBackend preserves an existing value for an oversized positive-TTL overwrite", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+
+  const cache = new MemoryCacheBackend(10, { maxSizeBytes: 8 });
+  await cache.set("k", "small", 60);
+  await cache.set("k", "value-too-large", 60);
+
+  assertEquals(await cache.get("k"), "small");
+});
+
 Deno.test("MemoryCacheBackend rejects a non-finite TTL", async () => {
   const { MemoryCacheBackend } = await importBackend();
 
