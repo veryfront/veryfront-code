@@ -695,11 +695,7 @@ layout: nonexistent
         });
       });
 
-      // SKIPPED: Test expects error but layout isn't discovered without `isLayout: true` frontmatter
-      // Root cause: Layout files require `isLayout: true` in frontmatter to be discovered (by design)
-      // See: src/types/entities/getEntityInfo.ts:159
-      // Investigation: RENDERER_CORE_TEST_INVESTIGATION.md (Session 36-37)
-      it.skip("should handle layout with runtime errors", async () => {
+      it("should handle layout with runtime errors", async () => {
         await withTestContext("renderer-core-layout-runtime", async (context) => {
           await remove(join(context.projectDir, "app"), { recursive: true });
 

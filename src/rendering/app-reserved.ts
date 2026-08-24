@@ -5,6 +5,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import type { loadComponentFromSource } from "#veryfront/modules/react-loader/component-loader.ts";
 import type { RenderModes } from "#veryfront/rendering/context/render-context.ts";
+import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 
 type ReservedComponent = BundledReact.ComponentType<{ error?: Error; reset?: () => void }>;
 
@@ -25,8 +26,10 @@ export function collectAncestorDirs(segmentDir: string, appRootDir: string): str
   const dirs: string[] = [];
   let current = normalizePath(segmentDir);
   const root = normalizePath(appRootDir);
+  const isWithinRoot = (path: string) =>
+    root === "/" ? path.startsWith("/") : path === root || path.startsWith(`${root}/`);
 
-  while (current.startsWith(root)) {
+  while (isWithinRoot(current)) {
     dirs.push(current);
 
     const parent = getDirname(current) || "/";
@@ -113,27 +116,30 @@ export async function loadReservedWithPath(
   for (const dir of dirs) {
     for (const ext of [".tsx", ".jsx"]) {
       const file = join(dir, candidateName.replace(/\.tsx$/, ext));
+      let src: string;
       try {
-        const src = await adapter.fs.readFile(file);
-        const Cmp = await loadComponentFromSource(src, file, projectDir, adapter, {
-          projectId: projectId ?? projectDir,
-          dev: modes.compileMode === "development",
-          mode: modes.environment,
-          contentSourceId,
-          reactVersion,
-          serverExternalPackages,
-          moduleServerOrigin,
-          dependencyPinningCacheKey,
-          dependencyPinningDependencies,
-          dependencyPinningSource,
-          signal,
-        });
-        if (typeof Cmp === "function") {
-          return { component: Cmp as ReservedComponent, filePath: file };
-        }
-      } catch (_) {
+        src = await adapter.fs.readFile(file);
+      } catch (error) {
         throwIfAborted(signal);
-        /* expected: component not found in this path, continue to next */
+        if (isCanonicalNotFoundError(error)) continue;
+        throw error;
+      }
+
+      const Cmp = await loadComponentFromSource(src, file, projectDir, adapter, {
+        projectId: projectId ?? projectDir,
+        dev: modes.compileMode === "development",
+        mode: modes.environment,
+        contentSourceId,
+        reactVersion,
+        serverExternalPackages,
+        moduleServerOrigin,
+        dependencyPinningCacheKey,
+        dependencyPinningDependencies,
+        dependencyPinningSource,
+        signal,
+      });
+      if (typeof Cmp === "function") {
+        return { component: Cmp as ReservedComponent, filePath: file };
       }
     }
   }

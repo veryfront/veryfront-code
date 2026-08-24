@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { type LayoutApplicationOptions, LayoutApplicator } from "./layout-applicator.ts";
 import * as React from "react";
@@ -12,6 +12,7 @@ import {
   __setServerModuleLoaderForTests,
   resetReactCache,
 } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
+import { FILE_NOT_FOUND } from "#veryfront/errors/error-registry/general.ts";
 
 /** Passthrough stand-ins for the framework providers, so the tree stays readable. */
 const Pass = ({ children }: { children?: React.ReactNode }) => children;
@@ -27,7 +28,14 @@ function createAdapter(files: Record<string, string> = {}): RuntimeAdapter {
       exists: (path: string) => Promise.resolve(path in files),
       readFile: (path: string) => {
         const content = files[path];
-        if (content === undefined) return Promise.reject(new Error(`not found: ${path}`));
+        if (content === undefined) {
+          return Promise.reject(
+            FILE_NOT_FOUND.create({
+              detail: "Layout fixture file not found",
+              context: { operation: "read" },
+            }),
+          );
+        }
         return Promise.resolve(content);
       },
       readDir: async function* () {},
@@ -233,12 +241,9 @@ describe("LayoutApplicator helpers", () => {
     });
   });
 
-  describe("ESM vs function-body layout routing", () => {
-    /**
-     * The two paths differ on how they render an MDX layout: applyLayoutsESM
-     * goes through applyMDXLayout -> mdxRenderer.loadModuleESM, while
-     * applyLayoutsFunctionBody calls mdxRenderer.render directly.
-     */
+  describe("layout module routing", () => {
+    /** Records whether layout routing reaches secure module loading or the
+     * disabled synchronous renderer that returns a migration placeholder. */
     const recordLayoutPath = async (config: VeryfrontConfig): Promise<string[]> => {
       __setServerModuleLoaderForTests(() => Promise.resolve({ default: React }));
       const calls: string[] = [];
@@ -300,21 +305,21 @@ describe("LayoutApplicator helpers", () => {
       );
     });
 
-    it("routes to applyLayoutsFunctionBody without the flag", async () => {
+    it("uses the secure ESM path without the legacy flag", async () => {
       assertEquals(
         await recordLayoutPath({} as VeryfrontConfig),
-        ["render"],
-        "an absent esmLayouts flag must route to applyLayoutsFunctionBody",
+        ["loadModuleESM"],
+        "an absent esmLayouts flag must not invoke the disabled synchronous renderer",
       );
     });
 
-    it("routes to applyLayoutsFunctionBody when esmLayouts is false", async () => {
+    it("keeps MDX layouts on the secure ESM path when esmLayouts is false", async () => {
       assertEquals(
         await recordLayoutPath(
           { experimental: { esmLayouts: false } } as unknown as VeryfrontConfig,
         ),
-        ["render"],
-        "experimental.esmLayouts: false must route to applyLayoutsFunctionBody",
+        ["loadModuleESM"],
+        "experimental.esmLayouts: false must not invoke the disabled synchronous renderer",
       );
     });
   });
@@ -376,7 +381,12 @@ describe("LayoutApplicator helpers", () => {
       fs: {
         readFile: (path: string) => {
           reads.push(path);
-          return Promise.reject(new Error("not found"));
+          return Promise.reject(
+            FILE_NOT_FOUND.create({
+              detail: "Reserved component fixture not found",
+              context: { operation: "read" },
+            }),
+          );
         },
       },
     } as unknown as RuntimeAdapter;
@@ -476,5 +486,43 @@ describe("LayoutApplicator helpers", () => {
       page,
       "the page element must stay inside both boundaries",
     );
+  });
+
+  it("propagates reserved component compilation failures", async () => {
+    const failure = new Error("reserved component compilation failed");
+    const applicator = new LayoutApplicator(
+      {
+        projectDir: "/project",
+        projectId: "project",
+        projectSlug: "project",
+        contentSourceId: "preview-main",
+        adapter: createAdapter({
+          "/project/app/loading.tsx": "export default function Loading() {}",
+        }),
+        config: { react: { version: "19.1.1" } } as VeryfrontConfig,
+        layoutCache: createLayoutComponentCache(),
+        mergedComponents: {},
+        mode: "production",
+        environment: "production",
+        reactVersion: "19.1.1",
+      },
+      {
+        loadComponentFromSource: () => Promise.reject(failure),
+      },
+    );
+
+    const error = await assertRejects(() =>
+      (applicator as unknown as {
+        wrapWithReservedComponents(
+          element: React.ReactElement,
+          path: string,
+        ): Promise<React.ReactElement>;
+      }).wrapWithReservedComponents(
+        React.createElement("main"),
+        "/project/app/page.tsx",
+      )
+    );
+
+    assertEquals(error, failure);
   });
 });

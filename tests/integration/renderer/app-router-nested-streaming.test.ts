@@ -15,10 +15,7 @@ describe(
     sanitizeOps: false,
   },
   () => {
-    // TODO: This test is flaky due to timing issues with streaming SSR and error boundaries
-    // The streaming behavior doesn't always produce the expected loading/error content in time
-    // Skipping until streaming behavior is more reliable
-    it.skip("nested loading+error streaming", async () => {
+    it("nested loading+error streaming", async () => {
       await withTestContext("app-router-nested-streaming", async (context) => {
         await remove(join(context.projectDir, "app"), { recursive: true });
         await remove(join(context.projectDir, "pages"), { recursive: true });

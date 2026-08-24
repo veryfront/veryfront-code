@@ -73,12 +73,43 @@ describe("rendering/layouts/utils/app-resolver", () => {
       assertEquals(result, "/project/src/app.tsx");
     });
 
-    it("should use absolute config.app path", async () => {
+    it("should reject absolute config.app paths outside the project", async () => {
       const files = new Set(["/absolute/app.tsx"]);
       const adapter = createMockAdapter(files);
       const config = { app: "/absolute/app.tsx" } as unknown as VeryfrontConfig;
-      const result = await resolveAppComponentPath("/project", adapter, config);
-      assertEquals(result, "/absolute/app.tsx");
+      await assertRejects(
+        () => resolveAppComponentPath("/project", adapter, config),
+        VeryfrontError,
+        "must stay inside the project directory",
+      );
+    });
+
+    it("should use absolute config.app paths inside the project", async () => {
+      const appPath = "/project/src/app.tsx";
+      const adapter = createMockAdapter(new Set([appPath]));
+      const config = { app: appPath } as unknown as VeryfrontConfig;
+
+      assertEquals(
+        await resolveAppComponentPath("/project", adapter, config),
+        appPath,
+      );
+    });
+
+    it("should reject config.app paths that escape through a symlink", async () => {
+      const appPath = "/project/src/app.tsx";
+      const adapter = createMockAdapter(new Set([appPath]));
+      adapter.fs.realPath = (path: string) => {
+        if (path === "/project") return Promise.resolve("/canonical/project");
+        if (path === appPath) return Promise.resolve("/canonical/outside/app.tsx");
+        return Promise.resolve(path);
+      };
+      const config = { app: "src/app.tsx" } as unknown as VeryfrontConfig;
+
+      await assertRejects(
+        () => resolveAppComponentPath("/project", adapter, config),
+        VeryfrontError,
+        "resolves outside the project directory",
+      );
     });
 
     it("should throw when config.app path does not exist", async () => {

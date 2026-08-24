@@ -374,6 +374,52 @@ describe(
     });
 
     describe("applyLayoutsFunctionBody", () => {
+      it("uses secure ESM loading for MDX compatibility calls", async () => {
+        const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+        const originalRender = mdxRenderer.render;
+        const calls: string[] = [];
+        const mutableRenderer = mdxRenderer as unknown as {
+          loadModuleESM: typeof mdxRenderer.loadModuleESM;
+          render: typeof mdxRenderer.render;
+        };
+        mutableRenderer.loadModuleESM = () => {
+          calls.push("loadModuleESM");
+          return Promise.resolve({
+            default: ({ children }: { children?: React.ReactNode }) =>
+              React.createElement("section", { id: "mdx-layout" }, children),
+          });
+        };
+        mutableRenderer.render = () => {
+          calls.push("render");
+          return React.createElement("div", null, "Migration Required");
+        };
+
+        try {
+          const result = await applyLayoutsFunctionBody(
+            React.createElement("p", { id: "page-body" }, "Text"),
+            {
+              compiledCode: "export default function Layout() { return null; }",
+            } as MdxBundle,
+            [],
+            {},
+            createLayoutComponentCache(),
+            "/project",
+            createMockAdapter(),
+            undefined,
+            "project-id",
+            "project-slug",
+            "content-source-id",
+            PRODUCTION_MODES,
+          );
+
+          assertEquals(calls, ["loadModuleESM"]);
+          assertEquals(result.type instanceof Function, true);
+        } finally {
+          mutableRenderer.loadModuleESM = originalLoadModuleESM;
+          mutableRenderer.render = originalRender;
+        }
+      });
+
       it("uses the requested project React version", async () => {
         const loadedUrls: string[] = [];
         __setServerModuleLoaderForTests((url) => {
@@ -381,14 +427,17 @@ describe(
           return Promise.resolve({ default: React });
         });
 
+        const adapter = createMockAdapter();
+        adapter.fs.readFile = () => Promise.resolve(LAYOUT_SOURCE);
+
         await applyLayoutsFunctionBody(
           React.createElement("div"),
           undefined,
-          [],
+          [{ kind: "tsx", componentPath: "/project/app/layout.tsx" } as LayoutItem],
           {},
           createLayoutComponentCache(),
           "/project",
-          createMockAdapter(),
+          adapter,
           undefined,
           "project-id",
           "project-slug",
