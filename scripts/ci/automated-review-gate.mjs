@@ -157,6 +157,7 @@ export async function publishCodeRabbitCompletionStatus({
   repo,
   headSha,
   status,
+  expectedPullNumber = undefined,
 }) {
   if (!FULL_SHA.test(headSha) || !isCodeRabbitCompletion(status)) {
     return { state: "ignored", review: undefined, failure: undefined };
@@ -164,6 +165,13 @@ export async function publishCodeRabbitCompletionStatus({
 
   try {
     const pull = await uniqueOpenPullForHead(github, owner, repo, headSha);
+    if (
+      expectedPullNumber !== undefined && pull.number !== expectedPullNumber
+    ) {
+      throw new Error(
+        "CodeRabbit completion belongs to a different pull request",
+      );
+    }
     const current = await github.rest.pulls.get({
       owner,
       repo,
@@ -307,5 +315,30 @@ export async function publishAutomatedReviewStatus({
       : "No authenticated review proof for current commit",
     target_url: review?.url ?? pullUrl,
   });
-  return { state, review, failure };
+  const result = { state, review, failure };
+  if (state === "success") return result;
+
+  try {
+    const statuses = await collectAll(
+      github,
+      github.rest.repos.listCommitStatusesForRef,
+      { owner, repo, ref: headSha },
+      "repair statuses",
+    );
+    const completion = statuses.find(isCodeRabbitCompletion);
+    if (!completion) return result;
+    const repaired = await publishCodeRabbitCompletionStatus({
+      github,
+      owner,
+      repo,
+      headSha,
+      status: completion,
+      expectedPullNumber: pullNumber,
+    });
+    return repaired.state === "success" || repaired.state === "pending"
+      ? repaired
+      : result;
+  } catch {
+    return result;
+  }
 }

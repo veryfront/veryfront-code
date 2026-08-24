@@ -362,9 +362,11 @@ describe("automated review evidence", () => {
 
 function githubFixture(options: {
   pages?: Record<string, unknown[][]>;
+  pagesByCall?: Record<string, unknown[][][]>;
   headResponses?: string[];
   commit?: string | undefined;
   failAfterFirstPage?: string;
+  failOnCall?: Record<string, number>;
   pullError?: Error;
 } = {}) {
   const endpoints = {
@@ -374,6 +376,7 @@ function githubFixture(options: {
     associatedPulls: () => undefined,
   };
   const published: Record<string, unknown>[] = [];
+  const endpointCalls: Record<string, number> = {};
   let pullRead = 0;
   const github = {
     paginate: {
@@ -382,9 +385,15 @@ function githubFixture(options: {
           value === endpoint
         )?.[0];
         if (!name) throw new Error("unknown endpoint");
-        const pages = options.pages?.[name] ?? [[]];
+        const call = endpointCalls[name] ?? 0;
+        endpointCalls[name] = call + 1;
+        const pages = options.pagesByCall?.[name]?.[call] ??
+          options.pages?.[name] ?? [[]];
         for (let index = 0; index < pages.length; index++) {
-          if (options.failAfterFirstPage === name && index === 1) {
+          if (
+            (options.failAfterFirstPage === name ||
+              options.failOnCall?.[name] === call) && index === 1
+          ) {
             throw new Error("pagination failed");
           }
           yield { data: pages[index] };
@@ -624,6 +633,82 @@ describe("CodeRabbit completion status wakeup", () => {
       "failure",
       "success",
     ]);
+  });
+
+  it("repairs a delayed general failure after status success", async () => {
+    const fixture = githubFixture({
+      pages: { associatedPulls: [[associatedPull()]] },
+      pagesByCall: { statuses: [[[]], [[status()]]] },
+    });
+    const completion = await publishCodeRabbitCompletionStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      headSha: HEAD,
+      status: status(),
+    });
+    const delayedGeneral = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(completion.state, "success");
+    assertEquals(delayedGeneral.state, "success");
+    assertEquals(fixture.published.map((value) => value.state), [
+      "success",
+      "failure",
+      "success",
+    ]);
+  });
+
+  it("repairs completion that appears between failure publication and repair", async () => {
+    const fixture = githubFixture({
+      pages: { associatedPulls: [[associatedPull()]] },
+      pagesByCall: { statuses: [[[]], [[status()]]] },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(result.state, "success");
+    assertEquals(fixture.published.map((value) => value.state), [
+      "failure",
+      "success",
+    ]);
+  });
+
+  it("leaves failure when repair has no proof, fails, or binds another PR", async () => {
+    for (
+      const fixture of [
+        githubFixture(),
+        githubFixture({
+          pagesByCall: { statuses: [[[]], [[], []]] },
+          failOnCall: { statuses: 1 },
+        }),
+        githubFixture({
+          pages: { associatedPulls: [[associatedPull({ number: 2 })]] },
+          pagesByCall: { statuses: [[[]], [[status()]]] },
+        }),
+      ]
+    ) {
+      const result = await publishAutomatedReviewStatus({
+        github: fixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        headSha: HEAD,
+        pullUrl: "https://example.test/pr/1",
+      });
+      assertEquals(result.state, "failure");
+      assertEquals(fixture.published.map((value) => value.state), ["failure"]);
+    }
   });
 
   it("ignores non-completion and wrong-creator status events", async () => {
