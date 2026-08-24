@@ -167,6 +167,57 @@ it("fixed hosted delegates inherit project-agent settings without overriding exp
   });
 });
 
+it("fixed hosted delegates keep every explicit input over project-agent settings", () => {
+  const configured = defaultHostedInvokeAgentToolInternals.applyChildAgentExecutionConfig(
+    {
+      description: "extract application",
+      prompt: "Extract the application.",
+      context: {},
+      agent_id: "extraction-agent",
+      model: "requested-model",
+      temperature: 0.9,
+      max_steps: 3,
+      thinking: 100,
+      tools: ["get_file"],
+    },
+    {
+      system: "Follow the extraction policy.",
+      model: "configured-model",
+      temperature: 0.25,
+      maxSteps: 12,
+      thinking: 800,
+      toolNames: ["get_file", "load_skill"],
+      mcpServers: [],
+    },
+  );
+
+  assertEquals(
+    configured.model,
+    "requested-model",
+    "explicit model must not be overridden by project-agent config",
+  );
+  assertEquals(
+    configured.temperature,
+    0.9,
+    "explicit temperature must not be overridden by project-agent config",
+  );
+  assertEquals(
+    configured.max_steps,
+    3,
+    "explicit max_steps must not be overridden by project-agent config",
+  );
+  assertEquals(
+    configured.thinking,
+    100,
+    "explicit thinking must not be overridden by project-agent config",
+  );
+  assertEquals(
+    configured.tools,
+    ["get_file"],
+    "explicit tools must not be overridden by project-agent config",
+  );
+});
+
 it("default hosted invoke resolves and runs configured child against the target project", async () => {
   const captured: {
     model?: string;

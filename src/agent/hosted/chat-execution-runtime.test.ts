@@ -565,6 +565,57 @@ describe("agent/hosted-chat-execution-runtime", () => {
     }
   });
 
+  it("aborts stream bootstrap when the bootstrap timeout elapses", async () => {
+    using time = new FakeTime();
+    let disposeCount = 0;
+    let streamAbortSignal: AbortSignal | undefined;
+    const externalAbort = new AbortController();
+    const agent: HostedChatRuntimeAgent = {
+      stream: ({ abortSignal }) =>
+        new Promise((_resolve, reject) => {
+          streamAbortSignal = abortSignal;
+          abortSignal?.addEventListener("abort", () => reject(abortSignal.reason), {
+            once: true,
+          });
+        }),
+    };
+
+    const pending = createHostedChatExecutionRuntimeBootstrap({
+      agent,
+      cleanup: async () => {},
+      lifecycleAdapter: createLifecycleAdapter(),
+      durableRunEventMirror: createDurableRunMirror({ chunks: [], flushes: [] }),
+      finalMessages: [],
+      abortSignal: externalAbort.signal,
+      streamBootstrapTimeoutMs: 50,
+      streamBootstrapKeepaliveIntervalMs: 10,
+      createRootStreamWatchdog: () =>
+        createRootStreamWatchdog({
+          disposed: () => {
+            disposeCount += 1;
+          },
+        }),
+    });
+
+    time.tick(50);
+    if (!streamAbortSignal?.aborted) {
+      // Release the hung stream so a missing timeout fails instead of hanging the suite.
+      externalAbort.abort(new Error("bootstrap timeout never fired"));
+    }
+
+    await assertRejects(
+      () => pending,
+      DOMException,
+      "Chat stream bootstrap timeout after 50ms",
+      "a hung stream bootstrap must be aborted by the watchdog timeout",
+    );
+    assertEquals(
+      disposeCount,
+      1,
+      "root stream watchdog must be disposed when bootstrap fails",
+    );
+  });
+
   it("creates a bootstrapped hosted chat execution runtime", async () => {
     const tracer = createTracer();
     const finalMessages: HostedChatRuntimeStreamInput["messages"] = [];
@@ -1353,6 +1404,144 @@ describe("agent/hosted-chat-execution-runtime", () => {
     await runtime.waitForFinish();
 
     assertEquals(terminalStates, [{ status: "completed" }]);
+  });
+
+  it("marks the root run failed when response finalization itself rejects", async () => {
+    let streamOptions: HostedChatRuntimeToUiMessageStreamOptions | undefined;
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const durableRunMirror: ConversationRunChunkMirror = {
+      ...createDurableRunMirror({ chunks: [], flushes: [] }),
+      flush: async () => {
+        throw new Error("flush failed");
+      },
+    };
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "openai/gpt-5.4",
+      originalMessages: [],
+      runContext: { withContext: (fn) => fn() },
+      abortSignal: new AbortController().signal,
+      bootstrap: {
+        cleanup: async () => {},
+        lifecycleAdapter: createLifecycleAdapter({ terminalStates, durableRunMirror }),
+        rootStreamWatchdog: createRootStreamWatchdog(),
+        streamResult: createStreamResult({
+          finalStep: {},
+          captureOptions: (options) => {
+            streamOptions = options;
+          },
+        }),
+        streamingMessageId: "stream-message-1",
+        capturedMessageId: "stream-message-1",
+        capturedConversationId: "conversation-1",
+        mirroredToolChunkState: createMirroredToolChunkState(),
+      },
+    });
+    if (!streamOptions) {
+      throw new Error("stream options were not captured");
+    }
+
+    await streamOptions.onFinish?.({
+      messages: [],
+      isContinuation: false,
+      responseMessage: createResponseMessage({ parts: [{ type: "text", text: "done" }] }),
+      isAborted: false,
+      finishReason: "stop",
+    });
+    await runtime.waitForFinish();
+
+    assertEquals(terminalStates.length, 1, "a failed terminal state must be dispatched");
+    assertEquals(terminalStates[0]?.status, "failed");
+    assertEquals(
+      terminalStates[0]?.terminalErrorCode,
+      "STREAM_ERROR",
+      "finalization failures must be classified as stream errors",
+    );
+    assertEquals(terminalStates[0]?.terminalErrorMessage, "flush failed");
+  });
+
+  it("fail disposes the watchdog, runs cleanup and marks the durable root run failed", async () => {
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    let disposed = 0;
+    let cleanupCount = 0;
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "openai/gpt-5.4",
+      originalMessages: [],
+      runContext: { withContext: (fn) => fn() },
+      abortSignal: new AbortController().signal,
+      bootstrap: {
+        cleanup: async () => {
+          cleanupCount += 1;
+        },
+        lifecycleAdapter: createLifecycleAdapter({ terminalStates }),
+        rootStreamWatchdog: createRootStreamWatchdog({
+          disposed: () => {
+            disposed += 1;
+          },
+        }),
+        streamResult: createStreamResult({
+          finalStep: {},
+          captureOptions: () => {},
+        }),
+        streamingMessageId: "stream-message-1",
+        capturedMessageId: "stream-message-1",
+        capturedConversationId: "conversation-1",
+        mirroredToolChunkState: createMirroredToolChunkState(),
+      },
+    });
+
+    await runtime.fail(new Error("boom"));
+
+    assertEquals(disposed, 1, "watchdog must be disposed on fail");
+    assertEquals(cleanupCount, 1, "cleanup must run once on fail");
+    assertEquals(
+      terminalStates,
+      [{ status: "failed", terminalErrorCode: "STREAM_ERROR", terminalErrorMessage: "boom" }],
+      "durable root run must be finalized as failed",
+    );
+  });
+
+  it("fail logs and resolves when marking the durable root run failed rejects", async () => {
+    const { logger, errors } = createLogger();
+    const lifecycleAdapter = createLifecycleAdapter();
+    lifecycleAdapter.terminal.finalizeRun = async () => {
+      throw new Error("finalize rejected");
+    };
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "openai/gpt-5.4",
+      originalMessages: [],
+      runContext: { withContext: (fn) => fn() },
+      abortSignal: new AbortController().signal,
+      logger,
+      bootstrap: {
+        cleanup: async () => {},
+        lifecycleAdapter,
+        rootStreamWatchdog: createRootStreamWatchdog(),
+        streamResult: createStreamResult({
+          finalStep: {},
+          captureOptions: () => {},
+        }),
+        streamingMessageId: "stream-message-1",
+        capturedMessageId: "stream-message-1",
+        capturedConversationId: "conversation-1",
+        mirroredToolChunkState: createMirroredToolChunkState(),
+      },
+    });
+
+    await runtime.fail(new Error("boom"));
+
+    assertEquals(errors, [
+      {
+        message: "Failed to mark durable chat root run as failed",
+        metadata: {
+          conversationId: "conversation-1",
+          runId: "root-run-1",
+          error: "finalize rejected",
+        },
+      },
+    ], "finalization failures inside fail must be logged rather than thrown");
   });
 
   it("stops cleanly when a late reasoning append finds a deleted run after local completion", async () => {

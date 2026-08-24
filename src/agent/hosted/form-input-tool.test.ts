@@ -103,6 +103,17 @@ function stubFetchSequence(responses: Response[]) {
   return calls;
 }
 
+function createSubmittedFormInputPart(inputRequestId: string, values: Record<string, unknown>) {
+  return {
+    type: "dynamic-tool" as const,
+    toolCallId: `tool-call-${inputRequestId}`,
+    toolName: "form_input",
+    state: "output-available" as const,
+    input: { title: "Plan intake" },
+    output: { submitted: true, values, inputRequestId },
+  };
+}
+
 describe("agent/hosted-form-input-tool", () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
@@ -210,6 +221,79 @@ describe("agent/hosted-form-input-tool", () => {
       values: { idea: "Build a support assistant" },
       inputRequestId: INPUT_REQUEST_ID,
     });
+  });
+
+  it("ignores submitted form_input results from before the latest user message", () => {
+    const result = findSubmittedFormInputResult([
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          createSubmittedFormInputPart(INPUT_REQUEST_ID, { idea: "Build a support assistant" }),
+        ],
+      },
+      { id: "user-2", role: "user", parts: [{ type: "text", text: "Next turn" }] },
+      { id: "assistant-3", role: "assistant", parts: [{ type: "text", text: "Working" }] },
+    ]);
+
+    assertEquals(
+      result,
+      undefined,
+      "a result persisted before the latest user message must not be reused",
+    );
+  });
+
+  it("returns the latest submitted form_input result after the latest user message", () => {
+    const result = findSubmittedFormInputResult([
+      { id: "user-1", role: "user", parts: [{ type: "text", text: "Start" }] },
+      {
+        id: "assistant-2",
+        role: "assistant",
+        parts: [createSubmittedFormInputPart("req-1", { idea: "first" })],
+      },
+      {
+        id: "assistant-3",
+        role: "assistant",
+        parts: [createSubmittedFormInputPart("req-2", { idea: "second" })],
+      },
+    ]);
+
+    assertEquals(
+      result,
+      { values: { idea: "second" }, inputRequestId: "req-2" },
+      "the later submitted result must win",
+    );
+  });
+
+  it("rejects execution without a durable conversation or run context", async () => {
+    const calls = stubFetchSequence([]);
+    const executeInput = createExecuteInput([
+      { type: "confirm", name: "confirmed", label: "Confirm?" },
+    ]);
+
+    await assertRejects(
+      () =>
+        createHostedFormInputTool({ authToken: AUTH_TOKEN }, API_URL).execute(
+          executeInput,
+          { toolCallId: TOOL_CALL_ID },
+        ),
+      Error,
+      "form_input requires a durable conversation context",
+    );
+    await assertRejects(
+      () =>
+        createHostedFormInputTool(
+          { authToken: AUTH_TOKEN, conversationId: CONVERSATION_ID },
+          API_URL,
+        ).execute(executeInput, { toolCallId: TOOL_CALL_ID }),
+      Error,
+      "form_input requires a durable run context",
+    );
+    assertEquals(
+      calls.length,
+      0,
+      "missing durable identifiers must fail before any API request",
+    );
   });
 
   it("publishes a lifecycle data event for the created durable input request", async () => {

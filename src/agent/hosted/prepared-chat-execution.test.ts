@@ -3,6 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import type { ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
 import type { HostedAgentRunSpan, HostedAgentRunTracer } from "./agent-run-lifecycle.ts";
+import { buildFinalizedAgentRunTraceAttributes } from "./trace-attributes.ts";
 import type {
   HostedChatRuntimeAgent,
   HostedChatRuntimeToUiMessageStreamOptions,
@@ -17,6 +18,28 @@ import {
 } from "./prepared-chat-execution.ts";
 
 async function* emptyStream(): AsyncIterable<ChatUiMessageChunk<MessageMetadata>> {}
+
+async function* textStream(): AsyncIterable<ChatUiMessageChunk<MessageMetadata>> {
+  yield { type: "text-start", id: "text-1" };
+  yield { type: "text-delta", id: "text-1", delta: "Done." };
+  yield { type: "text-end", id: "text-1" };
+}
+
+async function* throwingStream(
+  error: Error,
+): AsyncIterable<ChatUiMessageChunk<MessageMetadata>> {
+  yield { type: "text-start", id: "text-1" };
+  throw error;
+}
+
+function createStreamAgent(
+  uiStream: AsyncIterable<ChatUiMessageChunk<MessageMetadata>>,
+): HostedChatRuntimeAgent["stream"] {
+  return async () => ({
+    steps: Promise.resolve([{}]),
+    toUIMessageStream: () => uiStream,
+  });
+}
 
 function createRootRunContext(): HostedConversationRootRunContext {
   return {
@@ -75,8 +98,10 @@ function createTracer() {
 function createRuntimeOptions(input?: {
   traces?: string[];
   activeAttributes?: Record<string, unknown>[];
+  tracer?: ReturnType<typeof createTracer>;
+  errorLogs?: string[];
 }): PreparedHostedChatExecutionRuntimeOptions {
-  const tracer = createTracer();
+  const tracer = input?.tracer ?? createTracer();
   return {
     apiUrl: "https://api.example.test",
     tracer: tracer.tracer,
@@ -98,7 +123,9 @@ function createRuntimeOptions(input?: {
       input?.activeAttributes?.push(attributes);
     },
     logger: {
-      error: () => {},
+      error: (message) => {
+        input?.errorLogs?.push(message);
+      },
       warn: () => {},
     },
   };
@@ -168,22 +195,92 @@ describe("agent/prepared-hosted-chat-execution", () => {
 
   it("runs a prepared execution detached and waits for finalization", async () => {
     const traces: string[] = [];
+    const tracer = createTracer();
     let cleanupCount = 0;
 
     await runPreparedHostedChatExecutionDetached({
       execution: {
         ...createPreparedExecution({
+          stream: createStreamAgent(textStream()),
           cleanup: async () => {
             cleanupCount += 1;
           },
         }),
         abortSignal: new AbortController().signal,
       },
-      runtime: createRuntimeOptions({ traces }),
+      runtime: createRuntimeOptions({ traces, tracer }),
     });
 
     assertEquals(traces, ["chat.runDetached"]);
     assertEquals(cleanupCount, 1);
+    assertEquals(
+      tracer.attributes.at(-1),
+      buildFinalizedAgentRunTraceAttributes({ status: "completed", modelId: "openai/gpt-test" }),
+      "the agent run span must be finalized as completed",
+    );
+    assertEquals(tracer.finishCount, 1, "span must finish once");
+  });
+
+  it("finalizes the span as failed and fails the execution when the stream throws", async () => {
+    const tracer = createTracer();
+    const errorLogs: string[] = [];
+    let cleanupCount = 0;
+
+    await runPreparedHostedChatExecutionDetached({
+      execution: {
+        ...createPreparedExecution({
+          stream: createStreamAgent(throwingStream(new Error("boom"))),
+          cleanup: async () => {
+            cleanupCount += 1;
+          },
+        }),
+        abortSignal: new AbortController().signal,
+      },
+      runtime: createRuntimeOptions({ tracer, errorLogs }),
+    });
+
+    assertEquals(
+      tracer.attributes.at(-1),
+      buildFinalizedAgentRunTraceAttributes({
+        status: "failed",
+        terminalErrorCode: "STREAM_ERROR",
+        terminalErrorMessage: "boom",
+      }),
+      "a stream failure must finalize the span as failed with STREAM_ERROR",
+    );
+    assertEquals(tracer.finishCount, 1, "span must finish once");
+    assertEquals(
+      errorLogs,
+      ["Detached durable chat execution failed"],
+      "the detached failure must be logged",
+    );
+    assertEquals(cleanupCount, 1, "execution.fail must still run cleanup");
+  });
+
+  it("finalizes the span as cancelled when the abort signal is already aborted", async () => {
+    const tracer = createTracer();
+    const controller = new AbortController();
+    controller.abort();
+
+    await runPreparedHostedChatExecutionDetached({
+      execution: {
+        ...createPreparedExecution({
+          stream: createStreamAgent(throwingStream(new Error("aborted"))),
+        }),
+        abortSignal: controller.signal,
+      },
+      runtime: createRuntimeOptions({ tracer }),
+    });
+
+    assertEquals(
+      tracer.attributes.at(-1),
+      buildFinalizedAgentRunTraceAttributes({
+        status: "cancelled",
+        terminalErrorCode: "ABORTED",
+        terminalErrorMessage: "aborted",
+      }),
+      "an aborted stream failure must finalize the span as cancelled with ABORTED",
+    );
   });
 
   it("passes bootstrap keepalive settings to the bootstrapped runtime", async () => {

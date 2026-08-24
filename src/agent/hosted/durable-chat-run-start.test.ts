@@ -146,6 +146,30 @@ describe("agent/hosted-durable-chat-run-start", () => {
       Error,
       "Invalid detached start accepted response",
     );
+    await assertRejects(
+      () =>
+        durableChatRunStartInternals.parseAcceptedDetachedStartResponse(
+          new Response(JSON.stringify({ accepted: "yes" }), { status: 202 }),
+        ),
+      Error,
+      "Invalid detached start accepted response: invalid payload",
+      "a 202 body that fails the accepted schema must be rejected",
+    );
+    assertEquals(
+      await durableChatRunStartInternals.parseAcceptedDetachedStartResponse(
+        new Response(
+          JSON.stringify({
+            accepted: true,
+            duplicate: true,
+            runId: "run-1",
+            threadId: "11111111-1111-4111-8111-111111111111",
+          }),
+          { status: 202 },
+        ),
+      ),
+      { accepted: true, duplicate: true },
+      "valid payload must map accepted and duplicate flags",
+    );
   });
 
   it("short-circuits duplicate active runs before preparing execution", async () => {
@@ -174,6 +198,40 @@ describe("agent/hosted-durable-chat-run-start", () => {
     assertEquals(response.status, 202);
     assertEquals(await readJson(response), { accepted: true, duplicate: true });
     assertEquals(prepared, false);
+  });
+
+  it("releases a prepared execution when the run becomes a duplicate during start", async () => {
+    const tracker = createDetachedRunTracker<AgUiResumeValue>();
+    const req = createParsedRequest();
+    if (!req.durableRootRun || !req.conversationId) {
+      throw new Error("Expected durable request");
+    }
+    const runId = req.durableRootRun.runId;
+    const conversationId = req.conversationId;
+    const execution = { id: "execution-1" };
+    const cleanupCalls: unknown[] = [];
+
+    const response = await executeHostedDurableChatRun({
+      req,
+      rawRequest: createRequest(),
+      tracker,
+      prepareExecution: async () => {
+        tracker.sessionManager.startRun({ runId, threadId: conversationId });
+        return execution;
+      },
+      cleanupExecution: async (input) => {
+        cleanupCalls.push(input);
+      },
+      startDetachedExecution: async () => {},
+    });
+
+    assertEquals(response.status, 202);
+    assertEquals(await readJson(response), { accepted: true, duplicate: true });
+    assertEquals(
+      cleanupCalls,
+      [{ execution, runId, conversationId }],
+      "duplicate detected after prepare must release the prepared execution",
+    );
   });
 
   it("returns a stable error when durable conversation context is missing", async () => {

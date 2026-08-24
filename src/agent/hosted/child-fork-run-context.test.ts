@@ -1,4 +1,4 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertRejects, assertStrictEquals } from "@std/assert";
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/protocol.ts";
 import {
   createHostedChildForkRunContext,
@@ -7,6 +7,7 @@ import {
   finalizeHostedChildForkRunContextResources,
   handleHostedChildForkRunContextError,
 } from "./child-fork-run-context.ts";
+import { HostedChildTerminalStateError } from "./child-status.ts";
 import type { ForkPart, ForkRuntimeStep } from "../streaming/fork-runtime-stream.ts";
 import {
   createHostedRunEventWriterCapability,
@@ -363,6 +364,88 @@ Deno.test("handleHostedChildForkRunContextError closes buffers and pending tool 
   }
   assertEquals(result.error, "stream failed");
   assertEquals(chunks.map((chunk) => chunk.type), ["tool-input-start", "tool-output-error"]);
+});
+
+Deno.test("handleHostedChildForkRunContextError rethrows the original error when the run was aborted", async () => {
+  const chunks: ChatUiMessageChunk<ChatMessageMetadata>[] = [];
+  const context = createHostedChildForkRunContext({
+    mirror: {
+      handleChunk: (chunk) => {
+        chunks.push(chunk);
+      },
+    },
+    pendingToolLogContext: {
+      conversationId: "conversation-1",
+      parentRunId: "run-1",
+      description: "Check the app",
+    },
+  });
+  context.pendingToolLifecycle.upsertPendingToolCall("tool-call-1", {
+    phase: "awaiting_result",
+    toolName: "read_file",
+    input: { path: "README.md" },
+  });
+  const controller = new AbortController();
+  controller.abort();
+  const error = new Error("stopped");
+
+  const thrown = await assertRejects(() =>
+    handleHostedChildForkRunContextError({
+      error,
+      description: "Check the app",
+      kind: "invoke_agent",
+      runContext: context,
+      startTime: Date.now(),
+      abortSignal: controller.signal,
+    })
+  );
+
+  assertStrictEquals(thrown, error, "an aborted run must rethrow the original error");
+  assertEquals(
+    chunks.map((chunk) => chunk.type),
+    ["tool-input-start", "tool-output-error"],
+    "pending tool calls must still be closed before rethrowing",
+  );
+  const errorChunk = chunks[1];
+  assertEquals(
+    errorChunk?.type === "tool-output-error" ? errorChunk.errorText : undefined,
+    "Child fork stream aborted before tool result completed",
+    "pending tool calls must be closed with the aborted reason",
+  );
+});
+
+Deno.test("handleHostedChildForkRunContextError rethrows remote terminal state errors unchanged", async () => {
+  const context = createHostedChildForkRunContext({
+    mirror: { handleChunk: () => {} },
+    pendingToolLogContext: {
+      conversationId: "conversation-1",
+      parentRunId: "run-1",
+      description: "Check the app",
+    },
+  });
+  const terminal = new HostedChildTerminalStateError("cancelled", {
+    childConversationId: "child-conversation-1",
+    childRunId: "child-run-1",
+    childMessageId: "child-message-1",
+    latestEventId: 0,
+    latestExternalEventSequence: 0,
+  });
+
+  const thrown = await assertRejects(() =>
+    handleHostedChildForkRunContextError({
+      error: terminal,
+      description: "Check the app",
+      kind: "invoke_agent",
+      runContext: context,
+      startTime: Date.now(),
+    })
+  );
+
+  assertStrictEquals(
+    thrown,
+    terminal,
+    "a remote terminal state must be rethrown unchanged, not converted to a soft failure",
+  );
 });
 
 Deno.test("finalizeHostedChildForkRunContextResources closes buffers, aborts monitor, flushes mirror, and appends finish-step", async () => {

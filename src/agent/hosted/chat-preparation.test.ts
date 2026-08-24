@@ -707,6 +707,89 @@ Deno.test("prepareHostedChatExecution prepares root run, runtime, and final mess
   ]);
 });
 
+Deno.test("prepareHostedChatRuntimeCreationOptions forwards the verified integration tool grant", async () => {
+  const withGrant = await prepareHostedChatRuntimeCreationOptions({
+    request: createParsedHostedChatRequest(),
+    agentConfig: { id: "agent-1", model: "configured-model" },
+    projectId: "project-1",
+    authToken: "token-1",
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () => Promise.resolve({ instructions: "", skills: [] }),
+    buildInstructions: () => "Agent instructions",
+    serverResolvedIntegrationToolNames: ["outlook__list_emails"],
+  });
+  assertEquals(
+    withGrant.creationOptions.serverResolvedIntegrationToolNames,
+    ["outlook__list_emails"],
+    "verified integration grant must reach runtime creation options",
+  );
+
+  const withEmptyGrant = await prepareHostedChatRuntimeCreationOptions({
+    request: createParsedHostedChatRequest(),
+    agentConfig: { id: "agent-1", model: "configured-model" },
+    projectId: "project-1",
+    authToken: "token-1",
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () => Promise.resolve({ instructions: "", skills: [] }),
+    buildInstructions: () => "Agent instructions",
+    serverResolvedIntegrationToolNames: [],
+  });
+  assertEquals(
+    "serverResolvedIntegrationToolNames" in withEmptyGrant.creationOptions,
+    false,
+    "an empty grant must not be stamped on runtime creation options",
+  );
+});
+
+Deno.test("prepareHostedChatExecution forwards the verified integration tool grant to runtime creation", async () => {
+  let recordedOptions: { serverResolvedIntegrationToolNames?: readonly string[] } | undefined;
+
+  await prepareHostedChatExecution({
+    request: createParsedHostedChatRequest({
+      conversationId: "conversation-1",
+      projectId: "project-1",
+      durableRootRun: {
+        runId: "run-1",
+        messageId: "message-1",
+        latestEventId: 3,
+        latestExternalEventSequence: 2,
+      },
+    }),
+    agentConfig: {
+      id: "agent-1",
+      model: "configured-model",
+      maxSteps: 25,
+    },
+    apiUrl: "https://api.example.com",
+    abortSignal: new AbortController().signal,
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () => Promise.resolve({ instructions: "Project instructions", skills: [] }),
+    buildInstructions: () => "Agent instructions",
+    serverResolvedIntegrationToolNames: ["outlook__list_emails"],
+    createRuntime: (options) => {
+      recordedOptions = options;
+      return Promise.resolve({
+        runtimeKind: "framework",
+        modelId: options.model ?? "configured-model",
+        cleanup: () => Promise.resolve(),
+        agent: {
+          stream: () =>
+            Promise.resolve({
+              steps: Promise.resolve([]),
+              toUIMessageStream: async function* () {},
+            }),
+        },
+      });
+    },
+  });
+
+  assertEquals(
+    recordedOptions?.serverResolvedIntegrationToolNames,
+    ["outlook__list_emails"],
+    "verified integration grant must reach runtime creation options",
+  );
+});
+
 Deno.test("prepareHostedChatExecution strips configured provider history selected by a runtime override", async () => {
   const messages: ChatUiMessage[] = [
     {
