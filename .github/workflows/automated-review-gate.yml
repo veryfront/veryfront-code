@@ -21,6 +21,12 @@ permissions:
   pull-requests: write
   statuses: write
 
+concurrency:
+  group: automated-review-${{ github.event.pull_request.number || github.event.issue.number || github.event.sha || github.run_id }}
+  # Preserve event order for one pull request without allowing unrelated pull
+  # requests and commit-status events to fill the same repository-wide queue.
+  queue: max
+
 jobs:
   review:
     name: publish automated review status
@@ -33,9 +39,6 @@ jobs:
       (github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
       (github.event_name != 'pull_request_review' ||
        github.event.pull_request.head.repo.full_name == github.repository)
-    concurrency:
-      group: automated-review-status-publishers
-      queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -167,9 +170,6 @@ jobs:
       github.event.sender.login == 'coderabbitai[bot]' &&
       github.event.sender.id == 136622811 &&
       github.event.sender.type == 'Bot'
-    concurrency:
-      group: automated-review-status-publishers
-      queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
