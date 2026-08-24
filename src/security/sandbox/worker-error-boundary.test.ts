@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { SERVICE_OVERLOADED, VeryfrontError } from "#veryfront/errors";
+import { ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS } from "#veryfront/errors/safe-diagnostics.ts";
 import { deserializeWorkerError } from "./worker-error-boundary.ts";
 
 describe("worker error boundary", () => {
@@ -32,6 +33,96 @@ describe("worker error boundary", () => {
     assertEquals(error.message, "dependency overloaded");
     assert(error.stack?.includes("postgres://admin:[REDACTED]@db.internal/query"));
     assertEquals(error.stack?.includes("secret"), false);
+  });
+
+  it("redacts and bounds every worker-controlled diagnostic field", () => {
+    const tainted = `postgres://admin:secret@db.internal/query ${
+      "x".repeat(ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS + 100)
+    }`;
+    const error = deserializeWorkerError({
+      message: tainted,
+      name: "VeryfrontError",
+      problem: {
+        slug: SERVICE_OVERLOADED.slug,
+        category: SERVICE_OVERLOADED.category,
+        status: 429,
+        title: SERVICE_OVERLOADED.title,
+        suggestion: SERVICE_OVERLOADED.suggestion,
+        detail: tainted,
+        cause: tainted,
+        instance: tainted,
+      },
+    });
+
+    assertInstanceOf(error, VeryfrontError);
+    const fields: readonly (readonly [string, unknown])[] = [
+      ["message", error.message],
+      ["detail", error.detail],
+      ["cause", error.cause],
+      ["instance", error.instance],
+    ];
+
+    for (const [name, value] of fields) {
+      assertEquals(typeof value, "string", `${name} must be decoded as a string`);
+      const text = value as string;
+      assert(
+        text.includes("[REDACTED]"),
+        `${name} must be sanitized before it reaches the problem document`,
+      );
+      assertEquals(
+        text.includes("secret"),
+        false,
+        `${name} must not carry the credential`,
+      );
+      assert(
+        text.length <= ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS,
+        `${name} must be bounded by ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS`,
+      );
+    }
+  });
+
+  it("fails closed on an out-of-range or non-integer status", () => {
+    for (
+      const status of [200, 999, 429.5, "429", Number.NaN, Number.MAX_SAFE_INTEGER + 2]
+    ) {
+      const error = deserializeWorkerError({
+        message: "project failure",
+        name: "VeryfrontError",
+        problem: {
+          slug: SERVICE_OVERLOADED.slug,
+          category: SERVICE_OVERLOADED.category,
+          title: SERVICE_OVERLOADED.title,
+          suggestion: SERVICE_OVERLOADED.suggestion,
+          status,
+        },
+      });
+
+      assertEquals(
+        error instanceof VeryfrontError,
+        false,
+        `status ${String(status)} must not yield a registered error`,
+      );
+      assertEquals(
+        error.message,
+        "project failure",
+        "the decoded error falls back to a plain Error",
+      );
+    }
+
+    const inRange = deserializeWorkerError({
+      message: "project failure",
+      name: "VeryfrontError",
+      problem: {
+        slug: SERVICE_OVERLOADED.slug,
+        category: SERVICE_OVERLOADED.category,
+        title: SERVICE_OVERLOADED.title,
+        suggestion: SERVICE_OVERLOADED.suggestion,
+        status: 429,
+      },
+    });
+
+    assertInstanceOf(inRange, VeryfrontError);
+    assertEquals(inRange.status, 429, "an in-range status must still be accepted");
   });
 
   it("fails closed on forged registered metadata", () => {

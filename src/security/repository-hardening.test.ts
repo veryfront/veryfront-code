@@ -257,9 +257,14 @@ describe("repository hardening", () => {
 
       for (const jobName of jobs) {
         const block = jobBlock(workflow, jobName);
+        const jobIf = block.split("\n").find((line) => /^ {4}if:/.test(line));
         assert(
-          block.includes(WORKFLOW_PR_GUARD),
-          `expected ${path} job ${jobName} to gate fork pull requests`,
+          jobIf !== undefined,
+          `expected ${path} job ${jobName} to declare a job-level if: condition`,
+        );
+        assert(
+          jobIf.includes(WORKFLOW_PR_GUARD),
+          `expected ${path} job ${jobName} to carry the fork guard on its own job-level if:, not on a step`,
         );
       }
     }

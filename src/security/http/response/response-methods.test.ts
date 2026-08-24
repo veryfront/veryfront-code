@@ -28,7 +28,18 @@ describe("security/http/response/response-methods", () => {
     });
 
     it("should use default status from context", () => {
-      assertEquals(json.call(createContext(200), {}).status, 200);
+      // 200 is also the Response constructor default, so a non-default status
+      // is the only value that can observe the context read.
+      assertEquals(
+        json.call(createContext(404), {}).status,
+        404,
+        "json must inherit the status from its builder context",
+      );
+      assertEquals(
+        build.call(createContext(201)).status,
+        201,
+        "build must inherit the status from its builder context",
+      );
     });
 
     it("should override status when provided", () => {
