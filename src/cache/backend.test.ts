@@ -228,11 +228,109 @@ Deno.test("MemoryCacheBackend getBatch handles expired entries", async () => {
   const cache = new MemoryCacheBackend(10);
   await cache.set("exp", "val", 0); // TTL of 0 means expires immediately
 
-  // Slight delay to ensure expiration
-  await sleep(10);
-
   const results = await cache.getBatch(["exp"]);
   assertEquals(results.get("exp"), null);
+});
+
+Deno.test("MemoryCacheBackend expires a zero TTL immediately", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+
+  const cache = new MemoryCacheBackend(10);
+  await cache.set("k", "v", 60);
+  await cache.set("k", "v", 0);
+
+  // Read the store before any get(): get() lazily deletes an expired entry and
+  // would hide a retained one.
+  assertEquals(cache.size, 0, "a zero TTL must remove the existing entry and store nothing");
+  assertEquals(await cache.get("k"), null, "a zero-TTL key must read as a miss");
+});
+
+Deno.test("MemoryCacheBackend expires a negative TTL immediately", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+
+  const cache = new MemoryCacheBackend(10);
+  await cache.set("k", "v", 60);
+  await cache.set("k", "v", -5);
+
+  assertEquals(cache.size, 0, "a negative TTL must remove the existing entry and store nothing");
+  assertEquals(await cache.get("k"), null, "a negative-TTL key must read as a miss");
+});
+
+Deno.test("MemoryCacheBackend expires oversized non-positive TTL overwrites immediately", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+
+  const cache = new MemoryCacheBackend(10, { maxSizeBytes: 8 });
+  await cache.set("k", "small", 60);
+  await cache.set("k", "value-too-large", 0);
+
+  assertEquals(cache.size, 0, "an oversized zero-TTL overwrite must remove the old entry");
+  assertEquals(await cache.get("k"), null, "the old value must not survive size admission");
+});
+
+Deno.test("MemoryCacheBackend setBatch expires a non-positive TTL immediately", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+
+  const cache = new MemoryCacheBackend(10);
+  await cache.set("k", "v", 60);
+  await cache.setBatch([{ key: "k", value: "v", ttl: 0 }]);
+
+  assertEquals(
+    cache.size,
+    0,
+    "a batched zero TTL must remove the existing entry and store nothing",
+  );
+  assertEquals(await cache.get("k"), null, "a batched zero-TTL key must read as a miss");
+});
+
+Deno.test("MemoryCacheBackend setBatch expires oversized non-positive TTL overwrites immediately", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+
+  const cache = new MemoryCacheBackend(10, { maxSizeBytes: 8 });
+  await cache.set("k", "small", 60);
+  await cache.setBatch([{ key: "k", value: "value-too-large", ttl: 0 }]);
+
+  assertEquals(cache.size, 0, "a batched oversized zero-TTL overwrite must remove the old entry");
+  assertEquals(await cache.get("k"), null, "the old value must not survive batch size admission");
+});
+
+Deno.test("MemoryCacheBackend preserves an existing value for an oversized positive-TTL overwrite", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+
+  const cache = new MemoryCacheBackend(10, { maxSizeBytes: 8 });
+  await cache.set("k", "small", 60);
+  await cache.set("k", "value-too-large", 60);
+
+  assertEquals(await cache.get("k"), "small");
+});
+
+Deno.test("MemoryCacheBackend rejects a non-finite TTL", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+
+  const cache = new MemoryCacheBackend(10);
+  await assertRejects(
+    () => cache.set("k", "v", Number.POSITIVE_INFINITY),
+    RangeError,
+    "finite number of seconds",
+    "a non-finite TTL must be rejected before it is persisted",
+  );
+  assertEquals(cache.size, 0, "a rejected TTL must not leave an entry behind");
+});
+
+Deno.test("MemoryCacheBackend setBatch rejects a non-finite TTL without throwing synchronously", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+
+  const cache = new MemoryCacheBackend(10);
+  // `assertRejects` fails when the call throws synchronously, which is exactly
+  // the contract at stake: callers hold a declared `Promise<void>`, so an
+  // invalid TTL must surface through `.catch()` the way `set` and the
+  // API/Redis backends surface it.
+  await assertRejects(
+    () => cache.setBatch([{ key: "k", value: "v", ttl: Number.POSITIVE_INFINITY }]),
+    RangeError,
+    "finite number of seconds",
+    "a batched non-finite TTL must reject the returned promise",
+  );
+  assertEquals(cache.size, 0, "a rejected batch TTL must not leave an entry behind");
 });
 
 Deno.test("MemoryCacheBackend setBatch sets multiple entries", async () => {
@@ -451,9 +549,29 @@ Deno.test("MemoryCacheBackend rejects single entry exceeding maxSizeBytes", asyn
 
 Deno.test("ApiCacheBackend requires auth and project context", async () => {
   const { ApiCacheBackend } = await importBackend();
+  let fetchCalls = 0;
+  installMockFetch(
+    (() => {
+      fetchCalls++;
+      return Promise.resolve(Response.json({ value: null }));
+    }) as typeof fetch,
+  );
 
-  const cache = new ApiCacheBackend({});
-  assertEquals(await cache.get("test-key"), null);
+  try {
+    const cache = new ApiCacheBackend({});
+    assertEquals(
+      await cache.get("test-key"),
+      null,
+      "a request without auth or project context must miss",
+    );
+    assertEquals(
+      fetchCalls,
+      0,
+      "the cache API must not be contacted without a token and a project ref",
+    );
+  } finally {
+    restoreMockFetch();
+  }
 });
 
 Deno.test("ApiCacheBackend type property", async () => {
@@ -684,9 +802,25 @@ Deno.test("ApiCacheBackend bounded overflows do not open the dependency circuit"
 
 Deno.test("ApiCacheBackend set returns without auth context", async () => {
   const { ApiCacheBackend } = await importBackend();
+  let fetchCalls = 0;
+  installMockFetch(
+    (() => {
+      fetchCalls++;
+      return Promise.resolve(Response.json({ ok: true }));
+    }) as typeof fetch,
+  );
 
-  const cache = new ApiCacheBackend({});
-  await cache.set("key", "value"); // Should not throw
+  try {
+    const cache = new ApiCacheBackend({});
+    await cache.set("key", "value"); // Should not throw
+    assertEquals(
+      fetchCalls,
+      0,
+      "the cache API must not be contacted without a token and a project ref",
+    );
+  } finally {
+    restoreMockFetch();
+  }
 });
 
 Deno.test("ApiCacheBackend del returns without auth context", async () => {
@@ -749,8 +883,49 @@ Deno.test("ApiCacheBackend getBatch returns nulls without auth context", async (
 
   const cache = new ApiCacheBackend({});
   const results = await cache.getBatch(["k1", "k2"]);
-  // Should return empty map or map with nulls
-  assertEquals(results.size === 0 || results.get("k1") === null, true);
+  assertEquals(results.size, 2, "getBatch must return one entry per requested key");
+  assertEquals(results.get("k1"), null, "missing keys must map to null, not undefined");
+  assertEquals(results.get("k2"), null, "missing keys must map to null, not undefined");
+});
+
+Deno.test("ApiCacheBackend getBatch falls back to individual gets when the batch endpoint fails", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({
+      token: "request-token",
+      projectSlug: "project-slug",
+    }),
+  };
+  installMockFetch(
+    ((input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/get-batch")) {
+        return Promise.resolve(new Response("batch unavailable", { status: 503 }));
+      }
+      return Promise.resolve(Response.json({ value: `v-${url.searchParams.get("key")}` }));
+    }) as typeof fetch,
+  );
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "test-explicit-token",
+      circuitBreakerName: "api-cache-get-batch-fallback-test",
+    });
+
+    const results = await cache.getBatch(["k1", "k2"]);
+
+    assertEquals(results.size, 2, "getBatch must return one entry per requested key");
+    assertEquals(results.get("k1"), "v-k1", "a failed batch must fall back to individual gets");
+    assertEquals(results.get("k2"), "v-k2", "a failed batch must fall back to individual gets");
+  } finally {
+    if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
+    else globals.__vf_multi_project_adapter = originalAdapter;
+    restoreMockFetch();
+  }
 });
 
 Deno.test("ApiCacheBackend getBatch returns empty map for empty keys", async () => {
@@ -763,9 +938,25 @@ Deno.test("ApiCacheBackend getBatch returns empty map for empty keys", async () 
 
 Deno.test("ApiCacheBackend setBatch returns without auth context", async () => {
   const { ApiCacheBackend } = await importBackend();
+  let fetchCalls = 0;
+  installMockFetch(
+    (() => {
+      fetchCalls++;
+      return Promise.resolve(Response.json({ ok: true }));
+    }) as typeof fetch,
+  );
 
-  const cache = new ApiCacheBackend({});
-  await cache.setBatch([{ key: "k", value: "v" }]); // Should not throw
+  try {
+    const cache = new ApiCacheBackend({});
+    await cache.setBatch([{ key: "k", value: "v" }]); // Should not throw
+    assertEquals(
+      fetchCalls,
+      0,
+      "the cache API must not be contacted without a token and a project ref",
+    );
+  } finally {
+    restoreMockFetch();
+  }
 });
 
 Deno.test("ApiCacheBackend setBatch returns for empty entries", async () => {

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { CacheManager } from "./data-fetching-cache.ts";
@@ -251,6 +251,45 @@ describe("CacheManager", () => {
 
       assertExists(key);
       assertEquals(key.includes("/about::{}"), true);
+    });
+
+    it("separates modules resolving data for the same URL", () => {
+      const cache = new CacheManager();
+      const context = createContext("http://localhost/dashboard");
+
+      const layoutKey = withProductionContext(() =>
+        cache.createCacheKey(context, "/project/components/layout.tsx")
+      );
+      const pageKey = withProductionContext(() =>
+        cache.createCacheKey(context, "/project/pages/index.tsx")
+      );
+      const defaultKey = withProductionContext(() => cache.createCacheKey(context));
+      const blankKey = withProductionContext(() => cache.createCacheKey(context, "   "));
+
+      assertExists(layoutKey);
+      assertExists(pageKey);
+      assertExists(defaultKey);
+      assertExists(blankKey);
+      assertNotEquals(
+        layoutKey,
+        pageKey,
+        "two modules fetching data for the same URL must not share a cache entry",
+      );
+      assertEquals(
+        layoutKey.includes("/project/components/layout.tsx::"),
+        true,
+        "the module path must be a key segment",
+      );
+      assertEquals(
+        defaultKey.includes("page::"),
+        true,
+        "an absent module path must fall back to the page segment",
+      );
+      assertEquals(
+        blankKey,
+        defaultKey,
+        "a whitespace-only module path must fall back to the page segment",
+      );
     });
 
     it("should create unique keys for different params", () => {

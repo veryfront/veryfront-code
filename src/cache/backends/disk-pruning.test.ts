@@ -25,6 +25,23 @@ async function cacheFileNames(cacheDir: string): Promise<string[]> {
   return names;
 }
 
+async function allFileNames(cacheDir: string): Promise<string[]> {
+  const names: string[] = [];
+  for await (const entry of readDir(cacheDir)) {
+    if (entry.isFile) names.push(entry.name);
+  }
+  return names;
+}
+
+/** Pruning must leave the cache directory holding only cache entries. */
+async function assertNoLeftoverFiles(cacheDir: string): Promise<void> {
+  assertEquals(
+    (await allFileNames(cacheDir)).filter((name) => !name.endsWith(".vfcache")),
+    [],
+    "pruning must not leave temporary claim or temp files in the cache directory",
+  );
+}
+
 describe("DiskCacheBackend expiry pruning", () => {
   it("removes expired entries that are never read again", async () => {
     await withTempDir(async (isolatedDir) => {
@@ -39,6 +56,7 @@ describe("DiskCacheBackend expiry pruning", () => {
 
       assertEquals(await backend.get("fresh-content-hash"), "new");
       assertEquals((await cacheFileNames(cacheDir)).length, 1);
+      await assertNoLeftoverFiles(cacheDir);
     }, { prefix: "expired-entry-prune-test-" });
   });
 
@@ -78,6 +96,7 @@ describe("DiskCacheBackend expiry pruning", () => {
       await pruningWrite;
 
       assertEquals(await writer.get(key), "fresh");
+      await assertNoLeftoverFiles(join(isolatedDir, "veryfront-files"));
     }, { prefix: "expired-entry-race-test-" });
   });
 
@@ -123,6 +142,7 @@ describe("DiskCacheBackend expiry pruning", () => {
       await reader.get("flush-marker");
 
       assertEquals(await writer.get(key), "fresh");
+      await assertNoLeftoverFiles(join(isolatedDir, "veryfront-files"));
     }, { prefix: "expired-read-race-test-" });
   });
 });
