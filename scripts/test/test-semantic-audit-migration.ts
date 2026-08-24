@@ -2425,19 +2425,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "removalPr": "PR 4h",
       },
     ),
-    entry("src/build/asset-pipeline/tailwind-processor/detector.test.ts", [
-      "filesystem-read",
-      "filesystem-watch",
-      "filesystem-write",
-    ], {
-      "disposition": "integration-relocation",
-      "owner": "build-rendering",
-      "rationale":
-        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
-      "destination":
-        "tests/integration/semantic-unit-boundary/src/build/asset-pipeline/tailwind-processor/detector.test.ts",
-      "removalPr": "PR 4h",
-    }),
     entry("src/build/asset-pipeline/tailwind-processor/processor.test.ts", [
       "filesystem-read",
       "filesystem-watch",
