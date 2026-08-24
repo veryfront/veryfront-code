@@ -3,6 +3,7 @@ import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { rewriteNpmImports } from "#veryfront/transforms/npm-import-rewrites.ts";
+import { resolveContainedPackagePath } from "#veryfront/transforms/import-rewriter/package-resolution.ts";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 import {
   getNodeExternalPackagesToResolveForRoute,
@@ -89,12 +90,15 @@ function __vf_loadCjs(id, parentDir) {
   // then re-canonicalize via realPathSync to resist symlinked node_modules
   // entries that could point outside the project root.
   __vf_assertContained(resolved);
+  var real;
   try {
-    var real = Deno.realPathSync(resolved);
-    __vf_assertContained(real);
-    resolved = real;
+    real = Deno.realPathSync(resolved);
   } catch (_) {
     /* expected: realPathSync fails for non-existent paths — assertContained above already held */
+  }
+  if (real !== undefined) {
+    __vf_assertContained(real);
+    resolved = real;
   }
   if (resolved in __vf_cache) return __vf_cache[resolved];
   var code = Deno.readTextFileSync(resolved);
@@ -216,8 +220,17 @@ export async function rewriteNodeExternalImports(
 
     const subpath = specifier.slice(pkg.length);
     if (subpath) {
-      const packageDir = pathToFileURL(pathHelper.join(projectDir, "node_modules", pkg)).href;
-      const resolvedSubpath = `${packageDir}${subpath}`;
+      // The subpath comes from the handler source; reject any that escape the
+      // package directory (e.g. "pkg/../../secret") by leaving the import
+      // untouched so it fails to resolve rather than reading outside
+      // node_modules.
+      const packageDir = pathHelper.join(projectDir, "node_modules", pkg);
+      const target = resolveContainedPackagePath(packageDir, `.${subpath}`);
+      if (!target) {
+        logger.warn(`Skipping subpath import that escapes package directory: ${specifier}`);
+        continue;
+      }
+      const resolvedSubpath = pathToFileURL(target).href;
       logger.debug(`Resolved ${specifier} -> ${resolvedSubpath}`);
       replacements.set(specifier, resolvedSubpath);
       continue;

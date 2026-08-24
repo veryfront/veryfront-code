@@ -136,6 +136,11 @@ describe("dynamic-route-matcher", () => {
       });
     });
 
+    it("should return null when a required segment before a catch-all is missing", () => {
+      expect(extractParams("[lang]/[...path]", "")).toBeNull();
+      expect(extractParams("api/[version]/[...path]", "api")).toBeNull();
+    });
+
     it("should handle multiple dynamic before catch-all", () => {
       expect(extractParams("[lang]/[region]/[...path]", "en/us/docs/guide")).toEqual({
         lang: "en",
@@ -214,6 +219,10 @@ describe("dynamic-route-matcher", () => {
   });
 
   describe("matchesPattern", () => {
+    it("should return false when a required segment before a catch-all is missing", () => {
+      expect(matchesPattern("[lang]/[...path]", "")).toBe(false);
+    });
+
     it("should return true for matching simple pattern", () => {
       expect(matchesPattern("blog/[slug]", "blog/my-post")).toBe(true);
     });

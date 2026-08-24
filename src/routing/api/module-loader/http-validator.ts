@@ -13,8 +13,14 @@ export function isAllowedRemoteHost(url: URL, allowedHosts: string[]): boolean {
 export function validateHTTPImports(source: string, allowedHosts: string[]): void {
   const importRegex = /import\s+(?:[\w\s{},*]+\s+from\s+)?['"]https?:\/\/[^'"]+['"]/g;
   const dynamicImportRegex = /import\s*\(['"]https?:\/\/[^'"]+['"]\)/g;
+  // `export ... from "https://..."` is a remote import too, so it is held to the same allow-list.
+  const reExportRegex = /export\s+[\w\s{},*]+\s+from\s+['"]https?:\/\/[^'"]+['"]/g;
 
-  const matches = [...source.matchAll(importRegex), ...source.matchAll(dynamicImportRegex)];
+  const matches = [
+    ...source.matchAll(importRegex),
+    ...source.matchAll(dynamicImportRegex),
+    ...source.matchAll(reExportRegex),
+  ];
 
   for (const match of matches) {
     const url = match[0].match(/https?:\/\/[^'"]+/)?.[0];

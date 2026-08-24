@@ -1,10 +1,22 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { buildRouteRegistrySpanAttributes, RouteRegistry } from "./registry.ts";
 import type { Handler, HandlerContext, HandlerResult } from "./types.ts";
 import { CONFIG_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
 import { __registerLogRecordEmitter, refreshLoggerConfig } from "#veryfront/utils";
+import {
+  BasicTracerProvider,
+  InMemorySpanExporter,
+  SimpleSpanProcessor,
+} from "npm:@opentelemetry/sdk-trace-base@2.9.0";
+import {
+  _resetShimForTests,
+  type Context,
+  setGlobalContextAccessor,
+  setGlobalTracerProvider,
+  type Tracer,
+} from "#veryfront/observability/tracing/api-shim.ts";
 
 function makeHandler(
   name: string,
@@ -125,6 +137,84 @@ describe("routing/registry/RouteRegistry", () => {
       assertEquals(attributes["project.id"], "proj-123");
       assertEquals(attributes["veryfront.environment"], "production");
       assertEquals(attributes["veryfront.environment_name"], "Production");
+    });
+
+    it("records the routing span with the trusted project identity", async () => {
+      const exporter = new InMemorySpanExporter();
+      const provider = new BasicTracerProvider({
+        spanProcessors: [new SimpleSpanProcessor(exporter)],
+      });
+      const rootContext: Context = {
+        getValue: () => undefined,
+        setValue() {
+          return this;
+        },
+        deleteValue() {
+          return this;
+        },
+      };
+      setGlobalContextAccessor({
+        active: () => rootContext,
+        with: (_context, fn) => fn(),
+      });
+      setGlobalTracerProvider({
+        getTracer(name, version) {
+          return provider.getTracer(name, version) as unknown as Tracer;
+        },
+      });
+
+      try {
+        await new RouteRegistry()
+          .register(makeHandler("pass", 100))
+          .execute(makeReq(), {
+            ...makeCtx(),
+            projectSlug: "investment-ops-agent",
+            projectId: "proj-123",
+            resolvedEnvironment: "production",
+          });
+        await provider.forceFlush();
+
+        const [span] = exporter.getFinishedSpans();
+        assertExists(span, "execute() must record a routing span");
+        assertEquals(
+          span.name,
+          "routing.registry.execute",
+          "the routing span keeps its documented name",
+        );
+        assertEquals(
+          span.attributes["http.method"],
+          "GET",
+          "the routing span must carry the request method",
+        );
+        assertEquals(
+          span.attributes["http.path"],
+          "/test",
+          "the routing span must carry the request path",
+        );
+        assertEquals(
+          span.attributes["veryfront.project_slug"],
+          "investment-ops-agent",
+          "execute() must hand the trusted project slug to the routing span",
+        );
+        assertEquals(
+          span.attributes["project.slug"],
+          "investment-ops-agent",
+          "execute() must hand the trusted project slug to the routing span",
+        );
+        assertEquals(
+          span.attributes["veryfront.project_id"],
+          "proj-123",
+          "execute() must hand the trusted project id to the routing span",
+        );
+        assertEquals(
+          span.attributes["veryfront.environment"],
+          "production",
+          "execute() must hand the resolved environment to the routing span",
+        );
+      } finally {
+        _resetShimForTests();
+        await provider.shutdown();
+      }
     });
 
     it("omits project attributes when no trusted project identity exists", () => {
