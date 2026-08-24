@@ -1,7 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
-import { assertEquals, assertNotEquals, assertRejects, assertThrows } from "#std/assert";
+import {
+  assertEquals,
+  assertNotEquals,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { FakeTime } from "#std/testing/time";
 import { MemoryTokenStore } from "./memory.ts";
 import type { OAuthTokens, StoredOAuthState } from "../types.ts";

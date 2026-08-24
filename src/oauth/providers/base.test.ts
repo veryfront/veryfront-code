@@ -1,7 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { assert, assertEquals, assertNotEquals, assertRejects, assertThrows } from "#std/assert";
+import {
+  assert,
+  assertEquals,
+  assertNotEquals,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { OAuthProvider, OAuthService } from "./base.ts";
 import type {
   AuthorizationUrlOptions,

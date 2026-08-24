@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { it } from "#veryfront/testing/bdd.ts";
-import { assertEquals } from "#std/assert";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import {
   getAuthorizationUrlOptionsSchema,
   getOAuthProviderConfigSchema,

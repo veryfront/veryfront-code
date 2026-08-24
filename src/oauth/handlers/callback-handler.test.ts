@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { it } from "#veryfront/testing/bdd.ts";
-import { assertEquals, assertNotEquals, assertThrows } from "#std/assert";
+import { assertEquals, assertNotEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { FakeTime } from "#std/testing/time";
 import { createTestEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
