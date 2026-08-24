@@ -5,8 +5,8 @@
  */
 
 import "../../_helpers/contract-init.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
-import { describe, it } from "#veryfront/testing/bdd";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
 import { renderToString } from "react-dom/server";

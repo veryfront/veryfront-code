@@ -86,7 +86,9 @@ export function getObjectSample(obj: unknown): string {
 }
 
 interface ReactElementInternal {
-  $$typeof?: symbol;
+  // React markers are symbols in modern React but numbers in legacy builds, and
+  // arbitrary values reach here from non-React objects, so this stays unnarrowed.
+  $$typeof?: unknown;
   type?: unknown;
   props?: unknown;
 }
@@ -94,7 +96,7 @@ interface ReactElementInternal {
 export function getElementDebugInfo(child: unknown): {
   type: string;
   hasSymbol: boolean;
-  symbolValue?: symbol;
+  symbolValue?: unknown;
   typeValue?: unknown;
 } {
   if (child == null || typeof child !== "object") {

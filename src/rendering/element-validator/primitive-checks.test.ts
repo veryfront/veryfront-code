@@ -274,6 +274,14 @@ describe("primitive-checks", () => {
     it("should report the React element marker the caller logs", () => {
       const info = getElementDebugInfo({ $$typeof: "not-a-symbol", type: "div" });
       expect(info.hasSymbol).toBe(true);
+      expect(info.symbolValue).toBe("not-a-symbol");
+    });
+
+    it("should report a legacy numeric marker verbatim", () => {
+      // Pre-symbol React builds tag elements with the number 0xeac7.
+      const info = getElementDebugInfo({ $$typeof: 0xeac7, type: "div" });
+      expect(info.hasSymbol).toBe(true);
+      expect(info.symbolValue).toBe(0xeac7);
     });
 
     it("should report the React element marker value", () => {
