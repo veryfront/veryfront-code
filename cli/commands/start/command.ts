@@ -1,7 +1,7 @@
 import { cwd, getEnv, onGlobalError } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
 import { isAbsolute, join, resolve } from "veryfront/platform/path";
-import { cliLogger } from "#cli/utils";
+import { cliLogger, isVerbose } from "#cli/utils";
 import { exitProcess, registerTerminationSignals } from "#cli/utils";
 import { generateDefaultProjectId } from "../../utils/project.ts";
 import { clearAllLocalCaches } from "veryfront/transforms/mdx-cache";
@@ -30,6 +30,20 @@ interface ProxySetup {
 export interface StartProjectSelection {
   projectDir: string;
   projectSlug: string | undefined;
+}
+
+export function createGlobalErrorLogContext(
+  error: Error,
+  type: string,
+  fatal: boolean,
+  includeStack: boolean,
+): { message: string; type: string; fatal: boolean; stack?: string } {
+  return {
+    message: error.message,
+    type,
+    fatal,
+    ...(includeStack && error.stack ? { stack: error.stack } : {}),
+  };
 }
 
 function getProjectSlug(path: string): string {
@@ -199,12 +213,10 @@ export async function startCommand(options: StartOptions): Promise<void> {
       error.message.includes("out of memory") ||
       error.message.includes("allocation failed");
 
-    logger.error(`${type}: Application error caught`, {
-      message: error.message,
-      stack: error.stack,
-      type,
-      fatal: isFatal,
-    });
+    logger.error(
+      `${type}: Application error caught`,
+      createGlobalErrorLogContext(error, type, isFatal, isVerbose()),
+    );
 
     if (isFatal) {
       logger.error("Fatal error detected, allowing process exit");

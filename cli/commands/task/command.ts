@@ -15,6 +15,33 @@ import type { TaskArgs } from "./handler.ts";
 
 export interface TaskOptions extends TaskArgs {}
 
+export function parseTaskConfig(value: string | undefined): Record<string, unknown> {
+  if (value === undefined) return {};
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw INVALID_ARGUMENT.create({
+      detail: "Invalid --config JSON: must be a valid JSON object",
+    });
+  }
+
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Invalid --config JSON: must be a valid JSON object",
+    });
+  }
+  return parsed as Record<string, unknown>;
+}
+
+export function taskDiscoverySourceLabel(
+  proxyContext: { branchRef?: string | null } | null | undefined,
+): string {
+  if (proxyContext?.branchRef) return `branch ${proxyContext.branchRef}`;
+  return proxyContext ? "main" : "tasks/...";
+}
+
 function logRuntimeDiscoveryWarnings(
   errors: Array<{ file: string; error: Error }>,
   debug: boolean | undefined,
@@ -49,11 +76,7 @@ export async function taskCommand(options: TaskOptions): Promise<void> {
   await withProjectSourceContext(
     projectDir,
     async ({ adapter, config, configCacheKey, projectId, proxyContext }) => {
-      const sourceLabel = proxyContext?.branchRef
-        ? `branch ${proxyContext.branchRef}`
-        : proxyContext
-        ? "main"
-        : `${projectDir}/tasks/...`;
+      const sourceLabel = taskDiscoverySourceLabel(proxyContext);
 
       cliLogger.info(`Discovering tasks in ${sourceLabel}`);
 
@@ -88,16 +111,7 @@ export async function taskCommand(options: TaskOptions): Promise<void> {
         throw RESOURCE_NOT_FOUND.create({ detail: `Task "${taskName}" not found.` });
       }
 
-      let taskConfig: Record<string, unknown> = {};
-      if (options.config) {
-        try {
-          taskConfig = JSON.parse(options.config);
-        } catch {
-          throw INVALID_ARGUMENT.create({
-            detail: "Invalid --config JSON: must be a valid JSON object",
-          });
-        }
-      }
+      const taskConfig = parseTaskConfig(options.config);
 
       cliLogger.info(`Running task: ${task.name} (${task.id})`);
       cliLogger.info("");
