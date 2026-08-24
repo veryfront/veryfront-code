@@ -1,0 +1,1111 @@
+import { stop as stopEsbuild } from "veryfront/extensions/bundler";
+import "#veryfront/schemas/_test-setup.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import type { FileSystemAdapter, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
+import { clearConfigCache } from "#veryfront/config";
+import { toolRegistry } from "#veryfront/tool/registry.ts";
+import { discoverAll } from "#veryfront/discovery";
+import { taskHandler } from "#veryfront/discovery/handlers/task-handler.ts";
+import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/platform/compat/fs.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
+import { runTriggerTarget } from "#veryfront/trigger/local-runner.ts";
+import {
+  discoverTasks as discoverTasksRaw,
+  findTaskById as findTaskByIdRaw,
+} from "#veryfront/task/discovery.ts";
+import {
+  discoverProjectTaskRuntime as discoverProjectTaskRuntimeRaw,
+} from "#veryfront/task/project-runtime.ts";
+import { isTaskDefinition, type TaskDefinition } from "#veryfront/task/types.ts";
+
+const discoverTasks: typeof discoverTasksRaw = (options) =>
+  discoverTasksRaw({ ...options, allowHostProjectCodeExecution: true });
+const findTaskById: typeof findTaskByIdRaw = (taskId, options) =>
+  findTaskByIdRaw(taskId, { ...options, allowHostProjectCodeExecution: true });
+const discoverProjectTaskRuntime: typeof discoverProjectTaskRuntimeRaw = (options) =>
+  discoverProjectTaskRuntimeRaw({
+    ...options,
+    allowHostProjectCodeExecution: true,
+  });
+
+function createMockAdapter(files: Record<string, string>): FileSystemAdapter {
+  const normalize = (path: string): string => path.replace(/^\/project\/?/, "").replace(/^\/+/, "");
+  const normalizedFiles = Object.fromEntries(
+    Object.entries(files).map(([path, content]) => [normalize(path), content]),
+  );
+
+  return {
+    async readFile(path: string): Promise<string> {
+      const content = normalizedFiles[normalize(path)];
+      if (content === undefined) {
+        throw new Deno.errors.NotFound(`File not found: ${path}`);
+      }
+      return content;
+    },
+    async exists(path: string): Promise<boolean> {
+      const normalizedPath = normalize(path);
+      return (
+        normalizedPath in normalizedFiles ||
+        Object.keys(normalizedFiles).some((key) => key.startsWith(`${normalizedPath}/`))
+      );
+    },
+    async *readDir(path: string) {
+      const normalizedPath = normalize(path);
+      const prefix = normalizedPath.endsWith("/") ? normalizedPath : `${normalizedPath}/`;
+      const seen = new Set<string>();
+
+      for (const key of Object.keys(normalizedFiles)) {
+        if (!key.startsWith(prefix)) continue;
+
+        const rest = key.slice(prefix.length);
+        if (!rest) continue;
+
+        const name = rest.split("/")[0]!;
+        if (seen.has(name)) continue;
+
+        seen.add(name);
+        const isFile = !rest.includes("/");
+        yield { name, isFile, isDirectory: !isFile, isSymlink: false };
+      }
+    },
+    async stat(path: string) {
+      const normalizedPath = normalize(path);
+      const isFile = normalizedPath in normalizedFiles;
+      return {
+        size: isFile ? normalizedFiles[normalizedPath]!.length : 0,
+        isFile,
+        isDirectory: !isFile,
+        isSymlink: false,
+        mtime: new Date(),
+      };
+    },
+    async writeFile() {},
+    async mkdir() {},
+    async remove() {},
+    async makeTempDir() {
+      return "/tmp/mock";
+    },
+    watch() {
+      return null as never;
+    },
+  } satisfies FileSystemAdapter;
+}
+
+function createRuntimeAdapter(files: Record<string, string>): RuntimeAdapter {
+  return {
+    id: "memory",
+    name: "Memory",
+    capabilities: {
+      typescript: true,
+      jsx: true,
+      http2: false,
+      websocket: false,
+      workers: false,
+      fileWatching: false,
+      shell: false,
+      kvStore: false,
+      writableFs: true,
+    },
+    fs: createMockAdapter(files),
+    env: {
+      get: () => undefined,
+      set: () => {},
+      toObject: () => ({}),
+    },
+    server: {} as RuntimeAdapter["server"],
+    async serve() {
+      return {
+        addr: { hostname: "127.0.0.1", port: 0 },
+        async stop() {},
+      };
+    },
+  };
+}
+
+function makeTaskSource(name: string): string {
+  return [
+    "export default {",
+    `  name: "${name}",`,
+    "  run: () => ({ ok: true }),",
+    "};",
+    "",
+  ].join("\n");
+}
+
+/** Present the adapter as the trusted single-project virtual filesystem used by discovery. */
+function markAdapterAsSingleProjectVirtual(adapter: RuntimeAdapter): void {
+  Object.assign(adapter.fs, {
+    getUnderlyingAdapter: () => adapter.fs,
+    getAdapterType: () => "VeryfrontFSAdapter",
+    isVeryfrontAdapter: () => true,
+    isMultiProjectMode: () => false,
+  });
+}
+
+function resetDiscoveryState(): void {
+  clearTranspileCache();
+  clearConfigCache();
+  toolRegistry.clear();
+}
+
+// Effectful discovery uses the shared esbuild service, which outlives each
+// test case until stopEsbuild() runs after this integration group.
+describe("task/discovery effectful", { sanitizeOps: false, sanitizeResources: false }, () => {
+  afterEach(resetDiscoveryState);
+
+  afterAll(async () => {
+    await stopEsbuild();
+  });
+
+  describe("isTaskDefinition ambient runtime isolation", () => {
+    it("uses captured reflection primitives after module initialization", () => {
+      const originalApply = Reflect.apply;
+      const originalGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+      const originalGetPrototypeOf = Reflect.getPrototypeOf;
+      const originalOwnKeys = Reflect.ownKeys;
+      const originalDefineProperty = Object.defineProperty;
+      const originalArrayIterator = Array.prototype[Symbol.iterator];
+      const originalIsArray = Array.isArray;
+      const originalMapGet = Map.prototype.get;
+      const originalMapHas = Map.prototype.has;
+      const originalMapSet = Map.prototype.set;
+      const originalHasOwn = Object.hasOwn;
+      const originalFreeze = Object.freeze;
+      const originalValues = Object.values;
+      const originalSetAdd = Set.prototype.add;
+      const originalSetHas = Set.prototype.has;
+      let poisonCalls = 0;
+      let freezePoisonCalls = 0;
+      const poison = (): never => {
+        poisonCalls++;
+        throw new Error("ambient reflection primitive must not run");
+      };
+      const freezePoison = (<T>(value: T): Readonly<T> => {
+        freezePoisonCalls++;
+        return value;
+      }) as typeof Object.freeze;
+      let output: unknown;
+      let inputSchema: TaskDefinition["inputSchema"];
+      let requirements: TaskDefinition["integrationRequirements"];
+      const sourceInputSchema = {
+        type: "object",
+        required: ["name"],
+        properties: { name: { type: "string" } },
+      };
+
+      try {
+        Reflect.apply = poison;
+        Reflect.getOwnPropertyDescriptor = poison;
+        Reflect.getPrototypeOf = poison;
+        Reflect.ownKeys = poison;
+        Object.defineProperty = poison;
+        Array.prototype[Symbol.iterator] = poison as typeof originalArrayIterator;
+        Array.isArray = poison as unknown as typeof Array.isArray;
+        Map.prototype.get = poison as typeof Map.prototype.get;
+        Map.prototype.has = poison as typeof Map.prototype.has;
+        Map.prototype.set = poison as typeof Map.prototype.set;
+        Object.hasOwn = poison;
+        Object.freeze = freezePoison;
+        Object.values = poison;
+        Set.prototype.add = poison as typeof Set.prototype.add;
+        Set.prototype.has = poison as typeof Set.prototype.has;
+
+        const registered = taskHandler.register(
+          "stable",
+          {
+            run() {
+              return "stable";
+            },
+            inputSchema: sourceInputSchema,
+            integrationRequirements: [{
+              integration: "slack",
+              requiredScopes: ["channels:read"],
+              resources: [{
+                kind: "channel",
+                id: "C012345",
+                parent: { kind: "workspace", id: "T012345" },
+              }],
+            }],
+          },
+          "tasks/stable.ts",
+          "tasks",
+        );
+        output = registered.run({ env: {}, config: {} });
+        inputSchema = registered.inputSchema;
+        requirements = registered.integrationRequirements;
+      } finally {
+        Reflect.apply = originalApply;
+        Reflect.getOwnPropertyDescriptor = originalGetOwnPropertyDescriptor;
+        Reflect.getPrototypeOf = originalGetPrototypeOf;
+        Reflect.ownKeys = originalOwnKeys;
+        Object.defineProperty = originalDefineProperty;
+        Array.prototype[Symbol.iterator] = originalArrayIterator;
+        Array.isArray = originalIsArray;
+        Map.prototype.get = originalMapGet;
+        Map.prototype.has = originalMapHas;
+        Map.prototype.set = originalMapSet;
+        Object.hasOwn = originalHasOwn;
+        Object.freeze = originalFreeze;
+        Object.values = originalValues;
+        Set.prototype.add = originalSetAdd;
+        Set.prototype.has = originalSetHas;
+      }
+
+      sourceInputSchema.properties.name.type = "number";
+      sourceInputSchema.required[0] = "mutated";
+      assertEquals(output, "stable");
+      assertEquals(poisonCalls, 0);
+      assertEquals(freezePoisonCalls, 0);
+      assertEquals(inputSchema, {
+        type: "object",
+        required: ["name"],
+        properties: { name: { type: "string" } },
+      });
+      assertEquals(inputSchema === sourceInputSchema, false);
+      assertEquals(Object.isFrozen(inputSchema), true);
+      assertEquals(Object.isFrozen(inputSchema?.required), true);
+      assertEquals(Object.isFrozen(inputSchema?.properties), true);
+      assertEquals(Object.isFrozen(requirements), true);
+      assertEquals(Object.isFrozen(requirements?.[0]), true);
+      assertEquals(Object.isFrozen(requirements?.[0]?.requiredScopes), true);
+      assertEquals(Object.isFrozen(requirements?.[0]?.resources), true);
+      assertEquals(Object.isFrozen(requirements?.[0]?.resources?.[0]), true);
+      assertEquals(Object.isFrozen(requirements?.[0]?.resources?.[0]?.parent), true);
+    });
+
+    it("keeps JSON schemas detached after serialization primordial poisoning", () => {
+      const originalStringify = JSON.stringify;
+      let poisonCalls = 0;
+      const poison = (): never => {
+        poisonCalls += 1;
+        throw new Error("ambient JSON.stringify must not run");
+      };
+      const sourceInputSchema = {
+        type: "object",
+        properties: { name: { type: "string" } },
+      };
+      let inputSchema: TaskDefinition["inputSchema"];
+
+      try {
+        JSON.stringify = poison;
+        inputSchema = taskHandler.register(
+          "stable-json-schema",
+          { run() {}, inputSchema: sourceInputSchema },
+          "tasks/stable-json-schema.ts",
+          "tasks",
+        ).inputSchema;
+      } finally {
+        JSON.stringify = originalStringify;
+      }
+
+      sourceInputSchema.properties.name.type = "number";
+      assertEquals(poisonCalls, 0);
+      assertEquals(inputSchema, {
+        type: "object",
+        properties: { name: { type: "string" } },
+      });
+      assertEquals(inputSchema === sourceInputSchema, false);
+      assertEquals(Object.isFrozen(inputSchema), true);
+      assertEquals(Object.isFrozen(inputSchema?.properties), true);
+    });
+
+    it("deeply freezes JSON schemas without ambient array iteration", () => {
+      const originalIterator = Array.prototype[Symbol.iterator];
+      const sourceInputSchema = {
+        type: "object",
+        properties: { name: { type: "string" } },
+      };
+      let inputSchema: TaskDefinition["inputSchema"];
+
+      try {
+        Array.prototype[Symbol.iterator] = function (this: unknown[]) {
+          if (
+            this.length === 2 && this[0] === "object" &&
+            typeof this[1] === "object"
+          ) {
+            return Reflect.apply(originalIterator, [], []);
+          }
+          return Reflect.apply(originalIterator, this, []);
+        };
+        inputSchema = taskHandler.register(
+          "stable-json-schema-iteration",
+          { run() {}, inputSchema: sourceInputSchema },
+          "tasks/stable-json-schema-iteration.ts",
+          "tasks",
+        ).inputSchema;
+      } finally {
+        Array.prototype[Symbol.iterator] = originalIterator;
+      }
+
+      assertEquals(Object.isFrozen(inputSchema), true);
+      assertEquals(Object.isFrozen(inputSchema?.properties), true);
+      assertEquals(
+        Object.isFrozen(
+          (inputSchema?.properties as { name: { type: string } }).name,
+        ),
+        true,
+      );
+    });
+
+    it("rejects duplicate integration resources after JSON primordial poisoning", () => {
+      const originalStringify = JSON.stringify;
+      let poisonCalls = 0;
+
+      try {
+        JSON.stringify = (() => `poison-${++poisonCalls}`) as typeof JSON.stringify;
+        assertThrows(() =>
+          taskHandler.register(
+            "duplicate-resources",
+            {
+              run() {},
+              integrationRequirements: [{
+                integration: "slack",
+                resources: [
+                  { kind: "channel", id: "C012345" },
+                  { kind: "channel", id: "C012345" },
+                ],
+              }],
+            },
+            "tasks/duplicate-resources.ts",
+            "tasks",
+          )
+        );
+      } finally {
+        JSON.stringify = originalStringify;
+      }
+
+      assertEquals(poisonCalls, 0);
+    });
+  });
+
+  it("returns legacy discovery results in deterministic id order", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/z-last.ts": makeTaskSource("Last"),
+      "/project/tasks/a-first.ts": makeTaskSource("First"),
+    });
+
+    const result = await discoverTasks({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+    });
+
+    assertEquals(result.errors, []);
+    assertEquals(result.tasks.map((task) => task.id), ["a-first", "z-last"]);
+  });
+
+  it("reports invalid integration requirement metadata during legacy discovery", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/invalid.ts": [
+        "export default {",
+        "  run() {},",
+        '  integrationRequirements: [{ integration: "Slack" }],',
+        "};",
+      ].join("\n"),
+    });
+
+    const result = await discoverTasks({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+    });
+
+    assertEquals(result.tasks, []);
+    assertEquals(result.errors.length, 1);
+    assertEquals(
+      result.errors[0]?.error.includes("must use a lowercase integration identifier"),
+      true,
+    );
+  });
+
+  it("keeps valid sibling tasks after malformed legacy candidates", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/default-first.ts": [
+        "export default {",
+        "  run() {},",
+        '  integrationRequirements: [{ integration: "Slack" }],',
+        "};",
+        'export const validDefaultSibling = { run() { return "default sibling"; } };',
+      ].join("\n"),
+      "/project/tasks/named-first.ts": [
+        "export const aBroken = {",
+        "  run() {},",
+        '  integrationRequirements: [{ integration: "Slack" }],',
+        "};",
+        'export const zValidNamedSibling = { run() { return "named sibling"; } };',
+      ].join("\n"),
+    });
+
+    const result = await discoverTasks({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+    });
+
+    assertEquals(result.tasks.map((task) => [task.id, task.exportName]), [
+      ["default-first", "validDefaultSibling"],
+      ["named-first", "zValidNamedSibling"],
+    ]);
+    assertEquals(result.errors.length, 2);
+    assertEquals(
+      result.errors.every((entry) =>
+        entry.error.includes("must use a lowercase integration identifier")
+      ),
+      true,
+    );
+  });
+
+  it("reports invalid integration requirement metadata during unified discovery", async () => {
+    const tempDir = await Deno.makeTempDir({ prefix: "vf-task-invalid-requirements-" });
+
+    try {
+      await Deno.mkdir(`${tempDir}/tasks`, { recursive: true });
+      await Deno.writeTextFile(
+        `${tempDir}/tasks/sync.ts`,
+        [
+          "export default {",
+          "  run() {},",
+          '  integrationRequirements: [{ integration: "Slack" }],',
+          "};",
+        ].join("\n"),
+      );
+
+      const result = await discoverAll({
+        baseDir: tempDir,
+        allowHostProjectCodeExecution: true,
+      });
+
+      assertEquals(result.tasks.size, 0);
+      assertEquals(result.errors.length, 1);
+      assertEquals(
+        result.errors[0]?.error.message.includes(
+          "must use a lowercase integration identifier",
+        ),
+        true,
+      );
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("keeps valid sibling tasks after malformed unified candidates", async () => {
+    const tempDir = await Deno.makeTempDir({ prefix: "vf-task-invalid-sibling-" });
+
+    try {
+      await Deno.mkdir(`${tempDir}/tasks`, { recursive: true });
+      await Deno.writeTextFile(
+        `${tempDir}/tasks/default-first.ts`,
+        [
+          "export default {",
+          "  run() {},",
+          '  integrationRequirements: [{ integration: "Slack" }],',
+          "};",
+          'export const validDefaultSibling = { run() { return "default sibling"; } };',
+        ].join("\n"),
+      );
+      await Deno.writeTextFile(
+        `${tempDir}/tasks/named-first.ts`,
+        [
+          "export const aBroken = {",
+          "  run() {},",
+          '  integrationRequirements: [{ integration: "Slack" }],',
+          "};",
+          'export const zValidNamedSibling = { run() { return "named sibling"; } };',
+        ].join("\n"),
+      );
+
+      const result = await discoverAll({
+        baseDir: tempDir,
+        allowHostProjectCodeExecution: true,
+      });
+
+      assertEquals([...result.tasks.keys()].sort(), [
+        "default-first",
+        "named-first",
+      ]);
+      assertEquals(result.errors.length, 2);
+      assertEquals(
+        result.errors.every((entry) =>
+          entry.error.message.includes("must use a lowercase integration identifier")
+        ),
+        true,
+      );
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("keeps the file-derived ID when malformed named candidates are rejected", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-task-invalid-id-sibling-" });
+
+    try {
+      await mkdir(`${tempDir}/tasks`, { recursive: true });
+      await writeTextFile(
+        `${tempDir}/tasks/sync.ts`,
+        [
+          'export const aBroken = { run: "not a function" };',
+          'export const zValid = { run() { return "valid sibling"; } };',
+        ].join("\n"),
+      );
+
+      const result = await discoverAll({
+        baseDir: tempDir,
+        allowHostProjectCodeExecution: true,
+      });
+
+      assertEquals([...result.tasks.keys()], ["sync"]);
+      assertEquals(result.tasks.get("sync")?.run({ env: {}, config: {} }), "valid sibling");
+      assertEquals(result.errors.map((entry) => entry.error.message), [
+        "Task definition run must be a function.",
+      ]);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("reports accessor-backed task metadata without invoking the accessor", async () => {
+    const tempDir = await Deno.makeTempDir({ prefix: "vf-task-accessor-metadata-" });
+
+    try {
+      await Deno.mkdir(`${tempDir}/tasks`, { recursive: true });
+      await Deno.writeTextFile(
+        `${tempDir}/tasks/sync.ts`,
+        [
+          "export default {",
+          "  run() {},",
+          "  get integrationRequirements() {",
+          '    throw new Error("integrationRequirements accessor executed");',
+          "  },",
+          "};",
+        ].join("\n"),
+      );
+
+      const result = await discoverAll({
+        baseDir: tempDir,
+        allowHostProjectCodeExecution: true,
+      });
+
+      assertEquals(result.tasks.size, 0);
+      assertEquals(result.errors.length, 1);
+      assertEquals(
+        result.errors[0]?.error.message.includes(
+          "integrationRequirements must be a data property",
+        ),
+        true,
+      );
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("discovers class-instance tasks and preserves their run receiver", async () => {
+    const tempDir = await Deno.makeTempDir({ prefix: "vf-task-class-instance-" });
+
+    try {
+      await Deno.mkdir(`${tempDir}/tasks`, { recursive: true });
+      await Deno.writeTextFile(
+        `${tempDir}/tasks/stateful.ts`,
+        [
+          "class StatefulTask {",
+          '  prefix = "stateful";',
+          "  run() { return this.prefix; }",
+          "}",
+          "export default new StatefulTask();",
+        ].join("\n"),
+      );
+
+      const result = await discoverAll({
+        baseDir: tempDir,
+        allowHostProjectCodeExecution: true,
+      });
+
+      assertEquals(result.errors, []);
+      assertEquals([...result.tasks.keys()], ["stateful"]);
+      assertEquals(result.tasks.get("stateful")?.run({ env: {}, config: {} }), "stateful");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("does not treat Object.prototype.run pollution as a task export", async () => {
+    const tempDir = await Deno.makeTempDir({ prefix: "vf-task-prototype-pollution-" });
+    Object.defineProperty(Object.prototype, "run", {
+      configurable: true,
+      value: () => "polluted",
+    });
+
+    try {
+      assertEquals(isTaskDefinition({}), false);
+      await Deno.mkdir(`${tempDir}/tasks`, { recursive: true });
+      await Deno.writeTextFile(
+        `${tempDir}/tasks/config.ts`,
+        [
+          'export const config = { mode: "safe" };',
+          "export const helper = {};",
+        ].join("\n"),
+      );
+
+      const result = await discoverAll({
+        baseDir: tempDir,
+        allowHostProjectCodeExecution: true,
+      });
+
+      assertEquals(result.errors, []);
+      assertEquals([...result.tasks.keys()], []);
+    } finally {
+      delete (Object.prototype as Record<string, unknown>).run;
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("rejects ambiguous legacy task ids across supported extensions", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/sync.js": makeTaskSource("JavaScript sync"),
+      "/project/tasks/sync.ts": makeTaskSource("TypeScript sync"),
+    });
+
+    const result = await discoverTasks({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+    });
+    const found = await findTaskById("sync", {
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+    });
+
+    assertEquals(result.tasks, []);
+    assertEquals(result.errors.length, 2);
+    assertEquals(
+      result.errors.every((error) => error.error.includes('Duplicate task id "sync"')),
+      true,
+    );
+    assertEquals(found, null);
+  });
+
+  it("discovers default-exported tasks through the discovery module loader", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/ping.ts": [
+        'import { label } from "./shared.ts";',
+        "export default {",
+        "  name: label,",
+        "  schedulable: true,",
+        "  run() {",
+        "    return { ok: true };",
+        "  },",
+        "};",
+      ].join("\n"),
+      "/project/tasks/shared.ts": 'export const label = "Ping task";',
+    });
+
+    const result = await discoverTasks({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+    });
+
+    assertEquals(result.errors, []);
+    assertEquals(result.tasks.map((task) => task.id), ["ping"]);
+    assertEquals(result.tasks[0]?.name, "Ping task");
+  });
+
+  it("prefers a default-exported task over named task exports in the same file", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/ping.ts": [
+        "export const namedTask = {",
+        '  name: "Named task",',
+        "  run() {",
+        "    return { ok: true };",
+        "  },",
+        "};",
+        "",
+        "export default {",
+        '  name: "Default task",',
+        "  run() {",
+        "    return { ok: true };",
+        "  },",
+        "};",
+      ].join("\n"),
+    });
+
+    const result = await discoverTasks({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+    });
+
+    assertEquals(result.errors, []);
+    assertEquals(result.tasks.map((task) => task.id), ["ping"]);
+    assertEquals(result.tasks[0]?.name, "Default task");
+    assertEquals(result.tasks[0]?.exportName, "default");
+  });
+
+  it("continues discovering other tasks after a module load failure", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/broken.ts": 'import "./missing.ts"; export default { run() {} };',
+      "/project/tasks/ping.ts": [
+        "export default {",
+        '  name: "Ping task",',
+        "  run() {",
+        "    return { ok: true };",
+        "  },",
+        "};",
+      ].join("\n"),
+    });
+
+    const result = await discoverTasks({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+    });
+
+    assertEquals(result.tasks.map((task) => task.id), ["ping"]);
+    assertEquals(result.errors.length, 1);
+    assertEquals(result.errors[0]?.filePath, "tasks/broken.ts");
+  });
+
+  it("finds a task by id through the discovery module loader", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/ping.ts": [
+        "export const pingTask = {",
+        '  name: "Ping task",',
+        "  run() {",
+        "    return { ok: true };",
+        "  },",
+        "};",
+      ].join("\n"),
+    });
+
+    const task = await findTaskById("ping", {
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+    });
+
+    assertEquals(task?.id, "ping");
+    assertEquals(task?.name, "Ping task");
+    assertEquals(task?.exportName, "pingTask");
+  });
+
+  it("logs malformed task candidates while finding by id in debug mode", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/invalid.ts": [
+        "export default {",
+        "  run() {},",
+        '  integrationRequirements: [{ integration: "Slack" }],',
+        "};",
+      ].join("\n"),
+    });
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
+
+    let task;
+    try {
+      task = await findTaskById("invalid", {
+        projectDir: "/project",
+        adapter,
+        config: { fs: { type: "veryfront-api" } } as never,
+        debug: true,
+      });
+    } finally {
+      unsubscribe();
+    }
+
+    assertEquals(task, null);
+    assertEquals(
+      records.some((entry) =>
+        entry.component === "task-discovery" &&
+        entry.level === "warn" &&
+        entry.message.includes("must use a lowercase integration identifier")
+      ),
+      true,
+    );
+  });
+
+  it("does not import unrelated task files when finding by id", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/broken.ts": 'import "./missing.ts"; export default { run() {} };',
+      "/project/tasks/ping.ts": [
+        "export const pingTask = {",
+        '  name: "Ping task",',
+        "  run() {",
+        "    return { ok: true };",
+        "  },",
+        "};",
+      ].join("\n"),
+    });
+    const readPaths: string[] = [];
+    const readFile = adapter.fs.readFile.bind(adapter.fs);
+    adapter.fs.readFile = async (path) => {
+      readPaths.push(path);
+      return await readFile(path);
+    };
+
+    const task = await findTaskById("ping", {
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+    });
+
+    assertEquals(task?.id, "ping");
+    assertEquals(task?.name, "Ping task");
+    assertEquals(task?.exportName, "pingTask");
+    const normalizedReadPaths = readPaths.map((path) =>
+      path.replaceAll("\\", "/").replace(/^.*\/tasks\//, "tasks/")
+    );
+    assertEquals(normalizedReadPaths.includes("tasks/ping.ts"), true);
+    assertEquals(normalizedReadPaths.includes("tasks/broken.ts"), false);
+  });
+
+  it("returns null when the matching task module fails to load", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/broken.ts": 'import "./missing.ts"; export default { run() {} };',
+    });
+
+    const task = await findTaskById("broken", {
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+    });
+
+    assertEquals(task, null);
+  });
+
+  it("discovers runtime tasks through adapter-backed project paths", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/remote-tasks/sync.ts": makeTaskSource("Remote Sync"),
+    });
+
+    const discovery = await discoverProjectTaskRuntime({
+      projectDir: "/local-checkout",
+      adapter,
+      config: {
+        fs: { type: "veryfront-api" },
+        ai: { tasks: { discovery: { paths: ["remote-tasks"] } } },
+      },
+      fsAdapter: adapter.fs,
+    });
+
+    assertEquals([...discovery.tasks.keys()], ["sync"]);
+  });
+
+  it("isolates single-project virtual runtime config by cache key", async () => {
+    const firstAdapter = createRuntimeAdapter({
+      "/veryfront.config.ts": [
+        "export default {",
+        '  fs: { type: "veryfront-api", veryfront: { projectSlug: "project-a" } },',
+        '  ai: { tasks: { discovery: { paths: ["first-tasks"] } } },',
+        "};",
+        "",
+      ].join("\n"),
+      "/project/first-tasks/first.ts": makeTaskSource("First"),
+    });
+    markAdapterAsSingleProjectVirtual(firstAdapter);
+
+    const first = await discoverProjectTaskRuntime({
+      projectDir: "/project",
+      adapter: firstAdapter,
+      fsAdapter: firstAdapter.fs,
+      cacheKey: "project-a",
+    });
+    assertEquals([...first.tasks.keys()], ["first"]);
+
+    const secondAdapter = createRuntimeAdapter({
+      "/veryfront.config.ts": [
+        "export default {",
+        '  fs: { type: "veryfront-api", veryfront: { projectSlug: "project-b" } },',
+        '  ai: { tasks: { discovery: { paths: ["second-tasks"] } } },',
+        "};",
+        "",
+      ].join("\n"),
+      "/project/second-tasks/second.ts": makeTaskSource("Second"),
+    });
+    markAdapterAsSingleProjectVirtual(secondAdapter);
+
+    const second = await discoverProjectTaskRuntime({
+      projectDir: "/project",
+      adapter: secondAdapter,
+      fsAdapter: secondAdapter.fs,
+      cacheKey: "project-b",
+    });
+
+    assertEquals([...second.tasks.keys()], ["second"]);
+  });
+
+  it("returns runtime tasks alongside unrelated discovery errors by default", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/sync.ts": makeTaskSource("Sync"),
+      "/project/tools/broken.ts": 'import "./missing.ts"; export default {};\n',
+    });
+
+    const discovery = await discoverProjectTaskRuntime({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } },
+      fsAdapter: adapter.fs,
+    });
+
+    assertEquals([...discovery.tasks.keys()], ["sync"]);
+    assertEquals(discovery.errors.length, 1);
+  });
+
+  it("reports all runtime discovery errors in strict mode", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tools/first.ts": 'import "./missing-one.ts";\n',
+      "/project/tools/second.ts": 'import "./missing-two.ts";\n',
+    });
+
+    const error = await assertRejects(
+      () =>
+        discoverProjectTaskRuntime({
+          projectDir: "/project",
+          adapter,
+          config: { fs: { type: "veryfront-api" } },
+          fsAdapter: adapter.fs,
+          throwOnErrors: true,
+        }),
+      Error,
+      "Runtime discovery failed with 2 errors",
+    );
+    if (!(error instanceof Error)) throw new Error("Expected discovery to reject with an Error");
+    assertEquals(error.message.includes("tools/first.ts"), true);
+    assertEquals(error.message.includes("tools/second.ts"), true);
+  });
+
+  it("runs task targets after project runtime discovery", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tools/runtime-marker.ts": [
+        'import { tool } from "veryfront/tool";',
+        'import { defineSchema } from "veryfront/schemas";',
+        "",
+        "export default tool({",
+        '  id: "runtime_marker",',
+        '  description: "Marks project runtime discovery.",',
+        "  inputSchema: defineSchema((v) => v.object({}))(),",
+        "  execute: () => ({ ok: true }),",
+        "});",
+        "",
+      ].join("\n"),
+      "/project/tasks/probe-runtime.ts": [
+        'import { toolRegistry } from "veryfront/tool";',
+        "",
+        "export default {",
+        '  name: "Probe runtime",',
+        "  run() {",
+        '    return { hasRuntimeTool: toolRegistry.has("runtime_marker") };',
+        "  },",
+        "};",
+        "",
+      ].join("\n"),
+    });
+
+    const result = await runTriggerTarget({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } },
+      target: { kind: "task", id: "probe-runtime" },
+    });
+
+    assertEquals(result.kind, "task");
+    assertEquals(result.id, "probe-runtime");
+    assertEquals(result.output, { hasRuntimeTool: true });
+  });
+
+  it("runs agent targets after project runtime discovery", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/agents/scheduled-agent.ts": [
+        "export default {",
+        '  id: "scheduled-agent",',
+        '  config: { id: "scheduled-agent", model: "auto" },',
+        "  async generate({ input, context }) {",
+        '    return { text: `ran:${input}:${context.schedule_name}`, status: "completed", toolCalls: [] };',
+        "  },",
+        '  async stream() { throw new Error("not used"); },',
+        '  async respond() { throw new Error("not used"); },',
+        '  getMemory() { throw new Error("not used"); },',
+        '  async getMemoryStats() { return { totalMessages: 0, estimatedTokens: 0, type: "test" }; },',
+        "  async clearMemory() {},",
+        "};",
+        "",
+      ].join("\n"),
+    });
+
+    const result = await runTriggerTarget({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } },
+      target: { kind: "agent", id: "scheduled-agent" },
+      agentInput: "Run the fixture.",
+      agentContext: { schedule_name: "Fixture schedule" },
+    });
+
+    assertEquals(result.kind, "agent");
+    assertEquals(result.id, "scheduled-agent");
+    assertEquals(result.output, {
+      text: "ran:Run the fixture.:Fixture schedule",
+      status: "completed",
+      toolCalls: 0,
+    });
+
+    await assertRejects(
+      () =>
+        runTriggerTarget({
+          projectDir: "/project",
+          adapter,
+          config: { fs: { type: "veryfront-api" } },
+          target: { kind: "agent", id: "scheduled-agent" },
+        }),
+      Error,
+      "Local agent trigger runs require an explicit agent input.",
+    );
+
+    await assertRejects(
+      () =>
+        runTriggerTarget({
+          projectDir: "/project",
+          adapter,
+          config: { fs: { type: "veryfront-api" } },
+          target: { kind: "agent", id: "missing-agent" },
+          agentInput: "Run the fixture.",
+        }),
+      Error,
+      'Agent target "missing-agent" not found.',
+    );
+  });
+
+  it("fails when an agent target returns an error status", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/agents/failing-agent.ts": [
+        "export default {",
+        '  id: "failing-agent",',
+        '  config: { id: "failing-agent", model: "auto" },',
+        "  async generate() {",
+        '    return { text: "failure", status: "error", toolCalls: [] };',
+        "  },",
+        '  async stream() { throw new Error("not used"); },',
+        '  async respond() { throw new Error("not used"); },',
+        '  getMemory() { throw new Error("not used"); },',
+        '  async getMemoryStats() { return { totalMessages: 0, estimatedTokens: 0, type: "test" }; },',
+        "  async clearMemory() {},",
+        "};",
+        "",
+      ].join("\n"),
+    });
+
+    await assertRejects(
+      () =>
+        runTriggerTarget({
+          projectDir: "/project",
+          adapter,
+          config: { fs: { type: "veryfront-api" } },
+          target: { kind: "agent", id: "failing-agent" },
+          agentInput: "Run the fixture.",
+        }),
+      Error,
+      'Agent target "failing-agent" failed.',
+    );
+  });
+});

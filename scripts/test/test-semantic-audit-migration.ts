@@ -6814,24 +6814,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
       "removalPr": "PR 4n",
     }),
-    entry("src/task/discovery.test.ts", ["filesystem-write", "process"], {
-      "disposition": "integration-relocation",
-      "owner": "core-runtime",
-      "rationale":
-        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
-      "destination":
-        "tests/integration/semantic-unit-boundary/src/task/discovery.test.ts",
-      "removalPr": "PR 4n",
-    }),
-    entry("src/task/runner.test.ts", ["process"], {
-      "disposition": "replaceable-fake",
-      "owner": "core-runtime",
-      "rationale":
-        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
-      "replacement":
-        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
-      "removalPr": "PR 4n",
-    }),
     entry("src/testing/bdd-env-overlay.test.ts", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "core-runtime",
