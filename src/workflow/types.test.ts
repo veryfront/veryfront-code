@@ -3,9 +3,11 @@ import "#veryfront/schemas/_test-setup.ts";
  * Workflow Types Tests
  */
 
+import { VeryfrontError } from "#veryfront/errors";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
+import { MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS } from "./limits.ts";
 import {
   captureApprovalApprovers,
   generateId,
@@ -92,6 +94,20 @@ describe("parseDuration", () => {
     assertThrows(() => parseDuration("10x"), Error, message);
     assertThrows(() => parseDuration(""), Error, message);
   });
+
+  it("rejects non-string and non-number values before duration parsing", () => {
+    const coercibleDuration = {
+      toString() {
+        return "1s";
+      },
+    };
+
+    assertThrows(
+      () => parseDuration(coercibleDuration as never),
+      Error,
+      "invalid duration type",
+    );
+  });
 });
 
 describe("generateId", () => {
@@ -113,6 +129,36 @@ describe("generateId", () => {
 
   it("should use default 'wf' prefix when no prefix provided", () => {
     assertEquals(generateId().startsWith("wf_"), true);
+  });
+
+  it("rejects non-string prefixes without invoking conversion hooks", () => {
+    let hookCalls = 0;
+    const prefix = {
+      toString() {
+        hookCalls++;
+        return "unsafe";
+      },
+    };
+
+    assertThrows(
+      () => generateId(prefix as never),
+      VeryfrontError,
+      "prefix must be a canonical string",
+    );
+    assertEquals(hookCalls, 0);
+  });
+
+  it("keeps the complete generated ID within the shared identifier limit", () => {
+    const exactPrefix = "x".repeat(MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS - 13);
+    assertEquals(
+      generateId(exactPrefix).length,
+      MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS,
+    );
+    assertThrows(
+      () => generateId(`${exactPrefix}x`),
+      VeryfrontError,
+      "prefix must be a canonical string",
+    );
   });
 });
 
@@ -172,6 +218,12 @@ describe("RunFilterSchema", () => {
       () => RunFilterSchema.parse({ offset: 10_001 }),
       Error,
     );
+    for (const limit of [0, -1, 1.5]) {
+      assertThrows(() => RunFilterSchema.parse({ limit }), Error);
+    }
+    for (const offset of [-1, 1.5]) {
+      assertThrows(() => RunFilterSchema.parse({ offset }), Error);
+    }
   });
 });
 
@@ -212,6 +264,43 @@ describe("validateRetryConfig", () => {
         "plain record",
       );
     }
+  });
+
+  it("rejects accessor and Proxy fields without invoking hooks", () => {
+    let hookCalls = 0;
+    const accessor = Object.defineProperty({}, "maxAttempts", {
+      enumerable: true,
+      get() {
+        hookCalls++;
+        return 2;
+      },
+    });
+    const proxied = new Proxy({ maxAttempts: 2 }, {
+      getPrototypeOf() {
+        hookCalls++;
+        throw new Error("must not run");
+      },
+    });
+
+    assertThrows(
+      () => validateRetryConfig(accessor as never),
+      VeryfrontError,
+      "own data properties",
+    );
+    assertThrows(
+      () => validateRetryConfig(proxied),
+      VeryfrontError,
+      "plain record",
+    );
+    assertEquals(hookCalls, 0);
+  });
+
+  it("rejects a non-function retry predicate", () => {
+    assertThrows(
+      () => validateRetryConfig({ retryIf: "always" } as never),
+      VeryfrontError,
+      "retryIf must be a function",
+    );
   });
 
   it("should reject invalid maxAttempts", () => {
