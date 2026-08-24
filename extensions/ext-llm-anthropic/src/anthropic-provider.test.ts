@@ -4508,6 +4508,95 @@ describe("anthropic-provider", () => {
       }
     });
 
+    it("still grants a pause_turn continuation its pre-header retry budget after a long turn", async () => {
+      const originalNow = performance.now;
+      let now = 0;
+      const pauseTurn = sse(
+        { type: "message_start", message: { usage: { input_tokens: 3 } } },
+        { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "first" } },
+        { type: "content_block_stop", index: 0 },
+        {
+          type: "message_delta",
+          delta: { stop_reason: "pause_turn" },
+          usage: { output_tokens: 1 },
+        },
+        { type: "message_stop" },
+      );
+      let attempts = 0;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () => {
+          attempts++;
+          // The first turn streams for 60s before it pauses.
+          if (attempts === 1) {
+            now = 60_000;
+            return Promise.resolve(streamResponse(pauseTurn));
+          }
+          // The continuation's first attempt gets a transient 529 BEFORE any
+          // headers. requestStream retries that on its own, but only while it
+          // has header budget left. A budget anchored at doStream entry is
+          // already spent here, so the retry never happens and the run dies.
+          if (attempts === 2) {
+            return Promise.resolve(
+              new Response(JSON.stringify({ type: "error" }), {
+                status: 529,
+                headers: { "content-type": "application/json" },
+              }),
+            );
+          }
+          return Promise.resolve(streamResponse(SUCCESS));
+        },
+      }, "claude-opus-4-6");
+
+      try {
+        performance.now = () => now;
+        const result = await runtime.doStream({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+          maxOutputTokens: 64,
+        });
+        const parts = await collectAsync(result.stream);
+        const deltas = parts
+          .filter((part) => (part as { type?: string }).type === "text-delta")
+          .map((part) => (part as { delta?: string }).delta);
+        assertEquals(deltas, ["first", "hello"]);
+        assertEquals(attempts, 3);
+      } finally {
+        performance.now = originalNow;
+      }
+    });
+
+    it("caps how long a replay may wait for headers", async () => {
+      // The replay never gets headers. Only a budget handed to requestStream
+      // can end it; without one it inherits the 40s default.
+      const signals: AbortSignal[] = [];
+      let attempts = 0;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          attempts++;
+          if (init?.signal) signals.push(init.signal);
+          if (attempts === 1) return Promise.resolve(streamResponse(OVERLOADED));
+          return new Promise<Response>(() => {});
+        },
+      }, "claude-opus-4-6");
+
+      const result = await runtime.doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        maxOutputTokens: 64,
+      });
+
+      const startedAt = Date.now();
+      await assertRejects(() => collectAsync(result.stream));
+      const elapsedMs = Date.now() - startedAt;
+
+      assertEquals(elapsedMs < 25_000, true, `replay waited ${elapsedMs}ms for headers`);
+      assertEquals(attempts >= 2, true);
+      assertEquals(signals[1]?.aborted, true);
+    });
+
     it("bounds the replays and surfaces the provider failure when they are exhausted", async () => {
       const { runtime, attemptCount } = runtimeFor([() => streamResponse(OVERLOADED)]);
 

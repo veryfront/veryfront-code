@@ -72,6 +72,19 @@ const MAX_ANTHROPIC_STREAM_REPLAYS = 2;
 const ANTHROPIC_STREAM_REPLAY_DELAY_MS = 1_000;
 
 /**
+ * Ceiling on how long one replay may wait for response headers.
+ *
+ * The shared idle-window budget already stops replays from each opening a
+ * fresh 40-second header budget, but it is generous by the time a replay
+ * starts early in a window. This clamps the wait to the failure it covers: an
+ * `overloaded_error` is the first event of the stream and arrives within about
+ * a second of the headers, so a replay that cannot get headers inside ten
+ * seconds was never going to rescue the run, and spending the rest of the idle
+ * window on it only delays the same failure with a vaguer message.
+ */
+const ANTHROPIC_STREAM_REPLAY_HEADERS_BUDGET_MS = 10_000;
+
+/**
  * Only a typed provider failure the classifier marked retryable may be
  * replayed. Caller cancellation surfaces as an `AbortError`, never a
  * `ProviderError`, so it can never reach a replay.
@@ -616,9 +629,19 @@ export function createAnthropicModelRuntime(
       const enableMcpConnector = usesAnthropicMcpConnector(body);
       throwIfAnthropicRequestAborted(options.abortSignal);
       const providerAbortScope = createProviderAbortScope(options.abortSignal);
-      const streamHeadersBudgetStartedAt = Math.floor(performance.now());
+      // Anchor for the shared header budget. It bounds one *idle window*: the
+      // stretch where the consumer is awaiting a part and the hosted
+      // child-fork watchdog is counting. Replays stay inside the window they
+      // failed in, because a replay only happens when nothing was yielded.
+      //
+      // It must be re-anchored before a pause_turn continuation. That request
+      // opens a new idle window (the previous one ended when its parts were
+      // yielded), and carrying the spent budget into it strips the
+      // continuation of the pre-header retry veryfront-code#3993 added.
+      let streamHeadersBudgetStartedAt = Math.floor(performance.now());
       const issueStream = (
         requestBody: AnthropicRequestBody,
+        headersBudgetCeilingMs?: number,
       ): Promise<ReadableStream<Uint8Array>> =>
         requestStream({
           url,
@@ -635,10 +658,19 @@ export function createAnthropicModelRuntime(
             body: JSON.stringify(requestBody),
             signal: providerAbortScope.controller.signal,
           }),
-          totalHeadersBudgetMs: Math.max(
-            0,
-            DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS -
-              (Math.floor(performance.now()) - streamHeadersBudgetStartedAt),
+          // `requestStream` never shortens a request's *first* attempt to fit
+          // the total budget, so capping a replay's header wait takes both:
+          // the per-attempt deadline and the budget its own retries draw on.
+          ...(headersBudgetCeilingMs === undefined
+            ? {}
+            : { headersTimeoutMs: headersBudgetCeilingMs }),
+          totalHeadersBudgetMs: Math.min(
+            headersBudgetCeilingMs ?? Number.POSITIVE_INFINITY,
+            Math.max(
+              0,
+              DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS -
+                (Math.floor(performance.now()) - streamHeadersBudgetStartedAt),
+            ),
           ),
         });
       let firstResponseStream: ReadableStream<Uint8Array>;
@@ -707,7 +739,10 @@ export function createAnthropicModelRuntime(
             );
             streamReplayCount++;
             throwIfAnthropicRequestAborted(providerAbortScope.controller.signal);
-            responseStream = await issueStream(requestBody);
+            responseStream = await issueStream(
+              requestBody,
+              ANTHROPIC_STREAM_REPLAY_HEADERS_BUDGET_MS,
+            );
             continue;
           }
 
@@ -743,6 +778,7 @@ export function createAnthropicModelRuntime(
           continuationCount++;
           requestBody = createPauseTurnContinuationBody(requestBody, continuationContent);
           throwIfAnthropicRequestAborted(providerAbortScope.controller.signal);
+          streamHeadersBudgetStartedAt = Math.floor(performance.now());
           responseStream = await issueStream(requestBody);
         }
       };
