@@ -405,21 +405,14 @@ function scanMarkdownStructure(content) {
   const ranges = [];
   const reviewMarkers = [];
   const inlineCodeRanges = markdownInlineCodeRanges(content);
-  const possibleInlineCodeRanges = [];
-  appendMarkdownInlineCodeRanges(
-    content,
-    0,
-    content.length,
-    possibleInlineCodeRanges,
-  );
-  let possibleInlineCodeRangeIndex = 0;
-  const isInsidePossibleInlineCode = (index) => {
+  let inlineCodeRangeIndex = 0;
+  const isInsideInlineCode = (index) => {
     while (
-      possibleInlineCodeRanges[possibleInlineCodeRangeIndex]?.[1] <= index
+      inlineCodeRanges[inlineCodeRangeIndex]?.[1] <= index
     ) {
-      possibleInlineCodeRangeIndex += 1;
+      inlineCodeRangeIndex += 1;
     }
-    const range = possibleInlineCodeRanges[possibleInlineCodeRangeIndex];
+    const range = inlineCodeRanges[inlineCodeRangeIndex];
     return range?.[0] <= index && index < range[1];
   };
   let openFence;
@@ -430,6 +423,14 @@ function scanMarkdownStructure(content) {
     if (line.length === 0 && lineStart >= content.length) break;
     const lineEnd = lineStart + line.length;
     const lineWithoutEnding = line.replace(/(?:\r\n|[\r\n])$/, "");
+
+    if (
+      openHtmlComment !== undefined &&
+      openHtmlComment.container === undefined &&
+      isMarkdownInlineCodeBarrier(lineWithoutEnding)
+    ) {
+      openHtmlComment = undefined;
+    }
 
     if (
       openHtmlComment?.container !== undefined &&
@@ -457,7 +458,7 @@ function scanMarkdownStructure(content) {
         relativeCloseStart + 3,
         ranges,
         reviewMarkers,
-        isInsidePossibleInlineCode,
+        isInsideInlineCode,
       );
       lineStart = lineEnd;
       continue;
@@ -509,11 +510,11 @@ function scanMarkdownStructure(content) {
       0,
       ranges,
       reviewMarkers,
-      isInsidePossibleInlineCode,
+      isInsideInlineCode,
     );
     lineStart = lineEnd;
   }
-  if (openHtmlComment !== undefined) {
+  if (openHtmlComment?.container !== undefined) {
     ranges.push([openHtmlComment.start, content.length]);
   } else if (openFence !== undefined) {
     ranges.push([openFence.start, content.length]);
@@ -579,14 +580,14 @@ function scanMarkdownHtmlComments(
   searchStart,
   ranges,
   reviewMarkers,
-  isInsidePossibleInlineCode,
+  isInsideInlineCode,
 ) {
   while (searchStart < line.length) {
     const relativeCommentStart = line.indexOf("<!--", searchStart);
     if (relativeCommentStart < 0) return undefined;
     const commentStart = lineStart + relativeCommentStart;
     if (
-      isInsidePossibleInlineCode(commentStart) ||
+      isInsideInlineCode(commentStart) ||
       isEscapedMarkdownToken(content, commentStart) ||
       isMarkdownIndentedCodeLine(line)
     ) {

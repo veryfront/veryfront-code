@@ -1607,6 +1607,129 @@ describe("automated review gate", () => {
     );
   });
 
+  it("does not let incomplete inline comments cross Markdown blocks", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+
+    for (
+      const visibleRangeAfterIncompleteInlineComment of [
+        ["ordinary text <!--", MALFORMED_CURRENT_RANGE],
+        ["ordinary text <!--", "", MALFORMED_CURRENT_RANGE, "-->"],
+        ["ordinary text <!--", "# next block", MALFORMED_CURRENT_RANGE, "-->"],
+      ]
+    ) {
+      const newerVisibleCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...visibleRangeAfterIncompleteInlineComment,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerVisibleCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+
+    const newerHiddenCurrentRange = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "ordinary text <!--",
+        codeRabbitReviewRange(),
+        "-->",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      html_url:
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-valid-inline-comment",
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerHiddenCurrentRange],
+        },
+        HEAD_SHA,
+      ))?.url,
+      "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+    );
+  });
+
+  it("keeps raw-block backticks from masking later comments", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    for (
+      const [index, earlierComment] of [
+        "<!-- ` -->",
+        "ordinary text <!-- ` -->",
+      ].entries()
+    ) {
+      const newerHiddenCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          earlierComment,
+          "<!--",
+          codeRabbitReviewRange(),
+          "-->",
+          "`",
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        html_url:
+          `https://github.com/veryfront/veryfront-code/pull/1#issuecomment-raw-backtick-${index}`,
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerHiddenCurrentRange],
+          },
+          HEAD_SHA,
+        ))?.url,
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+      );
+    }
+  });
+
+  it("keeps structural review markers outside unmatched inline code", async () => {
+    const olderSuccess = olderCodeRabbitSuccess();
+    const newerMalformedCurrentRange = codeRabbitSummary({
+      body: [
+        "`possible inline code",
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        MALFORMED_CURRENT_RANGE,
+        "<!-- recent_review_end -->",
+        "possible inline code closes`",
+      ].join("\n"),
+      html_url:
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-structural-marker",
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerMalformedCurrentRange],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+  });
+
   it("keeps fence continuation examples excluded", async () => {
     const olderSuccess = olderCodeRabbitSuccess();
 
