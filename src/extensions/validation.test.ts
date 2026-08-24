@@ -5,9 +5,14 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module extensions/validation.test
  */
 
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { detectConflicts, SOURCE_PRIORITY, validateExtension } from "./validation.ts";
+import {
+  detectConflicts,
+  selectContractProviders,
+  SOURCE_PRIORITY,
+  validateExtension,
+} from "./validation.ts";
 import type { Capability, Extension, ResolvedExtension } from "./types.ts";
 
 describe("validateExtension", () => {
@@ -559,6 +564,44 @@ describe("validateExtension", () => {
 describe("SOURCE_PRIORITY", () => {
   it("is immutable process-wide policy", () => {
     assertEquals(Object.isFrozen(SOURCE_PRIORITY), true);
+    assertEquals(
+      SOURCE_PRIORITY,
+      { config: 0, package: 1, project: 2, "local-file": 3, builtin: 4 },
+      "source priority order is process-wide policy: lower number wins",
+    );
+  });
+});
+
+describe("selectContractProviders", () => {
+  it("ranks a project extension above a local-file extension", () => {
+    const projectExt: ResolvedExtension = {
+      extension: {
+        name: "ext-project",
+        version: "1.0.0",
+        capabilities: [],
+        provides: { Bundler: {} },
+      },
+      source: "project",
+      origin: "extensions/ext-project/src/index.ts",
+    };
+    const localExt: ResolvedExtension = {
+      extension: {
+        name: "ext-local",
+        version: "1.0.0",
+        capabilities: [],
+        provides: { Bundler: {} },
+      },
+      source: "local-file",
+      origin: "bundler.extension.ts",
+    };
+
+    for (const candidates of [[localExt, projectExt], [projectExt, localExt]]) {
+      assertStrictEquals(
+        selectContractProviders(candidates).get("Bundler"),
+        projectExt,
+        "a project extension outranks a local-file extension regardless of iteration order",
+      );
+    }
   });
 });
 

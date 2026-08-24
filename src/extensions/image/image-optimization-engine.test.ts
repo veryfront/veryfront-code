@@ -89,6 +89,40 @@ describe("ImageOptimizationEngine contract", () => {
     );
   });
 
+  it("rejects a prototype-inherited cacheIdentity but accepts an inherited optimize", async () => {
+    // The asymmetry is deliberate: a shared prototype must not supply one cache
+    // identity to differently configured instances, while a class implementation
+    // may still define optimize() on its prototype.
+    assertThrows(
+      () =>
+        assertImageOptimizationEngine(
+          Object.assign(Object.create({ cacheIdentity: "inherited@1" }), {
+            optimize: engine().optimize,
+          }),
+        ),
+      TypeError,
+      "cacheIdentity must be an own data property",
+      "cacheIdentity must be owned by the engine instance, not inherited",
+    );
+
+    const inheritedOptimize = Object.assign(
+      Object.create({ optimize: engine().optimize }),
+      { cacheIdentity: "prototype-optimize@1" },
+    );
+    const captured = captureImageOptimizationEngine(inheritedOptimize);
+    assertEquals(
+      (await captured.optimize({
+        input: new Uint8Array([1]),
+        targetWidths: Object.freeze([1]),
+        formats: Object.freeze(["png"]),
+        quality: 80,
+        signal: new AbortController().signal,
+      })).sourceWidth,
+      1,
+      "a prototype-defined optimize must still be captured",
+    );
+  });
+
   it("rejects unstable and oversized identities", () => {
     for (
       const cacheIdentity of [

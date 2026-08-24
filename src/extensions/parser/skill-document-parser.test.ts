@@ -247,6 +247,57 @@ Deno.test("Skill document parser provider observes rejected async results before
   assertEquals(unhandledRejections, 0);
 });
 
+Deno.test("Skill document parser provider observes a rejection behind a configurable own constructor", async () => {
+  let unhandledRejections = 0;
+  let hostileCalls = 0;
+  const onUnhandledRejection = (event: PromiseRejectionEvent): void => {
+    unhandledRejections += 1;
+    event.preventDefault();
+  };
+  globalThis.addEventListener("unhandledrejection", onUnhandledRejection);
+
+  const hostile = function HostileConstructor(): void {
+    hostileCalls += 1;
+  } as unknown as PromiseConstructor;
+  const promise = Promise.reject(new Error("async parser failure"));
+  Object.defineProperty(promise, "constructor", {
+    configurable: true,
+    enumerable: false,
+    writable: true,
+    value: hostile,
+  });
+
+  try {
+    const asyncParser = createSkillDocumentParserProvider(() => promise);
+    assertThrows(
+      () => asyncParser.parseFrontmatter("name: demo"),
+      TypeError,
+      "must be synchronous",
+    );
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  } finally {
+    globalThis.removeEventListener("unhandledrejection", onUnhandledRejection);
+  }
+
+  assertEquals(
+    unhandledRejections,
+    0,
+    "a rejected result with a configurable own constructor must still be observed",
+  );
+  assertEquals(hostileCalls, 0, "the extension-owned constructor must never be invoked");
+
+  const restored = Object.getOwnPropertyDescriptor(promise, "constructor");
+  assertStrictEquals(restored?.value, hostile, "restoration must return the original value");
+  assertEquals(restored?.configurable, true, "restoration must keep the original configurable");
+  assertEquals(restored?.writable, true, "restoration must keep the original writable");
+  assertEquals(
+    restored?.enumerable,
+    false,
+    "clonePropertyDescriptor must restore every original flag",
+  );
+});
+
 Deno.test("Skill document parser provider rejects hostile Promise constructors without invoking them", () => {
   const asynchronousResult = Promise.resolve({});
   let constructorGetterCalls = 0;

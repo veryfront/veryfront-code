@@ -1,4 +1,10 @@
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { register, unregister } from "../contracts.ts";
 import { ensureRedisRuntimeProvider } from "./defaults.ts";
@@ -27,6 +33,50 @@ function createClient(): RedisClient {
   };
 }
 
+/** Data-property stubs for every method `captureNodeRedisClient` must snapshot. */
+const NODE_REDIS_CLIENT_METHODS = [
+  "connect",
+  "hSet",
+  "hGetAll",
+  "hDel",
+  "del",
+  "sAdd",
+  "sRem",
+  "sMembers",
+  "rPush",
+  "lRange",
+  "lIndex",
+  "lSet",
+  "lLen",
+  "xAdd",
+  "xGroupCreate",
+  "xReadGroup",
+  "xAck",
+  "keys",
+  "exists",
+  "expire",
+  "set",
+  "get",
+  "publish",
+  "subscribe",
+  "unsubscribe",
+  "eval",
+  "close",
+  "destroy",
+  "on",
+] as const;
+
+function createModuleClient(
+  omitted?: typeof NODE_REDIS_CLIENT_METHODS[number],
+): Record<string, unknown> {
+  const client: Record<string, unknown> = {};
+  for (const name of NODE_REDIS_CLIENT_METHODS) {
+    if (name === omitted) continue;
+    client[name] = () => Promise.resolve(null);
+  }
+  return client;
+}
+
 function createProvider(): RedisRuntimeProvider {
   return {
     id: "test-redis",
@@ -49,16 +99,33 @@ function createProvider(): RedisRuntimeProvider {
 }
 
 describe("RedisRuntimeProvider", () => {
-  it("keeps error-only Redis event listeners source compatible", () => {
-    const on: NodeRedisClient["on"] = (
-      event: "error",
-      listener: (error: unknown) => void,
-    ): unknown => {
-      void listener;
-      return event;
+  it("forwards module-client error listeners with their own receiver", async () => {
+    const calls: Array<{ receiver: unknown; args: unknown[] }> = [];
+    const client = createModuleClient();
+    client.on = function (this: unknown, ...args: unknown[]) {
+      calls.push({ receiver: this, args });
+      return "registered";
     };
+    const provider = createProvider();
+    provider.loadModule = () => Promise.resolve({ createClient: () => client } as never);
 
-    assertEquals(on("error", () => {}), "error");
+    const module = await captureRedisRuntimeProvider(provider).loadModule();
+    const captured: NodeRedisClient = module.createClient({});
+    const listener = () => {};
+    const result = captured.on("error", listener);
+
+    assertEquals(calls.length, 1, "on must be forwarded exactly once");
+    assertEquals(
+      calls[0]?.receiver === client,
+      true,
+      "the underlying client must stay the receiver of on",
+    );
+    assertEquals(
+      calls[0]?.args,
+      ["error", listener],
+      "on must forward the event name and listener unchanged",
+    );
+    assertEquals(result, "registered", "on must return the underlying return value");
   });
 
   it("captures provider methods without losing their receiver", async () => {
@@ -96,6 +163,28 @@ describe("RedisRuntimeProvider", () => {
       "own data property",
     );
     assertEquals(getterCalls, 0);
+  });
+
+  it("rejects hostile provider ids", () => {
+    for (
+      const id of [
+        "",
+        " padded ",
+        // One code unit past the 256-code-unit bound.
+        "x".repeat(257),
+        "id\0",
+        "id\n",
+        // Decomposed "e" + combining acute: not NFC.
+        "e\u0301xt",
+      ]
+    ) {
+      assertThrows(
+        () => captureRedisRuntimeProvider({ ...createProvider(), id }),
+        TypeError,
+        "bounded canonical string",
+        `provider id ${JSON.stringify(id)} must be rejected at capture`,
+      );
+    }
   });
 
   it("rejects unexpected provider properties", () => {
@@ -154,6 +243,40 @@ describe("RedisRuntimeProvider", () => {
       "must be a data property",
     );
     assertEquals(getterCalls, 0);
+  });
+
+  it("rejects module-client accessors and missing methods without invoking them", async () => {
+    let getterCalls = 0;
+    const client = createModuleClient();
+    Object.defineProperty(client, "get", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return () => Promise.resolve(null);
+      },
+    });
+    const provider = createProvider();
+    provider.loadModule = () => Promise.resolve({ createClient: () => client } as never);
+
+    const module = await captureRedisRuntimeProvider(provider).loadModule();
+    assertThrows(
+      () => module.createClient({}),
+      TypeError,
+      "must be a data property",
+      "an accessor-backed module client method must be rejected",
+    );
+    assertEquals(getterCalls, 0, "module client getters must never run");
+
+    const incomplete = createProvider();
+    incomplete.loadModule = () =>
+      Promise.resolve({ createClient: () => createModuleClient("destroy") } as never);
+    const incompleteModule = await captureRedisRuntimeProvider(incomplete).loadModule();
+    assertThrows(
+      () => incompleteModule.createClient({}),
+      TypeError,
+      "must be exposed",
+      "a module client missing destroy must be rejected",
+    );
   });
 
   it("snapshots proxy-backed clients without reading Redis methods through get", async () => {
@@ -266,6 +389,107 @@ describe("RedisRuntimeProvider", () => {
     );
     assertEquals(getterCalls, 0);
     assertEquals(closeCalls, 1);
+  });
+
+  it("forwards captured publisher calls with their own receiver and requires a disposer", async () => {
+    const receivers: unknown[] = [];
+    const dispose = () => undefined;
+    const implementation = {
+      publish(this: unknown) {
+        receivers.push(this);
+        return Promise.resolve();
+      },
+      subscribe(this: unknown) {
+        receivers.push(this);
+        return Promise.resolve(dispose);
+      },
+      close(this: unknown) {
+        receivers.push(this);
+        return Promise.resolve();
+      },
+    };
+    const provider = createProvider();
+    provider.createEventPublisher = () => Promise.resolve(implementation as never);
+
+    const publisher = await captureRedisRuntimeProvider(provider).createEventPublisher({
+      url: "redis://cache.example.test",
+    });
+    await publisher.publish({ type: "ping" } as never);
+    const disposer = await publisher.subscribe("run-1", () => {});
+    await publisher.close();
+
+    assertEquals(receivers.length, 3, "publish, subscribe, and close must each be forwarded once");
+    for (const receiver of receivers) {
+      assertEquals(
+        receiver === implementation,
+        true,
+        "the publisher implementation must stay the receiver of its own methods",
+      );
+    }
+    assertEquals(disposer === dispose, true, "subscribe must resolve the disposer it returned");
+
+    const invalid = createProvider();
+    invalid.createEventPublisher = () =>
+      Promise.resolve({
+        publish: () => Promise.resolve(),
+        subscribe: () => Promise.resolve("not-a-disposer"),
+        close: () => Promise.resolve(),
+      } as never);
+    const invalidPublisher = await captureRedisRuntimeProvider(invalid).createEventPublisher({
+      url: "redis://cache.example.test",
+    });
+    await assertRejects(
+      () => invalidPublisher.subscribe("run-1", () => {}),
+      TypeError,
+      "must return a disposer",
+    );
+  });
+
+  it("preserves the validation error when handle cleanup also fails", async () => {
+    let getterCalls = 0;
+    let closeCalls = 0;
+    const client = createClient();
+    Object.defineProperty(client, "connect", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return () => Promise.resolve();
+      },
+    });
+    const provider = createProvider();
+    provider.openClient = () =>
+      Promise.resolve({
+        client,
+        close() {
+          closeCalls++;
+          return Promise.reject(new Error("close failed"));
+        },
+      });
+    const captured = captureRedisRuntimeProvider(provider);
+
+    const error = await assertRejects(
+      () => captured.openClient(),
+      AggregateError,
+      "Redis client handle validation and cleanup failed",
+    ) as AggregateError;
+
+    assertInstanceOf(
+      error.errors[0],
+      TypeError,
+      "the validation failure must be the first aggregated error",
+    );
+    assertStringIncludes(
+      error.errors[0].message,
+      "must be a data property",
+      "the validation failure must survive a failing cleanup",
+    );
+    assertStringIncludes(
+      String(error.errors[1]),
+      "close failed",
+      "the cleanup failure must be aggregated alongside it",
+    );
+    assertEquals(getterCalls, 0, "cleanup must not invoke the rejected accessor");
+    assertEquals(closeCalls, 1, "the rejected handle must still be closed once");
   });
 
   it("resolves a provider registered through explicit orchestration", async () => {
