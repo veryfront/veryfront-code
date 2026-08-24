@@ -1,9 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertNotEquals,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { CrossProjectImport } from "#veryfront/transforms/esm/import-parser.ts";
+import type { TransformOptions } from "#veryfront/transforms/esm/types.ts";
+import { CrossProjectSourceTooLargeError } from "#veryfront/modules/server/cross-project-source-limit.ts";
 import { globalCrossProjectCache } from "./cache/index.ts";
 import {
   buildCrossProjectImportCacheKey,
@@ -136,6 +145,9 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
     let injectedContextCount = 0;
     let capacityPath = "";
     let transformedFilePath = "";
+    let capturedProjectDir = "";
+    let capturedAdapter: unknown;
+    let capturedOpts: TransformOptions | undefined;
     let mkdirPath = "";
     let writePath = "";
     let writeCode = "";
@@ -184,8 +196,11 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
         injectedContextCount++;
         headers.set("x-trace-id", "trace-123");
       },
-      transformToESMImpl: async (_source, filePathWithExt) => {
+      transformToESMImpl: async (_source, filePathWithExt, projectDir, adapter, transformOpts) => {
         transformedFilePath = filePathWithExt;
+        capturedProjectDir = projectDir;
+        capturedAdapter = adapter;
+        capturedOpts = transformOpts;
         return "export const transformed = true;";
       },
       loggerImpl: {
@@ -212,6 +227,29 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
     assertEquals(injectedContextCount, 1);
     assertEquals(capacityPath, "cross-project/acme-ui@1.2.3/@/components/Button.tsx");
     assertEquals(transformedFilePath, "cross-project/acme-ui@1.2.3/@/components/Button.tsx");
+    assertEquals(capturedOpts?.ssr, true, "cross-project SSR transform must set ssr");
+    assertEquals(capturedOpts?.dev, true, "dev flag must be forwarded to the transform");
+    assertEquals(
+      capturedOpts?.projectId,
+      "project-a",
+      "projectId must be forwarded to the transform",
+    );
+    assertEquals(
+      capturedOpts?.apiBaseUrl,
+      "https://registry.example.com/api",
+      "apiBaseUrl must be forwarded to the transform",
+    );
+    assertEquals(
+      capturedOpts?.reactVersion,
+      "19.1.1",
+      "reactVersion must be forwarded to the transform",
+    );
+    assertEquals(capturedProjectDir, "/project", "projectDir must be forwarded to the transform");
+    assertStrictEquals(
+      capturedAdapter,
+      denoAdapter,
+      "runtime adapter must be forwarded to the transform",
+    );
     assertEquals(mkdirPath, "/tmp");
     assertEquals(writePath, "/tmp/cross-project-transformed.mjs");
     assertEquals(writeCode, "export const transformed = true;");
@@ -313,7 +351,7 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
           },
           loggerImpl: { debug: () => {}, error: () => {} },
         }),
-      Error,
+      CrossProjectSourceTooLargeError,
       "Cross-project source exceeds size limit",
     );
 
@@ -326,7 +364,7 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
     let errorLogMessage = "";
     let errorLogContext: unknown;
 
-    await assertRejects(
+    const error = await assertRejects(
       () =>
         transformCrossProjectImportFlow({
           crossProjectImport,
@@ -353,9 +391,16 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
             },
           },
         }),
-      Error,
+      VeryfrontError,
       "Failed to fetch https://registry.example.com/acme-ui@1.2.3/@/components/Button.tsx: 404 Not Found",
+    ) as VeryfrontError;
+
+    assertEquals(
+      error.slug,
+      "network-error",
+      "registry fetch failures stay classified as network errors",
     );
+    assertEquals(error.status, 502, "upstream registry failure must map to 502");
 
     assertEquals(errorLogMessage, "[SSR-MODULE-LOADER] Failed to fetch cross-project import");
     const context = errorLogContext as Record<string, unknown> | undefined;
@@ -367,6 +412,128 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
     assertEquals(
       context?.error,
       "Failed to fetch https://registry.example.com/acme-ui@1.2.3/@/components/Button.tsx: 404 Not Found",
+    );
+  });
+
+  it("forwards dependency pinning inputs into the cross-project transform", async () => {
+    globalCrossProjectCache.clear();
+
+    const pinnedDependencies: Readonly<Record<string, string>> = { react: "19.1.1" };
+    const pinningSource = "/project/package.json";
+    let capturedOpts: TransformOptions | undefined;
+
+    const result = await transformCrossProjectImportFlow({
+      crossProjectImport,
+      options: {
+        projectId: "project-a",
+        projectDir: "/project",
+        dev: false,
+        apiBaseUrl: "https://registry.example.com/api",
+        moduleServerOrigin: "https://app.example",
+        reactVersion: "19.1.1",
+        dependencyPinningCacheKey: SNAPSHOT_A_PIN_KEY,
+        dependencyPinningDependencies: pinnedDependencies,
+        dependencyPinningSource: pinningSource,
+        adapter: denoAdapter,
+      },
+      cache: {
+        hashContentAsync: async () => "pinnedhash",
+        getTempPath: async () => "/tmp/cross-project-pinned.mjs",
+        getFs: () => createMockCacheFs(),
+      },
+      withTransformCapacity: async (_syntheticFilePath, operation) => await operation(),
+      fetchImpl: async () => new Response("export const remoteValue = 1;", { status: 200 }),
+      transformToESMImpl: async (
+        _source,
+        _filePathWithExt,
+        _projectDir,
+        _adapter,
+        transformOpts,
+      ) => {
+        capturedOpts = transformOpts;
+        return "export const transformed = true;";
+      },
+      loggerImpl: { debug: () => {}, error: () => {} },
+    });
+
+    assertEquals(result, "/tmp/cross-project-pinned.mjs");
+    assertEquals(
+      capturedOpts?.moduleServerOrigin,
+      "https://app.example",
+      "moduleServerOrigin must reach the cross-project transform",
+    );
+    assertEquals(
+      capturedOpts?.dependencyPinningCacheKey,
+      SNAPSHOT_A_PIN_KEY,
+      "dependency pinning cache key must reach the cross-project transform",
+    );
+    assertStrictEquals(
+      capturedOpts?.dependencyPinningDependencies,
+      pinnedDependencies,
+      "pinned dependency map must reach the cross-project transform unchanged",
+    );
+    assertStrictEquals(
+      capturedOpts?.dependencyPinningSource,
+      pinningSource,
+      "pinning source must reach the cross-project transform unchanged",
+    );
+
+    const expectedCacheKey = buildCrossProjectImportCacheKey({
+      specifier: crossProjectImport.specifier,
+      projectId: "project-a",
+      reactVersion: "19.1.1",
+      registryBaseUrl: "https://registry.example.com",
+      moduleServerOrigin: "https://app.example",
+      dependencyPinningCacheKey: SNAPSHOT_A_PIN_KEY,
+    });
+    assertEquals(
+      globalCrossProjectCache.get(expectedCacheKey)?.tempPath,
+      "/tmp/cross-project-pinned.mjs",
+      "pinned variant must be cached under its pinning-scoped key",
+    );
+  });
+
+  it("throws and caches nothing when the transformed temp file cannot be written", async () => {
+    globalCrossProjectCache.clear();
+
+    const error = await assertRejects(
+      () =>
+        transformCrossProjectImportFlow({
+          crossProjectImport,
+          options: {
+            projectId: "project-a",
+            projectDir: "/project",
+            dev: true,
+            apiBaseUrl: "https://registry.example.com/api",
+            adapter: denoAdapter,
+          },
+          cache: {
+            hashContentAsync: async () => "1234abcd",
+            getTempPath: async () => "/tmp/cross-project-unwritable.mjs",
+            getFs: () =>
+              createMockCacheFs({
+                writeTextFile: () =>
+                  Promise.reject(new Deno.errors.NotFound("/tmp/cross-project-unwritable.mjs")),
+              }),
+          },
+          withTransformCapacity: async (_syntheticFilePath, operation) => await operation(),
+          fetchImpl: async () => new Response("export const remoteValue = 1;", { status: 200 }),
+          transformToESMImpl: async () => "export const transformed = true;",
+          loggerImpl: { debug: () => {}, error: () => {} },
+        }),
+      VeryfrontError,
+      "Failed to write cross-project import cache file: /tmp/cross-project-unwritable.mjs",
+    ) as VeryfrontError;
+
+    assertEquals(
+      error.slug,
+      "cache-error",
+      "a failed cross-project cache write must be classified as a cache error",
+    );
+    assertEquals(
+      globalCrossProjectCache.size,
+      0,
+      "a module whose temp file was not written must not be cached",
     );
   });
 });

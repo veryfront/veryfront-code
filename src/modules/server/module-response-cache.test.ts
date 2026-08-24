@@ -36,8 +36,10 @@ class FakeDistributedCache implements CacheBackend {
   readonly type = "redis" as const;
   readonly values = new Map<string, string>();
   readonly ttlSeconds = new Map<string, number | undefined>();
+  readonly getKeys: string[] = [];
 
   get(key: string): Promise<string | null> {
+    this.getKeys.push(key);
     return Promise.resolve(this.values.get(key) ?? null);
   }
 
@@ -79,6 +81,85 @@ describe("release module response cache", () => {
     assertEquals(recovered?.source, "distributed");
     assertEquals(recovered?.entry, entry);
     assertEquals(typeof distributedCache.ttlSeconds.get(cacheKey), "number");
+  });
+
+  it("serves a remembered response from the in-memory cache without touching the distributed backend", async () => {
+    const distributedCache = new FakeDistributedCache();
+    __setReleaseModuleResponseDistributedCacheForTests(distributedCache);
+
+    const cacheKey = "release-module-response:memory";
+    const entry: ReleaseModuleResponseCacheEntry = {
+      body: "export const value = 1;\n",
+      status: 200,
+      headers: [["cache-control", "public, max-age=31536000, immutable"]],
+    };
+
+    await rememberReleaseModuleResponse(cacheKey, entry);
+
+    const hit = await getReleaseModuleResponse(cacheKey);
+
+    assertEquals(hit?.source, "memory", "a remembered response must be served from the local LRU");
+    assertEquals(hit?.entry, entry, "the local LRU must return the remembered entry");
+    assertEquals(
+      distributedCache.getKeys.length,
+      0,
+      "a local hit must not call the distributed backend",
+    );
+  });
+
+  it("warms the in-memory cache from a distributed hit", async () => {
+    const distributedCache = new FakeDistributedCache();
+    __setReleaseModuleResponseDistributedCacheForTests(distributedCache);
+
+    const cacheKey = "release-module-response:warm";
+    const entry: ReleaseModuleResponseCacheEntry = {
+      body: "export const value = 1;\n",
+      status: 200,
+      headers: [["cache-control", "public, max-age=31536000, immutable"]],
+    };
+
+    await rememberReleaseModuleResponse(cacheKey, entry);
+    clearReleaseModuleResponseCache();
+
+    const first = await getReleaseModuleResponse(cacheKey);
+    assertEquals(
+      first?.source,
+      "distributed",
+      "an empty local cache must fall back to distributed",
+    );
+
+    const second = await getReleaseModuleResponse(cacheKey);
+    assertEquals(second?.source, "memory", "a distributed hit must warm the local LRU");
+    assertEquals(second?.entry, entry, "the warmed local entry must match the distributed entry");
+    assertEquals(
+      distributedCache.getKeys.length,
+      1,
+      "the second read must not re-query the distributed backend",
+    );
+  });
+
+  it("rejects malformed distributed payloads instead of serving them", async () => {
+    for (
+      const raw of [
+        "not json",
+        '{"body":123,"status":200,"headers":[]}',
+        '{"body":"x","status":"200","headers":[]}',
+        '{"body":"x","status":200,"headers":[["a"]]}',
+      ]
+    ) {
+      const distributedCache = new FakeDistributedCache();
+      __setReleaseModuleResponseDistributedCacheForTests(distributedCache);
+
+      const cacheKey = "release-module-response:malformed";
+      distributedCache.values.set(cacheKey, raw);
+      clearReleaseModuleResponseCache();
+
+      assertEquals(
+        await getReleaseModuleResponse(cacheKey),
+        undefined,
+        `malformed distributed payload must not be served: ${raw}`,
+      );
+    }
   });
 
   it("builds cache keys within the distributed backend's allowed charset", () => {

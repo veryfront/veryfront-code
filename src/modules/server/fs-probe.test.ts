@@ -34,6 +34,45 @@ describe("modules/server/fs-probe", () => {
     assertEquals(found, "present");
   });
 
+  it("returns null when no candidate exists", async () => {
+    const found = await findFirstExistingFile(
+      {
+        stat(path) {
+          return Promise.reject(new Deno.errors.NotFound(path));
+        },
+      },
+      ["a.tsx", "a.ts", "a.jsx"],
+    );
+
+    assertEquals(found, null, "a fully missing candidate list must resolve to null, not a path");
+  });
+
+  it("treats a directory candidate as a miss", async () => {
+    const found = await findFirstExistingFile(
+      {
+        stat(path) {
+          return Promise.resolve({ isFile: path !== "directory" });
+        },
+      },
+      ["directory", "file"],
+    );
+
+    assertEquals(found, "file", "a candidate that stats as a directory must not win the probe");
+  });
+
+  it("returns null when every candidate is a directory", async () => {
+    const found = await findFirstExistingFile(
+      {
+        stat() {
+          return Promise.resolve({ isFile: false });
+        },
+      },
+      ["components", "components/nested"],
+    );
+
+    assertEquals(found, null, "directory-only candidates must resolve to null");
+  });
+
   it("propagates operational probe failures", async () => {
     const denied = new Deno.errors.PermissionDenied("denied");
     await assertRejects(

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { ComponentRegistry } from "./index.ts";
@@ -162,6 +162,16 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       await registry.discover();
 
       assertEquals(registry.has("Button"), true);
+      assertEquals(
+        registry.getAll().size,
+        1,
+        "same-named components in different dirs collapse to one entry",
+      );
+      assertEquals(
+        registry.get("Button")?.path,
+        `${projectDir}/islands/Button.tsx`,
+        "the later entry in componentDirs wins a name collision",
+      );
     });
 
     it("should only match tsx and jsx extensions", async () => {
@@ -242,6 +252,13 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
         "export default function Button() {}",
       );
 
+      let reads = 0;
+      const originalReadFile = adapter.fs.readFile.bind(adapter.fs);
+      adapter.fs.readFile = (path: string) => {
+        if (path.includes("Button.tsx")) reads++;
+        return originalReadFile(path);
+      };
+
       const registry = new ComponentRegistry({ projectDir, adapter });
 
       await registry.discover();
@@ -251,7 +268,12 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
 
       assertEquals(component1?.isLoaded, true);
       assertEquals(component2?.isLoaded, true);
-      assertEquals(component1, component2);
+      assertEquals(reads, 1, "second load must be served from the cache, not re-read from disk");
+      assertStrictEquals(
+        component1,
+        component2,
+        "cached load must return the same component instance",
+      );
     });
 
     it("should handle loading all components", async () => {
@@ -381,8 +403,20 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
 
       assertEquals(components.length, 1);
       assertEquals(components[0]?.name, "Button");
-      assertExists(components[0]?.path);
+      assertEquals(
+        components[0]?.path,
+        `${projectDir}/components/Button.tsx`,
+        "listed path is the discovered component path",
+      );
       assertEquals(components[0]?.type, "component");
+      assertEquals(components[0]?.size, 14, "size comes from adapter.fs.stat");
+      const lastModified = components[0]?.lastModified;
+      assertExists(lastModified, "lastModified comes from stat.mtime");
+      assertEquals(
+        Number.isNaN(Date.parse(lastModified)),
+        false,
+        "lastModified is an ISO timestamp",
+      );
     });
 
     it("should handle stat errors gracefully", async () => {
@@ -407,6 +441,8 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
 
       assertEquals(components.length, 1);
       assertEquals(components[0]?.name, "Button");
+      assertEquals(components[0]?.size, undefined, "stat failure omits size");
+      assertEquals(components[0]?.lastModified, undefined, "stat failure omits lastModified");
     });
 
     it("should get component names", async () => {
@@ -500,10 +536,15 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
 
       const discoverPromise = registry.discover();
       const component = registry.get("Button");
+      assertEquals(component, undefined, "get() before discover resolves must return undefined");
 
       await discoverPromise;
 
-      assertExists(component ?? "timing-dependent");
+      assertEquals(
+        registry.get("Button")?.path,
+        `${projectDir}/components/Button.tsx`,
+        "get() after discover resolves must return the discovered component",
+      );
     });
 
     it("should handle loadComponent before discover", async () => {

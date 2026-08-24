@@ -742,11 +742,15 @@ describe("modules/react-loader/transformed-module-coordinator", () => {
     const releaseHeartbeat = deferred();
     const store = new MemoryModuleStore();
     const originalWrite = store.writeFile.bind(store);
+    const order: string[] = [];
     let heartbeatWrites = 0;
     store.writeFile = async (path, content) => {
       if (path.endsWith("/heartbeat") && ++heartbeatWrites === 2) {
         heartbeatEntered.resolve();
         await releaseHeartbeat.promise;
+        await originalWrite(path, content);
+        order.push("heartbeat");
+        return;
       }
       await originalWrite(path, content);
     };
@@ -770,15 +774,17 @@ describe("modules/react-loader/transformed-module-coordinator", () => {
     await new Promise((resolve) => setTimeout(resolve, 5));
     await heartbeatEntered.promise;
 
-    let disposalSettled = false;
     const disposal = coordinator.dispose().then(() => {
-      disposalSettled = true;
+      order.push("dispose");
     });
-    await Promise.resolve();
-    assertEquals(disposalSettled, false);
 
     releaseHeartbeat.resolve();
     await disposal;
+    assertEquals(
+      order,
+      ["heartbeat", "dispose"],
+      "dispose must await the in-flight heartbeat before tearing down the lease",
+    );
     assertEquals(
       store.directories.has(
         `/cache/project/.transformed-module-slots-v2/owners/${OWNER_A}`,

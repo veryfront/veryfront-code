@@ -272,13 +272,41 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
 
       globalModuleCache.set("prefix:project-1:module-a", { tempPath: "/tmp/a", contentHash: "a" });
       globalModuleCache.set("prefix:project-2:module-b", { tempPath: "/tmp/b", contentHash: "b" });
+      globalCrossProjectCache.set("prefix:project-1:mod", {
+        tempPath: "/tmp/x1.mjs",
+        contentHash: "x1",
+      });
+      globalCrossProjectCache.set("cross:acme@1.0.0:project-1-extra", {
+        tempPath: "/tmp/x2.mjs",
+        contentHash: "x2",
+      });
+      globalCrossProjectCache.set("prefix:project-2:mod", {
+        tempPath: "/tmp/y.mjs",
+        contentHash: "y",
+      });
 
       clearSSRModuleCacheForProject("project-1");
 
       assertEquals(globalModuleCache.has("prefix:project-1:module-a"), false);
       assertEquals(globalModuleCache.has("prefix:project-2:module-b"), true);
+      assertEquals(
+        globalCrossProjectCache.has("prefix:project-1:mod"),
+        false,
+        "project invalidation must evict its cross-project entries",
+      );
+      assertEquals(
+        globalCrossProjectCache.has("cross:acme@1.0.0:project-1-extra"),
+        false,
+        "substring-keyed cross-project entries must be evicted too",
+      );
+      assertEquals(
+        globalCrossProjectCache.has("prefix:project-2:mod"),
+        true,
+        "another project's cross-project entries must survive",
+      );
 
       globalModuleCache.clear();
+      globalCrossProjectCache.clear();
     });
 
     it("should clear in-progress entries for a specific project", () => {

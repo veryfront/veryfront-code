@@ -7,9 +7,11 @@ import type { PageRendererLike, PageRenderResult } from "./api-server.ts";
 function createMockRenderer(
   result: Partial<PageRenderResult> = {},
   error?: Error,
+  renderedSlugs: string[] = [],
 ): PageRendererLike {
   return {
-    renderPage: () => {
+    renderPage: (slug: string) => {
+      renderedSlugs.push(slug);
       if (error) throw error;
 
       return Promise.resolve({
@@ -45,11 +47,16 @@ describe("modules/server/api-server", () => {
     });
 
     it("should handle data request for a page", async () => {
+      const renderedSlugs: string[] = [];
       const server = new APIServer({
-        renderer: createMockRenderer({
-          html: "<h1>About</h1>",
-          frontmatter: { title: "About" },
-        }),
+        renderer: createMockRenderer(
+          {
+            html: "<h1>About</h1>",
+            frontmatter: { title: "About" },
+          },
+          undefined,
+          renderedSlugs,
+        ),
       });
 
       const response = await server.handleRequest("/_veryfront/data/about.json");
@@ -58,13 +65,15 @@ describe("modules/server/api-server", () => {
 
       const body = await response?.json();
       assertEquals(body.slug, "about");
+      assertEquals(renderedSlugs, ["about"], "page slug must be passed through to renderPage");
       assertEquals(body.html, "<h1>About</h1>");
       assertEquals(body.frontmatter.title, "About");
     });
 
     it("should handle index page (empty slug)", async () => {
+      const renderedSlugs: string[] = [];
       const server = new APIServer({
-        renderer: createMockRenderer({ html: "<h1>Home</h1>" }),
+        renderer: createMockRenderer({ html: "<h1>Home</h1>" }, undefined, renderedSlugs),
       });
 
       const response = await server.handleRequest("/_veryfront/data/.json");
@@ -73,6 +82,7 @@ describe("modules/server/api-server", () => {
       const body = await response?.json();
       // Empty slug should default to "index" for rendering
       assertEquals(body.slug, "");
+      assertEquals(renderedSlugs, ["index"], "empty slug must render the index document");
     });
 
     it("should include headings when present", async () => {
@@ -124,13 +134,19 @@ describe("modules/server/api-server", () => {
     });
 
     it("should handle nested page slugs", async () => {
+      const renderedSlugs: string[] = [];
       const server = new APIServer({
-        renderer: createMockRenderer({ html: "<p>Blog post</p>" }),
+        renderer: createMockRenderer({ html: "<p>Blog post</p>" }, undefined, renderedSlugs),
       });
 
       const response = await server.handleRequest("/_veryfront/data/blog/my-post.json");
       const body = await response?.json();
       assertEquals(body.slug, "blog/my-post");
+      assertEquals(
+        renderedSlugs,
+        ["blog/my-post"],
+        "nested slug must be passed through to renderPage",
+      );
     });
   });
 });

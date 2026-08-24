@@ -62,6 +62,44 @@ describe("modules/react-loader/ssr-module-loader/tmp-paths", () => {
     );
   });
 
+  it("builds hashed temp module paths for every accepted source extension", () => {
+    const tmpDir = `/cache/mdx/${hashCodeHex("my/project")}/${hashCodeHex("release-1")}`;
+
+    assertEquals(
+      buildTempModulePath(
+        tmpDir,
+        "/repo/project/src/Card.jsx",
+        "/repo/project",
+        "0.1.7",
+        "deadbeefcafebabe",
+      ),
+      `${tmpDir}/src/Card.v0-1-7.deadbeef.js`,
+      "jsx sources must get a versioned, content-hashed .js temp path",
+    );
+    assertEquals(
+      buildTempModulePath(
+        tmpDir,
+        "/repo/project/src/Post.mdx",
+        "/repo/project",
+        "0.1.7",
+        "deadbeefcafebabe",
+      ),
+      `${tmpDir}/src/Post.v0-1-7.deadbeef.js`,
+      "mdx sources must get a versioned, content-hashed .js temp path",
+    );
+    assertEquals(
+      buildTempModulePath(
+        tmpDir,
+        "/repo/project/src/util.ts",
+        "/repo/project",
+        "0.1.7",
+        "deadbeefcafebabe",
+      ),
+      `${tmpDir}/src/util.v0-1-7.deadbeef.js`,
+      "ts sources must get a versioned, content-hashed .js temp path",
+    );
+  });
+
   it("builds hashed JavaScript paths for compiled framework .src files", () => {
     const tempPath = buildTempModulePath(
       "/cache/mdx/v0-1-1154/project/source",

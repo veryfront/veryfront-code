@@ -148,9 +148,40 @@ describe(
         assertEquals(getBatchCacheStats().size, 0);
       });
 
-      it("should clear cache for specific project slug", () => {
-        clearBatchCache("my-project");
-        assertEquals(getBatchCacheStats().size, 0);
+      it("should clear cache for specific project slug", async () => {
+        clearBatchCache();
+
+        async function cacheOneTransform(projectSlug: string): Promise<void> {
+          const adapter = createMockAdapter();
+          adapter.fs.files.set(`/test-project/${projectSlug}.tsx`, "export const value = 1;");
+          const url = new URL("/_vf_modules/_batch", "http://localhost:8080");
+          url.searchParams.set("paths", `${projectSlug}.js`);
+          const response = await handleModuleBatch(new Request(url.toString()), {
+            projectDir: "/test-project",
+            adapter,
+            projectSlug,
+            releaseId: `rel-${projectSlug}`,
+            dev: false,
+          });
+          assertEquals(response.status, 200, `project ${projectSlug} must serve its module`);
+          await response.text();
+        }
+
+        await cacheOneTransform("a");
+        await cacheOneTransform("b");
+        assertEquals(getBatchCacheStats().size, 2, "both projects cached a transform");
+
+        clearBatchCache("a");
+
+        const stats = getBatchCacheStats();
+        assertEquals(stats.size, 1, "clearing project a must leave project b's entry");
+        assertEquals(
+          stats.keys.every((key) => key.startsWith("b:")),
+          true,
+          "clearing project a must leave only project b entries",
+        );
+
+        clearBatchCache();
       });
     });
 
@@ -382,6 +413,65 @@ describe(
         const code = await response.text();
         assertEquals(code.includes("exists.js"), true);
         assertEquals(code.includes("Failed: missing.js"), true);
+      });
+
+      it("escapes module paths in the batch bundle", async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set("/test-project/exists.tsx", "export const x = 1;");
+        const attackPath = 'evil");globalThis.__pwned=1;//';
+
+        const response = await handleModuleBatch(
+          createBatchRequest(`exists.js,${attackPath}`),
+          createOptions({ adapter }),
+        );
+
+        assertEquals(response.status, 200);
+        const code = await response.text();
+        assertStringIncludes(
+          code,
+          `__vf_batch_modules.set(${JSON.stringify(attackPath)}`,
+          "the failing path must be emitted as a JSON-escaped literal",
+        );
+        assertEquals(
+          code.includes('set("evil");'),
+          false,
+          "an attacker-supplied path must not close the string literal",
+        );
+      });
+
+      it("escapes transform error text in the batch bundle", async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set("/test-project/exists.tsx", "export const x = 1;");
+        adapter.fs.files.set("/test-project/broken.tsx", "export const b = 1;");
+        const errorMessage = 'boom "quoted" \\ backslash\nnewline';
+        const readFile = adapter.fs.readFile;
+        adapter.fs.readFile = (path: string) =>
+          path.includes("broken") ? Promise.reject(new Error(errorMessage)) : readFile(path);
+
+        const response = await handleModuleBatch(
+          createBatchRequest("exists.js,broken.js"),
+          createOptions({ adapter }),
+        );
+
+        assertEquals(response.status, 200);
+        const code = await response.text();
+        assertStringIncludes(
+          code,
+          `{ __vf_error: ${JSON.stringify(errorMessage)} }`,
+          "the transform error must be emitted as a JSON-escaped literal",
+        );
+        assertEquals(
+          code.includes('__vf_error: "boom "'),
+          false,
+          "a quote in the error message must not close the string literal",
+        );
+        for (const line of code.split("\n")) {
+          assertEquals(
+            line.trimStart().startsWith("newline"),
+            false,
+            "a newline in the error message must not start a new statement",
+          );
+        }
       });
 
       it("should set immutable cache headers for non-dev mode", async () => {

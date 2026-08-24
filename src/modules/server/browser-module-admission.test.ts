@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   classifyBrowserModuleAbsoluteSourcePath,
+  classifyBrowserModuleSourcePath,
   isProtectedBrowserModulePath,
 } from "./browser-module-admission.ts";
 
@@ -19,6 +20,20 @@ describe("browser module admission", () => {
         ".env.production",
       ]
     ) {
+      assertEquals(classifyBrowserModuleSourcePath(path).protectionReason, "metadata", path);
+    }
+  });
+
+  it("protects hidden project paths", () => {
+    for (
+      const path of [
+        "config/.env.local",
+        ".git/config.js",
+        "src/.secrets/key.ts",
+        ".vscode/settings.js",
+      ]
+    ) {
+      assertEquals(classifyBrowserModuleSourcePath(path).protectionReason, "hidden-path", path);
       assertEquals(isProtectedBrowserModulePath(path), true, path);
     }
   });

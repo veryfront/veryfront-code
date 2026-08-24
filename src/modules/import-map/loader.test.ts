@@ -174,7 +174,17 @@ describe("modules/import-map/loader", () => {
 
     it("should not include npm: specifiers in output", async () => {
       const adapter = createMockAdapter();
-      const { imports } = await loadImportMap("/any-project", adapter);
+      adapter.fs.files.set(
+        "/project-with-scoped-npm/deno.json",
+        JSON.stringify({
+          scopes: {
+            "/app/": {
+              lodash: "npm:lodash@4",
+            },
+          },
+        }),
+      );
+      const { imports, scopes } = await loadImportMap("/project-with-scoped-npm", adapter);
 
       for (const [key, value] of Object.entries(imports ?? {})) {
         assert(
@@ -182,6 +192,21 @@ describe("modules/import-map/loader", () => {
           `Import "${key}" should not use npm: specifier, got: ${value}`,
         );
       }
+
+      for (const [scope, record] of Object.entries(scopes ?? {})) {
+        for (const [key, value] of Object.entries(record)) {
+          assert(
+            !value.startsWith("npm:"),
+            `Scoped import "${key}" in "${scope}" should not use npm: specifier, got: ${value}`,
+          );
+        }
+      }
+
+      assertEquals(
+        scopes?.["/app/"]?.lodash,
+        "https://esm.sh/lodash@4?target=es2022",
+        "scoped npm: specifiers must be normalized to esm.sh",
+      );
     });
 
     it("should return consistent results for same path", async () => {

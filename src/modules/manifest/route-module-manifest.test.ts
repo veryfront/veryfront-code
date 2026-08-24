@@ -97,6 +97,16 @@ describe("Route Module Manifest", () => {
     const manifest = getRouteManifest("test-project", "about");
     assertExists(manifest);
     assertEquals(manifest.renderCount, 1);
+    assertEquals(
+      manifest.moduleCount,
+      2,
+      "both the critical and the collected non-critical module must be recorded",
+    );
+    assertEquals(
+      getRouteModulePaths("test-project", "about"),
+      ["pages/about.js", "components/Nav.js"],
+      "critical modules come first in loadOrder, then collected non-critical ones",
+    );
   });
 
   it("getCriticalModulePaths returns critical modules only", () => {
@@ -107,6 +117,12 @@ describe("Route Module Manifest", () => {
     const stats = getManifestStats();
     assertEquals(stats.routeCount, 2);
     assertEquals(stats.routes.length, 2);
+    assertEquals(stats.totalModules, 4, "totalModules must sum moduleCount across tracked routes");
+
+    const about = stats.routes.find((route) => route.route.endsWith("about"));
+    assertExists(about);
+    assertEquals(about.moduleCount, 2, "about route reports its recorded module count");
+    assertEquals(about.renderCount, 1, "about route reports its render count");
   });
 
   it("clearProjectManifests removes project manifests", () => {
