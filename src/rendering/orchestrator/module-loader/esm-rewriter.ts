@@ -153,10 +153,15 @@ async function fetchEsmModuleWithin(
   code = await rewriteEsmPaths(code, urlBase);
 
   const allEsmUrls = new Set<string>();
-  const urlPattern = /["'](https:\/\/esm\.sh\/[^"']+)["']/g;
-
-  for (let match = urlPattern.exec(code); match; match = urlPattern.exec(code)) {
-    if (match[1]) allEsmUrls.add(match[1]);
+  try {
+    for (const imported of await parseImports(code)) {
+      if (imported.n?.startsWith("https://esm.sh/")) allEsmUrls.add(imported.n);
+    }
+  } catch {
+    const urlPattern = /["'`](https:\/\/esm\.sh\/[^"'`]+)["'`]/g;
+    for (let match = urlPattern.exec(code); match; match = urlPattern.exec(code)) {
+      if (match[1]) allEsmUrls.add(match[1]);
+    }
   }
 
   const urlArray = Array.from(allEsmUrls);

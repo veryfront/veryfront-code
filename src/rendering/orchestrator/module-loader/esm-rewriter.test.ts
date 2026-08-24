@@ -193,6 +193,14 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       );
     });
 
+    it("prefetches a template-literal dynamic import", async () => {
+      const code = "const load = () => import(`./chunk.js`);";
+      assertEquals(
+        await rewriteEsmPaths(code, urlBase),
+        "const load = () => import(`https://esm.sh/v135/react-dom@18.2.0/es2022/chunk.js`);",
+      );
+    });
+
     it("leaves a specifier-shaped path inside a comment alone", async () => {
       const code = `// import "/v135/react.js"\nconst x = 1;`;
       assertEquals(
@@ -252,6 +260,23 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       const rootContent = files.get(result) ?? "";
       assertMatch(rootContent, /file:\/\//);
       assertEquals(/esm\.sh\/a/.test(rootContent), false);
+    });
+
+    it("prefetches successful template-literal dynamic imports", async () => {
+      const esmCache = new Map<string, string>();
+      globalThis.fetch = ((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "https://esm.sh/root") {
+          return Promise.resolve(jsonResponse("const load = () => import(`https://esm.sh/a`);"));
+        }
+        if (url === "https://esm.sh/a") return Promise.resolve(jsonResponse("export const a = 1;"));
+        return Promise.resolve(new Response("not found", { status: 404 }));
+      }) as typeof fetch;
+
+      const result = await fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache);
+      const rootContent = files.get(result) ?? "";
+      assertMatch(rootContent, /file:\/\//);
+      assertEquals(rootContent.includes("https://esm.sh/a"), false);
     });
 
     it("does not abort the render when a nested URL fetch fails", async () => {
