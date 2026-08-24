@@ -573,13 +573,8 @@ describe("rendering/cache/stores/api-store", () => {
           async () => {
             await store.set("distributed-stale-key", payload);
 
-            // The stale window is 60s wide, so the backend ttl must be 60
-            // (59 only if a full second of test time already elapsed).
-            assertEquals(
-              receivedTtl === 60 || receivedTtl === 59,
-              true,
-              `backend ttl must cover the full 60s stale window, not just ttlSeconds (got ${receivedTtl})`,
-            );
+            const expectedTtl = Math.max(5, Math.ceil((staleUntil - Date.now()) / 1_000));
+            assertEquals(receivedTtl, expectedTtl, "backend ttl must cover the full stale window");
             assertEquals(
               receivedValue.includes('"staleUntil"'),
               true,

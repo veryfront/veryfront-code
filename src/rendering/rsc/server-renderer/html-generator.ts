@@ -24,7 +24,9 @@ export function renderAttributes(props: Record<string, unknown>): string {
     if (value == null || SKIP_PROPS.has(key)) continue;
     if (!isSafeSerializedPropName(key)) continue;
 
-    const attrName = REACT_PROP_ATTRIBUTE_NAMES[key] ?? key;
+    const attrName = Object.hasOwn(REACT_PROP_ATTRIBUTE_NAMES, key)
+      ? REACT_PROP_ATTRIBUTE_NAMES[key]!
+      : key;
 
     if (typeof value === "boolean") {
       if (value) attrs.push(attrName);

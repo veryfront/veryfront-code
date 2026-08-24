@@ -72,6 +72,7 @@ describe("rendering/rsc/server-renderer/html-generator", () => {
         ONLOAD: "alert(1)",
         className: "safe",
         htmlFor: "field",
+        constructor: "safe-constructor",
         "aria-label": "Field",
         "data-test-id": "field",
       });
@@ -80,6 +81,7 @@ describe("rendering/rsc/server-renderer/html-generator", () => {
       assertEquals(result.toLowerCase().includes("onclick"), false);
       assertEquals(result.toLowerCase().includes("onload"), false);
       assertEquals(result.includes('class="safe"'), true);
+      assertEquals(result.includes('constructor="safe-constructor"'), true);
       assertEquals(
         result.includes('for="field"'),
         true,
