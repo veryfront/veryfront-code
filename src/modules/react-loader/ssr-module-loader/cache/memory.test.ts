@@ -287,6 +287,16 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
         tempPath: "/tmp/x2.mjs",
         contentHash: "x2",
       });
+      const colonSpecifierKey = buildCrossProjectImportCacheKey({
+        projectId: "project-1",
+        specifier: "@acme/component:variant:deep",
+        reactVersion: "1.0.0",
+        registryBaseUrl: "https://registry.example.com",
+      });
+      globalCrossProjectCache.set(colonSpecifierKey, {
+        tempPath: "/tmp/colon-specifier.mjs",
+        contentHash: "colon-specifier",
+      });
       globalCrossProjectCache.set("prefix:project-2:mod", {
         tempPath: "/tmp/y.mjs",
         contentHash: "y",
@@ -305,6 +315,11 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
         globalCrossProjectCache.has(prefixSharingProjectKey),
         true,
         "a prefix-sharing project's cross-project entry must survive exact project invalidation",
+      );
+      assertEquals(
+        globalCrossProjectCache.has(colonSpecifierKey),
+        false,
+        "cross-project entries with colon-containing specifiers must be evicted for their owner",
       );
       assertEquals(
         globalCrossProjectCache.has("prefix:project-2:mod"),

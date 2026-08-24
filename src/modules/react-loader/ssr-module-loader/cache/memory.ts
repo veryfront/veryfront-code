@@ -348,6 +348,25 @@ export function clearSSRModuleCache(): void {
   });
 }
 
+/**
+ * Cross-project cache keys put the raw import specifier before the owning
+ * project id, so the specifier may contain arbitrary `:` characters. Parse
+ * from the stable `:registry:` suffix instead of assuming fixed segments.
+ */
+function isCrossProjectCacheKeyForProject(key: string, projectId: string): boolean {
+  const registryMarker = ":registry:";
+  const markerIndex = key.lastIndexOf(registryMarker);
+  if (markerIndex < 0) return false;
+
+  const baseKey = key.slice(0, markerIndex);
+  const reactVersionSeparator = baseKey.lastIndexOf(":");
+  if (reactVersionSeparator < 0) return false;
+  const projectSeparator = baseKey.lastIndexOf(":", reactVersionSeparator - 1);
+  if (projectSeparator < 0) return false;
+
+  return baseKey.slice(projectSeparator + 1, reactVersionSeparator) === projectId;
+}
+
 export function clearSSRModuleCacheForProject(
   projectId: string,
   options: ClearSSRModuleCacheForProjectOptions = {},
@@ -363,7 +382,9 @@ export function clearSSRModuleCacheForProject(
   }
 
   for (const key of globalCrossProjectCache.keys()) {
-    if (!isKeyForProject(key, projectId)) continue;
+    if (!isCrossProjectCacheKeyForProject(key, projectId) && !isKeyForProject(key, projectId)) {
+      continue;
+    }
     globalCrossProjectCache.delete(key);
   }
 
