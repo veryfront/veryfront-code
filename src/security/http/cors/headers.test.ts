@@ -52,6 +52,51 @@ describe("security/http/cors/headers", () => {
     assertEquals(response?.headers.get("Access-Control-Expose-Headers"), null);
   });
 
+  it("emits a configured exposed-header policy verbatim", async () => {
+    const response = await applyCORSHeaders({
+      request: new Request("http://localhost/", {
+        headers: { origin: "https://app.example.com" },
+      }),
+      response: new Response("ok"),
+      config: {
+        origin: "https://app.example.com",
+        exposedHeaders: ["X-Total-Count", "X-Page"],
+      },
+    });
+
+    assertEquals(
+      response?.headers.get("Access-Control-Allow-Origin"),
+      "https://app.example.com",
+      "a valid policy is applied",
+    );
+    assertEquals(
+      response?.headers.get("Access-Control-Expose-Headers"),
+      "X-Total-Count, X-Page",
+      "a configured exposedHeaders policy is emitted verbatim in order",
+    );
+  });
+
+  it("replaces a stale exposed-header value rather than merging it", async () => {
+    const response = await applyCORSHeaders({
+      request: new Request("http://localhost/", {
+        headers: { origin: "https://app.example.com" },
+      }),
+      response: new Response("ok", {
+        headers: { "Access-Control-Expose-Headers": "X-Stale" },
+      }),
+      config: {
+        origin: "https://app.example.com",
+        exposedHeaders: ["X-Total-Count", "X-Page"],
+      },
+    });
+
+    assertEquals(
+      response?.headers.get("Access-Control-Expose-Headers"),
+      "X-Total-Count, X-Page",
+      "an upstream exposed-header value is replaced by the policy, never merged with it",
+    );
+  });
+
   it("does not partially apply malformed or unknown CORS configuration", async () => {
     const request = new Request("http://localhost/", {
       headers: { origin: "https://app.example.com" },

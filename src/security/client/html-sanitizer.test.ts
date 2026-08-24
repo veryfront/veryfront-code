@@ -112,6 +112,35 @@ describe("validateTrustedHtml", () => {
       );
     });
   });
+
+  describe("default (no options) call shape", () => {
+    // Every case above opts into strict mode, but the three innerHTML sinks
+    // (rsc/client-dom.ts, rsc/client-boot.ts, routing/client/page-transition.ts)
+    // call this with no options at all, so the no-options shape is pinned here.
+    //
+    // The dev/production arms of that shape cannot be pinned from a unit test:
+    // the module-private isDevMode() reads globalThis.__VERYFRONT_DEV__ and
+    // Deno.env.get("VERYFRONT_ENV") directly and the options bag exposes no
+    // override, so those arms live in
+    // tests/integration/security/html-sanitizer-dev-mode.test.ts.
+    it("returns clean HTML unchanged when called without options", () => {
+      const html = "<div><p>Hello <strong>world</strong></p></div>";
+      assertEquals(
+        validateTrustedHtml(html),
+        html,
+        "production callers pass no options and must get their HTML back untouched",
+      );
+    });
+
+    it("throws in strict mode even when warnings are disabled", () => {
+      assertThrows(
+        () => validateTrustedHtml('<svg onload="alert(1)"></svg>', { strict: true, warn: false }),
+        Error,
+        "event handler",
+        "warn only controls logging; strict alone decides whether the call throws",
+      );
+    });
+  });
 });
 
 describe("jsonForInlineScript", () => {
