@@ -779,6 +779,78 @@ describe("ragStore", () => {
     });
   });
 
+  it("ranks local chunks by cosine similarity and honors topK and threshold", async () => {
+    // Vectors are keyed off marker substrings so the query ("lookup") stays
+    // distinct from the documents while leaning toward the alpha document.
+    registerEmbeddingProvider("ranking", () =>
+      ({
+        specificationVersion: "v2",
+        provider: "ranking",
+        modelId: "test",
+        maxEmbeddingsPerCall: undefined,
+        supportsParallelCalls: true,
+        async doEmbed({ values }: { values: string[] }) {
+          return {
+            embeddings: values.map((value) => {
+              const vector = new Array<number>(1536).fill(0);
+              const normalized = value.toLowerCase();
+              const [first, second] = normalized.includes("lookup")
+                ? [1, 0]
+                : normalized.includes("alpha")
+                ? [1, 0.2]
+                : [0.2, 1];
+              vector[1] = first;
+              vector[2] = second;
+              return vector;
+            }),
+            usage: { tokens: 0 },
+            rawResponse: undefined,
+            warnings: [],
+          };
+        },
+      }) as never);
+
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const store = ragStore({ model: "ranking/test", storagePath });
+
+      const alphaId = await store.ingest("Alpha Doc", "Alpha body text", {
+        source: "upload:alpha.txt",
+        type: "txt",
+      });
+      const betaId = await store.ingest("Beta Doc", "Beta body text", {
+        source: "upload:beta.txt",
+        type: "txt",
+      });
+
+      const ranked = await store.search("alpha lookup", { topK: 2 });
+      assertEquals(
+        ranked.map((result) => result.documentId),
+        [alphaId, betaId],
+        "the higher-scoring chunk must sort first",
+      );
+      assertEquals(
+        ranked.map((result) => result.title),
+        ["Alpha Doc", "Beta Doc"],
+        "the document title must be joined onto each result",
+      );
+
+      const topOne = await store.search("alpha lookup", { topK: 1 });
+      assertEquals(topOne.length, 1, "topK must slice the ranked list");
+      assertEquals(
+        topOne[0]?.documentId,
+        alphaId,
+        "the single retained result must be the highest-scoring chunk",
+      );
+
+      assertEquals(
+        await store.search("alpha lookup", { threshold: 0.99 }),
+        [],
+        "a threshold above the best score must filter every chunk out",
+      );
+    });
+  });
+
   it("returns empty results for whitespace-only local queries", async () => {
     await withTempDir(async (tempDir) => {
       const storagePath = join(tempDir, "data", "index.json");

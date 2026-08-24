@@ -19,6 +19,13 @@ const browserReachableModules = [
     path: new URL("../utils/version.ts", import.meta.url),
     required: ["#veryfront/platform/compat/process/env.ts"],
   },
+  {
+    // Reached from the `veryfront/chat` client entry through
+    // src/chat/stream-watchdog.ts.
+    label: "src/agent/streaming/lifecycle/watchdog-compat-adapter.ts",
+    path: new URL("../agent/streaming/lifecycle/watchdog-compat-adapter.ts", import.meta.url),
+    required: ["#veryfront/platform/compat/process/env.ts"],
+  },
 ];
 
 Deno.test("chat client modules use leaf imports for server-capable dependencies", async () => {
