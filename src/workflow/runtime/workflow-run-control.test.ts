@@ -188,6 +188,34 @@ class ClaimDelayedRunningUpdateBackend extends MemoryBackend {
   }
 }
 
+class ClaimPersistedAssignmentRejectsBackend extends MemoryBackend {
+  readonly replacementWorkerId = "run-execution:replacement";
+
+  constructor(private readonly replaceBeforeReject: boolean) {
+    super();
+  }
+
+  override async updateRunIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.status === "running" && patch.workerId === "run-execution:execution-a") {
+      const updated = await super.updateRunIfStatus(runId, expectedStatuses, patch);
+      if (this.replaceBeforeReject) {
+        await super.updateRun(runId, {
+          status: "running",
+          workerId: this.replacementWorkerId,
+          context: { input: {}, replacement: true },
+        });
+      }
+      if (updated) throw new Error("claim write acknowledgement failed");
+      return updated;
+    }
+    return await super.updateRunIfStatus(runId, expectedStatuses, patch);
+  }
+}
+
 class ClaimPendingClaimLostBackend extends MemoryBackend {
   replacementWorkerId = "run-execution:replacement";
 
@@ -679,6 +707,45 @@ describe("workflow/runtime/workflow-run-control claim", () => {
     assertEquals(outcome.status, "created");
     assertEquals(outcome.execution?.executionId, "execution-a");
     assertEquals(createCalled, true);
+  });
+
+  it("fails the attempted execution owner when claim assignment persists then rejects", async () => {
+    const backend = new ClaimPersistedAssignmentRejectsBackend(false);
+    const run = createRun("claim-persisted-assignment-rejects");
+    await backend.createRun(run);
+    let createCalled = false;
+
+    const outcome = await claim(backend, run, {
+      createRunExecution: (config) => {
+        createCalled = true;
+        return Promise.resolve(config.executionId);
+      },
+    });
+
+    assertEquals(outcome.status, "failed-after-claim");
+    assertEquals(createCalled, false);
+    const persisted = await backend.getRun(run.id);
+    assertEquals(persisted?.status, "failed");
+    assertEquals(persisted?.workerId, "run-execution:execution-a");
+    assertEquals(
+      persisted?.error?.message.includes("claim write acknowledgement failed"),
+      true,
+    );
+  });
+
+  it("does not fail a replacement owner after claim assignment persists then rejects", async () => {
+    const backend = new ClaimPersistedAssignmentRejectsBackend(true);
+    const run = createRun("claim-persisted-assignment-replaced");
+    await backend.createRun(run);
+
+    const outcome = await claim(backend, run);
+
+    assertEquals(outcome.status, "failed-after-claim");
+    const persisted = await backend.getRun(run.id);
+    assertEquals(persisted?.status, "running");
+    assertEquals(persisted?.workerId, backend.replacementWorkerId);
+    assertEquals(persisted?.context.replacement, true);
+    assertEquals(persisted?.error, undefined);
   });
 
   it("skips pending runs when another owner wins the running claim", async () => {

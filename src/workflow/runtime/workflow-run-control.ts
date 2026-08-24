@@ -142,6 +142,11 @@ export interface WorkflowRunControlReconcileOutcome {
 const DEFAULT_DECISION_RECONCILIATION_ATTEMPTS = 8;
 const ACTIVE_RECONCILE_STATUSES: WorkflowRun["status"][] = ["pending", "running", "waiting"];
 
+type ClaimPhase =
+  | { kind: "before-execution-owner" }
+  | { kind: "assigning-execution-owner"; workerId: string }
+  | { kind: "execution-owner-assigned"; workerId: string };
+
 export async function reconcileWorkflowRunControl(
   input: WorkflowRunControlReconcileInput,
 ): Promise<WorkflowRunControlReconcileOutcome> {
@@ -172,7 +177,7 @@ export async function claimWorkflowRunControl(
   const workerId = `run-execution:${executionId}`;
   let pendingLockToken: string | null = null;
   let runToProcess: WorkflowRun | null = run;
-  let claimed = false;
+  let claimPhase: ClaimPhase = { kind: "before-execution-owner" };
   let managerClaimWorkerId: string | undefined;
 
   try {
@@ -206,7 +211,8 @@ export async function claimWorkflowRunControl(
 
     const now = new Date();
     const expectedWorkerId = managerClaimWorkerId;
-    claimed = await updateRunIfStatus(
+    claimPhase = { kind: "assigning-execution-owner", workerId };
+    const claimed = await updateRunIfStatus(
       backend,
       runId,
       [runToProcess.status],
@@ -223,6 +229,7 @@ export async function claimWorkflowRunControl(
         status: run.status === "running" ? "skipped-stalled-claim-lost" : "skipped-status-changed",
       };
     }
+    claimPhase = { kind: "execution-owner-assigned", workerId };
 
     const executionConfig: RunExecutionConfig = {
       executionId,
@@ -251,8 +258,7 @@ export async function claimWorkflowRunControl(
     return await failClaim(
       input,
       runToProcess ?? run,
-      workerId,
-      claimed,
+      claimPhase,
       ensureError(error),
       managerClaimWorkerId,
     );
@@ -439,8 +445,7 @@ async function reconcileExecutionFailure(
 async function failClaim(
   input: WorkflowRunControlClaimInput,
   run: WorkflowRun,
-  workerId: string,
-  claimed: boolean,
+  claimPhase: ClaimPhase,
   error?: Error,
   managerClaimWorkerId?: string,
 ): Promise<WorkflowRunControlClaimOutcome> {
@@ -453,8 +458,27 @@ async function failClaim(
     completedAt: new Date(),
   };
 
-  if (claimed) {
-    await updateRunIfStatus(input.backend, run.id, ["running"], failure, workerId);
+  if (claimPhase.kind !== "before-execution-owner") {
+    const updated = await updateRunIfStatus(
+      input.backend,
+      run.id,
+      ["pending", "waiting", "running"],
+      failure,
+      claimPhase.workerId,
+    );
+    if (updated) return { status: "failed-after-claim", error };
+
+    const latest = await input.backend.getRun(run.id);
+    if (
+      !latest ||
+      !ACTIVE_RECONCILE_STATUSES.includes(latest.status) ||
+      (latest.workerId !== undefined && latest.workerId !== managerClaimWorkerId)
+    ) {
+      return { status: "failed-after-claim", error };
+    }
+  }
+
+  if (claimPhase.kind === "execution-owner-assigned") {
     return { status: "failed-after-claim", error };
   }
 
