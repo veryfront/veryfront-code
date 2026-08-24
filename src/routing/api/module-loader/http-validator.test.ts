@@ -70,6 +70,17 @@ describe("routing/api/module-loader/http-validator", () => {
       validateHTTPImports('export * from "https://esm.sh/x.js";', ["https://esm.sh"]);
     });
 
+    it("should ignore remote re-export text inside strings and comments", () => {
+      validateHTTPImports(
+        [
+          `const example = 'export * from "https://evil.com/x.js";';`,
+          `// export { pwn } from "https://evil.com/y.js";`,
+          `export { ok } from "https://esm.sh/ok.js";`,
+        ].join("\n"),
+        ["https://esm.sh"],
+      );
+    });
+
     it("should allow imports from allowed hosts", () => {
       validateHTTPImports('import React from "https://esm.sh/react@18";', [
         "https://esm.sh",
