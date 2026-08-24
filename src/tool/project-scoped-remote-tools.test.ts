@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { it } from "#veryfront/testing/bdd.ts";
-import { assertEquals, assertRejects, assertStrictEquals, assertThrows } from "@std/assert";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import {
   createProjectScopedRemoteToolCatalog,
   filterProjectScopedRemoteToolDefinitions,
