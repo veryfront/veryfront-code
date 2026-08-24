@@ -73,10 +73,7 @@ export function buildTaskContextEnv(
   const allowedEnvKeys = envAllowlist ? new Set(envAllowlist) : null;
   const taskContextEnv: Record<string, string> = {};
 
-  for (const [key, value] of Object.entries(allEnv)) {
-    if (UNSAFE_INJECTED_ENV_KEYS.has(key) || isReservedTaskEnvKey(key)) {
-      continue;
-    }
+  for (const [key, value] of Object.entries(filterSafeWorkflowEnv(allEnv))) {
     if (allowedEnvKeys && !allowedEnvKeys.has(key)) {
       continue;
     }
