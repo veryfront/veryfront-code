@@ -1247,6 +1247,13 @@ describe("mcp/server", () => {
         paramsSchema: defineSchema((v) => v.object({ collection: v.string(), id: v.string() }))(),
         load: async () => ({}),
       });
+      registerResource("test:path-absolute-file", {
+        id: "test:path-absolute-file",
+        pattern: "custom:/files/file-:id",
+        description: "Path-absolute file",
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+        load: (params) => params,
+      });
 
       const response = await server.handleRequest({
         jsonrpc: "2.0",
@@ -1277,6 +1284,20 @@ describe("mcp/server", () => {
         templates.find((entry) => entry.name === "test:nested-file")?.uriTemplate,
         "custom:collections/{collection}/file-{id}",
       );
+      assertEquals(
+        templates.find((entry) => entry.name === "test:path-absolute-file")?.uriTemplate,
+        "custom:/files/file-{id}",
+      );
+
+      const readResponse = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "resources/read",
+        params: { uri: "custom:/files/file-42" },
+      });
+      assertEquals(readResponse.error, undefined);
+      const result = readResponse.result as { contents: Array<{ text: string }> };
+      assertEquals(JSON.parse(result.contents[0]!.text), { id: "42" });
     });
 
     it("excludes scheme-only colons like openapi://spec", async () => {

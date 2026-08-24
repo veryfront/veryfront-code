@@ -303,6 +303,26 @@ describe("resource registry", () => {
         ),
         { id: "42" },
       );
+
+      const pathAbsoluteFile = resource({
+        pattern: "custom:/files/file-:id",
+        description: "Path-absolute file",
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+        load: async () => ({}),
+      });
+      resourceRegistry.clearAll();
+      resourceRegistry.register(pathAbsoluteFile.id, pathAbsoluteFile);
+      assertEquals(
+        resourceRegistry.findByPattern("custom:/files/file-42"),
+        pathAbsoluteFile,
+      );
+      assertEquals(
+        resourceRegistry.extractParams(
+          "custom:/files/file-42",
+          pathAbsoluteFile.pattern,
+        ),
+        { id: "42" },
+      );
     });
 
     it("should support caller-scoped visibility without changing default lookup", () => {

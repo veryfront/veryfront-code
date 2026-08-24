@@ -96,7 +96,7 @@ function parseResourcePattern(pattern: string): ParsedResourcePattern {
   const firstSchemeComponentEnd = findFirstSchemeComponentEnd(pattern, schemeDelimiter);
   const urnScheme = isUrnScheme(pattern, schemeDelimiter);
   const hierarchicalScheme = schemeDelimiter >= 0 &&
-    pattern[schemeDelimiter + 1] === "/" && pattern[schemeDelimiter + 2] === "/";
+    pattern[schemeDelimiter + 1] === "/";
   const rootlessTemplatePath = schemeDelimiter >= 0 && !urnScheme && !hierarchicalScheme &&
     hasRootlessTemplateBoundary(pattern, schemeDelimiter, firstSchemeComponentEnd);
   let component: ResourceComponent = "path";
