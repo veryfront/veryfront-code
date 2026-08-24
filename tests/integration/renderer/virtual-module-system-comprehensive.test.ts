@@ -274,4 +274,41 @@ describe("VirtualModuleSystem", () => {
       assertEquals(res, null);
     }
   });
+
+  it("does not claim paths that only share the base path prefix", () => {
+    const adapter = createMockAdapter();
+    const vms = new VirtualModuleSystem("/_veryfront/modules", adapter);
+
+    const response = vms.handleRequest(
+      new Request("http://localhost/_veryfront/modules-evil/component:Example"),
+    );
+
+    assertEquals(response, null);
+  });
+
+  it("rejects unsupported methods before resolving a module", () => {
+    const adapter = createMockAdapter();
+    const vms = new VirtualModuleSystem("/_veryfront/modules", adapter);
+
+    const response = vms.handleRequest(
+      new Request("http://localhost/_veryfront/modules/component:Example", {
+        method: "POST",
+      }),
+    );
+
+    assertEquals(response?.status, 405);
+    assertEquals(response?.headers.get("Allow"), "GET, HEAD, OPTIONS");
+  });
+
+  it("returns a bad request response for malformed module identifiers", () => {
+    const adapter = createMockAdapter();
+    const vms = new VirtualModuleSystem("/_veryfront/modules", adapter);
+
+    const response = vms.handleRequest(
+      new Request("http://localhost/_veryfront/modules/%E0%A4%A"),
+    );
+
+    assertEquals(response?.status, 400);
+    assertEquals(response?.headers.get("Cache-Control"), "no-store");
+  });
 });
