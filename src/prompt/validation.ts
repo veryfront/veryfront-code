@@ -214,8 +214,8 @@ export function normalizePromptDefinition(id: string, value: Prompt): Prompt {
   const mcp = readOwnDataProperty(value, "mcp", "Prompt MCP configuration");
   const getContent = readOwnDataProperty(value, "getContent", "Prompt getContent");
 
-  if (typeof definitionId.value !== "string" || definitionId.value.length === 0) {
-    throw new TypeError("Prompt definition id must be a non-empty string");
+  if (typeof definitionId.value !== "string" || definitionId.value.trim().length === 0) {
+    throw new TypeError("Prompt definition id must not be blank");
   }
   if (definitionId.value !== id) {
     throw new TypeError(

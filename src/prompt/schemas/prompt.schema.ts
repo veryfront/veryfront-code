@@ -1,7 +1,11 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
-/** Cancellation and deadline controls for one prompt render. */
+/**
+ * Cancellation and absolute-deadline controls for one prompt render. A
+ * deadline is enforced before work begins and after interpolation or
+ * generation completes.
+ */
 export interface PromptRenderContext {
   /** Cooperative cancellation signal for generator work. */
   readonly abortSignal?: AbortSignal;
@@ -70,7 +74,7 @@ export const getPromptConfigSchema = defineSchema((v) => {
   ]);
 });
 
-/** Configuration used by prompt. */
+/** Configuration used by prompt. An explicit id must contain non-whitespace text. */
 export type PromptConfig = InferSchema<ReturnType<typeof getPromptConfigSchema>>;
 /** Public MCP argument metadata for a prompt. */
 export type PromptArgument = InferSchema<ReturnType<typeof getPromptArgumentSchema>>;

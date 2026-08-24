@@ -52,6 +52,29 @@ describe("prompt registry", () => {
       assertEquals(reads, 0);
     });
 
+    it("rejects blank definition ids at project and shared registry boundaries", () => {
+      for (const id of ["", " ", "\t\n"]) {
+        const definition: Prompt = {
+          id,
+          description: "desc",
+          getContent: async () => "Hello",
+        };
+
+        for (
+          const register of [
+            () => promptRegistry.register(id, definition),
+            () => promptRegistry.registerShared(id, definition),
+          ]
+        ) {
+          assertThrows(
+            register,
+            TypeError,
+            "Prompt definition id must not be blank",
+          );
+        }
+      }
+    });
+
     it("should store an owned immutable definition", () => {
       const definition = Object.freeze({
         id: "owned-definition",

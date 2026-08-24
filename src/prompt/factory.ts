@@ -21,7 +21,7 @@ interface PromptCancellation {
   cleanup(): void;
 }
 
-/** Create a typed prompt definition. */
+/** Create a typed prompt definition whose explicit id contains non-whitespace text. */
 export function prompt(config: PromptConfig): Prompt {
   const normalized = normalizePromptConfig(config);
   const { content, description, generate, mcp, suggestion } = normalized;
