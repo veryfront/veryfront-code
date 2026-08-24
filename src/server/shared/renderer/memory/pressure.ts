@@ -46,7 +46,13 @@ export function parseEnvThreshold(
 // set after this module is first imported (e.g., via late .env loading), the defaults
 // will be used for the lifetime of the process. Ensure these vars are exported before
 // the first import of this module (typically via bootstrap / env loading on startup).
-const THRESHOLDS = {
+/**
+ * Thresholds resolved from the environment at module load. Exported so tests can
+ * assert boundaries against the values this process actually uses rather than
+ * hard-coding the defaults, which a configured MEMORY_* variable would invalidate.
+ * @internal
+ */
+export const THRESHOLDS = {
   WARNING: parseEnvThreshold("MEMORY_WARNING_THRESHOLD", 65),
   HIGH: parseEnvThreshold("MEMORY_HIGH_THRESHOLD", 75),
   CRITICAL: parseEnvThreshold("MEMORY_CRITICAL_THRESHOLD", 80),

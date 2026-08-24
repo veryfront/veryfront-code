@@ -7,9 +7,13 @@ import {
   getMemoryPressureLevel,
   parseEnvThreshold,
   shouldRejectDueToMemory,
+  THRESHOLDS,
 } from "./pressure.ts";
 
-const DEFAULT_THRESHOLDS = { WARNING: 65, HIGH: 75, CRITICAL: 80 };
+// The module resolves its thresholds from MEMORY_*_THRESHOLD at load, so boundary
+// cases must be expressed against the resolved values. Hard-coding the defaults
+// would make these assertions wrong wherever those variables are configured.
+const DEFAULT_THRESHOLDS = THRESHOLDS;
 
 function withHeapUsedPercent(heapUsedPercent: number): void {
   __injectDepsForTests({ getHeapStats: () => ({ heapUsedPercent }) });
@@ -23,16 +27,28 @@ describe("server/shared/renderer/memory/pressure", () => {
   describe("shouldRejectDueToMemory", () => {
     it("rejects at exactly the CRITICAL threshold and above", () => {
       withHeapUsedPercent(DEFAULT_THRESHOLDS.CRITICAL);
-      assertEquals(shouldRejectDueToMemory(), true, "heap at CRITICAL (80) must reject");
-      withHeapUsedPercent(99.5);
-      assertEquals(shouldRejectDueToMemory(), true, "heap above CRITICAL (80) must reject");
+      assertEquals(
+        shouldRejectDueToMemory(),
+        true,
+        `heap at CRITICAL (${DEFAULT_THRESHOLDS.CRITICAL}) must reject`,
+      );
+      withHeapUsedPercent(DEFAULT_THRESHOLDS.CRITICAL + 0.5);
+      assertEquals(
+        shouldRejectDueToMemory(),
+        true,
+        `heap above CRITICAL (${DEFAULT_THRESHOLDS.CRITICAL}) must reject`,
+      );
     });
 
     it("does not reject just below the CRITICAL threshold", () => {
       withHeapUsedPercent(DEFAULT_THRESHOLDS.CRITICAL - 0.1);
       assertEquals(shouldRejectDueToMemory(), false, "heap at CRITICAL - 0.1 must not reject");
-      withHeapUsedPercent(79);
-      assertEquals(shouldRejectDueToMemory(), false, "heap at 79 must not reject");
+      withHeapUsedPercent(DEFAULT_THRESHOLDS.CRITICAL - 1);
+      assertEquals(
+        shouldRejectDueToMemory(),
+        false,
+        `heap at CRITICAL - 1 (${DEFAULT_THRESHOLDS.CRITICAL - 1}) must not reject`,
+      );
     });
 
     it("should return a boolean", () => {
@@ -56,15 +72,31 @@ describe("server/shared/renderer/memory/pressure", () => {
   });
 
   describe("getMemoryPressureLevel", () => {
-    it("walks the level ladder at the default thresholds", () => {
-      withHeapUsedPercent(64.9);
-      assertEquals(getMemoryPressureLevel(), "normal", "below WARNING (65) is normal");
+    it("walks the level ladder at the configured thresholds", () => {
+      withHeapUsedPercent(DEFAULT_THRESHOLDS.WARNING - 0.1);
+      assertEquals(
+        getMemoryPressureLevel(),
+        "normal",
+        `below WARNING (${DEFAULT_THRESHOLDS.WARNING}) is normal`,
+      );
       withHeapUsedPercent(DEFAULT_THRESHOLDS.WARNING);
-      assertEquals(getMemoryPressureLevel(), "warning", "exactly WARNING (65) is warning");
+      assertEquals(
+        getMemoryPressureLevel(),
+        "warning",
+        `exactly WARNING (${DEFAULT_THRESHOLDS.WARNING}) is warning`,
+      );
       withHeapUsedPercent(DEFAULT_THRESHOLDS.HIGH);
-      assertEquals(getMemoryPressureLevel(), "high", "exactly HIGH (75) is high");
+      assertEquals(
+        getMemoryPressureLevel(),
+        "high",
+        `exactly HIGH (${DEFAULT_THRESHOLDS.HIGH}) is high`,
+      );
       withHeapUsedPercent(DEFAULT_THRESHOLDS.CRITICAL);
-      assertEquals(getMemoryPressureLevel(), "critical", "exactly CRITICAL (80) is critical");
+      assertEquals(
+        getMemoryPressureLevel(),
+        "critical",
+        `exactly CRITICAL (${DEFAULT_THRESHOLDS.CRITICAL}) is critical`,
+      );
     });
 
     it("classifies against explicit thresholds", () => {

@@ -29,7 +29,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { Handler, RoutePattern } from "#veryfront/types";
 import { createHandlerRegistry } from "#veryfront/server/runtime-handler/index.ts";
-import { CONTROL_PLANE_RUN_OPERATION_PATH } from "#veryfront/channels/control-plane.ts";
+import { CONTROL_PLANE_RUN_OPERATION_PATH } from "#veryfront/channels/control-plane-routes.ts";
 import {
   CHANNEL_INVOKE_PATH,
   isChannelDispatchRoute,
