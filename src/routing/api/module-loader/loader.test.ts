@@ -1,8 +1,13 @@
 // @veryfront-test runtime-guarded-deno
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertMatch, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertMatch,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
-import { join } from "#veryfront/compat/path";
+import { join, toFileUrl } from "#veryfront/compat/path";
 import {
   bundlerForcesTypeScript,
   generateCompiledBinaryRequireShim,
@@ -1396,7 +1401,11 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       caught = error instanceof Error ? error.message : String(error);
     }
 
-    assertMatch(caught, /import map path escapes project|Failed to load/i);
+    assertMatch(
+      caught,
+      /Import map path escapes project: @app\/escape/,
+      "the import-map boundary check must be what rejects the load",
+    );
   });
 
   it("rejects relative imports inside handler that escape project directory", async () => {
@@ -1440,7 +1449,8 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
 
     assertMatch(
       caught,
-      /escapes project|Failed to load/i,
+      /Relative import escapes project/,
+      "the loader must reject the escaping relative import by name",
     );
   });
 
@@ -1772,6 +1782,24 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
   });
 });
 
+/**
+ * Load the emitted compiled-binary shim as a real module so its containment
+ * checks are exercised instead of being re-implemented by the test.
+ */
+async function importCompiledBinaryRequireShim(
+  projectDir: string,
+): Promise<(id: string) => unknown> {
+  const shimPath = join(projectDir, "vf-require-shim.mjs");
+  await fs.writeTextFile(
+    shimPath,
+    `${generateCompiledBinaryRequireShim(projectDir)}\nexport { require as vfRequire };\n`,
+  );
+  const module = await import(toFileUrl(shimPath).href) as {
+    vfRequire: (id: string) => unknown;
+  };
+  return module.vfRequire;
+}
+
 // VULN-FS-5: compiled-binary CJS loader must enforce project-root containment
 // on BOTH branches of __vf_loadCjs (relative/absolute ids AND bare-package
 // ids), and must re-canonicalise via Deno.realPathSync so that a symlinked
@@ -1822,40 +1850,43 @@ describe("generateCompiledBinaryRequireShim - static checks (VULN-FS-5)", () => 
     );
   });
 
-  it("the containment check rejects paths outside the project root", () => {
-    // Reproduce the assertion logic in a local closure so we can exercise it
-    // directly without eval. This is structurally identical to the bytes that
-    // get embedded into the compiled-binary shim.
-    const projectRoot = "/fake/project";
-    const assertContained = (resolved: string): void => {
-      const norm = resolved.replace(/\\/g, "/");
-      const root = projectRoot.replace(/\\/g, "/");
-      if (!norm.startsWith(root + "/") && norm !== root) {
-        throw new Error("CJS loader blocked path outside project: " + resolved);
-      }
-    };
+  denoIt("the emitted containment check rejects paths outside the project root", async () => {
+    // Execute the shim the generator actually emits: a local re-implementation
+    // would keep passing even if the emitted __vf_assertContained were gutted.
+    const projectDir = Deno.realPathSync(await makeTempDir());
+    const packageDir = join(projectDir, "node_modules", "ok");
+    await fs.mkdir(packageDir, { recursive: true });
+    await fs.writeTextFile(join(packageDir, "index.js"), "module.exports = { ok: true };");
 
-    // Rejects escapes.
-    let caught = "";
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    assertEquals(
+      (vfRequire(join(packageDir, "index.js")) as { ok: boolean }).ok,
+      true,
+      "in-project CJS must load",
+    );
+    assertThrows(
+      () => vfRequire("/etc/passwd"),
+      Error,
+      "blocked path outside project",
+      "absolute host paths must be refused",
+    );
+    assertThrows(
+      () => vfRequire(`${projectDir}ile/secret.js`),
+      Error,
+      "blocked path outside project",
+      "prefix-sibling dirs must be refused",
+    );
+    assertThrows(
+      () => vfRequire(join(projectDir, "node_modules", "..", "..", "escape.js")),
+      Error,
+      "blocked path outside project",
+      "'..' segments must be normalised before the containment check",
+    );
+
     try {
-      assertContained("/etc/passwd");
-    } catch (e) {
-      caught = e instanceof Error ? e.message : String(e);
-    }
-    assertMatch(caught, /blocked path outside project/);
-
-    // Rejects sibling project that shares a prefix.
-    caught = "";
-    try {
-      assertContained("/fake/projectile/secret.js");
-    } catch (e) {
-      caught = e instanceof Error ? e.message : String(e);
-    }
-    assertMatch(caught, /blocked path outside project/);
-
-    // Accepts the root itself and nested children.
-    assertContained("/fake/project");
-    assertContained("/fake/project/node_modules/ok/index.js");
+      await fs.remove(projectDir, { recursive: true });
+    } catch (_) { /* best effort */ }
   });
 });
 
@@ -1867,10 +1898,11 @@ describe("generateCompiledBinaryRequireShim - symlink resistance (VULN-FS-5)", {
     // Create a project root, a decoy "evil" package whose entry file is a
     // symlink pointing at a file outside the project root. If the shim only
     // checked the pre-symlink path, the containment test would pass but the
-    // readTextFileSync would still leak the external file. With the fix, the
-    // realPathSync + second __vf_assertContained catches the escape.
-    const projectDir = await makeTempDir();
-    const outsideDir = await makeTempDir();
+    // readTextFileSync would still leak the external file. The emitted shim is
+    // executed here so the realPathSync + second __vf_assertContained is the
+    // thing under test, not a copy of it.
+    const projectDir = Deno.realPathSync(await makeTempDir());
+    const outsideDir = Deno.realPathSync(await makeTempDir());
     const outsideFile = join(outsideDir, "secret.txt");
     await fs.writeTextFile(outsideFile, "top-secret-contents");
 
@@ -1887,28 +1919,19 @@ describe("generateCompiledBinaryRequireShim - symlink resistance (VULN-FS-5)", {
       throw e;
     }
 
-    // Simulate what the shim would do: resolve, assert, realPath, assert again.
-    const assertContained = (resolved: string): void => {
-      const norm = resolved.replace(/\\/g, "/");
-      const root = projectDir.replace(/\\/g, "/");
-      if (!norm.startsWith(root + "/") && norm !== root) {
-        throw new Error("CJS loader blocked path outside project: " + resolved);
-      }
-    };
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
 
-    // Pre-symlink path is inside the project - first assertion passes.
-    assertContained(symlinkEntry);
-
-    // realPathSync follows the symlink to the outside directory.
-    // Second assertion must fail.
-    const real = Deno.realPathSync(symlinkEntry);
-    let caught = "";
-    try {
-      assertContained(real);
-    } catch (e) {
-      caught = e instanceof Error ? e.message : String(e);
-    }
-    assertMatch(caught, /blocked path outside project/);
+    const error = assertThrows(
+      () => vfRequire(symlinkEntry),
+      Error,
+      "blocked path outside project",
+      "a symlinked dependency escaping the project root must be rejected",
+    );
+    assertEquals(
+      (error as Error).message.includes("top-secret-contents"),
+      false,
+      "the outside file contents must never reach the caller",
+    );
 
     // Clean up.
     try {

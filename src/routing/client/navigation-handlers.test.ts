@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { delay } from "#std/async.ts";
+import { delay, waitFor } from "#veryfront/testing/deno-compat.ts";
 import { scaleMs } from "#veryfront/testing/timing.ts";
 import { NavigationHandlers } from "./navigation-handlers.ts";
 import type { NavigationCallbacks } from "./navigation-handlers.ts";
@@ -339,7 +339,9 @@ describe("NavigationHandlers", () => {
 
         mouseOverHandler(event);
 
-        await delay(100);
+        await waitFor(() => prefetchedUrl === "/page", {
+          message: "Should prefetch link after delay",
+        });
 
         assertEquals(prefetchedUrl, "/page", "Should prefetch link after delay");
       } finally {
@@ -509,9 +511,13 @@ describe("NavigationHandlers", () => {
         mouseOverHandler(event);
         mouseOverHandler(event);
 
-        await delay(150);
+        await waitFor(() => prefetchCount === 1, {
+          message: "concurrent hovers on one href prefetch exactly once",
+        });
 
-        assertEquals(prefetchCount, 1, "Should only prefetch once for concurrent hovers");
+        await delay(100);
+
+        assertEquals(prefetchCount, 1, "no second prefetch fires after the queued one settles");
       } finally {
         mocks.cleanup();
       }
@@ -537,11 +543,15 @@ describe("NavigationHandlers", () => {
 
         mouseOverHandler(event);
 
-        await delay(100);
+        await waitFor(() => prefetchCount === 1, {
+          message: "the first hover prefetches once",
+        });
 
         mouseOverHandler(event);
 
-        await delay(100);
+        await waitFor(() => prefetchCount === 2, {
+          message: "Should allow prefetch again after removal from queue",
+        });
 
         assertEquals(prefetchCount, 2, "Should allow prefetch again after removal from queue");
       } finally {
@@ -607,9 +617,9 @@ describe("NavigationHandlers", () => {
         mocks.setScrollY(300);
         handlers.saveScrollPosition("/page3");
 
-        assertEquals(handlers.getScrollPosition("/page1"), 100);
-        assertEquals(handlers.getScrollPosition("/page2"), 200);
-        assertEquals(handlers.getScrollPosition("/page3"), 300);
+        assertEquals(handlers.getScrollPosition("/page1"), 100, "first path keeps its position");
+        assertEquals(handlers.getScrollPosition("/page2"), 200, "second path keeps its position");
+        assertEquals(handlers.getScrollPosition("/page3"), 300, "third path keeps its position");
       } finally {
         mocks.cleanup();
       }
@@ -618,10 +628,88 @@ describe("NavigationHandlers", () => {
     it("should handle scroll save errors gracefully", () => {
       const mocks = setupNavigationHandlerMocks();
       try {
-        delete (globalThis as any).scrollY;
-
         const handlers = new NavigationHandlers();
+
+        mocks.setScrollY(250);
         handlers.saveScrollPosition("/page");
+        assertEquals(
+          handlers.getScrollPosition("/page"),
+          250,
+          "baseline scroll position is recorded",
+        );
+
+        delete (globalThis as any).scrollY;
+        handlers.saveScrollPosition("/page");
+        assertEquals(
+          handlers.getScrollPosition("/page"),
+          0,
+          "a missing scrollY must overwrite the stored position with 0",
+        );
+      } finally {
+        mocks.cleanup();
+      }
+    });
+
+    it("should keep recording scroll positions after a throwing scrollY", () => {
+      const mocks = setupNavigationHandlerMocks();
+      try {
+        const handlers = new NavigationHandlers();
+
+        Object.defineProperty(globalThis, "scrollY", {
+          get() {
+            throw new Error("scrollY unavailable");
+          },
+          configurable: true,
+        });
+
+        handlers.saveScrollPosition("/page1");
+        assertEquals(
+          handlers.getScrollPosition("/page1"),
+          0,
+          "a throwing scrollY must not escape saveScrollPosition",
+        );
+
+        Object.defineProperty(globalThis, "scrollY", {
+          value: 120,
+          writable: true,
+          configurable: true,
+        });
+        handlers.saveScrollPosition("/page2");
+        assertEquals(
+          handlers.getScrollPosition("/page2"),
+          120,
+          "a later valid scrollY is still recorded",
+        );
+      } finally {
+        mocks.cleanup();
+      }
+    });
+
+    it("should evict the oldest scroll position once the cap is reached", () => {
+      const mocks = setupNavigationHandlerMocks();
+      try {
+        const handlers = new NavigationHandlers();
+
+        for (let i = 0; i <= 100; i++) {
+          mocks.setScrollY(1000 + i);
+          handlers.saveScrollPosition(`/p${i}`);
+        }
+
+        assertEquals(
+          handlers.getScrollPosition("/p0"),
+          0,
+          "the oldest path is evicted once the cap is reached",
+        );
+        assertEquals(
+          handlers.getScrollPosition("/p1"),
+          1001,
+          "entries within the cap are retained",
+        );
+        assertEquals(
+          handlers.getScrollPosition("/p100"),
+          1100,
+          "the newest path is stored",
+        );
       } finally {
         mocks.cleanup();
       }
@@ -727,9 +815,17 @@ describe("NavigationHandlers", () => {
         await delay(50);
         handlers.clear();
 
-        await delay(100);
+        await delay(150);
 
+        assertEquals(prefetchCount, 0, "clear() must cancel pending prefetch timers");
         assertEquals(handlers.isPopState(), false, "Should reset state after clear");
+
+        mouseOverHandler(event);
+
+        await waitFor(() => prefetchCount === 1, {
+          message:
+            "clear() must also empty the prefetch queue so the same href can be prefetched again",
+        });
       } finally {
         mocks.cleanup();
       }
