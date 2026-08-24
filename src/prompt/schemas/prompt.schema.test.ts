@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { prompt } from "#veryfront/prompt/factory.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { prompt } from "../factory.ts";
 import { getPromptConfigSchema } from "./prompt.schema.ts";
 
 describe("prompt configuration schema", () => {

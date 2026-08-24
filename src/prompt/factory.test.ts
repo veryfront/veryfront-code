@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { FakeTime } from "#std/testing/time";
-import { describe, it } from "#veryfront/testing/bdd";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   assertEquals,
   assertNotStrictEquals,
@@ -8,7 +8,7 @@ import {
   assertStrictEquals,
   assertStringIncludes,
   assertThrows,
-} from "#veryfront/testing/assert";
+} from "#veryfront/testing/assert.ts";
 import { prompt } from "./factory.ts";
 import type { PromptConfig, PromptMCPConfig, PromptRenderContext } from "./types.ts";
 
