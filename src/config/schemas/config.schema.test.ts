@@ -38,12 +38,17 @@ describe("configSchema", () => {
     assertEquals(cfg.router, "app");
   });
 
-  it("rejects opting out of ESM layouts", () => {
-    assertThrows(
+  it("rejects opting out of ESM layouts with migration guidance", () => {
+    const error = assertThrows(
       () => validateVeryfrontConfig({ experimental: { esmLayouts: false } }),
       Error,
       "experimental.esmLayouts",
-    );
+    ) as Error;
+
+    // The flag no longer controls behavior, so the rejection must tell the
+    // user to remove it and where the migration is documented.
+    assertStringIncludes(error.message, "Remove the setting");
+    assertStringIncludes(error.message, "docs/guides/configuration.md");
   });
 
   it("keeps CSS asset-pipeline schema constraints aligned with runtime", () => {
