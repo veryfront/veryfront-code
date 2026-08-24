@@ -277,14 +277,14 @@ function runEventStream(
         try {
           controller.enqueue(encode("snapshot", projectRun(observation.initial)));
           if (isTerminalRunStatus(observation.initial.status)) close();
-        } catch (error) {
+        } catch {
           // A snapshot failure raises the run's own data (a getter or `toJSON`
           // can throw with customer content), so log a classification rather
           // than the error itself. Reconnecting re-reads the same stored run
           // and fails the same way, so the failure is not retryable.
           logger.error("Workflow run snapshot serialization failed", {
             runId: observation.initial.id,
-            errorName: error instanceof Error ? error.name : typeof error,
+            errorName: "serialization_error",
           });
           failStream(controller, {
             code: "workflow_snapshot_serialization_failed",

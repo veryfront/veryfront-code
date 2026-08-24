@@ -989,7 +989,9 @@ describe("createWorkflowHandler", () => {
           status: "running",
           input: {
             toJSON: () => {
-              throw new Error("sensitive customer detail");
+              throw Object.assign(new Error("sensitive customer detail"), {
+                name: "sensitive customer detail",
+              });
             },
           },
         },
@@ -1020,7 +1022,7 @@ describe("createWorkflowHandler", () => {
       expect(entries.length).toBe(1);
       // The logger hoists the `runId` context key to the `run_id` entry field.
       expect(entries[0]?.run_id).toBe(runId);
-      expect(entries[0]?.context).toEqual({ errorName: "Error" });
+      expect(entries[0]?.context).toEqual({ errorName: "serialization_error" });
       expect(entries[0]?.error).toBeUndefined();
       expect(JSON.stringify(entries)).not.toContain("sensitive customer detail");
       expect(JSON.stringify(frames)).not.toContain("sensitive customer detail");
