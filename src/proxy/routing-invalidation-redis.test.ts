@@ -317,6 +317,30 @@ describe("proxy routing invalidation Redis bus", () => {
   it("counts distinct replicas, not acknowledgement messages", async () => {
     const redis = createFakeRedisServer();
     const integritySecret = createIntegritySecret();
+    const duplicateAcknowledgementsVerified = deferred();
+    const originalVerify = crypto.subtle.verify.bind(crypto.subtle);
+    const originalVerifyDescriptor = Object.getOwnPropertyDescriptor(crypto.subtle, "verify");
+    let duplicateAcknowledgementVerifications = 0;
+    Object.defineProperty(crypto.subtle, "verify", {
+      configurable: true,
+      value: async (...args: Parameters<SubtleCrypto["verify"]>) => {
+        const verified = await originalVerify(...args);
+        const input = args[3];
+        const bytes = input instanceof ArrayBuffer
+          ? new Uint8Array(input)
+          : new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+        if (
+          verified &&
+          new TextDecoder().decode(bytes).startsWith(`${ACK_SIGNATURE_DOMAIN}\0`)
+        ) {
+          duplicateAcknowledgementVerifications++;
+          if (duplicateAcknowledgementVerifications === 2) {
+            duplicateAcknowledgementsVerified.resolve();
+          }
+        }
+        return verified;
+      },
+    });
     // Redis redelivery, or one buggy replica, can repeat an acknowledgement.
     redis.setOnPublish(async (channel) => {
       if (channel !== ROUTING_INVALIDATION_CHANNEL) return;
@@ -332,7 +356,7 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "redis://example.test:6379",
       expectedReplicas: 2,
       replicaId: "replica-a",
-      acknowledgementTimeoutMs: 10,
+      acknowledgementTimeoutMs: TIMEOUT_NOT_UNDER_TEST_MS,
       createClient: redis.createClient,
       integritySecret,
       now: () => TEST_NOW_MS,
@@ -344,7 +368,7 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "redis://example.test:6379",
       expectedReplicas: 2,
       replicaId: "replica-b",
-      acknowledgementTimeoutMs: 10,
+      acknowledgementTimeoutMs: TIMEOUT_NOT_UNDER_TEST_MS,
       createClient: redis.createClient,
       integritySecret,
       now: () => TEST_NOW_MS,
@@ -353,16 +377,29 @@ describe("proxy routing invalidation Redis bus", () => {
       },
     });
 
-    const result = await busA?.publish(createEvent());
+    try {
+      const resultPromise = busA?.publish(createEvent());
+      await duplicateAcknowledgementsVerified.promise;
+      await busA?.close();
+      const result = await resultPromise;
 
-    assertEquals(
-      result,
-      { acknowledged: 1, converged: false, recipients: 2 },
-      "two acknowledgements from one replica must count once",
-    );
-
-    await busA?.close();
-    await busB?.close();
+      assertEquals(
+        result,
+        { acknowledged: 1, converged: false, recipients: 2 },
+        "two acknowledgements from one replica must count once",
+      );
+    } finally {
+      if (originalVerifyDescriptor) {
+        Object.defineProperty(crypto.subtle, "verify", originalVerifyDescriptor);
+      } else {
+        Object.defineProperty(crypto.subtle, "verify", {
+          configurable: true,
+          value: originalVerify,
+        });
+      }
+      await busA?.close();
+      await busB?.close();
+    }
   });
 
   it("does not claim convergence when a subscribed replica fails to apply the event", async () => {
