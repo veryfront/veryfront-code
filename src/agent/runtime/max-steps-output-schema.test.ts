@@ -114,6 +114,28 @@ describe("agent max steps output schema", () => {
     );
   });
 
+  it("surfaces an empty structured output on the max-steps exit", async () => {
+    const model = createMaxStepsModel("");
+    const assistant = agent({
+      id: "max-steps-empty",
+      system: "You report weather.",
+      tools: { max_steps_noop_tool: noopTool },
+      maxSteps: 1,
+      outputSchema: getReportSchema(),
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+
+    const response = await assistant.generate({ input: "Berlin?" });
+
+    assertEquals(response.metadata?.warning, "Max steps (1) reached");
+    assertEquals(response.object, undefined);
+    assertStringIncludes(
+      String(response.metadata?.outputSchemaError),
+      "is not valid JSON for its outputSchema",
+    );
+    assertEquals(response.text, "");
+  });
+
   it("keeps the parsed object and adds no error when the final text satisfies the schema", async () => {
     const model = createMaxStepsModel('{"city":"Berlin","tempC":12}');
     const assistant = agent({

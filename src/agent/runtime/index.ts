@@ -3291,7 +3291,7 @@ async function tryParseMaxStepsOutput(
   finalText: string,
   outputSchema: ResolvedAgentOutputSchema | undefined,
 ): Promise<MaxStepsOutputParse> {
-  if (!outputSchema || finalText.trim().length === 0) return {};
+  if (!outputSchema) return {};
   try {
     return { object: await outputSchema.parseOutput(finalText) };
   } catch (error) {
