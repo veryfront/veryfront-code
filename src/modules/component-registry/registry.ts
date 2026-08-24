@@ -186,6 +186,11 @@ export class ComponentRegistry {
           logger.debug(`Loaded component: ${name}`);
           return loaded;
         } catch (error) {
+          if (this.components.get(name) !== component) {
+            // The failed read belonged to a stale entry. A replacement may
+            // already be loadable even though the old source disappeared.
+            return this.loadComponent(name);
+          }
           if (isCanonicalNotFoundError(error)) return null;
           throw error;
         }

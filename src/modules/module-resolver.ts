@@ -55,16 +55,19 @@ export class ModuleResolver {
     return isPathContainedBy(normalizedCandidate, projectDir);
   }
 
-  private async isContainedFile(candidatePath: string, specifier: string): Promise<boolean> {
+  private async resolveContainedFile(
+    candidatePath: string,
+    specifier: string,
+  ): Promise<string | null> {
     const projectDir = normalize(this.options.projectDir);
     const normalizedCandidate = normalize(candidatePath);
 
-    if (!this.isContainedPath(normalizedCandidate)) return false;
+    if (!this.isContainedPath(normalizedCandidate)) return null;
 
-    if (!await this.adapter.fs.exists(normalizedCandidate)) return false;
+    if (!await this.adapter.fs.exists(normalizedCandidate)) return null;
 
     const realPath = this.adapter.fs.realPath;
-    if (!realPath) return true;
+    if (!realPath) return normalizedCandidate;
 
     const [projectResult, candidateResult] = await Promise.allSettled([
       realPath.call(this.adapter.fs, projectDir),
@@ -78,16 +81,16 @@ export class ModuleResolver {
       }
     }
     if (projectResult.status !== "fulfilled" || candidateResult.status !== "fulfilled") {
-      return false;
+      return null;
     }
     const canonicalProjectDir = projectResult.value;
     const canonicalCandidate = candidateResult.value;
     if (!isPathContainedBy(canonicalCandidate, canonicalProjectDir)) {
       logger.warn(`Canonical path escape blocked: ${specifier}`);
-      return false;
+      return null;
     }
 
-    return true;
+    return canonicalCandidate;
   }
 
   resolve(specifier: string, referrer?: string): Promise<ResolvedModule | null> {
@@ -132,8 +135,9 @@ export class ModuleResolver {
 
           for (const ext of MODULE_EXTENSIONS) {
             const pathWithExt = fullPath + ext;
-            if (await this.isContainedFile(pathWithExt, specifier)) {
-              return this.cacheAndReturn(cacheKey, { path: pathWithExt, type: "file" });
+            const resolvedPath = await this.resolveContainedFile(pathWithExt, specifier);
+            if (resolvedPath) {
+              return this.cacheAndReturn(cacheKey, { path: resolvedPath, type: "file" });
             }
           }
 
@@ -146,8 +150,9 @@ export class ModuleResolver {
             logger.warn(`Path traversal attempt blocked: ${specifier}`);
             return null;
           }
-          if (await this.isContainedFile(fullPath, specifier)) {
-            return this.cacheAndReturn(cacheKey, { path: fullPath, type: "file" });
+          const resolvedPath = await this.resolveContainedFile(fullPath, specifier);
+          if (resolvedPath) {
+            return this.cacheAndReturn(cacheKey, { path: resolvedPath, type: "file" });
           }
 
           return null;

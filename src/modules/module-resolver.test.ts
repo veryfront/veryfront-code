@@ -174,6 +174,32 @@ describe("modules/module-resolver", () => {
       assertEquals(result, null);
     });
 
+    it("should cache the canonical file path instead of a retargetable symlink path", async () => {
+      const adapter = createMockAdapter();
+      const linkedPath = "/project/components/Linked.tsx";
+      const canonicalPath = "/canonical/project/components/Linked.tsx";
+      adapter.fs.files.set(linkedPath, "export default function Linked() {}");
+      Reflect.deleteProperty(adapter.fs, "symlinkSemantics");
+      let canonicalCandidate = canonicalPath;
+      adapter.fs.realPath = (path: string) => {
+        if (path === "/project") return Promise.resolve("/canonical/project");
+        if (path === linkedPath) return Promise.resolve(canonicalCandidate);
+        return Promise.resolve(path);
+      };
+      const resolver = new ModuleResolver({ projectDir: "/project", adapter });
+
+      const first = await resolver.resolve("./components/Linked.tsx", "/project/index.ts");
+      canonicalCandidate = "/canonical/outside/Secret.tsx";
+      const cached = await resolver.resolve("./components/Linked.tsx", "/project/index.ts");
+
+      assertEquals(first?.path, canonicalPath);
+      assertStrictEquals(
+        cached,
+        first,
+        "the cached result must retain the verified canonical path",
+      );
+    });
+
     it("should propagate canonicalization failures", async () => {
       const adapter = createMockAdapter();
       adapter.fs.files.set("/project/components/Button.tsx", "export default function Button() {}");

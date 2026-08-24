@@ -7,6 +7,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { FILE_NOT_FOUND } from "#veryfront/errors/error-registry/general.ts";
 import { ComponentRegistry } from "./index.ts";
 
 describe("ComponentRegistry - Edge Cases and Error Handling", () => {
@@ -725,6 +726,42 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
         "a manual entry added during load must not be overwritten by stale file content",
       );
       assertEquals(loaded?.content, "manual content");
+    });
+
+    it("should load a replacement entry when the stale source disappears during its read", async () => {
+      const adapter = createMockAdapter();
+      const projectDir = "/test/replace-after-stale-read-failure";
+      const componentPath = `${projectDir}/components/Button.tsx`;
+      adapter.fs.files.set(componentPath, "discovered content");
+
+      let releaseRead = () => {};
+      const gate = new Promise<void>((resolve) => {
+        releaseRead = resolve;
+      });
+      let readStarted = () => {};
+      const readFileStarted = new Promise<void>((resolve) => {
+        readStarted = resolve;
+      });
+      adapter.fs.readFile = async () => {
+        readStarted();
+        await gate;
+        throw FILE_NOT_FOUND.create({
+          detail: "The stale component source disappeared",
+          context: { operation: "readFile" },
+        });
+      };
+
+      const registry = new ComponentRegistry({ projectDir, adapter });
+      await registry.discover();
+
+      const loading = registry.loadComponent("Button");
+      await readFileStarted;
+      registry.add("Button", { content: "replacement content", exports: { default: () => {} } });
+      releaseRead();
+      const loaded = await loading;
+
+      assertEquals(loaded?.content, "replacement content");
+      assertEquals(registry.get("Button")?.content, "replacement content");
     });
 
     it("should not restore a component removed while its source was being read", async () => {
