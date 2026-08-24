@@ -27,6 +27,15 @@ describe("runs/runtime-env", () => {
     );
   });
 
+  it("applies the same safety policy to ambient and existing workflow env", () => {
+    const unsafeEnv = JSON.parse(
+      '{"SAFE_VALUE":"ok","VERYFRONT_API_TOKEN":"secret","TENANT_SECRET":"tenant-secret","nonString":123,"__proto__":"polluted","constructor":"polluted","prototype":"polluted"}',
+    ) as Record<string, string>;
+
+    assertEquals(buildTaskContextEnv(unsafeEnv), { SAFE_VALUE: "ok" });
+    assertEquals(mergeInjectedWorkflowEnv(unsafeEnv, {}), { SAFE_VALUE: "ok" });
+  });
+
   it("builds task context env from visible and allowlisted injected values", () => {
     assertEquals(
       buildTaskContextEnv(
