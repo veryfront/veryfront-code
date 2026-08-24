@@ -28,6 +28,8 @@ const MARKDOWN_LIST_PREFIX_PATTERN =
   /([-*+]|\d+[.)])([ \t]+)(?:\[[ xX]\][ \t]+)?/g;
 const MARKDOWN_PARAGRAPH_LIST_PREFIX_PATTERN =
   /^(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?/;
+const MARKDOWN_RAW_HTML_BLOCK_START_PATTERN =
+  /^<(script|pre|style|textarea)(?:[ \t]|>|$)/i;
 const MARKDOWN_FENCE_CONTAINER_CONTINUATION_PATTERN = /^[ \t]*(?:>[ \t]*)*/;
 const CODERABBIT_REQUESTED_COMMIT_PATTERN =
   /Requested commit:\s*([0-9a-f]{40})/gi;
@@ -441,6 +443,7 @@ function scanMarkdownStructure(content) {
   };
   let openFence;
   let openHtmlComment;
+  let openRawHtmlBlock;
   let openParagraph;
   let lineStart = 0;
   for (const lineMatch of content.matchAll(/[^\r\n]*(?:\r\n|[\r\n]|$)/g)) {
@@ -461,6 +464,27 @@ function scanMarkdownStructure(content) {
       continuesParagraph,
       indentedCodeLine,
     );
+
+    if (
+      openRawHtmlBlock !== undefined &&
+      !continuesMarkdownFenceContainer(
+        lineWithoutEnding,
+        openRawHtmlBlock.container,
+      )
+    ) {
+      ranges.push([openRawHtmlBlock.start, lineStart]);
+      openRawHtmlBlock = undefined;
+    }
+
+    if (openRawHtmlBlock !== undefined) {
+      if (markdownRawHtmlBlockCloses(lineWithoutEnding, openRawHtmlBlock.tag)) {
+        ranges.push([openRawHtmlBlock.start, lineEnd]);
+        openRawHtmlBlock = undefined;
+      }
+      openParagraph = undefined;
+      lineStart = lineEnd;
+      continue;
+    }
 
     if (
       openHtmlComment !== undefined &&
@@ -549,6 +573,24 @@ function scanMarkdownStructure(content) {
       }
     }
 
+    const rawHtmlBlock = markdownRawHtmlBlockStart(
+      lineWithoutEnding,
+      indentedCodeLine,
+    );
+    if (rawHtmlBlock !== undefined) {
+      if (markdownRawHtmlBlockCloses(lineWithoutEnding, rawHtmlBlock.tag)) {
+        ranges.push([lineStart, lineEnd]);
+      } else {
+        openRawHtmlBlock = {
+          ...rawHtmlBlock,
+          start: lineStart,
+        };
+      }
+      openParagraph = undefined;
+      lineStart = lineEnd;
+      continue;
+    }
+
     openHtmlComment = scanMarkdownHtmlComments(
       content,
       lineWithoutEnding,
@@ -564,15 +606,24 @@ function scanMarkdownStructure(content) {
       : undefined;
     lineStart = lineEnd;
   }
-  if (openHtmlComment?.container !== undefined) {
+  if (openRawHtmlBlock !== undefined) {
+    ranges.push([openRawHtmlBlock.start, content.length]);
+  } else if (openHtmlComment?.container !== undefined) {
     ranges.push([openHtmlComment.start, content.length]);
   } else if (openFence !== undefined) {
     ranges.push([openFence.start, content.length]);
   }
+  const blockRanges = mergeMarkdownRanges(ranges, []);
+  const refinedInlineRanges = blockRanges.length === 0
+    ? { inlineCodeRanges, inlineHtmlRanges }
+    : markdownInlineStructureRanges(content, blockRanges);
   return {
     excludedRanges: mergeMarkdownRanges(
-      ranges,
-      mergeMarkdownRanges(inlineCodeRanges, inlineHtmlRanges),
+      blockRanges,
+      mergeMarkdownRanges(
+        refinedInlineRanges.inlineCodeRanges,
+        refinedInlineRanges.inlineHtmlRanges,
+      ),
     ),
     reviewMarkers,
   };
@@ -637,6 +688,8 @@ function markdownParagraphLineContext(line) {
     MARKDOWN_PARAGRAPH_LIST_PREFIX_PATTERN,
   )?.[0];
   return {
+    blockquoteDepth:
+      [...containerPrefix].filter((character) => character === ">").length,
     content: listPrefix === undefined
       ? remainingLine
       : remainingLine.slice(listPrefix.length),
@@ -649,10 +702,17 @@ function markdownParagraphLineContext(line) {
 }
 
 function markdownLineContinuesParagraph(line, paragraph) {
+  if (paragraph === undefined || line.listContinuationIndent !== undefined) {
+    return false;
+  }
+  const sameContainer = line.structuralPrefix === paragraph.structuralPrefix;
+  const lazyBlockquoteContinuation = paragraph.blockquoteDepth > 0 &&
+    line.blockquoteDepth < paragraph.blockquoteDepth;
+  const lazyListContinuation = paragraph.isListItem;
+  if (!sameContainer && !lazyBlockquoteContinuation) return false;
   if (
-    paragraph === undefined || line.listContinuationIndent !== undefined ||
-    line.structuralPrefix !== paragraph.structuralPrefix ||
-    line.indentation < paragraph.continuationIndent
+    line.indentation < paragraph.continuationIndent &&
+    !lazyBlockquoteContinuation && !lazyListContinuation
   ) return false;
   return line.indentation - paragraph.continuationIndent >= 4 ||
     !isMarkdownInlineCodeBarrier(line.content);
@@ -669,9 +729,35 @@ function markdownParagraphAfterLine(
     return undefined;
   }
   return {
+    blockquoteDepth: line.blockquoteDepth,
     continuationIndent: line.listContinuationIndent ?? 0,
+    isListItem: line.listContinuationIndent !== undefined,
     structuralPrefix: line.structuralPrefix,
   };
+}
+
+function markdownRawHtmlBlockStart(line, indentedCodeLine) {
+  if (indentedCodeLine) return undefined;
+  const containerPrefix = line.match(
+    MARKDOWN_FENCE_CONTAINER_CONTINUATION_PATTERN,
+  )?.[0] ?? "";
+  if (!hasValidMarkdownBlockquoteSpacing(containerPrefix)) return undefined;
+  const remainingLine = line.slice(containerPrefix.length);
+  const listPrefix = remainingLine.match(
+    MARKDOWN_PARAGRAPH_LIST_PREFIX_PATTERN,
+  )?.[0] ?? "";
+  const tag = remainingLine.slice(listPrefix.length).match(
+    MARKDOWN_RAW_HTML_BLOCK_START_PATTERN,
+  )?.[1];
+  if (tag === undefined) return undefined;
+  return {
+    container: markdownFenceContainer(containerPrefix + listPrefix),
+    tag: tag.toLowerCase(),
+  };
+}
+
+function markdownRawHtmlBlockCloses(line, tag) {
+  return line.toLowerCase().includes(`</${tag}>`);
 }
 
 function scanMarkdownHtmlComments(
@@ -736,9 +822,10 @@ function markdownHtmlCommentBlockContainer(line, commentStart) {
   return markdownFenceContainer(match[1]);
 }
 
-function markdownInlineStructureRanges(content) {
+function markdownInlineStructureRanges(content, excludedRanges = []) {
   const inlineCodeRanges = [];
   const inlineHtmlRanges = [];
+  const excludedRangeCursor = { index: 0 };
   let segmentStart = 0;
   let openParagraph;
   let lineStart = 0;
@@ -754,28 +841,37 @@ function markdownInlineStructureRanges(content) {
     );
     const indentedCodeLine = isMarkdownIndentedCodeLine(lineWithoutEnding) &&
       !continuesParagraph;
-    if (isMarkdownInlineCodeBarrier(lineWithoutEnding) || indentedCodeLine) {
+    const paragraphAfterLine = markdownParagraphAfterLine(
+      paragraphLine,
+      openParagraph,
+      continuesParagraph,
+      indentedCodeLine,
+    );
+    const splitsInlineCode = indentedCodeLine ||
+      (isMarkdownInlineCodeBarrier(lineWithoutEnding) && !continuesParagraph);
+    if (splitsInlineCode) {
       appendMarkdownInlineCodeRanges(
         content,
         segmentStart,
         lineStart,
         inlineCodeRanges,
         inlineHtmlRanges,
+        excludedRanges,
+        excludedRangeCursor,
       );
-      appendMarkdownInlineHtmlRanges(
-        content,
-        lineStart,
-        lineEnd,
-        inlineHtmlRanges,
-      );
-      segmentStart = lineEnd;
+      if (paragraphAfterLine !== undefined && !indentedCodeLine) {
+        segmentStart = lineStart;
+      } else {
+        appendMarkdownInlineHtmlRanges(
+          content,
+          lineStart,
+          lineEnd,
+          inlineHtmlRanges,
+        );
+        segmentStart = lineEnd;
+      }
     }
-    openParagraph = markdownParagraphAfterLine(
-      paragraphLine,
-      openParagraph,
-      continuesParagraph,
-      indentedCodeLine,
-    );
+    openParagraph = paragraphAfterLine;
     lineStart = lineEnd;
   }
   appendMarkdownInlineCodeRanges(
@@ -784,6 +880,8 @@ function markdownInlineStructureRanges(content) {
     content.length,
     inlineCodeRanges,
     inlineHtmlRanges,
+    excludedRanges,
+    excludedRangeCursor,
   );
   return { inlineCodeRanges, inlineHtmlRanges };
 }
@@ -806,6 +904,55 @@ function isMarkdownInlineCodeBarrier(line) {
 }
 
 function appendMarkdownInlineCodeRanges(
+  content,
+  start,
+  end,
+  inlineCodeRanges,
+  inlineHtmlRanges,
+  excludedRanges,
+  excludedRangeCursor,
+) {
+  let segmentStart = start;
+  let excludedIndex = excludedRangeCursor.index;
+  while (excludedRanges[excludedIndex]?.[1] <= segmentStart) {
+    excludedIndex += 1;
+  }
+  while (excludedIndex < excludedRanges.length) {
+    const [excludedStart, excludedEnd] = excludedRanges[excludedIndex];
+    if (excludedStart >= end) break;
+    if (segmentStart < excludedStart) {
+      appendMarkdownInlineCodeRangesInSegment(
+        content,
+        segmentStart,
+        Math.min(excludedStart, end),
+        inlineCodeRanges,
+        inlineHtmlRanges,
+      );
+    }
+    segmentStart = Math.max(segmentStart, excludedEnd);
+    if (excludedEnd > end) {
+      excludedRangeCursor.index = excludedIndex;
+      return;
+    }
+    excludedIndex += 1;
+    if (segmentStart >= end) {
+      excludedRangeCursor.index = excludedIndex;
+      return;
+    }
+  }
+  excludedRangeCursor.index = excludedIndex;
+  if (segmentStart < end) {
+    appendMarkdownInlineCodeRangesInSegment(
+      content,
+      segmentStart,
+      end,
+      inlineCodeRanges,
+      inlineHtmlRanges,
+    );
+  }
+}
+
+function appendMarkdownInlineCodeRangesInSegment(
   content,
   start,
   end,
