@@ -94,6 +94,25 @@ describe("MDXCacheAdapter", () => {
       expect(result).toBeUndefined();
     });
 
+    it("treats legacy unversioned metadata as a cache miss", async () => {
+      const contentHash = await adapter.computeHash(testContent);
+      const codeHash = "legacy-code-hash";
+      await manifestStore.setBundleCode(codeHash, {
+        code: testBundle.compiledCode,
+      });
+      await manifestStore.setBundleMetadata(`mdx:development:${contentHash}`, {
+        hash: contentHash,
+        codeHash,
+        size: testBundle.compiledCode.length,
+        compiledAt: Date.now(),
+        source: "legacy.mdx",
+        mode: "development",
+        meta: { type: "mdx" },
+      });
+
+      expect(await adapter.getCachedBundle(testContent)).toBeUndefined();
+    });
+
     it("should return cached bundle on cache hit", async () => {
       await adapter.setCachedBundle(testContent, testBundle, "test.mdx");
 
@@ -369,7 +388,7 @@ describe("MDXCacheAdapter", () => {
       await adapter.setCachedBundle(content, bundle, "/path/to/test.mdx");
 
       const hash = await adapter.computeHash(content);
-      const cacheKey = `mdx:development:${hash}`;
+      const cacheKey = `mdx:v2:development:${hash}`;
       const metadata = await manifestStore.getBundleMetadata(cacheKey);
 
       expect(metadata).toBeDefined();

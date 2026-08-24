@@ -120,6 +120,25 @@ describe("hash-utils", () => {
       );
     });
 
+    it("distinguishes lone surrogates from replacement characters in every field", async () => {
+      for (const field of ["code", "css", "sourceMap"] as const) {
+        const withLoneSurrogate = {
+          code: "",
+          [field]: "\uD800",
+        };
+        const withReplacementCharacter = {
+          code: "",
+          [field]: "\uFFFD",
+        };
+
+        assertNotEquals(
+          await computeCodeHash(withLoneSurrogate),
+          await computeCodeHash(withReplacementCharacter),
+          `${field} must preserve raw UTF-16 code-unit identity`,
+        );
+      }
+    });
+
     it("frames bundle fields without ambient array serialization methods", async () => {
       const originalJoin = Array.prototype.join;
       const originalMap = Array.prototype.map;
