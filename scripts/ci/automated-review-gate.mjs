@@ -411,6 +411,7 @@ function codeRabbitRangeEvidenceStatements(content) {
   const markdownStructure = scanMarkdownStructure(content);
   const excludedRanges = markdownStructure.excludedRanges;
   const continuationBarrierRanges = markdownStructure.continuationBarrierRanges;
+  const inlineCodeRanges = markdownStructure.inlineCodeRanges;
   const inlineLinkRanges = markdownStructure.inlineLinkRanges;
   const paragraphContinuationLineStarts =
     markdownStructure.paragraphContinuationLineStarts;
@@ -475,7 +476,12 @@ function codeRabbitRangeEvidenceStatements(content) {
     const insideExcludedRange = excludedRangeIndex < excludedRanges.length &&
       excludedRanges[excludedRangeIndex][0] <= statementIndex &&
       statementIndex < excludedRanges[excludedRangeIndex][1];
-    if (insideExcludedRange) continue;
+    const containingInlineCodeRange = insideExcludedRange
+      ? markdownRangeContainingIndex(inlineCodeRanges, statementIndex)
+      : undefined;
+    if (insideExcludedRange && containingInlineCodeRange === undefined) {
+      continue;
+    }
     while (
       continuationBarrierRangeIndex < continuationBarrierRanges.length &&
       continuationBarrierRanges[continuationBarrierRangeIndex][1] <=
@@ -485,6 +491,20 @@ function codeRabbitRangeEvidenceStatements(content) {
     }
     const nextStatementIndex = statementIndexes[matchIndex + 1] ??
       content.length;
+    if (
+      containingInlineCodeRange !== undefined &&
+      match.statementPhraseEnd <= containingInlineCodeRange[1] &&
+      parseCodeRabbitRangeStatement(
+          content,
+          match,
+          Math.min(nextStatementIndex, containingInlineCodeRange[1]),
+          nextStatementIndex,
+          paragraphContinuationLineStarts,
+          inlineLinkRanges,
+        ) !== undefined
+    ) {
+      continue;
+    }
     const continuationEnd = Math.min(
       nextStatementIndex,
       continuationBarrierRanges[continuationBarrierRangeIndex]?.[0] ??
@@ -909,10 +929,7 @@ function scanMarkdownStructure(content) {
       continuationBlockRanges,
       paragraphInterruptingHtmlRanges,
     ),
-    mergeMarkdownRanges(
-      refinedInlineRanges.inlineCodeRanges,
-      refinedInlineRanges.referenceDefinitionRanges,
-    ),
+    refinedInlineRanges.referenceDefinitionRanges,
   );
   return {
     continuationBarrierRanges,
@@ -923,6 +940,7 @@ function scanMarkdownStructure(content) {
         refinedInlineRanges.inlineHtmlRanges,
       ),
     ),
+    inlineCodeRanges: refinedInlineRanges.inlineCodeRanges,
     inlineLinkRanges: refinedInlineRanges.inlineLinkRanges,
     reviewMarkers,
     paragraphContinuationLineStarts,
@@ -2759,6 +2777,11 @@ function firstMarkdownRangeEndingAfter(ranges, index) {
     else upper = middle;
   }
   return lower;
+}
+
+function markdownRangeContainingIndex(ranges, index) {
+  const range = ranges[firstMarkdownRangeEndingAfter(ranges, index)];
+  return range !== undefined && range[0] <= index ? range : undefined;
 }
 
 function markdownRangesIntersect(ranges, start, end) {

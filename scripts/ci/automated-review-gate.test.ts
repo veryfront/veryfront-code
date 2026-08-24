@@ -1486,31 +1486,34 @@ describe("automated review gate", () => {
     );
 
     for (
-      const partiallyInlineCodeRange of [
-        `Rev\`iew\`ing files that changed from the base of the PR and between not-a-sha and ${HEAD_SHA}.`,
+      const partiallyCodeStyledRange of [
+        `Re\`view\`ing files that changed from the base of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        `\`Re\`viewing files that changed from the base of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        `\`Review\`ing files that changed from the base of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        `\`Reviewing\` files that changed from the base of the PR and between not-a-sha and ${HEAD_SHA}.`,
         "Reviewing files that changed from the base of the PR and between " +
         `not-a-sha \`and ${HEAD_SHA}.\``,
       ]
     ) {
-      const newerPartiallyInlineCodeCurrentRange = codeRabbitSummary({
+      const newerPartiallyCodeStyledCurrentRange = codeRabbitSummary({
         body: [
           "<!-- recent_review_start -->",
           "No actionable comments were generated in the recent review.",
-          partiallyInlineCodeRange,
+          partiallyCodeStyledRange,
           "<!-- recent_review_end -->",
         ].join("\n"),
         created_at: "2026-08-22T12:03:42Z",
         updated_at: "2026-08-22T12:03:42Z",
       });
       assertEquals(
-        (await findAutomatedReview(
+        await findAutomatedReview(
           {
             reviews: [],
-            comments: [olderSuccess, newerPartiallyInlineCodeCurrentRange],
+            comments: [olderSuccess, newerPartiallyCodeStyledCurrentRange],
           },
           HEAD_SHA,
-        ))?.url,
-        olderSuccess.html_url,
+        ),
+        undefined,
       );
     }
 
@@ -2434,7 +2437,7 @@ describe("automated review gate", () => {
       olderSuccess.html_url,
     );
 
-    const currentHeadOnlyInsideCodeAfterMultilineLink = codeRabbitSummary({
+    const codeStyledCurrentHeadAfterMultilineLink = codeRabbitSummary({
       body: [
         "<!-- recent_review_start -->",
         "No actionable comments were generated in the recent review.",
@@ -2447,14 +2450,14 @@ describe("automated review gate", () => {
       updated_at: "2026-08-22T12:03:43Z",
     });
     assertEquals(
-      (await findAutomatedReview(
+      await findAutomatedReview(
         {
           reviews: [],
-          comments: [olderSuccess, currentHeadOnlyInsideCodeAfterMultilineLink],
+          comments: [olderSuccess, codeStyledCurrentHeadAfterMultilineLink],
         },
         HEAD_SHA,
-      ))?.url,
-      olderSuccess.html_url,
+      ),
+      undefined,
     );
 
     for (
