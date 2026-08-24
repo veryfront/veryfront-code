@@ -982,19 +982,26 @@ describe("createWorkflowHandler", () => {
       const runId = await startRun();
       const persisted = await client.getRun(runId);
       if (!persisted) throw new Error("expected the run to exist");
-      replaceObservation({
-        supported: true,
-        initial: {
-          ...persisted,
-          status: "running",
-          input: {
-            toJSON: () => {
-              throw Object.assign(new Error("sensitive customer detail"), {
-                name: "sensitive customer detail",
-              });
-            },
+      const initial = {
+        ...persisted,
+        status: "running" as const,
+        input: {
+          toJSON: () => {
+            throw Object.assign(new Error("sensitive customer detail"), {
+              name: "sensitive customer detail",
+            });
           },
         },
+      };
+      Object.defineProperty(initial, "id", {
+        configurable: true,
+        get: () => {
+          throw new Error("sensitive customer id");
+        },
+      });
+      replaceObservation({
+        supported: true,
+        initial,
         events: {
           [Symbol.asyncIterator]: () => ({
             next: () => Promise.resolve({ value: undefined, done: true as const }),

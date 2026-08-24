@@ -201,6 +201,7 @@ function projectRun(
 function runEventStream(
   observation: WorkflowRunEventObservation,
   signal: AbortSignal,
+  runId: string,
 ): Response {
   const encoder = new TextEncoder();
   const iterator = observation.events[Symbol.asyncIterator]();
@@ -283,7 +284,7 @@ function runEventStream(
           // than the error itself. Reconnecting re-reads the same stored run
           // and fails the same way, so the failure is not retryable.
           logger.error("Workflow run snapshot serialization failed", {
-            runId: observation.initial.id,
+            runId,
             errorName: "serialization_error",
           });
           failStream(controller, {
@@ -310,7 +311,7 @@ function runEventStream(
       } catch (error) {
         if (closed) return;
         logger.error("Workflow event observation failed", {
-          runId: observation.initial.id,
+          runId,
         }, error);
         failStream(controller, {
           code: "workflow_observation_failed",
@@ -387,7 +388,7 @@ export function createWorkflowHandler(
         if (!observation.supported) {
           return problem("Workflow event observation is not supported", 501);
         }
-        return runEventStream(observation, request.signal);
+        return runEventStream(observation, request.signal, runId);
       }
 
       if (
