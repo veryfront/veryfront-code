@@ -37,9 +37,9 @@ describe(
         assertEquals(result.includes(JSON.stringify(VERSION)), true);
       });
 
-      it("should contain hydrate export", () => {
+      it("should contain an async hydrate export", () => {
         const result = getResult();
-        assertEquals(result.includes("export function hydrate"), true);
+        assertEquals(result.includes("export async function hydrate"), true);
       });
 
       it("should contain window.__veryfront setup", () => {
@@ -237,7 +237,7 @@ describe(
     describe("generateAppModule edge cases", () => {
       it("should expose the compatibility API without a placeholder IIFE", () => {
         const result = generateAppModule();
-        assertEquals(result.includes("export function hydrate"), true);
+        assertEquals(result.includes("export async function hydrate"), true);
         assertEquals(result.includes("(() => {"), false);
       });
 

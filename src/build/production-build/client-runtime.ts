@@ -87,7 +87,9 @@ import { boot } from './router.js';
 
 export const version = ${JSON.stringify(VERSION)};
 
-export function hydrate(slug, options = {}) {
+// Async so callers keep the Promise-based contract of the previous runtime
+// (window.hydrate(...).then(...)) while resolving to the router from boot().
+export async function hydrate(slug, options = {}) {
   return boot({ ...options, slug });
 }
 

@@ -39,10 +39,10 @@ describe(
         assertStringIncludes(code, "window.__veryfront.initialized = true");
       });
 
-      it("should define hydrate function", () => {
+      it("should define an async hydrate function", () => {
         const code = generateAppModule();
 
-        assertStringIncludes(code, "export function hydrate");
+        assertStringIncludes(code, "export async function hydrate");
         assertStringIncludes(code, "slug, options = {}");
       });
 
@@ -50,7 +50,7 @@ describe(
         const code = generateAppModule();
 
         assertStringIncludes(code, "export const version");
-        assertStringIncludes(code, "export function hydrate");
+        assertStringIncludes(code, "export async function hydrate");
       });
 
       it("should delegate to the router runtime", () => {
