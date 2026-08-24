@@ -3,6 +3,9 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ClaudeCodeMode } from "./types.ts";
 
+const TEST_CWD = "/veryfront-test/workspace";
+const TEST_WRITE_PATH = "/veryfront-test/workspace/a.ts";
+
 /**
  * Mock the Claude Agent SDK import to capture the permissionMode
  * passed to query() — this lets us test the real resolvePermissionMode
@@ -63,7 +66,7 @@ async function capturePermissionMode(
   mock.install();
   try {
     const { executeAgent } = await import("./agent.ts");
-    await executeAgent("test task", { ...config, cwd: "/tmp" });
+    await executeAgent("test task", { ...config, cwd: TEST_CWD });
     return mock.capturedOptions?.permissionMode as string;
   } finally {
     mock.uninstall();
@@ -77,7 +80,7 @@ const sdkMockAvailable = await (async () => {
   mock.install();
   try {
     const { executeAgent } = await import("./agent.ts");
-    await executeAgent("probe", { cwd: "/tmp" });
+    await executeAgent("probe", { cwd: TEST_CWD });
     return mock.capturedOptions !== null;
   } catch {
     return false;
@@ -173,7 +176,7 @@ describe("executeAgent result mapping", () => {
           content: [
             { type: "text", text: "done" },
             { type: "tool_use", name: "Bash", input: { command: "deno test" } },
-            { type: "tool_use", name: "Write", input: { file_path: "/tmp/a.ts" } },
+            { type: "tool_use", name: "Write", input: { file_path: TEST_WRITE_PATH } },
           ],
         },
       },
@@ -189,7 +192,7 @@ describe("executeAgent result mapping", () => {
     mock.install();
     try {
       const { executeAgent } = await import("./agent.ts");
-      const result = await executeAgent("test task", { cwd: "/tmp" });
+      const result = await executeAgent("test task", { cwd: TEST_CWD });
 
       assertEquals(
         result.success,
@@ -199,7 +202,7 @@ describe("executeAgent result mapping", () => {
       assertEquals(result.response, undefined, "a failed run must not report a response");
       assertEquals(result.error, "max turns reached", "the SDK errors must be surfaced");
       assertEquals(result.commandsExecuted, ["deno test"], "Bash commands must be tracked");
-      assertEquals(result.filesModified, ["/tmp/a.ts"], "written files must be tracked");
+      assertEquals(result.filesModified, [TEST_WRITE_PATH], "written files must be tracked");
       assertEquals(result.iterations, 1, "the SDK turn count must be reported");
     } finally {
       mock.uninstall();
@@ -211,7 +214,7 @@ describe("executeAgent result mapping", () => {
     mock.install();
     try {
       const { executeAgent } = await import("./agent.ts");
-      const result = await executeAgent("test task", { cwd: "/tmp" });
+      const result = await executeAgent("test task", { cwd: TEST_CWD });
 
       assertEquals(result.success, true, "a success SDK subtype must be reported as success");
       assertEquals(result.response, "mocked", "the SDK result text must be surfaced");
