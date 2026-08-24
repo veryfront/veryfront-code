@@ -39,6 +39,27 @@ async function settleWithin<T>(promise: Promise<T>, label: string): Promise<T> {
   return outcome.value;
 }
 
+async function waitWithin<T>(
+  promise: Promise<T>,
+  label: string,
+  timeoutMs = 1_000,
+): Promise<T> {
+  let timeout: number | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`${label} did not settle within ${timeoutMs}ms`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
 function createFakeRedisServer() {
   const subscriptions = new Map<RoutingInvalidationRedisClient, Map<string, RedisListener>>();
   const clientEventListeners = new Map<
@@ -156,12 +177,18 @@ async function signTestEnvelope(
   });
 }
 
-function deferred(): { promise: Promise<void>; resolve: () => void } {
+function deferred(): {
+  promise: Promise<void>;
+  reject: (error: unknown) => void;
+  resolve: () => void;
+} {
+  let reject!: (error: unknown) => void;
   let resolve!: () => void;
-  const promise = new Promise<void>((innerResolve) => {
+  const promise = new Promise<void>((innerResolve, innerReject) => {
+    reject = innerReject;
     resolve = innerResolve;
   });
-  return { promise, resolve };
+  return { promise, reject, resolve };
 }
 
 describe("proxy routing invalidation Redis bus", () => {
@@ -324,21 +351,26 @@ describe("proxy routing invalidation Redis bus", () => {
     Object.defineProperty(crypto.subtle, "verify", {
       configurable: true,
       value: async (...args: Parameters<SubtleCrypto["verify"]>) => {
-        const verified = await originalVerify(...args);
-        const input = args[3];
-        const bytes = input instanceof ArrayBuffer
-          ? new Uint8Array(input)
-          : new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
-        if (
-          verified &&
-          new TextDecoder().decode(bytes).startsWith(`${ACK_SIGNATURE_DOMAIN}\0`)
-        ) {
-          duplicateAcknowledgementVerifications++;
-          if (duplicateAcknowledgementVerifications === 2) {
-            duplicateAcknowledgementsVerified.resolve();
+        try {
+          const verified = await originalVerify(...args);
+          const input = args[3];
+          const bytes = input instanceof ArrayBuffer
+            ? new Uint8Array(input)
+            : new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+          if (
+            verified &&
+            new TextDecoder().decode(bytes).startsWith(`${ACK_SIGNATURE_DOMAIN}\0`)
+          ) {
+            duplicateAcknowledgementVerifications++;
+            if (duplicateAcknowledgementVerifications === 2) {
+              duplicateAcknowledgementsVerified.resolve();
+            }
           }
+          return verified;
+        } catch (error) {
+          duplicateAcknowledgementsVerified.reject(error);
+          throw error;
         }
-        return verified;
       },
     });
     // Redis redelivery, or one buggy replica, can repeat an acknowledgement.
@@ -379,7 +411,10 @@ describe("proxy routing invalidation Redis bus", () => {
 
     try {
       const resultPromise = busA?.publish(createEvent());
-      await duplicateAcknowledgementsVerified.promise;
+      await waitWithin(
+        duplicateAcknowledgementsVerified.promise,
+        "duplicate acknowledgement verification",
+      );
       await busA?.close();
       const result = await resultPromise;
 
