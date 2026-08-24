@@ -155,14 +155,18 @@ jobs:
     name: publish completed CodeRabbit review status
     # This SHA-scoped path publishes only durable completion success. It shares
     # the status publisher queue so it cannot race general PR reconciliation.
+    # The status payload carries no creator field, so pin the sender instead:
+    # for a bot-created commit status the sender is the bot itself. The gate
+    # helper then re-verifies the creator over the REST status history, where
+    # creator does exist, before treating the wakeup as completion proof.
     if: >-
       github.event_name == 'status' &&
       github.event.context == 'CodeRabbit' &&
       github.event.state == 'success' &&
       github.event.description == 'Review completed' &&
-      github.event.creator.login == 'coderabbitai[bot]' &&
-      github.event.creator.id == 136622811 &&
-      github.event.creator.type == 'Bot'
+      github.event.sender.login == 'coderabbitai[bot]' &&
+      github.event.sender.id == 136622811 &&
+      github.event.sender.type == 'Bot'
     concurrency:
       group: automated-review-status-publishers
       queue: max
@@ -194,11 +198,12 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               headSha: context.payload.sha,
+              // The payload claim carries no creator; the helper authenticates
+              // the completion against the REST status history for the head.
               status: {
                 context: context.payload.context,
                 state: context.payload.state,
                 description: context.payload.description,
-                creator: context.payload.creator,
               },
             });
             if (result.state === "success") {

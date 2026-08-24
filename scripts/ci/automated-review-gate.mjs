@@ -144,10 +144,14 @@ async function uniqueOpenPullForHead(github, owner, repo, headSha) {
   return matches[0];
 }
 
-function isCodeRabbitCompletion(status) {
+function isCodeRabbitCompletionClaim(status) {
   return status?.context === "CodeRabbit" &&
     status?.state === "success" &&
-    status?.description === "Review completed" &&
+    status?.description === "Review completed";
+}
+
+function isCodeRabbitCompletion(status) {
+  return isCodeRabbitCompletionClaim(status) &&
     isPinnedBot(status?.creator, CODERABBIT_LOGIN);
 }
 
@@ -160,11 +164,27 @@ export async function publishCodeRabbitCompletionStatus({
   status,
   expectedPullNumber = undefined,
 }) {
-  if (!FULL_SHA.test(headSha) || !isCodeRabbitCompletion(status)) {
+  if (!FULL_SHA.test(headSha) || !isCodeRabbitCompletionClaim(status)) {
     return { state: "ignored", review: undefined, failure: undefined };
   }
 
   try {
+    // The status webhook payload carries no creator field, so an event-shaped
+    // claim cannot authenticate itself. Re-read the commit statuses over REST,
+    // where creator does exist, and accept the wakeup only when a pinned
+    // CodeRabbit completion is attached to the captured head. A status that
+    // already carries the pinned creator came from that same REST history.
+    if (!isCodeRabbitCompletion(status)) {
+      const statuses = await collectAll(
+        github,
+        github.rest.repos.listCommitStatusesForRef,
+        { owner, repo, ref: headSha },
+        "completion statuses",
+      );
+      if (!statuses.some(isCodeRabbitCompletion)) {
+        return { state: "ignored", review: undefined, failure: undefined };
+      }
+    }
     const pull = await uniqueOpenPullForHead(github, owner, repo, headSha);
     if (
       expectedPullNumber !== undefined && pull.number !== expectedPullNumber

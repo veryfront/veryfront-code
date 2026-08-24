@@ -616,6 +616,14 @@ describe("automated review publication", () => {
   });
 });
 
+// The status webhook payload has no creator field, so the workflow hands the
+// gate only this claim tuple and the gate authenticates the creator over REST.
+const payloadClaim = () => ({
+  context: "CodeRabbit",
+  state: "success",
+  description: "Review completed",
+});
+
 describe("CodeRabbit completion status wakeup", () => {
   it("publishes success for one open PR whose head still matches", async () => {
     const fixture = githubFixture({
@@ -631,6 +639,63 @@ describe("CodeRabbit completion status wakeup", () => {
     assertEquals(result.state, "success");
     assertEquals(fixture.published[0]?.state, "success");
     assertEquals(fixture.published[0]?.sha, HEAD);
+  });
+
+  it("authenticates a creator-less payload claim against REST statuses", async () => {
+    const fixture = githubFixture({
+      pages: {
+        statuses: [[status()]],
+        associatedPulls: [[associatedPull()]],
+      },
+    });
+    const result = await publishCodeRabbitCompletionStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      headSha: HEAD,
+      status: payloadClaim(),
+    });
+    assertEquals(result.state, "success");
+    assertEquals(fixture.published[0]?.state, "success");
+    assertEquals(fixture.published[0]?.sha, HEAD);
+  });
+
+  it("ignores a payload claim without a pinned REST completion", async () => {
+    for (
+      const statuses of [
+        [],
+        [status({ creator: bot("github-actions[bot]", CODERABBIT_ID) })],
+        [status({ creator: bot("coderabbitai[bot]", CODERABBIT_ID + 1) })],
+        [status({ description: "Review rate limited" })],
+      ]
+    ) {
+      const fixture = githubFixture({ pages: { statuses: [statuses] } });
+      const result = await publishCodeRabbitCompletionStatus({
+        github: fixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        headSha: HEAD,
+        status: payloadClaim(),
+      });
+      assertEquals(result.state, "ignored");
+      assertEquals(fixture.published.length, 0);
+    }
+  });
+
+  it("fails closed when claim verification cannot fully paginate", async () => {
+    const fixture = githubFixture({
+      pages: { statuses: [[], []] },
+      failAfterFirstPage: "statuses",
+    });
+    const result = await publishCodeRabbitCompletionStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      headSha: HEAD,
+      status: payloadClaim(),
+    });
+    assertEquals(result.state, "failure");
+    assertEquals(fixture.published.length, 0);
   });
 
   it("resolves an earlier waiting publication into success", async () => {
@@ -1045,9 +1110,15 @@ describe("automated review workflow", () => {
         "github.event.context == 'CodeRabbit'",
         "github.event.state == 'success'",
         "github.event.description == 'Review completed'",
-        "github.event.creator.id == 136622811",
+        "github.event.sender.login == 'coderabbitai[bot]'",
+        "github.event.sender.id == 136622811",
+        "github.event.sender.type == 'Bot'",
       ]
     ) assert(statusIf.includes(condition));
+    assert(
+      !statusIf.includes("github.event.creator"),
+      "the status payload has no creator field, so that condition never matches",
+    );
     assertEquals(record(statusJob.concurrency, "status concurrency"), {
       ...publisherConcurrency,
     });
@@ -1061,6 +1132,10 @@ describe("automated review workflow", () => {
     assert(
       !statusScript.includes("publishAutomatedReviewStatus"),
       "completion wakeups must not enter mutable PR reconciliation",
+    );
+    assert(
+      !statusScript.includes("context.payload.creator"),
+      "the status payload has no creator; the gate authenticates over REST",
     );
   });
 });
