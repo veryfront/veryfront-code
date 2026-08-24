@@ -420,6 +420,79 @@ describe("ApprovalManager", () => {
     });
   });
 
+  describe("createApproval notification failures", () => {
+    const failingNotifier = () => Promise.reject(new Error("pager down"));
+
+    it("records a notifier failure on an owner-bound approval", async () => {
+      manager = new ApprovalManager({
+        backend,
+        expirationCheckInterval: 0,
+        notifier: failingNotifier,
+      });
+
+      const runId = "run-owner-bound-notify-failure";
+      await backend.createRun(createTestRun(runId, {
+        status: "waiting",
+        workerId: "run-execution:current-owner",
+      }));
+
+      const request = await manager.createApproval(
+        await backend.getRun(runId) as WorkflowRun,
+        "review-node",
+        { type: "wait", waitType: "approval", message: "Approve please", payload: {} },
+        createContext(runId),
+      );
+
+      assertEquals(
+        request.notificationError,
+        "pager down",
+        "a failed notification is reported to the caller so it can re-notify",
+      );
+
+      const persisted = await backend.getPendingApproval(runId, request.approvalId);
+      assertExists(persisted);
+      assertEquals(persisted.status, "pending", "the approval survives a failed notification");
+      assertEquals(
+        persisted.notificationError,
+        "pager down",
+        "the owner-bound write-back records the delivery failure",
+      );
+    });
+
+    it("records a notifier failure on an ownerless approval", async () => {
+      manager = new ApprovalManager({
+        backend,
+        expirationCheckInterval: 0,
+        notifier: failingNotifier,
+      });
+
+      const runId = "run-ownerless-notify-failure";
+      await backend.createRun(createTestRun(runId, { status: "waiting" }));
+
+      const request = await manager.createApproval(
+        await backend.getRun(runId) as WorkflowRun,
+        "review-node",
+        { type: "wait", waitType: "approval", message: "Approve please", payload: {} },
+        createContext(runId),
+      );
+
+      assertEquals(
+        request.notificationError,
+        "pager down",
+        "a failed notification is reported to the caller so it can re-notify",
+      );
+
+      const persisted = await backend.getPendingApproval(runId, request.approvalId);
+      assertExists(persisted);
+      assertEquals(persisted.status, "pending", "the approval survives a failed notification");
+      assertEquals(
+        persisted.notificationError,
+        "pager down",
+        "the initial append records the delivery failure",
+      );
+    });
+  });
+
   describe("processDecision", () => {
     it("rejects invalid structured approval data before persisting a direct approval", async () => {
       manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
@@ -661,6 +734,88 @@ describe("ApprovalManager", () => {
         [runId, undefined, "worker-original-owner"],
         [runId, undefined, "worker-replacement-owner"],
       ]);
+    });
+
+    it("refuses a decision from an approver outside the approvers list", async () => {
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+
+      const runId = "run-unauthorized-approver";
+      await backend.createRun(createTestRun(runId, { status: "waiting" }));
+
+      const request = await manager.createApproval(
+        await backend.getRun(runId) as WorkflowRun,
+        "decision-node",
+        {
+          type: "wait",
+          waitType: "approval",
+          message: "Approve please",
+          payload: { ticket: 1 },
+          approvers: ["alice"],
+        },
+        createContext(runId),
+      );
+
+      await assertRejects(
+        () => manager.approve(runId, request.approvalId, "mallory"),
+        Error,
+        "Not authorized to approve this request",
+      );
+
+      const untouched = await backend.getPendingApproval(runId, request.approvalId);
+      assertExists(untouched);
+      assertEquals(
+        untouched.status,
+        "pending",
+        "a refused approver must not resolve the approval",
+      );
+
+      const run = await backend.getRun(runId);
+      assertExists(run);
+      assertEquals(run.status, "waiting", "a refused approver must not advance the run");
+      assertEquals(
+        run.context["decision-node"],
+        undefined,
+        "a refused approver must not record a decision on the run context",
+      );
+    });
+
+    it("refuses a decision on an already-expired approval", async () => {
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+
+      const runId = "run-expired-decision";
+      await backend.createRun(createTestRun(runId, { status: "waiting" }));
+      await backend.savePendingApproval(runId, {
+        id: "apr-expired-decision",
+        nodeId: "review",
+        message: "approve me",
+        payload: {},
+        requestedAt: pastDate(2000),
+        expiresAt: pastDate(1000),
+        status: "pending",
+      });
+
+      await assertRejects(
+        () => manager.approve(runId, "apr-expired-decision", "reviewer"),
+        Error,
+        "Approval has expired",
+      );
+
+      const untouched = await backend.getPendingApproval(runId, "apr-expired-decision");
+      assertExists(untouched);
+      assertEquals(
+        untouched.status,
+        "pending",
+        "a decision past expiresAt must leave the approval pending",
+      );
+
+      const run = await backend.getRun(runId);
+      assertExists(run);
+      assertEquals(run.status, "waiting", "an expired decision must not advance the run");
+      assertEquals(
+        run.context.review,
+        undefined,
+        "an expired decision must not be recorded on the run context",
+      );
     });
 
     it("updates approval and run state without an executor", async () => {

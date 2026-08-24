@@ -30,6 +30,42 @@ function resumeInBackground(worker: WorkflowWorker, run: WorkflowRun): void {
     .resumeInBackground(run);
 }
 
+/** Drive one poll cycle without starting the timer loop. */
+function pollOnce(worker: WorkflowWorker): Promise<void> {
+  (worker as unknown as { status: string }).status = "running";
+  return (worker as unknown as { poll(): Promise<void> }).poll();
+}
+
+/**
+ * Reports a fixed set of stalled runs and lets `claimable` decide which of them
+ * this worker wins, standing in for another pod claiming a run first. The
+ * overrides are prototype methods that read `this`, like every real backend.
+ */
+class StalledRunsBackend extends MemoryBackend {
+  readonly claimAttempts: string[] = [];
+
+  constructor(
+    private readonly stalledRuns: WorkflowRun[],
+    private readonly claimable: (runId: string) => boolean,
+  ) {
+    super();
+  }
+
+  override findStalledRuns(_stalledThreshold: number): Promise<WorkflowRun[]> {
+    return Promise.resolve(this.stalledRuns);
+  }
+
+  override claimStalledRun(runId: string): Promise<boolean> {
+    this.claimAttempts.push(runId);
+    return Promise.resolve(this.claimable(runId));
+  }
+}
+
+/** Let the background resumes started by a poll cycle run to completion. */
+function settleResumes(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("workflow/worker/workflow-worker", () => {
   it("rejects backends that cannot fence owner-bound persistence", () => {
     const backend = new MemoryBackend();
@@ -89,6 +125,60 @@ describe("workflow/worker/workflow-worker", () => {
       runId: "run-worker-policy",
       workerId: "worker-current-owner",
     });
+  });
+
+  it("resumes only the stalled runs it claims", async () => {
+    const backend = new StalledRunsBackend(
+      [{ ...createRun(), id: "run-a" }, { ...createRun(), id: "run-b" }],
+      (runId) => runId === "run-b",
+    );
+    const resumed: string[] = [];
+    const worker = new WorkflowWorker({
+      backend,
+      pollInterval: 60_000,
+      resumeFn: (runId) => {
+        resumed.push(runId);
+        return Promise.resolve();
+      },
+    });
+
+    await pollOnce(worker);
+    await settleResumes();
+
+    assertEquals(resumed, ["run-b"], "a run claimed by another worker must not be resumed here");
+    assertEquals(worker.getStats().errorCount, 0, "a poll cycle must not record an error");
+  });
+
+  it("resumes no more stalled runs than the concurrency cap allows", async () => {
+    const backend = new StalledRunsBackend(
+      [
+        { ...createRun(), id: "run-a" },
+        { ...createRun(), id: "run-b" },
+        { ...createRun(), id: "run-c" },
+      ],
+      () => true,
+    );
+    const resumed: string[] = [];
+    const worker = new WorkflowWorker({
+      backend,
+      pollInterval: 60_000,
+      concurrency: 1,
+      resumeFn: (runId) => {
+        resumed.push(runId);
+        return Promise.resolve();
+      },
+    });
+
+    await pollOnce(worker);
+    await settleResumes();
+
+    assertEquals(resumed.length, 1, "poll must not exceed the concurrency cap");
+    assertEquals(
+      backend.claimAttempts.length,
+      1,
+      "poll must not claim runs it has no slot for",
+    );
+    assertEquals(worker.getStats().errorCount, 0, "a poll cycle must not record an error");
   });
 
   it("does not invoke the resume callback when a stalled run has no snapshot", async () => {

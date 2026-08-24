@@ -13,6 +13,7 @@ import { MemoryBackend } from "../backends/memory.ts";
 import { branch } from "../dsl/branch.ts";
 import { dependsOn, workflow } from "../dsl/workflow.ts";
 import { loop } from "../dsl/loop.ts";
+import { parallel } from "../dsl/parallel.ts";
 import { step } from "../dsl/step.ts";
 import { subWorkflow } from "../dsl/sub-workflow.ts";
 import { waitForApproval } from "../dsl/wait.ts";
@@ -149,6 +150,99 @@ describe("WorkflowClient", () => {
       const stillPending = await backend.getPendingApprovals(handle.runId);
       assertEquals(stillPending.length, 1);
       assertEquals(stillPending[0]!.status, "pending");
+    });
+
+    it("validates a schema declared on a wait nested in a branch arm", async () => {
+      client.register(workflow({
+        id: "typed-branch-approval-workflow",
+        steps: [
+          branch("review-gate", {
+            condition: () => true,
+            then: [
+              waitForApproval("nested-review", {
+                message: "Review the branch arm",
+                responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
+              }),
+            ],
+          }),
+        ],
+      }));
+
+      const handle = await client.start("typed-branch-approval-workflow", {});
+      await handle.settled();
+
+      const [approval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(approval);
+      assertEquals(approval.nodeId, "review-gate/then/nested-review");
+
+      await assertRejects(
+        () =>
+          client.approve(handle.runId, approval.id, "reviewer", undefined, {
+            confirmed: "yes",
+          }),
+        Error,
+        undefined,
+        "a branch-nested responseSchema must reject a non-conformant payload",
+      );
+
+      const stillPending = await backend.getPendingApprovals(handle.runId);
+      assertEquals(
+        stillPending.length,
+        1,
+        "a rejected payload must not consume the branch-nested approval",
+      );
+      const run = await backend.getRun(handle.runId);
+      assertExists(run);
+      assertEquals(
+        run.context["review-gate/then/nested-review"],
+        undefined,
+        "a non-conformant branch-nested payload must never reach workflow context",
+      );
+    });
+
+    it("validates a schema declared on a wait nested in a parallel node", async () => {
+      client.register(workflow({
+        id: "typed-parallel-approval-workflow",
+        steps: [
+          parallel("review-group", [
+            waitForApproval("nested-review", {
+              message: "Review the parallel arm",
+              responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
+            }),
+          ]),
+        ],
+      }));
+
+      const handle = await client.start("typed-parallel-approval-workflow", {});
+      await handle.settled();
+
+      const [approval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(approval);
+      assertEquals(approval.nodeId, "review-group/nested-review");
+
+      await assertRejects(
+        () =>
+          client.approve(handle.runId, approval.id, "reviewer", undefined, {
+            confirmed: "yes",
+          }),
+        Error,
+        undefined,
+        "a parallel-nested responseSchema must reject a non-conformant payload",
+      );
+
+      const stillPending = await backend.getPendingApprovals(handle.runId);
+      assertEquals(
+        stillPending.length,
+        1,
+        "a rejected payload must not consume the parallel-nested approval",
+      );
+      const run = await backend.getRun(handle.runId);
+      assertExists(run);
+      assertEquals(
+        run.context["review-group/nested-review"],
+        undefined,
+        "a non-conformant parallel-nested payload must never reach workflow context",
+      );
     });
 
     it("validates statically declared loop approval steps", async () => {

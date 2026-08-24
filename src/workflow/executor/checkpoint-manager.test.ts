@@ -108,6 +108,72 @@ describe("CheckpointManager", () => {
     assertEquals(resume.startFromNode, "node-1");
   });
 
+  it("refuses a checkpoint from a worker that no longer owns the run", async () => {
+    const runId = "ownership-stale";
+    const backend = new MemoryBackend();
+    await backend.createRun({ ...run(runId), status: "running", workerId: "worker-new" });
+
+    assertEquals(
+      await new CheckpointManager({ backend }).save(
+        runId,
+        checkpoint("cp-stale", "node-0", new Date(0)),
+        { runId, workerId: "worker-old" },
+      ),
+      false,
+      "a stale worker must not write checkpoints",
+    );
+    assertEquals(
+      (await backend.getCheckpoints(runId)).length,
+      0,
+      "nothing is persisted for a stale worker",
+    );
+  });
+
+  it("accepts a checkpoint from the worker that still owns the run", async () => {
+    const runId = "ownership-current";
+    const backend = new MemoryBackend();
+    await backend.createRun({ ...run(runId), status: "running", workerId: "worker-current" });
+
+    assertEquals(
+      await new CheckpointManager({ backend }).save(
+        runId,
+        checkpoint("cp-owned", "node-0", new Date(0)),
+        { runId, workerId: "worker-current" },
+      ),
+      true,
+      "the owning worker must be allowed to write checkpoints",
+    );
+    assertEquals(
+      (await backend.getCheckpoints(runId)).map(({ id }) => id),
+      ["cp-owned"],
+      "the owning worker's checkpoint is persisted",
+    );
+  });
+
+  it("refuses ownership-fenced saves on a backend that cannot fence them", async () => {
+    const runId = "ownership-unfenceable";
+    const inner = new MemoryBackend();
+    let unfencedSaves = 0;
+    const backend = {
+      saveCheckpoint: (id: string, value: Checkpoint) => {
+        unfencedSaves++;
+        return inner.saveCheckpoint(id, value);
+      },
+      getLatestCheckpoint: (id: string) => inner.getLatestCheckpoint(id),
+    } as unknown as WorkflowBackend;
+
+    assertEquals(
+      await new CheckpointManager({ backend }).save(
+        runId,
+        checkpoint("cp-unfenceable", "node-0", new Date(0)),
+        { runId, workerId: "worker-current" },
+      ),
+      false,
+      "an unfenceable backend must refuse an ownership-bound checkpoint",
+    );
+    assertEquals(unfencedSaves, 0, "the checkpoint must not fall back to an unfenced write");
+  });
+
   it("falls back to the latest checkpoint when the backend omits getCheckpoints", async () => {
     const inner = await seed("fallback", 2);
     const backend = {

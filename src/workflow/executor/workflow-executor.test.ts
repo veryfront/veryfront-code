@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertInstanceOf,
+  assertRejects,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { Tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
@@ -1198,6 +1203,88 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(receivedSignal?.aborted, true);
     assertEquals(dependentExecutions, 0);
     assertEquals(cancelledRun.status, "cancelled");
+  });
+
+  it("refuses to cancel a run that already completed", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend });
+    executor.register(
+      workflow({
+        id: "cancel-after-completion",
+        steps: [step("finish", { tool: createTool("finish", () => ({ ok: true })) })],
+      }).definition,
+    );
+
+    const handle = await executor.start("cancel-after-completion", {});
+    await handle.result();
+
+    await assertRejects(() => handle.cancel(), Error, "has already completed");
+
+    const run = await backend.getRun(handle.runId);
+    assertEquals(
+      run?.status,
+      "completed",
+      "cancelling a finished run must not rewrite its terminal status",
+    );
+    assertExists(run?.output);
+    assertExists(run?.completedAt);
+  });
+
+  it("refuses to cancel a run that already failed", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend });
+    executor.register(
+      workflow({
+        id: "cancel-after-failure",
+        steps: [
+          step("explode", {
+            tool: createTool("explode", () => {
+              throw new Error("step exploded");
+            }),
+          }),
+        ],
+      }).definition,
+    );
+
+    const handle = await executor.start("cancel-after-failure", {});
+    await assertRejects(() => handle.result());
+
+    await assertRejects(() => handle.cancel(), Error, "has already failed");
+
+    const run = await backend.getRun(handle.runId);
+    assertEquals(
+      run?.status,
+      "failed",
+      "cancelling a failed run must not rewrite its terminal status",
+    );
+    assertExists(run?.completedAt);
+  });
+
+  it("times out result() on a run parked in waiting", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend, resultWaitTimeout: 20 });
+    executor.register(
+      workflow({
+        id: "parked-in-waiting",
+        steps: [waitForApproval("gate", { message: "Approve to continue" })],
+      }).definition,
+    );
+
+    const handle = await executor.start("parked-in-waiting", {});
+    await handle.settled();
+
+    const error = await assertRejects(
+      () => handle.result(),
+      Error,
+      "Timed out after 20ms",
+      "result() must fail once the result-wait deadline passes",
+    );
+    assertInstanceOf(error, Error, "the timeout rejection must be an Error");
+    assertEquals(
+      error.message.includes('last status: "waiting"'),
+      true,
+      "the timeout must report the status the run was parked in",
+    );
   });
 
   it("does not report a failure while cancellation is still being persisted", async () => {

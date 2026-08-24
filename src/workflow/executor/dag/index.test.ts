@@ -939,6 +939,11 @@ describe("DAGExecutor", () => {
       const result = await executor.execute(nodes, createTestRun());
       assertEquals(result.completed, true);
       const output = result.nodeStates["loop-max"]!.output as any;
+      assertEquals(
+        output.exitReason,
+        "maxIterations",
+        "a loop that exhausts its iteration budget must report maxIterations, not condition",
+      );
       assertEquals(output.iterations, 2);
     });
 
@@ -2717,14 +2722,18 @@ describe("DAGExecutor", () => {
         return { success: true, output: node.id, executionTime: 1 };
       });
 
-      const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
+      const exec = new DAGExecutor({ stepExecutor: trackingExecutor, maxConcurrency: 1 });
       const nodes: WorkflowNode[] = [
+        { id: "a", dependsOn: [], config: { type: "step" } as any },
         { id: "b", dependsOn: [], config: { type: "step" } as any },
-        { id: "a", dependsOn: ["b"], config: { type: "step" } as any },
       ];
 
       await exec.execute(nodes, createTestRun(), "b");
-      assertEquals(order[0], "b");
+      assertEquals(
+        order,
+        ["b", "a"],
+        "startFromNode must seed the first batch, not the natural ready set",
+      );
     });
   });
 

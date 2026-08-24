@@ -90,6 +90,17 @@ describe("parallel()", () => {
     const node = parallel("test", [step("a", { agent: "a" })]);
 
     assertEquals(getConfig(node).strategy, "all");
+    assertEquals(
+      getConfig(node).checkpoint,
+      true,
+      "a parallel batch must checkpoint by default so a resume does not repeat the fan-out",
+    );
+  });
+
+  it("should allow checkpoint false", () => {
+    const node = parallel("test", [step("a", { agent: "a" })], { checkpoint: false });
+
+    assertEquals(getConfig(node).checkpoint, false);
   });
 
   it("should support timeout option", () => {

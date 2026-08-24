@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { map } from "./map.ts";
-import type { WorkflowNode } from "../types.ts";
+import type { MapNodeConfig, WorkflowNode } from "../types.ts";
 
 describe("workflow/dsl/map", () => {
   describe("map", () => {
@@ -43,6 +43,32 @@ describe("workflow/dsl/map", () => {
     it("should accept concurrency option", () => {
       const node = map("conc-map", { items: [1], processor, concurrency: 5 });
       assertEquals((node.config as { concurrency: number }).concurrency, 5);
+    });
+
+    it("carries every configured option onto the node config", () => {
+      const skip = () => true;
+      const node = map("full-map", {
+        items: [1],
+        processor,
+        checkpoint: false,
+        skip,
+        retry: { maxAttempts: 2 },
+        timeout: "1m",
+        description: "d",
+        concurrency: 3,
+      });
+      const config = node.config as MapNodeConfig;
+
+      assertEquals(
+        config.checkpoint,
+        false,
+        "an explicit checkpoint:false must be honored, not defaulted to true",
+      );
+      assertEquals(config.skip, skip, "the skip predicate must reach the executor's skip guard");
+      assertEquals(config.retry, { maxAttempts: 2 }, "the retry policy must reach the executor");
+      assertEquals(config.timeout, "1m", "the timeout must reach the executor");
+      assertEquals(config.description, "d", "the description must reach the node config");
+      assertEquals(config.concurrency, 3, "the concurrency must reach the executor");
     });
   });
 });

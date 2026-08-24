@@ -3,10 +3,11 @@ import "#veryfront/schemas/_test-setup.ts";
  * Wait DSL Tests
  */
 
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { delay, waitForApproval, waitForEvent } from "./wait.ts";
+import { delay, waitForApproval, waitForEvent, type WaitForEventOptions } from "./wait.ts";
 import type { WaitNodeConfig, WorkflowNode } from "../types.ts";
+import { getConfiguredTimedWaitKind, INTERNAL_DELAY_EVENT_NAME } from "../timed-wait-state.ts";
 
 function expectWaitConfig(node: WorkflowNode): WaitNodeConfig {
   if (node.config.type !== "wait") {
@@ -71,6 +72,19 @@ describe("waitForEvent()", () => {
 
     const config = expectWaitConfig(node);
     assertEquals(config.eventName, "order.updated");
+
+    assertThrows(
+      () => waitForEvent("no-event", { eventName: "" }),
+      Error,
+      "must specify an eventName",
+      "waitForEvent must reject an empty eventName",
+    );
+    assertThrows(
+      () => waitForEvent("no-event", {} as WaitForEventOptions),
+      Error,
+      "must specify an eventName",
+      "waitForEvent must reject a missing eventName",
+    );
   });
 });
 
@@ -83,6 +97,16 @@ describe("delay()", () => {
     assertEquals(config.type, "wait");
     assertEquals(config.waitType, "event");
     assertEquals(config.timeout, "5m");
+    assertEquals(
+      config.eventName,
+      INTERNAL_DELAY_EVENT_NAME,
+      "delay nodes must carry the reserved delay event name",
+    );
+    assertEquals(
+      getConfiguredTimedWaitKind(config),
+      "delay",
+      "delay() must produce a durable delay, not an external event wait",
+    );
   });
 
   it("should support numeric duration", () => {

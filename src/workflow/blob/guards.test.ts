@@ -22,6 +22,26 @@ describe("workflow/blob/guards", () => {
       expect(isBlobRef({ id: "b1", size: 1, mimeType: "x", createdAt: new Date() })).toBe(false);
     });
 
+    it("rejects objects whose fields have the wrong types", () => {
+      expect(
+        isBlobRef({
+          __kind: "blob",
+          id: "b1",
+          size: 1,
+          mimeType: "x",
+          createdAt: "2024-01-01T00:00:00Z",
+        }),
+      ).toBe(false);
+      expect(
+        isBlobRef({ __kind: "blob", id: "b1", size: "1", mimeType: "x", createdAt: new Date() }),
+      )
+        .toBe(false);
+      expect(isBlobRef({ __kind: "blob", id: "b1", size: 1, mimeType: 1, createdAt: new Date() }))
+        .toBe(false);
+      expect(isBlobRef({ __kind: "blob", id: 1, size: 1, mimeType: "x", createdAt: new Date() }))
+        .toBe(false);
+    });
+
     it("rejects objects whose __kind is not 'blob'", () => {
       expect(isBlobRef({ __kind: "other", id: "x", size: 1, mimeType: "y", createdAt: new Date() }))
         .toBe(false);

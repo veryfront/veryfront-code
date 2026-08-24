@@ -3,7 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * Step DSL Tests
  */
 
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { agentStep, step, toolStep } from "./step.ts";
 import type { StepNodeConfig } from "../types.ts";
@@ -74,6 +74,24 @@ describe("step()", () => {
     });
 
     assertEquals(typeof getConfig(node).input, "function");
+  });
+
+  it("should reject a step with neither agent nor tool", () => {
+    assertThrows(
+      () => step("bad", {}),
+      Error,
+      "must specify either 'agent' or 'tool'",
+      "a step with neither agent nor tool must fail at build time, not at run time",
+    );
+  });
+
+  it("should reject a step specifying both agent and tool", () => {
+    assertThrows(
+      () => step("bad", { agent: "a", tool: "t" }),
+      Error,
+      "cannot specify both",
+      "an ambiguous agent+tool step must be rejected rather than resolved by executor precedence",
+    );
   });
 });
 

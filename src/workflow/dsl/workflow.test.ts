@@ -125,6 +125,19 @@ describe("dag()", () => {
     assertEquals(nodes.length, 2);
     assertEquals(nodes[1]?.dependsOn, ["fetch"]);
   });
+
+  it("should reject duplicate node ids", () => {
+    assertThrows(
+      () =>
+        dag({
+          a: step("fetch", { tool: "fetcher" }),
+          b: step("fetch", { tool: "other-fetcher" }),
+        }),
+      Error,
+      "Duplicate node ID",
+      "two record keys resolving to the same node id must be rejected at build time",
+    );
+  });
 });
 
 describe("dependsOn()", () => {

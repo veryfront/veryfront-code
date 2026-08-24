@@ -55,6 +55,46 @@ describe("workflow/events", () => {
     ]);
   });
 
+  it("carries observed errors into events and closes the backend observation", async () => {
+    const initial = {
+      id: "r1",
+      status: "running",
+      nodeStates: { a: { nodeId: "a", status: "running", attempt: 1 } },
+    } as unknown as WorkflowRun;
+    let closeCalls = 0;
+    const observation: WorkflowRunObservation = {
+      initial,
+      changes: {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            revision: 1,
+            status: "failed",
+            runError: "boom",
+            nodes: { a: { status: "failed", attempt: 1, error: "node boom" } },
+          };
+        },
+      },
+      close: () => {
+        closeCalls++;
+        return Promise.resolve();
+      },
+    };
+
+    const derived = deriveWorkflowRunEventObservation(observation);
+    const events = [];
+    for await (const event of derived.events) events.push(event);
+
+    expect(events).toEqual([
+      { type: "step.failed", runId: "r1", nodeId: "a", attempt: 1, error: "node boom" },
+      { type: "run.status", runId: "r1", status: "failed", error: "boom" },
+    ]);
+
+    // A derived observation that does not close its backing observation leaks
+    // the underlying subscription for the lifetime of the process.
+    await derived.close();
+    expect(closeCalls).toBe(1);
+  });
+
   describe("deriveRunEvents", () => {
     it("reports a first observation as the run's current status", () => {
       const events = deriveRunEvents("r1", undefined, snapshot("running"));

@@ -7,7 +7,12 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
-import type { NodeState, WorkflowContext, WorkflowRun } from "../types.ts";
+import type {
+  CheckpointResumeEnvelope,
+  NodeState,
+  WorkflowContext,
+  WorkflowRun,
+} from "../types.ts";
 import {
   FRAMEWORK_CONTEXT_PROJECTION_KIND,
   INTERNAL_RUNTIME_PROJECTION_KIND,
@@ -386,6 +391,22 @@ describe("workflow/runtime/public-run", () => {
           context: {},
           inputKind: SUBWORKFLOW_INPUT_KIND,
         },
+        _resumeEnvelope: {
+          schemaVersion: 2,
+          ownerNodeId: "nested",
+          context: {
+            input: {},
+            env: { PROJECT_SECRET: "envelope-secret" },
+            _tenant: {
+              projectSlug: "acme",
+              token: "tenant-token",
+              projectId: "p-1",
+              productionMode: true,
+            },
+          },
+          nodeStates: {},
+          workflowProjection: { context: {} },
+        } as unknown as CheckpointResumeEnvelope,
       }],
       pendingApprovals: [],
       createdAt: new Date(0),
@@ -397,6 +418,11 @@ describe("workflow/runtime/public-run", () => {
     const projected = toPublicWorkflowRun(run);
     assertEquals(projected.checkpoints[0]?.context.input, undefined);
     assertEquals(projected.checkpoints[0]?._workflowProjection, undefined);
+    assertEquals(
+      projected.checkpoints[0]?._resumeEnvelope,
+      undefined,
+      "the framework resume envelope must never reach a public run",
+    );
   });
 
   it("projects owned slots after downstream mutation without touching equal unowned values", () => {
