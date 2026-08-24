@@ -15,8 +15,9 @@ function createTestEmbedder() {
     ["beta document", [0, 1, 0]],
     ["gamma document", [0, 0, 1]],
     ["banana", [0, 1, 0]],
-    ["banana exact", [0, 0, 1]],
+    ["banana report", [0, 0, 1]],
     ["semantic match", [0, 1, 0]],
+    ["near match", [0.2, 0.9, 0]],
     ["unrelated", [1, 0, 0]],
   ]);
 
@@ -118,16 +119,28 @@ describe("vectorStore", () => {
     const { embedder } = createTestEmbedder();
     const store = vectorStore({ embedder });
 
-    await store.add(["banana exact", "semantic match", "unrelated"]);
+    // "banana report" is the only lexical match but is dense-orthogonal to the
+    // query, so only RRF fusion can lift it above the dense-only runners-up.
+    await store.add(["banana report", "semantic match", "near match", "unrelated"]);
 
-    const results = await store.search("banana", {
+    const hybrid = await store.search("banana", {
       strategy: "hybrid",
       topK: 2,
     });
-    const texts = results.map((result) => result.text);
 
-    assertEquals(texts.includes("banana exact"), true);
-    assertEquals(texts.includes("semantic match"), true);
+    assertEquals(
+      hybrid.map((result) => result.text),
+      ["semantic match", "banana report"],
+      "hybrid RRF must promote the lexical-only match",
+    );
+
+    const dense = await store.search("banana", { topK: 2 });
+
+    assertEquals(
+      dense.map((result) => result.text),
+      ["semantic match", "near match"],
+      "dense-only search must exclude the lexical-only match, proving fusion ran",
+    );
   });
 
   it("clears stored entries and size", async () => {

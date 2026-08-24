@@ -88,6 +88,29 @@ describe("provider/local/local-engine buildPipeOptions", () => {
     assertEquals(opts.streamer, "streamer-sentinel");
   });
 
+  it("selects greedy decoding at temperature 0", () => {
+    assertEquals(
+      buildPipeOptions(
+        { maxNewTokens: 64, temperature: 0 },
+        fakeTransformers,
+        fakeTokenizer,
+        "streamer-sentinel",
+      ).do_sample,
+      false,
+      "temperature 0 must select greedy decoding",
+    );
+    assertEquals(
+      buildConditionalGenerateOptions(
+        { maxNewTokens: 64, temperature: 0 },
+        fakeTransformers,
+        fakeTokenizer,
+        "streamer-sentinel",
+      ).do_sample,
+      false,
+      "temperature 0 must select greedy decoding for conditional-generation models",
+    );
+  });
+
   it("does NOT silently drop stopSequences — it attaches a stopping_criteria", () => {
     const opts = buildPipeOptions(
       { maxNewTokens: 64, temperature: 0.7, stopSequences: ["STOP"] },
@@ -182,6 +205,26 @@ describe("provider/local/local-engine buildPipeOptions", () => {
     );
 
     assertEquals("stopping_criteria" in opts, false);
+  });
+
+  it("forwards core sampling options for conditional-generation models", () => {
+    const opts = buildConditionalGenerateOptions(
+      { maxNewTokens: 64, temperature: 0.3, topP: 0.9, topK: 40 },
+      fakeTransformers,
+      fakeTokenizer,
+      "streamer-sentinel",
+    );
+
+    assertEquals(opts.max_new_tokens, 64, "maxNewTokens must reach the conditional generate call");
+    assertEquals(opts.temperature, 0.3, "temperature must reach the conditional generate call");
+    assertEquals(opts.top_p, 0.9, "topP must reach the conditional generate call");
+    assertEquals(opts.top_k, 40, "topK must reach the conditional generate call");
+    assertEquals(opts.do_sample, true, "a positive temperature must enable sampling");
+    assertEquals(
+      opts.streamer,
+      "streamer-sentinel",
+      "the streamer must reach the conditional generate call",
+    );
   });
 
   it("forwards stopSequences for conditional-generation models", () => {

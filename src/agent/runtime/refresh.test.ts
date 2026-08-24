@@ -15,6 +15,12 @@ import type {
   ToolExecutionResultRequest,
 } from "../types.ts";
 import type { RuntimeRemoteToolConfig } from "./mcp-server-tool-sources.ts";
+import {
+  runtimeStream,
+  scriptedModel,
+  systemPromptOf,
+  toolNamesOf,
+} from "./model-runtime.test-helpers.ts";
 import type { TextGenerationRuntimeMessage } from "./text-generation-runtime-message-types.ts";
 import { flattenSystemInstructions, withRuntimeToolInventory } from "./tool-inventory.ts";
 import { getRuntimeProjectSkillCatalog } from "./project-skill-catalog.ts";
@@ -262,17 +268,6 @@ describe("runtime-state mutable data cloning", () => {
   });
 });
 
-function createRuntimeStream(parts: unknown[]) {
-  return new ReadableStream<unknown>({
-    start(controller) {
-      for (const part of parts) {
-        controller.enqueue(part);
-      }
-      controller.close();
-    },
-  });
-}
-
 async function readResponseBody(
   response: Response,
   onText?: (text: string) => void,
@@ -291,34 +286,6 @@ async function readResponseBody(
     body += text;
     onText?.(body);
   }
-}
-
-function extractSystemPrompt(options: unknown): string {
-  const prompt = (options as { prompt?: Array<{ role?: string; content?: unknown }> })
-    .prompt;
-  if (!Array.isArray(prompt)) {
-    return "";
-  }
-
-  return prompt
-    .filter((entry) => entry?.role === "system" && typeof entry.content === "string")
-    .map((entry) => entry.content as string)
-    .join("\n\n");
-}
-
-function extractRuntimeToolNames(options: unknown): string[] {
-  const tools = (options as { tools?: unknown }).tools;
-  if (Array.isArray(tools)) {
-    return tools.map((entry) => {
-      const toolEntry = entry as { name?: unknown; id?: unknown };
-      return typeof toolEntry.name === "string"
-        ? toolEntry.name
-        : typeof toolEntry.id === "string"
-        ? toolEntry.id
-        : "";
-    }).sort();
-  }
-  return Object.keys((tools as Record<string, unknown> | undefined) ?? {}).sort();
 }
 
 function supplierInvoiceEvidenceMessages(): Message[] {
@@ -400,37 +367,13 @@ function submittedFormWithActiveSkillMessages(): Message[] {
 describe("agent runtime refresh hooks", () => {
   it("keeps one authoritative UTC snapshot across refreshed scheduled-run steps", async () => {
     using time = new FakeTime(new Date("2026-07-19T07:30:00.000Z"));
-    const observedSystems: string[] = [];
-    let callCount = 0;
-    const model: ModelRuntime = {
-      provider: "hosted",
-      modelId: "hosted/runtime-context-snapshot",
-      async doGenerate(options: unknown) {
-        observedSystems.push(extractSystemPrompt(options));
-        callCount++;
-        if (callCount === 1) {
-          time.tick(24 * 60 * 60 * 1_000);
-          return {
-            content: [{
-              type: "tool-call",
-              toolCallId: "continue-1",
-              toolName: "continue_run",
-              input: "{}",
-            }],
-            finishReason: "tool-calls",
-            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-          };
-        }
-        return {
-          content: [{ type: "text", text: "2026-07-19" }],
-          finishReason: "stop",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
+    const model = scriptedModel([
+      () => {
+        time.tick(24 * 60 * 60 * 1_000);
+        return { toolCalls: [{ id: "continue-1", name: "continue_run", input: {} }] };
       },
-      async doStream() {
-        return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
-      },
-    };
+      { text: "2026-07-19" },
+    ], { modelId: "hosted/runtime-context-snapshot", only: "generate" });
     const continueRun = tool({
       id: "continue_run",
       description: "Continue the run",
@@ -455,6 +398,7 @@ describe("agent runtime refresh hooks", () => {
       context: { scheduleId: "schedule-1" },
     });
 
+    const observedSystems = model.systemPrompts();
     assertEquals(observedSystems.length, 2);
     for (const system of observedSystems) {
       assertEquals(system.match(/<runtime_context>/g)?.length, 1);
@@ -492,7 +436,7 @@ describe("agent runtime refresh hooks", () => {
 
         if (callCount === 1) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               { type: "text-delta", text: "I will reload the skill." },
               { type: "tool-input-start", id: "tc-stale", toolName: "stale_tool" },
               { type: "tool-input-delta", id: "tc-stale", delta: '{"query":"create-agent"}' },
@@ -509,7 +453,7 @@ describe("agent runtime refresh hooks", () => {
         }
 
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "text-delta", text: "Recovered." },
             { type: "finish", finishReason: "stop" },
           ]),
@@ -582,7 +526,7 @@ describe("agent runtime refresh hooks", () => {
 
         if (callCount === 1) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               {
                 type: "tool-call",
                 toolCallId: "tc-stale",
@@ -607,7 +551,7 @@ describe("agent runtime refresh hooks", () => {
         }
 
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "text-delta", text: "Recovered." },
             { type: "finish", finishReason: "stop" },
           ]),
@@ -692,30 +636,15 @@ describe("agent runtime refresh hooks", () => {
 
   it("notifies configured hooks after generate() executes a tool", async () => {
     const toolResults: ToolExecutionResultRequest[] = [];
-    const model: ModelRuntime = {
-      provider: "hosted",
-      modelId: "hosted/tool-result-generate",
-      async doGenerate() {
-        return {
-          content: [{
-            type: "tool-call",
-            toolCallId: "write-1",
-            toolName: "write_report",
-            input: '{"path":"research/report.md"}',
-          }],
-          finishReason: "tool-calls",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
+    const model = scriptedModel([
+      {
+        toolCalls: [{
+          id: "write-1",
+          name: "write_report",
+          input: '{"path":"research/report.md"}',
+        }],
       },
-      async doStream() {
-        return {
-          stream: createRuntimeStream([{
-            type: "finish",
-            finishReason: "stop",
-          }]),
-        };
-      },
-    };
+    ], { modelId: "hosted/tool-result-generate", only: "generate" });
 
     const writeReport = tool({
       id: "write_report",
@@ -755,37 +684,16 @@ describe("agent runtime refresh hooks", () => {
   });
 
   it("preserves the finish reason when generate() stops without final text", async () => {
-    let callCount = 0;
-    const model: ModelRuntime = {
-      provider: "hosted",
-      modelId: "hosted/empty-final-text",
-      async doGenerate() {
-        callCount++;
-        if (callCount === 1) {
-          return {
-            content: [{
-              type: "tool-call",
-              toolCallId: "write-1",
-              toolName: "write_report",
-              input: '{"path":"research/report.md"}',
-            }],
-            finishReason: "tool-calls",
-            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-          };
-        }
-
-        return {
-          content: [],
-          finishReason: "stop",
-          usage: { inputTokens: 1, outputTokens: 0, totalTokens: 1 },
-        };
+    const model = scriptedModel([
+      {
+        toolCalls: [{
+          id: "write-1",
+          name: "write_report",
+          input: '{"path":"research/report.md"}',
+        }],
       },
-      async doStream() {
-        return {
-          stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]),
-        };
-      },
-    };
+      { content: [], finishReason: "stop" },
+    ], { modelId: "hosted/empty-final-text", only: "generate" });
 
     const writeReport = tool({
       id: "write_report",
@@ -804,7 +712,7 @@ describe("agent runtime refresh hooks", () => {
 
     const response = await assistant.generate({ input: "Write a report" });
 
-    assertEquals(callCount, 2);
+    assertEquals(model.callCount, 2);
     assertEquals(response.status, "completed");
     assertEquals(response.text, "");
     assertEquals(response.metadata?.finishReason, "stop");
@@ -812,47 +720,16 @@ describe("agent runtime refresh hooks", () => {
   });
 
   it("classifies structured errors returned during generate()", async () => {
-    const toolNamesByStep: string[][] = [];
-    let callCount = 0;
-    const model: ModelRuntime = {
-      provider: "anthropic",
-      modelId: "claude-sonnet-4-6",
-      async doGenerate(options) {
-        const rawTools = (options as { tools?: unknown }).tools;
-        const toolNames = Array.isArray(rawTools)
-          ? rawTools.map((entry) =>
-            (entry as { name?: string; id?: string }).name ??
-              (entry as { name?: string; id?: string }).id ?? ""
-          )
-          : Object.keys((rawTools as Record<string, unknown> | undefined) ?? {});
-        toolNamesByStep.push(toolNames);
-        callCount++;
-
-        if (callCount === 1) {
-          return {
-            content: [{
-              type: "tool-call",
-              toolCallId: "update-agent-generate-error-1",
-              toolName: "update_agent",
-              input: '{"id":"jira-agent"}',
-            }],
-            finishReason: "tool-calls",
-            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-          };
-        }
-
-        return {
-          content: [{ type: "text", text: "I can retry with the required input." }],
-          finishReason: "stop",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
+    const model = scriptedModel([
+      {
+        toolCalls: [{
+          id: "update-agent-generate-error-1",
+          name: "update_agent",
+          input: '{"id":"jira-agent"}',
+        }],
       },
-      async doStream() {
-        return {
-          stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]),
-        };
-      },
-    };
+      { text: "I can retry with the required input." },
+    ], { provider: "anthropic", modelId: "claude-sonnet-4-6", only: "generate" });
 
     const updateError = {
       error: "tool_error",
@@ -879,73 +756,34 @@ describe("agent runtime refresh hooks", () => {
       input: "Attach the project skill to my Jira agent",
     });
 
-    assertEquals(toolNamesByStep.length, 2);
-    assertEquals(toolNamesByStep[1]?.includes("update_agent"), true);
-    assertEquals(toolNamesByStep[1]?.includes("web_search"), true);
-    assertEquals(toolNamesByStep[1]?.includes("web_fetch"), true);
+    assertEquals(model.callCount, 2);
+    assertEquals(model.toolNames(1).includes("update_agent"), true);
+    assertEquals(model.toolNames(1).includes("web_search"), true);
+    assertEquals(model.toolNames(1).includes("web_fetch"), true);
     assertEquals(response.toolCalls[0]?.status, "error");
     assertEquals(response.toolCalls[0]?.error, updateError.message);
     assertEquals(response.toolCalls[0]?.result, updateError);
   });
 
   it("forces a final response after create_agent succeeds during generate()", async () => {
-    const toolNamesByStep: string[][] = [];
-    const systemPromptsByStep: string[] = [];
-    let callCount = 0;
     let executionCount = 0;
-    const model: ModelRuntime = {
-      provider: "anthropic",
-      modelId: "claude-sonnet-4-6",
-      async doGenerate(options) {
-        systemPromptsByStep.push(extractSystemPrompt(options));
-        const rawTools = (options as { tools?: unknown }).tools;
-        const toolNames = Array.isArray(rawTools)
-          ? rawTools.map((entry) =>
-            (entry as { name?: string; id?: string }).name ??
-              (entry as { name?: string; id?: string }).id ?? ""
-          )
-          : Object.keys((rawTools as Record<string, unknown> | undefined) ?? {});
-        toolNamesByStep.push(toolNames);
-        callCount++;
-
-        if (callCount === 1) {
-          return {
-            content: [{
-              type: "tool-call",
-              toolCallId: "create-agent-generate-1",
-              toolName: "create_agent",
-              input: '{"id":"gmail-assistant-e2e"}',
-            }],
-            finishReason: "tool-calls",
-            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-          };
-        }
-
-        if (callCount === 2) {
-          return {
-            content: [{
-              type: "tool-call",
-              toolCallId: "create-agent-generate-guessed-2",
-              toolName: "create_agent",
-              input: '{"id":"guessed-second-agent"}',
-            }],
-            finishReason: "tool-calls",
-            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-          };
-        }
-
-        return {
-          content: [{ type: "text", text: "Created Gmail Assistant." }],
-          finishReason: "stop",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
+    const model = scriptedModel([
+      {
+        toolCalls: [{
+          id: "create-agent-generate-1",
+          name: "create_agent",
+          input: '{"id":"gmail-assistant-e2e"}',
+        }],
       },
-      async doStream() {
-        return {
-          stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]),
-        };
+      {
+        toolCalls: [{
+          id: "create-agent-generate-guessed-2",
+          name: "create_agent",
+          input: '{"id":"guessed-second-agent"}',
+        }],
       },
-    };
+      { text: "Created Gmail Assistant." },
+    ], { provider: "anthropic", modelId: "claude-sonnet-4-6", only: "generate" });
 
     const createAgent = tool({
       id: "create_agent",
@@ -978,13 +816,13 @@ describe("agent runtime refresh hooks", () => {
 
     const response = await assistant.generate({ input: "Create a Gmail agent" });
 
-    assertEquals(toolNamesByStep.length, 3);
-    assertEquals(toolNamesByStep[0]?.includes("create_agent"), true);
-    assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
-    assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
-    assertEquals(toolNamesByStep[1], ["load_skill"]);
-    assertEquals(systemPromptsByStep[1]?.includes("- create_agent"), false);
-    assertEquals(systemPromptsByStep[1]?.includes("- load_skill"), true);
+    assertEquals(model.callCount, 3);
+    assertEquals(model.toolNames(0).includes("create_agent"), true);
+    assertEquals(model.toolNames(0).includes("web_search"), true);
+    assertEquals(model.toolNames(0).includes("web_fetch"), true);
+    assertEquals(model.toolNames(1), ["load_skill"]);
+    assertEquals(model.systemPrompts()[1]?.includes("- create_agent"), false);
+    assertEquals(model.systemPrompts()[1]?.includes("- load_skill"), true);
     assertEquals(executionCount, 1);
     assertEquals(response.toolCalls[1]?.status, "error");
     assertEquals(
@@ -994,22 +832,10 @@ describe("agent runtime refresh hooks", () => {
   });
 
   it("omits provider-native tools unsupported by the configured model", async () => {
-    let capturedSystem = "";
-    const model: ModelRuntime = {
-      provider: "google",
-      modelId: "gemini-3.5-flash",
-      async doGenerate(options) {
-        capturedSystem = extractSystemPrompt(options);
-        return {
-          content: [{ type: "text", text: "done" }],
-          finishReason: "stop",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
-      },
-      async doStream() {
-        return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
-      },
-    };
+    const model = scriptedModel(
+      [{ text: "done" }],
+      { provider: "google", modelId: "gemini-3.5-flash", only: "generate" },
+    );
 
     const assistant = eagerAgent({
       model: "google/gemini-3.5-flash",
@@ -1023,6 +849,7 @@ describe("agent runtime refresh hooks", () => {
     await assistant.generate({ input: "Search the web" });
 
     // Google exposes neither native tool, so neither may reach the inventory.
+    const capturedSystem = model.systemPrompts()[0] ?? "";
     assertEquals(capturedSystem.includes("- web_search"), false);
     assertEquals(capturedSystem.includes("- web_fetch"), false);
   });
@@ -1037,7 +864,7 @@ describe("agent runtime refresh hooks", () => {
       async doGenerate() {
         if (callCount === 2) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               {
                 type: "tool-call",
                 toolCallId: "create-agent-guessed-2",
@@ -1047,7 +874,7 @@ describe("agent runtime refresh hooks", () => {
               {
                 type: "finish",
                 finishReason: "tool-calls",
-                usage: { inputTokens: 1, outputTokens: 1 },
+                totalUsage: { inputTokens: 1, outputTokens: 1 },
               },
             ]),
           };
@@ -1072,7 +899,7 @@ describe("agent runtime refresh hooks", () => {
 
         if (callCount === 1) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               {
                 type: "tool-call",
                 toolCallId: "create-agent-1",
@@ -1082,19 +909,19 @@ describe("agent runtime refresh hooks", () => {
               {
                 type: "finish",
                 finishReason: "tool-calls",
-                usage: { inputTokens: 1, outputTokens: 1 },
+                totalUsage: { inputTokens: 1, outputTokens: 1 },
               },
             ]),
           };
         }
 
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "text-delta", text: "Created Gmail Assistant." },
             {
               type: "finish",
               finishReason: "stop",
-              usage: { inputTokens: 1, outputTokens: 1 },
+              totalUsage: { inputTokens: 1, outputTokens: 1 },
             },
           ]),
         };
@@ -1166,7 +993,7 @@ describe("agent runtime refresh hooks", () => {
 
           if (callCount === 1) {
             return {
-              stream: createRuntimeStream([
+              stream: runtimeStream([
                 {
                   type: "tool-call",
                   toolCallId: "agent-write-1",
@@ -1176,7 +1003,7 @@ describe("agent runtime refresh hooks", () => {
                 {
                   type: "finish",
                   finishReason: "tool-calls",
-                  usage: { inputTokens: 1, outputTokens: 1 },
+                  totalUsage: { inputTokens: 1, outputTokens: 1 },
                 },
               ]),
             };
@@ -1184,7 +1011,7 @@ describe("agent runtime refresh hooks", () => {
 
           if (callCount === 2 && toolNames.includes("create_schedule")) {
             return {
-              stream: createRuntimeStream([
+              stream: runtimeStream([
                 {
                   type: "tool-call",
                   toolCallId: "create-schedule-1",
@@ -1205,19 +1032,19 @@ describe("agent runtime refresh hooks", () => {
                 {
                   type: "finish",
                   finishReason: "tool-calls",
-                  usage: { inputTokens: 1, outputTokens: 1 },
+                  totalUsage: { inputTokens: 1, outputTokens: 1 },
                 },
               ]),
             };
           }
 
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               { type: "text-delta", text: "Scheduled agent created." },
               {
                 type: "finish",
                 finishReason: "stop",
-                usage: { inputTokens: 1, outputTokens: 1 },
+                totalUsage: { inputTokens: 1, outputTokens: 1 },
               },
             ]),
           };
@@ -1322,7 +1149,7 @@ describe("agent runtime refresh hooks", () => {
 
         if (callCount === 1) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               {
                 type: "tool-call",
                 toolCallId: "create-agent-1",
@@ -1332,19 +1159,19 @@ describe("agent runtime refresh hooks", () => {
               {
                 type: "finish",
                 finishReason: "tool-calls",
-                usage: { inputTokens: 1, outputTokens: 1 },
+                totalUsage: { inputTokens: 1, outputTokens: 1 },
               },
             ]),
           };
         }
 
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "text-delta", text: "I can retry with corrected agent input." },
             {
               type: "finish",
               finishReason: "stop",
-              usage: { inputTokens: 1, outputTokens: 1 },
+              totalUsage: { inputTokens: 1, outputTokens: 1 },
             },
           ]),
         };
@@ -1409,7 +1236,7 @@ describe("agent runtime refresh hooks", () => {
 
         if (callCount === 1) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               {
                 type: "tool-call",
                 toolCallId: "update-agent-error-1",
@@ -1419,19 +1246,19 @@ describe("agent runtime refresh hooks", () => {
               {
                 type: "finish",
                 finishReason: "tool-calls",
-                usage: { inputTokens: 1, outputTokens: 1 },
+                totalUsage: { inputTokens: 1, outputTokens: 1 },
               },
             ]),
           };
         }
 
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "text-delta", text: "I can retry with the required input." },
             {
               type: "finish",
               finishReason: "stop",
-              usage: { inputTokens: 1, outputTokens: 1 },
+              totalUsage: { inputTokens: 1, outputTokens: 1 },
             },
           ]),
         };
@@ -1498,7 +1325,7 @@ describe("agent runtime refresh hooks", () => {
         callCount++;
         if (callCount === 1) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               {
                 type: "tool-call",
                 toolCallId: "gmail-list-emails-auth-1",
@@ -1508,19 +1335,19 @@ describe("agent runtime refresh hooks", () => {
               {
                 type: "finish",
                 finishReason: "tool-calls",
-                usage: { inputTokens: 1, outputTokens: 1 },
+                totalUsage: { inputTokens: 1, outputTokens: 1 },
               },
             ]),
           };
         }
 
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "text-delta", text: "Connect Gmail to continue." },
             {
               type: "finish",
               finishReason: "stop",
-              usage: { inputTokens: 1, outputTokens: 1 },
+              totalUsage: { inputTokens: 1, outputTokens: 1 },
             },
           ]),
         };
@@ -1598,7 +1425,7 @@ describe("agent runtime refresh hooks", () => {
 
         if (callCount === 1) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               {
                 type: "tool-call",
                 toolCallId: "load-missing-skill",
@@ -1608,19 +1435,19 @@ describe("agent runtime refresh hooks", () => {
               {
                 type: "finish",
                 finishReason: "tool-calls",
-                usage: { inputTokens: 1, outputTokens: 1 },
+                totalUsage: { inputTokens: 1, outputTokens: 1 },
               },
             ]),
           };
         }
 
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "text-delta", text: "I could not load that skill." },
             {
               type: "finish",
               finishReason: "stop",
-              usage: { inputTokens: 1, outputTokens: 1 },
+              totalUsage: { inputTokens: 1, outputTokens: 1 },
             },
           ]),
         };
@@ -1689,7 +1516,7 @@ describe("agent runtime refresh hooks", () => {
 
         if (callCount === 1) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               {
                 type: "tool-call",
                 toolCallId: "update-agent-1",
@@ -1699,19 +1526,19 @@ describe("agent runtime refresh hooks", () => {
               {
                 type: "finish",
                 finishReason: "tool-calls",
-                usage: { inputTokens: 1, outputTokens: 1 },
+                totalUsage: { inputTokens: 1, outputTokens: 1 },
               },
             ]),
           };
         }
 
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "text-delta", text: "Updated Gmail Assistant." },
             {
               type: "finish",
               finishReason: "stop",
-              usage: { inputTokens: 1, outputTokens: 1 },
+              totalUsage: { inputTokens: 1, outputTokens: 1 },
             },
           ]),
         };
@@ -1769,7 +1596,7 @@ describe("agent runtime refresh hooks", () => {
 
         if (callCount === 1) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               {
                 type: "tool-call",
                 toolCallId: "write-stream-1",
@@ -1779,19 +1606,19 @@ describe("agent runtime refresh hooks", () => {
               {
                 type: "finish",
                 finishReason: "tool-calls",
-                usage: { inputTokens: 1, outputTokens: 1 },
+                totalUsage: { inputTokens: 1, outputTokens: 1 },
               },
             ]),
           };
         }
 
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "text-delta", text: "stream complete" },
             {
               type: "finish",
               finishReason: "stop",
-              usage: { inputTokens: 1, outputTokens: 1 },
+              totalUsage: { inputTokens: 1, outputTokens: 1 },
             },
           ]),
         };
@@ -1856,7 +1683,7 @@ describe("agent runtime refresh hooks", () => {
 
         if (callCount === 1) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               { type: "text-delta", text: "Applying the requested updates." },
               {
                 type: "tool-input-start",
@@ -1871,7 +1698,7 @@ describe("agent runtime refresh hooks", () => {
               {
                 type: "finish",
                 finishReason: "stop",
-                usage: { inputTokens: 0, outputTokens: 0 },
+                totalUsage: { inputTokens: 0, outputTokens: 0 },
               },
             ]),
           };
@@ -1879,7 +1706,7 @@ describe("agent runtime refresh hooks", () => {
 
         if (callCount === 2) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               {
                 type: "tool-call",
                 toolCallId: "retry-file",
@@ -1901,19 +1728,19 @@ describe("agent runtime refresh hooks", () => {
               {
                 type: "finish",
                 finishReason: "tool-calls",
-                usage: { inputTokens: 1, outputTokens: 1 },
+                totalUsage: { inputTokens: 1, outputTokens: 1 },
               },
             ]),
           };
         }
 
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "text-delta", text: "Recovered after interrupted tool batch." },
             {
               type: "finish",
               finishReason: "stop",
-              usage: { inputTokens: 1, outputTokens: 1 },
+              totalUsage: { inputTokens: 1, outputTokens: 1 },
             },
           ]),
         };
@@ -1983,7 +1810,7 @@ describe("agent runtime refresh hooks", () => {
           callCount++;
           if (callCount > 1) {
             return {
-              stream: createRuntimeStream([
+              stream: runtimeStream([
                 { type: "text-delta", text: "Unexpected recovery." },
                 { type: "finish", finishReason: "stop" },
               ]),
@@ -1991,7 +1818,7 @@ describe("agent runtime refresh hooks", () => {
           }
 
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               {
                 type: "tool-call",
                 toolCallId: "exposed-file",
@@ -2000,7 +1827,7 @@ describe("agent runtime refresh hooks", () => {
               },
               ...(hasFinalResult
                 ? [{
-                  type: "tool-result",
+                  type: "tool-result" as const,
                   toolCallId: "exposed-file",
                   toolName: "issue466_update_file",
                   output: { revision: "already-applied" },
@@ -2019,7 +1846,7 @@ describe("agent runtime refresh hooks", () => {
               {
                 type: "finish",
                 finishReason: "stop",
-                usage: { inputTokens: 0, outputTokens: 0 },
+                totalUsage: { inputTokens: 0, outputTokens: 0 },
               },
             ]),
           };
@@ -2105,7 +1932,7 @@ describe("agent runtime refresh hooks", () => {
         callCount++;
         if (callCount === 1) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               {
                 type: "tool-call",
                 toolCallId: "issue3737-committed",
@@ -2115,13 +1942,13 @@ describe("agent runtime refresh hooks", () => {
               {
                 type: "finish",
                 finishReason: "tool-calls",
-                usage: { inputTokens: 1, outputTokens: 1 },
+                totalUsage: { inputTokens: 1, outputTokens: 1 },
               },
             ]),
           };
         }
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             {
               type: "tool-input-start",
               id: "issue3737-truncated",
@@ -2135,7 +1962,7 @@ describe("agent runtime refresh hooks", () => {
             {
               type: "finish",
               finishReason: "tool-calls",
-              usage: { inputTokens: 1, outputTokens: 1 },
+              totalUsage: { inputTokens: 1, outputTokens: 1 },
             },
           ]),
         };
@@ -2210,7 +2037,7 @@ describe("agent runtime refresh hooks", () => {
       async doStream() {
         callCount++;
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             ...(callCount === 1
               ? [{ type: "text-delta" as const, text: "Starting the work." }]
               : []),
@@ -2223,7 +2050,7 @@ describe("agent runtime refresh hooks", () => {
             {
               type: "finish",
               finishReason: "tool-calls",
-              usage: { inputTokens: 1, outputTokens: 1 },
+              totalUsage: { inputTokens: 1, outputTokens: 1 },
             },
           ]),
         };
@@ -2280,7 +2107,7 @@ describe("agent runtime refresh hooks", () => {
         callCount++;
         if (callCount === 2) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               { type: "text-delta", text: "Created the Outlook " },
               { type: "text-delta", text: "assistant." },
               {
@@ -2292,14 +2119,14 @@ describe("agent runtime refresh hooks", () => {
               {
                 type: "finish",
                 finishReason: "tool-calls",
-                usage: { inputTokens: 1, outputTokens: 1 },
+                totalUsage: { inputTokens: 1, outputTokens: 1 },
               },
             ]),
           };
         }
         if (callCount > 2) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               { type: "text-delta", text: "Unexpected second recovery." },
               { type: "finish", finishReason: "stop" },
             ]),
@@ -2307,7 +2134,7 @@ describe("agent runtime refresh hooks", () => {
         }
 
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "text-delta", text: "Created the Outlook assistant." },
             {
               type: "tool-input-start",
@@ -2318,7 +2145,7 @@ describe("agent runtime refresh hooks", () => {
             {
               type: "finish",
               finishReason: "tool-calls",
-              usage: { inputTokens: 1, outputTokens: 1 },
+              totalUsage: { inputTokens: 1, outputTokens: 1 },
             },
           ]),
         };
@@ -2456,7 +2283,7 @@ describe("agent runtime refresh hooks", () => {
         callCount++;
         if (callCount === 1) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               { type: "text-delta", text: "Preparing the Studio suggestions." },
               {
                 type: "tool-input-start",
@@ -2469,7 +2296,7 @@ describe("agent runtime refresh hooks", () => {
           };
         }
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             {
               type: "tool-call",
               toolCallId: "toolu_reconstructed_suggestions",
@@ -2577,7 +2404,7 @@ describe("agent runtime refresh hooks", () => {
         }
 
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "text-delta", text: "Initial partial answer." },
             {
               type: "tool-input-start",
@@ -2674,7 +2501,7 @@ describe("agent runtime refresh hooks", () => {
         }
 
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "text-delta", text: "Initial partial answer." },
             {
               type: "tool-input-start",
@@ -2770,7 +2597,7 @@ describe("agent runtime refresh hooks", () => {
         }
 
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "text-delta", text: "Created the assistant." },
             {
               type: "tool-input-start",
@@ -2848,7 +2675,7 @@ describe("agent runtime refresh hooks", () => {
         callCount++;
         if (callCount === 2) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               { type: "text-delta", text: "Created the " },
               { type: "text-delta", text: "workflow." },
               { type: "reasoning-delta", id: "recovery-reasoning", delta: "Check result." },
@@ -2860,7 +2687,7 @@ describe("agent runtime refresh hooks", () => {
         }
 
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "text-delta", text: "Created the assistant." },
             {
               type: "tool-input-start",
@@ -2951,7 +2778,7 @@ describe("agent runtime refresh hooks", () => {
         callCount++;
         if (callCount === 2) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               { type: "text-delta", text: "Created the " },
               { type: "finish", finishReason: "stop" },
             ]),
@@ -2959,7 +2786,7 @@ describe("agent runtime refresh hooks", () => {
         }
 
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "text-delta", text: "Created the assistant." },
             {
               type: "tool-input-start",
@@ -3027,7 +2854,7 @@ describe("agent runtime refresh hooks", () => {
         callCount++;
         if (callCount === 1) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               { type: "text-delta", text: "Checking the requested update." },
               {
                 type: "tool-input-start",
@@ -3041,7 +2868,7 @@ describe("agent runtime refresh hooks", () => {
         }
         if (callCount === 2) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               { type: "text-delta", text: "The provider lookup completed." },
               {
                 type: "tool-call",
@@ -3062,7 +2889,7 @@ describe("agent runtime refresh hooks", () => {
           };
         }
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "text-delta", text: "Unexpected continuation." },
             { type: "finish", finishReason: "stop" },
           ]),
@@ -3126,7 +2953,7 @@ describe("agent runtime refresh hooks", () => {
         callCount++;
         if (callCount === 1) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               { type: "text-delta", text: "Checking the requested update." },
               {
                 type: "tool-input-start",
@@ -3233,7 +3060,7 @@ describe("agent runtime refresh hooks", () => {
         callCount++;
         if (callCount === 1) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               { type: "text-delta", text: "Checking the requested update." },
               {
                 type: "tool-input-start",
@@ -3348,7 +3175,7 @@ describe("agent runtime refresh hooks", () => {
         callCount++;
         if (callCount === 1) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               { type: "text-delta", text: "Checking the update." },
               {
                 type: "tool-input-start",
@@ -3366,7 +3193,7 @@ describe("agent runtime refresh hooks", () => {
         }
 
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "text-delta", text: "Checking " },
             {
               type: "tool-call",
@@ -3444,7 +3271,7 @@ describe("agent runtime refresh hooks", () => {
       async doStream() {
         callCount++;
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "reasoning-start", id: "reasoning-before-interruption" },
             {
               type: "reasoning-delta",
@@ -3552,7 +3379,7 @@ describe("agent runtime refresh hooks", () => {
         callCount++;
         if (callCount > 1) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               { type: "text-delta", text: "Unexpected recovery." },
               { type: "finish", finishReason: "stop" },
             ]),
@@ -3560,7 +3387,7 @@ describe("agent runtime refresh hooks", () => {
         }
 
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "reasoning-start", id: "reasoning-before-remote" },
             {
               type: "reasoning-delta",
@@ -3667,7 +3494,7 @@ describe("agent runtime refresh hooks", () => {
         callCount++;
         if (callCount > 1) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               { type: "text-delta", text: "Done." },
               { type: "finish", finishReason: "stop" },
             ]),
@@ -3675,7 +3502,7 @@ describe("agent runtime refresh hooks", () => {
         }
 
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "reasoning-start", id: "reasoning-before-rename" },
             {
               type: "reasoning-delta",
@@ -3751,7 +3578,7 @@ describe("agent runtime refresh hooks", () => {
         callCount++;
         if (callCount > 1) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               { type: "text-delta", text: "Unexpected recovery." },
               { type: "finish", finishReason: "stop" },
             ]),
@@ -3759,7 +3586,7 @@ describe("agent runtime refresh hooks", () => {
         }
 
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "reasoning-start", id: "reasoning-before-placeholder" },
             {
               type: "reasoning-delta",
@@ -3777,7 +3604,7 @@ describe("agent runtime refresh hooks", () => {
             {
               type: "finish",
               finishReason: "tool-calls",
-              usage: { inputTokens: 1, outputTokens: 1 },
+              totalUsage: { inputTokens: 1, outputTokens: 1 },
             },
           ]),
         };
@@ -3868,7 +3695,7 @@ describe("agent runtime refresh hooks", () => {
         callCount++;
         if (callCount === 1) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               { type: "text-delta", text: "Checking the requested update." },
               {
                 type: "tool-input-start",
@@ -3990,7 +3817,7 @@ describe("agent runtime refresh hooks", () => {
         };
       },
       async doStream() {
-        return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
+        return { stream: runtimeStream([{ type: "finish", finishReason: "stop" }]) };
       },
     };
     const loadSkill = tool({
@@ -4058,7 +3885,7 @@ describe("agent runtime refresh hooks", () => {
 
         if (callCount === 1) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               {
                 type: "tool-call",
                 toolCallId: "load-build-stream-1",
@@ -4068,7 +3895,7 @@ describe("agent runtime refresh hooks", () => {
               {
                 type: "finish",
                 finishReason: "tool-calls",
-                usage: { inputTokens: 1, outputTokens: 1 },
+                totalUsage: { inputTokens: 1, outputTokens: 1 },
               },
             ]),
           };
@@ -4076,7 +3903,7 @@ describe("agent runtime refresh hooks", () => {
 
         if (callCount === 2) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               {
                 type: "tool-call",
                 toolCallId: "invoke-stream-1",
@@ -4087,16 +3914,20 @@ describe("agent runtime refresh hooks", () => {
               {
                 type: "finish",
                 finishReason: "tool-calls",
-                usage: { inputTokens: 1, outputTokens: 1 },
+                totalUsage: { inputTokens: 1, outputTokens: 1 },
               },
             ]),
           };
         }
 
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "text-delta", text: "done" },
-            { type: "finish", finishReason: "stop", usage: { inputTokens: 1, outputTokens: 1 } },
+            {
+              type: "finish",
+              finishReason: "stop",
+              totalUsage: { inputTokens: 1, outputTokens: 1 },
+            },
           ]),
         };
       },
@@ -4167,7 +3998,7 @@ describe("agent runtime refresh hooks", () => {
 
         if (callCount === 1) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               {
                 type: "tool-call",
                 toolCallId: "invoke-resumed-1",
@@ -4178,16 +4009,20 @@ describe("agent runtime refresh hooks", () => {
               {
                 type: "finish",
                 finishReason: "tool-calls",
-                usage: { inputTokens: 1, outputTokens: 1 },
+                totalUsage: { inputTokens: 1, outputTokens: 1 },
               },
             ]),
           };
         }
 
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "text-delta", text: "done" },
-            { type: "finish", finishReason: "stop", usage: { inputTokens: 1, outputTokens: 1 } },
+            {
+              type: "finish",
+              finishReason: "stop",
+              totalUsage: { inputTokens: 1, outputTokens: 1 },
+            },
           ]),
         };
       },
@@ -4297,7 +4132,7 @@ describe("agent runtime refresh hooks", () => {
         };
       },
       async doStream() {
-        return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
+        return { stream: runtimeStream([{ type: "finish", finishReason: "stop" }]) };
       },
     };
     const invokeAgent = tool({
@@ -4349,7 +4184,7 @@ describe("agent runtime refresh hooks", () => {
         callCount++;
         if (callCount === 1) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               {
                 type: "tool-call",
                 toolCallId: "invoke-payment-1",
@@ -4364,16 +4199,20 @@ describe("agent runtime refresh hooks", () => {
               {
                 type: "finish",
                 finishReason: "tool-calls",
-                usage: { inputTokens: 1, outputTokens: 1 },
+                totalUsage: { inputTokens: 1, outputTokens: 1 },
               },
             ]),
           };
         }
 
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "text-delta", text: "blocked" },
-            { type: "finish", finishReason: "stop", usage: { inputTokens: 1, outputTokens: 1 } },
+            {
+              type: "finish",
+              finishReason: "stop",
+              totalUsage: { inputTokens: 1, outputTokens: 1 },
+            },
           ]),
         };
       },
@@ -4422,7 +4261,7 @@ describe("agent runtime refresh hooks", () => {
       modelId: "hosted/runtime-refresh-generate",
       async doGenerate(options: unknown) {
         callCount++;
-        observedSystems.push(extractSystemPrompt(options));
+        observedSystems.push(systemPromptOf(options));
 
         if (callCount === 1) {
           return {
@@ -4458,7 +4297,7 @@ describe("agent runtime refresh hooks", () => {
       },
       async doStream() {
         return {
-          stream: createRuntimeStream([{
+          stream: runtimeStream([{
             type: "finish",
             finishReason: "stop",
           }]),
@@ -4562,11 +4401,11 @@ describe("agent runtime refresh hooks", () => {
       },
       async doStream(options: unknown) {
         callCount++;
-        observedSystems.push(extractSystemPrompt(options));
+        observedSystems.push(systemPromptOf(options));
 
         if (callCount === 1) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               {
                 type: "tool-call",
                 toolCallId: "switch-stream-1",
@@ -4576,19 +4415,19 @@ describe("agent runtime refresh hooks", () => {
               {
                 type: "finish",
                 finishReason: "tool-calls",
-                usage: { inputTokens: 1, outputTokens: 1 },
+                totalUsage: { inputTokens: 1, outputTokens: 1 },
               },
             ]),
           };
         }
 
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "text-delta", text: "stream done" },
             {
               type: "finish",
               finishReason: "stop",
-              usage: { inputTokens: 1, outputTokens: 1 },
+              totalUsage: { inputTokens: 1, outputTokens: 1 },
             },
           ]),
         };
@@ -4654,7 +4493,7 @@ describe("agent runtime refresh hooks", () => {
       provider: "hosted",
       modelId: "hosted/runtime-state-string-contract",
       async doGenerate(options) {
-        observedProviderSystem = extractSystemPrompt(options);
+        observedProviderSystem = systemPromptOf(options);
         return {
           content: [{ type: "text", text: "done" }],
           finishReason: "stop",
@@ -4662,7 +4501,7 @@ describe("agent runtime refresh hooks", () => {
         };
       },
       async doStream() {
-        return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
+        return { stream: runtimeStream([{ type: "finish", finishReason: "stop" }]) };
       },
     };
     const assistant = eagerAgent({
@@ -4699,7 +4538,7 @@ describe("agent runtime refresh hooks", () => {
       provider: "hosted",
       modelId: "hosted/runtime-state-structured-copy",
       async doGenerate(options) {
-        observedProviderSystem = extractSystemPrompt(options);
+        observedProviderSystem = systemPromptOf(options);
         observedProviderPrompt = (options as { prompt?: unknown }).prompt;
         return {
           content: [{ type: "text", text: "done" }],
@@ -4708,7 +4547,7 @@ describe("agent runtime refresh hooks", () => {
         };
       },
       async doStream() {
-        return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
+        return { stream: runtimeStream([{ type: "finish", finishReason: "stop" }]) };
       },
     };
     const assistant = eagerAgent({
@@ -4767,7 +4606,7 @@ describe("agent runtime refresh hooks", () => {
       provider: "hosted",
       modelId: "hosted/post-form-skill-reference",
       async doGenerate(options: unknown) {
-        generateToolNames.push(extractRuntimeToolNames(options));
+        generateToolNames.push(toolNamesOf(options));
         generateCalls++;
         if (generateCalls === 1) {
           return {
@@ -4788,11 +4627,11 @@ describe("agent runtime refresh hooks", () => {
         };
       },
       async doStream(options: unknown) {
-        streamToolNames.push(extractRuntimeToolNames(options));
+        streamToolNames.push(toolNamesOf(options));
         streamCalls++;
         if (streamCalls === 1) {
           return {
-            stream: createRuntimeStream([
+            stream: runtimeStream([
               {
                 type: "tool-call",
                 toolCallId: "read-plan-guide-stream",
@@ -4802,18 +4641,18 @@ describe("agent runtime refresh hooks", () => {
               {
                 type: "finish",
                 finishReason: "tool-calls",
-                usage: { inputTokens: 1, outputTokens: 1 },
+                totalUsage: { inputTokens: 1, outputTokens: 1 },
               },
             ]),
           };
         }
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             { type: "text-delta", text: "stream done" },
             {
               type: "finish",
               finishReason: "stop",
-              usage: { inputTokens: 1, outputTokens: 1 },
+              totalUsage: { inputTokens: 1, outputTokens: 1 },
             },
           ]),
         };
@@ -4941,7 +4780,7 @@ describe("agent runtime refresh hooks", () => {
       async doStream() {
         streamCalls++;
         return {
-          stream: createRuntimeStream([
+          stream: runtimeStream([
             {
               type: "tool-call",
               toolCallId: `root-skill-stream-${streamCalls}`,

@@ -253,14 +253,14 @@ import { assertSafeBlobId, BlobStorageContractName, isSafeBlobId } from "veryfro
 
 | Name               | Description                                                               | Source                                                                                           |
 | ------------------ | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `assertSafeBlobId` | Validate an identifier before any blob backend constructs a storage path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/blob-id.ts#L13) |
-| `isSafeBlobId`     | Return whether a runtime value is a framework-safe blob identifier.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/blob-id.ts#L7)  |
+| `assertSafeBlobId` | Validate an identifier before any blob backend constructs a storage path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/blob-id.ts#L15) |
+| `isSafeBlobId`     | Return whether a runtime value is a framework-safe blob identifier.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/blob-id.ts#L9)  |
 
 #### Classes
 
 | Name                        | Description | Source                                                                                                            |
 | --------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------- |
-| `LocalBlobStorage`          |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/local-storage.ts#L12)            |
+| `LocalBlobStorage`          |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/local-storage.ts#L13)            |
 | `VeryfrontCloudBlobStorage` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/veryfront-cloud-storage.ts#L462) |
 
 #### Types
@@ -492,17 +492,17 @@ import {
 
 | Name                     | Description                                          | Source                                                                                                            |
 | ------------------------ | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `createWorkflowRegistry` | Create a workflow registry from discovered workflows | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L235) |
-| `discoverWorkflows`      | Discover all workflows in a project                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L124) |
-| `findWorkflowById`       | Find a specific workflow by ID                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L224) |
+| `createWorkflowRegistry` | Create a workflow registry from discovered workflows | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L328) |
+| `discoverWorkflows`      | Discover all workflows in a project                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L207) |
+| `findWorkflowById`       | Find a specific workflow by ID                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L314) |
 
 #### Types
 
-| Name                       | Description                    | Source                                                                                                           |
-| -------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `DiscoveredWorkflow`       | Discovered workflow info       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L38) |
-| `WorkflowDiscoveryOptions` | Options for workflow discovery | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L55) |
-| `WorkflowDiscoveryResult`  | Result of workflow discovery   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L78) |
+| Name                       | Description                    | Source                                                                                                            |
+| -------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `DiscoveredWorkflow`       | Discovered workflow info       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L70)  |
+| `WorkflowDiscoveryOptions` | Options for workflow discovery | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L87)  |
+| `WorkflowDiscoveryResult`  | Result of workflow discovery   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L110) |
 
 ### `veryfront/workflow/registry`
 

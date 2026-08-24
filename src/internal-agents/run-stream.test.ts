@@ -1812,6 +1812,66 @@ describe("internal-agents/run-stream", () => {
     assertEquals(capturedToolNames, ["read_baseline"]);
   });
 
+  it("strips invoke_agent from the remote tool grants when delegation is denied", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedAllowedRemoteTools: string[] | undefined;
+    let capturedToolNames: string[] = [];
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        __vfAllowedRemoteTools: ["invoke_agent"],
+        tools: {
+          read_baseline: { description: "Read the telemetry baseline" },
+          invoke_agent: { description: "Delegate to another agent" },
+        },
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      allowDelegation: false,
+      forwardedProps: {
+        runtimeOverrides: {
+          allowedTools: ["search_knowledge"],
+        },
+      },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: (runtimeAgent, mergedTools) => {
+        capturedAllowedRemoteTools = (
+          runtimeAgent.config as Agent["config"] & { __vfAllowedRemoteTools?: string[] }
+        ).__vfAllowedRemoteTools;
+        capturedToolNames = Object.keys(mergedTools ?? {}).sort();
+        return {
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            }),
+        };
+      },
+    });
+
+    assertEquals(
+      capturedAllowedRemoteTools,
+      ["search_knowledge"],
+      "a signed request denying delegation must strip invoke_agent from the remote grants too",
+    );
+    assertEquals(capturedToolNames.includes("invoke_agent"), false);
+  });
+
   it("preserves invoke_agent delegation when visible skills are hidden from the catalog", async () => {
     registerSkill("handoff", {
       id: "handoff",
@@ -2792,6 +2852,86 @@ describe("internal-agents/run-stream", () => {
     assertEquals(runtimeCancelCalls, 1);
     assertEquals(runtimeStream?.locked, false);
     assertEquals(sessionManager.getRunStatus(input.runId), null);
+  });
+
+  it("pre-registers the tool-result wait when a tool call starts streaming", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "tool-wait-agent",
+      config: {
+        id: "tool-wait-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_tool_wait",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    let runtimeController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async () =>
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              runtimeController = controller;
+              controller.enqueue(
+                new TextEncoder().encode(
+                  'data: {"type":"tool-input-start","toolCallId":"tool-1","toolName":"bash"}\n\n',
+                ),
+              );
+            },
+          }),
+      }),
+    });
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error("Expected a runtime response body");
+    }
+
+    const decoder = new TextDecoder();
+    let streamed = "";
+    while (!streamed.includes("event: ToolCallStart")) {
+      const chunk = await reader.read();
+      if (chunk.done) {
+        break;
+      }
+      streamed += decoder.decode(chunk.value, { stream: true });
+    }
+    assertStringIncludes(streamed, "event: ToolCallStart");
+
+    // A Studio client can POST its result before the runtime invokes the tool,
+    // so the wait has to exist as soon as the frame reaches the client.
+    let thrown: unknown;
+    try {
+      sessionManager.submitToolResult(input.runId, {
+        toolCallId: "tool-1",
+        result: { ok: true },
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    assertEquals(
+      thrown,
+      undefined,
+      "the tool-result wait must be pre-registered when ToolCallStart is emitted",
+    );
+
+    runtimeController?.close();
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) {
+        break;
+      }
+    }
+    reader.releaseLock();
   });
 
   it("cancels an active runtime stream when the client disconnects before a tool wait", async () => {

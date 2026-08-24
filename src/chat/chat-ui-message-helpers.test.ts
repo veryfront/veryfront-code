@@ -141,6 +141,56 @@ describe("chat/chat-ui-message-helpers", () => {
     );
   });
 
+  it("preserves the full billing metadata set and drops invalid enum members", () => {
+    assertEquals(
+      normalizeChatMessageMetadata({
+        billableInputTokens: 10,
+        billableOutputTokens: 7,
+        costUsd: 0.0025,
+        providerInputCostUsd: 0.001,
+        providerOutputCostUsd: 0.0005,
+        providerCostUsd: 0.0015,
+        veryfrontInputChargeUsd: 0.0012,
+        veryfrontOutputChargeUsd: 0.0007,
+        veryfrontChargeUsd: 0.0019,
+        veryfrontBilledUsd: 0.002,
+        costCredits: 19,
+        costSource: "gateway",
+        billingMode: "deferred",
+        usageCaptureStatus: "complete",
+      }),
+      {
+        billableInputTokens: 10,
+        billableOutputTokens: 7,
+        costUsd: 0.0025,
+        providerInputCostUsd: 0.001,
+        providerOutputCostUsd: 0.0005,
+        providerCostUsd: 0.0015,
+        veryfrontInputChargeUsd: 0.0012,
+        veryfrontOutputChargeUsd: 0.0007,
+        veryfrontChargeUsd: 0.0019,
+        veryfrontBilledUsd: 0.002,
+        costCredits: 19,
+        costSource: "gateway",
+        billingMode: "deferred",
+        usageCaptureStatus: "complete",
+      },
+      "every billing field the run stream emits must survive normalization",
+    );
+
+    assertEquals(
+      normalizeChatMessageMetadata({
+        billingMode: "bogus",
+        usageCaptureStatus: "bogus",
+        costSource: "bogus",
+        billableInputTokens: 1.5,
+        billableOutputTokens: -1,
+      }),
+      {},
+      "invalid enum members and fractional or negative token counts must be dropped",
+    );
+  });
+
   it("returns undefined when extracting empty metadata", () => {
     assertEquals(extractChatMessageMetadata(null), undefined);
     assertEquals(extractChatMessageMetadata({ ignored: true }), undefined);

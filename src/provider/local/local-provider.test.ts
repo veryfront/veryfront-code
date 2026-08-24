@@ -15,7 +15,12 @@ import {
   assertThrows,
 } from "#std/assert";
 import { afterEach, describe, it } from "#std/testing/bdd";
-import { DEFAULT_LOCAL_MODEL, getLocalModelIds, resolveLocalModel } from "./model-catalog.ts";
+import {
+  DEFAULT_LOCAL_MODEL,
+  getLocalModelIds,
+  resolveLocalEmbeddingModel,
+  resolveLocalModel,
+} from "./model-catalog.ts";
 import { createLocalModel } from "./model-runtime-adapter.ts";
 import { clearModelProviders, ensureModelReady } from "../model-registry.ts";
 import { fromError } from "#veryfront/errors/legacy-error-codec.ts";
@@ -80,6 +85,31 @@ describe("model-catalog", () => {
       "gemma4-e2b-it",
       "gemma4-e4b-it",
     ]);
+  });
+
+  it("resolves embedding model IDs and falls back to raw HuggingFace repos", () => {
+    assertEquals(
+      resolveLocalEmbeddingModel("qwen3-embedding-0.6b").pooling,
+      "last_token",
+      "Qwen3 embeddings must use last-token pooling, not the mean default",
+    );
+    assertEquals(
+      resolveLocalEmbeddingModel("all-MiniLM-L6-v2").hfId,
+      "Xenova/all-MiniLM-L6-v2",
+      "the default embedding id must resolve to its HuggingFace repo",
+    );
+
+    const custom = resolveLocalEmbeddingModel("my-org/my-embedder");
+    assertEquals(
+      custom.hfId,
+      "my-org/my-embedder",
+      "an uncatalogued embedding id must pass through as a raw HuggingFace repo",
+    );
+    assertEquals(
+      custom.dtype,
+      "q4",
+      "the custom embedding fallback must default to q4",
+    );
   });
 });
 

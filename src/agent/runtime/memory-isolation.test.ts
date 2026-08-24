@@ -3,15 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type ModelRuntime } from "#veryfront/provider";
 import { agent } from "../index.ts";
-
-function createRuntimeStream(parts: unknown[]) {
-  return new ReadableStream<unknown>({
-    start(controller) {
-      for (const part of parts) controller.enqueue(part);
-      controller.close();
-    },
-  });
-}
+import { type ScriptedModel, scriptedModel } from "./model-runtime.test-helpers.ts";
 
 /**
  * Read the most recent user-turn text from the model-runtime prompt. The stub
@@ -42,46 +34,15 @@ function lastUserText(options: unknown): string {
 
 /** A model that echoes the latest user message verbatim. */
 function echoModel(modelId: string): ModelRuntime {
-  return {
-    provider: "hosted",
-    modelId,
-    doGenerate(options: unknown) {
-      return Promise.resolve({
-        content: [{ type: "text", text: lastUserText(options) }],
-        finishReason: "stop",
-        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-      });
-    },
-    doStream(options: unknown) {
-      return Promise.resolve({
-        stream: createRuntimeStream([
-          { type: "text-delta", text: lastUserText(options) },
-          { type: "finish", finishReason: "stop", usage: { inputTokens: 1, outputTokens: 1 } },
-        ]),
-      });
-    },
-  } as ModelRuntime;
+  return scriptedModel(
+    [(options) => ({ text: lastUserText(options) })],
+    { modelId },
+  );
 }
 
 /** A model that records the maxOutputTokens the runtime resolved for the call. */
-function capturingModel(modelId: string, captured: { maxOutputTokens?: number }): ModelRuntime {
-  return {
-    provider: "hosted",
-    modelId,
-    doGenerate(options: unknown) {
-      captured.maxOutputTokens = (options as { maxOutputTokens?: number }).maxOutputTokens;
-      return Promise.resolve({
-        content: [{ type: "text", text: "ok" }],
-        finishReason: "stop",
-        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-      });
-    },
-    doStream() {
-      return Promise.resolve({
-        stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]),
-      });
-    },
-  } as ModelRuntime;
+function capturingModel(modelId: string): ScriptedModel {
+  return scriptedModel([{ text: "ok" }], { modelId });
 }
 
 const WORDS = ["APPLE", "BANANA", "CHERRY"];
@@ -167,31 +128,29 @@ describe("agent memory isolation (issue 2336)", () => {
   it("memory.enabled === false ignores leftover maxTokens for the output limit", async () => {
     // A disabled memory config must behave exactly like omitting `memory`: its
     // maxTokens (a conversation-window size) must not cap model output.
-    const disabledCapture: { maxOutputTokens?: number } = {};
+    const disabledModel = capturingModel("hosted/cap-disabled");
     const disabled = agent({
       id: "echo-disabled-maxtokens",
       model: "hosted/echo-disabled-maxtokens",
       system: "x",
       maxSteps: 1,
       memory: { type: "conversation", enabled: false, maxTokens: 100 },
-      resolveModelTransport: () =>
-        Promise.resolve({ model: capturingModel("hosted/cap-disabled", disabledCapture) }),
+      resolveModelTransport: () => Promise.resolve({ model: disabledModel }),
     });
 
-    const omittedCapture: { maxOutputTokens?: number } = {};
+    const omittedModel = capturingModel("hosted/cap-omitted");
     const omitted = agent({
       id: "echo-omitted-memory",
       model: "hosted/echo-omitted-memory",
       system: "x",
       maxSteps: 1,
-      resolveModelTransport: () =>
-        Promise.resolve({ model: capturingModel("hosted/cap-omitted", omittedCapture) }),
+      resolveModelTransport: () => Promise.resolve({ model: omittedModel }),
     });
 
     await disabled.generate({ input: "hi" });
     await omitted.generate({ input: "hi" });
 
-    assertEquals(disabledCapture.maxOutputTokens, omittedCapture.maxOutputTokens);
-    assertEquals(disabledCapture.maxOutputTokens === 100, false);
+    assertEquals(disabledModel.calls[0]?.maxOutputTokens, omittedModel.calls[0]?.maxOutputTokens);
+    assertEquals(disabledModel.calls[0]?.maxOutputTokens === 100, false);
   });
 });

@@ -1,6 +1,7 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { registerModelProvider } from "#veryfront/provider";
 import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ModelRuntime } from "#veryfront/provider";
@@ -77,6 +78,26 @@ describe("llm/generate", () => {
     }
   });
 
+  it("forwards sampling settings to the model call", async () => {
+    const stub = stubProvider("hello");
+    try {
+      await generate({ input: "hi", model: "stub/stub", temperature: 0.9, maxOutputTokens: 77 });
+      const [call] = stub.calls;
+      assertEquals(
+        call?.temperature,
+        0.9,
+        "generate must lift temperature into the ephemeral agent config and reach the model call",
+      );
+      assertEquals(
+        call?.maxOutputTokens,
+        77,
+        "generate must forward maxOutputTokens through the request",
+      );
+    } finally {
+      stub.dispose();
+    }
+  });
+
   it("parses a schema-constrained response into object", async () => {
     const stub = stubProvider('{"city":"Berlin"}');
     try {
@@ -106,10 +127,17 @@ describe("llm/generate", () => {
   it("rejects a response that does not satisfy the schema", async () => {
     const stub = stubProvider('{"city":42}');
     try {
-      await assertRejects(() =>
-        generate({ input: "where", model: "stub/stub", outputSchema: SCHEMA })
+      await assertRejects(
+        () => generate({ input: "where", model: "stub/stub", outputSchema: SCHEMA }),
+        VeryfrontError,
+        "failed outputSchema validation: /city: must be string",
+        "a schema mismatch must reject as a classified VeryfrontError naming the failing property",
       );
-      assertEquals(agentRegistry.getAllIds(), []);
+      assertEquals(
+        agentRegistry.getAllIds(),
+        [],
+        "the ephemeral agent must be unregistered even when validation fails",
+      );
     } finally {
       stub.dispose();
     }
