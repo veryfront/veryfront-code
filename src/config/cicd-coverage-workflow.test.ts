@@ -133,18 +133,37 @@ describe("cicd coverage workflow", () => {
   it("blocks live provider egress in every Deno unit coverage path", async () => {
     const providerDenyNet =
       "--deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai";
-    const coverageCiScript = await readRepoFile("scripts/test/coverage-ci.ts");
 
-    assertStringIncludes(coverageCiScript, `"${providerDenyNet}"`);
+    // The deny-net flag lives once in scripts/test/suites.ts; the coverage
+    // runners import it rather than restating the host list. This pins the
+    // single source and the import edges, and run-suite.test.ts asserts the
+    // rendered command of every suite profile carries the flag at runtime.
+    const suitesScript = await readRepoFile("scripts/test/suites.ts");
+    for (const host of providerDenyNet.slice("--deny-net=".length).split(",")) {
+      assertStringIncludes(suitesScript, `"${host}"`);
+    }
     for (
-      const taskName of [
-        "test:coverage",
-        "test:coverage:unit",
-        "test:coverage:integration",
+      const script of [
+        await readRepoFile("scripts/test/coverage-ci.ts"),
+        await readRepoFile("scripts/test/run-deno-suite.ts"),
       ]
     ) {
-      assertStringIncludes(await readDenoTask(taskName), providerDenyNet);
+      assertStringIncludes(script, "PROVIDER_EGRESS_DENY_NET");
+      assertStringIncludes(script, 'from "./suites.ts"');
     }
+
+    // test:coverage still spells the flag inline: it is a plain `deno test`
+    // task line, and deno.json cannot reference the shared constant.
+    assertStringIncludes(await readDenoTask("test:coverage"), providerDenyNet);
+    // The converted coverage tasks inherit the flag from their suite records.
+    assertStringIncludes(
+      await readDenoTask("test:coverage:unit"),
+      "run-deno-suite.ts --suite=coverage:unit",
+    );
+    assertStringIncludes(
+      await readDenoTask("test:coverage:integration"),
+      "run-deno-suite.ts --suite=coverage:integration",
+    );
   });
 
   it("stays runnable on every runtime, not just the one with the global", async () => {
