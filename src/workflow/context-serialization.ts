@@ -1,8 +1,55 @@
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
+import {
+  canIdentifyProxyWithoutHooks,
+  isProxyWithoutHooks,
+} from "#veryfront/platform/compat/error-introspection.ts";
 import { agentLogger } from "#veryfront/utils";
 import type { WorkflowContext } from "./types.ts";
 
 const logger = agentLogger.component("workflow-context");
+const arrayIsArray = Array.isArray;
+const BigIntValueOf = BigInt.prototype.valueOf;
+const BooleanValueOf = Boolean.prototype.valueOf;
+const dateGetTime = Date.prototype.getTime;
+const jsonIsRawJSON = typeof (JSON as JsonRawSupport).isRawJSON === "function"
+  ? (JSON as JsonRawSupport).isRawJSON
+  : undefined;
+const jsonStringify = JSON.stringify;
+const mathFloor = Math.floor;
+const mathMin = Math.min;
+const MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
+const numberIsFinite = Number.isFinite;
+const numberIsNaN = Number.isNaN;
+const NumberValueOf = Number.prototype.valueOf;
+const ObjectConstructor = Object;
+const objectCreate = Object.create;
+const objectDefineProperty = Object.defineProperty;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectGetPrototypeOf = Object.getPrototypeOf;
+const objectHasOwn = Object.hasOwn;
+const objectKeys = Object.keys;
+const objectPrototype = Object.prototype;
+const objectToString = Object.prototype.toString;
+const POSITIVE_INFINITY = Number.POSITIVE_INFINITY;
+const reflectApply = Reflect.apply;
+const reflectGet = Reflect.get;
+const regExpExec = RegExp.prototype.exec;
+const SetConstructor = Set;
+const setAdd = Set.prototype.add;
+const setDelete = Set.prototype.delete;
+const setHas = Set.prototype.has;
+const StringConstructor = String;
+const StringValueOf = String.prototype.valueOf;
+const symbolToStringTag = Symbol.toStringTag;
+
+function defineArrayElement<T>(values: T[], index: number, value: T): void {
+  objectDefineProperty(values, index, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+}
 
 /** How many paths a diagnostic names before it stops enumerating. */
 const MAX_REPORTED_PATHS = 5;
@@ -36,7 +83,7 @@ export const MAX_TRAVERSAL_DEPTH = 1000;
 const SAFE_PATH_SEGMENT = /^[A-Za-z_$][A-Za-z0-9_$]{0,39}$/;
 
 function redactPathSegment(key: string): string {
-  return SAFE_PATH_SEGMENT.test(key) ? key : "<redacted>";
+  return reflectApply(regExpExec, SAFE_PATH_SEGMENT, [key]) !== null ? key : "<redacted>";
 }
 
 /** A value the durable codec cannot carry, named by where it sits. */
@@ -99,15 +146,16 @@ function describe(value: unknown): string {
   if (typeof value === "bigint") return "BigInt";
   if (typeof value === "function") return "function";
   if (typeof value === "symbol") return "symbol";
-  if (typeof value === "number") return Number.isFinite(value) ? "number" : `number (${value})`;
+  if (typeof value === "number") return numberIsFinite(value) ? "number" : `number (${value})`;
   return "object";
 }
 
 /** Whether a value is a plain `{}` object rather than a class instance. */
 function isPlainObject(value: JsonTraversalReference): boolean {
+  if (!canIdentifyProxyWithoutHooks || isProxyWithoutHooks(value)) return false;
   try {
-    const prototype = Object.getPrototypeOf(value);
-    return prototype === Object.prototype || prototype === null;
+    const prototype = objectGetPrototypeOf(value);
+    return prototype === objectPrototype || prototype === null;
   } catch {
     return false;
   }
@@ -117,7 +165,7 @@ function describeToJsonValue(value: unknown): string {
   if (typeof value === "bigint") return "BigInt";
   if (typeof value === "object") {
     try {
-      Date.prototype.getTime.call(value);
+      reflectApply(dateGetTime, value, []);
       return "Date";
     } catch {
       // The value is not a Date.
@@ -130,9 +178,24 @@ function toJsonLength(value: unknown): number {
   // Unary plus uses the specification's ToNumber operation, which rejects a
   // BigInt directly or returned by an object's primitive conversion.
   const number = +(value as number);
-  if (Number.isNaN(number) || number <= 0) return 0;
-  if (number === Number.POSITIVE_INFINITY) return Number.MAX_SAFE_INTEGER;
-  return Math.min(Math.floor(number), Number.MAX_SAFE_INTEGER);
+  if (numberIsNaN(number) || number <= 0) return 0;
+  if (number === POSITIVE_INFINITY) return MAX_SAFE_INTEGER;
+  return mathMin(mathFloor(number), MAX_SAFE_INTEGER);
+}
+
+function hasToStringTagWithoutHooks(value: JsonTraversalReference): boolean {
+  if (!canIdentifyProxyWithoutHooks) return true;
+  let current: object | null = value;
+  for (let depth = 0; current !== null && depth < 100; depth++) {
+    if (isProxyWithoutHooks(current)) return true;
+    try {
+      if (objectGetOwnPropertyDescriptor(current, symbolToStringTag)) return true;
+      current = objectGetPrototypeOf(current);
+    } catch {
+      return true;
+    }
+  }
+  return current !== null;
 }
 
 /**
@@ -145,8 +208,8 @@ function toJsonLength(value: unknown): number {
  */
 function couldHoldPrimitiveSlot(value: JsonTraversalReference): boolean {
   try {
-    if (Symbol.toStringTag in value) return true;
-    const tag = Object.prototype.toString.call(value);
+    if (hasToStringTagWithoutHooks(value)) return true;
+    const tag = reflectApply(objectToString, value, []);
     return tag === "[object Number]" || tag === "[object String]" ||
       tag === "[object Boolean]" || tag === "[object BigInt]";
   } catch {
@@ -169,25 +232,25 @@ type BoxedPrimitiveSlot = "number" | "string" | "boolean" | "bigint";
 function boxedPrimitiveSlot(value: JsonTraversalReference): BoxedPrimitiveSlot | null {
   if (!couldHoldPrimitiveSlot(value)) return null;
   try {
-    Number.prototype.valueOf.call(value);
+    reflectApply(NumberValueOf, value, []);
     return "number";
   } catch {
     // Try the next boxed primitive brand.
   }
   try {
-    String.prototype.valueOf.call(value);
+    reflectApply(StringValueOf, value, []);
     return "string";
   } catch {
     // Try the next boxed primitive brand.
   }
   try {
-    Boolean.prototype.valueOf.call(value);
+    reflectApply(BooleanValueOf, value, []);
     return "boolean";
   } catch {
     // Try the next boxed primitive brand.
   }
   try {
-    BigInt.prototype.valueOf.call(value);
+    reflectApply(BigIntValueOf, value, []);
     return "bigint";
   } catch {
     return null;
@@ -215,9 +278,9 @@ function unboxAsJsonWould(
 ): string | number | boolean | bigint {
   if (slot === "number") return +(value as number);
   if (slot === "string") return `${value as string}`;
-  if (slot === "boolean") return Boolean.prototype.valueOf.call(value as boolean);
+  if (slot === "boolean") return reflectApply(BooleanValueOf, value as boolean, []);
   // JSON refuses a BigInt box outright, and the walk reports it by its path.
-  return BigInt.prototype.valueOf.call(value as bigint);
+  return reflectApply(BigIntValueOf, value as bigint, []);
 }
 
 /** Build the exact value JSON will encode, collecting what it cannot carry. */
@@ -229,11 +292,13 @@ function normalizeAndFindUnrepresentableValues(
   unrepresentable: UnrepresentableValues;
 } {
   const found: UnrepresentableValues = { fatal: [], lossy: [], fatalCount: 0, lossyCount: 0 };
-  const active = new Set<JsonTraversalReference>();
+  const active = new SetConstructor<JsonTraversalReference>();
 
   const recordFatal = (path: string, kind: string) => {
     found.fatalCount++;
-    if (found.fatal.length < MAX_REPORTED_PATHS) found.fatal.push({ path, kind });
+    if (found.fatal.length < MAX_REPORTED_PATHS) {
+      defineArrayElement(found.fatal, found.fatal.length, { path, kind });
+    }
   };
 
   // `index` is appended here rather than by the caller, so an array with more
@@ -241,7 +306,10 @@ function normalizeAndFindUnrepresentableValues(
   const recordLossy = (path: string, kind: string, index?: number) => {
     found.lossyCount++;
     if (found.lossy.length >= MAX_REPORTED_PATHS) return;
-    found.lossy.push({ path: index === undefined ? path : `${path}[${index}]`, kind });
+    defineArrayElement(found.lossy, found.lossy.length, {
+      path: index === undefined ? path : `${path}[${index}]`,
+      kind,
+    });
   };
 
   const normalize = (
@@ -256,8 +324,8 @@ function normalizeAndFindUnrepresentableValues(
     const type = typeof value;
     if (
       type === "object" &&
-      typeof jsonRawSupport.isRawJSON === "function" &&
-      jsonRawSupport.isRawJSON(value)
+      jsonIsRawJSON !== undefined &&
+      reflectApply(jsonIsRawJSON, jsonRawSupport, [value])
     ) {
       return value as RawJsonValue;
     }
@@ -265,10 +333,12 @@ function normalizeAndFindUnrepresentableValues(
       applyToJson &&
       (type === "object" || type === "function" || type === "bigint")
     ) {
-      const receiver = type === "bigint" ? Object(value) : value as JsonTraversalReference;
-      const toJson = Reflect.get(receiver, "toJSON");
+      const receiver = type === "bigint"
+        ? ObjectConstructor(value)
+        : value as JsonTraversalReference;
+      const toJson = reflectGet(receiver, "toJSON");
       if (typeof toJson === "function") {
-        const replacement = Reflect.apply(toJson, value, [key]);
+        const replacement = reflectApply(toJson, value, [key]);
         recordLossy(path, describeToJsonValue(value));
         return normalize(replacement, path, key, false, depth);
       }
@@ -276,7 +346,7 @@ function normalizeAndFindUnrepresentableValues(
 
     if (type === "string" || type === "boolean") return value as string | boolean;
     if (type === "number") {
-      if (!Number.isFinite(value)) {
+      if (!numberIsFinite(value)) {
         recordLossy(path, describe(value));
         return null;
       }
@@ -292,12 +362,12 @@ function normalizeAndFindUnrepresentableValues(
     }
 
     const nested = value as JsonTraversalReference;
-    if (active.has(nested)) {
+    if (reflectApply(setHas, active, [nested])) {
       recordFatal(path, "circular reference");
       return null;
     }
 
-    const isArray = Array.isArray(nested);
+    const isArray = arrayIsArray(nested);
     if (!isArray) {
       const slot = boxedPrimitiveSlot(nested);
       if (slot !== null) {
@@ -312,23 +382,25 @@ function normalizeAndFindUnrepresentableValues(
     // that answers differently on its second call would then persist a value
     // this check never saw. Nothing below here is reported, which is the price.
     if (depth >= MAX_TRAVERSAL_DEPTH) return nested as NormalizedJsonValue;
-    active.add(nested);
+    reflectApply(setAdd, active, [nested]);
     try {
       if (isArray) {
         const result: NormalizedJsonValue[] = [];
-        const length = toJsonLength(Reflect.get(nested, "length"));
+        const length = toJsonLength(reflectGet(nested, "length"));
         for (let index = 0; index < length; index++) {
-          const indexKey = String(index);
-          const child = Reflect.get(nested, indexKey);
+          const indexKey = StringConstructor(index);
+          const child = reflectGet(nested, indexKey);
           let isHole = false;
-          try {
-            isHole = !Object.hasOwn(nested, indexKey);
-          } catch {
-            // Hole diagnostics are best-effort; the captured value still wins.
+          if (canIdentifyProxyWithoutHooks && !isProxyWithoutHooks(nested)) {
+            try {
+              isHole = !objectHasOwn(nested, indexKey);
+            } catch {
+              // Hole diagnostics are best-effort; the captured value still wins.
+            }
           }
           if (isHole) recordLossy(path, "array hole", index);
           if (isHole && child === undefined) {
-            result.push(null);
+            defineArrayElement(result, result.length, null);
             continue;
           }
           const normalized = normalize(
@@ -338,15 +410,21 @@ function normalizeAndFindUnrepresentableValues(
             true,
             depth + 1,
           );
-          result.push(normalized === OMIT_JSON_VALUE ? null : normalized);
+          defineArrayElement(
+            result,
+            result.length,
+            normalized === OMIT_JSON_VALUE ? null : normalized,
+          );
         }
         return result;
       }
 
-      const result: NormalizedJsonObject = Object.create(null);
-      for (const childKey of Object.keys(nested)) {
+      const result: NormalizedJsonObject = objectCreate(null);
+      const childKeys = objectKeys(nested);
+      for (let childIndex = 0; childIndex < childKeys.length; childIndex++) {
+        const childKey = childKeys[childIndex]!;
         const normalized = normalize(
-          Reflect.get(nested, childKey),
+          reflectGet(nested, childKey),
           `${path}.${redactPathSegment(childKey)}`,
           childKey,
           true,
@@ -359,7 +437,7 @@ function normalizeAndFindUnrepresentableValues(
       if (!isPlainObject(nested)) recordLossy(path, describe(nested));
       return result;
     } finally {
-      active.delete(nested);
+      reflectApply(setDelete, active, [nested]);
     }
   };
 
@@ -372,9 +450,14 @@ function normalizeAndFindUnrepresentableValues(
 }
 
 function formatPaths(samples: readonly UnrepresentableValue[], total: number): string {
-  const shown = samples.map(({ path, kind }) => `${path} (${kind})`).join(", ");
+  let shown = "";
+  for (let index = 0; index < samples.length; index++) {
+    if (index > 0) shown += ", ";
+    shown += `${samples[index]!.path} (${samples[index]!.kind})`;
+  }
   const remaining = total - samples.length;
-  return remaining > 0 ? `${shown}, and ${remaining} more` : shown;
+  if (remaining <= 0) return shown;
+  return shown ? `${shown}, and ${remaining} more` : `and ${remaining} more`;
 }
 
 /**
@@ -425,6 +508,18 @@ export function prepareWorkflowJson(
     });
   }
 
+  const serialized = jsonStringify(normalized);
+  if (serialized === undefined) {
+    const paths = lossyCount > 0
+      ? formatPaths(lossy, lossyCount)
+      : `${label} (value omitted by JSON)`;
+    throw ORCHESTRATION_ERROR.create({
+      detail: `Workflow run cannot be persisted: ${paths}. Workflow state must produce a JSON ` +
+        `document, because a run that suspends is stored as JSON. Return a plain object from ` +
+        `the step that produced this value.`,
+    });
+  }
+
   if (lossyCount > 0) {
     logger.warn(
       "Workflow state holds values that do not survive persistence unchanged",
@@ -437,7 +532,7 @@ export function prepareWorkflowJson(
 
   // Encoded only once the fatal check has passed, so a value JSON refuses is
   // named by this module rather than by the anonymous error JSON raises.
-  return { normalized, serialized: JSON.stringify(normalized) };
+  return { normalized, serialized };
 }
 
 export function serializeWorkflowJson(value: unknown, label: string, runId?: string): string {

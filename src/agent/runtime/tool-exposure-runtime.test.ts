@@ -1,7 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
-import type { ModelRuntime } from "#veryfront/provider";
 import { defineSchema } from "#veryfront/schemas";
 import { tool } from "#veryfront/tool";
 import {
@@ -10,82 +9,20 @@ import {
 } from "#veryfront/utils/logger/index.ts";
 import { agent } from "../index.ts";
 import type { AgentConfig } from "../types.ts";
+import { type ScriptedModel, scriptedModel } from "./model-runtime.test-helpers.ts";
 import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
 import { flattenSystemInstructions, withRuntimeToolInventory } from "./tool-inventory.ts";
 
-function toolNames(options: unknown): string[] {
-  const value = (options as { tools?: unknown }).tools;
-  return Array.isArray(value)
-    ? value.map((tool) =>
-      (tool as { name?: string; id?: string }).name ??
-        (tool as { name?: string; id?: string }).id ?? ""
-    ).sort()
-    : Object.keys((value as Record<string, unknown> | undefined) ?? {}).sort();
-}
-
-function createRuntimeStream(parts: unknown[]): ReadableStream<unknown> {
-  return new ReadableStream({
-    start(controller) {
-      for (const part of parts) controller.enqueue(part);
-      controller.close();
-    },
-  });
-}
-
-function systemPrompt(options: unknown): string {
-  const prompt = (options as { prompt?: Array<{ role?: string; content?: unknown }> }).prompt;
-  if (!Array.isArray(prompt)) return "";
-  return prompt
-    .filter((entry) => entry?.role === "system" && typeof entry.content === "string")
-    .map((entry) => entry.content as string)
-    .join("\n");
+function observedToolNames(model: ScriptedModel): string[][] {
+  return model.calls.map((_, call) => model.toolNames(call));
 }
 
 it("deferred generate searches, exposes on the next step, and executes once", async () => {
-  const observedTools: string[][] = [];
-  const observedSystems: string[] = [];
-  let step = 0;
-  const model: ModelRuntime = {
-    provider: "hosted",
-    modelId: "hosted/deferred-tools",
-    async doGenerate(options: unknown) {
-      observedTools.push(toolNames(options));
-      observedSystems.push(systemPrompt(options));
-      step++;
-      if (step === 1) {
-        return {
-          content: [{
-            type: "tool-call",
-            toolCallId: "search-1",
-            toolName: "tool_search",
-            input: JSON.stringify({ query: "release marker" }),
-          }],
-          finishReason: "tool-calls",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
-      }
-      if (step === 2) {
-        return {
-          content: [{
-            type: "tool-call",
-            toolCallId: "marker-1",
-            toolName: "read_release_marker",
-            input: "{}",
-          }],
-          finishReason: "tool-calls",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
-      }
-      return {
-        content: [{ type: "text", text: "Release marker marker-1" }],
-        finishReason: "stop",
-        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-      };
-    },
-    async doStream() {
-      return { stream: new ReadableStream() };
-    },
-  };
+  const model = scriptedModel([
+    { toolCalls: [{ id: "search-1", name: "tool_search", input: { query: "release marker" } }] },
+    { toolCalls: [{ id: "marker-1", name: "read_release_marker", input: {} }] },
+    { text: "Release marker marker-1" },
+  ], { modelId: "hosted/deferred-tools", only: "generate" });
   let executionCount = 0;
   const assistant = agent(
     {
@@ -123,8 +60,9 @@ it("deferred generate searches, exposes on the next step, and executes once", as
 
   const response = await assistant.generate({ input: "Read the release marker" });
 
-  assertEquals(observedTools[0], ["load_skill", "tool_search"]);
-  assertEquals(observedTools[1], [
+  const observedSystems = model.systemPrompts();
+  assertEquals(model.toolNames(0), ["load_skill", "tool_search"]);
+  assertEquals(model.toolNames(1), [
     "load_skill",
     "read_release_marker",
     "tool_search",
@@ -137,50 +75,25 @@ it("deferred generate searches, exposes on the next step, and executes once", as
 });
 
 it("deferred generate can reload create_agent after a successful agent write", async () => {
-  const observedTools: string[][] = [];
-  const observedSystems: string[] = [];
-  let step = 0;
-  const model: ModelRuntime = {
-    provider: "hosted",
-    modelId: "hosted/deferred-agent-authoring",
-    async doGenerate(options: unknown) {
-      observedTools.push(toolNames(options));
-      observedSystems.push(systemPrompt(options));
-      step++;
-      if (step === 1 || step === 3) {
-        return {
-          content: [{
-            type: "tool-call",
-            toolCallId: `search-create-agent-${step}`,
-            toolName: "tool_search",
-            input: JSON.stringify({ query: "create_agent" }),
-          }],
-          finishReason: "tool-calls",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
-      }
-      if (step === 2 || step === 4) {
-        return {
-          content: [{
-            type: "tool-call",
-            toolCallId: `create-agent-${step}`,
-            toolName: "create_agent",
-            input: JSON.stringify({ id: `agent-${step}` }),
-          }],
-          finishReason: "tool-calls",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
-      }
-      return {
-        content: [{ type: "text", text: "Created both agents." }],
-        finishReason: "stop",
-        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-      };
+  const model = scriptedModel([
+    {
+      toolCalls: [{
+        id: "search-create-agent-1",
+        name: "tool_search",
+        input: { query: "create_agent" },
+      }],
     },
-    async doStream() {
-      return { stream: new ReadableStream() };
+    { toolCalls: [{ id: "create-agent-2", name: "create_agent", input: { id: "agent-2" } }] },
+    {
+      toolCalls: [{
+        id: "search-create-agent-3",
+        name: "tool_search",
+        input: { query: "create_agent" },
+      }],
     },
-  };
+    { toolCalls: [{ id: "create-agent-4", name: "create_agent", input: { id: "agent-4" } }] },
+    { text: "Created both agents." },
+  ], { modelId: "hosted/deferred-agent-authoring", only: "generate" });
   let executionCount = 0;
   const assistant = agent(
     {
@@ -223,7 +136,8 @@ it("deferred generate can reload create_agent after a successful agent write", a
 
   const response = await assistant.generate({ input: "Create two project agents" });
 
-  assertEquals(observedTools, [
+  const observedSystems = model.systemPrompts();
+  assertEquals(observedToolNames(model), [
     ["load_skill", "tool_search"],
     ["create_agent", "load_skill", "tool_search"],
     ["load_skill", "tool_search"],
@@ -243,53 +157,25 @@ it("deferred generate can reload create_agent after a successful agent write", a
 });
 
 it("deferred stream can reload another agent write tool after a successful write", async () => {
-  const observedTools: string[][] = [];
-  const observedSystems: string[] = [];
-  let step = 0;
-  const model: ModelRuntime = {
-    provider: "hosted",
-    modelId: "hosted/deferred-agent-authoring-stream",
-    async doGenerate() {
-      return { content: [{ type: "text", text: "unused" }] };
+  const model = scriptedModel([
+    {
+      toolCalls: [{
+        id: "search-create-agent-1",
+        name: "tool_search",
+        input: { query: "create_agent" },
+      }],
     },
-    async doStream(options: unknown) {
-      observedTools.push(toolNames(options));
-      observedSystems.push(systemPrompt(options));
-      step++;
-      if (step === 1 || step === 3) {
-        return {
-          stream: createRuntimeStream([
-            {
-              type: "tool-call",
-              toolCallId: `search-create-agent-${step}`,
-              toolName: "tool_search",
-              input: { query: step === 1 ? "create_agent" : "update_agent" },
-            },
-            { type: "finish", finishReason: "tool-calls" },
-          ]),
-        };
-      }
-      if (step === 2 || step === 4) {
-        return {
-          stream: createRuntimeStream([
-            {
-              type: "tool-call",
-              toolCallId: `create-agent-${step}`,
-              toolName: step === 2 ? "create_agent" : "update_agent",
-              input: { id: `agent-${step}` },
-            },
-            { type: "finish", finishReason: "tool-calls" },
-          ]),
-        };
-      }
-      return {
-        stream: createRuntimeStream([
-          { type: "text-delta", text: "Created both agents." },
-          { type: "finish", finishReason: "stop" },
-        ]),
-      };
+    { toolCalls: [{ id: "create-agent-2", name: "create_agent", input: { id: "agent-2" } }] },
+    {
+      toolCalls: [{
+        id: "search-create-agent-3",
+        name: "tool_search",
+        input: { query: "update_agent" },
+      }],
     },
-  };
+    { toolCalls: [{ id: "create-agent-4", name: "update_agent", input: { id: "agent-4" } }] },
+    { text: "Created both agents." },
+  ], { modelId: "hosted/deferred-agent-authoring-stream", only: "stream" });
   const executionCounts = { create: 0, update: 0 };
   const assistant = agent(
     {
@@ -342,7 +228,8 @@ it("deferred stream can reload another agent write tool after a successful write
   const response = await assistant.stream({ input: "Create two project agents" });
   const body = await response.toDataStreamResponse().text();
 
-  assertEquals(observedTools, [
+  const observedSystems = model.systemPrompts();
+  assertEquals(observedToolNames(model), [
     ["load_skill", "tool_search"],
     ["create_agent", "load_skill", "tool_search"],
     ["load_skill", "tool_search"],
@@ -362,59 +249,28 @@ it("deferred stream can reload another agent write tool after a successful write
 });
 
 it("deferred generate activates and executes provider-native web search on demand", async () => {
-  const observedTools: string[][] = [];
-  const observedSystems: string[] = [];
-  let step = 0;
-  const model: ModelRuntime = {
-    provider: "anthropic",
-    modelId: "claude-sonnet-4-6",
-    async doGenerate(options: unknown) {
-      observedTools.push(toolNames(options));
-      observedSystems.push(systemPrompt(options));
-      step++;
-      if (step === 1) {
-        return {
-          content: [{
-            type: "tool-call",
-            toolCallId: "search-native-1",
-            toolName: "tool_search",
-            input: JSON.stringify({ query: "web_search" }),
-          }],
-          finishReason: "tool-calls",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
-      }
-      if (step === 2) {
-        return {
-          content: [
-            {
-              type: "tool-call",
-              toolCallId: "web-search-1",
-              toolName: "web_search",
-              input: JSON.stringify({ query: "Veryfront" }),
-            },
-            {
-              type: "tool-result",
-              toolCallId: "web-search-1",
-              toolName: "web_search",
-              result: { results: [{ title: "Veryfront" }] },
-              providerExecuted: true,
-            },
-          ],
-          finishReason: "tool-calls",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
-      }
-      return {
-        content: [{ type: "text", text: "Found Veryfront." }],
-        finishReason: "stop",
-        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-      };
+  const model = scriptedModel([
+    { toolCalls: [{ id: "search-native-1", name: "tool_search", input: { query: "web_search" } }] },
+    {
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "web-search-1",
+          toolName: "web_search",
+          input: JSON.stringify({ query: "Veryfront" }),
+        },
+        {
+          type: "tool-result",
+          toolCallId: "web-search-1",
+          toolName: "web_search",
+          result: { results: [{ title: "Veryfront" }] },
+          providerExecuted: true,
+        },
+      ],
+      finishReason: "tool-calls",
     },
-    async doStream() {
-      return { stream: new ReadableStream() };
-    },
-  };
+    { text: "Found Veryfront." },
+  ], { provider: "anthropic", modelId: "claude-sonnet-4-6", only: "generate" });
   const assistant = agent(
     {
       id: "deferred-provider-native-test",
@@ -431,9 +287,10 @@ it("deferred generate activates and executes provider-native web search on deman
 
   const response = await assistant.generate({ input: "Search the web for Veryfront" });
 
-  assertEquals(observedTools[0], ["tool_search"]);
-  assertEquals(observedTools[1], ["tool_search", "web_search"]);
-  assertEquals(observedTools[2], ["tool_search", "web_search"]);
+  const observedSystems = model.systemPrompts();
+  assertEquals(model.toolNames(0), ["tool_search"]);
+  assertEquals(model.toolNames(1), ["tool_search", "web_search"]);
+  assertEquals(model.toolNames(2), ["tool_search", "web_search"]);
   assertEquals((observedSystems[0] ?? "").includes("web_search"), false);
   assertEquals((observedSystems[0] ?? "").includes("web_fetch"), false);
   assertEquals((observedSystems[1] ?? "").includes("web_search"), false);
@@ -445,33 +302,11 @@ it("deferred generate activates and executes provider-native web search on deman
 });
 
 it("deferred generate rejects a guessed tool that was not exposed", async () => {
-  let step = 0;
   let executionCount = 0;
-  const model: ModelRuntime = {
-    provider: "hosted",
-    modelId: "hosted/deferred-guessed-tool",
-    async doGenerate() {
-      step++;
-      if (step === 1) {
-        return {
-          content: [{
-            type: "tool-call",
-            toolCallId: "guessed-1",
-            toolName: "get_release",
-            input: "{}",
-          }],
-          finishReason: "tool-calls",
-        };
-      }
-      return {
-        content: [{ type: "text", text: "done" }],
-        finishReason: "stop",
-      };
-    },
-    async doStream() {
-      return { stream: new ReadableStream() };
-    },
-  };
+  const model = scriptedModel([
+    { toolCalls: [{ id: "guessed-1", name: "get_release", input: {} }] },
+    { text: "done" },
+  ], { modelId: "hosted/deferred-guessed-tool", only: "generate" });
   const assistant = agent(
     {
       id: "deferred-guessed-generate",

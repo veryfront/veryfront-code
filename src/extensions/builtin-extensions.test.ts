@@ -279,6 +279,37 @@ describe("createBuiltinExtensions", () => {
     assertEquals(logs.some((message) => message.includes("ext-missing")), true);
   });
 
+  it("rethrows a package-backed load failure that is not a missing implementation", async () => {
+    // The module resolves; only the identity check fails. A swallowed failure
+    // here would drop a real first-party builtin from the runtime while
+    // claiming its package is not installed.
+    const candidate = createDeferredBuiltinExtension({
+      name: "ext-name-drift",
+      origin: "veryfront/ext-yaml",
+      sourceDirectory: "ext-yaml",
+      availability: "package",
+    });
+
+    const logs: string[] = [];
+    await assertRejects(
+      () =>
+        getDeferredExtensionState(candidate)!.load({
+          debug: (message) => logs.push(message),
+          info: () => {},
+          warn: () => {},
+          error: () => {},
+        }),
+      Error,
+      'returned extension "ext-yaml"',
+      "a package-backed builtin must rethrow a non-missing load failure",
+    );
+    assertEquals(
+      logs.some((message) => message.includes("is not available from the root package")),
+      false,
+      `a resolvable package must not be reported as not installed, got: ${logs.join(" | ")}`,
+    );
+  });
+
   it("rejects an invalid root-bundled deferred factory result", async () => {
     const candidate = createDeferredBuiltinExtension({
       name: "ext-invalid",

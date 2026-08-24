@@ -1,9 +1,13 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
-import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
+import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "#veryfront/chat/types.ts";
 import type { HostedAgentRunSpan, HostedAgentRunTracer } from "./agent-run-lifecycle.ts";
-import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
+import {
+  type ConversationRunChunkMirror,
+  createHostedConversationRunChunkMirror,
+} from "#veryfront/agent/conversation/run-chunk-mirror.ts";
 import type { ConversationRunMirrorDisableReason } from "../conversation/run-mirror.ts";
 import type {
   HostedChatRuntimeAgent,
@@ -1349,6 +1353,139 @@ describe("agent/hosted-chat-execution-runtime", () => {
     await runtime.waitForFinish();
 
     assertEquals(terminalStates, [{ status: "completed" }]);
+  });
+
+  it("stops cleanly when a late reasoning append finds a deleted run after local completion", async () => {
+    let appendRequestCount = 0;
+    const finalizeRequestStatuses: string[] = [];
+    const errorLogs: string[] = [];
+    const observedTerminalStatuses: string[] = [];
+    const appendResponse = Promise.withResolvers<Response>();
+    const resourceNotFoundFetch: typeof globalThis.fetch = () => {
+      appendRequestCount += 1;
+      return appendResponse.promise;
+    };
+
+    const durableRunMirror = createHostedConversationRunChunkMirror({
+      authToken: "token",
+      apiUrl: "https://api.example.test",
+      conversationId: "conversation-1",
+      runId: "root-run-1",
+      latestEventId: 0,
+      batchSize: 1,
+      fetch: resourceNotFoundFetch,
+      instrumentation: {
+        error: (message) => {
+          errorLogs.push(message);
+        },
+      },
+    });
+    const lifecycleAdapter = createLifecycleAdapter({ durableRunMirror });
+    const rejectFinalize = async (state: HostedLifecycleTerminalState) => {
+      finalizeRequestStatuses.push(state.status);
+      throw new Error("resource-not-found");
+    };
+    lifecycleAdapter.terminal.finalizeRun = rejectFinalize;
+    lifecycleAdapter.terminal.cancelRun = rejectFinalize;
+    lifecycleAdapter.terminal.onTerminalState = async (state) => {
+      observedTerminalStatuses.push(state.status);
+    };
+    let streamOptions: HostedChatRuntimeToUiMessageStreamOptions | undefined;
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "openai/gpt-5.4",
+      originalMessages: [],
+      runContext: { withContext: (fn) => fn() },
+      abortSignal: new AbortController().signal,
+      logger: {
+        error: (message) => {
+          errorLogs.push(message);
+        },
+        warn: () => {},
+      },
+      bootstrap: {
+        cleanup: async () => {},
+        lifecycleAdapter,
+        rootStreamWatchdog: createRootStreamWatchdog(),
+        streamResult: createStreamResult({
+          finalStep: {},
+          captureOptions: (options) => {
+            streamOptions = options;
+          },
+        }),
+        streamingMessageId: "stream-message-1",
+        capturedMessageId: "stream-message-1",
+        capturedConversationId: "conversation-1",
+        mirroredToolChunkState: createMirroredToolChunkState(),
+      },
+    });
+    if (!streamOptions) {
+      throw new Error("stream options were not captured");
+    }
+
+    await durableRunMirror.handleChunk({
+      type: "reasoning-delta",
+      id: "reasoning-1",
+      delta: "late reasoning",
+    });
+    assertEquals(appendRequestCount, 1);
+    const finishPromise = streamOptions.onFinish?.({
+      messages: [],
+      isContinuation: false,
+      responseMessage: createResponseMessage({ parts: [{ type: "text", text: "done" }] }),
+      isAborted: false,
+      finishReason: "stop",
+    });
+    if (!finishPromise) {
+      throw new Error("finish callback did not return its completion promise");
+    }
+    appendResponse.resolve(
+      Response.json(
+        {
+          type: "https://api.veryfront.com/errors/resource-not-found",
+          title: "Resource Not Found",
+          status: 404,
+          slug: "resource-not-found",
+          category: "RESOURCE",
+          detail: "Run not found",
+          instance: "/conversations/conversation-1/runs/root-run-1/events",
+          suggestion: "Verify the resource ID exists and you have access to it.",
+        },
+        { status: 404 },
+      ),
+    );
+    await finishPromise;
+    await runtime.waitForFinish();
+    const drainedMirror = durableRunMirror.getSnapshot();
+    durableRunMirror.dispose();
+
+    assertEquals(
+      {
+        appendRequestCount,
+        mirror: drainedMirror,
+        finalizeRequestStatuses,
+        errorLogs,
+        observedTerminalStatuses,
+      },
+      {
+        appendRequestCount: 1,
+        mirror: {
+          latestEventId: 0,
+          latestExternalEventSequence: 0,
+          pendingEventCount: 0,
+          consecutiveFailures: 0,
+          disabled: true,
+          hasFlushTimer: false,
+          hasRetryTimer: false,
+          inFlight: false,
+          appendRequestCount: 1,
+          disableReason: "run_terminal",
+        },
+        finalizeRequestStatuses: [],
+        errorLogs: [],
+        observedTerminalStatuses: ["completed"],
+      },
+    );
   });
 
   it("mirrors a pending knowledge source before response finalization flushes", async () => {

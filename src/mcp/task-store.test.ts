@@ -13,6 +13,11 @@ describe("mcp/task-store", () => {
     assertExists(task.createdAt);
     assertExists(task.lastUpdatedAt);
     assertEquals(task.ttl, 60000);
+    assertEquals(
+      task.pollInterval,
+      2000,
+      "created tasks must advertise the default poll interval to MCP clients",
+    );
   });
 
   it("gets a task by ID", () => {
@@ -54,6 +59,11 @@ describe("mcp/task-store", () => {
     const cancelled = store.cancel(task.taskId);
     assertEquals(cancelled, true);
     assertEquals(store.get(task.taskId)!.status, "cancelled");
+    assertEquals(
+      store.get(task.taskId)!.statusMessage,
+      "The task was cancelled by request.",
+      "cancelled tasks must carry a cancellation reason",
+    );
   });
 
   it("rejects cancel on already-completed task", () => {
@@ -70,6 +80,22 @@ describe("mcp/task-store", () => {
     store.create(60000);
     const tasks = store.list();
     assertEquals(tasks.length, 2);
+  });
+
+  it("does not list tasks that get() reports as expired", () => {
+    using time = new FakeTime();
+    const store = new TaskStore();
+    const task = store.create(1);
+    store.complete(task.taskId, { ok: true });
+
+    time.tick(2);
+
+    assertEquals(
+      store.list().length,
+      0,
+      "tasks/list must not advertise a task tasks/get answers not-found for",
+    );
+    assertEquals(store.get(task.taskId), undefined, "the same task is gone from get()");
   });
 
   it("retrieves result for completed task", () => {

@@ -16,6 +16,9 @@ export type SuitePlanId =
   | "integration:legacy-tests-root"
   | "integration:cli"
   | "coverage:unit"
+  | "coverage:integration"
+  | "e2e:rsc-browser"
+  | "e2e:binary"
   | "runtime:node"
   | "runtime:bun";
 
@@ -74,6 +77,19 @@ const UNIT_CWD_EXCLUSION_FILES = [
   "src/testing/cwd-exclusion-a.test.ts",
   "src/testing/cwd-exclusion-b.test.ts",
 ];
+// Chromium-backed hydration regressions; each spawns a real server and drives
+// a browser page, so they run through their own serial lane rather than the
+// parallel integration root.
+const E2E_RSC_BROWSER_FILES = [
+  "tests/e2e/regressions/2026-07-27-legacy-router-hydration.test.ts",
+  "tests/e2e/regressions/2026-07-27-release-asset-page-island-hydration.test.ts",
+  "tests/e2e/regressions/2026-08-14-server-layout-spa-fallback.test.ts",
+  "tests/e2e/regressions/dev-ui-browser-bundle.test.ts",
+  "tests/e2e/regressions/rsc-proxy-hydration.test.ts",
+];
+const E2E_BINARY_FILES = [
+  "tests/integration/compiled-binary-e2e.test.ts",
+];
 const UNIT_PARALLEL_EXCLUSIONS = new Set([
   ...UNIT_CWD_FILES,
   ...UNIT_CWD_EXCLUSION_FILES,
@@ -120,6 +136,9 @@ const RUNNERS: Record<SuitePlanId, SuitePlanRunner> = {
   "integration:legacy-tests-root": "deno",
   "integration:cli": "deno",
   "coverage:unit": "deno",
+  "coverage:integration": "deno",
+  "e2e:rsc-browser": "deno",
+  "e2e:binary": "deno",
   "runtime:node": "node",
   "runtime:bun": "bun",
 };
@@ -248,11 +267,16 @@ async function selectProfileFiles(
         UNIT_CWD_EXCLUSION_FILES.includes(path)
       );
     case "integration:legacy-tests-root":
+    case "coverage:integration":
       return candidates.filter((path) =>
         path.startsWith("tests/") && isDenoDiscoveredTest(path) &&
         !path.startsWith("tests/e2e/") &&
         path !== "tests/integration/compiled-binary-e2e.test.ts"
       );
+    case "e2e:rsc-browser":
+      return candidates.filter((path) => E2E_RSC_BROWSER_FILES.includes(path));
+    case "e2e:binary":
+      return candidates.filter((path) => E2E_BINARY_FILES.includes(path));
     case "integration:cli":
       return candidates.filter((path) =>
         path.startsWith("cli/") && /\.integration\.test\.tsx?$/.test(path)

@@ -398,6 +398,29 @@ describe("internal-agents/ag-ui-sse", () => {
       true,
       `elapsedMs must reach the wire, got ${JSON.stringify(stamped)}`,
     );
+    assertEquals(
+      /"emittedAt":\d+/.test(stamped),
+      true,
+      `every frame must carry an absolute emittedAt even when none is supplied, got ${
+        JSON.stringify(stamped)
+      }`,
+    );
+
+    const sanitized = new TextDecoder().decode(
+      formatAgUiEvent("StepStarted", { stepName: "step-1", emittedAt: -1, elapsedMs: -5 }),
+    );
+    assertEquals(
+      /"emittedAt":[1-9]\d*/.test(sanitized),
+      true,
+      `an invalid emittedAt must be replaced with a real timestamp, got ${
+        JSON.stringify(sanitized)
+      }`,
+    );
+    assertEquals(
+      sanitized.includes("elapsedMs"),
+      false,
+      `a negative elapsedMs must be dropped rather than sent, got ${JSON.stringify(sanitized)}`,
+    );
 
     const withEmittedAt = new TextDecoder().decode(
       formatAgUiEvent("StepStarted", { stepName: "step-1", emittedAt: 1_786_000_000_123 }),

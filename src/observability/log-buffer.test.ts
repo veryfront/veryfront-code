@@ -6,6 +6,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import { MAX_STRING_DISPLAY_LENGTH } from "#veryfront/utils/constants/index.ts";
 import { MAX_OBSERVABILITY_NAME_LENGTH } from "./limits.ts";
 import { interceptConsole, LogBuffer } from "./log-buffer.ts";
@@ -227,7 +228,11 @@ describe("observability/log-buffer", () => {
       buf.info("b", "src2");
 
       const results = buf.query({ source: "src1" });
-      assertEquals(results.length, 1);
+      assertEquals(
+        results.map((entry) => entry.message),
+        ["a"],
+        "source filter must return the matching entry, not the complement",
+      );
     });
 
     it("should query by string pattern", () => {
@@ -236,7 +241,39 @@ describe("observability/log-buffer", () => {
       buf.info("goodbye");
 
       const results = buf.query({ pattern: "hello" });
-      assertEquals(results.length, 1);
+      assertEquals(
+        results.map((entry) => entry.message),
+        ["hello world"],
+        "pattern filter must return the matching entry",
+      );
+    });
+
+    it("should query by since", () => {
+      using time = new FakeTime(1_000);
+      const buf = new LogBuffer();
+      buf.info("first");
+      time.tick(1_000);
+      buf.info("second");
+
+      const [first, second] = buf.getAll();
+      assertExists(first);
+      assertExists(second);
+
+      assertEquals(
+        buf.query({ since: second.timestamp }).map((entry) => entry.message),
+        ["second"],
+        "since must exclude entries older than the cutoff",
+      );
+      assertEquals(
+        buf.query({ since: second.timestamp + 1 }).length,
+        0,
+        "since must exclude entries at or before a later cutoff",
+      );
+      assertEquals(
+        buf.query({ since: first.timestamp }).map((entry) => entry.message),
+        ["first", "second"],
+        "since must keep every entry at or after the cutoff",
+      );
     });
 
     it("should query by regex pattern", () => {
