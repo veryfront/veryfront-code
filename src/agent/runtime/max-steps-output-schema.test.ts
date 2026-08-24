@@ -7,6 +7,9 @@ import { tool } from "#veryfront/tool";
 import { agent } from "../factory.ts";
 
 const getReportSchema = defineSchema((v) => v.object({ city: v.string(), tempC: v.number() }));
+const discardReportSchema = defineSchema((v) =>
+  v.object({ city: v.string() }).transform(() => undefined)
+);
 
 const noopTool = tool({
   id: "max_steps_noop_tool",
@@ -154,6 +157,24 @@ describe("agent max steps output schema", () => {
     assertEquals(response.object, { city: "Berlin", tempC: 12 });
   });
 
+  it("preserves object presence when a successful schema transform returns undefined", async () => {
+    const model = createMaxStepsModel('{"city":"Berlin"}');
+    const assistant = agent({
+      id: "max-steps-undefined-transform",
+      system: "You report weather.",
+      tools: { max_steps_noop_tool: noopTool },
+      maxSteps: 1,
+      outputSchema: discardReportSchema(),
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+
+    const response = await assistant.generate({ input: "Berlin?" });
+
+    assertEquals("object" in response, true);
+    assertEquals(response.object, undefined);
+    assertEquals(response.metadata?.outputSchemaError, undefined);
+  });
+
   it("streams the partial response with outputSchemaError when the step budget runs out", async () => {
     const model = createMaxStepsModel("Twelve degrees in Berlin.");
     const assistant = agent({
@@ -209,6 +230,32 @@ describe("agent max steps output schema", () => {
     assertEquals(metadata?.warning, "Max steps (1) reached");
     assertEquals(metadata?.outputSchemaError, undefined);
     assertEquals(finished?.object, { city: "Berlin", tempC: 12 });
+  });
+
+  it("streams object presence when a successful schema transform returns undefined", async () => {
+    const model = createMaxStepsModel('{"city":"Berlin"}');
+    const assistant = agent({
+      id: "max-steps-stream-undefined-transform",
+      system: "You report weather.",
+      tools: { max_steps_noop_tool: noopTool },
+      maxSteps: 1,
+      outputSchema: discardReportSchema(),
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+
+    let finished: Record<string, unknown> | undefined;
+    const result = await assistant.stream({
+      input: "Berlin?",
+      onFinish: (response) => {
+        finished = response as unknown as Record<string, unknown>;
+      },
+    });
+    await result.toDataStreamResponse().text();
+
+    assertEquals(finished !== undefined && "object" in finished, true);
+    assertEquals(finished?.object, undefined);
+    const metadata = finished?.metadata as Record<string, unknown> | undefined;
+    assertEquals(metadata?.outputSchemaError, undefined);
   });
 
   it("adds no outputSchemaError when the agent has no outputSchema", async () => {

@@ -2103,17 +2103,19 @@ export class AgentRuntime {
       // The last message on this exit is a tool result, so the response text
       // and the structured-output candidate come from the final assistant turn.
       const finalText = getFinalAssistantText(currentMessages);
-      const { object, outputSchemaError } = await tryParseMaxStepsOutput(finalText, outputSchema);
+      const parsedOutput = await tryParseMaxStepsOutput(finalText, outputSchema);
       return attachOutputSchemaParser({
         text: finalText,
-        ...(object !== undefined ? { object } : {}),
+        ...(parsedOutput.parsed ? { object: parsedOutput.object } : {}),
         messages: currentMessages,
         toolCalls,
         status: this.status,
         usage: totalUsage,
         metadata: withAgentRunRuntimeContextMetadata(runRuntimeContext, {
           warning: `Max steps (${maxSteps}) reached`,
-          ...(outputSchemaError !== undefined ? { outputSchemaError } : {}),
+          ...(!parsedOutput.parsed && parsedOutput.outputSchemaError !== undefined
+            ? { outputSchemaError: parsedOutput.outputSchemaError }
+            : {}),
         }),
       }, outputSchema);
     });
@@ -3122,13 +3124,13 @@ export class AgentRuntime {
       // Step-budget exhaustion mirrors the generate loop's max-steps exit: the
       // partial result is still returned, so the structured-output parse is
       // best effort and a failure is surfaced in metadata instead of thrown.
-      const { object, outputSchemaError } = await tryParseMaxStepsOutput(
+      const parsedOutput = await tryParseMaxStepsOutput(
         latestAssistantText,
         outputSchema,
       );
       return attachOutputSchemaParser({
         text: latestAssistantText,
-        ...(object !== undefined ? { object } : {}),
+        ...(parsedOutput.parsed ? { object: parsedOutput.object } : {}),
         messages: currentMessages,
         toolCalls,
         status: "completed",
@@ -3136,7 +3138,9 @@ export class AgentRuntime {
         metadata: withAgentRunRuntimeContextMetadata(runRuntimeContext, {
           warning: `Max steps (${maxSteps}) reached`,
           ...(finalFinishReason ? { finishReason: finalFinishReason } : {}),
-          ...(outputSchemaError !== undefined ? { outputSchemaError } : {}),
+          ...(!parsedOutput.parsed && parsedOutput.outputSchemaError !== undefined
+            ? { outputSchemaError: parsedOutput.outputSchemaError }
+            : {}),
         }),
       }, outputSchema);
     }
@@ -3280,22 +3284,30 @@ type ProviderMetadataReconciler = (input: {
  * throw that result away, so the failure is captured as `outputSchemaError` for
  * the response metadata instead of being swallowed.
  */
-interface MaxStepsOutputParse {
-  /** Parsed structured output when the final text satisfied the schema. */
-  object?: unknown;
-  /** Parse or validation failure message when the final text did not. */
-  outputSchemaError?: string;
-}
+type MaxStepsOutputParse =
+  | {
+    /** The configured schema parsed successfully, even if its transform returned undefined. */
+    parsed: true;
+    object: unknown;
+  }
+  | {
+    /** No schema was configured, or the configured schema rejected the output. */
+    parsed: false;
+    outputSchemaError?: string;
+  };
 
 async function tryParseMaxStepsOutput(
   finalText: string,
   outputSchema: ResolvedAgentOutputSchema | undefined,
 ): Promise<MaxStepsOutputParse> {
-  if (!outputSchema) return {};
+  if (!outputSchema) return { parsed: false };
   try {
-    return { object: await outputSchema.parseOutput(finalText) };
+    return { parsed: true, object: await outputSchema.parseOutput(finalText) };
   } catch (error) {
-    return { outputSchemaError: error instanceof Error ? error.message : String(error) };
+    return {
+      parsed: false,
+      outputSchemaError: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
