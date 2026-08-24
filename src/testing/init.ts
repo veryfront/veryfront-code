@@ -16,9 +16,6 @@ const g = globalThis as Record<string, unknown>;
 
 g.__vfDisableLruInterval = true;
 g.__vfTestEnv = true;
-g.__vfTestEnvMask = {
-  prefixes: ["VERYFRONT_", "OTEL_", "OAUTH_", "GITHUB_", "OPENAI_", "ANTHROPIC_", "GOOGLE_"],
-};
 
 // Tests don't run the extension orchestrator; prime the Bundler + ModuleLexer
 // contracts here so transforms that depend on them (lexer.ts, parse-cache.ts,

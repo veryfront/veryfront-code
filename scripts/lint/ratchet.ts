@@ -235,6 +235,15 @@ export function isTestFile(path: string): boolean {
   return /\.test\.(?:ts|tsx|mjs)$/.test(path);
 }
 
+/**
+ * Every executable test filename tests/README.md documents: the suite
+ * planner's `*.test.ts|tsx|mjs` plus `*.test.js`, `*.test.cjs`, and
+ * Playwright's `*.playwright.ts`.
+ */
+export function isExecutableTestFile(path: string): boolean {
+  return /\.(?:test\.(?:ts|tsx|js|mjs|cjs)|playwright\.ts)$/.test(path);
+}
+
 /** Any TypeScript source, test or not, excluding declaration files. */
 export function isTypeScriptFile(path: string): boolean {
   return /\.tsx?$/.test(path) && !path.endsWith(".d.ts");

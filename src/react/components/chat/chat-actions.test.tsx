@@ -22,45 +22,12 @@ import {
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
+import { type ComponentDomOptions, installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import { ChatActions, useChatActions } from "./chat-actions.tsx";
 
-function installDom(dom: JSDOM): () => void {
-  const window = dom.window;
-  const replacements: Record<string, unknown> = {
-    window,
-    document: window.document,
-    navigator: window.navigator,
-    self: window,
-    Node: window.Node,
-    Element: window.Element,
-    HTMLElement: window.HTMLElement,
-    HTMLButtonElement: window.HTMLButtonElement,
-    KeyboardEvent: window.KeyboardEvent,
-    MouseEvent: window.MouseEvent,
-    requestAnimationFrame: window.requestAnimationFrame.bind(window),
-    cancelAnimationFrame: window.cancelAnimationFrame.bind(window),
-  };
-  const previous = new Map<string, PropertyDescriptor | undefined>();
-
-  for (const [key, value] of Object.entries(replacements)) {
-    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
-    Object.defineProperty(globalThis, key, {
-      configurable: true,
-      enumerable: true,
-      value,
-      writable: true,
-    });
-  }
-
-  return () => {
-    for (const key of Object.keys(replacements)) {
-      const descriptor = previous.get(key);
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-      else delete (globalThis as Record<string, unknown>)[key];
-    }
-    dom.window.close();
-  };
-}
+const DOM_OPTIONS: ComponentDomOptions = {
+  windowGlobals: ["self", "HTMLButtonElement", "KeyboardEvent"],
+};
 
 async function waitFor(
   condition: () => boolean,
@@ -192,7 +159,7 @@ describe("ChatActions — render-or-compose", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { pretendToBeVisual: true, url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     let submissions = 0;
 
@@ -262,7 +229,7 @@ describe("ChatActions — render-or-compose", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { pretendToBeVisual: true, url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const rootElement = document.getElementById("root");
     assert(rootElement);
     const root = createRoot(rootElement);

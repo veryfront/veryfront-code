@@ -3,7 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { makeTempDir, readTextFile, remove } from "#veryfront/testing/deno-compat.ts";
-import type { CacheBackend } from "#veryfront/cache/types.ts";
+import { MockCacheBackend } from "#veryfront/cache/testing/index.ts";
 import { tokenizeAllVeryFrontPaths } from "#veryfront/cache";
 import { buildMdxEsmModuleRecoveryCacheKey } from "../cache-format.ts";
 import { ensureMdxModuleDependencies } from "./dependency-recovery.ts";
@@ -17,29 +17,10 @@ const noopLog = {
   child: () => noopLog,
 } as never;
 
-class FakeDistributedCache implements CacheBackend {
-  readonly type = "redis" as const;
-  private values = new Map<string, string>();
-
-  get(key: string): Promise<string | null> {
-    return Promise.resolve(this.values.get(key) ?? null);
-  }
-
-  set(key: string, value: string): Promise<void> {
-    this.values.set(key, value);
-    return Promise.resolve();
-  }
-
-  del(key: string): Promise<void> {
-    this.values.delete(key);
-    return Promise.resolve();
-  }
-}
-
 describe("module-fetcher/dependency-recovery", () => {
   it("recovers nested vfmod dependencies for the current content source", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-vfmod-recovery-" });
-    const distributedCache = new FakeDistributedCache();
+    const distributedCache = new MockCacheBackend({ type: "redis", ignoreTtl: true });
     const sourceDir = join(getMdxEsmCacheDir(), "project-a", "preview-main");
     const childPath = join(sourceDir, "vfmod-child.mjs");
     const grandChildPath = join(sourceDir, "vfmod-grandchild.mjs");
@@ -88,7 +69,7 @@ describe("module-fetcher/dependency-recovery", () => {
 
   it("does not recover vfmods from another content source", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-vfmod-recovery-scope-" });
-    const distributedCache = new FakeDistributedCache();
+    const distributedCache = new MockCacheBackend({ type: "redis", ignoreTtl: true });
     const sourceDir = join(getMdxEsmCacheDir(), "project-a", "preview-main");
     const childPath = join(sourceDir, "vfmod-child.mjs");
 
