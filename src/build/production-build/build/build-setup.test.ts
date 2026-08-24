@@ -1,6 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { setupBuildDirectories } from "./build-setup.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
@@ -152,9 +158,16 @@ describe("build/production-build/build/build-setup", () => {
 
         const error = await assertRejects(
           () => setupBuildDirectories(adapter, outputDir, false),
+          VeryfrontError,
+        );
+        assertInstanceOf(error, VeryfrontError);
+        assertEquals(
+          error.slug,
+          "build-failed",
+          "the refusal must stay classified so the CLI maps its exit code and tips",
         );
 
-        const message = error instanceof Error ? error.message : String(error);
+        const message = error.message;
         assertStringIncludes(message, "foreign-output");
         assertStringIncludes(message, "outDir");
         assertEquals(
@@ -207,9 +220,16 @@ describe("build/production-build/build/build-setup", () => {
 
         const error = await assertRejects(
           () => setupBuildDirectories(adapter, outputDir, false),
+          VeryfrontError,
+        );
+        assertInstanceOf(error, VeryfrontError);
+        assertEquals(
+          error.slug,
+          "build-failed",
+          "the refusal must stay classified so the CLI maps its exit code and tips",
         );
 
-        const message = error instanceof Error ? error.message : String(error);
+        const message = error.message;
         assertStringIncludes(message, "unreadable-output");
         assertEquals(removed, [], "an uninspectable output directory must not be deleted");
         assertEquals(

@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import * as esbuild from "veryfront/extensions/bundler";
+import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import {
   generateAppModule,
   generateClientModule,
@@ -48,8 +49,16 @@ describe(
 
       it("should set data-hydrated attribute on root element", () => {
         const result = getResult();
-        assertEquals(result.includes("data-hydrated"), true);
-        assertEquals(result.includes("getElementById('root')"), true);
+        assertStringIncludes(
+          result,
+          "root.setAttribute('data-hydrated', 'true')",
+          "app module must mark the root element as hydrated",
+        );
+        assertStringIncludes(
+          result,
+          "const root = document.getElementById('root');",
+          "app module must resolve the root element before hydrating",
+        );
       });
     });
 
@@ -193,6 +202,12 @@ describe(
     );
 
     describe("generateImportMap", () => {
+      function parseImportMap(importMap: string): { imports: Record<string, string> } {
+        const jsonMatch = importMap.match(/<script type="importmap">\s*([\s\S]*?)\s*<\/script>/);
+        assertEquals(jsonMatch !== null, true, "import map must be wrapped in a script tag");
+        return JSON.parse(jsonMatch![1]!) as { imports: Record<string, string> };
+      }
+
       it("should return an HTML script tag with importmap", async () => {
         const importMap = await generateImportMap();
         assertEquals(importMap.includes('<script type="importmap">'), true);
@@ -201,17 +216,27 @@ describe(
 
       it("should contain react in the import map", async () => {
         const importMap = await generateImportMap();
-        assertEquals(importMap.includes("react"), true);
+        const parsed = parseImportMap(importMap);
+        assertEquals(
+          parsed.imports,
+          getReactImportMap(REACT_DEFAULT_VERSION),
+          "import map must be the shared React import map for the default version",
+        );
+        assertStringIncludes(
+          parsed.imports["react"] as string,
+          REACT_DEFAULT_VERSION,
+          "react specifier pins the configured React version",
+        );
       });
 
       it("should contain valid JSON inside the script tag", async () => {
         const importMap = await generateImportMap();
-        const jsonMatch = importMap.match(/<script type="importmap">\s*([\s\S]*?)\s*<\/script>/);
-        assertEquals(jsonMatch !== null, true);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[1]!);
-          assertEquals(typeof parsed.imports, "object");
-        }
+        const parsed = parseImportMap(importMap);
+        assertEquals(
+          parsed.imports !== null && typeof parsed.imports === "object",
+          true,
+          "imports is a non-null object",
+        );
       });
     });
 

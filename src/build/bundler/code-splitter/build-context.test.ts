@@ -1,8 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { createShimFile, getExternalDependencies } from "./build-context.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 
 describe("build/bundler/code-splitter/build-context", () => {
   describe("getExternalDependencies", () => {
@@ -100,15 +101,37 @@ describe("build/bundler/code-splitter/build-context", () => {
 
     it("should create a shim file in the specified directory", async () => {
       const shimPath = await createShimFile(tmpDir);
-      assertEquals(shimPath.includes(".veryfront-shim.js"), true);
+      assertEquals(
+        shimPath,
+        join(tmpDir, ".veryfront-shim.js"),
+        "shim must be created inside the requested outDir",
+      );
     });
 
     it("should write global polyfills", async () => {
       const shimPath = await createShimFile(tmpDir);
       const fs = createFileSystem();
       const content = await fs.readTextFile(shimPath);
-      assertEquals(content.includes("global"), true);
-      assertEquals(content.includes("process"), true);
+      assertStringIncludes(
+        content,
+        "if (typeof global === 'undefined')",
+        "shim must guard on a missing global",
+      );
+      assertStringIncludes(
+        content,
+        "window.global = window",
+        "shim must assign the global polyfill",
+      );
+      assertStringIncludes(
+        content,
+        "if (typeof process === 'undefined')",
+        "shim must guard on a missing process",
+      );
+      assertStringIncludes(
+        content,
+        "window.process = { env: {} }",
+        "shim must assign the process polyfill",
+      );
     });
 
     it("should include react import map", async () => {

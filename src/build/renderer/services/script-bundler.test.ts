@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { bundleScript } from "./script-bundler.ts";
 import * as esbuild from "veryfront/extensions/bundler";
@@ -46,23 +46,47 @@ describe(
       });
 
       it("should minify in production mode", async () => {
-        const result = createBundleResult();
-        const fileCache = new Map<string, string>();
-
+        const source = {
+          path: "app.ts",
+          content: 'export const greeting = "hello world";',
+          type: "ts",
+        };
+        const productionResult = createBundleResult();
         await bundleScript(
-          {
-            path: "app.ts",
-            content: 'export const greeting = "hello world";',
-            type: "ts",
-          },
+          source,
           { mode: "production", projectDir: "/tmp", external: [], sources: [] },
-          result,
+          productionResult,
           esbuild,
-          fileCache,
+          new Map<string, string>(),
+        );
+        const developmentResult = createBundleResult();
+        await bundleScript(
+          source,
+          { mode: "development", projectDir: "/tmp", external: [], sources: [] },
+          developmentResult,
+          esbuild,
+          new Map<string, string>(),
         );
 
-        const output = result.outputs.get("app.js")!;
-        assertExists(output.content);
+        const prod = productionResult.outputs.get("app.js")!.content;
+        const dev = developmentResult.outputs.get("app.js")!.content;
+
+        assertEquals(prod.includes(" = "), false, "production bundle is minified");
+        assertEquals(
+          prod.includes("sourceMappingURL"),
+          false,
+          "production bundle carries no sourcemap",
+        );
+        assertStringIncludes(
+          dev,
+          "//# sourceMappingURL=data:application/json;base64,",
+          "development bundle carries an inline sourcemap",
+        );
+        assertEquals(
+          prod.length < dev.length,
+          true,
+          "production bundle is smaller than the development bundle",
+        );
       });
 
       it("should track dependencies", async () => {
@@ -143,6 +167,38 @@ describe(
 
         const output = result.outputs.get("server.js");
         assertExists(output);
+        assertStringIncludes(
+          output.content,
+          "module.exports = __toCommonJS(",
+          "node platform must emit CommonJS",
+        );
+        assertEquals(
+          output.content.includes("export {"),
+          false,
+          "node bundles must not ship ESM exports",
+        );
+      });
+
+      it("should use ESM format for the default browser platform", async () => {
+        const result = createBundleResult();
+        const fileCache = new Map<string, string>();
+
+        await bundleScript(
+          { path: "browser.ts", content: "export const x = 1;", type: "ts" },
+          { mode: "development", projectDir: "/tmp", external: [], sources: [] },
+          result,
+          esbuild,
+          fileCache,
+        );
+
+        const output = result.outputs.get("browser.js");
+        assertExists(output);
+        assertStringIncludes(output.content, "export {", "browser platform must emit ESM");
+        assertEquals(
+          output.content.includes("module.exports"),
+          false,
+          "browser bundles must not emit CommonJS",
+        );
       });
 
       it("should handle JSX files", async () => {

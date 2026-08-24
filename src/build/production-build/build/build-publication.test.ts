@@ -20,8 +20,38 @@ describe("build/production-build/build/build-publication", () => {
       await publication.publish();
 
       assertEquals(await Deno.readTextFile(`${outputDir}/version.txt`), "new");
+
+      await publication.cleanup();
+      assertEquals(
+        [...Deno.readDirSync(root)].map((entry) => entry.name).sort(),
+        ["dist"],
+        "publication leaves no backup, stage, or lock artifacts beside the output",
+      );
     } finally {
       await publication.cleanup();
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("refuses to release a build output lock it no longer owns", async () => {
+    const root = await Deno.makeTempDir({ prefix: "vf-build-publication-" });
+    const lockPath = `${root}/build.lock`;
+    const foreignLock = '{"token":"foreign"}\n';
+    try {
+      const release = await nativeBuildPublicationLock.acquire(lockPath, 1_000);
+      await Deno.writeTextFile(lockPath, foreignLock);
+
+      await assertRejects(
+        () => release(),
+        Error,
+        "Build output lock ownership changed unexpectedly",
+      );
+      assertEquals(
+        await Deno.readTextFile(lockPath),
+        foreignLock,
+        "a build must not remove a lock it no longer owns",
+      );
+    } finally {
       await Deno.remove(root, { recursive: true });
     }
   });

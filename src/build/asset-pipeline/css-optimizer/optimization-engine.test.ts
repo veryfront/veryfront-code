@@ -317,6 +317,25 @@ describe("CSS optimization engine boundary", () => {
           mappings: "AAAA",
           unknown: true,
         }),
+        JSON.stringify({
+          version: 3,
+          sources: ["field.css"],
+          names: ["a\u0000b"],
+          mappings: "AAAA",
+        }),
+        JSON.stringify({
+          version: 3,
+          sources: ["field.css"],
+          names: [],
+          mappings: "AAAAA",
+        }),
+        JSON.stringify({
+          version: 3,
+          sources: ["field.css"],
+          names: [],
+          mappings: "AAAA",
+          file: "../escape.css",
+        }),
       ]
     ) {
       assertThrows(
@@ -335,8 +354,9 @@ describe("CSS optimization engine boundary", () => {
     const sourceMap = JSON.stringify({
       version: 3,
       sources: ["field.css"],
-      names: [],
-      mappings: "AAAA",
+      names: ["selector"],
+      mappings: "AAAAA",
+      file: "field.css",
       sourceRoot: "",
       ignoreList: [0],
       x_google_ignoreList: [0],
