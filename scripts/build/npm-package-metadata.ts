@@ -11,20 +11,6 @@ type PackageJson = {
 	overrides?: Record<string, string>;
 };
 
-import { OPAQUE_DEPENDENCY_VERSIONS } from "../../src/platform/compat/opaque-dependency-versions.ts";
-
-export const ROOT_OPTIONAL_RUNTIME_PEERS = [
-	"@huggingface/transformers",
-] as const;
-
-// Opaque imports (src/platform/compat/opaque-deps.ts) are invisible to dnt, so
-// their packages never appear in the generated dependencies. Without this
-// fallback the optional-peer move silently skips them and the published
-// package.json omits the dependency entirely.
-const ROOT_OPTIONAL_RUNTIME_PEER_FALLBACK_RANGES: Record<string, string> = {
-	"@huggingface/transformers": `^${OPAQUE_DEPENDENCY_VERSIONS["@huggingface/transformers"]}`,
-};
-
 /**
  * CLI-only first-party extensions that must not land in a library consumer's
  * dependency tree.
@@ -53,6 +39,7 @@ export const ROOT_OPTIONAL_EXTENSION_PEERS = [
 ] as const;
 
 export const EXTENSION_OWNED_DEPENDENCIES = [
+	"@huggingface/transformers",
 	"@aws-sdk/client-s3",
 	"@aws-sdk/lib-storage",
 	"@babel/generator",
@@ -145,7 +132,7 @@ export function normalizeNpmPackageMetadata(pkg: PackageJson): PackageJson {
 		pkg.files = pkg.files.filter((entry) => entry !== "src" && entry !== "/src");
 	}
 
-	for (const name of [...ROOT_OPTIONAL_RUNTIME_PEERS, ...ROOT_OPTIONAL_EXTENSION_PEERS]) {
+	for (const name of ROOT_OPTIONAL_EXTENSION_PEERS) {
 		movePackageToOptionalPeer(pkg, name);
 	}
 
@@ -187,8 +174,7 @@ function stripLeadingRangeOperator(range: string): string {
 }
 
 function movePackageToOptionalPeer(pkg: PackageJson, name: string): void {
-	const range = pkg.dependencies?.[name] ?? pkg.optionalDependencies?.[name] ??
-		ROOT_OPTIONAL_RUNTIME_PEER_FALLBACK_RANGES[name];
+	const range = pkg.dependencies?.[name] ?? pkg.optionalDependencies?.[name];
 	if (!range) return;
 
 	delete pkg.dependencies?.[name];

@@ -5,12 +5,12 @@
  * framework's current embedding runtime interface. This allows `embed()` and
  * `embedMany()` to work with local models seamlessly.
  *
- * @module provider/local
+ * @module extensions/ext-llm-onnx
  */
 
 import { embedTexts } from "./local-embedding-engine.ts";
 import { DEFAULT_LOCAL_EMBEDDING_MODEL } from "./model-catalog.ts";
-import type { EmbeddingRuntime } from "../types.ts";
+import type { EmbeddingRuntime } from "veryfront/provider/types";
 
 /**
  * Create a local embedding runtime for the given model ID.

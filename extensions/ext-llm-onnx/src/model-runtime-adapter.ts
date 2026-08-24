@@ -5,17 +5,17 @@
  * current model runtime substrate. This allows `streamText()` and
  * `generateText()` to work with local models seamlessly.
  *
- * @module provider/local
+ * @module extensions/ext-llm-onnx
  */
 
 import { generate, generateStream, verifyLocalRuntime } from "./local-engine.ts";
 import type { ChatMessage, GenerateOptions } from "./local-engine.ts";
 import { DEFAULT_LOCAL_MODEL } from "./model-catalog.ts";
-import { serverLogger } from "#veryfront/utils";
-import { fromError } from "#veryfront/errors";
+import { fromError } from "veryfront/errors";
 import { throwIfLocalAIDisabled } from "./env.ts";
-import type { ModelRuntime } from "../types.ts";
-import { waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
+import type { ModelRuntime } from "veryfront/provider/types";
+import { serverLogger } from "veryfront/utils/logger";
+import { waitForSharedPromise } from "veryfront/utils/singleflight";
 
 const logger = serverLogger.component("local-llm");
 

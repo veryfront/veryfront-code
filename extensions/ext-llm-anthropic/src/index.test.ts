@@ -1,5 +1,5 @@
 import { describe, it } from "@std/testing/bdd";
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertThrows } from "@std/assert";
 import extAnthropic, { AnthropicProvider } from "./index.ts";
 import { type LLMProviderRegistry, LLMProviderRegistryName } from "veryfront/extensions/llm";
 
@@ -39,5 +39,13 @@ describe("ext-llm-anthropic", () => {
     };
     ext.setup?.(ctx as never);
     assert(registered.anthropic instanceof AnthropicProvider);
+  });
+
+  it("rejects a missing credential at the provider boundary", () => {
+    assertThrows(
+      () => new AnthropicProvider().createModel("claude-haiku-4-5", {} as never),
+      TypeError,
+      "Anthropic provider requires a credential",
+    );
   });
 });

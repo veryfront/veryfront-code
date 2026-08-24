@@ -5,7 +5,7 @@
 # throwaway npm project, that:
 #   1. a `veryfront` install with co-published required packages runs the CLI
 #      and activates the parser extension under Node
-#   2. the @huggingface/transformers optional peer is declared
+#   2. @huggingface/transformers is owned by the ONNX extension package
 #   3. loading a missing extension fails naming the installable package
 #   4. installing @veryfront/ext-auth-jwt makes the extension load
 #   5. a broken transitive dependency surfaces the real error, not a
@@ -107,6 +107,7 @@ else
     [ -d "$ROOT_DIR/npm/extensions/ext-css-tailwind" ] || fail "ext-css-tailwind package output missing"
     [ -d "$ROOT_DIR/npm/extensions/ext-dev-ui-react" ] || fail "ext-dev-ui-react package output missing"
     [ -d "$ROOT_DIR/npm/extensions/ext-node-websocket-ws" ] || fail "ext-node-websocket-ws package output missing"
+    [ -d "$ROOT_DIR/npm/extensions/ext-llm-onnx" ] || fail "ext-llm-onnx package output missing"
     [ -d "$ROOT_DIR/npm/extensions/ext-parser-babel" ] || fail "ext-parser-babel package output missing"
     [ -d "$ROOT_DIR/npm/extensions/ext-yaml" ] || fail "ext-yaml package output missing"
     [ -d "$ROOT_DIR/npm/extensions/ext-auth-jwt" ] || fail "ext-auth-jwt package output missing"
@@ -117,6 +118,7 @@ else
     (cd "$ROOT_DIR/npm/extensions/ext-css-tailwind" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
     (cd "$ROOT_DIR/npm/extensions/ext-dev-ui-react" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
     (cd "$ROOT_DIR/npm/extensions/ext-node-websocket-ws" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+    (cd "$ROOT_DIR/npm/extensions/ext-llm-onnx" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
     (cd "$ROOT_DIR/npm/extensions/ext-parser-babel" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
     (cd "$ROOT_DIR/npm/extensions/ext-yaml" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
     (cd "$ROOT_DIR/npm/extensions/ext-auth-jwt" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
@@ -184,12 +186,16 @@ if (ast?.type !== 'File') throw new Error('TSX parse failed');
 await extension.teardown?.();
 " || fail "root deferred builtin did not register a working CodeParser"
 
-echo "== 2. root install: transformers optional peer declared"
+echo "== 2. package ownership: transformers belongs to ext-llm-onnx"
 node -e "
-const p = require('./node_modules/veryfront/package.json');
-if (!p.peerDependencies?.['@huggingface/transformers']) process.exit(1);
-if (p.peerDependenciesMeta?.['@huggingface/transformers']?.optional !== true) process.exit(1);
-" || fail "@huggingface/transformers optional peer missing from root package.json"
+const root = require('./node_modules/veryfront/package.json');
+const onnx = require('$ROOT_DIR/npm/extensions/ext-llm-onnx/package.json');
+if (root.dependencies?.['@huggingface/transformers']) process.exit(1);
+if (root.optionalDependencies?.['@huggingface/transformers']) process.exit(1);
+if (root.peerDependencies?.['@huggingface/transformers']) process.exit(1);
+if (onnx.peerDependencies?.['@huggingface/transformers'] !== '4.2.0') process.exit(1);
+if (onnx.peerDependenciesMeta?.['@huggingface/transformers']?.optional !== true) process.exit(1);
+" || fail "@huggingface/transformers package ownership is incorrect"
 
 echo "== 3. root install: missing extension failure names the installable package"
 set +e

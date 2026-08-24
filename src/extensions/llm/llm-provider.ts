@@ -14,8 +14,8 @@ import type { EmbeddingRuntime, ModelRuntime } from "#veryfront/provider/types.t
 
 /** Config passed to any provider's create* method. */
 export interface LLMProviderConfig {
-  /** API credential — maps to OpenAI `apiKey`, Anthropic `authToken`, Google `apiKey` internally. */
-  credential: string;
+  /** Optional API credential. Credentialed providers validate it at their boundary. */
+  credential?: string;
   /** Override the provider's base URL (e.g. Azure OpenAI, self-hosted gateway). */
   baseURL?: string;
   /** Override fetch (veryfront-cloud uses this to inject project auth headers). */
@@ -35,9 +35,23 @@ export interface LLMProviderConfig {
 export interface LLMProvider {
   /** Stable id used in model strings: "openai" / "anthropic" / "google". */
   readonly id: string;
+  /** Provider model id used when automatic embedding selection chooses this provider. */
+  readonly defaultEmbeddingModelId?: string;
   createModel(modelId: string, config: LLMProviderConfig): ModelRuntime;
   createEmbedding?(modelId: string, config: LLMProviderConfig): EmbeddingRuntime;
   createResponses?(modelId: string, config: LLMProviderConfig): ModelRuntime;
+}
+
+/** Require a non-empty credential at a credentialed provider boundary. */
+export function requireLLMProviderCredential(
+  config: LLMProviderConfig,
+  providerName: string,
+): string {
+  const credential = config.credential;
+  if (typeof credential !== "string" || credential.trim().length === 0) {
+    throw new TypeError(`${providerName} provider requires a credential`);
+  }
+  return credential;
 }
 
 /** Registry contract. Single impl created at bootstrap. */

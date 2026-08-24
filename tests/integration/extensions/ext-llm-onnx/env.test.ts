@@ -1,13 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { fromError } from "#veryfront/errors/legacy-error-codec.ts";
+import { fromError } from "veryfront/errors";
 import {
   getLocalAIDevice,
   getLocalAIThinkingEnabled,
   isLocalAIDisabled,
   throwIfLocalAIDisabled,
-} from "./env.ts";
+} from "../../../../extensions/ext-llm-onnx/src/env.ts";
 
 const DISABLE_LOCAL_AI_ENV = "VERYFRONT_DISABLE_LOCAL_AI";
 const LOCAL_AI_DEVICE_ENV = "VERYFRONT_LOCAL_AI_DEVICE";
@@ -36,7 +36,7 @@ function restoreEnv(): void {
   }
 }
 
-describe("provider/local/env", () => {
+describe("ext-llm-onnx/env", () => {
   afterEach(() => {
     restoreEnv();
   });

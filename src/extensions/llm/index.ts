@@ -9,7 +9,7 @@
  * @module extensions/llm
  */
 
-export { LLMProviderRegistryName } from "./llm-provider.ts";
+export { LLMProviderRegistryName, requireLLMProviderCredential } from "./llm-provider.ts";
 export type { LLMProvider, LLMProviderConfig, LLMProviderRegistry } from "./llm-provider.ts";
 export type { EmbeddingOptions, EmbeddingProvider, EmbeddingResult } from "./embedding-provider.ts";
 export { createLLMProviderRegistry } from "./llm-provider-registry.ts";

@@ -2,8 +2,8 @@ import { createError, toError } from "#veryfront/errors";
 import { getGoogleGenAIEnvConfig, getOpenAIEnvConfig } from "#veryfront/config/env.ts";
 import { createOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { DEFAULT_GOOGLE_BASE_URL } from "#veryfront/provider/runtime-loader/provider-endpoints.ts";
-import { createLocalEmbeddingModel } from "#veryfront/provider/local/embedding-runtime-adapter.ts";
 import type { EmbeddingRuntime } from "#veryfront/provider/types.ts";
+import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { LLMProviderRegistry } from "#veryfront/extensions/llm/index.ts";
 import { LLMProviderRegistryName } from "#veryfront/extensions/llm/index.ts";
@@ -98,7 +98,15 @@ function autoInitializeFromEnv(): void {
   }
 
   if (!providers.has("local")) {
-    providers.set("local", createLocalEmbeddingModel);
+    providers.set("local", (id) => {
+      const provider = ensureBuiltinLLMProviders().get("local");
+      if (provider?.createEmbedding) return provider.createEmbedding(id, {});
+      throw toError(createError({
+        type: "config",
+        message:
+          "Local ONNX provider not installed. Add @veryfront/ext-llm-onnx to use local/* embedding models.",
+      }));
+    });
   }
 
   if (!providers.has("veryfront-cloud")) {

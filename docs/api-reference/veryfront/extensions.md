@@ -64,7 +64,7 @@ await loader.teardownAll();
 | `discoverProjectExtensions`      | Discover project extension paths without exposing identity internals.                                                                                                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L530)                          |
 | `formatCapabilities`             | Format capabilities as human-readable strings for logging.                                                                                                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L36)                        |
 | `formatInstallCommand`           | Return the command that installs `packageName` with `target`.                                                                                                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/install-command.ts#L140)                    |
-| `getRecommendation`              | Return recommendation.                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/recommendations.ts#L38)                     |
+| `getRecommendation`              | Return recommendation.                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/recommendations.ts#L39)                     |
 | `isSupportedDenoSystemReadApi`   |                                                                                                                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L110)                       |
 | `loadExtensionFactory`           | Dynamically import an extension factory from `path` and resolve it.                                                                                                                                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/factory-loader.ts#L100)                     |
 | `mapToDenoPermissions`           | Map capabilities to Deno CLI permission flags.                                                                                                                                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L795)                       |
@@ -743,20 +743,25 @@ import {
 LLM category barrel - provider, embedding, and registry contracts. Interfaces re-exported with `export type { ... }` because Deno `--no-check` transpiles each file in isolation and would otherwise emit a runtime value re-export that fails ESM resolution. Reserve plain `export { ... }` for runtime values.
 
 ```ts
-import { createLLMProviderRegistry, LLMProviderRegistryName } from "veryfront/extensions/llm";
+import {
+  createLLMProviderRegistry,
+  LLMProviderRegistryName,
+  requireLLMProviderCredential,
+} from "veryfront/extensions/llm";
 ```
 
 #### Components
 
 | Name                      | Description                                       | Source                                                                                                 |
 | ------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `LLMProviderRegistryName` | Contract name used for `resolve()` / `provide()`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/llm/llm-provider.ts#L54) |
+| `LLMProviderRegistryName` | Contract name used for `resolve()` / `provide()`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/llm/llm-provider.ts#L68) |
 
 #### Functions
 
-| Name                        | Description                  | Source                                                                                                          |
-| --------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `createLLMProviderRegistry` | Create llmprovider registry. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/llm/llm-provider-registry.ts#L66) |
+| Name                           | Description                                                         | Source                                                                                                          |
+| ------------------------------ | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `createLLMProviderRegistry`    | Create llmprovider registry.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/llm/llm-provider-registry.ts#L66) |
+| `requireLLMProviderCredential` | Require a non-empty credential at a credentialed provider boundary. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/llm/llm-provider.ts#L46)          |
 
 #### Types
 
@@ -767,7 +772,7 @@ import { createLLMProviderRegistry, LLMProviderRegistryName } from "veryfront/ex
 | `EmbeddingResult`     | Result returned from `EmbeddingProvider.embed`.                                                                                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/llm/embedding-provider.ts#L20) |
 | `LLMProvider`         | An LLM provider implementation. Extensions register one of these with the `LLMProviderRegistry` during setup(). `createModel` is required; `createEmbedding` and `createResponses` are optional and absent on providers that don't support them. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/llm/llm-provider.ts#L35)       |
 | `LLMProviderConfig`   | Config passed to any provider's create* method.                                                                                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/llm/llm-provider.ts#L16)       |
-| `LLMProviderRegistry` | Registry contract. Single impl created at bootstrap.                                                                                                                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/llm/llm-provider.ts#L44)       |
+| `LLMProviderRegistry` | Registry contract. Single impl created at bootstrap.                                                                                                                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/llm/llm-provider.ts#L58)       |
 
 ### `veryfront/extensions/observability`
 

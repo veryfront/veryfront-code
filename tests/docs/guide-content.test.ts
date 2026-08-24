@@ -29,8 +29,11 @@ describe("guide content contracts", () => {
     );
     assertStringIncludes(installation, "0.9 to 1.2 GB");
     assertStringIncludes(installation, "Model weights are not included");
-    assertStringIncludes(providers, "Embedded ONNX inference");
-    assertStringIncludes(providers, "npm install @huggingface/transformers");
+    assertStringIncludes(providers, "Optional ONNX extension");
+    assertStringIncludes(
+      providers,
+      "npm install @veryfront/ext-llm-onnx @huggingface/transformers",
+    );
     assertStringIncludes(providers, "not available from compiled standalone binaries");
     assertStringIncludes(
       providers,

@@ -8,12 +8,13 @@
  * Uses ONNX Runtime for inference with q4 quantization, not q4f16,
  * due to a known ONNX bug with f16 LayerNorm on CPU.
  *
- * @module provider/local
+ * @module extensions/ext-llm-onnx
  */
 
-import { serverLogger } from "#veryfront/utils";
-import { createError, toError } from "#veryfront/errors";
-import { importTransformers } from "#veryfront/compat/opaque-deps.ts";
+import { createError, toError } from "veryfront/errors";
+import { dynamicImport } from "veryfront/platform/dynamic-import";
+import { isDeno } from "veryfront/platform/runtime";
+import { serverLogger } from "veryfront/utils/logger";
 import { DEFAULT_LOCAL_MODEL, type ModelInfo, resolveLocalModel } from "./model-catalog.ts";
 import {
   getLocalAIDevice,
@@ -24,6 +25,16 @@ import {
 import { createPipelineCache } from "./pipeline-cache.ts";
 
 const logger = serverLogger.component("local-llm");
+
+const TRANSFORMERS_PACKAGE = "@huggingface/transformers";
+export const TRANSFORMERS_VERSION = "4.2.0";
+
+function importTransformers(): Promise<TransformersModule> {
+  const specifier = isDeno
+    ? `npm:${TRANSFORMERS_PACKAGE}@${TRANSFORMERS_VERSION}`
+    : TRANSFORMERS_PACKAGE;
+  return dynamicImport<TransformersModule>(specifier);
+}
 
 /** Default maximum new tokens for local model generation */
 const DEFAULT_MAX_NEW_TOKENS = 512;
@@ -258,8 +269,8 @@ export async function getTransformers(): Promise<TransformersModule> {
     throw toError(
       createError({
         type: "no_ai_available",
-        message:
-          "Local AI model unavailable. Install @huggingface/transformers alongside veryfront " +
+        message: "Local AI model unavailable. Install @veryfront/ext-llm-onnx and " +
+          "@huggingface/transformers alongside veryfront " +
           "(npm installs), or run veryfront login, set VERYFRONT_API_TOKEN, or configure " +
           "OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY to use a cloud provider. " +
           "Native ONNX Runtime is not supported in compiled binaries.",

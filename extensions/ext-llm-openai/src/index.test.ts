@@ -1,5 +1,5 @@
 import { describe, it } from "@std/testing/bdd";
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertThrows } from "@std/assert";
 import extOpenAI, { OpenAIProvider } from "./index.ts";
 import { type LLMProviderRegistry, LLMProviderRegistryName } from "veryfront/extensions/llm";
 
@@ -39,5 +39,13 @@ describe("ext-llm-openai", () => {
     };
     ext.setup?.(ctx as never);
     assert(registered.openai instanceof OpenAIProvider);
+  });
+
+  it("rejects a missing credential at the provider boundary", () => {
+    assertThrows(
+      () => new OpenAIProvider().createModel("gpt-5.4-nano", {} as never),
+      TypeError,
+      "OpenAI provider requires a credential",
+    );
   });
 });

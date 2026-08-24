@@ -1344,9 +1344,8 @@ export class AgentRuntime {
     const isLocal = isLocalModelRuntime(languageModel);
     const supportsToolCalling = supportsModelRuntimeToolCalling(languageModel);
 
-    // Eagerly verify the model runtime is available. For local models this
-    // checks that @huggingface/transformers can be imported. Must happen
-    // BEFORE creating the ReadableStream so no_ai_available errors propagate
+    // Eagerly verify the model runtime is available. Provider readiness must
+    // finish BEFORE creating the ReadableStream so no_ai_available errors propagate
     // to the route handler, which returns a 503 instead of swallowing it as an
     // in-band SSE error in a 200 response.
     await ensureModelReady(languageModel, streamAbortSignal);

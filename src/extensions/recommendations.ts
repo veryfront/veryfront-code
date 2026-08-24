@@ -23,6 +23,7 @@ const recommendations = new Map<string, string>([
   ["LLMProvider:openai", "@veryfront/ext-llm-openai"],
   ["LLMProvider:anthropic", "@veryfront/ext-llm-anthropic"],
   ["LLMProvider:google", "@veryfront/ext-llm-google"],
+  ["LLMProvider:local", "@veryfront/ext-llm-onnx"],
   ["CodeParser", "@veryfront/ext-parser-babel"],
   ["SchemaValidator", "@veryfront/ext-schema-zod"],
   ["SqliteStore", "@veryfront/ext-db-sqlite"],

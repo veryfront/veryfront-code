@@ -276,3 +276,40 @@ import {
 | `rendererLogger`              | Shared renderer logger value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1078)        |
 | `requestContextStore`         |                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/request-context.ts#L24) |
 | `serverLogger`                | Shared server logger value.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1076)        |
+
+### `veryfront/utils/lru-cache`
+
+```ts
+import { LRUCache } from "veryfront/utils/lru-cache";
+```
+
+#### Classes
+
+| Name       | Description | Source                                                                                       |
+| ---------- | ----------- | -------------------------------------------------------------------------------------------- |
+| `LRUCache` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/lru-wrapper.ts#L22) |
+
+### `veryfront/utils/singleflight`
+
+```ts
+import { Singleflight, waitForSharedPromise } from "veryfront/utils/singleflight";
+```
+
+#### Functions
+
+| Name                   | Description                                                                                                                                     | Source                                                                                        |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `waitForSharedPromise` | Wait for shared work while allowing this caller to detach independently. Aborting `signal` rejects only this waiter; it never cancels `shared`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/singleflight.ts#L38) |
+
+#### Classes
+
+| Name           | Description | Source                                                                                        |
+| -------------- | ----------- | --------------------------------------------------------------------------------------------- |
+| `Singleflight` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/singleflight.ts#L71) |
+
+#### Types
+
+| Name                  | Description | Source                                                                                        |
+| --------------------- | ----------- | --------------------------------------------------------------------------------------------- |
+| `SingleflightControl` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/singleflight.ts#L14) |
+| `SingleflightOptions` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/singleflight.ts#L3)  |

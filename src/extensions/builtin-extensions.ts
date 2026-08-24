@@ -19,6 +19,7 @@ import {
 import { OpenAIProvider } from "@veryfront/ext-llm-openai";
 import { AnthropicProvider } from "@veryfront/ext-llm-anthropic";
 import { GoogleProvider } from "@veryfront/ext-llm-google";
+import { OnnxProvider } from "@veryfront/ext-llm-onnx";
 import extEvalReportMlflow from "@veryfront/ext-eval-report-mlflow";
 import extZod from "@veryfront/ext-schema-zod";
 export { ensureBuiltinSchemaValidator } from "./builtin-schema-validator.ts";
@@ -58,6 +59,11 @@ const BUILTIN_LLM_PROVIDERS: BuiltinLLMProviderDefinition[] = [
     extensionName: "ext-llm-google",
     origin: "veryfront/ext-llm-google",
     provider: () => new GoogleProvider(),
+  },
+  {
+    extensionName: "ext-llm-onnx",
+    origin: "veryfront/ext-llm-onnx",
+    provider: () => new OnnxProvider(),
   },
 ];
 

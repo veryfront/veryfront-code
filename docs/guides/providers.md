@@ -12,7 +12,7 @@ is developed or deployed.
 | Use managed model access          | Veryfront Cloud AI Gateway | [Cloud quickstart](../getting-started/cloud-quickstart.md) |
 | Call a model vendor with your key | Direct provider            | [Direct providers](#direct-providers)                      |
 | Use an OpenAI-compatible endpoint | Compatible service         | [OpenAI-compatible services](#openai-compatible-services)  |
-| Run inference inside the app      | Embedded ONNX inference    | [Embedded ONNX inference](#embedded-onnx-inference)        |
+| Run inference inside the app      | Optional ONNX extension    | [ONNX extension](#onnx-extension)                          |
 
 An agent's `model` is a `"provider/model"` string. Omit it to use the default
 `openai/gpt-5.4-nano` model with the inference credentials available at runtime.
@@ -172,24 +172,26 @@ web-search contracts. See the
 [`ext-llm-openai` reference](https://github.com/veryfront/veryfront-code/blob/main/extensions/ext-llm-openai/README.md#hosted-web-search)
 for supported identifiers, arguments, and replay limits.
 
-## Embedded ONNX inference
+## ONNX extension
 
-Embedded inference is explicit. Use a `local/*` model when you want the app
-server process to run a curated ONNX model through `@huggingface/transformers`.
+The optional `@veryfront/ext-llm-onnx` provider runs curated ONNX models in the
+app server process through `@huggingface/transformers`. It keeps the `local/*`
+model identifiers for compatibility.
+
 For local chat development, use Ollama or LM Studio unless you specifically
 need the model to run inside the app process.
 
-For Node.js or Bun, install the optional runtime alongside Veryfront. Deno
-resolves the runtime on first use.
+For Node.js or Bun, install the extension and its optional runtime peer. Deno
+resolves the runtime on first use in source distributions.
 
 ```bash
-npm install @huggingface/transformers
+npm install @veryfront/ext-llm-onnx @huggingface/transformers
 ```
 
 The Transformers and ONNX packages add approximately 500 MB before model
 weights.
 
-Embedded ONNX inference is not available from compiled standalone binaries.
+The ONNX extension is not available from compiled standalone binaries.
 Use a package-manager installation of Veryfront for this inference path.
 
 Select a supported model:
@@ -210,10 +212,10 @@ export default agent({
 | `local/gemma4-e4b-it` | 6 GB                 |
 
 The selected model is downloaded and cached on first use. If the runtime cannot
-load ONNX, the chat handler returns a `503` setup error. Veryfront never starts
-an embedded model automatically.
+load ONNX, the chat handler returns a `503` setup error. Veryfront does not load
+model weights until the first request.
 
-Embedded ONNX inference uses CPU by default. To request WebGPU, use:
+The ONNX extension uses CPU by default. To request WebGPU, use:
 
 ```bash
 export VERYFRONT_LOCAL_AI_DEVICE=webgpu
@@ -230,7 +232,7 @@ export VERYFRONT_LOCAL_AI_THINKING=1
 
 Thinking is disabled by default.
 
-To disable embedded ONNX inference, use:
+To disable the ONNX extension, use:
 
 ```bash
 export VERYFRONT_DISABLE_LOCAL_AI=1

@@ -8,7 +8,11 @@
  * @module extensions/ext-llm-openai/openai-provider
  */
 
-import type { LLMProvider, LLMProviderConfig } from "veryfront/extensions/llm";
+import {
+  type LLMProvider,
+  type LLMProviderConfig,
+  requireLLMProviderCredential,
+} from "veryfront/extensions/llm";
 import type {
   EmbeddingRuntime,
   ModelRuntime,
@@ -1338,10 +1342,11 @@ export class OpenAIProvider implements LLMProvider {
     modelId: string,
     config: LLMProviderConfig,
   ): ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart> {
+    const credential = requireLLMProviderCredential(config, "OpenAI");
     const providerLabel = getOpenAIProviderLabel(config);
     const providerName = getLLMOpenAIProviderName(config);
     const runtimeConfig: OpenAIRuntimeConfig = {
-      apiKey: config.credential,
+      apiKey: credential,
       baseURL: config.baseURL,
       name: providerLabel,
       providerName,
@@ -1375,9 +1380,10 @@ export class OpenAIProvider implements LLMProvider {
   }
 
   createEmbedding(modelId: string, config: LLMProviderConfig): EmbeddingRuntime {
+    const credential = requireLLMProviderCredential(config, "OpenAI");
     return createOpenAIEmbeddingRuntime(
       {
-        apiKey: config.credential,
+        apiKey: credential,
         baseURL: config.baseURL,
         name: getOpenAIProviderLabel(config),
         providerName: getLLMOpenAIProviderName(config),
@@ -1391,9 +1397,10 @@ export class OpenAIProvider implements LLMProvider {
     modelId: string,
     config: LLMProviderConfig,
   ): ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart> {
+    const credential = requireLLMProviderCredential(config, "OpenAI");
     return createOpenAIResponsesRuntime(
       {
-        apiKey: config.credential,
+        apiKey: credential,
         baseURL: config.baseURL,
         name: getOpenAIProviderLabel(config),
         providerName: getLLMOpenAIProviderName(config),

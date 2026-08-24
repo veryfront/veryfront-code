@@ -8,10 +8,10 @@
  * long-running process that touches many models cannot grow memory without
  * limit (loaded models are large).
  *
- * @module provider/local
+ * @module extensions/ext-llm-onnx
  */
 
-import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { LRUCache } from "veryfront/utils/lru-cache";
 
 /**
  * Maximum number of loaded pipelines kept in memory at once. Loaded models are

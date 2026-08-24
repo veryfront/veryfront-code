@@ -11,7 +11,6 @@ import type { DocumentExtractor } from "../../extensions/compat/native-services.
 import {
   importClaudeAgentSDK,
   importKreuzberg,
-  importTransformers,
   injectedClaudeAgentSdkMock,
 } from "./opaque-deps.ts";
 
@@ -26,12 +25,6 @@ const stubDocumentExtractor: DocumentExtractor = {
 describe("platform/compat/opaque-deps", () => {
   afterEach(() => {
     reset();
-  });
-
-  describe("importTransformers", () => {
-    it("should be a function", () => {
-      assertEquals(typeof importTransformers, "function");
-    });
   });
 
   describe("importClaudeAgentSDK", () => {

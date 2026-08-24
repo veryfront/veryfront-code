@@ -20,10 +20,10 @@ import {
   getLocalModelIds,
   resolveLocalEmbeddingModel,
   resolveLocalModel,
-} from "./model-catalog.ts";
-import { createLocalModel } from "./model-runtime-adapter.ts";
-import { clearModelProviders, ensureModelReady } from "../model-registry.ts";
-import { fromError } from "#veryfront/errors/legacy-error-codec.ts";
+} from "../../../../extensions/ext-llm-onnx/src/model-catalog.ts";
+import { createLocalModel } from "../../../../extensions/ext-llm-onnx/src/model-runtime-adapter.ts";
+import { clearModelProviders, ensureModelReady } from "veryfront/provider";
+import { fromError } from "veryfront/errors";
 
 const RUN_LOCAL_AI_TESTS = Deno.env.get("VERYFRONT_RUN_LOCAL_AI_TESTS") === "1";
 const RUN_LOCAL_AI_GPU_TESTS = Deno.env.get("VERYFRONT_RUN_LOCAL_AI_GPU_TESTS") === "1";
@@ -33,7 +33,7 @@ const RUN_LOCAL_AI_GEMMA_E4B_TESTS = Deno.env.get("VERYFRONT_RUN_LOCAL_AI_GEMMA_
 
 async function runLocalSmokeTest(env: Record<string, string>): Promise<string> {
   const command = new Deno.Command(Deno.execPath(), {
-    args: ["run", "-A", "src/provider/local/_smoke-test.ts"],
+    args: ["run", "-A", "extensions/ext-llm-onnx/src/_smoke-test.ts"],
     cwd: Deno.cwd(),
     env: {
       ...env,

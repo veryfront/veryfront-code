@@ -4,10 +4,10 @@
  * Maps friendly model IDs to HuggingFace model repository IDs.
  * Used by the local inference engine to resolve model names.
  *
- * @module provider/local
+ * @module extensions/ext-llm-onnx
  */
 
-import { createError, toError } from "#veryfront/errors";
+import { createError, toError } from "veryfront/errors";
 
 export interface ModelInfo {
   /** HuggingFace model repository ID */

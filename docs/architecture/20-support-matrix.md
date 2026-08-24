@@ -69,6 +69,7 @@ project.
 | `LLMProvider`                 | `@veryfront/ext-llm-openai`                               | Built-in                              | OpenAI provider selection               | Network (OpenAI API)         |
 | `LLMProvider`                 | `@veryfront/ext-llm-anthropic`                            | Built-in                              | Anthropic provider selection            | Network (Anthropic API)      |
 | `LLMProvider`                 | `@veryfront/ext-llm-google`                               | Built-in                              | Google provider selection               | Network (Google AI API)      |
+| `LLMProvider`                 | `@veryfront/ext-llm-onnx`                                 | Built-in                              | `local/*` ONNX model selection          | Native ONNX runtime and FS   |
 | `AuthProvider`                | `@veryfront/ext-auth-jwt`                                 | Optional                              | Auth signing or verification            | None (jose library)          |
 | `TracingExporter`             | `@veryfront/ext-observability-opentelemetry`              | Optional                              | OTLP tracing export                     | Network (OTLP endpoint)      |
 | `NodeTelemetryProvider`       | `@veryfront/ext-observability-opentelemetry`              | Built-in                              | Node OpenTelemetry SDK bootstrap        | Network (OTLP endpoint)      |

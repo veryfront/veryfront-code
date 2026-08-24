@@ -31,14 +31,6 @@ function resolve(pkg: string, version: string): string {
 // deno-lint-ignore no-explicit-any -- callers assign to their own typed variable; any allows implicit narrowing at each call site
 type OpaqueModule = any;
 
-/** Lazily import `@huggingface/transformers` (+ onnxruntime, ~500MB). */
-export function importTransformers(): Promise<OpaqueModule> {
-  return dynamicImport(resolve(
-    "@huggingface/transformers",
-    OPAQUE_DEPENDENCY_VERSIONS["@huggingface/transformers"],
-  ));
-}
-
 /**
  * Return `value` when it is an injected Claude Agent SDK mock (an object exposing
  * `query`), otherwise `undefined` so the real package is imported.

@@ -65,7 +65,7 @@ const ALLOWED_FILES = new Set([
   // Explicit Deno compat layer for tests (makeTempFile, exit, etc.)
   "src/testing/deno-compat.ts",
   // Smoke test script — runs with `deno run --allow-all`
-  "src/provider/local/_smoke-test.ts",
+  "extensions/ext-llm-onnx/src/_smoke-test.ts",
   // Worker entrypoints — run in their own Deno subprocess
   "src/workflow/worker/job-entrypoint.ts",
   "src/workflow/worker/dynamic-job-entrypoint.ts",

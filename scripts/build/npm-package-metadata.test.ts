@@ -11,7 +11,6 @@ import {
 import {
   EXTENSION_OWNED_DEPENDENCIES,
   normalizeNpmPackageMetadata,
-  ROOT_OPTIONAL_RUNTIME_PEERS,
 } from "./npm-package-metadata.ts";
 import {
   type ExtensionManifest,
@@ -224,7 +223,6 @@ it("npm publish version bump pins first-party extension peers to the publish ver
           },
           peerDependencies: {
             "@veryfront/ext-content-mdx": "0.1.1240",
-            "@huggingface/transformers": "^4.2.0",
             react: "^19.0.0",
           },
           peerDependenciesMeta: {
@@ -259,8 +257,6 @@ it("npm publish version bump pins first-party extension peers to the publish ver
     const pkg = JSON.parse(await Deno.readTextFile(packagePath));
     assertEquals(pkg.peerDependencies, {
       "@veryfront/ext-content-mdx": publishVersion,
-      // Third-party optional peers keep their compatibility ranges.
-      "@huggingface/transformers": "^4.2.0",
       react: "^19.0.0",
     });
     assertEquals(pkg.peerDependenciesMeta, {
@@ -395,13 +391,15 @@ it("npm publish skips extension packages marked publish false", async () => {
 
 // Extensions whose implementations are statically imported by
 // src/extensions/builtin-extensions.ts and therefore ship inside the root
-// npm package. Their dependencies must stay in root; every other workspace
-// extension's dependencies must be stripped via EXTENSION_OWNED_DEPENDENCIES.
+// npm package. Their required dependencies stay in root. Optional extension
+// peers and every non-bundled implementation dependency are stripped via
+// EXTENSION_OWNED_DEPENDENCIES.
 const ROOT_BUNDLED_EXTENSIONS = new Set([
   "ext-schema-zod",
   "ext-llm-openai",
   "ext-llm-anthropic",
   "ext-llm-google",
+  "ext-llm-onnx",
   "ext-eval-report-mlflow",
 ]);
 
@@ -415,7 +413,6 @@ it("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests", async 
     await Deno.readTextFile("deno.json"),
   ) as RootPackageConfig;
   const owned = new Set<string>(EXTENSION_OWNED_DEPENDENCIES);
-  const optionalPeers = new Set<string>(ROOT_OPTIONAL_RUNTIME_PEERS);
 
   const manifestPaths = firstPartyExtensionManifestPaths(denoConfig);
   assertEquals(
@@ -430,13 +427,16 @@ it("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests", async 
     ) as ExtensionManifest;
     const extensionDirectory = manifestPath.split("/")[1];
     const dependencies = Object.keys(manifestDependencies(manifest));
+    const optionalPeers = new Set(manifest.veryfront?.npm?.optionalPeers ?? []);
 
     if (ROOT_BUNDLED_EXTENSIONS.has(extensionDirectory)) {
       for (const dependency of dependencies) {
         assertEquals(
           owned.has(dependency),
-          false,
-          `${dependency} is required by root-bundled ${extensionDirectory} and must not be stripped from the root veryfront package`,
+          optionalPeers.has(dependency),
+          optionalPeers.has(dependency)
+            ? `${dependency} is optional in ${extensionDirectory} and must stay out of root installs`
+            : `${dependency} is required by root-bundled ${extensionDirectory} and must not be stripped from the root veryfront package`,
         );
       }
       continue;
@@ -474,8 +474,7 @@ describe("normalizeNpmPackageMetadata", () => {
   // npm 11.12.1 — a package.json whose sole entry is
   // `optionalDependencies: { "@mdx-js/mdx": "3.1.1" }` still produces
   // node_modules/@types/mdx and still fails `tsc --noEmit` with the same four
-  // errors. Only an optional peer keeps the package out of the tree, which is
-  // the mechanism ROOT_OPTIONAL_RUNTIME_PEERS already uses.
+  // errors. Only an optional peer keeps the package out of the tree.
   it("keeps the MDX content extension out of automatic npm installs", () => {
     const pkg = normalizeNpmPackageMetadata({
       dependencies: {
@@ -526,12 +525,8 @@ describe("normalizeNpmPackageMetadata", () => {
 
     assertEquals(pkg.dependencies, { zod: "4.3.6" });
     assertEquals(pkg.optionalDependencies, undefined);
-    assertEquals(pkg.peerDependencies, {
-      "@huggingface/transformers": "^4.2.0",
-    });
-    assertEquals(pkg.peerDependenciesMeta, {
-      "@huggingface/transformers": { optional: true },
-    });
+    assertEquals(pkg.peerDependencies, undefined);
+    assertEquals(pkg.peerDependenciesMeta, undefined);
   });
 
   it("keeps sandbox shell extension packages out of automatic npm installs", () => {
@@ -545,26 +540,21 @@ describe("normalizeNpmPackageMetadata", () => {
 
     assertEquals(pkg.dependencies, { zod: "4.3.6" });
     assertEquals(pkg.optionalDependencies, undefined);
-    assertEquals(pkg.peerDependencies, {
-      "@huggingface/transformers": "^4.2.0",
-    });
-    assertEquals(pkg.peerDependenciesMeta, {
-      "@huggingface/transformers": { optional: true },
-    });
+    assertEquals(pkg.peerDependencies, undefined);
+    assertEquals(pkg.peerDependenciesMeta, undefined);
   });
 
-  it("declares opaque optional runtime peers even when dnt cannot trace them", () => {
-    // The @huggingface/transformers import is opaque (invisible to dnt), so the
-    // generated package.json never contains it; the optional peer must still be
-    // declared or npm consumers get no installable remedy for local AI models.
+  it("keeps the ONNX runtime dependency out of root package metadata", () => {
     const pkg = normalizeNpmPackageMetadata({
-      dependencies: { zod: "4.3.6" },
+      dependencies: {
+        "@huggingface/transformers": "^4.2.0",
+        zod: "4.3.6",
+      },
     });
 
-    assertEquals(pkg.peerDependencies?.["@huggingface/transformers"], "^4.2.0");
-    assertEquals(pkg.peerDependenciesMeta?.["@huggingface/transformers"], {
-      optional: true,
-    });
+    assertEquals(pkg.dependencies, { zod: "4.3.6" });
+    assertEquals(pkg.peerDependencies, undefined);
+    assertEquals(pkg.peerDependenciesMeta, undefined);
   });
 
   it("keeps first-party extension implementation packages out of root npm metadata", () => {
@@ -583,12 +573,8 @@ describe("normalizeNpmPackageMetadata", () => {
     });
 
     assertEquals(pkg.dependencies, { zod: "4.3.6" });
-    assertEquals(pkg.peerDependencies, {
-      "@huggingface/transformers": "^4.2.0",
-    });
-    assertEquals(pkg.peerDependenciesMeta, {
-      "@huggingface/transformers": { optional: true },
-    });
+    assertEquals(pkg.peerDependencies, undefined);
+    assertEquals(pkg.peerDependenciesMeta, undefined);
   });
 
   it("removes stale direct AI SDK metadata from automatic npm installs", () => {
@@ -600,12 +586,8 @@ describe("normalizeNpmPackageMetadata", () => {
     });
 
     assertEquals(pkg.dependencies, { zod: "4.3.6" });
-    assertEquals(pkg.peerDependencies, {
-      "@huggingface/transformers": "^4.2.0",
-    });
-    assertEquals(pkg.peerDependenciesMeta, {
-      "@huggingface/transformers": { optional: true },
-    });
+    assertEquals(pkg.peerDependencies, undefined);
+    assertEquals(pkg.peerDependenciesMeta, undefined);
   });
 
   it("removes stale npm-only type dev dependencies", () => {
@@ -649,7 +631,6 @@ describe("normalizeNpmPackageMetadata", () => {
       "@types/node": "20.9.0",
     });
     assertEquals(pkg.peerDependencies, {
-      "@huggingface/transformers": "^4.2.0",
       react: "^19.0.0",
     });
     assertEquals(pkg.overrides, {

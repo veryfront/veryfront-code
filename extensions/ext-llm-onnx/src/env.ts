@@ -4,11 +4,11 @@
  * Uses the platform compat layer so all local-AI checks go through
  * a single function — no duplicated env access patterns.
  *
- * @module provider/local
+ * @module extensions/ext-llm-onnx
  */
 
-import { createError, toError } from "#veryfront/errors";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { createError, toError } from "veryfront/errors";
+import { getHostEnv } from "veryfront/platform/env";
 
 const LOCAL_AI_DISABLED_MESSAGE =
   "Local AI disabled via VERYFRONT_DISABLE_LOCAL_AI environment variable.";

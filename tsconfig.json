@@ -86,9 +86,14 @@
       "veryfront/platform/esbuild-init": [
         "./src/platform/compat/esbuild-init.ts"
       ],
+      "veryfront/platform/dynamic-import": [
+        "./src/platform/compat/dynamic-import.ts"
+      ],
       "veryfront/platform/env": ["./src/platform/compat/process/env.ts"],
       "veryfront/platform/path": ["./src/platform/compat/path/index.ts"],
       "veryfront/platform/http": ["./src/platform/compat/http/index.ts"],
+      "veryfront/platform/runtime": ["./src/platform/compat/runtime.ts"],
+      "veryfront/utils/lru-cache": ["./src/utils/lru-wrapper.ts"],
       "veryfront/errors/general": ["./src/errors/error-registry/general.ts"],
       "veryfront/errors/module": ["./src/errors/error-registry/module.ts"],
       "veryfront/cli": ["./cli/main.ts"],

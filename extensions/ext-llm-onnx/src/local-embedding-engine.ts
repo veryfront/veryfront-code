@@ -5,10 +5,10 @@
  * local embedding generation. Uses the `feature-extraction` pipeline
  * with mean pooling and normalization.
  *
- * @module provider/local
+ * @module extensions/ext-llm-onnx
  */
 
-import { serverLogger } from "#veryfront/utils";
+import { serverLogger } from "veryfront/utils/logger";
 import { type ModelInfo, resolveLocalEmbeddingModel } from "./model-catalog.ts";
 import { getTransformers } from "./local-engine.ts";
 import { createPipelineCache } from "./pipeline-cache.ts";

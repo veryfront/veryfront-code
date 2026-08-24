@@ -17,6 +17,7 @@ export type ExtensionManifest = {
     npm?: {
       nodeEngine?: string;
       publish?: boolean;
+      optionalPeers?: string[];
       stagedSources?: ExtensionStagedSourceManifest[];
       runtimePackages?: ExtensionRuntimePackageManifest[];
     };
@@ -68,6 +69,7 @@ export type ExtensionPackageSpec = {
   packageJson: ExtensionPackageJson;
   dntMappings: Record<string, NpmPackageMapping>;
   manifestDependencies: Record<string, string>;
+  optionalPeerDependencies?: Record<string, string>;
   peerVeryfront: boolean;
   readmePath: string;
   stagedSources: ExtensionStagedSourceManifest[];
@@ -165,6 +167,35 @@ export function manifestDependencies(
     Object.entries(dependencies).toSorted(([left], [right]) =>
       left.localeCompare(right)
     ),
+  );
+}
+
+function manifestOptionalPeerDependencies(
+  manifest: ExtensionManifest,
+  dependencies: Record<string, string>,
+): Record<string, string> {
+  const optionalPeers: Record<string, string> = {};
+  const seen = new Set<string>();
+
+  for (const name of manifest.veryfront?.npm?.optionalPeers ?? []) {
+    if (typeof name !== "string" || name.length === 0 || seen.has(name)) {
+      throw new Error(
+        `${manifest.name} veryfront.npm.optionalPeers must contain unique package names`,
+      );
+    }
+    seen.add(name);
+
+    const version = dependencies[name];
+    if (!version) {
+      throw new Error(
+        `${manifest.name} optional peer "${name}" must be declared as an npm import`,
+      );
+    }
+    optionalPeers[name] = version;
+  }
+
+  return Object.fromEntries(
+    Object.entries(optionalPeers).toSorted(([left], [right]) => left.localeCompare(right)),
   );
 }
 
@@ -296,15 +327,22 @@ function createBaseExtensionPackageSpec(input: {
   }
 
   const packageDirectoryName = extensionPackageDirectoryName(packageName);
+  const allManifestDependencies = manifestDependencies(input.manifest);
+  const optionalPeerDependencies = manifestOptionalPeerDependencies(
+    input.manifest,
+    allManifestDependencies,
+  );
   const dependencies = Object.fromEntries(
     Object.entries({
-      ...manifestDependencies(input.manifest),
+      ...allManifestDependencies,
       ...localFirstPartyExtensionDependencies(
         input.manifest,
         manifestDir,
         input.version,
       ),
-    }).toSorted(([left], [right]) => left.localeCompare(right)),
+    }).filter(([name]) => !(name in optionalPeerDependencies)).toSorted(
+      ([left], [right]) => left.localeCompare(right),
+    ),
   );
   const veryfrontPeerRange = `^${input.version}`;
   const entryPoints = normalizeExtensionEntryPoints({
@@ -326,6 +364,7 @@ function createBaseExtensionPackageSpec(input: {
     packageName,
     packageDirectoryName,
     manifestDependencies: dependencies,
+    optionalPeerDependencies,
     peerVeryfront: true,
     readmePath: join(manifestDir, "README.md"),
     stagedSources,
@@ -358,8 +397,16 @@ function createBaseExtensionPackageSpec(input: {
         node: extensionNodeEngine(input.manifest),
       },
       peerDependencies: {
+        ...optionalPeerDependencies,
         veryfront: veryfrontPeerRange,
       },
+      ...(Object.keys(optionalPeerDependencies).length > 0
+        ? {
+          peerDependenciesMeta: Object.fromEntries(
+            Object.keys(optionalPeerDependencies).map((name) => [name, { optional: true }]),
+          ),
+        }
+        : {}),
       dependencies,
       keywords: [
         "veryfront",
@@ -461,6 +508,7 @@ function createRuntimeExtensionPackageSpec(input: {
     packageName: runtimePackage.name,
     packageDirectoryName: extensionPackageDirectoryName(runtimePackage.name),
     manifestDependencies: dependencies,
+    optionalPeerDependencies: {},
     peerVeryfront,
     readmePath: input.baseSpec.readmePath,
     stagedSources: input.baseSpec.stagedSources,
@@ -518,6 +566,7 @@ export function normalizeExtensionPackageJson(input: {
   const pkg = input.packageJson as {
     dependencies?: Record<string, string>;
     peerDependencies?: Record<string, string>;
+    peerDependenciesMeta?: Record<string, { optional?: boolean }>;
     exports?: Record<string, string | { import?: string; types?: string }>;
     module?: string;
     types?: string;
@@ -545,11 +594,20 @@ export function normalizeExtensionPackageJson(input: {
     pkg.dependencies = dependencies;
   }
 
-  if (input.spec.peerVeryfront) {
+  const optionalPeerDependencies = input.spec.optionalPeerDependencies ?? {};
+  if (input.spec.peerVeryfront || Object.keys(optionalPeerDependencies).length > 0) {
     pkg.peerDependencies ??= {};
-    pkg.peerDependencies.veryfront = `^${input.version}`;
+    if (input.spec.peerVeryfront) {
+      pkg.peerDependencies.veryfront = `^${input.version}`;
+    }
+    for (const [name, version] of Object.entries(optionalPeerDependencies)) {
+      pkg.peerDependencies[name] = version;
+      pkg.peerDependenciesMeta ??= {};
+      pkg.peerDependenciesMeta[name] = { optional: true };
+    }
   } else {
     delete pkg.peerDependencies;
+    delete pkg.peerDependenciesMeta;
   }
 
   pkg.type = "module";

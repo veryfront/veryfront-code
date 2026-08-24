@@ -859,6 +859,80 @@ describe("createVeryfrontPeerTypeImportReplacements", () => {
 });
 
 describe("normalizeExtensionPackageJson", () => {
+  it("moves manifest-declared optional peers out of extension dependencies", () => {
+    const manifest: ExtensionManifest = {
+      name: "@veryfront/ext-llm-onnx",
+      exports: "./src/index.ts",
+      veryfront: {
+        extension: true,
+        npm: {
+          optionalPeers: ["@huggingface/transformers"],
+        },
+      },
+      imports: {
+        "@huggingface/transformers": "npm:@huggingface/transformers@4.2.0",
+      },
+    };
+    const spec = createExtensionPackageSpec({
+      manifestPath: "extensions/ext-llm-onnx/deno.json",
+      manifest,
+      rootConfig,
+      rootDir: "/repo",
+      version: "0.1.985",
+      license: "Apache-2.0",
+    });
+
+    const normalized = normalizeExtensionPackageJson({
+      spec,
+      version: "0.1.985",
+      packageJson: {
+        name: "@veryfront/ext-llm-onnx",
+        module: "./esm/index.js",
+        exports: { ".": { import: "./esm/index.js" } },
+        dependencies: {
+          "@huggingface/transformers": "4.2.0",
+          veryfront: "^0.1.985",
+        },
+      },
+    });
+
+    assertEquals(normalized.dependencies, undefined);
+    assertEquals(normalized.peerDependencies, {
+      "@huggingface/transformers": "4.2.0",
+      veryfront: "^0.1.985",
+    });
+    assertEquals(normalized.peerDependenciesMeta, {
+      "@huggingface/transformers": { optional: true },
+    });
+  });
+
+  it("rejects optional peers without an authoritative npm import version", () => {
+    const manifest: ExtensionManifest = {
+      name: "@veryfront/ext-llm-onnx",
+      exports: "./src/index.ts",
+      veryfront: {
+        extension: true,
+        npm: {
+          optionalPeers: ["@huggingface/transformers"],
+        },
+      },
+    };
+
+    assertThrows(
+      () =>
+        createExtensionPackageSpec({
+          manifestPath: "extensions/ext-llm-onnx/deno.json",
+          manifest,
+          rootConfig,
+          rootDir: "/repo",
+          version: "0.1.985",
+          license: "Apache-2.0",
+        }),
+      Error,
+      'optional peer "@huggingface/transformers" must be declared as an npm import',
+    );
+  });
+
   it("moves dnt-added veryfront dependency back to a peer and preserves manifest metadata", () => {
     const manifest: ExtensionManifest = {
       name: "@veryfront/ext-sandbox-shell-tools",

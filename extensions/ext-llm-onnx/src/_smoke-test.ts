@@ -1,10 +1,9 @@
 /**
  * Smoke test: explicit local model.
- * Run: deno run --allow-all src/provider/local/_smoke-test.ts
+ * Run: deno run --allow-all extensions/ext-llm-onnx/src/_smoke-test.ts
  */
 
-import { resolveModel } from "../model-registry.ts";
-import { getModelRuntimeId, getModelRuntimeProvider } from "../runtime-inspection.ts";
+import { resolveModel } from "veryfront/provider";
 import { generate } from "./local-engine.ts";
 
 // Suppress provider adapter warnings for cleaner output.
@@ -19,7 +18,7 @@ const modelName = `local/${localModelId}`;
 
 console.log(`1. Resolving "${modelName}"...`);
 const model = resolveModel(modelName);
-console.log(`   -> Got model: ${getModelRuntimeId(model) ?? getModelRuntimeProvider(model)}`);
+console.log(`   -> Got model: ${model.modelId ?? model.provider}`);
 console.log(`   -> Device: ${Deno.env.get("VERYFRONT_LOCAL_AI_DEVICE") || "cpu"}`);
 console.log(
   `   -> Thinking: ${Deno.env.get("VERYFRONT_LOCAL_AI_THINKING") === "1" ? "enabled" : "disabled"}`,

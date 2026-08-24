@@ -8,7 +8,7 @@ workflow execution, or browser upload UI.
 ## Responsibility
 
 The provider runtime resolves model providers, builds provider requests, streams
-provider responses, and exposes local or Veryfront Cloud provider adapters.
+provider responses, and exposes extension-backed or Veryfront Cloud provider adapters.
 Embedding code reuses the same provider model resolution to turn source content
 into chunks, embed those chunks, store vectors, and expose retrieval helpers
 for agent and application code.
@@ -17,13 +17,13 @@ Primary source areas:
 
 - [`src/provider/`](../../src/provider/)
 - [`src/provider/runtime-loader/`](../../src/provider/runtime-loader/)
-- [`src/provider/local/`](../../src/provider/local/)
+- [`extensions/ext-llm-onnx/`](../../extensions/ext-llm-onnx/)
 - [`src/provider/veryfront-cloud/`](../../src/provider/veryfront-cloud/)
 - [`src/agent/runtime/model-resolution.ts`](../../src/agent/runtime/model-resolution.ts)
 - [`src/embedding/`](../../src/embedding/)
 - [`src/embedding/veryfront-cloud/`](../../src/embedding/veryfront-cloud/)
 - [`src/embedding/model-resolution.ts`](../../src/embedding/model-resolution.ts)
-- [`src/provider/local/local-embedding-engine.ts`](../../src/provider/local/local-embedding-engine.ts)
+- [`extensions/ext-llm-onnx/src/local-embedding-engine.ts`](../../extensions/ext-llm-onnx/src/local-embedding-engine.ts)
 
 ## Runtime flow
 
@@ -32,8 +32,8 @@ Primary source areas:
    capabilities.
 3. Runtime loader helpers build request init, endpoint URLs, SSE parsers, usage
    records, embedding responses, and tool input status.
-4. Provider adapters send requests to local engines or Veryfront Cloud provider
-   endpoints.
+4. Provider adapters send requests to remote endpoints, Veryfront Cloud, or the
+   extension-owned ONNX engine.
 5. The agent runtime consumes the provider stream through provider-neutral
    runtime events.
 
@@ -51,6 +51,8 @@ Primary source areas:
 - The agent runtime owns conversation messages and tool inventory; see
   [agent runtime](./05-agent-runtime.md).
 - The provider runtime owns provider request and response translation.
+- In-process ONNX model loading belongs to `@veryfront/ext-llm-onnx`, not the
+  core provider registry.
 - Agent prompt assembly and retrieval orchestration belong in
   [agent runtime](./05-agent-runtime.md), not in embedding helpers.
 - File upload UI belongs in guide or component docs, not this architecture

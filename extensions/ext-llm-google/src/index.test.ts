@@ -1,5 +1,5 @@
 import { describe, it } from "@std/testing/bdd";
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertThrows } from "@std/assert";
 import extGoogle, { GoogleProvider } from "./index.ts";
 import { type LLMProviderRegistry, LLMProviderRegistryName } from "veryfront/extensions/llm";
 
@@ -45,5 +45,13 @@ describe("ext-llm-google", () => {
     const provider = new GoogleProvider();
     assertEquals(typeof provider.createModel, "function");
     assertEquals(typeof provider.createEmbedding, "function");
+  });
+
+  it("rejects a missing credential at the provider boundary", () => {
+    assertThrows(
+      () => new GoogleProvider().createModel("gemini-2.5-flash", {} as never),
+      TypeError,
+      "Google provider requires a credential",
+    );
   });
 });

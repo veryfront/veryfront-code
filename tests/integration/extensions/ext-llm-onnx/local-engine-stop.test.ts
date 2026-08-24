@@ -5,7 +5,7 @@ import {
   buildConditionalChatTemplateOptions,
   buildConditionalGenerateOptions,
   buildPipeOptions,
-} from "./local-engine.ts";
+} from "../../../../extensions/ext-llm-onnx/src/local-engine.ts";
 
 const LOCAL_AI_THINKING_ENV = "VERYFRONT_LOCAL_AI_THINKING";
 const originalThinkingEnv = Deno.env.get(LOCAL_AI_THINKING_ENV);
@@ -67,7 +67,7 @@ const fakeTransformers: any = {
   StoppingCriteriaList: FakeStoppingCriteriaList,
 };
 
-describe("provider/local/local-engine buildPipeOptions", () => {
+describe("ext-llm-onnx/local-engine buildPipeOptions", () => {
   afterEach(() => {
     restoreThinkingEnv();
   });

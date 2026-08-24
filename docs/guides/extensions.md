@@ -250,20 +250,20 @@ upgrades fail closed with an error that names the required package.
 
 ## First-party extension areas
 
-| Area          | Example package                              | Contract family   |
-| ------------- | -------------------------------------------- | ----------------- |
-| Auth          | `@veryfront/ext-auth-jwt`                    | `AuthProvider`    |
-| Build         | `@veryfront/ext-bundler-swc`                 | `Bundler`         |
-| Cache         | `@veryfront/ext-cache-redis`                 | `TokenCacheStore` |
-| Content       | `@veryfront/ext-content-mdx`                 | content parsing   |
-| CSS           | `@veryfront/ext-css-tailwind`                | CSS processing    |
-| Database      | `@veryfront/ext-db-sqlite`                   | database access   |
-| LLM           | `@veryfront/ext-llm-openai`                  | model providers   |
-| Observability | `@veryfront/ext-observability-opentelemetry` | telemetry         |
-| Parser        | `@veryfront/ext-parser-babel`                | parsing           |
-| Sandbox       | `@veryfront/ext-sandbox-shell-tools`         | sandbox tools     |
-| Schema        | `@veryfront/ext-schema-zod`                  | schema validation |
-| WebSocket     | `@veryfront/ext-node-websocket-ws`           | Node.js transport |
+| Area          | Example package                                        | Contract family   |
+| ------------- | ------------------------------------------------------ | ----------------- |
+| Auth          | `@veryfront/ext-auth-jwt`                              | `AuthProvider`    |
+| Build         | `@veryfront/ext-bundler-swc`                           | `Bundler`         |
+| Cache         | `@veryfront/ext-cache-redis`                           | `TokenCacheStore` |
+| Content       | `@veryfront/ext-content-mdx`                           | content parsing   |
+| CSS           | `@veryfront/ext-css-tailwind`                          | CSS processing    |
+| Database      | `@veryfront/ext-db-sqlite`                             | database access   |
+| LLM           | `@veryfront/ext-llm-openai`, `@veryfront/ext-llm-onnx` | model providers   |
+| Observability | `@veryfront/ext-observability-opentelemetry`           | telemetry         |
+| Parser        | `@veryfront/ext-parser-babel`                          | parsing           |
+| Sandbox       | `@veryfront/ext-sandbox-shell-tools`                   | sandbox tools     |
+| Schema        | `@veryfront/ext-schema-zod`                            | schema validation |
+| WebSocket     | `@veryfront/ext-node-websocket-ws`                     | Node.js transport |
 
 Veryfront applies explicit disable directives and higher-priority project
 overrides before importing optional first-party built-ins. A package that is

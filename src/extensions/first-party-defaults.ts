@@ -140,6 +140,12 @@ export const FIRST_PARTY_EXTENSION_POLICIES = Object.freeze(([
     rootNpm: false,
   },
   {
+    name: "ext-llm-onnx",
+    sourceDirectory: "ext-llm-onnx",
+    selection: "builtin-direct",
+    rootNpm: false,
+  },
+  {
     name: "ext-llm-openai",
     sourceDirectory: "ext-llm-openai",
     selection: "builtin-direct",

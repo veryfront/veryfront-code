@@ -8,7 +8,11 @@
  * @module extensions/ext-llm-anthropic/anthropic-provider
  */
 
-import type { LLMProvider, LLMProviderConfig } from "veryfront/extensions/llm";
+import {
+  type LLMProvider,
+  type LLMProviderConfig,
+  requireLLMProviderCredential,
+} from "veryfront/extensions/llm";
 import type { RuntimeUsage } from "veryfront/provider/shared";
 import type { ModelRuntime } from "veryfront/provider/types";
 import {
@@ -842,9 +846,10 @@ export class AnthropicProvider implements LLMProvider {
     modelId: string,
     config: LLMProviderConfig,
   ): ModelRuntime<OpenAICompatibleLanguageOptions, AnthropicGenerateContent> {
+    const credential = requireLLMProviderCredential(config, "Anthropic");
     return createAnthropicModelRuntime(
       {
-        apiKey: config.credential,
+        apiKey: credential,
         authToken: typeof config.authToken === "string" ? config.authToken : undefined,
         baseURL: config.baseURL,
         name: config.name ?? "anthropic",

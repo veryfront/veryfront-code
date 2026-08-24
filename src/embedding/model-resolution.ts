@@ -2,7 +2,7 @@ import {
   getDefaultVeryfrontCloudEmbeddingModel,
   isVeryfrontCloudEnabled,
 } from "#veryfront/platform/cloud/resolver.ts";
-import { DEFAULT_LOCAL_EMBEDDING_MODEL } from "#veryfront/provider/local/model-catalog.ts";
+import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import { isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 
@@ -51,5 +51,15 @@ export function resolveConfiguredEmbeddingModel(
     if (cloud) return cloud;
   }
 
-  return `local/${DEFAULT_LOCAL_EMBEDDING_MODEL}`;
+  const provider = ensureBuiltinLLMProviders().list().find((candidate) =>
+    candidate.createEmbedding && candidate.defaultEmbeddingModelId
+  );
+  if (provider?.defaultEmbeddingModelId) {
+    return `${provider.id}/${provider.defaultEmbeddingModelId}`;
+  }
+
+  const cloud = resolveCloudEmbeddingFallback();
+  if (cloud) return cloud;
+
+  throw new Error("No default embedding provider is available");
 }

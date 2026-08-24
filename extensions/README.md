@@ -28,6 +28,7 @@ Extension availability is separate from contract requirement:
 | ----------------------------------------------------- | ------------- | ------------------------------------------------ |
 | [`@veryfront/ext-llm-anthropic`](./ext-llm-anthropic) | `LLMProvider` | Anthropic Claude models via `@anthropic-ai/sdk`  |
 | [`@veryfront/ext-llm-google`](./ext-llm-google)       | `LLMProvider` | Google Gemini models via `@google/generative-ai` |
+| [`@veryfront/ext-llm-onnx`](./ext-llm-onnx)           | `LLMProvider` | In-process ONNX models via Transformers.js       |
 | [`@veryfront/ext-llm-openai`](./ext-llm-openai)       | `LLMProvider` | OpenAI models via `openai` SDK                   |
 
 ### Auth
@@ -146,6 +147,7 @@ subset used by ordinary apps and local development.
 | `@veryfront/ext-llm-openai`                  | `LLMProvider:openai`          | Direct service/source built-in            |
 | `@veryfront/ext-llm-anthropic`               | `LLMProvider:anthropic`       | Direct service/source built-in            |
 | `@veryfront/ext-llm-google`                  | `LLMProvider:google`          | Direct service/source built-in            |
+| `@veryfront/ext-llm-onnx`                    | `LLMProvider:local`           | Direct service/source built-in            |
 
 ## Explicit opt-in extensions
 
@@ -195,12 +197,17 @@ raw transitive dependencies such as `bash-tool`, `just-bash`, `jose`,
 | OpenTelemetry export or Node telemetry       | `@veryfront/ext-observability-opentelemetry`                                                                                                                                                                           |
 | Sentry application error capture             | `@veryfront/ext-observability-sentry`                                                                                                                                                                                  |
 | Local shell-tool agent runtime               | `@veryfront/ext-sandbox-shell-tools`                                                                                                                                                                                   |
+| In-process ONNX inference                    | `@veryfront/ext-llm-onnx` and its optional `@huggingface/transformers` peer                                                                                                                                            |
 | Eval report export to a generic HTTP gateway | `@veryfront/ext-eval-report-http`                                                                                                                                                                                      |
 | Eval report export to MLflow                 | `@veryfront/ext-eval-report-mlflow`                                                                                                                                                                                    |
 
 An agent runtime needs `@veryfront/ext-sandbox-shell-tools` only when it creates
 local bash or shell tools. MCP-only remote tool execution does not need that
 package unless the service also provides local shell tools.
+
+`@huggingface/transformers` is an explicit exception to the raw-dependency
+rule. It is the ONNX extension's declared optional runtime peer and is not part
+of root `veryfront` installs.
 
 ## Contract requirements
 

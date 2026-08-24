@@ -26,7 +26,6 @@ import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped
 import { tryGetRegistryScopeId } from "#veryfront/cache/cache-key-builder.ts";
 import { DEFAULT_GOOGLE_BASE_URL } from "#veryfront/provider/runtime-loader/provider-endpoints.ts";
 import { createOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
-import { createLocalModel } from "./local/model-runtime-adapter.ts";
 import { createVeryfrontCloudModel } from "./veryfront-cloud/provider.ts";
 import type { ModelRuntime } from "./types.ts";
 
@@ -322,12 +321,16 @@ function autoInitializeFromEnv(): void {
     }));
   });
 
-  // The local provider is always available and needs no API key.
-  // createLocalModel is a lightweight synchronous constructor — the actual
-  // @huggingface/transformers import and model loading happen lazily on the
-  // first prepare/doGenerate/doStream call, so this adds no startup overhead.
+  // The local provider needs no credential. The extension keeps Transformers
+  // and model loading lazy until prepare/doGenerate/doStream runs.
   manager.registerShared("local", (id) => {
-    return createLocalModel(id);
+    const provider = ensureBuiltinLLMProviders().get("local");
+    if (provider) return provider.createModel(id, {});
+    throw toError(createError({
+      type: "config",
+      message:
+        "Local ONNX provider not installed. Add @veryfront/ext-llm-onnx to use local/* models.",
+    }));
   });
 
   manager.registerShared("veryfront-cloud", (id) => {

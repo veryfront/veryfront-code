@@ -7,7 +7,11 @@
  * @module extensions/ext-llm-google/google-provider
  */
 
-import type { LLMProvider, LLMProviderConfig } from "veryfront/extensions/llm";
+import {
+  type LLMProvider,
+  type LLMProviderConfig,
+  requireLLMProviderCredential,
+} from "veryfront/extensions/llm";
 import type {
   EmbeddingRuntime,
   ModelRuntime,
@@ -740,9 +744,10 @@ export class GoogleProvider implements LLMProvider {
     modelId: string,
     config: LLMProviderConfig,
   ): ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart> {
+    const credential = requireLLMProviderCredential(config, "Google");
     return createGoogleModelRuntime(
       {
-        apiKey: config.credential,
+        apiKey: credential,
         baseURL: config.baseURL,
         name: config.name ?? "google",
         fetch: config.fetch,
@@ -752,9 +757,10 @@ export class GoogleProvider implements LLMProvider {
   }
 
   createEmbedding(modelId: string, config: LLMProviderConfig): EmbeddingRuntime {
+    const credential = requireLLMProviderCredential(config, "Google");
     return createGoogleEmbeddingRuntime(
       {
-        apiKey: config.credential,
+        apiKey: credential,
         baseURL: config.baseURL,
         name: config.name ?? "google",
         fetch: config.fetch,
