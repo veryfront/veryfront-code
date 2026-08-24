@@ -801,6 +801,30 @@ describe("automated review gate", () => {
 
     for (
       const malformedCurrentRange of [
+        "Review<strong>ing</strong> files that changed from the base of the " +
+        `PR and betw<em>ee</em>n not-a-sha and ${HEAD_SHA}.`,
+        "Review<strong>ing</strong> files that changed from the base\n" +
+        `of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base\\\n" +
+        `of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "Rev<!-- hidden -->iewing files that changed from the base\n" +
+        `of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "> Review<strong>ing</strong> files that changed from the base\n" +
+        `> of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "> Review<strong>ing</strong> files that changed from the base\n" +
+        `of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "| review |\n| --- |\n" +
+        "| Review<strong>ing</strong> files that changed from the base |\n" +
+        `| of the PR and betw<em>ee</em>n not-a-sha and ${HEAD_SHA}. |`,
+        "Rev**iew**ing files that changed from the base of the PR and " +
+        `betw[ee](https://example.com)n not-a-sha and ${HEAD_SHA}.`,
+        "Rev**iew**ing files that changed from the base of the PR and " +
+        "betw[ee](https://example.com)n not-a-sha\n" +
+        `and ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
+        `not-a-sha [and](https://example.com \"\nhidden title\n\") ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
+        `not-a-sha [x](https://example.com \"\nhidden title\n\") and ${HEAD_SHA}.`,
         "Reviewing files that changed from the base of the PR and " +
         `betw&#101;en not-a-sha and ${HEAD_SHA}.`,
         "&#82;eviewing files that changed from the base of the PR and " +
@@ -930,6 +954,8 @@ describe("automated review gate", () => {
     for (
       const nonRangeEncodedReviewingText of [
         `x&#82;eviewing files between not-a-sha and ${HEAD_SHA}.`,
+        `x<strong>Reviewing</strong> files between not-a-sha and ${HEAD_SHA}.`,
+        `&#120;<strong>Reviewing</strong> files between not-a-sha and ${HEAD_SHA}.`,
         `&#00000082;eviewing files between not-a-sha and ${HEAD_SHA}.`,
         "`&#82;eviewing files that changed from the base of the PR and " +
         `between not-a-sha and ${HEAD_SHA}.\``,
@@ -1458,6 +1484,35 @@ describe("automated review gate", () => {
       ))?.url,
       "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
     );
+
+    for (
+      const partiallyInlineCodeRange of [
+        `Rev\`iew\`ing files that changed from the base of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
+        `not-a-sha \`and ${HEAD_SHA}.\``,
+      ]
+    ) {
+      const newerPartiallyInlineCodeCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          partiallyInlineCodeRange,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:42Z",
+        updated_at: "2026-08-22T12:03:42Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerPartiallyInlineCodeCurrentRange],
+          },
+          HEAD_SHA,
+        ))?.url,
+        olderSuccess.html_url,
+      );
+    }
 
     const newerEscapedInlineCodeCurrentRangeExample = codeRabbitSummary({
       body: [
@@ -2331,6 +2386,77 @@ describe("automated review gate", () => {
       "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
     );
 
+    const currentHeadOnlyInsideMultilineComment = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "Reviewing files that changed from the base of the PR and between " +
+        `${STALE_SHA} <!--`,
+        `and ${HEAD_SHA}.`,
+        "-->",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, currentHeadOnlyInsideMultilineComment],
+        },
+        HEAD_SHA,
+      ))?.url,
+      olderSuccess.html_url,
+    );
+
+    const currentHeadOnlyInsideMultilineLinkTitle = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "Reviewing files that changed from the base of the PR and between " +
+        `${STALE_SHA} [x](https://example.com \"`,
+        `and ${HEAD_SHA}.`,
+        `\")`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:42Z",
+      updated_at: "2026-08-22T12:03:42Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, currentHeadOnlyInsideMultilineLinkTitle],
+        },
+        HEAD_SHA,
+      ))?.url,
+      olderSuccess.html_url,
+    );
+
+    const currentHeadOnlyInsideCodeAfterMultilineLink = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        'Reviewing[](https://example.com "',
+        "title",
+        `\") files that changed from the base of the PR and between ${STALE_SHA} \`and ${HEAD_SHA}.\``,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:43Z",
+      updated_at: "2026-08-22T12:03:43Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, currentHeadOnlyInsideCodeAfterMultilineLink],
+        },
+        HEAD_SHA,
+      ))?.url,
+      olderSuccess.html_url,
+    );
+
     for (
       const hiddenInlineComment of [
         [
@@ -2496,6 +2622,30 @@ describe("automated review gate", () => {
         "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
       );
     }
+
+    const decoratedRangeBeforeTypeSixHtmlBlock = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "Review<strong>ing</strong> files that changed from the base",
+        "<div>",
+        `of the PR and between not-a-sha and ${HEAD_SHA}.`,
+        "</div>",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, decoratedRangeBeforeTypeSixHtmlBlock],
+        },
+        HEAD_SHA,
+      ))?.url,
+      olderSuccess.html_url,
+    );
 
     const currentSummaryWithHiddenMarkers = codeRabbitSummary({
       body: [
