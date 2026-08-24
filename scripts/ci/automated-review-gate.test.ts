@@ -1516,28 +1516,97 @@ describe("automated review gate", () => {
 
   it("excludes indented code from range evidence", async () => {
     const olderSuccess = olderCodeRabbitSuccess();
-    const newerIndentedMalformedCurrentRange = codeRabbitSummary({
-      body: [
-        "<!-- recent_review_start -->",
-        "No actionable comments were generated in the recent review.",
-        "",
-        `    ${MALFORMED_CURRENT_RANGE}`,
-        "<!-- recent_review_end -->",
-      ].join("\n"),
-      created_at: "2026-08-22T12:03:43Z",
-      updated_at: "2026-08-22T12:03:43Z",
-    });
-
-    assertEquals(
-      (await findAutomatedReview(
+    for (
+      const { beforeRange, visibleIndent, hiddenIndent } of [
+        { beforeRange: [""], hiddenIndent: "    " },
         {
-          reviews: [],
-          comments: [olderSuccess, newerIndentedMalformedCurrentRange],
+          beforeRange: ["- list item", ""],
+          hiddenIndent: " ".repeat(6),
+          visibleIndent: " ".repeat(5),
         },
-        HEAD_SHA,
-      ))?.url,
-      olderSuccess.html_url,
-    );
+        {
+          beforeRange: ["", "9. list item", ""],
+          hiddenIndent: " ".repeat(7),
+          visibleIndent: " ".repeat(6),
+        },
+        {
+          beforeRange: ["", "123. list item", ""],
+          hiddenIndent: " ".repeat(9),
+          visibleIndent: " ".repeat(8),
+        },
+        {
+          beforeRange: ["", "123456789. list item", ""],
+          hiddenIndent: " ".repeat(15),
+          visibleIndent: " ".repeat(14),
+        },
+        {
+          beforeRange: ["- outer", "  - inner", ""],
+          hiddenIndent: " ".repeat(8),
+          visibleIndent: " ".repeat(7),
+        },
+        {
+          beforeRange: ["> - list item", ">"],
+          hiddenIndent: `>${" ".repeat(7)}`,
+          visibleIndent: `>${" ".repeat(6)}`,
+        },
+        {
+          beforeRange: ["- list item", "", "outside paragraph", ""],
+          hiddenIndent: "    ",
+        },
+        {
+          beforeRange: ["ordinary paragraph", "123. not a list", ""],
+          hiddenIndent: "    ",
+        },
+      ]
+    ) {
+      if (visibleIndent !== undefined) {
+        const newerVisibleListContinuation = codeRabbitSummary({
+          body: [
+            "<!-- recent_review_start -->",
+            "No actionable comments were generated in the recent review.",
+            ...beforeRange,
+            `${visibleIndent}${MALFORMED_CURRENT_RANGE}`,
+            "<!-- recent_review_end -->",
+          ].join("\n"),
+          created_at: "2026-08-22T12:03:44Z",
+          updated_at: "2026-08-22T12:03:44Z",
+        });
+        assertEquals(
+          await findAutomatedReview(
+            {
+              reviews: [],
+              comments: [olderSuccess, newerVisibleListContinuation],
+            },
+            HEAD_SHA,
+          ),
+          undefined,
+          JSON.stringify({ beforeRange, visibleIndent }),
+        );
+      }
+
+      const newerIndentedCode = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...beforeRange,
+          `${hiddenIndent}${MALFORMED_CURRENT_RANGE}`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:45Z",
+        updated_at: "2026-08-22T12:03:45Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerIndentedCode],
+          },
+          HEAD_SHA,
+        ))?.url,
+        olderSuccess.html_url,
+        JSON.stringify({ beforeRange, hiddenIndent }),
+      );
+    }
   });
 
   it("scopes HTML comments and validates fence openers", async () => {

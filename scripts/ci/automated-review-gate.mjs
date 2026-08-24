@@ -539,6 +539,7 @@ function scanMarkdownStructure(content) {
   let openFence;
   let openHtmlBlock;
   let openHtmlComment;
+  let openListContexts = [];
   let openParagraph;
   let lineStart = 0;
   for (const lineMatch of content.matchAll(/[^\r\n]*(?:\r\n|[\r\n]|$)/g)) {
@@ -551,8 +552,21 @@ function scanMarkdownStructure(content) {
       paragraphLine,
       openParagraph,
     );
-    const indentedCodeLine = isMarkdownIndentedCodeLine(lineWithoutEnding) &&
-      !continuesParagraph;
+    const listContextsForLine = markdownListContextsForLine(
+      paragraphLine,
+      openListContexts,
+      continuesParagraph,
+    );
+    const indentedCodeLine = isMarkdownIndentedCodeLine(
+      lineWithoutEnding,
+      paragraphLine,
+      listContextsForLine.at(-1)?.continuationIndent ?? 0,
+    ) && !continuesParagraph;
+    openListContexts = markdownListContextsAfterLine(
+      paragraphLine,
+      listContextsForLine,
+      continuesParagraph,
+    );
     const paragraphAfterLine = markdownParagraphAfterLine(
       paragraphLine,
       openParagraph,
@@ -790,11 +804,22 @@ function hasValidMarkdownBlockquoteSpacing(prefix) {
   return true;
 }
 
-function isMarkdownIndentedCodeLine(line) {
+function isMarkdownIndentedCodeLine(
+  line,
+  paragraphLine,
+  listContinuationIndent,
+) {
   const prefix = line.match(
     MARKDOWN_FENCE_CONTAINER_CONTINUATION_PATTERN,
   )?.[0] ?? "";
   const firstBlockquote = prefix.indexOf(">");
+  if (listContinuationIndent > 0) {
+    if (
+      firstBlockquote >= 0 &&
+      markdownColumns(prefix.slice(0, firstBlockquote)) >= 4
+    ) return true;
+    return paragraphLine.indentation - listContinuationIndent >= 4;
+  }
   if (firstBlockquote < 0) return markdownColumns(prefix) >= 4;
   if (markdownColumns(prefix.slice(0, firstBlockquote)) >= 4) return true;
   return !hasValidMarkdownBlockquoteSpacing(prefix);
@@ -826,6 +851,40 @@ function markdownParagraphLineContext(line) {
       : markdownContainerIndentColumns(containerPrefix + listPrefix),
     structuralPrefix,
   };
+}
+
+function markdownListContextsForLine(
+  line,
+  openListContexts,
+  continuesParagraph,
+) {
+  const blankContainerLine = line.listContinuationIndent === undefined &&
+    line.content.trim().length === 0;
+  if (continuesParagraph || blankContainerLine) return openListContexts;
+  while (openListContexts.length > 0) {
+    const context = openListContexts.at(-1);
+    if (
+      context.structuralPrefix === line.structuralPrefix &&
+      context.continuationIndent <= line.indentation
+    ) break;
+    openListContexts.pop();
+  }
+  return openListContexts;
+}
+
+function markdownListContextsAfterLine(
+  line,
+  listContextsForLine,
+  continuesParagraph,
+) {
+  if (continuesParagraph || line.listContinuationIndent === undefined) {
+    return listContextsForLine;
+  }
+  listContextsForLine.push({
+    continuationIndent: line.listContinuationIndent,
+    structuralPrefix: line.structuralPrefix,
+  });
+  return listContextsForLine;
 }
 
 function markdownLineContinuesParagraph(line, paragraph) {
@@ -1047,6 +1106,7 @@ function markdownInlineStructureRanges(content, excludedRanges = []) {
   const tableSplitRangeCursor = { index: 0 };
 
   let segmentStart = 0;
+  let openListContexts = [];
   let openParagraph;
   let excludedRangeIndex = 0;
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
@@ -1059,8 +1119,21 @@ function markdownInlineStructureRanges(content, excludedRanges = []) {
       paragraphLine,
       openParagraph,
     );
-    const indentedCodeLine = isMarkdownIndentedCodeLine(lineWithoutEnding) &&
-      !continuesParagraph;
+    const listContextsForLine = markdownListContextsForLine(
+      paragraphLine,
+      openListContexts,
+      continuesParagraph,
+    );
+    const indentedCodeLine = isMarkdownIndentedCodeLine(
+      lineWithoutEnding,
+      paragraphLine,
+      listContextsForLine.at(-1)?.continuationIndent ?? 0,
+    ) && !continuesParagraph;
+    openListContexts = markdownListContextsAfterLine(
+      paragraphLine,
+      listContextsForLine,
+      continuesParagraph,
+    );
     while (excludedRanges[excludedRangeIndex]?.[1] <= lineStart) {
       excludedRangeIndex += 1;
     }
