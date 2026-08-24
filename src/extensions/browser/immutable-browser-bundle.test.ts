@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { snapshotImmutableBrowserBundleProvider } from "./immutable-browser-bundle.ts";
 
 Deno.test("immutable browser bundle inspection is independent of replaced globals", () => {
@@ -16,7 +16,7 @@ Deno.test("immutable browser bundle inspection is independent of replaced global
     });
     Object.defineProperty(Array, "isArray", {
       configurable: true,
-      value: () => false,
+      value: () => true,
     });
     assertEquals(
       snapshotImmutableBrowserBundleProvider(
@@ -24,10 +24,22 @@ Deno.test("immutable browser bundle inspection is independent of replaced global
         { bundleLabel: "bundle", providerLabel: "provider", maxBytes: 1_024 },
       ).browserBundle,
       "console.log('safe');",
+      "inspection must use the captured intrinsics, not the replaced globals",
     );
   } finally {
     if (descriptors) Object.defineProperty(Object, "getOwnPropertyDescriptors", descriptors);
     if (ownKeys) Object.defineProperty(Reflect, "ownKeys", ownKeys);
     if (isArray) Object.defineProperty(Array, "isArray", isArray);
   }
+
+  assertThrows(
+    () =>
+      snapshotImmutableBrowserBundleProvider(
+        Object.assign([], { browserBundle: "console.log('x');" }),
+        { bundleLabel: "bundle", providerLabel: "provider", maxBytes: 1_024 },
+      ),
+    TypeError,
+    "provider must be an object",
+    "an array carrying a browserBundle property must be rejected",
+  );
 });

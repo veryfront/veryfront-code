@@ -5,7 +5,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module extensions/contract-registry-internal.test
  */
 
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   acquireContractLease,
@@ -13,6 +13,7 @@ import {
   commitContractGeneration,
   completeContractGenerationRetirement,
   drainContractGeneration,
+  failContractGeneration,
   isContractGenerationDrained,
   registerUnmanagedContract,
   resetContractRegistry,
@@ -119,6 +120,18 @@ describe("contract registry lifecycle state", () => {
     const published = tryResolveRegisteredContract("InheritedOwnerCandidate");
     assertEquals(failure, undefined);
     assertEquals(published, candidate);
+    assertEquals(
+      tryResolveRegisteredContract("InheritedOwnerUnmanaged"),
+      unmanaged,
+      "an ownerless compatibility entry must survive an unrelated generation commit",
+    );
+    assertEquals(
+      trySnapshotGenerationOwnedContractForUse("InheritedOwnerUnmanaged"),
+      undefined,
+      "the committing generation must not adopt an ownerless entry through an inherited generation property",
+    );
+    sealContractGeneration(generation);
+    completeContractGenerationRetirement(generation);
   });
 
   it("ignores an inherited candidate overlay during successful teardown", async () => {
@@ -428,5 +441,83 @@ describe("contract registry lifecycle state", () => {
       true,
     );
     assertEquals(published, undefined);
+  });
+
+  it("refuses to publish over an active generation", () => {
+    const first = Object.freeze({ id: "first" });
+    const second = Object.freeze({ id: "second" });
+    const activeGeneration = createCommittedGeneration("ActiveFencedContract", first);
+    const candidate = beginContractGeneration();
+    stageContract(candidate, "ActiveFencedContract", second);
+
+    assertThrows(
+      () => commitContractGeneration(candidate),
+      Error,
+      "before the active generation retires",
+      "a candidate must not publish while another generation is still active",
+    );
+    assertEquals(
+      tryResolveRegisteredContract("ActiveFencedContract"),
+      first,
+      "a fenced commit must leave the active generation's entries published",
+    );
+
+    failContractGeneration(candidate);
+    sealContractGeneration(activeGeneration);
+    completeContractGenerationRetirement(activeGeneration);
+  });
+
+  it("refuses to publish while a prior generation still owns published entries", () => {
+    const retiring = Object.freeze({ id: "retiring" });
+    const replacement = Object.freeze({ id: "replacement" });
+    const retiringGeneration = createCommittedGeneration("OwnedFencedContract", retiring);
+    sealContractGeneration(retiringGeneration);
+    const candidate = beginContractGeneration();
+    stageContract(candidate, "ReplacementFencedContract", replacement);
+
+    assertThrows(
+      () => commitContractGeneration(candidate),
+      Error,
+      "while a prior generation remains owned",
+      "a candidate must not publish while a retiring generation still owns entries",
+    );
+    assertEquals(
+      tryResolveRegisteredContract("ReplacementFencedContract"),
+      undefined,
+      "a fenced commit must publish none of its staged entries",
+    );
+    assertEquals(
+      tryResolveRegisteredContract("OwnedFencedContract"),
+      retiring,
+      "a fenced commit must leave the retiring generation's entries untouched",
+    );
+
+    failContractGeneration(candidate);
+    completeContractGenerationRetirement(retiringGeneration);
+  });
+
+  it("keeps contract absence fail-closed after a failed generation", () => {
+    const generation = beginContractGeneration();
+    failContractGeneration(generation);
+
+    assertThrows(
+      () => trySnapshotContractForUse("FailedGenerationContract"),
+      Error,
+      "unavailable because the previous generation failed",
+      "a failed generation must stay fail-closed instead of reporting an absent registration",
+    );
+
+    const recovered = beginContractGeneration();
+    stageContract(recovered, "RecoveredContract", Object.freeze({ id: "recovered" }));
+    commitContractGeneration(recovered);
+
+    assertEquals(
+      trySnapshotContractForUse("UnrelatedContract"),
+      undefined,
+      "a successful commit must clear the fail-closed flag",
+    );
+
+    sealContractGeneration(recovered);
+    completeContractGenerationRetirement(recovered);
   });
 });

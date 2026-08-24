@@ -5,6 +5,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module extensions/contracts.test
  */
 
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { register, reset, resolve, tryResolve, unregister } from "./contracts.ts";
@@ -22,18 +23,46 @@ describe("extensions/contracts", () => {
     });
 
     it("throws MissingExtensionError for unregistered contract", () => {
-      assertThrows(
+      const error = assertThrows(
         () => resolve("UnknownContract"),
-        Error,
+        VeryfrontError,
         'Missing extension for contract "UnknownContract"',
+        "resolve must raise the registry missing-extension error",
+      ) as VeryfrontError;
+      assertEquals(
+        error.slug,
+        "missing-extension",
+        "resolve must raise the registry missing-extension error",
+      );
+      assertEquals(error.status, 500, "missing extension must map to 500");
+      assertEquals(
+        error.category,
+        "RUNTIME",
+        "missing extension must stay in the RUNTIME category",
+      );
+      assertEquals(
+        error.detail,
+        undefined,
+        "a contract without a recommendation must not carry an install detail",
       );
     });
 
     it("includes recommendation in error message when available", () => {
-      assertThrows(
+      const error = assertThrows(
         () => resolve("Bundler"),
-        Error,
+        VeryfrontError,
         "deno add @veryfront/ext-bundler-esbuild",
+        "a recommended contract must still raise the registry missing-extension error",
+      ) as VeryfrontError;
+      assertEquals(
+        error.slug,
+        "missing-extension",
+        "a recommended contract must keep the missing-extension slug",
+      );
+      assertEquals(
+        error.detail,
+        "Install it with: deno add @veryfront/ext-bundler-esbuild",
+        "detail must name the package to install",
       );
     });
 
