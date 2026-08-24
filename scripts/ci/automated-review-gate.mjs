@@ -88,6 +88,13 @@ export async function findAutomatedReview(
       return { kind: "failure" };
     }
   }
+  events.sort((left, right) => {
+    if (left.time === undefined) {
+      return right.time === undefined ? right.order - left.order : 1;
+    }
+    if (right.time === undefined) return -1;
+    return right.time - left.time || right.order - left.order;
+  });
   const timedEvents = Map.groupBy(
     events.filter((event) => event.time !== undefined),
     (event) => event.time,
@@ -98,18 +105,13 @@ export async function findAutomatedReview(
     )).filter(
       (outcome) => outcome.kind !== "not-head",
     );
+    if (exactHeadOutcomes.length === 0) continue;
     if (
       exactHeadOutcomes.length > 1 &&
       exactHeadOutcomes.some((outcome) => outcome.kind !== "success")
     ) return { kind: "failure" };
+    break;
   }
-  events.sort((left, right) => {
-    if (left.time === undefined) {
-      return right.time === undefined ? right.order - left.order : 1;
-    }
-    if (right.time === undefined) return -1;
-    return right.time - left.time || right.order - left.order;
-  });
 
   for (const event of events) {
     const outcome = await outcomeFor(event);

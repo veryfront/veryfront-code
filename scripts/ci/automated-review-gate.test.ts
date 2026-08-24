@@ -2248,6 +2248,25 @@ describe("automated review gate", () => {
       );
     }
 
+    const newerSuccessfulSummary = codeRabbitSummary({
+      created_at: "2026-08-22T12:01:00Z",
+      updated_at: "2026-08-22T12:01:00Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [
+            failedSummary,
+            successfulSummary,
+            newerSuccessfulSummary,
+          ],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+
     assertEquals(
       await findAutomatedReview(
         {
