@@ -1080,8 +1080,18 @@ describe("automated review workflow", () => {
     );
     const gate = record(steps[1], "gate");
     const script = String(record(gate.with, "gate inputs").script);
+    assertEquals(
+      record(gate.env, "gate environment").TARGET_SHA,
+      "${{ needs.target.outputs.key }}",
+    );
     assert(script.includes("publishAutomatedReviewStatus"));
     assert(script.includes("github.rest.pulls.get"));
+    assert(script.includes("process.env.TARGET_SHA"));
+    assert(script.includes("pullRequest.head.sha !== headSha"));
+    assert(
+      !script.includes("const headSha = pullRequest.head.sha"),
+      "the publisher must use the same immutable SHA as its concurrency key",
+    );
     assert(!script.includes("listPullRequestsAssociatedWithCommit"));
     assert(
       script.includes("allowPullRequestReviews") &&

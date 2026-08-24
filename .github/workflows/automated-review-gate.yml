@@ -91,6 +91,8 @@ jobs:
       - name: Require an automated review for the current commit
         id: publish
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          TARGET_SHA: ${{ needs.target.outputs.key }}
         with:
           retries: 3
           result-encoding: string
@@ -109,7 +111,15 @@ jobs:
             const pullRequest = response.data;
             const sameRepository =
               `${context.repo.owner}/${context.repo.repo}`;
-            const headSha = pullRequest.head.sha;
+            const headSha = process.env.TARGET_SHA;
+            if (!/^[0-9a-f]{40}$/i.test(headSha ?? "")) {
+              core.setFailed("The resolved review target commit is invalid");
+              return "failure";
+            }
+            if (pullRequest.head.sha !== headSha) {
+              core.notice("Skipped automated review publication after the pull request head changed.");
+              return "stale";
+            }
             let publishAutomatedReviewStatus;
             try {
               ({ publishAutomatedReviewStatus } = await import(gateUrl));
@@ -168,6 +178,8 @@ jobs:
           github.event.action == 'synchronize' &&
           steps.publish.outputs.result == 'pending'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          TARGET_SHA: ${{ needs.target.outputs.key }}
         with:
           retries: 3
           script: |
@@ -182,11 +194,11 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               pullNumber: pullRequest.number,
-              headSha: pullRequest.head.sha,
+              headSha: process.env.TARGET_SHA,
             });
             core.notice(
               result.requested
-                ? `Requested an automated review of ${pullRequest.head.sha.slice(0, 12)}.`
+                ? `Requested an automated review of ${process.env.TARGET_SHA.slice(0, 12)}.`
                 : result.reason === "stale-head"
                 ? "Skipped an automated review request from a stale synchronize event."
                 : "An automated review request for this head commit already exists.",
@@ -221,6 +233,8 @@ jobs:
           persist-credentials: false
       - name: Publish authenticated CodeRabbit completion
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          TARGET_SHA: ${{ needs.target.outputs.key }}
         with:
           retries: 3
           script: |
@@ -239,7 +253,7 @@ jobs:
               github,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              headSha: context.payload.sha,
+              headSha: process.env.TARGET_SHA,
               // The payload claim carries no creator; the helper authenticates
               // the completion against the REST status history for the head.
               status: {
@@ -250,7 +264,7 @@ jobs:
             });
             if (result.state === "success") {
               core.notice(
-                `Authenticated CodeRabbit completion for ${context.payload.sha.slice(0, 12)}.`,
+                `Authenticated CodeRabbit completion for ${process.env.TARGET_SHA.slice(0, 12)}.`,
               );
             } else if (result.failure) {
               core.warning(result.failure.message);
