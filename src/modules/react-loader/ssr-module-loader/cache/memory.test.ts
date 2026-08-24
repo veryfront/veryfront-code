@@ -369,6 +369,12 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
         tempPath: "/tmp/y.mjs",
         contentHash: "y",
       });
+      const collidingPathKey =
+        "path:project-1:file.ts:project-2:1.0.0:registry:https://registry.example.com";
+      globalCrossProjectCache.set(collidingPathKey, {
+        tempPath: "other-project-temp.mjs",
+        contentHash: "other-project",
+      });
 
       clearSSRModuleCacheForProject("project-1");
 
@@ -398,6 +404,11 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
         globalCrossProjectCache.has("prefix:project-2:mod"),
         true,
         "another project's cross-project entries must survive",
+      );
+      assertEquals(
+        globalCrossProjectCache.has(collidingPathKey),
+        true,
+        "a project ID in the source path must not claim another project's cache entry",
       );
 
       clearSSRModuleCacheForProject("project:01J2XYZ");

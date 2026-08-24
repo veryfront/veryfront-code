@@ -78,6 +78,20 @@ describe("rendering/rsc/server-renderer/component-detector", () => {
       assertEquals(getComponentId(comp), "MyDisplay");
     });
 
+    it("treats an empty displayName as absent", () => {
+      function NamedComponent() {
+        return null;
+      }
+      const comp = Object.assign(NamedComponent, { displayName: "" }) as unknown as RSCComponent;
+
+      const id = getComponentId(comp);
+      assertEquals(id, "NamedComponent");
+
+      const refs = new Map<string, string>();
+      registerClientRef(id, comp, new Map(), refs);
+      assertEquals(refs.get("NamedComponent"), "/_veryfront/client/NamedComponent.js");
+    });
+
     it("should fallback to function name", () => {
       function MyNamedComponent() {
         return null;

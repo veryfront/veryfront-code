@@ -3,8 +3,8 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
-import { FilesystemCacheStore } from "./filesystem-store.ts";
-import type { CachePayload } from "../types.ts";
+import { FilesystemCacheStore } from "#veryfront/rendering/cache/stores/filesystem-store.ts";
+import type { CachePayload } from "#veryfront/rendering/cache/types.ts";
 
 /**
  * Allocate a cache root through the platform filesystem adapter so the suite

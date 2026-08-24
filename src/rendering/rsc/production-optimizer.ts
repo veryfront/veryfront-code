@@ -45,9 +45,13 @@ export class RSCProductionOptimizer {
       hash = Math.imul(hash, 16777619);
     }
 
-    for (const key of Object.keys(payload.clientRefs).sort()) {
-      for (let i = 0; i < key.length; i++) {
-        hash ^= key.charCodeAt(i);
+    for (
+      const [key, moduleUrl] of Object.entries(payload.clientRefs).sort(([a], [b]) =>
+        a.localeCompare(b)
+      )
+    ) {
+      for (const char of `${key}\0${moduleUrl}\0`) {
+        hash ^= char.charCodeAt(0);
         hash = Math.imul(hash, 16777619);
       }
     }

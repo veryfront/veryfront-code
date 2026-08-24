@@ -101,8 +101,12 @@ describe("rendering/rsc/production-optimizer", () => {
     });
 
     it("should differ for different client reference maps", () => {
-      const a = RSCProductionOptimizer.generateETag(makePayload({ clientRefs: { A: "/a.js" } }));
-      const b = RSCProductionOptimizer.generateETag(makePayload({ clientRefs: { B: "/b.js" } }));
+      const a = RSCProductionOptimizer.generateETag(
+        makePayload({ clientRefs: { App: "/a.js" } }),
+      );
+      const b = RSCProductionOptimizer.generateETag(
+        makePayload({ clientRefs: { App: "/b.js" } }),
+      );
       assertEquals(a !== b, true, "ETag must cover the client reference map");
     });
 

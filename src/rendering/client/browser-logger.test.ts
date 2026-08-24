@@ -78,6 +78,7 @@ function withBrowserGlobals<T>(
     value: scope[name],
   }));
 
+  for (const name of DEV_FLAG_NAMES) delete scope[name];
   if (options.window) {
     scope.window = {};
   } else {
@@ -264,6 +265,19 @@ describe("Browser Logger", () => {
         withBrowserGlobals({ window: true, flags: { __RSC_DEV__: true } }, getBrowserLogLevel),
         LogLevel.INFO,
         "the __RSC_DEV__ alias logs at INFO",
+      );
+    });
+
+    it("does not inherit dev flags omitted from a nested test scope", () => {
+      withBrowserGlobals(
+        { window: true, flags: { __VERYFRONT_DEV__: true } },
+        () => {
+          assertEquals(
+            withBrowserGlobals({ window: true }, getBrowserLogLevel),
+            LogLevel.WARN,
+            "each browser test scope must declare its own development flags",
+          );
+        },
       );
     });
 

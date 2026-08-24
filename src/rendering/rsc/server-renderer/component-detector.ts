@@ -29,7 +29,7 @@ export function isClientComponent(
 }
 
 export function getComponentId(Component: RSCComponent): string {
-  return Component.__rsc_id ?? Component.displayName ?? (Component.name || "Unknown");
+  return Component.__rsc_id ?? (Component.displayName || Component.name || "Unknown");
 }
 
 export function registerClientRef(

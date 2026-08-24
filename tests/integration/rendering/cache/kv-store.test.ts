@@ -95,8 +95,8 @@ describe("rendering/cache/stores/kv-store against a stubbed Deno KV", () => {
       await withFakeKv(async (store, kv) => {
         await store.get("any-key");
 
-        assertEquals(kv.openedPaths, ["/tmp/test.db"], "the configured path must reach openKv");
-      }, { path: "/tmp/test.db" });
+        assertEquals(kv.openedPaths, ["test.db"], "the configured path must reach openKv");
+      }, { path: "test.db" });
     });
   });
 
