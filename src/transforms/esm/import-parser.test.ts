@@ -423,13 +423,55 @@ describe("transforms/esm/import-parser", () => {
     }
   });
 
+  it("reports a cross-project import with its parsed slug, version and path", async () => {
+    await withProject(
+      {
+        "pages/index.tsx":
+          `import { Button } from "demo@1.0/@/components/Button";\nexport default () => Button;`,
+      },
+      async (projectDir) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "pages/index.tsx");
+        const result = await parseLocalImports(
+          await Deno.readTextFile(filePath),
+          filePath,
+          projectDir,
+          adapter,
+        );
+
+        assertEquals(
+          result.crossProjectImports,
+          [{
+            specifier: "demo@1.0/@/components/Button",
+            projectSlug: "demo",
+            version: "1.0",
+            path: "components/Button",
+          }],
+          "a cross-project import must be reported for SSR transformation",
+        );
+        assertEquals(
+          result.missing.length,
+          0,
+          "a cross-project import is not a missing dependency",
+        );
+      },
+    );
+  });
+
   it("short-circuits .css and .json without invoking the compiler", async () => {
     await withProject({}, async (projectDir) => {
       const adapter = await getLocalAdapter();
-      for (const file of ["styles/globals.css", "data/config.json"]) {
-        const result = await parseLocalImports("{}", join(projectDir, file), projectDir, adapter);
-        assertEquals(result.imports.length, 0);
-        assertEquals(result.missing.length, 0);
+      // Each source is invalid under the esbuild loader its extension selects,
+      // so a file that lost its short circuit would reject instead of parsing.
+      const sources: Record<string, string> = {
+        "styles/globals.css": `.a { content: "unterminated`,
+        "data/config.json": `{ "a": , }`,
+      };
+
+      for (const [file, source] of Object.entries(sources)) {
+        const result = await parseLocalImports(source, join(projectDir, file), projectDir, adapter);
+        assertEquals(result.imports.length, 0, "short-circuited files must never be compiled");
+        assertEquals(result.missing.length, 0, "short-circuited files report no missing deps");
       }
     });
   });

@@ -67,6 +67,15 @@ describe("upgradeImportAssertions", () => {
     assertEquals(await upgradeImportAssertions(code), code);
   });
 
+  it("leaves an assert call on the next line alone", async () => {
+    const code = `import x from "./a.js"\nassert (cond);\n`;
+    assertEquals(
+      await upgradeImportAssertions(code),
+      code,
+      "ASI-terminated import must not let the assert keyword cross the newline",
+    );
+  });
+
   it("keeps positions correct when the module also imports over HTTP", async () => {
     const code = `import "https://esm.sh/react@19.1.1";\n` +
       `import m from "./a.json" assert { type: "json" };\n`;

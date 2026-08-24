@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { initLexer, parseImports, replaceSpecifiers, rewriteImports } from "./lexer.ts";
 
@@ -113,12 +113,37 @@ import { render } from "react-dom";
     });
 
     it("handles dynamic import replacement", async () => {
-      const code = `const m = await import("./lazy.js");`;
-      const result = await replaceSpecifiers(code, (spec) => {
-        if (spec === "./lazy.js") return "./lazy-v2.js";
-        return null;
-      });
-      assertEquals(result.includes("./lazy-v2.js"), true);
+      const replacer = (spec: string) => (spec === "./lazy.js" ? "./lazy-v2.js" : null);
+
+      const doubleQuoted = await replaceSpecifiers(
+        `const m = await import("./lazy.js");`,
+        replacer,
+      );
+      assertEquals(
+        doubleQuoted,
+        `const m = await import("./lazy-v2.js");`,
+        "double-quoted dynamic import keeps its quotes and quote style",
+      );
+
+      const singleQuoted = await replaceSpecifiers(
+        `const m = await import('./lazy.js');`,
+        replacer,
+      );
+      assertEquals(
+        singleQuoted,
+        `const m = await import('./lazy-v2.js');`,
+        "single-quoted dynamic import keeps its quotes and quote style",
+      );
+
+      const backtickQuoted = await replaceSpecifiers(
+        "const m = await import(`./lazy.js`);",
+        replacer,
+      );
+      assertEquals(
+        backtickQuoted,
+        "const m = await import(`./lazy-v2.js`);",
+        "backtick-quoted dynamic import keeps its quotes and quote style",
+      );
     });
 
     it("preserves HTTP URLs in non-import string literals", async () => {
@@ -143,6 +168,31 @@ const url = "https://example.com/api";
         return null;
       });
       assertEquals(result, `import React from "preact/compat";`);
+    });
+
+    it("hands the rewriter the unmasked HTTP specifier and statement", async () => {
+      const code = `import React from "https://esm.sh/react@18";`;
+      let sawUrl = false;
+      const result = await rewriteImports(code, (imp, stmt) => {
+        sawUrl = true;
+        assertEquals(
+          imp.n,
+          "https://esm.sh/react@18",
+          "rewriter must see the real URL, not the mask placeholder",
+        );
+        assertStringIncludes(
+          stmt,
+          "https://esm.sh/react@18",
+          "statement text handed to the rewriter must be unmasked",
+        );
+        return stmt.replace(`"https://esm.sh/react@18"`, `"/_vf/react.js"`);
+      });
+      assertEquals(sawUrl, true, "rewriter must run for an HTTP URL import");
+      assertEquals(
+        result,
+        `import React from "/_vf/react.js";`,
+        "an HTTP URL import is rewritten to the served path",
+      );
     });
 
     it("leaves statement unchanged when rewriter returns null", async () => {

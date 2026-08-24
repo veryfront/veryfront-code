@@ -242,6 +242,41 @@ describe("transforms/esm/transform-cache", () => {
         { packageName: "zod", declaration: "^4" },
       ]);
     });
+
+    it("discards a backend entry whose code is empty", async () => {
+      const cacheBackend: CacheBackend = {
+        type: "memory",
+        get: () =>
+          Promise.resolve(JSON.stringify({ code: "", hash: "hash-empty", timestamp: Date.now() })),
+        set: () => Promise.resolve(),
+        del: () => Promise.resolve(),
+      };
+      __injectCachesForTests({ cacheBackend });
+
+      assertEquals(
+        await getCachedTransformAsync("empty-code-key"),
+        undefined,
+        "an empty-code cache entry must be discarded instead of served for its whole TTL",
+      );
+    });
+
+    it("falls back to the local cache when the distributed backend rejects", async () => {
+      const cacheBackend: CacheBackend = {
+        type: "redis",
+        get: () => Promise.reject(new Error("redis down")),
+        set: () => Promise.reject(new Error("redis down")),
+        del: () => Promise.resolve(),
+      };
+      __injectCachesForTests({ cacheBackend });
+
+      await setCachedTransformAsync("redis-down-key", "const x = 1;", "hash-x");
+
+      assertEquals(
+        (await getCachedTransformAsync("redis-down-key"))?.code,
+        "const x = 1;",
+        "a distributed-cache outage must degrade to the local fallback, not throw",
+      );
+    });
   });
 
   describe("getOrComputeTransform", () => {

@@ -808,13 +808,29 @@ describe("transforms/esm/http-cache-helpers", () => {
     });
 
     it("resolves react subpaths", () => {
-      const result = resolveBareSpecifier("react/jsx-runtime", emptyImportMap);
-      assertEquals(result.includes("react"), true);
+      assertEquals(
+        resolveBareSpecifier("react/jsx-runtime", emptyImportMap, "19.1.0"),
+        "https://esm.sh/react@19.1.0/jsx-runtime?external=react&target=es2022&deps=csstype@3.2.3",
+        "an enumerated react subpath resolves through the canonical React import map",
+      );
+      assertEquals(
+        resolveBareSpecifier("react/compiler-runtime", emptyImportMap, "19.1.0"),
+        "https://esm.sh/react@19.1.0/compiler-runtime?external=react&target=es2022",
+        "non-enumerated react subpaths keep react external and stay off the node target",
+      );
     });
 
     it("resolves react-dom subpaths", () => {
-      const result = resolveBareSpecifier("react-dom/client", emptyImportMap);
-      assertEquals(result.includes("react-dom"), true);
+      assertEquals(
+        resolveBareSpecifier("react-dom/client", emptyImportMap, "19.1.0"),
+        "https://esm.sh/react-dom@19.1.0/client?external=react&target=es2022&deps=csstype@3.2.3",
+        "an enumerated react-dom subpath resolves through the canonical React import map",
+      );
+      assertEquals(
+        resolveBareSpecifier("react-dom/test-utils", emptyImportMap, "19.1.0"),
+        "https://esm.sh/react-dom@19.1.0/test-utils?external=react&target=es2022",
+        "non-enumerated react-dom subpaths keep react external",
+      );
     });
 
     it("uses captured string intrinsics after prototype poisoning", () => {
