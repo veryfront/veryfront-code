@@ -41,7 +41,6 @@ if (suite && suite !== "runtime:node") {
   throw new Error(`Unsupported Node suite profile: ${suite}`);
 }
 const patterns = rawArgs.filter((arg) => arg !== suiteArg);
-ensureNpmNodeModulesLinks();
 const concurrency = resolveConcurrency(["VF_TEST_CONCURRENCY", "NODE_TEST_CONCURRENCY"]);
 const shardOverride = resolveShardCount(["VF_TEST_SHARDS", "NODE_TEST_SHARDS"]);
 const autoShards = concurrency >= 4 ? Math.min(4, Math.floor(concurrency / 2)) : 1;
@@ -54,15 +53,19 @@ const envExcludePatterns = (process.env.NODE_TEST_EXCLUDE || process.env.VF_TEST
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
-const hasFilters = includePatterns.length > 0 || envExcludePatterns.length > 0;
 
 function selectedTestFiles() {
-  return loadSuitePlan({
+  const files = loadSuitePlan({
     suite: suite ?? "runtime:node",
     patterns,
     include: includePatterns,
     exclude: envExcludePatterns,
   });
+  if (files.length === 0) {
+    console.error("Node test runner selected no test files for the active filters.");
+    process.exit(1);
+  }
+  return files;
 }
 
 function buildNodeArgs(files, perShardConcurrency) {
@@ -102,9 +105,7 @@ for (
 
 async function runShardedTests() {
   const files = selectedTestFiles();
-  if (files.length === 0) {
-    return hasFilters ? true : null;
-  }
+  ensureNpmNodeModulesLinks();
 
   const shards = splitIntoShards(files, shardCount);
   const perShardConcurrency = Math.max(1, Math.floor(concurrency / shards.length));
@@ -130,10 +131,6 @@ async function runShardedTests() {
 if (shardCount > 1) {
   runShardedTests()
     .then((ok) => {
-      if (ok === null) {
-        process.exit(0);
-        return;
-      }
       process.exit(ok ? 0 : 1);
     })
     .catch((error) => {
@@ -142,9 +139,7 @@ if (shardCount > 1) {
     });
 } else {
   const runtimeFiles = selectedTestFiles();
-  if (runtimeFiles.length === 0) {
-    process.exit(0);
-  }
+  ensureNpmNodeModulesLinks();
   const nodeArgs = buildNodeArgs(runtimeFiles, concurrency);
   const child = spawn(process.execPath, nodeArgs, { stdio: "inherit", env });
   child.on("error", (error) => {

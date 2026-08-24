@@ -1,5 +1,9 @@
 import { walk } from "#std/fs/walk";
-import { DENO_TEST_ENV, PROVIDER_EGRESS_DENY_NET } from "./suites.ts";
+import {
+  buildTestProcessEnv,
+  DENO_TEST_ENV,
+  PROVIDER_EGRESS_DENY_NET,
+} from "./suites.ts";
 
 export interface ShardSpec {
   index: number;
@@ -158,7 +162,9 @@ async function runShard(args: string[]): Promise<void> {
 
 async function runMerge(args: string[]): Promise<void> {
   const threshold = Number(readOption(args, "--threshold") ?? "80");
-  const coveragePaths = args.filter((arg) => !arg.startsWith("--"));
+  const coveragePaths = args.filter((arg, index) =>
+    !arg.startsWith("--") && args[index - 1] !== "--threshold"
+  );
 
   if (!Number.isFinite(threshold)) {
     throw new Error("Coverage threshold must be a number.");
@@ -274,7 +280,8 @@ async function runDeno(
 ): Promise<void> {
   const child = new Deno.Command("deno", {
     args,
-    env,
+    clearEnv: true,
+    env: buildTestProcessEnv(Deno.env.toObject(), env),
     stdout: "inherit",
     stderr: "inherit",
   }).spawn();
@@ -287,6 +294,8 @@ async function runDeno(
 async function captureDeno(args: string[]): Promise<string> {
   const output = await new Deno.Command("deno", {
     args,
+    clearEnv: true,
+    env: buildTestProcessEnv(Deno.env.toObject()),
     stdout: "piped",
     stderr: "inherit",
   }).output();

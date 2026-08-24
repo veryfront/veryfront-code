@@ -1,4 +1,8 @@
-import { DENO_TEST_ENV, PROVIDER_EGRESS_DENY_NET } from "./suites.ts";
+import {
+  buildTestProcessEnv,
+  DENO_TEST_ENV,
+  PROVIDER_EGRESS_DENY_NET,
+} from "./suites.ts";
 
 export { PROVIDER_EGRESS_DENY_NET };
 
@@ -33,7 +37,8 @@ function isScriptsPath(arg: string): boolean {
 async function main(): Promise<void> {
   const command = new Deno.Command("deno", {
     args: buildTestFileCommandArgs(Deno.args),
-    env: { ...TEST_FILE_ENV },
+    clearEnv: true,
+    env: buildTestProcessEnv(Deno.env.toObject(), TEST_FILE_ENV),
     stdout: "inherit",
     stderr: "inherit",
   });

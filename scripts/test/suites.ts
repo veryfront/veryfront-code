@@ -33,6 +33,34 @@ export const PROVIDER_EGRESS_DENY_NET = `--deny-net=${
   PROVIDER_EGRESS_HOSTS.join(",")
 }`;
 
+/** Provider credentials and endpoint overrides ordinary test lanes must not inherit. */
+export const PROVIDER_ENV_KEYS: readonly string[] = Object.freeze([
+  "OPENAI_API_KEY",
+  "OPENAI_BASE_URL",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_BASE_URL",
+  "GOOGLE_API_KEY",
+  "GOOGLE_GENERATIVE_AI_API_KEY",
+  "GOOGLE_GEMINI_BASE_URL",
+  "MISTRAL_API_KEY",
+  "MISTRAL_BASE_URL",
+  "GROQ_API_KEY",
+  "GROQ_BASE_URL",
+  "DEEPSEEK_API_KEY",
+  "DEEPSEEK_BASE_URL",
+  "OPENROUTER_API_KEY",
+  "OPENROUTER_BASE_URL",
+]);
+
+export function buildTestProcessEnv(
+  parentEnv: Readonly<Record<string, string>>,
+  overrides: Readonly<Record<string, string>> = {},
+): Record<string, string> {
+  const env = { ...parentEnv, ...overrides };
+  for (const key of PROVIDER_ENV_KEYS) delete env[key];
+  return env;
+}
+
 export type TestLevel = "unit" | "integration" | "e2e";
 
 export type TestRunner = "deno" | "node" | "bun" | "playwright";

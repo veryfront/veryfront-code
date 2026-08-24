@@ -1,12 +1,28 @@
 import { assertEquals, assertThrows } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import {
+  buildTestProcessEnv,
+  DENO_TEST_ENV,
   LEAF_TEST_SUITES,
+  PROVIDER_ENV_KEYS,
   resolveLeafSuiteOwners,
   validateLeafSuiteRegistry,
 } from "./suites.ts";
 
 describe("leaf test suite registry", () => {
+  it("removes every provider credential while preserving benign parent values", () => {
+    const parentEnv = Object.fromEntries([
+      ...PROVIDER_ENV_KEYS.map((key) => [key, "test-only-value"]),
+      ["PATH", "/test/bin"],
+    ]);
+
+    const env = buildTestProcessEnv(parentEnv, DENO_TEST_ENV);
+
+    assertEquals(env.PATH, "/test/bin");
+    assertEquals(env.DENO_TESTING, "1");
+    for (const key of PROVIDER_ENV_KEYS) assertEquals(env[key], undefined);
+  });
+
   it("records runtime as one suite with variants, ownership, and support exclusions", () => {
     // Production break caught: node and bun runtime tests can drift into
     // competing leaf owners instead of one runtime suite with runner variants.
