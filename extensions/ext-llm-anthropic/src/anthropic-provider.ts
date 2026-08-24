@@ -66,8 +66,9 @@ const MAX_PAUSE_TURN_CONTINUATIONS = 5;
  * request body is still available to re-issue. The bound and the backoff match
  * the pre-header loop in `provider/runtime-loader/provider-http.ts`.
  *
- * Worst-case added wait is 3 seconds, which keeps a hosted child fork inside
- * its 45-second idle watchdog even on top of a full header budget.
+ * The backoff can add at most 3 seconds. Replay header attempts remain inside
+ * the shared total header/idle-window budget, and each replay's header wait is
+ * capped at 10 seconds.
  */
 const MAX_ANTHROPIC_STREAM_REPLAYS = 2;
 const ANTHROPIC_STREAM_REPLAY_DELAY_MS = 1_000;
@@ -631,9 +632,9 @@ export function createAnthropicModelRuntime(
       throwIfAnthropicRequestAborted(options.abortSignal);
       const providerAbortScope = createProviderAbortScope(options.abortSignal);
       // Anchor for the shared header budget. It bounds one *idle window*: the
-      // stretch where the consumer is awaiting a part and the hosted
-      // child-fork watchdog is counting. Replays stay inside the window they
-      // failed in, because a replay only happens when nothing was yielded.
+      // stretch where the consumer is awaiting a part and the stream watchdog
+      // is counting. Replays stay inside the window they failed in, because a
+      // replay only happens when nothing was yielded.
       //
       // It is re-anchored when a part is yielded, because that is when the
       // watchdog window restarts: the watchdog wraps each pending pull, so a
@@ -642,7 +643,7 @@ export function createAnthropicModelRuntime(
       // stream may spend most of a window finishing the paused response after
       // its last visible part, and handing the continuation a fresh budget
       // there would let it wait for headers past the window the watchdog is
-      // still timing (veryfront-code#4085 review).
+      // still timing.
       let streamHeadersBudgetStartedAt = Math.floor(performance.now());
       const remainingStreamHeadersBudgetMs = () =>
         Math.max(

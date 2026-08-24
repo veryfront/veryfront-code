@@ -1,5 +1,6 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
+import { FakeTime } from "#std/testing/time";
 
 import { ProviderOverloadedError, ProviderRequestError } from "veryfront/provider/shared";
 
@@ -4631,8 +4632,36 @@ describe("anthropic-provider", () => {
     it("caps how long a replay may wait for headers", async () => {
       // The replay never gets headers. Only a budget handed to requestStream
       // can end it; without one it inherits the 40s default.
+      const originalNow = performance.now;
+      const realSetTimeout = globalThis.setTimeout;
+      const realClearTimeout = globalThis.clearTimeout;
+      using time = new FakeTime(0);
       const signals: AbortSignal[] = [];
       let attempts = 0;
+      let replayStartedAt: number | undefined;
+      let replayAbortedAt: number | undefined;
+      let resolveReplayStarted: (() => void) | undefined;
+      let resolveReplayAborted: (() => void) | undefined;
+      const replayStarted = new Promise<void>((resolve, reject) => {
+        const timeoutId = realSetTimeout(
+          () => reject(new Error("Replay request did not start")),
+          500,
+        );
+        resolveReplayStarted = () => {
+          realClearTimeout(timeoutId);
+          resolve();
+        };
+      });
+      const replayAborted = new Promise<void>((resolve, reject) => {
+        const timeoutId = realSetTimeout(
+          () => reject(new Error("Replay request did not abort")),
+          500,
+        );
+        resolveReplayAborted = () => {
+          realClearTimeout(timeoutId);
+          resolve();
+        };
+      });
       const runtime = createAnthropicModelRuntime({
         apiKey: "test-anthropic-key",
         baseURL: "https://example.anthropic.test/v1",
@@ -4648,25 +4677,51 @@ describe("anthropic-provider", () => {
           return new Promise<Response>((_resolve, reject) => {
             init?.signal?.addEventListener(
               "abort",
-              () => reject(new DOMException("Aborted", "AbortError")),
+              () => {
+                replayAbortedAt = performance.now();
+                resolveReplayAborted?.();
+                reject(new DOMException("Aborted", "AbortError"));
+              },
               { once: true },
             );
+            replayStartedAt = performance.now();
+            resolveReplayStarted?.();
           });
         },
       }, "claude-opus-4-6");
 
-      const result = await runtime.doStream({
-        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
-        maxOutputTokens: 64,
-      });
+      try {
+        performance.now = () => time.now;
+        const result = await runtime.doStream({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+          maxOutputTokens: 64,
+        });
 
-      const startedAt = Date.now();
-      await assertRejects(() => collectAsync(result.stream));
-      const elapsedMs = Date.now() - startedAt;
+        const collectPromise = collectAsync(result.stream);
+        collectPromise.catch(() => {});
+        await time.tickAsync(1_000);
+        await replayStarted;
+        assertEquals(attempts, 2);
+        assertEquals(signals[1]?.aborted, false);
 
-      assertEquals(elapsedMs < 25_000, true, `replay waited ${elapsedMs}ms for headers`);
-      assertEquals(attempts >= 2, true);
-      assertEquals(signals[1]?.aborted, true);
+        await time.tickAsync(9_999);
+        assertEquals(signals[1]?.aborted, false);
+        await time.tickAsync(1);
+        await replayAborted;
+
+        await assertRejects(
+          () => collectPromise,
+          ProviderRequestError,
+          "request timed out",
+        );
+        assertEquals(signals[1]?.aborted, true);
+        if (replayStartedAt === undefined || replayAbortedAt === undefined) {
+          throw new Error("Replay timing was not captured");
+        }
+        assertEquals(replayAbortedAt - replayStartedAt, 10_000);
+      } finally {
+        performance.now = originalNow;
+      }
     });
 
     it("bounds the replays and surfaces the provider failure when they are exhausted", async () => {
