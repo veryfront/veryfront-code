@@ -79,6 +79,17 @@ describe("InputValidator", () => {
     );
   });
 
+  it("accepts frozen blocked patterns without mutating their match state", async () => {
+    const validator = new InputValidator({
+      blockedPatterns: [Object.freeze(/secret/i), Object.freeze(/token/gi)],
+    });
+
+    const result = await validator.validate("secret token");
+
+    assertEquals(result.valid, false);
+    assertEquals(result.violations.length, 2);
+  });
+
   it("sanitizes harmful markup when enabled", async () => {
     const validator = new InputValidator({ sanitize: true });
 
@@ -113,6 +124,17 @@ describe("OutputFilter", () => {
     assertEquals(result.violations.length, 1);
     assertEquals(result.violations[0]?.type, "output");
     assertEquals(result.violations[0]?.reason, "Output contains blocked pattern");
+  });
+
+  it("redacts with frozen blocked patterns without mutating them", async () => {
+    const filter = new OutputFilter({
+      blockedPatterns: [Object.freeze(/secret/i), Object.freeze(/token/gi)],
+    });
+
+    const result = await filter.filter("secret token token");
+
+    assertEquals(result.filtered, "[REDACTED] [REDACTED] [REDACTED]");
+    assertEquals(result.violations.length, 2);
   });
 });
 

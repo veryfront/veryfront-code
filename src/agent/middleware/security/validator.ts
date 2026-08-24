@@ -99,6 +99,10 @@ const PII_REPLACEMENTS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/g, label: "[CREDIT_CARD]" },
 ];
 
+function freshStatefulPattern(pattern: RegExp): RegExp {
+  return pattern.global || pattern.sticky ? new RegExp(pattern.source, pattern.flags) : pattern;
+}
+
 /**
  * Input Validator
  */
@@ -130,10 +134,9 @@ export class InputValidator {
 
     for (const pattern of this.config.blockedPatterns ?? []) {
       // Blocked pattern groups are shared module-level objects reused across
-      // requests; a /g pattern carries lastIndex forward and would skip every
-      // second identical match, so reset the match position before testing.
-      pattern.lastIndex = 0;
-      if (!pattern.test(input)) continue;
+      // requests. Test stateful patterns through a fresh matcher so lastIndex
+      // cannot skip a repeat match and caller-owned patterns remain untouched.
+      if (!freshStatefulPattern(pattern).test(input)) continue;
 
       violations.push({
         type: "input",
@@ -204,9 +207,8 @@ export class OutputFilter {
 
     for (const pattern of this.config.blockedPatterns ?? []) {
       // See InputValidator.validate: shared /g patterns must not carry
-      // lastIndex across calls, otherwise a repeat match is skipped.
-      pattern.lastIndex = 0;
-      if (!pattern.test(filtered)) continue;
+      // lastIndex across calls or require caller-owned regexes to be mutable.
+      if (!freshStatefulPattern(pattern).test(filtered)) continue;
 
       violations.push({
         type: "output",
@@ -215,7 +217,7 @@ export class OutputFilter {
         pattern,
       });
 
-      filtered = filtered.replace(pattern, "[REDACTED]");
+      filtered = filtered.replace(freshStatefulPattern(pattern), "[REDACTED]");
     }
 
     if (this.config.filterPII) {
