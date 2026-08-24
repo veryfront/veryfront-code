@@ -499,6 +499,36 @@ describe("external-import-rewriter", () => {
       assertStringIncludes(out, `from "file:///srv/app/node_modules/my-lib/utils.js"`);
     });
 
+    it("resolves subpath containment against an absolute package directory", async () => {
+      const fs = createFakeFileSystem({});
+
+      const out = await rewriteNodeExternalImports(
+        `import util from "my-lib/utils.js";`,
+        "relative-app",
+        fs,
+        new Map([["my-lib", "^1"]]),
+        { loadRunningPackage: () => Promise.resolve(null) },
+      );
+
+      assertEquals(out.includes(`from "my-lib/utils.js"`), false);
+      assertStringIncludes(out, `/relative-app/node_modules/my-lib/utils.js`);
+    });
+
+    it("preserves query and hash suffixes outside the resolved file path", async () => {
+      const fs = createFakeFileSystem({});
+
+      const out = await rewriteNodeExternalImports(
+        `import worker from "my-lib/worker.js?raw#entry";`,
+        "/srv/app",
+        fs,
+        new Map([["my-lib", "^1"]]),
+        { loadRunningPackage: () => Promise.resolve(null) },
+      );
+
+      assertStringIncludes(out, `file:///srv/app/node_modules/my-lib/worker.js?raw#entry`);
+      assertEquals(out.includes("worker.js%3Fraw%23entry"), false);
+    });
+
     it("leaves a Node subpath import untouched when it escapes the package directory", async () => {
       const fs = createFakeFileSystem({});
       const code = `import secret from "my-lib/../../../../etc/passwd";`;

@@ -27,6 +27,21 @@ type SourceReader = Pick<FileSystem, "readTextFile">;
 /** Node.js built-in module names — shared across the CJS shim, esbuild externals, and Deno rewrites. */
 export const NODE_BUILTINS = ROUTE_NODE_BUILTINS;
 
+function splitImportSuffix(specifier: string): { path: string; suffix: string } {
+  const queryIndex = specifier.indexOf("?");
+  const hashIndex = specifier.indexOf("#");
+  const suffixIndex = queryIndex === -1
+    ? hashIndex
+    : hashIndex === -1
+    ? queryIndex
+    : Math.min(queryIndex, hashIndex);
+  if (suffixIndex === -1) return { path: specifier, suffix: "" };
+  return {
+    path: specifier.slice(0, suffixIndex),
+    suffix: specifier.slice(suffixIndex),
+  };
+}
+
 export async function readProjectDependencies(
   projectDir: string,
   fs: Pick<FileSystem, "readTextFile">,
@@ -218,19 +233,20 @@ export async function rewriteNodeExternalImports(
     const pkg = packages.find((name) => specifier === name || specifier.startsWith(`${name}/`));
     if (!pkg) continue;
 
-    const subpath = specifier.slice(pkg.length);
+    const { path: specifierPath, suffix } = splitImportSuffix(specifier);
+    const subpath = specifierPath.slice(pkg.length);
     if (subpath) {
       // The subpath comes from the handler source; reject any that escape the
       // package directory (e.g. "pkg/../../secret") by leaving the import
       // untouched so it fails to resolve rather than reading outside
       // node_modules.
-      const packageDir = pathHelper.join(projectDir, "node_modules", pkg);
+      const packageDir = pathHelper.resolve(projectDir, "node_modules", pkg);
       const target = resolveContainedPackagePath(packageDir, `.${subpath}`);
       if (!target) {
         logger.warn(`Skipping subpath import that escapes package directory: ${specifier}`);
         continue;
       }
-      const resolvedSubpath = pathToFileURL(target).href;
+      const resolvedSubpath = `${pathToFileURL(target).href}${suffix}`;
       logger.debug(`Resolved ${specifier} -> ${resolvedSubpath}`);
       replacements.set(specifier, resolvedSubpath);
       continue;
