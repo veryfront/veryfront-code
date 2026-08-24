@@ -468,6 +468,7 @@ export function loadMDXLayout(
         isLocalProject,
         serverExternalPackages: config?.build?.serverExternalPackages,
       })) as MDXModule;
+      throwIfAborted(signal);
 
       loadMdxLayoutLog.debug("loadModuleESM DONE", {
         projectSlug,

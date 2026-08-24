@@ -660,6 +660,68 @@ describe(
           mutableRenderer.loadModuleESM = originalLoadModuleESM;
         }
       });
+
+      it("stops an MDX layout load when the signal aborts during module loading", async () => {
+        const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+        const mutableRenderer = mdxRenderer as unknown as {
+          loadModuleESM: typeof mdxRenderer.loadModuleESM;
+        };
+        let resolveModule!: (module: { default: () => null }) => void;
+        const moduleLoad = new Promise<{ default: () => null }>((resolve) => {
+          resolveModule = resolve;
+        });
+        let markModuleLoadStarted!: () => void;
+        const moduleLoadStarted = new Promise<void>((resolve) => {
+          markModuleLoadStarted = resolve;
+        });
+        mutableRenderer.loadModuleESM = () => {
+          markModuleLoadStarted();
+          return moduleLoad;
+        };
+
+        const controller = new AbortController();
+
+        try {
+          const layoutResult = applyLayoutsESM(
+            React.createElement("p", { id: "page-body" }, "Text"),
+            {
+              compiledCode: "export default function Layout() { return null; }",
+            } as MdxBundle,
+            [],
+            "/project",
+            {},
+            createLayoutComponentCache(),
+            createMockAdapter(),
+            undefined,
+            "project-esm-aborted-during-load",
+            "project-slug",
+            "content-source-id",
+            PRODUCTION_MODES,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            controller.signal,
+          );
+
+          await moduleLoadStarted;
+          controller.abort(new Error("request canceled during module load"));
+          resolveModule({ default: () => null });
+
+          await assertRejects(
+            () => layoutResult,
+            Error,
+            "request canceled during module load",
+            "an abort while the module loader is pending must stop layout application",
+          );
+        } finally {
+          mutableRenderer.loadModuleESM = originalLoadModuleESM;
+        }
+      });
     });
   },
 );
