@@ -28,7 +28,7 @@ jobs:
       (github.event_name != 'pull_request_review' ||
        github.event.pull_request.head.repo.full_name == github.repository)
     concurrency:
-      group: automated-review-${{ github.event.pull_request.number || github.event.issue.number }}
+      group: automated-review-status-publishers
       queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -110,8 +110,8 @@ jobs:
 
   status_review:
     name: publish completed CodeRabbit review status
-    # This SHA-scoped path publishes only durable completion success. It never
-    # runs mutable PR reconciliation, so it can safely use separate concurrency.
+    # This SHA-scoped path publishes only durable completion success. It shares
+    # the status publisher queue so it cannot race general PR reconciliation.
     if: >-
       github.event_name == 'status' &&
       github.event.context == 'CodeRabbit' &&
@@ -121,7 +121,7 @@ jobs:
       github.event.creator.id == 136622811 &&
       github.event.creator.type == 'Bot'
     concurrency:
-      group: automated-review-status-${{ github.event.sha }}
+      group: automated-review-status-publishers
       queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 5

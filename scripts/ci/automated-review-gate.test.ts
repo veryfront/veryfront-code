@@ -798,10 +798,12 @@ describe("automated review workflow", () => {
     assert("status" in triggers, "completion status must have a wakeup path");
     const jobs = record(workflow.jobs, "jobs");
     const job = record(jobs.review, "review job");
-    assertEquals(record(job.concurrency, "review concurrency"), {
-      group:
-        "automated-review-${{ github.event.pull_request.number || github.event.issue.number }}",
+    const publisherConcurrency = {
+      group: "automated-review-status-publishers",
       queue: "max",
+    };
+    assertEquals(record(job.concurrency, "review concurrency"), {
+      ...publisherConcurrency,
     });
     assert(
       String(job.if).includes("github.event_name != 'status'"),
@@ -852,8 +854,7 @@ describe("automated review workflow", () => {
       ]
     ) assert(statusIf.includes(condition));
     assertEquals(record(statusJob.concurrency, "status concurrency"), {
-      group: "automated-review-status-${{ github.event.sha }}",
-      queue: "max",
+      ...publisherConcurrency,
     });
     const statusSteps = statusJob.steps;
     assert(Array.isArray(statusSteps));
