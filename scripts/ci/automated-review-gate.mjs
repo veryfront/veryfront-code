@@ -522,18 +522,21 @@ function scanMarkdownStructure(content) {
     referenceDefinitionRanges,
     tableCellRanges,
   } = markdownInlineStructureRanges(content);
-  const inlineExcludedRanges = mergeMarkdownRanges(
-    mergeMarkdownRanges(inlineCodeRanges, inlineLinkRanges),
-    referenceDefinitionRanges,
+  const inlineSyntaxRanges = mergeMarkdownRanges(
+    mergeMarkdownRanges(
+      mergeMarkdownRanges(inlineCodeRanges, inlineLinkRanges),
+      referenceDefinitionRanges,
+    ),
+    inlineHtmlRanges,
   );
-  let inlineCodeRangeIndex = 0;
-  const isInsideInlineCode = (index) => {
+  let inlineSyntaxRangeIndex = 0;
+  const isInsideInlineSyntax = (index) => {
     while (
-      inlineExcludedRanges[inlineCodeRangeIndex]?.[1] <= index
+      inlineSyntaxRanges[inlineSyntaxRangeIndex]?.[1] <= index
     ) {
-      inlineCodeRangeIndex += 1;
+      inlineSyntaxRangeIndex += 1;
     }
-    const range = inlineExcludedRanges[inlineCodeRangeIndex];
+    const range = inlineSyntaxRanges[inlineSyntaxRangeIndex];
     return range?.[0] <= index && index < range[1];
   };
   let openFence;
@@ -638,7 +641,7 @@ function scanMarkdownStructure(content) {
         relativeCloseStart + 3,
         ranges,
         reviewMarkers,
-        isInsideInlineCode,
+        isInsideInlineSyntax,
         indentedCodeLine,
       );
       openParagraph = inlineComment && openHtmlComment?.container === undefined
@@ -721,7 +724,7 @@ function scanMarkdownStructure(content) {
       0,
       ranges,
       reviewMarkers,
-      isInsideInlineCode,
+      isInsideInlineSyntax,
       indentedCodeLine,
     );
     openParagraph = openHtmlComment?.container === undefined
@@ -1012,7 +1015,7 @@ function scanMarkdownHtmlComments(
   searchStart,
   ranges,
   reviewMarkers,
-  isInsideInlineCode,
+  isInsideInlineSyntax,
   indentedCodeLine,
 ) {
   while (searchStart < line.length) {
@@ -1020,7 +1023,7 @@ function scanMarkdownHtmlComments(
     if (relativeCommentStart < 0) return undefined;
     const commentStart = lineStart + relativeCommentStart;
     if (
-      isInsideInlineCode(commentStart) ||
+      isInsideInlineSyntax(commentStart) ||
       isEscapedMarkdownToken(content, commentStart) ||
       indentedCodeLine
     ) {

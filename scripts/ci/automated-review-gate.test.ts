@@ -1847,6 +1847,12 @@ describe("automated review gate", () => {
     for (
       const visibleRangeAfterCommentLookalike of [
         ["\\<!--", MALFORMED_CURRENT_RANGE, "-->"],
+        [
+          '<span title="<!--">',
+          MALFORMED_CURRENT_RANGE,
+          "-->",
+          "</span>",
+        ],
         ["", "    <!--", MALFORMED_CURRENT_RANGE, "-->"],
         ["", "    example <!--", MALFORMED_CURRENT_RANGE, "-->"],
         ["", "\t<!--", MALFORMED_CURRENT_RANGE, "-->"],
