@@ -1,12 +1,31 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createCacheNamespace } from "#veryfront/utils/cache-namespace.ts";
 import { generateVendorCacheKey, VENDOR_CACHE_NAMESPACE } from "./vendor-cache.ts";
 
 describe("build/vendor-cache", () => {
   describe("generateVendorCacheKey", () => {
     it("uses a derived namespace instead of a manually bumped transform version", () => {
-      assertEquals(VENDOR_CACHE_NAMESPACE.startsWith("vendor-build-"), true);
+      assertEquals(
+        VENDOR_CACHE_NAMESPACE,
+        createCacheNamespace("vendor-build", {
+          configSample: {
+            react: "19.1.1",
+            deps: [["@radix-ui/react-slot", "1.2.3"], ["react", "19.1.1"]],
+          },
+          digest: "sha256-16hex",
+        }),
+        "namespace must stay derived from the declared vendor cache config shape",
+      );
+      assertEquals(
+        VENDOR_CACHE_NAMESPACE === createCacheNamespace("vendor-build", {
+          configSample: { react: "19.1.1", deps: [] },
+          digest: "sha256-16hex",
+        }),
+        false,
+        "a change to the cache config shape must roll the namespace",
+      );
     });
 
     it("should return a key with vendor prefix and project id", async () => {

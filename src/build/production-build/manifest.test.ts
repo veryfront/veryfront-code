@@ -51,6 +51,32 @@ describe("build/production-build/manifest", () => {
       assertEquals(result.features.clientRouting, true);
     });
 
+    it("reports disabled features as false", () => {
+      const result = generateManifest(baseOptions);
+
+      assertEquals(
+        result.features.codeSplitting,
+        false,
+        "codeSplitting mirrors enableSplitting",
+      );
+      assertEquals(
+        result.features.prefetching,
+        false,
+        "prefetching mirrors enablePrefetch",
+      );
+      assertEquals(
+        result.features.compression,
+        false,
+        "compression mirrors enableCompression",
+      );
+      assertEquals(result.features.streaming, true, "streaming is always on");
+      assertEquals(
+        result.features.clientRouting,
+        true,
+        "clientRouting is always on",
+      );
+    });
+
     it("should map routes correctly", () => {
       const result = generateManifest(baseOptions);
       assertEquals(result.routes.length, 2);

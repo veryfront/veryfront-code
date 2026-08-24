@@ -72,5 +72,53 @@ describe("build/production-build/build/route-collector", () => {
       assertEquals(result.pages.map((route) => route.path), ["/about"]);
       assertEquals(result.app.map((route) => route.path), ["/dashboard"]);
     });
+
+    it("forwards include and exclude filters to the route collectors", async () => {
+      const adapter = createMemoryAdapter();
+      adapter.fs.files.set("/tmp/project/site-pages/about.mdx", "# About");
+      adapter.fs.files.set("/tmp/project/site-pages/dashboard.mdx", "# Dashboard");
+
+      const result = await collectAllRoutes(
+        adapter,
+        "/tmp/project",
+        true,
+        ["/about"],
+        ["/dashboard"],
+        {
+          directories: {
+            pages: "site-pages",
+            app: "site-app",
+          },
+        } as VeryfrontConfig,
+      );
+
+      assertEquals(
+        result.pages.map((route) => route.path),
+        ["/about"],
+        "include/exclude must reach the route collectors",
+      );
+    });
+
+    it("falls back to the pages and app directories when no config is supplied", async () => {
+      const adapter = createMemoryAdapter();
+      adapter.fs.files.set("/tmp/project/pages/about.mdx", "# About");
+      adapter.fs.files.set(
+        "/tmp/project/app/dashboard/page.tsx",
+        "export default function Dashboard() {}",
+      );
+
+      const result = await collectAllRoutes(adapter, "/tmp/project", true);
+
+      assertEquals(
+        result.pages.map((route) => route.path),
+        ["/about"],
+        "pages/ is the default pages directory",
+      );
+      assertEquals(
+        result.app.map((route) => route.path),
+        ["/dashboard"],
+        "app/ is the default app directory",
+      );
+    });
   });
 });

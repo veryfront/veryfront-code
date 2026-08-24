@@ -1,6 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { runtime } from "#veryfront/platform/adapters/registry.ts";
+import { installTestCSSOptimizationEngine } from "../../../../tests/_helpers/css-optimization-engine.ts";
 import { processTailwindCSSInDirectory } from "./batch-processor.ts";
 
 describe("build/asset-pipeline/tailwind-processor/batch-processor", () => {
@@ -37,6 +45,65 @@ describe("build/asset-pipeline/tailwind-processor/batch-processor", () => {
         assertEquals(result, []);
       } finally {
         await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    // Directory discovery (lstat/readDir) goes through the runtime-native
+    // filesystem, so the stylesheet must exist on disk for the scan to find it.
+    // Every content read and the emit itself go through the injected
+    // RuntimeAdapter, so an in-memory adapter carrying the same source lets the
+    // emitted stylesheet be asserted from the adapter instead of reading the
+    // host filesystem back.
+    it("should process a Tailwind v4 stylesheet and write it to the output directory", async () => {
+      const source = '@import "tailwindcss";\n.btn { color: red; }';
+      const tmpDir = await Deno.makeTempDir();
+      const restoreEngine = installTestCSSOptimizationEngine();
+      const memoryAdapter = createMockAdapter();
+      try {
+        await Deno.mkdir(`${tmpDir}/styles`, { recursive: true });
+        await Deno.writeTextFile(`${tmpDir}/styles/app.css`, source);
+        await memoryAdapter.fs.mkdir(`${tmpDir}/styles`, { recursive: true });
+        await memoryAdapter.fs.writeFile(`${tmpDir}/styles/app.css`, source);
+        await runtime.set(memoryAdapter);
+
+        const results = await processTailwindCSSInDirectory(tmpDir, "styles", ".veryfront/css");
+
+        assertEquals(results.length, 1, "a Tailwind v4 stylesheet must be processed");
+        const [processed] = results;
+        assertExists(processed, "a Tailwind v4 stylesheet must be processed");
+        assertStringIncludes(
+          processed.css,
+          "tailwindcss",
+          "processed CSS must carry the Tailwind import",
+        );
+        assertEquals(
+          memoryAdapter.fs.files.get(`${tmpDir}/.veryfront/css/app.css`),
+          processed.css,
+          "processed CSS must be emitted under the output directory",
+        );
+      } finally {
+        await runtime.reset();
+        restoreEngine();
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("should reject a symlinked CSS source directory", async () => {
+      const root = await Deno.makeTempDir();
+      try {
+        const realStyles = `${root}/real-styles`;
+        const projectDir = `${root}/project`;
+        await Deno.mkdir(realStyles, { recursive: true });
+        await Deno.mkdir(projectDir, { recursive: true });
+        await Deno.symlink(realStyles, `${projectDir}/styles`);
+
+        await assertRejects(
+          () => processTailwindCSSInDirectory(projectDir, "styles", ".veryfront/css"),
+          TypeError,
+          "Tailwind CSS source path must be a real directory",
+        );
+      } finally {
+        await Deno.remove(root, { recursive: true });
       }
     });
   });

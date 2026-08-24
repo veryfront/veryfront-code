@@ -356,6 +356,110 @@ describe("build/asset-pipeline/image-optimizer/optimizer-core", () => {
         });
       });
 
+      it("rejects sources whose variants collide", async () => {
+        await withTempProject(async (projectDir, inputDir) => {
+          await Deno.writeFile(join(inputDir, "photo.jpg"), new Uint8Array([9, 8, 7]));
+          await Deno.writeFile(join(inputDir, "photo.png"), new Uint8Array([6, 5, 4]));
+          const optimizer = new ImageOptimizer(
+            {
+              projectDir,
+              inputDir: "public",
+              outputDir: ".veryfront/images",
+              formats: ["webp"],
+              sizes: [320],
+              preserveOriginal: false,
+            },
+            { engine: createImageEngine() },
+          );
+
+          await assertRejects(
+            () => optimizer.optimize(),
+            TypeError,
+            "Image output collision",
+          );
+          await assertRejects(
+            () => Deno.stat(join(projectDir, ".veryfront/images/image-manifest.json")),
+            Deno.errors.NotFound,
+            undefined,
+            "a colliding build publishes nothing",
+          );
+        });
+      });
+
+      it("rejects symlinked or physically escaping image directories", async () => {
+        await withTempProject(async (projectDir) => {
+          const outside = await Deno.makeTempDir();
+          try {
+            await Deno.mkdir(join(projectDir, "public/src-images"), { recursive: true });
+            await Deno.symlink(outside, join(projectDir, "public/images"));
+
+            await assertRejects(
+              () =>
+                new ImageOptimizer(
+                  {
+                    projectDir,
+                    inputDir: "public/src-images",
+                    outputDir: "public/images",
+                  },
+                  { engine: createImageEngine() },
+                ).optimize(),
+              TypeError,
+              "Image output path must be a real directory",
+            );
+          } finally {
+            await Deno.remove(outside, { recursive: true });
+          }
+        });
+
+        await withTempProject(async (projectDir) => {
+          const outside = await Deno.makeTempDir();
+          try {
+            await Deno.symlink(outside, join(projectDir, "public/src-images"));
+
+            await assertRejects(
+              () =>
+                new ImageOptimizer(
+                  {
+                    projectDir,
+                    inputDir: "public/src-images",
+                    outputDir: "public/images",
+                  },
+                  { engine: createImageEngine() },
+                ).optimize(),
+              TypeError,
+              "Image input directory must be a real directory",
+            );
+          } finally {
+            await Deno.remove(outside, { recursive: true });
+          }
+        });
+
+        await withTempProject(async (projectDir) => {
+          const outside = await Deno.makeTempDir();
+          try {
+            await Deno.mkdir(join(projectDir, "public/src-images"), { recursive: true });
+            await Deno.mkdir(join(outside, "images"), { recursive: true });
+            await Deno.symlink(outside, join(projectDir, "escape"));
+
+            await assertRejects(
+              () =>
+                new ImageOptimizer(
+                  {
+                    projectDir,
+                    inputDir: "public/src-images",
+                    outputDir: "escape/images",
+                  },
+                  { engine: createImageEngine() },
+                ).optimize(),
+              TypeError,
+              "must remain inside the physical project",
+            );
+          } finally {
+            await Deno.remove(outside, { recursive: true });
+          }
+        });
+      });
+
       it("preserves the last known-good output when encoding fails", async () => {
         await withTempProject(async (projectDir, inputDir) => {
           await Deno.writeFile(join(inputDir, "photo.jpg"), new Uint8Array([9]));

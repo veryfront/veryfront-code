@@ -3,7 +3,12 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getProdHydrationModulePath } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
 import { resolveProdHydrationModulePath } from "#veryfront/html/hydration-script-builder/prod-runtime-selection.ts";
-import { generateClientScripts, generateRedirectsFile } from "./output-generator.ts";
+import {
+  generateClientScripts,
+  generateManifestAndServiceWorker,
+  generateRedirectsFile,
+} from "./output-generator.ts";
+import type { OutputGeneratorOptions } from "./output-generator.ts";
 
 describe("build/production-build/build/output-generator", () => {
   describe("generateClientScripts", () => {
@@ -92,6 +97,83 @@ describe("build/production-build/build/output-generator", () => {
           releaseId: "release-built",
         }),
         getProdHydrationModulePath(),
+      );
+    });
+  });
+
+  describe("generateManifestAndServiceWorker", () => {
+    function createOptions(
+      dryRun: boolean,
+      writes: { path: string; content: string }[],
+    ): OutputGeneratorOptions {
+      const adapter = {
+        fs: {
+          mkdir() {
+            return Promise.resolve();
+          },
+          writeFile(path: string, content: string) {
+            writes.push({ path, content });
+            return Promise.resolve();
+          },
+        },
+      };
+
+      return {
+        // deno-lint-ignore no-explicit-any
+        adapter: adapter as any,
+        projectDir: "/project",
+        outputDir: "/output",
+        routes: [{ path: "/about", slug: "about", file: "pages/about.mdx" }],
+        appRoutes: [],
+        stats: {
+          pages: 1,
+          components: 0,
+          chunks: 0,
+          assets: 2,
+          totalSize: 1024 * 1024,
+          duration: 5,
+        },
+        enableSplitting: false,
+        enablePrefetch: false,
+        enableCompression: false,
+        chunkManifest: null,
+        dryRun,
+      };
+    }
+
+    it("should skip writing when dryRun is true", async () => {
+      const writes: { path: string; content: string }[] = [];
+
+      await generateManifestAndServiceWorker(createOptions(true, writes));
+
+      assertEquals(writes.length, 0, "dry runs must not write the manifest or service worker");
+    });
+
+    it("should write the manifest and service worker when not dryRun", async () => {
+      const writes: { path: string; content: string }[] = [];
+
+      await generateManifestAndServiceWorker(createOptions(false, writes));
+
+      assertEquals(
+        writes.map((write) => write.path),
+        ["/output/_veryfront/manifest.json", "/output/sw.js"],
+        "the manifest and the service worker are both written under outputDir",
+      );
+      const manifestWrite = writes[0];
+      assertExists(manifestWrite, "the manifest write must exist");
+      const manifest = JSON.parse(manifestWrite.content) as {
+        routes: Array<{ path: string; slug: string; chunks: string[] }>;
+        stats: { pages: number; chunks: number; assets: number; totalSize: string };
+      };
+      assertEquals(
+        manifest.routes,
+        [{ path: "/about", slug: "about", chunks: [] }],
+        "the manifest round-trips the routes it was given",
+      );
+      assertEquals(
+        manifest.stats,
+        { pages: 1, chunks: 0, assets: 2, totalSize: "1.00 MB" },
+        "the manifest round-trips the build stats it was given",
       );
     });
   });

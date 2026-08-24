@@ -49,6 +49,9 @@ describe("CSS Optimizer Utils", () => {
     it("rejects a missing directory", async () => {
       await assertRejects(
         () => findCSSFiles(`${TEST_DIR}-${crypto.randomUUID()}`),
+        Deno.errors.NotFound,
+        undefined,
+        "a missing CSS root must reject as NotFound",
       );
     });
   });
@@ -96,6 +99,19 @@ describe("CSS Optimizer Utils", () => {
         () => getOutputPath("../main.css", ".output"),
         TypeError,
         "Invalid relative",
+      );
+    });
+
+    it("rejects inputs that are not CSS files", () => {
+      assertThrows(
+        () => getOutputPath("styles/main.js", ".output"),
+        TypeError,
+        "must end in .css",
+      );
+      assertThrows(
+        () => getOutputPath("styles/main", ".output"),
+        TypeError,
+        "must end in .css",
       );
     });
   });
@@ -169,7 +185,26 @@ describe("CSS Optimizer Utils", () => {
       assertEquals(calculateSavings(1000, 500), 50);
       assertEquals(calculateSavings(1000, 750), 25);
       assertEquals(calculateSavings(0, 0), 0);
-      assertThrows(() => calculateSavings(-1, 0), TypeError);
+      assertThrows(
+        () => calculateSavings(-1, 0),
+        TypeError,
+        "non-negative safe integers",
+      );
+      assertThrows(
+        () => calculateSavings(1000, -5),
+        TypeError,
+        "non-negative safe integers",
+      );
+      assertThrows(
+        () => calculateSavings(1000, 1.5),
+        TypeError,
+        "non-negative safe integers",
+      );
+      assertThrows(
+        () => calculateSavings(1000, Number.NaN),
+        TypeError,
+        "non-negative safe integers",
+      );
     });
   });
 

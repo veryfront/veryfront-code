@@ -82,6 +82,23 @@ describe("build/embedded/preset", () => {
 
       assertEquals(result.manifest.routes.some((route) => route.path === "/docs"), true);
       assertEquals(result.manifest.routes.some((route) => route.path === "/about"), true);
+
+      const routes = result.manifest.routes;
+      assertEquals(
+        new Set(routes.map((route) => route.path)).size,
+        routes.length,
+        "every manifest route path is published exactly once",
+      );
+      assertEquals(
+        routes.find((route) => route.path === "/")?.file,
+        "embedded/app.js",
+        "/ is served by the bundled shell entry, not a per-route artifact",
+      );
+      assertEquals(
+        routes.some((route) => route.file.includes("/.js")),
+        false,
+        "no route compiles to a dotfile artifact",
+      );
     } finally {
       await Deno.remove(root, { recursive: true });
     }

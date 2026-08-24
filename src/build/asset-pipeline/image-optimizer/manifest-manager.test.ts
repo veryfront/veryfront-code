@@ -3,6 +3,8 @@ import { join } from "#veryfront/compat/path";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, readTextFile } from "#veryfront/testing/deno-compat.ts";
+import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
+import { MAX_IMAGE_MANIFEST_BYTES } from "./constants.ts";
 import { loadManifest, writeManifest } from "./manifest-manager.ts";
 import type { OptimizedImageMetadata } from "./types.ts";
 
@@ -55,9 +57,41 @@ describe("manifest-manager", () => {
     const tmpDir = await makeTempDir();
     try {
       assertEquals((await loadManifest(tmpDir)).size, 0);
+
+      await Deno.writeTextFile(join(tmpDir, "real-manifest.json"), "{}");
+      await Deno.symlink(
+        join(tmpDir, "real-manifest.json"),
+        join(tmpDir, "image-manifest.json"),
+      );
+      await assertRejects(
+        () => loadManifest(tmpDir),
+        TypeError,
+        "Image manifest must be a regular file",
+        "a symlinked manifest must fail loudly instead of loading as empty",
+      );
     } finally {
       await Deno.remove(tmpDir, { recursive: true });
     }
+  });
+
+  it("rejects an oversized manifest instead of returning an empty one", async () => {
+    const oversizedFs = {
+      lstat: () =>
+        Promise.resolve({
+          isFile: true,
+          isDirectory: false,
+          isSymlink: false,
+          size: MAX_IMAGE_MANIFEST_BYTES + 1,
+        }),
+      readTextFile: () => Promise.reject(new Error("an oversized manifest must not be read")),
+    } as unknown as FileSystem;
+
+    await assertRejects(
+      () => loadManifest("/manifest-dir", oversizedFs),
+      TypeError,
+      "exceeds",
+      "an oversized manifest must fail loudly instead of loading as empty",
+    );
   });
 
   it("rejects malformed JSON and malformed entries", async () => {

@@ -135,4 +135,47 @@ describe("build/asset-pipeline/css-optimizer/cache-manager", () => {
       );
     });
   });
+
+  it("rejects case-folded key and output collisions", async () => {
+    const entry = (file: string, outputFile: string) => ({
+      file,
+      outputFile,
+      content: ".a{}",
+      size: 4,
+      minifiedSize: 4,
+      savings: calculateSavings(4, 4),
+    });
+
+    await withTempDir(async (directory) => {
+      await Deno.writeTextFile(
+        join(directory, "css-manifest.json"),
+        JSON.stringify({
+          "A.css": entry("A.css", ".veryfront/css/first.min.css"),
+          "a.css": entry("a.css", ".veryfront/css/second.min.css"),
+        }),
+      );
+      await assertRejects(
+        () => loadCSSManifest(directory),
+        TypeError,
+        "path collision",
+        "keys differing only in case must be rejected",
+      );
+    });
+
+    await withTempDir(async (directory) => {
+      await Deno.writeTextFile(
+        join(directory, "css-manifest.json"),
+        JSON.stringify({
+          "one.css": entry("one.css", ".veryfront/css/Out.min.css"),
+          "two.css": entry("two.css", ".veryfront/css/out.min.css"),
+        }),
+      );
+      await assertRejects(
+        () => loadCSSManifest(directory),
+        TypeError,
+        "path collision",
+        "output files differing only in case must be rejected",
+      );
+    });
+  });
 });

@@ -3,6 +3,7 @@ import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createTestCSSOptimizationEngine } from "../../../../tests/_helpers/css-optimization-engine.ts";
 import { createTestCSSPurgingEngine } from "../../../../tests/_helpers/css-purging-engine.ts";
+import type { CSSPurgingRequest } from "#veryfront/extensions/css/index.ts";
 import { extractCriticalCSS } from "./critical-css.ts";
 import { createCSSPurgingSession } from "./purging-engine.ts";
 
@@ -69,10 +70,41 @@ describe("build/asset-pipeline/css-optimizer/critical-css", () => {
           { optimizationEngine, purgingSession: purgingSession() },
         );
 
-        // Minified result should have less whitespace
-        assertExists(result.critical);
-        assertEquals(typeof result.criticalSize, "number");
-        assertEquals(typeof result.remainingSize, "number");
+        assertEquals(
+          result.critical,
+          ".header{color:red;}",
+          "minify: true must run the optimization engine over the critical CSS",
+        );
+        assertEquals(
+          result.criticalSize,
+          ".header{color:red;}".length,
+          "criticalSize measures the minified critical CSS",
+        );
+        assertEquals(result.remainingSize, 0, "no CSS remains outside the critical set");
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("should return the CSS untouched when minify is false", async () => {
+      const tmpDir = await Deno.makeTempDir();
+      const cssPath = `${tmpDir}/style.css`;
+      await Deno.writeTextFile(cssPath, `.header { color: red; }`);
+
+      try {
+        const html = `<div class="header">Hi</div>`;
+        const result = await extractCriticalCSS(
+          cssPath,
+          html,
+          { minify: false },
+          { optimizationEngine, purgingSession: purgingSession() },
+        );
+
+        assertEquals(
+          result.critical,
+          ".header { color: red; }",
+          "minify: false must return the CSS untouched",
+        );
       } finally {
         await Deno.remove(tmpDir, { recursive: true });
       }
@@ -92,8 +124,7 @@ describe("build/asset-pipeline/css-optimizer/critical-css", () => {
           { optimizationEngine, purgingSession: purgingSession() },
         );
 
-        // Should not throw, minify defaults to true
-        assertExists(result.critical);
+        assertEquals(result.critical, ".a{color:red;}", "minify defaults to true");
       } finally {
         await Deno.remove(tmpDir, { recursive: true });
       }
@@ -188,6 +219,47 @@ h1 { font-size: 32px; }`,
         "dense data-property array",
       );
       assertEquals(iteratorCalls, 0);
+    });
+
+    it("forwards the validated safelist and requests rejected CSS", async () => {
+      const tmpDir = await Deno.makeTempDir();
+      const cssPath = `${tmpDir}/style.css`;
+      const cssContent = `.dynamic { color: red; }`;
+      await Deno.writeTextFile(cssPath, cssContent);
+      let captured: CSSPurgingRequest | undefined;
+
+      try {
+        const html = `<div class="dynamic">Hi</div>`;
+        await extractCriticalCSS(
+          cssPath,
+          html,
+          { minify: false, purgeSafelist: [".dynamic", "#hero", "plain"] },
+          {
+            purgingSession: createCSSPurgingSession(
+              createTestCSSPurgingEngine((request) => {
+                captured = request;
+                return Promise.resolve({ css: request.css, rejectedCSS: "" });
+              }),
+            ),
+          },
+        );
+
+        assertExists(captured, "the purging session must be invoked");
+        assertEquals(
+          [...captured.safelist],
+          ["dynamic", "hero", "plain"],
+          "leading . and # are stripped from safelist tokens",
+        );
+        assertEquals(captured.includeRejectedCSS, true, "purging must return rejected CSS");
+        assertEquals(captured.css, cssContent, "the file contents are handed to the purger");
+        assertEquals(
+          [...captured.content],
+          [{ raw: html, extension: "html" }],
+          "HTML is passed as raw html content",
+        );
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
     });
   });
 });

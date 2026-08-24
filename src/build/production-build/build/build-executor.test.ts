@@ -1,9 +1,17 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { VeryfrontRenderer } from "#veryfront/rendering/index.ts";
+import * as React from "react";
+import * as esbuild from "veryfront/extensions/bundler";
+import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
+import {
+  __injectReactDOMServerForTests,
+  __setServerModuleLoaderForTests,
+  resetReactCache,
+} from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 import type { BuildExecutorOptions, BuildResult } from "./build-executor.ts";
 import { executeBuild } from "./build-executor.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
@@ -33,6 +41,10 @@ function createRenderer(): VeryfrontRenderer {
 }
 
 describe("BuildExecutor", () => {
+  afterAll(async () => {
+    await esbuild.stop();
+  });
+
   describe("BuildExecutorOptions", () => {
     it("should require adapter", () => {
       const options: Partial<BuildExecutorOptions> = { adapter: createMockAdapter() };
@@ -142,28 +154,67 @@ describe("BuildExecutor", () => {
   });
 
   describe("BuildResult aggregation", () => {
-    it("should aggregate pages from multiple sources", () => {
-      const pages = { pages: 5, totalSize: 50000, ssgPaths: ["/", "/about"] };
-      const app = { pages: 3, totalSize: 30000, ssgPaths: ["/api/data"] };
-      const combined: BuildResult = {
-        pages: pages.pages + app.pages,
-        totalSize: pages.totalSize + app.totalSize,
-        ssgPaths: [...pages.ssgPaths, ...app.ssgPaths],
-      };
-      assertEquals(combined.pages, 8);
-      assertEquals(combined.totalSize, 80000);
-      assertEquals(combined.ssgPaths.length, 3);
-    });
+    it("sums the pages and app route stats it renders", async () => {
+      const adapter = createMockAdapter();
+      const appDir = "/project/app";
+      adapter.fs.files.set(
+        `${appDir}/app-only/page.tsx`,
+        "export default function Page() { return null; }",
+      );
+      __setServerModuleLoaderForTests((_url, label) => {
+        if (label === "React") return Promise.resolve({ default: React });
+        throw new Error(`Unexpected module load: ${label}`);
+      });
+      __injectReactDOMServerForTests({
+        renderToString: () => "<main>app</main>",
+        renderToStaticMarkup: () => "<main>app</main>",
+      });
 
-    it("should handle zero pages in both sources", () => {
-      const combined: BuildResult = {
-        pages: 0 + 0,
-        totalSize: 0 + 0,
-        ssgPaths: [],
-      };
-      assertEquals(combined.pages, 0);
-      assertEquals(combined.totalSize, 0);
-      assertEquals(combined.ssgPaths.length, 0);
+      try {
+        const renderer = {
+          renderPage: () =>
+            Promise.resolve({
+              html:
+                '<html><head><script type="importmap">{"imports":{}}</script></head><body></body></html>',
+            }),
+        } as unknown as VeryfrontRenderer;
+
+        const result = await executeBuild(
+          [{ slug: "index", path: "/", file: "pages/index.tsx" }],
+          [{
+            path: "/app-only",
+            pageFile: `${appDir}/app-only/page.tsx`,
+            segments: ["app-only"],
+            segmentDirs: [appDir, `${appDir}/app-only`],
+          }],
+          {
+            adapter,
+            projectDir: "/project",
+            outputDir: "/output",
+            renderer,
+            config: baseConfig,
+            enablePrefetch: false,
+            chunkManifest: null,
+            baseUrl: "",
+            dryRun: true,
+          },
+        );
+
+        assertEquals(result.pages, 2, "executeBuild must sum pages and app route stats");
+        assertEquals(
+          result.ssgPaths,
+          ["/", "/app-only"],
+          "ssgPaths must concatenate both sources",
+        );
+        assertEquals(
+          result.totalSize > 0,
+          true,
+          "totalSize must sum the bytes of both sources",
+        );
+      } finally {
+        resetReactCache();
+        __setServerModuleLoaderForTests(null);
+      }
     });
   });
 
@@ -215,7 +266,7 @@ describe("BuildExecutor", () => {
           },
         } as unknown as VeryfrontRenderer;
 
-        await executeBuild(
+        const result = await executeBuild(
           [
             { slug: "first", path: "/first", file: "pages/first.tsx" },
             { slug: "second", path: "/second", file: "pages/second.tsx" },
@@ -234,6 +285,7 @@ describe("BuildExecutor", () => {
           },
         );
 
+        assertEquals(result.pages, 2, "executeBuild reports every page it rendered");
         assertEquals(observed.length, 2);
         assertEquals(
           observed.every(
@@ -295,7 +347,7 @@ describe("BuildExecutor", () => {
           },
         } as unknown as VeryfrontRenderer;
 
-        await executeBuild(
+        const result = await executeBuild(
           [{ slug: "index", path: "/", file: "pages/index.tsx" }],
           [],
           {
@@ -314,6 +366,7 @@ describe("BuildExecutor", () => {
           },
         );
 
+        assertEquals(result.pages, 1, "executeBuild reports every page it rendered");
         assertEquals(observedCacheKey?.startsWith("on:"), true);
         assertEquals(observedDependencies?.react, "19.2.4");
         assertEquals(observedDependencies?.lodash, "1.0.0");

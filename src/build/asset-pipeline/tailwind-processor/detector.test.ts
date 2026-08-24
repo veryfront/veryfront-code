@@ -54,6 +54,37 @@ describe("build/asset-pipeline/tailwind-processor/detector", () => {
     }
   });
 
+  it("detects Tailwind v4 stylesheets by their tailwindcss import", async () => {
+    const projectDir = await Deno.makeTempDir();
+    try {
+      const adapter = createFileAdapter();
+      await Deno.writeTextFile(`${projectDir}/app.css`, '@import "tailwindcss";');
+      await Deno.writeTextFile(
+        `${projectDir}/preflight.css`,
+        '@import "tailwindcss/preflight";',
+      );
+      await Deno.writeTextFile(`${projectDir}/plain.css`, "body { color: red; }");
+
+      assertEquals(
+        await isTailwindV4File(`${projectDir}/app.css`, projectDir, adapter),
+        true,
+        "a stylesheet importing tailwindcss is a Tailwind v4 file",
+      );
+      assertEquals(
+        await isTailwindV4File(`${projectDir}/preflight.css`, projectDir, adapter),
+        true,
+        "a tailwindcss sub-path import is a Tailwind v4 file",
+      );
+      assertEquals(
+        await isTailwindV4File(`${projectDir}/plain.css`, projectDir, adapter),
+        false,
+        "a stylesheet without a tailwindcss import is not a Tailwind v4 file",
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   describe("autoDetectContentPaths", () => {
     it("should return four content path patterns", () => {
       assertEquals(autoDetectContentPaths("/project").length, 4);

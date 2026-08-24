@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   CodeSplitter,
@@ -116,7 +116,21 @@ describe("build/bundler/code-splitter/index", () => {
 
     it("should prepend baseUrl when provided", () => {
       const links = generatePreloadLinks(manifest, "/", "https://cdn.example.com");
-      assertEquals(links.includes("https://cdn.example.com/index.js"), true);
+      assertStringIncludes(
+        links,
+        '<link rel="modulepreload" href="https://cdn.example.com/index.js">',
+        "the entry link must carry the baseUrl prefix",
+      );
+      assertStringIncludes(
+        links,
+        '<link rel="modulepreload" href="https://cdn.example.com/chunks/shared-abc.js">',
+        "preload chunks must carry the baseUrl prefix",
+      );
+      assertStringIncludes(
+        links,
+        '<link rel="preload" as="style" href="https://cdn.example.com/styles/main.css">',
+        "CSS links must carry the baseUrl prefix",
+      );
     });
 
     it("should generate links without preload or css arrays", () => {

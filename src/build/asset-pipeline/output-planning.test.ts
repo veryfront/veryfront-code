@@ -51,6 +51,30 @@ describe("build/asset-pipeline output planning", () => {
     });
   });
 
+  it("rejects outputs that differ only by case or Unicode normalization", async () => {
+    await withDirectory(async (projectDir) => {
+      await assertRejects(
+        () =>
+          assertIndependentAssetStageOutputs([
+            { stage: "images", projectDir, outputDir: ".veryfront/Assets" },
+            { stage: "css", projectDir, outputDir: ".veryfront/assets/css" },
+          ]),
+        TypeError,
+        "must not overlap physically",
+      );
+
+      await assertRejects(
+        () =>
+          assertIndependentAssetStageOutputs([
+            { stage: "images", projectDir, outputDir: ".veryfront/caf\u00e9" },
+            { stage: "css", projectDir, outputDir: ".veryfront/cafe\u0301/css" },
+          ]),
+        TypeError,
+        "must not overlap physically",
+      );
+    });
+  });
+
   it("rejects distinct configured paths that alias the same physical tree", async () => {
     await withDirectory(async (projectDir) => {
       const physicalOutput = join(projectDir, "generated");
