@@ -50,8 +50,9 @@ export class RSCProductionOptimizer {
         a.localeCompare(b)
       )
     ) {
-      for (const char of `${key}\0${moduleUrl}\0`) {
-        hash ^= char.charCodeAt(0);
+      const clientReference = `${key}\0${moduleUrl}\0`;
+      for (let i = 0; i < clientReference.length; i++) {
+        hash ^= clientReference.charCodeAt(i);
         hash = Math.imul(hash, 16777619);
       }
     }
@@ -59,8 +60,8 @@ export class RSCProductionOptimizer {
     const dependencyPinningCacheKey = payload.dependencyPinningCacheKey?.startsWith("on:")
       ? payload.dependencyPinningCacheKey
       : "";
-    for (const char of dependencyPinningCacheKey) {
-      hash ^= char.charCodeAt(0);
+    for (let i = 0; i < dependencyPinningCacheKey.length; i++) {
+      hash ^= dependencyPinningCacheKey.charCodeAt(i);
       hash = Math.imul(hash, 16777619);
     }
 

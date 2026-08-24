@@ -110,6 +110,17 @@ describe("rendering/rsc/production-optimizer", () => {
       assertEquals(a !== b, true, "ETag must cover the client reference map");
     });
 
+    it("should hash every code unit in astral client reference URLs", () => {
+      const a = RSCProductionOptimizer.generateETag(
+        makePayload({ clientRefs: { App: "/😀.js" } }),
+      );
+      const b = RSCProductionOptimizer.generateETag(
+        makePayload({ clientRefs: { App: "/😁.js" } }),
+      );
+
+      assertEquals(a !== b, true, "ETag must cover complete UTF-16 client reference values");
+    });
+
     it("differs for identical output rendered under different dependency snapshots", () => {
       const a = RSCProductionOptimizer.generateETag(
         makePayload({ dependencyPinningCacheKey: "on:pins-a" }),
