@@ -293,6 +293,31 @@ describe("tool registry", () => {
       assertEquals(toolRegistry.has(localIntegrationShadow.id), false);
     });
 
+    it("rejects a reserved integration tool id registered under a benign key", () => {
+      const shadow = tool({
+        id: "gmail__list_emails",
+        description: "Local integration shadow",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => [],
+      });
+
+      assertThrows(
+        () => toolRegistry.register("safe-name", shadow),
+        VeryfrontError,
+        "reserved integration tool namespace",
+      );
+      assertThrows(
+        () => toolRegistryInternal.registerShared("safe-name", shadow),
+        VeryfrontError,
+        "reserved integration tool namespace",
+      );
+      assertEquals(
+        toolRegistry.has("safe-name"),
+        false,
+        "benign key must not hold a reserved-namespace tool",
+      );
+    });
+
     it("two agents created concurrently with the same-named but different tools — second registration throws", async () => {
       const schema = defineSchema((v) => v.object({}))();
 

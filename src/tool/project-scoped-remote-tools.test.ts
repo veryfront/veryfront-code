@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStrictEquals, assertThrows } from "@std/assert";
+import { assertEquals, assertRejects, assertStrictEquals, assertThrows } from "@std/assert";
 import {
   createProjectScopedRemoteToolCatalog,
   filterProjectScopedRemoteToolDefinitions,
@@ -9,11 +9,14 @@ import {
   listProjectScopedRemoteToolNames,
   resolveProjectScopedRemoteToolProjectId,
 } from "./project-scoped-remote-tools.ts";
+import type { ToolAnnotations } from "#veryfront/mcp/annotations.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "./types.ts";
 
 function toolDefinition(input: {
   name: string;
   required?: string[];
+  title?: string;
+  annotations?: ToolAnnotations;
 }): ToolDefinition {
   return {
     name: input.name,
@@ -23,6 +26,8 @@ function toolDefinition(input: {
       properties: {},
       ...(input.required ? { required: input.required } : {}),
     },
+    ...(input.title !== undefined ? { title: input.title } : {}),
+    ...(input.annotations !== undefined ? { annotations: input.annotations } : {}),
   };
 }
 
@@ -214,7 +219,12 @@ Deno.test("createProjectScopedRemoteToolCatalog filters, revalidates, and hydrat
       listContexts.push(context);
       return [
         toolDefinition({ name: "list_projects" }),
-        toolDefinition({ name: "list_files", required: ["project_reference"] }),
+        toolDefinition({
+          name: "list_files",
+          required: ["project_reference"],
+          title: "List files",
+          annotations: { readOnlyHint: true },
+        }),
         toolDefinition({ name: "delete_file", required: ["project_reference"] }),
       ];
     },
@@ -228,10 +238,17 @@ Deno.test("createProjectScopedRemoteToolCatalog filters, revalidates, and hydrat
     allowedToolNames: new Set(["list_files", "list_projects"]),
   });
 
-  assertEquals((await catalog.listTools()).map((tool) => tool.name), [
+  const listed = await catalog.listTools();
+  assertEquals(listed.map((tool) => tool.name), [
     "list_projects",
     "list_files",
   ]);
+  assertEquals(listed[1]?.title, "List files", "remote titles survive normalization");
+  assertEquals(
+    listed[1]?.annotations,
+    { readOnlyHint: true },
+    "remote MCP annotations survive normalization",
+  );
   assertEquals(listContexts, [{ projectId: "project-1" }]);
 
   const prepared = await catalog.prepareExecution({
@@ -250,6 +267,54 @@ Deno.test("createProjectScopedRemoteToolCatalog filters, revalidates, and hydrat
     { projectId: "project-1" },
     { projectId: "project-1" },
   ]);
+});
+
+Deno.test("createProjectScopedRemoteToolCatalog detaches and validates advertised MCP metadata", async () => {
+  function createCatalog(definition: ToolDefinition) {
+    const source: RemoteToolSource = {
+      id: "api",
+      async listTools() {
+        return [definition];
+      },
+      async executeTool() {
+        return { ok: true };
+      },
+    };
+    return createProjectScopedRemoteToolCatalog({ source });
+  }
+
+  const catalog = createCatalog(
+    toolDefinition({
+      name: "list_agents",
+      title: "List agents",
+      annotations: { readOnlyHint: true },
+    }),
+  );
+  const first = await catalog.listTools();
+  (first[0]?.annotations as Record<string, unknown>).readOnlyHint = false;
+  const second = await catalog.listTools();
+  assertEquals(
+    second[0]?.annotations,
+    { readOnlyHint: true },
+    "mutating returned annotations does not affect a later listing",
+  );
+
+  await assertRejects(
+    () => createCatalog(toolDefinition({ name: "list_agents", title: "" })).listTools(),
+    TypeError,
+    "malformed title",
+  );
+  await assertRejects(
+    () =>
+      createCatalog(
+        toolDefinition({
+          name: "list_agents",
+          annotations: [] as unknown as ToolAnnotations,
+        }),
+      ).listTools(),
+    TypeError,
+    "malformed annotations",
+  );
 });
 
 Deno.test("createProjectScopedRemoteToolCatalog does not reuse definitions across credential contexts", async () => {

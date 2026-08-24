@@ -215,6 +215,80 @@ Deno.test("Skill frontmatter mapping snapshot rejects non-mappings, cycles, and 
   );
 });
 
+Deno.test("Skill frontmatter mapping snapshot enforces its resource bounds", () => {
+  let deep: Record<string, unknown> = { leaf: "x" };
+  for (let index = 0; index < 40; index += 1) {
+    deep = { child: deep };
+  }
+  assertThrows(
+    () => snapshotSkillFrontmatterMapping(deep),
+    TypeError,
+    "data-only mapping",
+    "nesting past the depth bound is rejected instead of recursing",
+  );
+
+  let shallow: Record<string, unknown> = { leaf: "x" };
+  for (let index = 0; index < 10; index += 1) {
+    shallow = { child: shallow };
+  }
+  assertEquals(
+    snapshotSkillFrontmatterMapping(shallow),
+    shallow,
+    "nesting within the depth bound is still snapshotted",
+  );
+
+  const wideMapping: Record<string, unknown> = {};
+  for (let index = 0; index <= 2_048; index += 1) {
+    wideMapping[`key-${index}`] = "x";
+  }
+  assertThrows(
+    () => snapshotSkillFrontmatterMapping(wideMapping),
+    TypeError,
+    "data-only mapping",
+    "a mapping past the container-entry bound is rejected",
+  );
+
+  assertThrows(
+    () => snapshotSkillFrontmatterMapping({ list: new Array(2_049).fill("x") }),
+    TypeError,
+    "data-only mapping",
+    "a sequence past the container-entry bound is rejected",
+  );
+
+  const manyNodes: Record<string, unknown> = {};
+  for (let index = 0; index < 5; index += 1) {
+    manyNodes[`list-${index}`] = new Array(2_000).fill("x");
+  }
+  assertThrows(
+    () => snapshotSkillFrontmatterMapping(manyNodes),
+    TypeError,
+    "data-only mapping",
+    "a mapping past the node bound is rejected even when every container fits",
+  );
+});
+
+Deno.test("bounded Skill document parsing rejects malformed document content", () => {
+  let calls = 0;
+  const provider = createSkillDocumentParserProvider(() => {
+    calls += 1;
+    return { name: "demo" };
+  });
+
+  assertThrows(
+    () => parseBoundedSkillDocument("---\nname: demo\n---\nBody \uD800", provider),
+    TypeError,
+    "well-formed UTF-16",
+    "a lone surrogate in the document fails closed instead of reaching callers",
+  );
+  assertThrows(
+    () => parseBoundedSkillDocument(42 as unknown as string, provider),
+    TypeError,
+    "must be a string",
+    "non-string document content fails closed",
+  );
+  assertEquals(calls, 0, "the parser provider is never dispatched for malformed content");
+});
+
 Deno.test("Skill frontmatter mapping snapshot rejects decoder-created malformed Unicode", () => {
   for (
     const value of [

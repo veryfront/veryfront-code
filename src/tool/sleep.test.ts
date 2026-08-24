@@ -25,16 +25,37 @@ describe("tool/sleep", () => {
 
   it("waits for the requested number of seconds and returns a concise result", async () => {
     const waits: number[] = [];
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let signalWaitCalled: (() => void) | undefined;
+    const waitCalled = new Promise<void>((resolve) => {
+      signalWaitCalled = resolve;
+    });
     const testSleepTool = createSleepTool({
       wait: (milliseconds) => {
         waits.push(milliseconds);
+        signalWaitCalled?.();
+        return gate;
       },
     });
 
-    const result = await testSleepTool.execute({ seconds: 5 });
+    let settled = false;
+    const pending = testSleepTool.execute({ seconds: 5 }).then((value) => {
+      settled = true;
+      return value;
+    });
 
+    await waitCalled;
     assertEquals(waits, [5000]);
-    assertEquals(result, {
+    // Drain the microtask queue: execute must still be suspended on wait.
+    for (let turn = 0; turn < 20; turn++) await Promise.resolve();
+    assertEquals(settled, false, "execute must not resolve before wait settles");
+
+    release?.();
+
+    assertEquals(await pending, {
       sleptFor: 5,
       message: "Waited for 5 seconds",
     });

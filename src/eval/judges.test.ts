@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntime } from "veryfront/provider";
 import { judges } from "veryfront/eval";
@@ -201,6 +201,29 @@ describe("eval/judges", () => {
       pass: true,
       explanation: "Supported.",
     });
+
+    const negativeCalls: unknown[] = [];
+    const negativeJudge = judges.llm.groundedness({
+      model: createJudgeModel(
+        JSON.stringify({ score: -0.5, pass: true, explanation: "Ungrounded." }),
+        negativeCalls,
+      ),
+    });
+
+    const negativeResult = await negativeJudge({
+      rubric: "Grounded answer.",
+      input: "Question",
+      output: { text: "Answer" },
+      metadata: {},
+      evidence: ["Evidence"],
+      sources: [],
+    });
+
+    assertEquals(
+      negativeResult,
+      { score: 0, pass: false, explanation: "Ungrounded." },
+      "negative judge scores clamp to 0 and fail the 0.8 default threshold",
+    );
   });
 
   it("requires both model pass and threshold pass", async () => {
@@ -235,6 +258,60 @@ describe("eval/judges", () => {
     assertEquals(result.pass, false);
     assertStringIncludes(result.explanation ?? "", "unsupported rollback result");
     assertStringIncludes(result.explanation ?? "", "Rollback already completed");
+
+    const belowThresholdCalls: unknown[] = [];
+    const belowThresholdJudge = judges.llm.groundedness({
+      threshold: 0.8,
+      model: createJudgeModel(
+        JSON.stringify({
+          score: 0.4,
+          pass: true,
+          explanation: "Model believed it was supported.",
+        }),
+        belowThresholdCalls,
+      ),
+    });
+
+    const belowThreshold = await belowThresholdJudge({
+      rubric: "Grounded answer.",
+      input: "Question",
+      output: { text: "Answer" },
+      metadata: {},
+      evidence: ["Evidence"],
+      sources: [],
+    });
+
+    assertEquals(belowThreshold.score, 0.4, "clamped model score is reported unchanged");
+    assertEquals(
+      belowThreshold.pass,
+      false,
+      "a score below the configured threshold fails even when the model says pass",
+    );
+
+    const boundaryCalls: unknown[] = [];
+    const boundaryJudge = judges.llm.groundedness({
+      threshold: 0.8,
+      model: createJudgeModel(
+        JSON.stringify({
+          score: 0.8,
+          pass: true,
+          explanation: "Supported with minor omissions.",
+        }),
+        boundaryCalls,
+      ),
+    });
+
+    const boundary = await boundaryJudge({
+      rubric: "Grounded answer.",
+      input: "Question",
+      output: { text: "Answer" },
+      metadata: {},
+      evidence: ["Evidence"],
+      sources: [],
+    });
+
+    assertEquals(boundary.score, 0.8, "a boundary score is reported unchanged");
+    assertEquals(boundary.pass, true, "a score exactly at the configured threshold passes");
   });
 
   it("does not imply source-to-evidence alignment", async () => {
@@ -265,7 +342,17 @@ describe("eval/judges", () => {
     const promptText = call.prompt[0]?.content[0]?.text ?? "";
     assertStringIncludes(promptText, "Evidence snippets:");
     assertStringIncludes(promptText, "Retrieved sources:");
-    assertEquals(promptText.includes("knowledge/a.md\nFirst evidence snippet"), false);
+    const sourcesSection = promptText.slice(promptText.indexOf("Retrieved sources:"));
+    assertEquals(
+      sourcesSection.includes("First evidence snippet"),
+      false,
+      "sources section must not carry evidence text",
+    );
+    assertEquals(
+      sourcesSection.includes("Second evidence snippet"),
+      false,
+      "sources section must not carry evidence text",
+    );
   });
 
   it("preserves evidence when source labels are long", async () => {
@@ -297,6 +384,30 @@ describe("eval/judges", () => {
     const promptText = call.prompt[0]?.content[0]?.text ?? "";
     assertStringIncludes(promptText, "Critical policy evidence");
     assertStringIncludes(promptText, "Retrieved sources:");
+  });
+
+  it("rejects invalid LLM groundedness judge options", () => {
+    assertThrows(
+      () => judges.llm.groundedness({ maxEvidenceChars: 0 }),
+      Error,
+      "maxEvidenceChars must be an integer and at least 1",
+      "a maxEvidenceChars below 1 would grade groundedness with no evidence",
+    );
+    assertThrows(
+      () => judges.llm.groundedness({ threshold: -1 }),
+      Error,
+      "threshold must be a finite number and at least 0",
+      "an out-of-range threshold is rejected at construction time",
+    );
+    assertThrows(
+      () =>
+        judges.llm.groundedness({
+          providerOptions: "anthropic" as unknown as Record<string, unknown>,
+        }),
+      Error,
+      "providerOptions must be an object",
+      "non-object providerOptions are rejected at construction time",
+    );
   });
 
   it("fails closed when the judge omits the pass field", async () => {
@@ -380,7 +491,39 @@ describe("eval/judges rubric framing", () => {
     // rather than twice as both the input and the answer.
     assertEquals(sent.includes("Evaluate an agent answer"), false);
     assertEquals(sent.includes("expected-answer context"), false);
-    assertStringIncludes(sent, "text");
+
+    const call = calls[0] as {
+      prompt: Array<{
+        role: string;
+        content: string | Array<{ type: string; text: string }>;
+      }>;
+    };
+    const userContent = call.prompt[1]?.content;
+    const userMessage = typeof userContent === "string"
+      ? userContent
+      : userContent?.[0]?.text ?? "";
+    const beginMarker = "BEGIN EVALUATION DATA";
+    const payload = JSON.parse(
+      userMessage.slice(
+        userMessage.indexOf(beginMarker) + beginMarker.length,
+        userMessage.indexOf("END EVALUATION DATA"),
+      ),
+    ) as Record<string, unknown>;
+    assertEquals(
+      Object.keys(payload),
+      ["rubric", "metadata", "text"],
+      "text framing sends rubric, metadata, and text only",
+    );
+    assertEquals(
+      payload.text,
+      { text: "Sehr geehrte Frau Muster, ..." },
+      "the graded value is sent under the text key",
+    );
+    assertEquals(
+      userMessage.split("Sehr geehrte Frau Muster").length - 1,
+      1,
+      "the graded value is not shown twice as input and answer",
+    );
   });
 
   it("keeps the answer framing as the default", async () => {
