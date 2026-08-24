@@ -110,16 +110,19 @@ describe("GoogleFonts", () => {
 
     const head = collectGoogleFonts(fonts);
 
-    assertEquals(
-      head.links.filter(({ rel }) => rel === "preconnect"),
-      PRECONNECT_LINKS,
-      "both Google Fonts preconnect links must precede the stylesheet",
-    );
     assertEquals(mutableWeights, [700, "400", 500]);
     assertEquals(frozenWeights, ["200..900"]);
     assertEquals(
-      head.links.find(({ rel }) => rel === "stylesheet")?.href,
-      "https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;700&family=Source+Serif+4:ital,wght@0,200..900;1,200..900&display=swap",
+      head.links,
+      [
+        ...PRECONNECT_LINKS,
+        {
+          rel: "stylesheet",
+          href:
+            "https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;700&family=Source+Serif+4:ital,wght@0,200..900;1,200..900&display=swap",
+        },
+      ],
+      "both Google Fonts preconnect links must precede the stylesheet",
     );
     assertEquals(head.styles, [
       `@layer base {

@@ -36,8 +36,13 @@ const readRepoFile = (path: string): Promise<string> =>
  * fail-loud CI gate in #3670, not this focused regression.)
  */
 const SERVER_ONLY_PATTERNS: readonly RegExp[] = [
-  /\/platform\/adapters\/runtime\/(deno|node|bun|cloudflare)\/adapter\.ts$/,
-  /\/platform\/adapters\/runtime\/(deno|node|bun|cloudflare)\/filesystem-adapter\.ts$/,
+  /\/platform\/adapters\/runtime\/deno\/adapter\.ts$/,
+  /\/platform\/adapters\/runtime\/node\/adapter\.ts$/,
+  /\/platform\/adapters\/runtime\/bun\/adapter\.ts$/,
+  /\/platform\/adapters\/runtime\/cloudflare\/adapter\.ts$/,
+  /\/platform\/adapters\/runtime\/deno\/filesystem-adapter\.ts$/,
+  /\/platform\/adapters\/runtime\/node\/filesystem-adapter\.ts$/,
+  /\/platform\/adapters\/runtime\/bun\/filesystem-adapter\.ts$/,
   /\/platform\/adapters\/runtime\/shared\/node-filesystem-adapter\.ts$/,
 ];
 
@@ -188,14 +193,22 @@ describe("index.client static import boundary", () => {
   it("server-only patterns still name real modules", async () => {
     const canonical = [
       "src/platform/adapters/runtime/deno/adapter.ts",
+      "src/platform/adapters/runtime/node/adapter.ts",
+      "src/platform/adapters/runtime/bun/adapter.ts",
+      "src/platform/adapters/runtime/cloudflare/adapter.ts",
       "src/platform/adapters/runtime/deno/filesystem-adapter.ts",
       "src/platform/adapters/runtime/node/filesystem-adapter.ts",
+      "src/platform/adapters/runtime/bun/filesystem-adapter.ts",
       "src/platform/adapters/runtime/shared/node-filesystem-adapter.ts",
     ];
     for (const path of canonical) {
       assert(
         (await readModule(path)) !== null,
         `${path} no longer exists; update SERVER_ONLY_PATTERNS or the guard goes stale`,
+      );
+      assert(
+        SERVER_ONLY_PATTERNS.some((pattern) => pattern.test("/" + path)),
+        `${path} is no longer covered by SERVER_ONLY_PATTERNS; the guard has gone stale`,
       );
     }
     for (const pattern of SERVER_ONLY_PATTERNS) {

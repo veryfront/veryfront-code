@@ -296,7 +296,8 @@ describe("head-collector", () => {
       assertEquals(
         result.size,
         1,
-        "re-registering an identical payload must return the same token instead of minting a new one",
+        "re-registering an identical payload must return the same token " +
+          "instead of minting a new one",
       );
     });
 
