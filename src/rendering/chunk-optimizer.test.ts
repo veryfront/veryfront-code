@@ -429,10 +429,10 @@ describe("rendering/chunk-optimizer", () => {
             };
           }
         },
-        async readTextFile(path: string) {
+        readTextFile(path: string) {
           const content = files[path];
-          if (content !== undefined) return content;
-          throw new Error("not found: " + path);
+          if (content !== undefined) return Promise.resolve(content);
+          return Promise.reject(new Error("not found: " + path));
         },
       };
     }
@@ -779,8 +779,8 @@ describe("rendering/chunk-optimizer", () => {
             };
           }
         },
-        async readTextFile() {
-          return "";
+        readTextFile() {
+          return Promise.resolve("");
         },
       };
 
@@ -808,8 +808,8 @@ describe("rendering/chunk-optimizer", () => {
         async *readDir(path: string) {
           if (path === "/project/pages") yield hostile as never;
         },
-        async readTextFile() {
-          return "";
+        readTextFile() {
+          return Promise.resolve("");
         },
       };
 
@@ -831,7 +831,7 @@ describe("rendering/chunk-optimizer", () => {
           },
         },
         readTextFile: {
-          value: async () => "",
+          value: () => Promise.resolve(""),
         },
       }) as unknown as FSLike;
 
@@ -854,8 +854,8 @@ describe("rendering/chunk-optimizer", () => {
             };
           }
         },
-        async readTextFile() {
-          return "";
+        readTextFile() {
+          return Promise.resolve("");
         },
       };
 
@@ -882,8 +882,8 @@ describe("rendering/chunk-optimizer", () => {
             };
           }
         },
-        async readTextFile() {
-          return "";
+        readTextFile() {
+          return Promise.resolve("");
         },
       };
 
@@ -936,8 +936,8 @@ describe("rendering/chunk-optimizer", () => {
           }
           if (path === "/project/pages/nested") throw missing;
         },
-        async readTextFile() {
-          return "";
+        readTextFile() {
+          return Promise.resolve("");
         },
       };
 
@@ -963,8 +963,8 @@ describe("rendering/chunk-optimizer", () => {
             throw missing;
           }
         },
-        async readTextFile() {
-          return "";
+        readTextFile() {
+          return Promise.resolve("");
         },
       };
 
@@ -982,8 +982,8 @@ describe("rendering/chunk-optimizer", () => {
           yield* [];
           throw missing;
         },
-        async readTextFile() {
-          throw new Error("must not read");
+        readTextFile() {
+          return Promise.reject(new Error("must not read"));
         },
       };
 

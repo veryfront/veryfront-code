@@ -61,8 +61,9 @@ Deno.test("createVeryfrontServer fans out shutdown state and stop hooks", async 
         name: "second",
         handle: () => null,
         setShuttingDown: () => events.push("second:shutdown"),
-        stop: async () => {
+        stop: () => {
           events.push("second:stop");
+          return Promise.resolve();
         },
       },
     ],

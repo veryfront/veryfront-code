@@ -99,7 +99,7 @@ describe("rendering/ssr-renderer", () => {
     __injectReactDOMServerForTests({
       renderToString: () => "<div>unused</div>",
       renderToStaticMarkup: () => "<div>static</div>",
-      renderToReadableStream: async (_element, options) => {
+      renderToReadableStream: (_element, options) => {
         observedNonce = options?.nonce;
         const stream = new ReadableStream<Uint8Array>({
           start(controller) {
@@ -107,9 +107,11 @@ describe("rendering/ssr-renderer", () => {
             controller.close();
           },
         });
-        return Object.assign(stream, { allReady: streamAllReady }) as Awaited<
-          ReturnType<NonNullable<ReactDOMServer["renderToReadableStream"]>>
-        >;
+        return Promise.resolve(
+          Object.assign(stream, { allReady: streamAllReady }) as Awaited<
+            ReturnType<NonNullable<ReactDOMServer["renderToReadableStream"]>>
+          >,
+        );
       },
     });
 
@@ -382,17 +384,19 @@ describe("rendering/ssr-renderer", () => {
     __injectReactDOMServerForTests({
       renderToString: () => "<div>unused</div>",
       renderToStaticMarkup: () => "<div>static</div>",
-      renderToReadableStream: async () =>
-        new ReadableStream<Uint8Array>({
-          pull(controller) {
-            controller.enqueue(new Uint8Array([1, 2, 3, 4, 5]));
-          },
-          cancel() {
-            cancelled = true;
-          },
-        }) as Awaited<
-          ReturnType<NonNullable<ReactDOMServer["renderToReadableStream"]>>
-        >,
+      renderToReadableStream: () =>
+        Promise.resolve(
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              controller.enqueue(new Uint8Array([1, 2, 3, 4, 5]));
+            },
+            cancel() {
+              cancelled = true;
+            },
+          }) as Awaited<
+            ReturnType<NonNullable<ReactDOMServer["renderToReadableStream"]>>
+          >,
+        ),
     });
 
     const renderer = new SSRRenderer("production");

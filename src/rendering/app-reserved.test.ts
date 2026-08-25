@@ -343,8 +343,14 @@ describe("rendering/app-reserved", () => {
       function MockErrorComponent() {
         return null;
       }
-      const Boundary = createErrorBoundary(MockErrorComponent);
-      const state = (Boundary as any).getDerivedStateFromError(new Error("test"));
+      const Boundary = createErrorBoundary(MockErrorComponent) as
+        & ReturnType<
+          typeof createErrorBoundary
+        >
+        & {
+          getDerivedStateFromError(error: Error): { hasError: boolean; error?: Error };
+        };
+      const state = Boundary.getDerivedStateFromError(new Error("test"));
       assertEquals(state.hasError, true);
       assertEquals(state.error instanceof Error, true);
     });

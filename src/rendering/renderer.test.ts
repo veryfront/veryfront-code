@@ -860,7 +860,7 @@ describe("Renderer release asset cache isolation", () => {
     const store = createInMemoryStore();
     const ctx = {
       ...makeRenderContext(),
-      adapter: { fs: { exists: async () => true } },
+      adapter: { fs: { exists: () => Promise.resolve(true) } },
     } as unknown as RenderContext;
     const cacheKey = `${ctx.cachePrefix}:page:/stale`;
     store.data.set(cacheKey, {
@@ -956,7 +956,7 @@ describe("Renderer release asset cache isolation", () => {
       projectId,
       projectSlug: projectId,
       cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1", "production"),
-      adapter: { fs: { exists: async () => true } },
+      adapter: { fs: { exists: () => Promise.resolve(true) } },
     } as unknown as RenderContext;
     const cacheKey = `${ctx.cachePrefix}:page:/stale-at-capacity`;
     store.data.set(cacheKey, {
@@ -1018,7 +1018,7 @@ describe("Renderer release asset cache isolation", () => {
     const store = createInMemoryStore();
     const ctx = {
       ...makeRenderContext(),
-      adapter: { fs: { exists: async () => true } },
+      adapter: { fs: { exists: () => Promise.resolve(true) } },
     } as unknown as RenderContext;
     const url = new URL("https://example.com/data?filter=recent");
     const requestAbort = new AbortController();
@@ -1131,7 +1131,7 @@ describe("Renderer release asset cache isolation", () => {
       const store = createInMemoryStore();
       const ctx = {
         ...makeRenderContext(),
-        adapter: { fs: { exists: async () => true } },
+        adapter: { fs: { exists: () => Promise.resolve(true) } },
       } as unknown as RenderContext;
       const cacheKey = `${ctx.cachePrefix}:page:/prewarm-disabled`;
       store.data.set(cacheKey, {
@@ -1217,7 +1217,7 @@ describe("Renderer release asset cache isolation", () => {
     const store = createInMemoryStore();
     const ctx = {
       ...makeRenderContext(),
-      adapter: { fs: { exists: async () => true } },
+      adapter: { fs: { exists: () => Promise.resolve(true) } },
     } as unknown as RenderContext;
     const themedCacheKey = `${ctx.cachePrefix}:page:/stale-themed:theme-dark`;
     const unthemedCacheKey = `${ctx.cachePrefix}:page:/stale-themed`;

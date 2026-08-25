@@ -41,7 +41,7 @@ function extractInlineJson(
 function createScriptAdapter(): RuntimeAdapter {
   return {
     fs: {
-      exists: async () => false,
+      exists: () => Promise.resolve(false),
     },
   } as unknown as RuntimeAdapter;
 }

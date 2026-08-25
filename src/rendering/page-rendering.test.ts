@@ -115,7 +115,7 @@ describe("rendering/page-rendering", () => {
             "probe",
             "/project",
             {},
-            async () => ({ compiledCode: "", frontmatter: {}, headings: [] }),
+            () => Promise.resolve({ compiledCode: "", frontmatter: {}, headings: [] }),
             adapter,
             {
               projectId: "project-1",
@@ -182,7 +182,7 @@ describe("rendering/page-rendering", () => {
         "probe",
         "/project",
         {},
-        async () => ({ compiledCode: "", frontmatter: {}, headings: [] }),
+        () => Promise.resolve({ compiledCode: "", frontmatter: {}, headings: [] }),
         {
           fs: {},
         } as unknown as RuntimeAdapter,
@@ -225,7 +225,7 @@ describe("rendering/page-rendering", () => {
         prepareDependencySnapshot: () => Promise.resolve("off"),
         getAllAsComponents: () => ({}),
       } as never,
-      compileMDX: async () => ({ compiledCode: "", frontmatter: {}, headings: [] }),
+      compileMDX: () => Promise.resolve({ compiledCode: "", frontmatter: {}, headings: [] }),
       isLocalProject: true,
     });
 
@@ -275,7 +275,7 @@ describe("rendering/page-rendering", () => {
           prepareDependencySnapshot: () => Promise.resolve("off"),
           getAllAsComponents: () => ({}),
         } as never,
-        compileMDX: async () => ({ compiledCode: "", frontmatter: {}, headings: [] }),
+        compileMDX: () => Promise.resolve({ compiledCode: "", frontmatter: {}, headings: [] }),
       });
 
       await renderer.preparePageBundles(
@@ -320,7 +320,7 @@ describe("rendering/page-rendering", () => {
         "probe",
         "/project",
         {},
-        async () => ({ compiledCode: "", frontmatter: {}, headings: [] }),
+        () => Promise.resolve({ compiledCode: "", frontmatter: {}, headings: [] }),
         { fs: {} } as unknown as RuntimeAdapter,
         { projectId: "default-mode-project", contentSourceId: "release-1" },
       );

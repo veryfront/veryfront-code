@@ -113,7 +113,7 @@ describe("rendering/page-rendering preview ESM cache recovery", () => {
           "probe",
           "/project",
           {},
-          async () => ({ compiledCode: "", frontmatter: {}, headings: [] }),
+          () => Promise.resolve({ compiledCode: "", frontmatter: {}, headings: [] }),
           adapter,
           {
             projectId: "project-1",
