@@ -13,7 +13,7 @@ import {
 import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import type { Message, Plugin } from "veryfront/extensions/bundler";
-import { isAllowedRemoteHost } from "./http-validator.ts";
+import { isAllowedRemoteHost, validateHTTPImports } from "./http-validator.ts";
 import {
   guardedOutboundFetch,
   OutboundRequestBlockedError,
@@ -184,6 +184,14 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         );
       }
 
+      async function validateRemoteModuleSource(contents: string): Promise<{
+        readonly contents: string;
+        readonly loader: "js";
+      }> {
+        await validateHTTPImports(contents, allowedHosts);
+        return { contents, loader: "js" };
+      }
+
       async function fetchRemoteModuleAttempt(url: string): Promise<RemoteModuleFetchResult> {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), fetchTimeoutMs);
@@ -303,7 +311,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         return { ok: false, status: HTTP_NETWORK_CONNECT_TIMEOUT, url };
       }
 
-      build.onResolve({ filter: /^(http|https):\/\// }, (args) => ({
+      build.onResolve({ filter: /^https?:\/\//i }, (args) => ({
         path: args.path,
         namespace: "http-url",
       }));
@@ -395,6 +403,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
               const integrity = await computeIntegrity(text);
 
               if (integrity === lockfileEntry.integrity) {
+                const loaded = await validateRemoteModuleSource(text);
                 await moduleCache?.write(args.path, text, lockfileEntry.resolved, integrity);
                 await moduleCache?.write(
                   lockfileEntry.resolved,
@@ -402,7 +411,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
                   lockfileEntry.resolved,
                   integrity,
                 );
-                return { contents: text, loader: "js" } as const;
+                return loaded;
               }
 
               if (strict) {
@@ -434,7 +443,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
                 await readCachedModule(args.path, lockfileEntry.integrity);
             if (cachedText) {
               logger.warn(`[http] serving cached remote import for ${args.path}`);
-              return { contents: cachedText, loader: "js" } as const;
+              return await validateRemoteModuleSource(cachedText);
             }
           }
         }
@@ -456,7 +465,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
               await readCachedModule(args.path, lockfileEntry?.integrity);
           if (cachedText) {
             logger.warn(`[http] serving cached remote import for ${args.path}`);
-            return { contents: cachedText, loader: "js" } as const;
+            return await validateRemoteModuleSource(cachedText);
           }
 
           logger.error(`[http] fetch failed ${requestUrl} ${res.status}`);
@@ -472,6 +481,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         const text = res.text;
         const resolvedUrl = res.url;
         const integrity = await computeIntegrity(text);
+        const loaded = await validateRemoteModuleSource(text);
 
         await persistLockfileEntry(args.path, {
           resolved: resolvedUrl,
@@ -482,7 +492,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         await moduleCache?.write(requestUrl, text, resolvedUrl, integrity);
         await moduleCache?.write(resolvedUrl, text, resolvedUrl, integrity);
 
-        return { contents: text, loader: "js" } as const;
+        return loaded;
       });
 
       logger.debug(
