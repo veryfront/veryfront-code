@@ -200,7 +200,7 @@ export function resolveLoopbackAddresses(
 }
 
 /** Deno 2 raises NotCapable for a missing permission; earlier runtimes used PermissionDenied. */
-function isPermissionError(error: unknown): boolean {
+function isPermissionError(error: unknown): error is Error {
   return error instanceof Error &&
     (error.name === "NotCapable" || error.name === "PermissionDenied");
 }
