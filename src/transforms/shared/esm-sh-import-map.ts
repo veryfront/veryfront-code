@@ -127,9 +127,15 @@ export function parseEsmShSpecifier(
 }
 
 /**
- * Path segments CDNs use to introduce a package coordinate, as jsDelivr does in
- * `https://cdn.jsdelivr.net/npm/chart.js`.
+ * CDNs that introduce a package coordinate with a leading route segment, as
+ * jsDelivr does in `https://cdn.jsdelivr.net/npm/chart.js`.
  */
+const PACKAGE_ROUTE_HOSTS: ReadonlySet<string> = new Set([
+  "cdn.jsdelivr.net",
+  "fastly.jsdelivr.net",
+]);
+
+/** The route segments those CDNs use. */
 const PACKAGE_COORDINATE_ROUTES: ReadonlySet<string> = new Set(["npm", "jsr"]);
 
 /**
@@ -143,13 +149,27 @@ const PACKAGE_ROOT_HOSTS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * A file extension, which must begin with a letter.
+ *
+ * That rules out the last component of a version: `lodash@4.17.21` ends in
+ * `.21`, which is not an extension, while `pkg@2.0.0.js` ends in one.
+ */
+const FILE_EXTENSION = /\.[A-Za-z][A-Za-z0-9]*$/;
+
+/**
  * How many leading path segments a recognised package coordinate occupies, or
  * -1 when the URL is not a shape this knows.
+ *
+ * Both forms are tied to specific hosts. An arbitrary site may have a directory
+ * called `npm`, and a path is not a package coordinate merely for containing
+ * one, so the route is recognised only at the front of a known CDN's path.
  */
 function coordinateSegmentCount(url: URL, segments: readonly string[]): number {
-  const routeIndex = segments.findIndex((segment) => PACKAGE_COORDINATE_ROUTES.has(segment));
-  if (routeIndex !== -1) {
-    return segments[routeIndex + 1]?.startsWith("@") ? routeIndex + 3 : routeIndex + 2;
+  if (
+    PACKAGE_ROUTE_HOSTS.has(url.hostname) && segments[0] !== undefined &&
+    PACKAGE_COORDINATE_ROUTES.has(segments[0])
+  ) {
+    return segments[1]?.startsWith("@") ? 3 : 2;
   }
 
   if (PACKAGE_ROOT_HOSTS.has(url.hostname)) {
@@ -166,7 +186,7 @@ function coordinateSegmentCount(url: URL, segments: readonly string[]): number {
  * recognised before anything is read from the name itself. Where a coordinate
  * is recognised, position decides: the coordinate alone is a root, and anything
  * below it already selects an export, extensionless or not. Only outside those
- * shapes does the extension decide, since there is nothing better to go on.
+ * shapes does the name decide, since there is nothing better to go on.
  *
  * A trailing separator settles it first: a path ending in one names a
  * directory, whatever its last segment looks like.
@@ -189,10 +209,12 @@ function addressesRemoteFile(mapping: string): boolean {
   const coordinateLength = coordinateSegmentCount(url, segments);
   if (coordinateLength !== -1) return segments.length > coordinateLength;
 
-  // A versioned coordinate outside a recognised shape is still a package root.
-  if (lastSegment.includes("@")) return false;
+  // Outside a recognised shape, a version marks a coordinate unless the name
+  // also carries an extension, which makes it a version-stamped file such as
+  // `pkg@2.0.0.js`.
+  if (lastSegment.includes("@") && !FILE_EXTENSION.test(lastSegment)) return false;
 
-  return /\.[A-Za-z0-9]+$/.test(lastSegment);
+  return FILE_EXTENSION.test(lastSegment);
 }
 
 function coordinateSelectsExport(coordinate: string): boolean {

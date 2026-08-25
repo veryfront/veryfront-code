@@ -174,4 +174,28 @@ describe("transforms/shared/esm-sh-import-map", () => {
       "unpkg serves the coordinate from the path root, so the whole path is the package",
     );
   });
+
+  it("does not treat an npm directory on an arbitrary host as a package route", () => {
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/sub", { pkg: "https://example.com/npm/some.js" }),
+      "https://example.com/npm/some.js",
+      "any site may have a directory called npm; the route belongs to specific CDNs",
+    );
+  });
+
+  it("keeps a version-stamped remote file exact", () => {
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/sub", { pkg: "https://cdn.example/pkg@2.0.0.js" }),
+      "https://cdn.example/pkg@2.0.0.js",
+      "a version plus an extension is a stamped filename, not a coordinate",
+    );
+  });
+
+  it("still appends to a bare versioned coordinate", () => {
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/fp", { pkg: "https://cdn.example/lodash@4.17.21" }),
+      "https://cdn.example/lodash@4.17.21/fp",
+      "the last component of a version is not an extension, since one starts with a letter",
+    );
+  });
 });
