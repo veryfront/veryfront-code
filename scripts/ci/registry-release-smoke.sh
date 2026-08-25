@@ -4,6 +4,7 @@
 recovery() {
 	echo "::error::${1}" >&2
 	echo "::error::npm versions are immutable. Do not unpublish ${VERSION}. Fix forward by publishing a new version from the intended commit, then rerun registry validation. Downstream deploy dispatches remain blocked." >&2
+	return 0
 }
 
 registry_smoke_failure_classification() {
@@ -13,6 +14,7 @@ registry_smoke_failure_classification() {
 		21) printf '%s\n' "behavior" ;;
 		*) printf '%s\n' "install-or-behavior" ;;
 	esac
+	return 0
 }
 
 registry_release_smoke_main() {
@@ -23,14 +25,14 @@ registry_release_smoke_main() {
 	root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 	cd "$root_dir"
 
-	if [ "${IS_STABLE:-}" = "true" ]; then
+	if [[ "${IS_STABLE:-}" == "true" ]]; then
 		version="${STABLE_VERSION:-}"
 	else
 		version="${RC_VERSION:-}"
 	fi
 	VERSION="$version"
 
-	if [ -z "$version" ] || [ -z "${GITHUB_SHA:-}" ]; then
+	if [[ -z "$version" || -z "${GITHUB_SHA:-}" ]]; then
 		echo "REGISTRY RELEASE FAIL [configuration]: exact version and GITHUB_SHA are required." >&2
 		return 1
 	fi
@@ -62,12 +64,12 @@ registry_release_smoke_main() {
 	while IFS= read -r package_name; do
 		package_args+=(--package "$package_name")
 		package_names+=("$package_name")
-		if [ "${VF_NPM_SMOKE_DRY_RUN:-}" = "1" ]; then
+		if [[ "${VF_NPM_SMOKE_DRY_RUN:-}" == "1" ]]; then
 			printf 'REGISTRY_PACKAGE_SPEC=%s@%s\n' "$package_name" "$version"
 		fi
 	done < <(package_names_from_workspace)
 
-	if [ "${VF_NPM_SMOKE_DRY_RUN:-}" = "1" ]; then
+	if [[ "${VF_NPM_SMOKE_DRY_RUN:-}" == "1" ]]; then
 		return 0
 	fi
 	printf -v registry_packages '%s\n' "${package_names[@]}"
@@ -81,7 +83,7 @@ registry_release_smoke_main() {
 		"${package_args[@]}"
 	metadata_status=$?
 	set -e
-	if [ "$metadata_status" -ne 0 ]; then
+	if [[ "$metadata_status" -ne 0 ]]; then
 		recovery "Exact-version registry metadata validation failed."
 		return 1
 	fi
@@ -93,7 +95,7 @@ registry_release_smoke_main() {
 		bash "$root_dir/scripts/test/npm-install-smoke.sh"
 	smoke_status=$?
 	set -e
-	if [ "$smoke_status" -ne 0 ]; then
+	if [[ "$smoke_status" -ne 0 ]]; then
 		classification="$(registry_smoke_failure_classification "$smoke_status")"
 		recovery "Exact-version registry ${classification} smoke failed."
 		return 1
@@ -102,6 +104,6 @@ registry_release_smoke_main() {
 	echo "Registry release smoke: ${version} passed exact-version metadata, install, API, page, and workflow checks."
 }
 
-if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 	registry_release_smoke_main "$@"
 fi

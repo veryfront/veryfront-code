@@ -101,6 +101,8 @@ canonical_tarball_for_package_dir() {
       echo "::error::Canonical artifact file for ${PACKAGE_NAME} is invalid." >&2
       return 1
       ;;
+    *)
+      ;;
   esac
   printf '%s/%s\n' "${NPM_PACK_DIR}" "${PACKAGE_FILE}"
 }
@@ -109,7 +111,7 @@ verify_npm_compatibility_artifact() {
   if ! VERIFY_OUTPUT="$(deno run --config=scripts/test.deno.json --no-lock --allow-read --allow-run=tar \
     scripts/ci/npm-compatibility-artifact.ts verify "${NPM_PACK_DIR}" "${GITHUB_SHA}" \
     2>&1)"; then
-    if [ -n "${VERIFY_OUTPUT}" ]; then
+    if [[ -n "${VERIFY_OUTPUT}" ]]; then
       printf '%s\n' "${VERIFY_OUTPUT}" >&2
     fi
     echo "::error::Canonical npm compatibility artifact verification failed." >&2
@@ -150,15 +152,15 @@ rc_publish_package_dir() {
     PUBLISHED_GIT_HEAD="$(npm view "${PACKAGE_NAME}@${VERSION}" gitHead 2>&1)"
     PUBLISHED_GIT_HEAD_STATUS=$?
     set -e
-    if [ "${PUBLISHED_GIT_HEAD_STATUS}" -ne 0 ]; then
+    if [[ "${PUBLISHED_GIT_HEAD_STATUS}" -ne 0 ]]; then
       echo "::error::npm registry gitHead lookup failed for ${PACKAGE_NAME}@${VERSION} (status ${PUBLISHED_GIT_HEAD_STATUS})." >&2
       SANITIZED_NPM_LOOKUP_OUTPUT="$(sanitize_npm_lookup_output "${PUBLISHED_GIT_HEAD}")"
-      if [ -n "${SANITIZED_NPM_LOOKUP_OUTPUT}" ]; then
+      if [[ -n "${SANITIZED_NPM_LOOKUP_OUTPUT}" ]]; then
         printf '%s\n' "${SANITIZED_NPM_LOOKUP_OUTPUT}" >&2
       fi
       return "${PUBLISHED_GIT_HEAD_STATUS}"
     fi
-    if [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]; then
+    if [[ "${PUBLISHED_GIT_HEAD}" == "${GITHUB_SHA}" ]]; then
       echo "::notice::${PACKAGE_NAME}@${VERSION} already published for this commit; skipping npm publish"
       return 0
     fi
@@ -172,7 +174,7 @@ rc_publish_package_dir() {
   PUBLISH_STATUS=$?
   set -e
   SANITIZED_PUBLISH_OUTPUT="$(sanitize_npm_lookup_output "${PUBLISH_OUTPUT}")"
-  if [ -n "${SANITIZED_PUBLISH_OUTPUT}" ]; then
+  if [[ -n "${SANITIZED_PUBLISH_OUTPUT}" ]]; then
     printf '%s\n' "${SANITIZED_PUBLISH_OUTPUT}"
   fi
   return "${PUBLISH_STATUS}"
@@ -192,7 +194,7 @@ release_publish_package_dir() {
     PUBLISH_STATUS=$?
     set -e
     SANITIZED_PUBLISH_OUTPUT="$(sanitize_npm_lookup_output "${PUBLISH_OUTPUT}")"
-    if [ -n "${SANITIZED_PUBLISH_OUTPUT}" ]; then
+    if [[ -n "${SANITIZED_PUBLISH_OUTPUT}" ]]; then
       printf '%s\n' "${SANITIZED_PUBLISH_OUTPUT}"
     fi
 
@@ -218,7 +220,7 @@ run_rc_publish() {
 
   for PACKAGE_DIR in $(package_dirs); do
     PUBLISH_SPEC="$(canonical_tarball_for_package_dir "${PACKAGE_DIR}")" || PUBLISH_SPEC=""
-    if [ -z "${PUBLISH_SPEC}" ]; then
+    if [[ -z "${PUBLISH_SPEC}" ]]; then
       PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
       echo "::error::Canonical npm publish spec for ${PACKAGE_NAME} is empty. Ensure manifest.json contains exactly one matching package entry." >&2
       return 1
@@ -310,7 +312,7 @@ run_release_publish() {
 
   for PACKAGE_DIR in $(package_dirs); do
     PUBLISH_SPEC="$(canonical_tarball_for_package_dir "${PACKAGE_DIR}")" || PUBLISH_SPEC=""
-    if [ -z "${PUBLISH_SPEC}" ]; then
+    if [[ -z "${PUBLISH_SPEC}" ]]; then
       PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
       echo "::error::Canonical npm publish spec for ${PACKAGE_NAME} is empty. Ensure manifest.json contains exactly one matching package entry." >&2
       return 1

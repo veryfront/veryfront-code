@@ -56,7 +56,8 @@ const MANIFEST_FILE = "manifest.json";
 const EXTENSION_PREFIX = "@veryfront/ext-";
 
 function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
+  if (left < right) return -1;
+  return left > right ? 1 : 0;
 }
 
 async function sha256File(path: string): Promise<string> {
@@ -444,12 +445,11 @@ export function formatNpmCompatibilityArtifactCliError(
   error: unknown,
   requestedOperation?: string,
 ): string {
+  const requestedIsKnown = requestedOperation === "pack" ||
+    requestedOperation === "verify" || requestedOperation === "materialize";
   const operation = error instanceof NpmCompatibilityArtifactError
     ? error.operation
-    : requestedOperation === "pack" || requestedOperation === "verify" ||
-        requestedOperation === "materialize"
-    ? requestedOperation
-    : undefined;
+    : (requestedIsKnown ? requestedOperation : undefined);
   const packageName = error instanceof NpmCompatibilityArtifactError
     ? safePackageName(error.context.packageName)
     : undefined;

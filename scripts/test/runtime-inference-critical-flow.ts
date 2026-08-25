@@ -49,7 +49,7 @@ const LOCAL_PATH_PATTERN =
 const FILE_URL_PATTERN = /file:\/\/\/[^\s"'`<>)]*/g;
 
 function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return value.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
 function fileUrlForPath(path: string): string {

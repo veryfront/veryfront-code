@@ -180,6 +180,68 @@ function isTimeoutError(error: unknown): boolean {
     (error.name === "AbortError" || error.name === "TimeoutError");
 }
 
+type RegistryAttempt =
+  | { readonly kind: "metadata"; readonly metadata: RegistryPackageMetadata }
+  | {
+    readonly kind: "failure";
+    readonly failure: RegistryReleaseError | "timeout";
+  };
+
+/** One registry lookup. Throws terminal failures; returns retryable ones. */
+async function attemptRegistryLookup(
+  options: PollRegistryPackageOptions,
+  fetcher: typeof fetch,
+  spec: string,
+): Promise<RegistryAttempt> {
+  try {
+    const response = await fetcher(
+      registryVersionUrl(
+        options.registryUrl ?? DEFAULT_REGISTRY_URL,
+        options.packageName,
+        options.version,
+      ),
+      { signal: AbortSignal.timeout(options.requestTimeoutMs) },
+    );
+    if (response.status === 404) {
+      return {
+        kind: "failure",
+        failure: new RegistryReleaseError(
+          "missing-version",
+          `${spec} is not available yet.`,
+          registryErrorContext(options, "version is not available yet"),
+        ),
+      };
+    }
+    if (!response.ok) {
+      throw new RegistryReleaseError(
+        "lookup",
+        `${spec} registry lookup failed with HTTP ${response.status}.`,
+        registryErrorContext(
+          options,
+          `registry lookup failed with HTTP ${response.status}`,
+        ),
+      );
+    }
+    const metadata = await response.json() as RegistryPackageMetadata;
+    const incomplete = incompleteMetadataError(metadata, options);
+    if (incomplete) return { kind: "failure", failure: incomplete };
+    validateMetadata(metadata, options);
+    return { kind: "metadata", metadata };
+  } catch (error) {
+    if (error instanceof RegistryReleaseError) throw error;
+    if (!isTimeoutError(error)) {
+      throw new RegistryReleaseError(
+        "lookup",
+        `${spec} registry lookup failed: ${
+          error instanceof Error ? error.message : String(error)
+        }.`,
+        registryErrorContext(options, "registry lookup failed"),
+      );
+    }
+    return { kind: "failure", failure: "timeout" };
+  }
+}
+
 export async function pollRegistryPackage(
   options: PollRegistryPackageOptions,
 ): Promise<RegistryPackageMetadata> {
@@ -193,53 +255,9 @@ export async function pollRegistryPackage(
   );
 
   for (let attempt = 1; attempt <= options.maxAttempts; attempt++) {
-    try {
-      const response = await fetcher(
-        registryVersionUrl(
-          options.registryUrl ?? DEFAULT_REGISTRY_URL,
-          options.packageName,
-          options.version,
-        ),
-        { signal: AbortSignal.timeout(options.requestTimeoutMs) },
-      );
-      if (response.status === 404) {
-        lastFailure = new RegistryReleaseError(
-          "missing-version",
-          `${spec} is not available yet.`,
-          registryErrorContext(options, "version is not available yet"),
-        );
-      } else if (!response.ok) {
-        throw new RegistryReleaseError(
-          "lookup",
-          `${spec} registry lookup failed with HTTP ${response.status}.`,
-          registryErrorContext(
-            options,
-            `registry lookup failed with HTTP ${response.status}`,
-          ),
-        );
-      } else {
-        const metadata = await response.json() as RegistryPackageMetadata;
-        const incomplete = incompleteMetadataError(metadata, options);
-        if (incomplete) {
-          lastFailure = incomplete;
-        } else {
-          validateMetadata(metadata, options);
-          return metadata;
-        }
-      }
-    } catch (error) {
-      if (error instanceof RegistryReleaseError) throw error;
-      if (!isTimeoutError(error)) {
-        throw new RegistryReleaseError(
-          "lookup",
-          `${spec} registry lookup failed: ${
-            error instanceof Error ? error.message : String(error)
-          }.`,
-          registryErrorContext(options, "registry lookup failed"),
-        );
-      }
-      lastFailure = "timeout";
-    }
+    const result = await attemptRegistryLookup(options, fetcher, spec);
+    if (result.kind === "metadata") return result.metadata;
+    lastFailure = result.failure;
 
     if (attempt < options.maxAttempts) {
       options.onRetry?.(
@@ -335,10 +353,12 @@ export function formatRegistryReleaseFailure(error: unknown): string {
       case "wrong-version":
       case "provenance":
       case "timeout":
-      case "lookup":
+      case "lookup": {
+        const reasonSuffix = error.safeReason ? `: ${error.safeReason}` : "";
         return `REGISTRY RELEASE FAIL [${error.classification}]${
           formatFailureContext(error.context)
-        }${error.safeReason ? `: ${error.safeReason}` : ""}.`;
+        }${reasonSuffix}.`;
+      }
     }
   }
   return "REGISTRY RELEASE FAIL [configuration].";
