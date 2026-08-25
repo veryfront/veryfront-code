@@ -120,6 +120,8 @@ jobs:
           max_attempts: 3
           retry_wait_seconds: 10
           command: VF_DISABLE_LRU_INTERVAL=1 deno task test:integration --no-lock
+      - name: Run CLI integration tests
+        run: deno task test:integration:cli --no-lock
 
   tests-node:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}

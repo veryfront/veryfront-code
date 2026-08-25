@@ -1,4 +1,5 @@
 import {
+  awaitAbortable,
   computeHash,
   rendererLogger as logger,
   throwIfAborted,
@@ -392,6 +393,12 @@ export interface MDXLayoutModuleOptions {
   moduleServerOrigin?: string;
   config?: VeryfrontConfig;
   isLocalProject?: boolean;
+  /**
+   * Request cancellation. The import-map preloader and ESM module loader do
+   * not take a signal themselves, so each stage is guarded and the module wait
+   * is raced against cancellation.
+   */
+  signal?: AbortSignal;
 }
 
 /** Inputs for {@link loadMDXLayout}. */
@@ -419,6 +426,7 @@ export function loadMDXLayout(
     moduleServerOrigin,
     config,
     isLocalProject,
+    signal,
   } = options;
 
   return withSpan(
@@ -429,36 +437,45 @@ export function loadMDXLayout(
         hasPreloadedImportMap: !!preloadedImportMap,
       });
 
-      const map = preloadedImportMap ?? (await preloadImportMap(projectDir, adapter, projectId, {
-        projectDir,
-        contentSourceId,
-        config,
-      }));
+      throwIfAborted(signal);
+      const map = preloadedImportMap ?? (await awaitAbortable(
+        preloadImportMap(projectDir, adapter, projectId, {
+          projectDir,
+          contentSourceId,
+          config,
+        }),
+        signal,
+      ));
       if (preloadedImportMap) {
         loadMdxLayoutLog.debug("Using preloaded import map", { projectSlug });
       }
 
+      throwIfAborted(signal);
       const code = transformImportsWithMap(bundle.compiledCode, map);
       loadMdxLayoutLog.debug("Loading module via loadModuleESM START", {
         projectSlug,
         codeLength: code.length,
       });
 
-      const mod = (await mdxRenderer.loadModuleESM(code, {
-        adapter,
-        projectId,
-        projectDir,
-        projectSlug,
-        contentSourceId,
-        mode: modes.compileMode,
-        reactVersion,
-        dependencyPinningCacheKey,
-        dependencyPinningDependencies,
-        dependencyPinningSource,
-        moduleServerOrigin,
-        isLocalProject,
-        serverExternalPackages: config?.build?.serverExternalPackages,
-      })) as MDXModule;
+      const mod = (await awaitAbortable(
+        mdxRenderer.loadModuleESM(code, {
+          adapter,
+          projectId,
+          projectDir,
+          projectSlug,
+          contentSourceId,
+          mode: modes.compileMode,
+          reactVersion,
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
+          dependencyPinningSource,
+          moduleServerOrigin,
+          isLocalProject,
+          serverExternalPackages: config?.build?.serverExternalPackages,
+        }),
+        signal,
+      )) as MDXModule;
+      throwIfAborted(signal);
 
       loadMdxLayoutLog.debug("loadModuleESM DONE", {
         projectSlug,

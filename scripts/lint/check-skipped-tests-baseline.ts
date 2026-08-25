@@ -28,7 +28,7 @@ import {
 
 // Lower this when you re-enable or delete skipped tests. Raising it means new
 // dead coverage is being added — prefer fixing or deleting the test instead.
-export const SKIPPED_TEST_BASELINE = 11;
+export const SKIPPED_TEST_BASELINE = 5;
 
 // Method form: it.skip( / describe.ignore( / test.skip( / Deno.test.ignore(
 const METHOD_FORM = /\b(?:it|describe|test|Deno\.test)\.(?:skip|ignore)\s*\(/g;
