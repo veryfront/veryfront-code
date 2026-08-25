@@ -617,13 +617,12 @@ describe("ApiHandlerWrapper", () => {
     );
   });
 
-  it("enters the requested branch before preview freshness and page classification", async () => {
-    // A non-multi-project contextual adapter is reused across requests and
-    // still points at the previous request's branch. Both the strict refresh
-    // and the page/API ownership classification must run in the branch this
-    // request addresses — the same context SSR later renders from.
-    const events: string[] = [];
-    let adapterBranch: string | null = "main"; // left over from the previous request
+  it("rejects a shared contextual adapter before mutating or reading it", async () => {
+    // A contextual adapter without runWithContext stores request state in
+    // process-global mutators. Reject it before branch A can be retargeted by
+    // a concurrent branch B request while classification or SSR is running.
+    let contextMutations = 0;
+    let filesystemReads = 0;
     const ctx = createCtx({});
     ctx.requestContext!.mode = "preview";
     ctx.requestContext!.branch = "feature";
@@ -646,28 +645,30 @@ describe("ApiHandlerWrapper", () => {
     };
     fs.isMultiProjectMode = () => false;
     fs.isContextualMode = () => true;
-    fs.setRequestToken = () => {};
-    fs.setRequestBranch = (branch) => {
-      adapterBranch = branch;
-      events.push(`branch:${branch}`);
+    fs.setRequestToken = () => contextMutations++;
+    fs.setRequestBranch = () => contextMutations++;
+    fs.setProductionMode = () => contextMutations++;
+    fs.exists = () => {
+      filesystemReads++;
+      return Promise.resolve(false);
     };
-    fs.setProductionMode = () => {};
-    fs.exists = () => Promise.resolve(false);
     fs.readDir = async function* () {};
     fs.resolveFile = (path) => {
-      events.push(`resolve:${adapterBranch}`);
+      filesystemReads++;
       return Promise.resolve(
         path === "/tmp/project/pages/review" ? "/tmp/project/pages/review.tsx" : null,
       );
     };
     fs.symlinkSemantics = "none";
     fs.readFile = (path) => {
+      filesystemReads++;
       if (path === "pages/review.tsx" || path === "/tmp/project/pages/review.tsx") {
         return Promise.resolve("export default function Review() { return null; }");
       }
       return Promise.reject(new Error("File not found"));
     };
     fs.readFileBytesWithinLimit = (path) => {
+      filesystemReads++;
       if (path === "pages/review.tsx" || path === "/tmp/project/pages/review.tsx") {
         return Promise.resolve(
           new TextEncoder().encode("export default function Review() { return null; }"),
@@ -676,21 +677,20 @@ describe("ApiHandlerWrapper", () => {
       return Promise.reject(new Error("File not found"));
     };
     fs.refreshSourceSnapshot = () => {
-      events.push(`refresh:${adapterBranch}`);
+      filesystemReads++;
       return Promise.resolve();
     };
     const handler = new ApiHandlerWrapper("/tmp/project", ctx.adapter);
 
     const result = await handler.handle(new Request("http://localhost/review"), ctx);
 
-    assertEquals(result, { continue: true });
-    assertEquals(events[0], "branch:feature", "the adapter context must be entered first");
-    assertEquals(events.includes("refresh:feature"), true);
-    assertEquals(events.includes("resolve:feature"), true);
+    assertEquals(result.response?.status, 503);
+    assertEquals(contextMutations, 0);
+    assertEquals(filesystemReads, 0);
+    const problem = await result.response!.json();
     assertEquals(
-      events.some((event) => event.endsWith(":main")),
-      false,
-      "freshness and classification must see the requested branch, not the leftover one",
+      problem.type,
+      "https://veryfront.com/docs/code/guides/errors#project-execution-unavailable",
     );
   });
 

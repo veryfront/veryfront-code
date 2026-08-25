@@ -50,7 +50,6 @@ import {
 import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 import { appendDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
 import { ensurePreviewDocumentSourceSnapshot } from "../source-snapshot-freshness.ts";
-import { enterContextualAdapterRequestContext } from "../contextual-adapter-context.ts";
 import { ssrOwnsDocumentPathname } from "./document-ownership.ts";
 
 const logger = serverLogger.component("ssr");
@@ -167,10 +166,34 @@ export class SSRHandler extends BaseHandler {
         );
       }
 
-      // Enter this request's adapter context (token, branch, production mode)
-      // through the same helper the API/page classifier uses, so the snapshot
-      // it prepared describes the context this render reads from.
-      enterContextualAdapterRequestContext(ctx);
+      if (isExtended && fsAdapter.isContextualMode()) {
+        // setRequestToken and setRequestBranch are optional per-request context hints;
+        // some adapters may not support them. Swallow those errors gracefully.
+        try {
+          if (ctx.proxyToken) fsAdapter.setRequestToken(ctx.proxyToken);
+          fsAdapter.setRequestBranch(ctx.parsedDomain?.branch ?? null);
+        } catch (e) {
+          logger.warn("Non-critical adapter context setup failed (token/branch)", {
+            error: e instanceof Error ? e.message : String(e),
+            projectSlug: ctx.projectSlug,
+          });
+        }
+
+        // setProductionMode is more important than the token/branch hints: if it
+        // silently no-ops the request could run in the wrong environment. Adapters
+        // that don't implement it may still throw, so keep it non-fatal but surface
+        // the failure at warn (rather than swallowing it) so a genuinely broken
+        // production-mode setup is visible instead of silently serving draft content.
+        try {
+          const prodMode = isProductionMode(ctx);
+          fsAdapter.setProductionMode(prodMode, ctx.releaseId);
+        } catch (e) {
+          logger.warn("Adapter setProductionMode failed", {
+            error: e instanceof Error ? e.message : String(e),
+            projectSlug: ctx.projectSlug,
+          });
+        }
+      }
 
       return this.handleWithContext(req, ctx, slug, requestId, url);
     } catch (error) {

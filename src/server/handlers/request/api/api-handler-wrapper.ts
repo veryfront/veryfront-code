@@ -19,10 +19,10 @@ import {
   PROJECT_EXECUTION_UNAVAILABLE,
 } from "#veryfront/errors";
 import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
-import { enterContextualAdapterRequestContext } from "../contextual-adapter-context.ts";
 
 type FsWrapper = {
   isMultiProjectMode?: () => boolean;
+  isContextualMode?: () => boolean;
   runWithContext?: <T>(
     slug: string,
     token: string,
@@ -89,12 +89,17 @@ export class ApiHandlerWrapper extends BaseHandler {
     const mustDenyProjectExecution = requiresIsolatedProjectRuntime(ctx);
 
     if (!isMultiProject) {
-      // A reused contextual adapter still points at the branch of whatever
-      // request it served last. Enter the context this request addresses —
-      // the same one SSR renders from — before freshness is prepared and
-      // route ownership is classified, or both would inspect the previous
-      // branch's source.
-      enterContextualAdapterRequestContext(ctx);
+      // Request-global token and branch mutators cannot keep classification
+      // and the later render on one context when requests overlap. Only an
+      // atomic runWithContext adapter may serve contextual project source.
+      if (fsWrapper.isContextualMode?.() === true) {
+        return this.projectExecutionUnavailable(
+          req,
+          ctx,
+          pathname,
+          "Contextual project filesystem access requires atomic request-scoped execution",
+        );
+      }
       return this.handleWithContext(req, ctx, pathname, mustDenyProjectExecution);
     }
 
@@ -142,7 +147,7 @@ export class ApiHandlerWrapper extends BaseHandler {
             mustDenyProjectExecution &&
             (pathname === "/api" || pathname.startsWith("/api/"))
           ) {
-            return this.sharedRuntimeExecutionUnavailable(req, ctx, pathname);
+            return this.projectExecutionUnavailable(req, ctx, pathname);
           }
 
           const canResolveAsPage = pathname !== "/api" &&
@@ -168,7 +173,7 @@ export class ApiHandlerWrapper extends BaseHandler {
           }
 
           if (mustDenyProjectExecution) {
-            return this.sharedRuntimeExecutionUnavailable(req, ctx, pathname);
+            return this.projectExecutionUnavailable(req, ctx, pathname);
           }
 
           // Lazy per-project primitive discovery (agents, tools) on first access.
@@ -227,16 +232,17 @@ export class ApiHandlerWrapper extends BaseHandler {
     );
   }
 
-  private sharedRuntimeExecutionUnavailable(
+  private projectExecutionUnavailable(
     req: Request,
     ctx: HandlerContext,
     pathname: string,
+    detail =
+      "Shared runtimes do not execute tenant API modules in the host process or same-process Workers",
   ): HandlerResult {
     const problem = createErrorResponseFromDefinition(
       PROJECT_EXECUTION_UNAVAILABLE,
       {
-        detail:
-          "Shared runtimes do not execute tenant API modules in the host process or same-process Workers",
+        detail,
         instance: pathname,
       },
     );
