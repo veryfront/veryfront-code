@@ -14,6 +14,7 @@ import {
   RuntimeAgentRunInvocationSchema,
 } from "../index.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
+import { createHostedRunEventWriterCapabilityForRequest } from "./child-run-event-writer-token.ts";
 
 const conversationId = "10000000-1000-4000-8000-100000000001";
 const messageId = "10000000-1000-4000-8000-100000000002";
@@ -23,6 +24,11 @@ const projectId = "10000000-1000-4000-8000-100000000005";
 const branchId = "10000000-1000-4000-8000-100000000006";
 const environmentId = "10000000-1000-4000-8000-100000000008";
 const runtimeSource = { type: "release", releaseId: "release-42" } as const;
+const environmentRuntimeSource = {
+  type: "environment",
+  environmentName: "Production",
+  releaseId: "release-42",
+} as const;
 const replayToolName = "github__get_pr_diff";
 const replayOutput = { files: ["src/chat/conversation.ts"] };
 const rawReplayToolCallPart = {
@@ -1694,6 +1700,124 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(parsed.upstreamParentRunId, "run_parent_1");
     assertEquals(parsed.spawnedFromToolCallId, "tool_1");
     assertEquals(parsed.persistLatestUserMessageBeforeDurableRun, false);
+  });
+
+  it("does not trust runtime environment targets from public hosted chat requests", async () => {
+    const parsed = await parseHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
+          context: {
+            conversationId,
+            projectId,
+            branchId,
+            runtimeTargetKind: "environment",
+            runtimeTargetEnvironmentId: environmentId,
+          },
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+      },
+    );
+
+    if (parsed instanceof Response) throw new Error("Expected parsed request");
+    assertEquals(parsed.validatedContext.runtimeTargetKind, undefined);
+    assertEquals(parsed.validatedContext.runtimeTargetEnvironmentId, undefined);
+  });
+
+  it("trusts runtime environment targets only with a verified control-plane token", async () => {
+    const baseInvocation = createRuntimeInvocation();
+    const invocation = RuntimeAgentRunInvocationSchema.parse({
+      ...baseInvocation,
+      run: {
+        ...baseInvocation.run,
+        project: {
+          ...baseInvocation.run.project,
+          runtimeTargetKind: "environment",
+          runtimeTargetEnvironmentId: environmentId,
+          runtimeTargetBranchId: null,
+        },
+      },
+      agentSource: environmentRuntimeSource,
+    });
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        headers: {
+          "X-Veryfront-Run-Event-Token": "run-event-service-token",
+        },
+        body: JSON.stringify(invocation),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () => Promise.resolve(true),
+        runtimeSource: environmentRuntimeSource,
+      },
+    );
+
+    if (parsed instanceof Response) throw new Error("Expected parsed request");
+    assertEquals(parsed.validatedContext.runtimeTargetKind, "environment");
+    assertEquals(parsed.validatedContext.runtimeTargetEnvironmentId, environmentId);
+
+    // Regression: the verified run-event credential is registered against the
+    // object the parser returns, so the downstream capability lookup must
+    // succeed on that exact value even after runtime target metadata is added.
+    const capability = createHostedRunEventWriterCapabilityForRequest(parsed, {
+      apiUrl: "https://api.example.com/",
+      runId: "run_root_1",
+    });
+    assertEquals(
+      typeof capability?.mintChildRunEventWriterCapability,
+      "function",
+      "verified writer capability must be recoverable from the parser's return value",
+    );
+
+    const detachedCopy = { ...parsed };
+    assertEquals(
+      createHostedRunEventWriterCapabilityForRequest(detachedCopy, {
+        apiUrl: "https://api.example.com/",
+        runId: "run_root_1",
+      }),
+      undefined,
+      "credential stays bound to object identity, not to a spread copy",
+    );
+  });
+
+  it("strips runtime targets from an invocation without a verified control-plane token", async () => {
+    const baseInvocation = createRuntimeInvocation();
+    const invocation = RuntimeAgentRunInvocationSchema.parse({
+      ...baseInvocation,
+      run: {
+        ...baseInvocation.run,
+        project: {
+          ...baseInvocation.run.project,
+          runtimeTargetKind: "environment",
+          runtimeTargetEnvironmentId: environmentId,
+          runtimeTargetBranchId: null,
+        },
+      },
+      agentSource: environmentRuntimeSource,
+    });
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        body: JSON.stringify(invocation),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        runtimeSource: environmentRuntimeSource,
+      },
+    );
+
+    if (parsed instanceof Response) throw new Error("Expected parsed request");
+    assertEquals(parsed.serverEnvelopeVerified, undefined);
+    assertEquals(parsed.validatedContext.runtimeTargetKind, undefined);
+    assertEquals(parsed.validatedContext.runtimeTargetEnvironmentId, undefined);
   });
 
   it("rejects oversized hosted chat requests before schema parsing", async () => {

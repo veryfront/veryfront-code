@@ -428,14 +428,18 @@ async function verifyHostedChatProjectAccess(input: {
 }
 
 /** Request payload for build parsed hosted chat. */
-export async function buildParsedHostedChatRequest(input: {
+type BuildParsedHostedChatRequestInput = {
   chatRequest: HostedChatRequest;
   agentId?: string;
   agentConfig?: RuntimeAgentMarkdownDefinition;
   authToken: string;
   userId: string;
   verifyProjectAccess?: ParseHostedChatRequestOptions["verifyProjectAccess"];
-}): Promise<ParsedHostedChatRequest | Response> {
+};
+
+async function buildParsedHostedChatRequestInternal(
+  input: BuildParsedHostedChatRequestInput,
+): Promise<ParsedHostedChatRequest | Response> {
   const {
     messages,
     context: chatContext,
@@ -480,8 +484,13 @@ export async function buildParsedHostedChatRequest(input: {
     return access;
   }
   const verifiedProjectSlug = access.projectSlug;
+  const {
+    runtimeTargetKind: _runtimeTargetKind,
+    runtimeTargetEnvironmentId: _runtimeTargetEnvironmentId,
+    ...publicChatContext
+  } = chatContext;
   const validatedContext: ChatRequestContext = {
-    ...chatContext,
+    ...publicChatContext,
     projectSlug: verifiedProjectSlug,
   };
 
@@ -506,6 +515,13 @@ export async function buildParsedHostedChatRequest(input: {
     persistLatestUserMessageBeforeDurableRun: false,
     ...(input.agentConfig ? { agentConfig: input.agentConfig } : {}),
   };
+}
+
+/** Builds a public hosted chat request without trusting client-supplied runtime targets. */
+export function buildParsedHostedChatRequest(
+  input: BuildParsedHostedChatRequestInput,
+): Promise<ParsedHostedChatRequest | Response> {
+  return buildParsedHostedChatRequestInternal(input);
 }
 
 /** Request payload for parse hosted chat request from. */
@@ -578,7 +594,7 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     });
   }
 
-  const parsedRequest = await buildParsedHostedChatRequest({
+  const parsedRequest = await buildParsedHostedChatRequestInternal({
     authToken: authenticatedRequest.authToken,
     userId: invocation.data.run.requestedByUserId,
     chatRequest: chatRequest.data,
@@ -619,5 +635,19 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     );
   }
 
+  if (!verifiedRequest.serverEnvelopeVerified) {
+    return verifiedRequest;
+  }
+
+  // The verified run-event credential lives in module-private ingress state
+  // keyed by the exact object identity of `verifiedRequest`, so the runtime
+  // target metadata is grafted onto that same object rather than a spread
+  // copy — returning a copy would orphan the credential lookup downstream.
+  const runtimeContext = chatRequest.data.context;
+  verifiedRequest.validatedContext = {
+    ...verifiedRequest.validatedContext,
+    runtimeTargetKind: runtimeContext.runtimeTargetKind,
+    runtimeTargetEnvironmentId: runtimeContext.runtimeTargetEnvironmentId,
+  };
   return verifiedRequest;
 }
