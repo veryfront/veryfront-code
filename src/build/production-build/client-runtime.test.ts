@@ -10,6 +10,7 @@ import {
   generatePrefetchScript,
   generateRouterScript,
 } from "./client-runtime.ts";
+import { VERSION } from "#veryfront/utils/version-constant.ts";
 
 describe(
   "build/production-build/client-runtime",
@@ -33,12 +34,12 @@ describe(
       it("should contain version export", () => {
         const result = getResult();
         assertEquals(result.includes("export const version"), true);
-        assertEquals(result.includes("2.0.0"), true);
+        assertEquals(result.includes(JSON.stringify(VERSION)), true);
       });
 
-      it("should contain hydrate export", () => {
+      it("should contain an async hydrate export", () => {
         const result = getResult();
-        assertEquals(result.includes("export const hydrate"), true);
+        assertEquals(result.includes("export async function hydrate"), true);
       });
 
       it("should contain window.__veryfront setup", () => {
@@ -47,18 +48,11 @@ describe(
         assertEquals(result.includes("__veryfront.initialized"), true);
       });
 
-      it("should set data-hydrated attribute on root element", () => {
+      it("should delegate hydration to the generated router runtime", () => {
         const result = getResult();
-        assertStringIncludes(
-          result,
-          "root.setAttribute('data-hydrated', 'true')",
-          "app module must mark the root element as hydrated",
-        );
-        assertStringIncludes(
-          result,
-          "const root = document.getElementById('root');",
-          "app module must resolve the root element before hydrating",
-        );
+        assertEquals(result.includes("import { boot } from './router.js'"), true);
+        assertEquals(result.includes("return boot({ ...options, slug })"), true);
+        assertEquals(result.includes("data-hydrated"), false);
       });
     });
 
@@ -241,16 +235,16 @@ describe(
     });
 
     describe("generateAppModule edge cases", () => {
-      it("should include IIFE wrapper", () => {
+      it("should expose the compatibility API without a placeholder IIFE", () => {
         const result = generateAppModule();
-        assertEquals(result.includes("(() => {"), true);
-        assertEquals(result.includes("})()"), true);
+        assertEquals(result.includes("export async function hydrate"), true);
+        assertEquals(result.includes("(() => {"), false);
       });
 
       it("should include hydration support", () => {
         const result = generateAppModule();
-        assertEquals(result.includes("window.hydrate"), true);
-        assertEquals(result.includes("async function"), true);
+        assertEquals(result.includes("window.hydrate = hydrate"), true);
+        assertEquals(result.includes("return boot({ ...options, slug })"), true);
       });
     });
   },
