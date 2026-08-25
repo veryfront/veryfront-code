@@ -63,6 +63,34 @@ const immutableL1 = createImmutableFileCacheL1();
 /** Process-wide default entry lifetime for that tier, overridable per instance. */
 const IMMUTABLE_L1_TTL_MS = resolveImmutableL1TtlMs();
 
+/**
+ * The single path by which this module publishes a value into the
+ * request-scoped cache, and the place the process-local tier's per-key
+ * generation is bumped for that write.
+ *
+ * These two must not be separable. `getAsync` decides whether a read may use
+ * the L1 tier BEFORE it awaits the backend, so a write landing mid-read does
+ * not make that read's `inRequestScope` guard true. What such a read receives
+ * instead is this request's own optimistic value, handed back by
+ * `getCachedWithBatching`'s mutation-version divergence path, and the only
+ * thing that then keeps it out of the process-local tier is that the
+ * generation token the read took no longer matches. If a request-cache write
+ * ever happened without that bump, a value the backend never confirmed could
+ * be admitted and served to LATER, SEPARATE requests for the rest of the TTL.
+ *
+ * Holding the two together by adjacency made that a one-line deletion away, and
+ * the deletion passed the whole suite. They are one function instead.
+ *
+ * The bump is not folded into `setInRequestCache` itself: that lives in
+ * `cache/request-cache-batcher.ts`, a layer BELOW this one, and the L1 store is
+ * owned here. Making the batcher reach into it would invert the dependency and
+ * would be meaningless for its other callers, which cache unrelated things.
+ */
+function publishToRequestCache(key: string, serialized: string | null): void {
+  immutableL1.dropKey(key);
+  setInRequestCache(key, serialized);
+}
+
 // Shared backend state across all FileCache instances
 let cacheBackend: CacheBackend | null = null;
 let backendInitialized = false;
@@ -267,6 +295,10 @@ export class FileCache {
 
     const size = estimateSize(value);
     const entry: CacheEntry<T> = { value, timestamp: Date.now(), size };
+    // A write invalidates any held entry whichever storage path is taken below,
+    // including the fallback one that never reaches the request cache. The
+    // barrier for a write landing mid-read is a separate concern and lives in
+    // publishToRequestCache; dropKey is idempotent, so both may run.
     immutableL1.dropKey(key);
 
     // In distributed mode, fire-and-forget to backend
@@ -284,7 +316,7 @@ export class FileCache {
         return;
       }
       // Update request-scoped cache so subsequent reads in same request see the new value
-      setInRequestCache(key, serialized);
+      publishToRequestCache(key, serialized);
       backend.set(key, serialized, this.backendTtlSeconds).catch((error) => {
         logger.warn("Backend set failed", { key, error });
       }).finally(() => {
@@ -307,6 +339,10 @@ export class FileCache {
 
     const size = estimateSize(value);
     const entry: CacheEntry<T> = { value, timestamp: Date.now(), size };
+    // A write invalidates any held entry whichever storage path is taken below,
+    // including the fallback one that never reaches the request cache. The
+    // barrier for a write landing mid-read is a separate concern and lives in
+    // publishToRequestCache; dropKey is idempotent, so both may run.
     immutableL1.dropKey(key);
 
     // Try backend first
@@ -323,7 +359,7 @@ export class FileCache {
         try {
           const serialized = JSON.stringify(entry);
           // Update request-scoped cache so subsequent reads in same request see the new value
-          setInRequestCache(key, serialized);
+          publishToRequestCache(key, serialized);
           await backend.set(key, serialized, this.backendTtlSeconds);
         } catch (error) {
           logger.debug("Backend set failed, skipping fallback", { key, error });
@@ -381,7 +417,7 @@ export class FileCache {
         // cache before awaiting the backend. Invalidate that view as part of
         // the same delete, or this request can keep reading a value that the
         // backend no longer contains.
-        setInRequestCache(key, null);
+        publishToRequestCache(key, null);
         const backend = this.getBackend();
         if (backend) {
           try {

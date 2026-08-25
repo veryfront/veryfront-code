@@ -21,12 +21,15 @@
  * @module cache/immutable-l1
  */
 
+import { logger as baseLogger } from "#veryfront/utils";
 import { getEnvValue } from "./backends/helpers.ts";
 import {
   cacheCredentialIdentity,
   resolveCacheRequestAuthority,
   type ResolvedCacheAuthority,
 } from "./request-authority.ts";
+
+const logger = baseLogger.component("immutable-l1");
 
 /**
  * How long an admitted entry may be served without the backend being consulted
@@ -48,6 +51,31 @@ import {
  *     handle the poke.
  */
 export const IMMUTABLE_L1_DEFAULT_TTL_MS = 5_000;
+
+/**
+ * Hard upper bound on the configured entry lifetime, applied to
+ * `IMMUTABLE_L1_TTL_ENV_VAR` after parsing.
+ *
+ * The TTL is not a performance knob that only costs staleness when it is set
+ * too high. It is the width of two separate windows at once, and a clamp is
+ * what keeps a typo from widening either of them without bound:
+ *
+ *  1. CREDENTIAL REVOCATION. An L1 hit is served with no server-side
+ *     authorization, so a credential revoked mid-flight keeps reading release
+ *     assets of a project it was already authorized for for up to this long.
+ *  2. CROSS-POD PUBLISH VISIBILITY. A publish poke drops the `file:release:`
+ *     entries of the pod that received it and of no other, so every other pod
+ *     keeps serving warm entries until they expire. This is the upper bound on
+ *     how long a publish stays invisible on pods that did not handle the poke.
+ *
+ * Without a clamp, `VERYFRONT_FILE_CACHE_L1_TTL_MS=5000000` parses cleanly and
+ * silently buys 83 minutes of BOTH windows in place of the intended 5 seconds.
+ * 60 seconds is the outer edge at which both remain defensible operationally:
+ * it is twelve times the default, so it leaves real room to trade round trips
+ * for staleness, while keeping revocation lag and publish lag inside the minute
+ * an operator would already tolerate from a rolling restart.
+ */
+export const IMMUTABLE_L1_MAX_TTL_MS = 60_000;
 
 /** Entry-count ceiling, so the store cannot grow without limit. */
 export const IMMUTABLE_L1_DEFAULT_MAX_ENTRIES = 2_000;
@@ -79,7 +107,10 @@ export const IMMUTABLE_L1_DEFAULT_MAX_VALUE_BYTES = 512 * 1024;
  */
 export const IMMUTABLE_L1_DEFAULT_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 
-/** Overrides the TTL above. Set to `0` to disable the tier outright. */
+/**
+ * Overrides the TTL above. Set to `0` to disable the tier outright. Values
+ * above `IMMUTABLE_L1_MAX_TTL_MS` are clamped to it, with a warning.
+ */
 export const IMMUTABLE_L1_TTL_ENV_VAR = "VERYFRONT_FILE_CACHE_L1_TTL_MS";
 
 /** Overrides the entry-count ceiling above. Set to `0` to admit nothing. */
@@ -249,18 +280,51 @@ export interface ImmutableFileCacheL1 {
   clear(): void;
 }
 
-function readPositiveIntegerEnv(name: string, fallback: number): number {
+/**
+ * Parse a non-negative integer override, falling back on anything unusable.
+ *
+ * `maxValue`, when given, is a ceiling the configured value is CLAMPED to
+ * rather than rejected for exceeding: an operator who asked for a longer
+ * lifetime still gets the longest one that is allowed, instead of silently
+ * getting the default they were trying to move away from. The clamp is logged
+ * at warn level because a value being quietly reinterpreted is exactly the
+ * failure a misconfiguration needs to be visible for.
+ */
+function readPositiveIntegerEnv(
+  name: string,
+  fallback: number,
+  maxValue?: number,
+): number {
   const raw = getEnvValue(name);
   if (raw === undefined || raw.trim() === "") return fallback;
 
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed < 0) return fallback;
-  return Math.floor(parsed);
+
+  const value = Math.floor(parsed);
+  if (maxValue !== undefined && value > maxValue) {
+    logger.warn(
+      "Configured cache limit exceeds its maximum and was clamped to the maximum",
+      { setting: name, configured: value, clampedTo: maxValue },
+    );
+    return maxValue;
+  }
+  return value;
 }
 
-/** Configured entry lifetime; `0` disables the tier. */
+/**
+ * Configured entry lifetime; `0` disables the tier.
+ *
+ * Clamped to `IMMUTABLE_L1_MAX_TTL_MS`, because this value is the width of the
+ * credential-revocation window and of the cross-pod publish-visibility window,
+ * not a staleness preference. See that constant for both.
+ */
 export function resolveImmutableL1TtlMs(): number {
-  return readPositiveIntegerEnv(IMMUTABLE_L1_TTL_ENV_VAR, IMMUTABLE_L1_DEFAULT_TTL_MS);
+  return readPositiveIntegerEnv(
+    IMMUTABLE_L1_TTL_ENV_VAR,
+    IMMUTABLE_L1_DEFAULT_TTL_MS,
+    IMMUTABLE_L1_MAX_TTL_MS,
+  );
 }
 
 /** Configured entry-count ceiling. */

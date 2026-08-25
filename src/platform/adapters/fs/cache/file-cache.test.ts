@@ -9,6 +9,7 @@ import {
 import { CacheBackends } from "#veryfront/cache/backend.ts";
 import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
+import type { ResolvedCacheAuthority } from "#veryfront/cache/request-authority.ts";
 import type { FileCacheOptions } from "./types.ts";
 
 /** `file:release:<projectSlug>:<releaseId>:<path>`, immutable by construction. */
@@ -63,6 +64,27 @@ interface CountingBackendHarness {
   /** Resolves once a held delete has started and blocked, before mutating. */
   mutationStarted: () => Promise<void>;
   releaseMutations: () => void;
+  /** Hold every backend write open until `releaseWrites()`, to order a race. */
+  holdWrites: () => void;
+  /** Resolves once a held write has blocked, BEFORE it applies to the backend. */
+  writeStarted: () => Promise<void>;
+  releaseWrites: () => void;
+}
+
+/**
+ * How the fake backend presents itself. The default mirrors a Redis backend,
+ * which authorizes by process-held credentials and so exposes no per-request
+ * authority. `type: "api"` is the credential-gated shape: `cacheAuthority()`
+ * reports the token and project the backend's own reads would use, and the
+ * process-local tier must scope entries on exactly that.
+ */
+interface DistributedBackendShape {
+  backendType?: "redis" | "api";
+  /**
+   * Supplies the backend's OWN authority, as `ApiCacheBackend` does. Read fresh
+   * on every call so a test can revoke or swap the credential between requests.
+   */
+  cacheAuthority?: () => ResolvedCacheAuthority;
 }
 
 /**
@@ -73,6 +95,7 @@ interface CountingBackendHarness {
 async function useCountingDistributedBackend(
   distributedModule: DistributedFileCacheModule,
   cacheOptions: FileCacheOptions = {},
+  shape: DistributedBackendShape = {},
 ): Promise<CountingBackendHarness> {
   const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
   assertExists(descriptor);
@@ -104,12 +127,32 @@ async function useCountingDistributedBackend(
     markMutationStarted?.();
     await mutationsReleased;
   };
+  let holdingWrites = false;
+  let markWriteStarted: (() => void) | undefined;
+  let writeStarted = new Promise<void>((resolve) => {
+    markWriteStarted = resolve;
+  });
+  let doReleaseWrites: (() => void) | undefined;
+  let writesReleased = new Promise<void>((resolve) => {
+    doReleaseWrites = resolve;
+  });
+  // Blocks BEFORE the write applies, so a held write leaves the backend holding
+  // the value it had, exactly as an in-flight or hung network write would. That
+  // is what makes an unconfirmed value observable as unconfirmed.
+  const gateWrite = async (): Promise<void> => {
+    if (!holdingWrites) return;
+    markWriteStarted?.();
+    await writesReleased;
+  };
   Object.defineProperty(CacheBackends, "file", {
     ...descriptor,
     value: () =>
       Promise.resolve({
-        type: "redis",
+        type: shape.backendType ?? "redis",
         size: 0,
+        // Present only when the shape supplies one, so the default backend keeps
+        // the `cacheAuthority === undefined` shape a Redis backend really has.
+        ...(shape.cacheAuthority ? { cacheAuthority: shape.cacheAuthority } : {}),
         get: async (key: string) => {
           gets += 1;
           // Captured before blocking, so a held read carries the value the
@@ -121,9 +164,9 @@ async function useCountingDistributedBackend(
           }
           return captured;
         },
-        set: (key: string, value: string) => {
+        set: async (key: string, value: string) => {
+          await gateWrite();
           values.set(key, value);
-          return Promise.resolve();
         },
         del: async (key: string) => {
           await gateMutation();
@@ -186,6 +229,20 @@ async function useCountingDistributedBackend(
     releaseMutations: (): void => {
       holdingMutations = false;
       doReleaseMutations?.();
+    },
+    holdWrites: (): void => {
+      holdingWrites = true;
+      writeStarted = new Promise<void>((resolve) => {
+        markWriteStarted = resolve;
+      });
+      writesReleased = new Promise<void>((resolve) => {
+        doReleaseWrites = resolve;
+      });
+    },
+    writeStarted: () => writeStarted,
+    releaseWrites: (): void => {
+      holdingWrites = false;
+      doReleaseWrites?.();
     },
   };
 }
@@ -1080,6 +1137,169 @@ describe("Distributed cache functions", () => {
         1,
         "an unconfirmed optimistic write must not be promoted into the process-local tier",
       );
+    });
+
+    it("keeps one credential from reading another credential's process-local entry", async () => {
+      const distributedModule = await import("./file-cache.ts?issue-602-l1-credential-isolation");
+      // Only the backend's credential changes between requests. The ambient
+      // project stays fixed, so a miss can only be credential separation.
+      let backendToken = "token-a";
+      const harness = await useCountingDistributedBackend(distributedModule, {}, {
+        backendType: "api",
+        cacheAuthority: (): ResolvedCacheAuthority => ({
+          token: backendToken,
+          projectRef: "proj-a",
+          tokenSource: "explicit-endpoint",
+        }),
+      });
+
+      await harness.cache.setAsync(IMMUTABLE_RELEASE_KEY, "page-source");
+      assertEquals(
+        await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY),
+        "page-source",
+        "the warming request must read the immutable value through the api backend",
+      );
+
+      harness.resetBackendGets();
+      backendToken = "token-b";
+      assertEquals(
+        await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY),
+        "page-source",
+        "the second credential must still be served, but only through the backend",
+      );
+      assertEquals(
+        harness.backendGets(),
+        1,
+        "the same key under a different credential must not hit the first credential's entry",
+      );
+
+      // Positive control: without this, a miss above would be indistinguishable
+      // from the first entry having simply been evicted.
+      harness.resetBackendGets();
+      backendToken = "token-a";
+      assertEquals(
+        await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY),
+        "page-source",
+        "the first credential must still read the entry it warmed",
+      );
+      assertEquals(
+        harness.backendGets(),
+        0,
+        "the first credential's entry must survive, so the miss above was scope and not eviction",
+      );
+    });
+
+    it("disables the process-local tier when the backend read has no credential", async () => {
+      const distributedModule = await import("./file-cache.ts?issue-602-l1-credential-absent");
+      const harness = await useCountingDistributedBackend(distributedModule, {}, {
+        backendType: "api",
+        cacheAuthority: (): ResolvedCacheAuthority => ({
+          token: null,
+          projectRef: "proj-a",
+          tokenSource: "none",
+        }),
+      });
+
+      await harness.cache.setAsync(IMMUTABLE_RELEASE_KEY, "page-source");
+      await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY);
+
+      harness.resetBackendGets();
+      assertEquals(
+        await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY),
+        "page-source",
+        "a credential-less read must still return whatever the backend returns",
+      );
+      assertEquals(
+        harness.backendGets(),
+        1,
+        "a read the api backend gates on a credential must not be answered from process memory instead",
+      );
+    });
+
+    it("scopes entries on the backend's own authority rather than the ambient one", async () => {
+      const distributedModule = await import("./file-cache.ts?issue-602-l1-backend-authority");
+      // A backend constructed with an explicit endpoint credential reads under
+      // THAT credential and project for every request, whatever ambient context
+      // the request carries. Only one tenancy is ever read here, so entries may
+      // be shared across these requests; scoping them on the ambient project
+      // instead would be scoping them on something the read never used.
+      const harness = await useCountingDistributedBackend(distributedModule, {}, {
+        backendType: "api",
+        cacheAuthority: (): ResolvedCacheAuthority => ({
+          token: "endpoint-token",
+          projectRef: "endpoint-project",
+          tokenSource: "explicit-endpoint",
+        }),
+      });
+
+      await harness.cache.setAsync(IMMUTABLE_RELEASE_KEY, "page-source");
+      await readInRequest(harness.cache, "ambient-proj-a", IMMUTABLE_RELEASE_KEY);
+
+      harness.resetBackendGets();
+      assertEquals(
+        await readInRequest(harness.cache, "ambient-proj-b", IMMUTABLE_RELEASE_KEY),
+        "page-source",
+        "the entry admitted under the backend's own authority must still be readable",
+      );
+      assertEquals(
+        harness.backendGets(),
+        0,
+        "the scope must follow the backend's own authority, so a different ambient project cannot change it",
+      );
+    });
+
+    it("does not admit a value written mid-read that the backend never confirmed", async () => {
+      const distributedModule = await import("./file-cache.ts?issue-602-l1-midread-write");
+      const harness = await useCountingDistributedBackend(distributedModule);
+
+      await harness.cache.setAsync(IMMUTABLE_RELEASE_KEY, "backend-bytes");
+
+      // getAsync decides whether it may use the process-local tier BEFORE it
+      // awaits the backend, so a write that lands mid-read leaves that decision
+      // true. What the read then receives is this request's own optimistic
+      // value, by way of getCachedWithBatching's mutation-version divergence
+      // path. The write's generation bump is the only barrier left.
+      harness.holdWrites();
+      const { pendingWrite } = await runWithCacheKeyContext(
+        { projectId: "proj-a", mode: "production", versionId: "rel-1" },
+        () =>
+          runWithCacheBatching(async () => {
+            harness.holdReads();
+            const readPromise = harness.cache.getAsync<string>(IMMUTABLE_RELEASE_KEY);
+            await harness.readStarted();
+
+            // Deliberately not awaited: the backend write stays open, which is
+            // a slow or hung write racing a concurrent read of the same key.
+            const write = harness.cache.setAsync(IMMUTABLE_RELEASE_KEY, "never-persisted");
+            await harness.writeStarted();
+
+            harness.releaseReads();
+            assertEquals(
+              await readPromise,
+              "never-persisted",
+              "the writing request itself must still see its own newer write",
+            );
+            // Wrapped so awaiting the request does not await the held write.
+            return { pendingWrite: write };
+          }),
+      );
+
+      // Still before the write settles, so the compensating drop in setAsync's
+      // `finally` cannot be what makes this pass.
+      harness.resetBackendGets();
+      assertEquals(
+        await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY),
+        "backend-bytes",
+        "a later request must see what the backend holds, not the unconfirmed write",
+      );
+      assertEquals(
+        harness.backendGets(),
+        1,
+        "a value the backend never confirmed must not reach a later request from the process-local tier",
+      );
+
+      harness.releaseWrites();
+      await pendingWrite;
     });
 
     it("should return boolean", async () => {

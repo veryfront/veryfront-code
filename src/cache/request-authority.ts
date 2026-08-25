@@ -111,11 +111,25 @@ let credentialIdentitySalt: string | null = null;
  * Used to keep two credentials from sharing a process-local cache scope. The
  * salt is random per process and never leaves it, so the digest is meaningless
  * outside this process and cannot be precomputed. It is not a cryptographic
- * commitment: FNV-1a is a 64-bit fold, so two live credentials could in
- * principle collide, which is why callers must also scope on the project
- * reference rather than relying on this alone.
+ * commitment, so callers must also scope on the project reference rather than
+ * relying on this alone.
+ *
+ * Two domain-separated folds are concatenated rather than one, giving a 128-bit
+ * identity. This is the widening `cache/keys/dependency-pinning.ts` already
+ * applies for the same reason, and it keeps the digest SYNCHRONOUS, which
+ * `buildImmutableL1Scope` requires because it runs inline on every read. A
+ * single 64-bit fold was already infeasible to collide deliberately here: the
+ * salt never leaves the process, so there is no offline search, and a birthday
+ * collision would need on the order of 2^63 live credentials inside one short
+ * TTL window. But a collision between two live credentials would merge their
+ * cache scopes, and widening removes the argument for the cost of one extra
+ * pass over a short string, on a path that is otherwise about to make an HTTP
+ * round trip.
  */
 export function cacheCredentialIdentity(token: string): string {
   credentialIdentitySalt ??= crypto.randomUUID();
-  return hashString(`${credentialIdentitySalt}\u0000${token}`);
+  const salted = `${credentialIdentitySalt}\u0000${token}`;
+  return `${hashString(`cache-credential:a:${salted}`)}${
+    hashString(`cache-credential:b:${salted}`)
+  }`;
 }
