@@ -142,6 +142,29 @@ describe("merge quality gate workflow", () => {
     );
   });
 
+  it("runs changed CI TypeScript through one reproducible static gate", async () => {
+    const denoConfig = JSON.parse(await readRepoFile("deno.json")) as {
+      tasks: Record<string, string>;
+    };
+    const task = denoConfig.tasks["lint:ci-typescript"];
+
+    assert(task, "deno.json must define lint:ci-typescript");
+    assertStringIncludes(
+      task,
+      "deno check --unstable-sloppy-imports --frozen --config=scripts/test.deno.json",
+    );
+    assertStringIncludes(task, "scripts/ci/npm-compatibility-artifact.ts");
+    assertStringIncludes(task, "scripts/ci/registry-release-integrity.ts");
+    assertStringIncludes(task, "tests/integration/ci/");
+    for (const entrypoint of ["lint:ci", "verify", "verify:quick"]) {
+      assertStringIncludes(
+        denoConfig.tasks[entrypoint],
+        "deno task lint:ci-typescript",
+        `${entrypoint} must run the CI TypeScript static gate`,
+      );
+    }
+  });
+
   it("succeeds only when every required dependency succeeds", async () => {
     const result = await runGate();
 

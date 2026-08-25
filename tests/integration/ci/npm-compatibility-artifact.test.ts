@@ -11,7 +11,6 @@ import {
   withTempDir,
 } from "#veryfront/testing/deno-compat.ts";
 import { join } from "#std/path/join";
-import { relative } from "#std/path/relative";
 import {
   createNpmCompatibilityArtifact,
   loadNpmCompatibilityArtifact,
@@ -46,25 +45,29 @@ function withTempDirs<T>(
 describe("npm compatibility artifact", () => {
   it("packs into a destination relative to the caller working directory", async () => {
     await withTempDir(async (root) => {
-      const absoluteDestination = await makeTempDirWithOptions({
-        prefix: "vf-npm-artifact-output-",
+      const workspace = await makeTempDirWithOptions({
+        prefix: "vf-npm-artifact-workspace-",
         dir: Deno.cwd(),
       });
+      const originalCwd = Deno.cwd();
       try {
         await writePackage(root, { name: "veryfront", version: "1.2.3" });
-        const destination = relative(Deno.cwd(), absoluteDestination);
+        Deno.chdir(workspace);
 
         const manifest = await createNpmCompatibilityArtifact(
           root,
-          destination,
+          "dist/npm-compatibility",
         );
 
         assertEquals(manifest.packages.length, 1);
         const packageEntry = manifest.packages[0];
         assertExists(packageEntry);
-        await Deno.stat(join(absoluteDestination, packageEntry.file));
+        await Deno.stat(
+          join(workspace, "dist/npm-compatibility", packageEntry.file),
+        );
       } finally {
-        await remove(absoluteDestination, { recursive: true });
+        Deno.chdir(originalCwd);
+        await remove(workspace, { recursive: true });
       }
     }, { prefix: "vf-npm-artifact-source-" });
   });
