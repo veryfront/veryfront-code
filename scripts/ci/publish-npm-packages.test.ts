@@ -1308,6 +1308,85 @@ describe("npm package publishing", () => {
     });
   }
 
+  // The conflicting write can also land between the pre-retry registry check
+  // and the retry publish. npm rejects that publish as an ordinary
+  // already-published error rather than a conflict, so the registry has to
+  // settle whether the earlier conflict published this commit.
+  const ALREADY_PUBLISHED_OUTPUT =
+    "npm error code E403\nnpm error 403 403 Forbidden - PUT https://registry.npmjs.org/@veryfront%2fext-llm-google - You cannot publish over the previously published versions: 0.1.0.";
+
+  for (
+    const publishFunction of [
+      "rc_publish_package_dir",
+      "release_publish_package_dir",
+    ]
+  ) {
+    it(`accepts an already-published retry rejection in ${publishFunction}`, async () => {
+      await withTempDir(async (stateDir) => {
+        const packageDir = `${stateDir}/package`;
+        const npmLog = `${stateDir}/npm.log`;
+        await Deno.mkdir(packageDir);
+        await Deno.writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({ name: "@veryfront/ext-llm-google" }),
+        );
+        await Deno.writeTextFile(npmLog, "");
+
+        const output = await runBash(
+          [
+            "set -euo pipefail",
+            'source "$SCRIPT_PATH"',
+            "npm() {",
+            '  printf "%s\\n" "$*" >> "$NPM_LOG"',
+            '  if [ "$1" = "publish" ]; then',
+            '    if [ "$(grep -c "^publish" "$NPM_LOG")" -eq 1 ]; then',
+            '      printf "%s\\n" "$CONFLICT_OUTPUT"',
+            "    else",
+            '      printf "%s\\n" "$ALREADY_PUBLISHED_OUTPUT"',
+            "    fi",
+            "    return 1",
+            "  fi",
+            // the conflicting write stays invisible until the retry races it
+            '  if [ "$1" = "view" ]; then',
+            '    if [ "$(grep -c "^publish" "$NPM_LOG")" -le 1 ]; then return 1; fi',
+            '    printf "%s\\n" "$GITHUB_SHA"',
+            "    return 0",
+            "  fi",
+            "  return 1",
+            "}",
+            `${publishFunction} "$PACKAGE_DIR"`,
+          ].join("\n"),
+          {
+            ALREADY_PUBLISHED_OUTPUT,
+            CONFLICT_OUTPUT,
+            GITHUB_SHA: "0".repeat(40),
+            NPM_LOG: npmLog,
+            NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
+            PACKAGE_DIR: packageDir,
+            VERSION: "0.1.0",
+          },
+        );
+
+        assertEquals(
+          output.code,
+          0,
+          `${publishFunction} must accept a raced already-published rejection whose gitHead matches this commit: ${
+            decoder.decode(output.stderr)
+          }`,
+        );
+        const publishes = (await Deno.readTextFile(npmLog)).trim().split("\n")
+          .filter((line) => line.startsWith("publish"));
+        assertEquals(
+          publishes.length,
+          2,
+          `${publishFunction} must stop publishing once the registry shows this commit, but issued: ${
+            publishes.join(", ")
+          }`,
+        );
+      });
+    });
+  }
+
   it("keeps the caller's errexit state so the release rerun recovery still runs", async () => {
     await withTempDir(async (stateDir) => {
       const packageDir = `${stateDir}/package`;

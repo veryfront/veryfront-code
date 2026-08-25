@@ -167,6 +167,7 @@ publish_npm_package_with_retry() {
   PUBLISH_PACKAGE_NAME="$1"
   PUBLISH_SPEC="$2"
   shift 2
+  PUBLISH_SAW_CONFLICT=0
   for PUBLISH_ATTEMPT in $(seq 1 "${NPM_PUBLISH_CONFLICT_ATTEMPTS}"); do
     if [[ "${PUBLISH_ATTEMPT}" -gt 1 ]]; then
       # npm refuses to reuse a published name/version, so a write that landed
@@ -188,8 +189,17 @@ publish_npm_package_with_retry() {
       return 0
     fi
     if ! is_transient_publish_conflict "${PUBLISH_OUTPUT}"; then
+      # A conflicting write can land between the pre-retry registry check and
+      # this publish, which npm then rejects as an ordinary already-published
+      # error rather than a conflict. Only the registry can say whether that
+      # earlier conflict published this commit, so reinspect before failing.
+      if [[ "${PUBLISH_SAW_CONFLICT}" -eq 1 ]] \
+        && inspect_publish_conflict_result "${PUBLISH_PACKAGE_NAME}"; then
+        return 0
+      fi
       return "${PUBLISH_STATUS}"
     fi
+    PUBLISH_SAW_CONFLICT=1
 
     inspect_publish_conflict_result "${PUBLISH_PACKAGE_NAME}" \
       && PUBLISH_CONFLICT_STATE=0 || PUBLISH_CONFLICT_STATE=$?
