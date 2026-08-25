@@ -792,6 +792,12 @@ export class AgentStreamHandler extends BaseHandler {
           detail: "Named agent source environment requires a request-scoped API token",
         });
       }
+      // Keep request-scoped user credentials within framework-owned API calls.
+      // Project code and sandbox-backed tools may only receive the runtime's
+      // existing project credential, never the credential supplied by the user.
+      // The process host token is never combined with request-selected tenant
+      // identity, so it is not a fallback here either.
+      const projectRuntimeToken = ctx.proxyToken || "";
       const requestScopedContext: HandlerContext = {
         ...ctx,
         proxyToken: apiAuthToken || undefined,
@@ -898,7 +904,7 @@ export class AgentStreamHandler extends BaseHandler {
                     localTools,
                     projectAgentSandbox: {
                       apiUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
-                      authToken: apiAuthToken || undefined,
+                      authToken: projectRuntimeToken || undefined,
                       branchId: payload.runtimeTargetBranchId,
                       projectId: sourceScopedContext.projectId ?? null,
                     },
@@ -908,7 +914,7 @@ export class AgentStreamHandler extends BaseHandler {
                   ? await runWithProjectEnv(
                     buildAgentStreamEnv({
                       envVars: envVarsForAgent,
-                      proxyToken: apiAuthToken,
+                      proxyToken: projectRuntimeToken,
                       projectSlug: sourceScopedContext.projectSlug,
                     }),
                     runAgentStream,

@@ -296,13 +296,13 @@ describe("server/handlers/request/agent-stream.handler", () => {
         },
         body,
       }),
-      createCtx(publicKeyPem),
+      { ...createCtx(publicKeyPem), proxyToken: "run-scoped-token" },
     );
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
     assertEquals(discoveryCalls, 1);
-    assertEquals(streamContext?.authToken, "request-scoped-user-token");
+    assertEquals(streamContext?.authToken, "run-scoped-token");
     assertEquals(result.response.headers.get("content-type"), "text/event-stream");
     assertEquals(
       result.response.headers.get("x-veryfront-runtime-owner-invoke-url"),
@@ -1893,7 +1893,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     }
   });
 
-  it("exposes request-scoped Veryfront env vars to dynamic agent systems and MCP headers", async () => {
+  it("keeps request-scoped credentials out of project agent environments", async () => {
     let capturedEnv: Record<string, string | undefined> | null = null;
     let capturedSystem: string | null = null;
     let capturedMcpRequest: { url: string; authorization: string | null } | null = null;
@@ -2092,7 +2092,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 200);
     assertEquals(capturedEnv, {
-      VERYFRONT_API_TOKEN: "request-scoped-user-token",
+      VERYFRONT_API_TOKEN: "run-scoped-token",
       VERYFRONT_API_URL: TEST_PUBLIC_API_ORIGIN,
       VERYFRONT_PROJECT_SLUG: "support-agent-fork",
       CUSTOM_PROJECT_ENV: "project-value",
@@ -2407,7 +2407,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 200);
     assertEquals(capturedEnv, {
-      VERYFRONT_API_TOKEN: "request-scoped-user-token",
+      VERYFRONT_API_TOKEN: "run-scoped-token",
       VERYFRONT_API_URL: apiBaseUrl,
       VERYFRONT_PROJECT_SLUG: "base-url-agent-fork",
       CUSTOM_PROJECT_ENV: "project-value-from-base-url",
