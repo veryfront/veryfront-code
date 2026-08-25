@@ -25,12 +25,18 @@ import {
   waitForDiskCleanup,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import {
+  __setModuleTransformActivityObserverForTests,
+  __setModuleTransformStallTimeoutForTests,
   isMissingModuleError,
   isUnresolvedTenantImport,
   loadModule,
   type ModuleLoaderConfig,
   transformModuleWithDeps,
 } from "./index.ts";
+import { delay, scaleMs } from "#veryfront/testing";
+import { VeryfrontError } from "#veryfront/errors";
+import { getTransformSemaphore } from "#veryfront/modules/react-loader/ssr-module-loader/cache/index.ts";
+import { getMaxConcurrentTransforms } from "#veryfront/modules/react-loader/ssr-module-loader/constants.ts";
 import { buildModuleTransformCacheVariant, getModuleCacheKey } from "./module-cache-lookup.ts";
 import { CYCLE_MANIFEST_SIDECAR_SUFFIX, inspectCycleManifestCache } from "./cycle-manifest.ts";
 import {
@@ -106,6 +112,30 @@ async function withModuleLoaderFixture<T>(
     await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
     await Deno.remove(getCycleManifestCacheDir(tmpDir), { recursive: true }).catch(() => undefined);
   }
+}
+
+/**
+ * Occupy `count` permits of the shared transform semaphore, standing in for
+ * concurrent SSR component transforms elsewhere in the process. Returns a
+ * releaser that must run before the test ends so later tests see a full pool.
+ */
+async function reserveTransformPermits(count: number): Promise<() => void> {
+  const semaphore = getTransformSemaphore();
+  let reserved = 0;
+  try {
+    for (; reserved < count; reserved++) {
+      assert(
+        await semaphore.tryAcquire(1000),
+        `expected to reserve shared transform permit ${reserved + 1} of ${count}`,
+      );
+    }
+  } catch (error) {
+    for (let index = 0; index < reserved; index++) semaphore.release();
+    throw error;
+  }
+  return () => {
+    for (let index = 0; index < reserved; index++) semaphore.release();
+  };
 }
 
 function assertTransformedImportPath(code: string, expectedPathPart: string): string {
@@ -1628,6 +1658,315 @@ describe("module-loader/transformModuleWithDeps", () => {
         assertEquals((await Deno.stat(depPath)).isFile, true);
       },
     );
+  });
+
+  it("bounds dependency transforms by the shared configurable transform semaphore", async () => {
+    const semaphore = getTransformSemaphore();
+    const configuredLimit = getMaxConcurrentTransforms();
+    assert(configuredLimit > 0, "test expects SSR_MAX_CONCURRENT_TRANSFORMS to be enabled");
+
+    // Occupy most of the operator-configured pool the way concurrent SSR
+    // component transforms would. The loader must bound itself by what remains:
+    // a scheduler that ignored SSR_MAX_CONCURRENT_TRANSFORMS or drew from a
+    // parallel hard-coded pool would overshoot `expectedBound` and leave shared
+    // permits available at saturation.
+    const expectedBound = Math.min(4, configuredLimit);
+    const dependencyCount = expectedBound + 5;
+    const files: Record<string, string> = {
+      "app/page.json": Array.from(
+        { length: dependencyCount },
+        (_, index) => `import "../lib/dep-${index}.json";`,
+      ).join("\n"),
+    };
+    for (let index = 0; index < dependencyCount; index++) {
+      files[`lib/dep-${index}.json`] = `export const value = ${index};`;
+    }
+
+    const releaseReserved = await reserveTransformPermits(configuredLimit - expectedBound);
+    try {
+      await withModuleLoaderFixture(
+        files,
+        async ({ projectDir, tmpDir, config }) => {
+          // Every transform stalls while holding its permit until the pool is
+          // saturated, so the observed maximum is the scheduler's true bound
+          // rather than an accident of transform latency.
+          let maxActiveTransforms = 0;
+          let sharedPermitsAvailableAtSaturation = -1;
+          let saturate: (() => void) | undefined;
+          const saturated = new Promise<void>((resolve) => {
+            saturate = resolve;
+          });
+          __setModuleTransformActivityObserverForTests((activeCount) => {
+            maxActiveTransforms = Math.max(maxActiveTransforms, activeCount);
+            if (activeCount >= expectedBound && sharedPermitsAvailableAtSaturation === -1) {
+              sharedPermitsAvailableAtSaturation = semaphore.available;
+              saturate?.();
+            }
+            return saturated;
+          });
+
+          try {
+            await transformModuleWithDeps(
+              join(projectDir, "app/page.json"),
+              tmpDir,
+              config.adapter,
+              config,
+            );
+          } finally {
+            __setModuleTransformActivityObserverForTests(undefined);
+          }
+
+          assertEquals(
+            maxActiveTransforms,
+            expectedBound,
+            "dependency transforms must be bounded by the shared pool's remaining capacity",
+          );
+          assertEquals(
+            sharedPermitsAvailableAtSaturation,
+            0,
+            "saturation must exhaust the shared transform semaphore, proving one pool",
+          );
+        },
+      );
+    } finally {
+      releaseReserved();
+    }
+  });
+
+  it("completes a nested fan-out wider than the transform permit pool", async () => {
+    // Regression: scheduling that holds a concurrency permit across the
+    // recursive dependency fan-out lets importers exhaust the pool and starve
+    // their own children into acquisition timeouts. Shrink the shared pool by
+    // reserving permits so the importer tier alone is wider than what remains.
+    const semaphore = getTransformSemaphore();
+    const configuredLimit = getMaxConcurrentTransforms();
+    assert(configuredLimit > 0, "test expects SSR_MAX_CONCURRENT_TRANSFORMS to be enabled");
+    const effectivePool = Math.min(8, configuredLimit);
+    const dependencyCount = effectivePool + 1;
+    const files: Record<string, string> = {
+      "app/page.json": Array.from(
+        { length: dependencyCount },
+        (_, index) => `import "../lib/dep-${index}.json";`,
+      ).join("\n"),
+    };
+    for (let index = 0; index < dependencyCount; index++) {
+      files[`lib/dep-${index}.json`] = [
+        `import "./leaf-${index}.json";`,
+        `export const value = ${index};`,
+      ].join("\n");
+      files[`lib/leaf-${index}.json`] = `export const leaf = ${index};`;
+    }
+
+    const releaseReserved = await reserveTransformPermits(configuredLimit - effectivePool);
+    // A regressed scheduler fails via a stuck-pool timeout; keep that fast
+    // while staying far above the runtime of a healthy batch of transforms.
+    __setModuleTransformStallTimeoutForTests(10_000);
+    try {
+      await withModuleLoaderFixture(
+        files,
+        async ({ projectDir, tmpDir, config }) => {
+          const transformedPath = await transformModuleWithDeps(
+            join(projectDir, "app/page.json"),
+            tmpDir,
+            config.adapter,
+            config,
+          );
+
+          // Match path components portably; the transformed path uses the
+          // platform's separators.
+          assertStringIncludes(transformedPath, join("app", "page"));
+          assertEquals((await Deno.stat(transformedPath)).isFile, true);
+        },
+      );
+    } finally {
+      __setModuleTransformStallTimeoutForTests(undefined);
+      releaseReserved();
+      assertEquals(
+        semaphore.available,
+        configuredLimit,
+        "the fan-out must return every shared transform permit",
+      );
+    }
+  });
+
+  it("keeps queued transforms alive while the pool makes progress", async () => {
+    // A wide cold graph queues far more transforms than there are permits, so
+    // the last waiters wait much longer than one stall window. As long as
+    // permits keep cycling, no waiter may time out: expiry is a liveness
+    // window that re-arms on progress, not one absolute deadline shared by
+    // every waiter from the initial fan-out.
+    const configuredLimit = getMaxConcurrentTransforms();
+    assert(configuredLimit > 0, "test expects SSR_MAX_CONCURRENT_TRANSFORMS to be enabled");
+    const effectivePool = Math.min(2, configuredLimit);
+    const dependencyCount = 12;
+    const files: Record<string, string> = {
+      "app/page.json": Array.from(
+        { length: dependencyCount },
+        (_, index) => `import "../lib/dep-${index}.json";`,
+      ).join("\n"),
+    };
+    for (let index = 0; index < dependencyCount; index++) {
+      files[`lib/dep-${index}.json`] = `export const value = ${index};`;
+    }
+
+    const releaseReserved = await reserveTransformPermits(configuredLimit - effectivePool);
+    // Each transform holds its permit noticeably shorter than the stall
+    // window, but the whole queue takes several windows to drain: with two
+    // permits and thirteen transforms the last waiter outlives the window
+    // multiple times over and only survives because completions re-arm it.
+    __setModuleTransformStallTimeoutForTests(scaleMs(400));
+    __setModuleTransformActivityObserverForTests(() => delay(150));
+    try {
+      await withModuleLoaderFixture(
+        files,
+        async ({ projectDir, tmpDir, config }) => {
+          const transformedPath = await transformModuleWithDeps(
+            join(projectDir, "app/page.json"),
+            tmpDir,
+            config.adapter,
+            config,
+          );
+          assertEquals(
+            (await Deno.stat(transformedPath)).isFile,
+            true,
+            "a slow but moving pool must drain the whole graph without timeouts",
+          );
+        },
+      );
+    } finally {
+      __setModuleTransformActivityObserverForTests(undefined);
+      __setModuleTransformStallTimeoutForTests(undefined);
+      releaseReserved();
+    }
+  });
+
+  it("fails a transform whose permit wait sees no progress at all", async () => {
+    // The liveness window must still be a real failure bound: when every
+    // permit is held by wedged work and nothing cycles for a whole window,
+    // waiting longer cannot help and the waiter must surface a timeout.
+    const semaphore = getTransformSemaphore();
+    const configuredLimit = getMaxConcurrentTransforms();
+    assert(configuredLimit > 0, "test expects SSR_MAX_CONCURRENT_TRANSFORMS to be enabled");
+
+    const releaseReserved = await reserveTransformPermits(configuredLimit);
+    assertEquals(semaphore.available, 0, "the whole pool must be wedged for this test");
+    __setModuleTransformStallTimeoutForTests(scaleMs(400));
+    try {
+      await withModuleLoaderFixture(
+        { "app/page.json": `export const value = 1;` },
+        async ({ projectDir, tmpDir, config }) => {
+          const error = await assertRejects(() =>
+            transformModuleWithDeps(
+              join(projectDir, "app/page.json"),
+              tmpDir,
+              config.adapter,
+              config,
+            )
+          );
+          assert(
+            error instanceof VeryfrontError,
+            "a stuck permit wait must fail with a registry error",
+          );
+          assertEquals(
+            error.slug,
+            "timeout-error",
+            "a stuck permit wait must be classified as a timeout",
+          );
+        },
+      );
+    } finally {
+      __setModuleTransformStallTimeoutForTests(undefined);
+      releaseReserved();
+    }
+  });
+
+  it("does not hold transform permits for followers of an in-flight transform", async () => {
+    // Two module graphs share one cold dependency. The second caller must
+    // attach to the first caller's in-flight compute without consuming a
+    // permit: followers holding permits while a single leader computes can
+    // occupy the entire pool with waiting.
+    const semaphore = getTransformSemaphore();
+    const configuredLimit = getMaxConcurrentTransforms();
+    assert(configuredLimit > 0, "test expects SSR_MAX_CONCURRENT_TRANSFORMS to be enabled");
+
+    const files: Record<string, string> = {
+      "app/page-a.json": `import "../lib/shared.json";`,
+      "app/page-b.json": `import "../lib/shared.json";`,
+      "lib/shared.json": `export const shared = true;`,
+    };
+
+    // Leave exactly one permit: the leader takes it, and any follower that
+    // wrongly queued for a permit becomes visible in `semaphore.waiting`.
+    const releaseReserved = await reserveTransformPermits(configuredLimit - 1);
+    try {
+      await withModuleLoaderFixture(
+        files,
+        async ({ projectDir, tmpDir, config }) => {
+          let maxActiveTransforms = 0;
+          let stallLeader = true;
+          let leaderStalled: (() => void) | undefined;
+          const leaderHoldsPermit = new Promise<void>((resolve) => {
+            leaderStalled = resolve;
+          });
+          let releaseLeader: (() => void) | undefined;
+          const leaderReleased = new Promise<void>((resolve) => {
+            releaseLeader = resolve;
+          });
+          __setModuleTransformActivityObserverForTests((activeCount) => {
+            maxActiveTransforms = Math.max(maxActiveTransforms, activeCount);
+            if (!stallLeader) return;
+            stallLeader = false;
+            leaderStalled?.();
+            return leaderReleased;
+          });
+
+          let permitQueueDepthDuringLeaderStall = -1;
+          try {
+            // The shared dependency transforms before either root module, so
+            // the first observer activation is its leader holding the permit.
+            const firstRoot = transformModuleWithDeps(
+              join(projectDir, "app/page-a.json"),
+              tmpDir,
+              config.adapter,
+              config,
+            );
+            await leaderHoldsPermit;
+
+            const secondRoot = transformModuleWithDeps(
+              join(projectDir, "app/page-b.json"),
+              tmpDir,
+              config.adapter,
+              config,
+            );
+            // Give the second graph time to reach the shared dependency's
+            // in-flight compute while the leader still holds the only permit.
+            await delay(250);
+            permitQueueDepthDuringLeaderStall = semaphore.waiting;
+            releaseLeader?.();
+
+            const [firstPath, secondPath] = await Promise.all([firstRoot, secondRoot]);
+            assertEquals((await Deno.stat(firstPath)).isFile, true);
+            assertEquals((await Deno.stat(secondPath)).isFile, true);
+          } finally {
+            releaseLeader?.();
+            __setModuleTransformActivityObserverForTests(undefined);
+          }
+
+          assertEquals(
+            permitQueueDepthDuringLeaderStall,
+            0,
+            "a follower of an in-flight transform must not queue for a permit",
+          );
+          assertEquals(
+            maxActiveTransforms,
+            1,
+            "the shared dependency must be computed once, by a single permit holder",
+          );
+        },
+      );
+    } finally {
+      releaseReserved();
+    }
   });
 });
 

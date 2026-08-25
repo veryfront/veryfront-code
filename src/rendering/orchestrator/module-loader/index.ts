@@ -80,6 +80,11 @@ function cacheUnresolvedSpecifiers(cacheKey: string, specifiers: readonly string
   }
 }
 
+export {
+  __setModuleTransformActivityObserverForTests,
+  __setModuleTransformStallTimeoutForTests,
+} from "./transform-permit.ts";
+
 function throwIfModuleLoadAborted(config: ModuleLoaderConfig): void {
   throwIfAborted(config.signal);
 }
@@ -449,6 +454,13 @@ async function transformModuleWithDepsUnmemoized(
   // break a cycle that is still in progress. Carry the chain instead.
   const nextLineage = new Set(lineage).add(filePath);
 
+  // Fan the dependency subtree out without holding any concurrency permit:
+  // each recursion level only coordinates its children, while the bounded
+  // resource is the leaf transform work, which draws a permit from the shared
+  // transform semaphore inside `transformModuleCodeWithCache`'s compute
+  // callback. Holding a permit here while awaiting recursive transforms would
+  // let wide module graphs exhaust the permits and starve their own
+  // descendants.
   const transformedDeps = (await Promise.all(
     resolvedDeps.filter((d) => d.depFilePath).map(async (dep) => {
       const manifestDependency = (): TransformedModuleDependency | null => {
