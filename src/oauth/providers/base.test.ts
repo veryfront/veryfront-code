@@ -1715,6 +1715,86 @@ it("OAuthService.getAccessToken clears legacy full-Drive tokens before use", asy
   assertEquals(await store.getTokens("drive", "alice"), null);
 });
 
+it("OAuthService.getAccessToken serves explicitly requested read-only Drive grants", async () => {
+  const store = new MemoryTokenStore();
+  await store.setTokens("drive", "alice", {
+    accessToken: "read-only-drive-token",
+    scope: "https://www.googleapis.com/auth/drive.readonly",
+    expiresAt: Date.now() + 60_000_000,
+  });
+  const service = new OAuthService(
+    { ...TEST_CONFIG, serviceId: "drive" },
+    store,
+    (key) => ENV[key],
+  );
+
+  assertEquals(await service.getAccessToken("alice"), "read-only-drive-token");
+  assertNotEquals(await store.getTokens("drive", "alice"), null);
+});
+
+it("OAuthService.getAccessToken does not clear a reauthorized Drive grant over a stale legacy read", async () => {
+  const store = new MemoryTokenStore();
+  await store.setTokens("drive", "alice", {
+    accessToken: "legacy-drive-token",
+    scope: "https://www.googleapis.com/auth/drive",
+    expiresAt: Date.now() + 60_000,
+  });
+  const staleSnapshot = await store.getTokenSnapshot("drive", "alice");
+  // The user completes reauthorization after the legacy row was read.
+  await store.setTokens("drive", "alice", {
+    accessToken: "fresh-drive-token",
+    scope:
+      "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file",
+    expiresAt: Date.now() + 60_000_000,
+  });
+
+  const racingStore: TokenStore = {
+    getTokens: (serviceId, userId) => store.getTokens(serviceId, userId),
+    getTokenSnapshot: () => Promise.resolve(staleSnapshot),
+    setTokens: (serviceId, userId, tokens) => store.setTokens(serviceId, userId, tokens),
+    compareAndClearTokens: (serviceId, userId, expectedRevision) =>
+      store.compareAndClearTokens(serviceId, userId, expectedRevision),
+    clearTokens: (serviceId, userId) => store.clearTokens(serviceId, userId),
+    setState: (state, meta) => store.setState(state, meta),
+    consumeState: (state) => store.consumeState(state),
+  };
+  const service = new OAuthService(
+    { ...TEST_CONFIG, serviceId: "drive" },
+    racingStore,
+    (key) => ENV[key],
+  );
+
+  assertEquals(await service.getAccessToken("alice"), null);
+  assertEquals((await store.getTokens("drive", "alice"))?.accessToken, "fresh-drive-token");
+});
+
+it("OAuthService.getAccessToken leaves a legacy Drive row alone without a revision-guarded delete", async () => {
+  let clearTokensCalls = 0;
+  const legacyTokens: OAuthTokens = {
+    accessToken: "legacy-drive-token",
+    scope: "https://www.googleapis.com/auth/drive",
+    expiresAt: Date.now() + 60_000_000,
+  };
+  const store: TokenStore = {
+    getTokens: () => Promise.resolve(legacyTokens),
+    setTokens: () => Promise.resolve(),
+    clearTokens: () => {
+      clearTokensCalls++;
+      return Promise.resolve();
+    },
+    setState: () => Promise.resolve(),
+    consumeState: () => Promise.resolve(null),
+  };
+  const service = new OAuthService(
+    { ...TEST_CONFIG, serviceId: "drive" },
+    store,
+    (key) => ENV[key],
+  );
+
+  assertEquals(await service.getAccessToken("alice"), null);
+  assertEquals(clearTokensCalls, 0);
+});
+
 it("OAuthService.getAccessToken uses a non-refreshable token until its real expiry", async () => {
   const store = makeAuthedTokenStore();
   store.getTokens = () =>

@@ -87,6 +87,21 @@ export interface TokenStore {
     tokens: OAuthTokens,
   ): Promise<boolean>;
   /**
+   * Atomically delete a token row only when its current revision equals
+   * `expectedRevision`. The comparison and delete MUST be one indivisible
+   * backing-store operation. Return false when the row is absent or changed.
+   *
+   * Optional capability: callers invalidating a row they classified from a
+   * snapshot (for example a superseded legacy grant) MUST fail safe and skip
+   * the delete when this method is absent, so a concurrent reauthorization
+   * can never be destroyed by an unconditional `clearTokens`.
+   */
+  compareAndClearTokens?(
+    serviceId: string,
+    userId: string,
+    expectedRevision: string,
+  ): Promise<boolean>;
+  /**
    * Run an operation while holding a refresh lock for one token slot.
    *
    * Production stores shared by multiple workers MUST implement this as a

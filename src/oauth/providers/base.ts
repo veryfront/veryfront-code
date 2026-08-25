@@ -66,12 +66,21 @@ const TOKEN_REFRESH_BUFFER_MS = 300_000;
 const SECONDS_TO_MS = 1_000;
 const DEFAULT_TOKEN_RESPONSE_MAX_BYTES = 64 * 1_024;
 const DEFAULT_API_RESPONSE_MAX_BYTES = 1_048_576;
-const DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
-const DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+const DRIVE_SERVICE_ID = "drive";
+const SUPERSEDED_DRIVE_FULL_ACCESS_SCOPE = "https://www.googleapis.com/auth/drive";
 
-function driveTokenNeedsReauthorization(serviceId: string, scope: string | undefined): boolean {
-  if (serviceId !== "drive" || typeof scope !== "string") return serviceId === "drive";
-  return !scope.includes(DRIVE_READONLY_SCOPE) || !scope.includes(DRIVE_FILE_SCOPE);
+/**
+ * Whether a stored Drive token carries the superseded broad full-Drive grant
+ * that the narrower `drive.readonly` + `drive.file` defaults replaced. Only
+ * that exact scope entry is flagged: explicitly requested scope sets (for
+ * example a read-only connection authorized via `createAuthorizationUrl`)
+ * and rows without a recorded scope stay untouched. Scope entries are
+ * compared whole, so `drive.readonly` and `drive.file` never match on the
+ * shared `auth/drive` prefix.
+ */
+function isSupersededFullDriveGrant(serviceId: string, scope: string | undefined): boolean {
+  if (serviceId !== DRIVE_SERVICE_ID || typeof scope !== "string") return false;
+  return scope.split(/\s+/).includes(SUPERSEDED_DRIVE_FULL_ACCESS_SCOPE);
 }
 
 function assertBoundedPositiveInteger(value: number, name: string, maximum: number): void {
@@ -1126,8 +1135,15 @@ export class OAuthService extends OAuthProvider {
     if (!stored) return null;
     const { tokens } = stored;
 
-    if (driveTokenNeedsReauthorization(this.serviceId, tokens.scope)) {
-      await this.tokenStore?.clearTokens(this.serviceId, userId);
+    if (isSupersededFullDriveGrant(this.serviceId, tokens.scope)) {
+      // Invalidate only the exact row that was classified. An unconditional
+      // clear could race a concurrent reauthorization and delete the freshly
+      // written least-privilege grant (the ABA problem the snapshot revision
+      // exists to prevent). When the store cannot express a revision-guarded
+      // delete, fail safe by leaving the row in place: it is never served.
+      if (stored.revision && typeof this.tokenStore?.compareAndClearTokens === "function") {
+        await this.tokenStore.compareAndClearTokens(this.serviceId, userId, stored.revision);
+      }
       return null;
     }
 

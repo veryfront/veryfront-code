@@ -45290,7 +45290,7 @@ export const connectors: IntegrationConfig[] = [
         "Access tokens last 60 minutes; refresh tokens roll and remain valid for up to 100 days",
         "The company realm ID arrives as a query parameter on the OAuth callback, not in the token response — it must be saved and passed to every tool",
         "QuickBooks responds with XML unless the Accept: application/json header is sent (the tools set it by default)",
-        "Every tool takes a host parameter restricted to exactly quickbooks.api.intuit.com (production, the default) or sandbox-quickbooks.api.intuit.com (sandbox companies) — no other host is accepted",
+        "Every tool takes a host parameter restricted to exactly quickbooks.api.intuit.com (production, the default) or sandbox-quickbooks.api.intuit.com (sandbox companies); no other host is accepted",
       ],
       "documentation":
         "https://developer.intuit.com/app/developer/qbo/docs/develop/authentication-and-authorization/oauth-2.0",

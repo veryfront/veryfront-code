@@ -185,12 +185,7 @@ export class MemoryTokenStore implements RefreshCapableTokenStore {
     );
   }
 
-  async compareAndSetTokens(
-    serviceId: string,
-    userId: string,
-    expectedRevision: string,
-    tokens: OAuthTokens,
-  ): Promise<boolean> {
+  private static requireExpectedRevision(expectedRevision: string): void {
     if (
       typeof expectedRevision !== "string" || !expectedRevision ||
       expectedRevision.trim() !== expectedRevision ||
@@ -201,6 +196,15 @@ export class MemoryTokenStore implements RefreshCapableTokenStore {
         `Expected OAuth token revision must be trimmed, nonempty, and at most ${MAX_OAUTH_TOKEN_REVISION_LENGTH} characters`,
       );
     }
+  }
+
+  async compareAndSetTokens(
+    serviceId: string,
+    userId: string,
+    expectedRevision: string,
+    tokens: OAuthTokens,
+  ): Promise<boolean> {
+    MemoryTokenStore.requireExpectedRevision(expectedRevision);
     const replacement = normalizeStoredOAuthTokens(tokens);
     if (!replacement) throw new TypeError("Invalid OAuth token row");
 
@@ -240,6 +244,20 @@ export class MemoryTokenStore implements RefreshCapableTokenStore {
       release();
       if (this.refreshLockTails.get(key) === tail) this.refreshLockTails.delete(key);
     }
+  }
+
+  async compareAndClearTokens(
+    serviceId: string,
+    userId: string,
+    expectedRevision: string,
+  ): Promise<boolean> {
+    MemoryTokenStore.requireExpectedRevision(expectedRevision);
+    // No await occurs between the comparison and delete. JavaScript execution
+    // within one MemoryTokenStore instance is therefore indivisible here.
+    const current = this.readTokenEntry(serviceId, userId);
+    if (!current || current.revision !== expectedRevision) return false;
+    this.tokens.delete(this.scopedKey(serviceId, userId));
+    return true;
   }
 
   async clearTokens(serviceId: string, userId: string): Promise<void> {
