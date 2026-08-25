@@ -35,6 +35,7 @@ const abortSignalReason = Object.getOwnPropertyDescriptor(
 const abortSignalThrowIfAborted = AbortSignal.prototype.throwIfAborted;
 const addEventListener = EventTarget.prototype.addEventListener;
 const apply = Reflect.apply;
+const arrayIncludes = Array.prototype.includes;
 const arrayIsArray = Array.isArray;
 const clearTimeoutIntrinsic = clearTimeout;
 const DOMExceptionConstructor = DOMException;
@@ -272,6 +273,13 @@ function fieldValue(
   }
   if (!valueMatchesType(value, field.type)) {
     requestInvalid(`Local integration argument "${name}" must have type "${field.type}"`);
+  }
+  const allowedValues = "enum" in field ? field.enum : undefined;
+  if (
+    allowedValues !== undefined &&
+    (typeof value !== "string" || !(apply(arrayIncludes, allowedValues, [value]) as boolean))
+  ) {
+    requestInvalid(`Local integration argument "${name}" must use an allowed value`);
   }
   return { present: true, value };
 }

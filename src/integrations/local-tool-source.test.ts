@@ -538,6 +538,62 @@ describe("createLocalIntegrationToolSource", () => {
     ]);
   });
 
+  it("enforces analytics host allowlists before resolving credentials", async () => {
+    let credentialProviderCalls = 0;
+    let transportCalls = 0;
+    const requestedOrigins: string[] = [];
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["posthog__list_feature_flags"],
+        credentialProvider: () => {
+          credentialProviderCalls += 1;
+          return TEST_CREDENTIAL;
+        },
+      },
+      (request) => {
+        transportCalls += 1;
+        requestedOrigins.push(request.url.origin);
+        assertEquals(request.url.origin, request.allowedOrigin);
+        return Promise.resolve(Response.json({ results: [] }));
+      },
+    );
+
+    const definitions = await source.listTools();
+    const properties = (definitions[0]?.parameters as {
+      properties?: Record<string, { enum?: string[] }>;
+    }).properties;
+    assertEquals(properties?.host?.enum, [
+      "us.posthog.com",
+      "eu.posthog.com",
+      "app.posthog.com",
+    ]);
+    credentialProviderCalls = 0;
+
+    const error = await assertRejects(
+      () =>
+        source.executeTool("posthog__list_feature_flags", {
+          host: "attacker.example",
+          projectId: "42",
+        }),
+      VeryfrontError,
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "local-integration-request-invalid");
+    assertEquals(credentialProviderCalls, 0);
+    assertEquals(transportCalls, 0);
+
+    assertEquals(
+      await source.executeTool("posthog__list_feature_flags", {
+        host: "eu.posthog.com",
+        projectId: "42",
+      }),
+      { results: [] },
+    );
+    assertEquals(credentialProviderCalls, 1);
+    assertEquals(transportCalls, 1);
+    assertEquals(requestedOrigins, ["https://eu.posthog.com"]);
+  });
+
   it("mints client credentials before executing a fixed-origin provider tool", async () => {
     const requests: string[] = [];
     const transport: LocalIntegrationEndpointTransport = (request) => {
