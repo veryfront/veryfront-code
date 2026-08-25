@@ -114,11 +114,14 @@ describe("repository hardening", () => {
     assert(workflow.includes("scripts/ci/publish-npm-packages.sh release-publish"));
     assert(workflow.includes("deno run -A scripts/ci/prepare-rc-build.ts"));
 
+    const compatibilityArtifact = jobBlock(workflow, "npm-compatibility-artifact");
     const prerelease = jobBlock(workflow, "prerelease");
     assert(
-      prerelease.indexOf("deno run -A scripts/ci/prepare-rc-build.ts") <
-        prerelease.indexOf("deno task build:npm"),
+      compatibilityArtifact.indexOf("deno run -A scripts/ci/prepare-rc-build.ts") <
+        compatibilityArtifact.indexOf("deno task build:npm"),
     );
+    assert(prerelease.includes("npm-compatibility-artifact.ts materialize"));
+    assertEquals(prerelease.includes("deno task build:npm"), false);
 
     assertEquals(publishScript.includes("NPM_TOKEN"), false);
     assertEquals(publishScript.includes("NODE_AUTH_TOKEN"), false);
