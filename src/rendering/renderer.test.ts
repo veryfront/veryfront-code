@@ -507,6 +507,7 @@ describe("Renderer response metadata", () => {
     const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
     (renderer as unknown as { initialized: boolean }).initialized = true;
     let observedDelivery: RenderOptions["delivery"];
+    const stream = new ReadableStream<Uint8Array>();
     (renderer as unknown as {
       createServicesForContext: () => {
         pipeline: {
@@ -517,12 +518,12 @@ describe("Renderer response metadata", () => {
       pipeline: {
         renderPage: (_slug, options) => {
           observedDelivery = options?.delivery;
-          return Promise.resolve({ html: "<html>private</html>", frontmatter: {}, stream: null });
+          return Promise.resolve({ html: "", frontmatter: {}, stream });
         },
       },
     });
 
-    await renderer.renderPage("/private", makeRenderContext(), {
+    const result = await renderer.renderPage("/private", makeRenderContext(), {
       environment: "production",
       releaseId: "rel-1",
       releaseAssetManifest: null,
@@ -533,6 +534,8 @@ describe("Renderer response metadata", () => {
     });
 
     assertEquals(observedDelivery, "stream");
+    assertEquals(result.stream, stream);
+    assertEquals(result.html, "");
   });
 
   it("rerenders singleflight followers when the leader returns cookies", async () => {

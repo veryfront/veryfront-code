@@ -148,8 +148,8 @@ export interface RendererOptions {
 
 /**
  * Cached render result for Singleflight deduplication.
- * Contains only the serializable parts of RenderResult (no stream).
- * Each caller gets a fresh RenderResult from this cached data.
+ * Contains serializable cache data plus an uncached leader's stream.
+ * Singleflight entries never carry streams because cache-sensitive renders bypass it.
  */
 interface CachedRenderData {
   html: string;
@@ -160,6 +160,7 @@ interface CachedRenderData {
   pageModule?: RenderResult["pageModule"];
   headers?: RenderResult["headers"];
   cookies?: RenderResult["cookies"];
+  stream?: RenderResult["stream"];
 }
 
 function createCacheRenderNonce(): string {
@@ -929,7 +930,7 @@ export class Renderer {
       pageModule: cachedData.pageModule,
       ...(cachedData.headers ? { headers: cachedData.headers } : {}),
       ...(cachedData.cookies ? { cookies: cachedData.cookies } : {}),
-      stream: null,
+      stream: cachedData.stream ?? null,
     };
   }
 
@@ -1066,6 +1067,7 @@ export class Renderer {
         pageModule: result.pageModule,
         ...(result.headers ? { headers: result.headers } : {}),
         ...(result.cookies ? { cookies: result.cookies } : {}),
+        ...(cacheKey === null && result.stream ? { stream: result.stream } : {}),
       };
     } finally {
       if (globalAcquired) renderSemaphore.release();
