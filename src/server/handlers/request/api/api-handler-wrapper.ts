@@ -161,7 +161,10 @@ export class ApiHandlerWrapper extends BaseHandler {
         // This must stay outside the API-discovery catch: downstream document
         // handlers must never serve an older snapshot after freshness fails.
         if (canResolveAsPage) {
-          await preparePreviewDocumentSourceSnapshot(ctx);
+          await preparePreviewDocumentSourceSnapshot(
+            ctx,
+            () => this.handleWithContext(req, ctx, pathname, mustDenyProjectExecution),
+          );
         } else {
           await ensurePreviewSourceSnapshotFresh(ctx);
         }

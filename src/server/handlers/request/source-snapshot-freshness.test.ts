@@ -167,26 +167,31 @@ it("reuses a prepared document snapshot while its identity and generation are un
   assertEquals(refreshes, 1, "an unchanged generation reuses the classifier's strict refresh");
 });
 
-it("re-establishes freshness when the snapshot generation changes under one identity", async () => {
+it("reclassifies when the source generation changes without changing identity", async () => {
   let refreshes = 0;
-  let generation = 1;
+  let version = 1;
   const adapter = createMockAdapter();
   adapter.fs.refreshSourceSnapshot = () => {
     refreshes++;
     return Promise.resolve();
   };
   adapter.fs.getSourceSnapshotIdentity = () => "branch:preview-project:main";
-  adapter.fs.getSourceSnapshotVersion = () => generation;
+  adapter.fs.getSourceSnapshotVersion = () => version;
   const ctx = makePreviewCtx(adapter);
+  const reclassify = () => Promise.resolve({ continue: true });
 
-  await preparePreviewDocumentSourceSnapshot(ctx);
-  generation++;
-  await ensurePreviewDocumentSourceSnapshot(ctx);
+  await preparePreviewDocumentSourceSnapshot(ctx, reclassify);
+  version++;
 
   assertEquals(
+    await ensurePreviewDocumentSourceSnapshot(ctx),
+    reclassify,
+    "same-branch edits must invalidate the ownership decision made from the old generation",
+  );
+  assertEquals(
     refreshes,
-    2,
-    "a same-branch source update after classification must refresh before rendering",
+    1,
+    "SSR must not refresh into a new generation while retaining old route ownership",
   );
 });
 

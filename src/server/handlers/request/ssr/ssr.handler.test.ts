@@ -24,6 +24,7 @@ import {
   __resetPerfTimerForTests,
   __trackedRequestIdsForTests,
 } from "#veryfront/utils/perf-timer.ts";
+import { __injectDepsForTests as injectMemoryPressureDeps } from "#veryfront/server/shared/renderer/memory/pressure.ts";
 
 describe("server/handlers/request/ssr/ssr.handler", () => {
   describe("SSRHandler metadata", () => {
@@ -271,6 +272,62 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
         [0],
         "the SSR document render must demand a zero-age snapshot rather than accept the default lease",
       );
+    });
+
+    it("reclassifies route ownership before SSR rendering or memory shedding", async () => {
+      let version = 1;
+      let renderCalls = 0;
+      let reclassificationCalls = 0;
+      const adapter = createMockAdapter();
+      adapter.fs.refreshSourceSnapshot = () => Promise.resolve();
+      adapter.fs.getSourceSnapshotIdentity = () => "branch:preview-project:main";
+      adapter.fs.getSourceSnapshotVersion = () => version;
+      const ctx = makeCtx({
+        adapter,
+        projectSlug: "preview-project",
+        requestContext: {
+          token: "",
+          slug: "preview-project",
+          branch: "main",
+          mode: "preview",
+        },
+      });
+
+      await preparePreviewDocumentSourceSnapshot(ctx, () => {
+        reclassificationCalls++;
+        return Promise.resolve({
+          response: new Response("current route response", { status: 202 }),
+          continue: false,
+        });
+      });
+      version++;
+
+      injectMemoryPressureDeps({ getHeapStats: () => ({ heapUsedPercent: 99 }) });
+      try {
+        const result = await new SSRHandler(createMockSSRService({
+          renderPage: () => {
+            renderCalls++;
+            return Promise.resolve({
+              status: 200,
+              html: "<html>obsolete page</html>",
+              isStreaming: false,
+              cacheStrategy: "short" as const,
+              slug: "preview",
+            });
+          },
+        })).handle(new Request("http://localhost/review"), ctx);
+
+        assertEquals(result.response?.status, 202);
+        assertEquals(await result.response?.text(), "current route response");
+        assertEquals(reclassificationCalls, 1);
+        assertEquals(
+          renderCalls,
+          0,
+          "SSR must not render or shed after the current generation becomes API-owned",
+        );
+      } finally {
+        injectMemoryPressureDeps(null);
+      }
     });
 
     it("rejects a legacy ensure-only adapter for a preview document", async () => {

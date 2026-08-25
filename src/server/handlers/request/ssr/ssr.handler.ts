@@ -46,13 +46,18 @@ import { isProductionMode, shouldHideRouteInProduction } from "../route-visibili
 import {
   createErrorResponseFromDefinition,
   PROJECT_EXECUTION_UNAVAILABLE,
+  SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE,
 } from "#veryfront/errors";
 import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 import { appendDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
-import { ensurePreviewDocumentSourceSnapshot } from "../source-snapshot-freshness.ts";
+import {
+  ensurePreviewDocumentSourceSnapshot,
+  reclassifyPreviewDocumentSourceSnapshotIfChanged,
+} from "../source-snapshot-freshness.ts";
 import { ssrOwnsDocumentPathname } from "./document-ownership.ts";
 
 const logger = serverLogger.component("ssr");
+const MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS = 3;
 
 /**
  * SSR Handler - Thin orchestration layer
@@ -224,6 +229,35 @@ export class SSRHandler extends BaseHandler {
         const memoryStatus = this.ssrService.checkMemoryPressure();
         const dependencySource = createHandlerDependencyPinningSource(ctx);
         if (memoryStatus.shouldReject) {
+          // A page can become an API route after the wrapper classified it.
+          // API routes must not inherit renderer load shedding, so re-run a
+          // stale prepared classifier before returning the SSR 503. Unprepared
+          // direct SSR requests still take the cheap shed path without refresh.
+          try {
+            for (
+              let attempts = 0;
+              attempts <= MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS;
+              attempts++
+            ) {
+              const reclassify = await reclassifyPreviewDocumentSourceSnapshotIfChanged(ctx);
+              if (reclassify === undefined) break;
+              if (attempts === MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS) {
+                throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+                  detail:
+                    `The source snapshot for "${ctx.projectSlug}" changed during document ownership classification ${MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS} times, so this request cannot safely choose between API and page routing.`,
+                });
+              }
+              const reclassified = await reclassify();
+              if (reclassified.response || !reclassified.continue) {
+                endRequest(requestId);
+                return reclassified;
+              }
+            }
+          } catch (error) {
+            endRequest(requestId);
+            throw error;
+          }
+
           // The shed response still carries the snapshot key that its dependent
           // requests must use, but it must not spend memory refreshing source
           // that it will not render.
@@ -260,7 +294,26 @@ export class SSRHandler extends BaseHandler {
         // Sub-resource requests within this page load keep the default lease,
         // so the strict listing happens once per document.
         try {
-          await ensurePreviewDocumentSourceSnapshot(ctx);
+          for (
+            let attempts = 0;
+            attempts <= MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS;
+            attempts++
+          ) {
+            const reclassify = await ensurePreviewDocumentSourceSnapshot(ctx);
+            if (reclassify === undefined) break;
+            if (attempts === MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS) {
+              throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+                detail:
+                  `The source snapshot for "${ctx.projectSlug}" changed during document ownership classification ${MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS} times, so this request cannot safely choose between API and page routing.`,
+              });
+            }
+
+            const reclassified = await reclassify();
+            if (reclassified.response || !reclassified.continue) {
+              endRequest(requestId);
+              return reclassified;
+            }
+          }
         } catch (error) {
           endRequest(requestId);
           throw error;

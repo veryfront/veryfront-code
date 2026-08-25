@@ -4,7 +4,7 @@ import {
 } from "#veryfront/cache/cache-key-builder.ts";
 import { SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE } from "#veryfront/errors";
 import { readOwnDataProperty } from "#veryfront/security/project-locality.ts";
-import type { HandlerContext } from "../types.ts";
+import type { HandlerContext, HandlerResult } from "../types.ts";
 
 function hasMutablePreviewSource(ctx: HandlerContext): boolean {
   if (!ctx.projectSlug) return false;
@@ -36,47 +36,82 @@ const DOCUMENT_FRESHNESS_REASONS: SourceSnapshotFreshnessReasons = Object.freeze
   maxAgeMs: 0,
 });
 
+export type PreviewDocumentSnapshotReclassifier = () => Promise<HandlerResult>;
+
 interface PreparedDocumentSnapshot {
-  readonly identity: string;
-  readonly version: number | undefined;
-  readonly tracksVersion: boolean;
+  readonly identity?: string;
+  readonly version?: number;
+  readonly reclassify?: PreviewDocumentSnapshotReclassifier;
 }
 
-const documentFreshContexts = new WeakMap<HandlerContext, PreparedDocumentSnapshot>();
+const preparedDocumentSnapshots = new WeakMap<HandlerContext, PreparedDocumentSnapshot>();
+
+async function preparedDocumentSnapshotMatches(
+  ctx: HandlerContext,
+  prepared: PreparedDocumentSnapshot,
+): Promise<boolean> {
+  const identity = await ctx.adapter.fs.getSourceSnapshotIdentity?.();
+  const version = await ctx.adapter.fs.getSourceSnapshotVersion?.();
+  const identityMatches = prepared.identity !== undefined && identity === prepared.identity;
+  const versionMatches = prepared.version === undefined || version === prepared.version;
+  return identityMatches && versionMatches;
+}
 
 /** Establish strict freshness before API/page ownership is classified. */
-export async function preparePreviewDocumentSourceSnapshot(ctx: HandlerContext): Promise<void> {
+export async function preparePreviewDocumentSourceSnapshot(
+  ctx: HandlerContext,
+  reclassify?: PreviewDocumentSnapshotReclassifier,
+): Promise<void> {
   await ensurePreviewSourceSnapshotFresh(ctx, DOCUMENT_FRESHNESS_REASONS);
   // The classifier runs before SSR enters its render context, and SSR may
   // still change a reused contextual adapter's context (setRequestBranch)
   // before it reads. Record which snapshot identity this preparation applied
   // to; reuse is sound only while the render context resolves the same one.
-  // An adapter that cannot name its context records nothing, so the render
-  // re-establishes freshness instead of trusting a possibly different context.
+  // An adapter that cannot name its context records an unprovable preparation,
+  // so the render re-establishes freshness (or reclassifies) instead of trusting
+  // a possibly different context.
   const identity = await ctx.adapter.fs.getSourceSnapshotIdentity?.();
-  if (identity !== undefined) {
-    const getVersion = ctx.adapter.fs.getSourceSnapshotVersion;
-    const tracksVersion = typeof getVersion === "function";
-    const version = tracksVersion ? await getVersion.call(ctx.adapter.fs) : undefined;
-    documentFreshContexts.set(ctx, { identity, version, tracksVersion });
-  }
+  const version = await ctx.adapter.fs.getSourceSnapshotVersion?.();
+  preparedDocumentSnapshots.set(ctx, { identity, version, reclassify });
 }
 
-/** Reuse a strict snapshot prepared by the API/page classifier, or establish it directly. */
-export async function ensurePreviewDocumentSourceSnapshot(ctx: HandlerContext): Promise<void> {
-  const prepared = documentFreshContexts.get(ctx);
+/**
+ * Return the prepared classifier only when its page/API decision has become
+ * stale. This probe never refreshes an unprepared direct SSR request, which
+ * lets memory-pressure shedding stay cheap without hiding a newly API-owned
+ * route behind an SSR 503.
+ */
+export async function reclassifyPreviewDocumentSourceSnapshotIfChanged(
+  ctx: HandlerContext,
+): Promise<PreviewDocumentSnapshotReclassifier | undefined> {
+  const prepared = preparedDocumentSnapshots.get(ctx);
+  if (prepared?.reclassify === undefined) return;
+  if (await preparedDocumentSnapshotMatches(ctx, prepared)) return;
+  preparedDocumentSnapshots.delete(ctx);
+  return prepared.reclassify;
+}
+
+/**
+ * Reuse a strict snapshot prepared by the API/page classifier, or return the
+ * continuation that can classify the current generation again.
+ */
+export async function ensurePreviewDocumentSourceSnapshot(
+  ctx: HandlerContext,
+): Promise<PreviewDocumentSnapshotReclassifier | undefined> {
+  const prepared = preparedDocumentSnapshots.get(ctx);
   if (prepared !== undefined) {
-    documentFreshContexts.delete(ctx);
+    preparedDocumentSnapshots.delete(ctx);
     // Freshness established by the classifier only carries over when this
     // render context still targets the identity the preparation refreshed. A
     // branch switch on a reused contextual adapter between the two points
     // must re-establish, or the render serves the previous branch's snapshot.
-    const identity = await ctx.adapter.fs.getSourceSnapshotIdentity?.();
-    const getVersion = ctx.adapter.fs.getSourceSnapshotVersion;
-    const versionMatches = !prepared.tracksVersion ||
-      (typeof getVersion === "function" &&
-        await getVersion.call(ctx.adapter.fs) === prepared.version);
-    if (identity === prepared.identity && versionMatches) return;
+    if (await preparedDocumentSnapshotMatches(ctx, prepared)) return;
+
+    // A same-branch source replacement preserves identity but increments the
+    // generation. Refreshing here would make SSR read the new files while
+    // retaining the previous generation's page/API decision. Let the original
+    // classifier rerun in the render's established adapter context instead.
+    if (prepared.reclassify !== undefined) return prepared.reclassify;
   }
   await ensurePreviewSourceSnapshotFresh(ctx, DOCUMENT_FRESHNESS_REASONS);
 }
