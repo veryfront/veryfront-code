@@ -130,7 +130,7 @@ is_transient_publish_conflict() {
     | grep -Eq 'npm error code E409|409 Conflict|Failed to save packument'
 }
 
-# 0: landed for GITHUB_SHA. 1: exists for another commit. 2: still absent.
+# 0: landed for GITHUB_SHA. 1: exists but cannot match. 2: still absent.
 inspect_publish_conflict_result() {
   CONFLICT_PACKAGE_NAME="$1"
   PUBLISHED_GIT_HEAD="$(npm view "${CONFLICT_PACKAGE_NAME}@${VERSION}" gitHead 2>/dev/null || true)"
@@ -140,6 +140,22 @@ inspect_publish_conflict_result() {
   fi
   if [[ -n "${PUBLISHED_GIT_HEAD}" ]]; then
     echo "::error::${CONFLICT_PACKAGE_NAME}@${VERSION} exists with a different commit after a registry conflict." >&2
+    return 1
+  fi
+
+  # npm can expose the immutable name@version before its gitHead metadata. A
+  # visible version is pending, not absent: wait for its identity instead of
+  # issuing a publish that npm must reject.
+  if npm view "${CONFLICT_PACKAGE_NAME}@${VERSION}" version >/dev/null 2>&1; then
+    if wait_for_npm_git_head "${CONFLICT_PACKAGE_NAME}"; then
+      echo "::notice::${CONFLICT_PACKAGE_NAME}@${VERSION} landed despite an npm registry conflict; continuing."
+      return 0
+    fi
+    if [[ -n "${PUBLISHED_GIT_HEAD}" ]]; then
+      echo "::error::${CONFLICT_PACKAGE_NAME}@${VERSION} exists with a different commit after a registry conflict." >&2
+    else
+      echo "::error::${CONFLICT_PACKAGE_NAME}@${VERSION} exists after a registry conflict, but its gitHead metadata did not converge." >&2
+    fi
     return 1
   fi
   return 2
@@ -183,6 +199,12 @@ publish_npm_package_with_retry() {
     if [[ "${PUBLISH_ATTEMPT}" -lt "${NPM_PUBLISH_CONFLICT_ATTEMPTS}" ]]; then
       echo "npm registry conflict publishing ${PUBLISH_PACKAGE_NAME}@${VERSION}; retrying in ${NPM_PUBLISH_CONFLICT_DELAY_SECONDS}s (attempt ${PUBLISH_ATTEMPT}/${NPM_PUBLISH_CONFLICT_ATTEMPTS})."
       sleep "${NPM_PUBLISH_CONFLICT_DELAY_SECONDS}"
+    elif wait_for_npm_git_head "${PUBLISH_PACKAGE_NAME}"; then
+      echo "::notice::${PUBLISH_PACKAGE_NAME}@${VERSION} landed after the final npm registry conflict; continuing."
+      return 0
+    elif [[ -n "${PUBLISHED_GIT_HEAD}" ]]; then
+      echo "::error::${PUBLISH_PACKAGE_NAME}@${VERSION} exists with a different commit after the final registry conflict." >&2
+      return 1
     fi
   done
   echo "::error::npm registry conflict persisted for ${PUBLISH_PACKAGE_NAME}@${VERSION} after ${NPM_PUBLISH_CONFLICT_ATTEMPTS} attempts." >&2
@@ -229,6 +251,14 @@ rc_publish_package_dir() {
         printf '%s\n' "${SANITIZED_NPM_LOOKUP_OUTPUT}" >&2
       fi
       return "${PUBLISHED_GIT_HEAD_STATUS}"
+    fi
+    if [[ -z "${PUBLISHED_GIT_HEAD}" ]] && ! wait_for_npm_git_head "${PACKAGE_NAME}"; then
+      if [[ -n "${PUBLISHED_GIT_HEAD}" ]]; then
+        echo "::error::${PACKAGE_NAME}@${VERSION} already exists, but its gitHead does not match this commit." >&2
+      else
+        echo "::error::${PACKAGE_NAME}@${VERSION} already exists, but its gitHead metadata did not converge." >&2
+      fi
+      return 1
     fi
     if [[ "${PUBLISHED_GIT_HEAD}" == "${GITHUB_SHA}" ]]; then
       echo "::notice::${PACKAGE_NAME}@${VERSION} already published for this commit; skipping npm publish"

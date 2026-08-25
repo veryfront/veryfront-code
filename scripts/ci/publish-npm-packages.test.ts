@@ -1,4 +1,7 @@
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 
@@ -234,7 +237,9 @@ describe("npm package publishing", () => {
 
   for (const publishFunction of ["run_rc_publish", "run_release_publish"]) {
     for (const artifactGitHead of [undefined, "f".repeat(40)]) {
-      const identityCase = artifactGitHead === undefined ? "missing" : "mismatched";
+      const identityCase = artifactGitHead === undefined
+        ? "missing"
+        : "mismatched";
       it(`blocks ${publishFunction} before publish when canonical tarball gitHead is ${identityCase}`, async () => {
         await withTempDir(async (stateDir) => {
           const packageDir = `${stateDir}/npm`;
@@ -410,61 +415,110 @@ describe("npm package publishing", () => {
     }
   });
 
-  for (const publishedGitHead of ["", "wrong-commit"]) {
-    const identityCase = publishedGitHead === "" ? "missing" : "mismatched";
-    it(`rejects an RC rerun when the existing version has ${identityCase} gitHead`, async () => {
-      await withTempDir(async (stateDir) => {
-        const packageDir = `${stateDir}/package`;
-        const npmLog = `${stateDir}/npm.log`;
-        await Deno.mkdir(packageDir);
-        await Deno.writeTextFile(
-          `${packageDir}/package.json`,
-          JSON.stringify({ name: "@veryfront/ext-auth-jwt" }),
-        );
-        await Deno.writeTextFile(npmLog, "");
+  it("rejects an RC rerun when the existing version has a mismatched gitHead", async () => {
+    await withTempDir(async (stateDir) => {
+      const packageDir = `${stateDir}/package`;
+      const npmLog = `${stateDir}/npm.log`;
+      await Deno.mkdir(packageDir);
+      await Deno.writeTextFile(
+        `${packageDir}/package.json`,
+        JSON.stringify({ name: "@veryfront/ext-auth-jwt" }),
+      );
+      await Deno.writeTextFile(npmLog, "");
 
-        const output = await runBash(
-          [
-            "set -euo pipefail",
-            'source "$SCRIPT_PATH"',
-            "npm() {",
-            '  printf "%s\\n" "$*" >> "$NPM_LOG"',
-            '  if [ "$1" = "view" ] && [ "$3" = "version" ]; then',
-            '    printf "%s\\n" "$VERSION"',
-            "    return 0",
-            "  fi",
-            '  if [ "$1" = "view" ] && [ "$3" = "gitHead" ]; then',
-            '    printf "%s\\n" "$PUBLISHED_GIT_HEAD_FIXTURE"',
-            "    return 0",
-            "  fi",
-            "  return 92",
-            "}",
-            'rc_publish_package_dir "$PACKAGE_DIR"',
-          ].join("\n"),
-          {
-            GITHUB_SHA: "expected-commit",
-            NPM_LOG: npmLog,
-            PACKAGE_DIR: packageDir,
-            PUBLISHED_GIT_HEAD_FIXTURE: publishedGitHead,
-            VERSION: "0.1.1069",
-          },
-        );
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          '  printf "%s\\n" "$*" >> "$NPM_LOG"',
+          '  if [ "$1" = "view" ] && [ "$3" = "version" ]; then',
+          '    printf "%s\\n" "$VERSION"',
+          "    return 0",
+          "  fi",
+          '  if [ "$1" = "view" ] && [ "$3" = "gitHead" ]; then',
+          '    printf "%s\\n" "wrong-commit"',
+          "    return 0",
+          "  fi",
+          "  return 92",
+          "}",
+          'rc_publish_package_dir "$PACKAGE_DIR"',
+        ].join("\n"),
+        {
+          GITHUB_SHA: "expected-commit",
+          NPM_LOG: npmLog,
+          PACKAGE_DIR: packageDir,
+          VERSION: "0.1.1069",
+        },
+      );
 
-        assertEquals(output.code, 1, decoder.decode(output.stderr));
-        assertStringIncludes(
-          decoder.decode(output.stderr),
-          "gitHead does not match this commit",
-        );
-        assertEquals(
-          (await Deno.readTextFile(npmLog)).trim().split("\n"),
-          [
-            "view @veryfront/ext-auth-jwt@0.1.1069 version",
-            "view @veryfront/ext-auth-jwt@0.1.1069 gitHead",
-          ],
-        );
-      });
+      assertEquals(output.code, 1, decoder.decode(output.stderr));
+      assertStringIncludes(
+        decoder.decode(output.stderr),
+        "gitHead does not match this commit",
+      );
+      assertEquals(
+        (await Deno.readTextFile(npmLog)).trim().split("\n"),
+        [
+          "view @veryfront/ext-auth-jwt@0.1.1069 version",
+          "view @veryfront/ext-auth-jwt@0.1.1069 gitHead",
+        ],
+      );
     });
-  }
+  });
+
+  it("waits for an existing RC version's missing gitHead metadata", async () => {
+    await withTempDir(async (stateDir) => {
+      const packageDir = `${stateDir}/package`;
+      const npmLog = `${stateDir}/npm.log`;
+      await Deno.mkdir(packageDir);
+      await Deno.writeTextFile(
+        `${packageDir}/package.json`,
+        JSON.stringify({ name: "@veryfront/ext-auth-jwt" }),
+      );
+      await Deno.writeTextFile(npmLog, "");
+
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          '  printf "%s\\n" "$*" >> "$NPM_LOG"',
+          '  if [ "$1" = "view" ] && [ "$3" = "version" ]; then',
+          '    printf "%s\\n" "$VERSION"',
+          "    return 0",
+          "  fi",
+          '  if [ "$1" = "view" ] && [ "$3" = "gitHead" ]; then',
+          '    if [ "$(grep -c gitHead "$NPM_LOG")" -lt 4 ]; then return 0; fi',
+          '    printf "%s\\n" "$GITHUB_SHA"',
+          "    return 0",
+          "  fi",
+          "  return 92",
+          "}",
+          "sleep() { :; }",
+          'rc_publish_package_dir "$PACKAGE_DIR"',
+        ].join("\n"),
+        {
+          GITHUB_SHA: "expected-commit",
+          NPM_LOG: npmLog,
+          PACKAGE_DIR: packageDir,
+          VERSION: "0.1.1069",
+        },
+      );
+
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      assertStringIncludes(
+        decoder.decode(output.stdout),
+        "already published for this commit; skipping npm publish",
+      );
+      const calls = (await Deno.readTextFile(npmLog)).trim().split("\n");
+      assertEquals(
+        calls.filter((line) => line.startsWith("publish")).length,
+        0,
+      );
+      assertEquals(calls.filter((line) => line.endsWith("gitHead")).length, 4);
+    });
+  });
 
   it("reports a sanitized npm lookup failure when an existing RC version gitHead cannot be read", async () => {
     await withTempDir(async (stateDir) => {
@@ -973,6 +1027,7 @@ describe("npm package publishing", () => {
           "  fi",
           '  if [ "$1" = "view" ]; then return 1; fi',
           "}",
+          "sleep() { :; }",
           'rc_publish_package_dir "$PACKAGE_DIR" || echo "EXIT=$?"',
         ].join("\n"),
         {
@@ -1066,6 +1121,125 @@ describe("npm package publishing", () => {
             publishes.join(", ")
           }`,
         );
+      });
+    });
+  }
+
+  it("waits instead of republishing when an RC conflict version lacks gitHead", async () => {
+    await withTempDir(async (stateDir) => {
+      const packageDir = `${stateDir}/package`;
+      const npmLog = `${stateDir}/npm.log`;
+      const delayMarker = `${stateDir}/delay-elapsed`;
+      await Deno.mkdir(packageDir);
+      await Deno.writeTextFile(
+        `${packageDir}/package.json`,
+        JSON.stringify({ name: "@veryfront/ext-llm-google" }),
+      );
+      await Deno.writeTextFile(npmLog, "");
+
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          '  printf "%s\\n" "$*" >> "$NPM_LOG"',
+          '  if [ "$1" = "publish" ]; then',
+          '    if [ "$(grep -c "^publish" "$NPM_LOG")" -gt 1 ]; then',
+          '      printf "%s\\n" "npm error code E403"',
+          "      return 1",
+          "    fi",
+          '    printf "%s\\n" "$CONFLICT_OUTPUT"',
+          "    return 1",
+          "  fi",
+          '  if [ "$1" = "view" ] && [ "$3" = "version" ]; then',
+          '    if [ ! -f "$DELAY_MARKER" ]; then return 1; fi',
+          '    printf "%s\\n" "$VERSION"',
+          "    return 0",
+          "  fi",
+          '  if [ "$1" = "view" ] && [ "$3" = "gitHead" ]; then',
+          '    if [ "$(grep -c gitHead "$NPM_LOG")" -lt 4 ]; then return 0; fi',
+          '    printf "%s\\n" "$GITHUB_SHA"',
+          "    return 0",
+          "  fi",
+          "  return 1",
+          "}",
+          'sleep() { : > "$DELAY_MARKER"; }',
+          'rc_publish_package_dir "$PACKAGE_DIR"',
+        ].join("\n"),
+        {
+          CONFLICT_OUTPUT,
+          DELAY_MARKER: delayMarker,
+          GITHUB_SHA: "0".repeat(40),
+          NPM_LOG: npmLog,
+          NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
+          PACKAGE_DIR: packageDir,
+          VERSION: "0.1.0",
+        },
+      );
+
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      const publishes = (await Deno.readTextFile(npmLog)).trim().split("\n")
+        .filter((line) => line.startsWith("publish"));
+      assertEquals(
+        publishes.length,
+        1,
+        "an immutable name@version must not be republished while gitHead converges",
+      );
+    });
+  });
+
+  for (
+    const publishFunction of [
+      "rc_publish_package_dir",
+      "release_publish_package_dir",
+    ]
+  ) {
+    it(`rechecks after the final conflict in ${publishFunction}`, async () => {
+      await withTempDir(async (stateDir) => {
+        const packageDir = `${stateDir}/package`;
+        const npmLog = `${stateDir}/npm.log`;
+        await Deno.mkdir(packageDir);
+        await Deno.writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({ name: "@veryfront/ext-llm-google" }),
+        );
+        await Deno.writeTextFile(npmLog, "");
+
+        const output = await runBash(
+          [
+            "set -euo pipefail",
+            'source "$SCRIPT_PATH"',
+            "npm() {",
+            '  printf "%s\\n" "$*" >> "$NPM_LOG"',
+            '  if [ "$1" = "publish" ]; then',
+            '    printf "%s\\n" "$CONFLICT_OUTPUT"',
+            "    return 1",
+            "  fi",
+            '  if [ "$1" = "view" ] && [ "$3" = "gitHead" ]; then',
+            '    if [ "$(grep -c gitHead "$NPM_LOG")" -le 2 ]; then return 1; fi',
+            '    printf "%s\\n" "$GITHUB_SHA"',
+            "    return 0",
+            "  fi",
+            '  if [ "$1" = "view" ]; then return 1; fi',
+            "}",
+            "sleep() { :; }",
+            `${publishFunction} "$PACKAGE_DIR"`,
+          ].join("\n"),
+          {
+            CONFLICT_OUTPUT,
+            GITHUB_SHA: "0".repeat(40),
+            NPM_LOG: npmLog,
+            NPM_PUBLISH_CONFLICT_ATTEMPTS: "1",
+            NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
+            PACKAGE_DIR: packageDir,
+            VERSION: "0.1.0",
+          },
+        );
+
+        assertEquals(output.code, 0, decoder.decode(output.stderr));
+        const publishes = (await Deno.readTextFile(npmLog)).trim().split("\n")
+          .filter((line) => line.startsWith("publish"));
+        assertEquals(publishes.length, 1);
       });
     });
   }
