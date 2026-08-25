@@ -238,6 +238,42 @@ describe("transforms/import-rewriter/strategies/import-map-strategy", () => {
       );
     });
 
+    it("does not duplicate the separator when a mapping ends in a slash", () => {
+      const map: ImportMapConfig = { imports: { "@scope/pkg": "https://cdn.example/pkg/" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/@scope/pkg@1/sub", map),
+        "https://cdn.example/pkg/sub",
+        "not every CDN collapses a doubled separator back to one",
+      );
+    });
+
+    it("keeps a remote single-module mapping instead of appending a subpath", () => {
+      const map: ImportMapConfig = { imports: { "@scope/pkg": "https://cdn.example/pkg.js" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/@scope/pkg@1/sub", map),
+        "https://cdn.example/pkg.js",
+        "a mapping that already addresses one module cannot take a path below it",
+      );
+    });
+
+    it("still appends a subpath to a remote package-root mapping", () => {
+      const map: ImportMapConfig = { imports: { "@scope/pkg": "https://cdn.example/pkg" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/@scope/pkg@1/sub", map),
+        "https://cdn.example/pkg/sub",
+        "an extensionless remote mapping is a package root, so the subpath still applies",
+      );
+    });
+
+    it("resolves a legacy build-prefixed esm.sh URL", () => {
+      const map: ImportMapConfig = { imports: { react: "/local/react.js" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/v135/react@18.3.1", map),
+        "/local/react.js",
+        "esm.sh still serves v-prefixed build URLs, which must keep resolving",
+      );
+    });
+
     it("resolves a scoped package carrying a non-numeric version tag", () => {
       const map: ImportMapConfig = { imports: { "@scope/pkg": "https://cdn.example/pkg" } };
       assertEquals(

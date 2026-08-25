@@ -5,58 +5,23 @@ import type {
   RewriteContext,
   RewriteResult,
 } from "../types.ts";
-import { isEsmShUrl } from "../url-builder.ts";
+import { isEsmShUrl, parseEsmShUrl } from "../url-builder.ts";
 
 /**
- * Splits an esm.sh path into its package name and subpath.
- *
- * esm.sh serves two specifier shapes, `pkg[@version][/subpath]` and
- * `@scope/pkg[@version][/subpath]`. Parsing them with separate rules is what
- * previously let them drift: the scoped branch consumed the version as part of
- * the package name and then looked for it again, so every scoped subpath was
- * dropped. One parse keeps the two shapes in step.
- *
- * The scan is written with indexOf rather than a regular expression because the
- * optional version and the optional subpath would otherwise both be able to
- * match the same trailing characters, which backtracks super-linearly.
- *
- * The subpath is multi-segment for esm.sh build targets such as
- * `@scope/pkg@1.0/es2022/pkg.mjs`, so the whole remainder is kept.
+ * esm.sh also serves legacy build-prefixed URLs such as
+ * `https://esm.sh/v135/react@18`. `parseEsmShUrl` rejects those, so the prefix
+ * is stripped first to keep them resolvable through the import map, which is
+ * what the previous hand-rolled parse here did.
  */
-function parseEsmShSpecifier(url: string): { pkg: string; subpath: string } | null {
-  let pathname: string;
-  try {
-    pathname = new URL(url).pathname.slice(1).replace(/^v\d+\//, "");
-  } catch (_) {
-    /* expected: URL may be malformed */
-    return null;
-  }
+const ESM_SH_BUILD_PREFIX = /^(https?:\/\/esm\.sh\/)v\d+\//;
 
-  // The package name spans one segment, or two when it carries a scope.
-  let nameEnd: number;
-  if (pathname.startsWith("@")) {
-    const scopeEnd = pathname.indexOf("/");
-    if (scopeEnd <= 1) return null;
-    nameEnd = pathname.indexOf("/", scopeEnd + 1);
-  } else {
-    nameEnd = pathname.indexOf("/");
-  }
-
-  const head = nameEnd === -1 ? pathname : pathname.slice(0, nameEnd);
-  const subpath = nameEnd === -1 ? "" : pathname.slice(nameEnd);
-
-  // Any "@" after the first character starts the version, whatever it contains,
-  // so non-numeric tags such as "@beta" are stripped along with "@1.0".
-  const versionAt = head.indexOf("@", 1);
-  const pkg = versionAt === -1 ? head : head.slice(0, versionAt);
-  if (!pkg || pkg.endsWith("/")) return null;
-
-  return { pkg, subpath };
+function parseEsmShSpecifier(url: string) {
+  return parseEsmShUrl(url.replace(ESM_SH_BUILD_PREFIX, "$1"));
 }
 
 function extractEsmShPackage(url: string): string | null {
   if (!isEsmShUrl(url)) return null;
-  return parseEsmShSpecifier(url)?.pkg ?? null;
+  return parseEsmShSpecifier(url)?.packageName ?? null;
 }
 
 function extractEsmShSubpath(url: string): string {
@@ -73,9 +38,29 @@ function extractEsmShSubpath(url: string): string {
  */
 function appendSubpath(mapping: string, subpath: string): string {
   const boundary = mapping.search(/[?#]/);
-  if (boundary === -1) return mapping + subpath;
+  const path = boundary === -1 ? mapping : mapping.slice(0, boundary);
+  const query = boundary === -1 ? "" : mapping.slice(boundary);
+  // A mapping that names a directory already ends in the separator the subpath
+  // starts with, and not every CDN collapses "//" back to "/".
+  const joined = path.endsWith("/") ? path.slice(0, -1) + subpath : path + subpath;
 
-  return mapping.slice(0, boundary) + subpath + mapping.slice(boundary);
+  return joined + query;
+}
+
+/** Module file extensions a mapping can end in when it addresses one module. */
+const MODULE_FILE_SUFFIX = /\.(?:m|c)?js$|\.json$/;
+
+/**
+ * Reports whether a mapping already addresses a single module rather than a
+ * package root. Such a mapping cannot take a subpath: appending one produces a
+ * path below a file, as in `https://cdn.example/pkg.js/sub`.
+ */
+function isSingleModuleMapping(mapping: string): boolean {
+  const isRemote = mapping.startsWith("http://") || mapping.startsWith("https://");
+  if (!isRemote) return !mapping.startsWith("npm:");
+
+  const boundary = mapping.search(/[?#]/);
+  return MODULE_FILE_SUFFIX.test(boundary === -1 ? mapping : mapping.slice(0, boundary));
 }
 
 export function resolveImportWithMap(
@@ -105,11 +90,7 @@ export function resolveImportWithMap(
       const mapping = scopedImports?.[esmShPackage] ?? importMap.imports?.[esmShPackage];
       if (mapping) {
         if (!subpath) return mapping;
-
-        const isFilePath = !mapping.startsWith("http://") &&
-          !mapping.startsWith("https://") &&
-          !mapping.startsWith("npm:");
-        if (isFilePath) return mapping;
+        if (isSingleModuleMapping(mapping)) return mapping;
 
         return appendSubpath(mapping, subpath);
       }
