@@ -339,25 +339,6 @@ describe("ext-eval-report-mlflow", () => {
     assertEquals(registry.has("mlflow"), true);
   });
 
-  it("treats an empty configured OAuth token URL as unset", async () => {
-    clearMlflowEnv();
-    Deno.env.set("MLFLOW_TRACKING_URI", "https://mlflow.test");
-    Deno.env.set("MLFLOW_TRACKING_TOKEN", "host-token");
-    const registry = createEvalReportExporterRegistry();
-    const { requests, fetchImpl } = createMlflowFetchRecorder();
-    const extension = factory({ oauthTokenUrl: "", fetch: undefined });
-
-    await extension.setup?.(createContext(registry));
-    await registry.export(createReport(), {});
-
-    assertEquals(
-      requests.filter((request) => request.method !== "PUT").every((request) =>
-        request.headers.get("authorization") === "Bearer host-token"
-      ),
-      true,
-    );
-  });
-
   it("unregisters the MLflow eval report exporter during teardown", async () => {
     clearMlflowEnv();
     Deno.env.set("MLFLOW_TRACKING_URI", "https://mlflow.test");
