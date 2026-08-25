@@ -92,6 +92,7 @@ const VERTICAL_BAR_CODE_UNIT = 124;
 const ASCII_UPPERCASE_A_CODE_UNIT = 65;
 const ASCII_UPPERCASE_Z_CODE_UNIT = 90;
 const ASCII_LOWERCASE_OFFSET = 32;
+const MIN_TRUNCATED_TERMINAL_SEGMENT_CODE_UNITS = 8;
 const FILESYSTEM_DIAGNOSTIC_FALLBACK = "Filesystem operation failed";
 const DOM_EXCEPTION_MESSAGE_GETTER = typeof DOMException === "function"
   ? getOwnPropertyDescriptor(DOMException.prototype, "message")?.get
@@ -410,9 +411,25 @@ function trimUrlIgnoredAsciiWhitespace(value: string): string {
   return start === 0 && end === value.length ? value : sliceString(value, start, end);
 }
 
+/** Remove ASCII controls that the WHATWG URL parser ignores anywhere in a URL. */
+function removeUrlIgnoredAsciiControls(value: string): string {
+  const segments: string[] = [];
+  let segmentStart = 0;
+  for (let index = 0; index < value.length; index++) {
+    const codeUnit = charCodeAtString(value, index);
+    if (codeUnit !== 9 && codeUnit !== 10 && codeUnit !== 13) continue;
+    apply(arrayPush, segments, [sliceString(value, segmentStart, index)]);
+    segmentStart = index + 1;
+  }
+  if (segmentStart === 0) return value;
+  apply(arrayPush, segments, [sliceString(value, segmentStart)]);
+  return apply(arrayJoin, segments, [""]) as string;
+}
+
 function fileUrlNormalizationSource(path: string): string {
   const trimmed = trimUrlIgnoredAsciiWhitespace(path);
-  return lowercaseString(sliceString(trimmed, 0, 5)) === "file:" ? trimmed : path;
+  const canonical = removeUrlIgnoredAsciiControls(trimmed);
+  return lowercaseString(sliceString(canonical, 0, 5)) === "file:" ? canonical : path;
 }
 
 export function isAbsoluteFilesystemPathForDiagnostic(path: string): boolean {
@@ -585,7 +602,12 @@ function minimumAbsolutePathPrefixLength(path: string): number {
   } else {
     while (index < path.length && isPathSeparatorCodeUnit(charCodeAtString(path, index))) index++;
   }
+  const rootLength = index;
   while (index < path.length && !isPathSeparatorCodeUnit(charCodeAtString(path, index))) index++;
+  if (index === path.length) {
+    const terminalPrefixLength = rootLength + MIN_TRUNCATED_TERMINAL_SEGMENT_CODE_UNITS;
+    return terminalPrefixLength < path.length ? terminalPrefixLength : path.length;
+  }
   return index;
 }
 
@@ -730,20 +752,44 @@ export function snapshotThrowableDiagnosticRedactingPath(
   const posixDoubleSeparatorPath = normalizePosixDoubleSeparatorPathForDiagnostic(
     normalizationSource,
   );
-  const rawPlatformPath = platformPathFromNormalizedFileUrl(normalizedPath);
-  const rawPosixDrivePlatformPath = rawPlatformPath && isWindowsFilesystemPath(rawPlatformPath)
-    ? `/${rawPlatformPath}`
+  const rawCanonicalPlatformPath = platformPathFromNormalizedFileUrl(normalizationSource);
+  const rawNormalizedPlatformPath = normalizationSource === normalizedPath
+    ? undefined
+    : platformPathFromNormalizedFileUrl(normalizedPath);
+  const rawCanonicalPosixDrivePath = rawCanonicalPlatformPath &&
+      isWindowsFilesystemPath(rawCanonicalPlatformPath)
+    ? `/${rawCanonicalPlatformPath}`
     : undefined;
-  const platformPath = rawPlatformPath === path || rawPlatformPath === normalizationSource ||
-      rawPlatformPath === normalizedPath
+  const rawNormalizedPosixDrivePath = rawNormalizedPlatformPath &&
+      isWindowsFilesystemPath(rawNormalizedPlatformPath)
+    ? `/${rawNormalizedPlatformPath}`
+    : undefined;
+  const canonicalPlatformPath = rawCanonicalPlatformPath === path ||
+      rawCanonicalPlatformPath === normalizationSource ||
+      rawCanonicalPlatformPath === normalizedPath
     ? undefined
-    : rawPlatformPath;
-  const posixDrivePlatformPath = rawPosixDrivePlatformPath === path ||
-      rawPosixDrivePlatformPath === normalizationSource ||
-      rawPosixDrivePlatformPath === normalizedPath ||
-      rawPosixDrivePlatformPath === platformPath
+    : rawCanonicalPlatformPath;
+  const normalizedPlatformPath = rawNormalizedPlatformPath === path ||
+      rawNormalizedPlatformPath === normalizationSource ||
+      rawNormalizedPlatformPath === normalizedPath ||
+      rawNormalizedPlatformPath === canonicalPlatformPath
     ? undefined
-    : rawPosixDrivePlatformPath;
+    : rawNormalizedPlatformPath;
+  const canonicalPosixDrivePath = rawCanonicalPosixDrivePath === path ||
+      rawCanonicalPosixDrivePath === normalizationSource ||
+      rawCanonicalPosixDrivePath === normalizedPath ||
+      rawCanonicalPosixDrivePath === canonicalPlatformPath ||
+      rawCanonicalPosixDrivePath === normalizedPlatformPath
+    ? undefined
+    : rawCanonicalPosixDrivePath;
+  const normalizedPosixDrivePath = rawNormalizedPosixDrivePath === path ||
+      rawNormalizedPosixDrivePath === normalizationSource ||
+      rawNormalizedPosixDrivePath === normalizedPath ||
+      rawNormalizedPosixDrivePath === canonicalPlatformPath ||
+      rawNormalizedPosixDrivePath === normalizedPlatformPath ||
+      rawNormalizedPosixDrivePath === canonicalPosixDrivePath
+    ? undefined
+    : rawNormalizedPosixDrivePath;
   let redacted = redactPathFromText(diagnostic, path, replacement);
   if (normalizationSource !== path) {
     redacted = redactPathFromText(redacted, normalizationSource, replacement);
@@ -758,11 +804,17 @@ export function snapshotThrowableDiagnosticRedactingPath(
   ) {
     redacted = redactPathFromText(redacted, posixDoubleSeparatorPath, replacement);
   }
-  if (posixDrivePlatformPath !== undefined) {
-    redacted = redactPathFromText(redacted, posixDrivePlatformPath, replacement);
+  if (canonicalPosixDrivePath !== undefined) {
+    redacted = redactPathFromText(redacted, canonicalPosixDrivePath, replacement);
   }
-  if (platformPath !== undefined) {
-    redacted = redactPathFromText(redacted, platformPath, replacement);
+  if (normalizedPosixDrivePath !== undefined) {
+    redacted = redactPathFromText(redacted, normalizedPosixDrivePath, replacement);
+  }
+  if (canonicalPlatformPath !== undefined) {
+    redacted = redactPathFromText(redacted, canonicalPlatformPath, replacement);
+  }
+  if (normalizedPlatformPath !== undefined) {
+    redacted = redactPathFromText(redacted, normalizedPlatformPath, replacement);
   }
   if (
     containsTruncatedFilesystemPathPrefix(redacted, path) ||
@@ -772,9 +824,14 @@ export function snapshotThrowableDiagnosticRedactingPath(
       containsTruncatedFilesystemPathPrefix(redacted, normalizedPath)) ||
     (posixDoubleSeparatorPath !== undefined &&
       containsTruncatedFilesystemPathPrefix(redacted, posixDoubleSeparatorPath)) ||
-    (posixDrivePlatformPath !== undefined &&
-      containsTruncatedFilesystemPathPrefix(redacted, posixDrivePlatformPath)) ||
-    (platformPath !== undefined && containsTruncatedFilesystemPathPrefix(redacted, platformPath))
+    (canonicalPosixDrivePath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, canonicalPosixDrivePath)) ||
+    (normalizedPosixDrivePath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, normalizedPosixDrivePath)) ||
+    (canonicalPlatformPath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, canonicalPlatformPath)) ||
+    (normalizedPlatformPath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, normalizedPlatformPath))
   ) {
     return `${FILESYSTEM_DIAGNOSTIC_FALLBACK} for ${replacement}`;
   }

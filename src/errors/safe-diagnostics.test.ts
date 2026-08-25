@@ -264,6 +264,49 @@ describe("safe-diagnostics", () => {
     }
   });
 
+  it("should redact native paths after canonicalizing controls inside the file scheme", () => {
+    for (const control of ["\t", "\n", "\r"] as const) {
+      assertEquals(
+        snapshotThrowableDiagnosticRedactingPath(
+          new Error("ENOENT: no such file or directory, open '/private/secret/nope'"),
+          `fi${control}le:///private/secret/nope`,
+          "<absolute-path>",
+        ),
+        "ENOENT: no such file or directory, open '<absolute-path>'",
+      );
+    }
+  });
+
+  it("should preserve repeated separators in native file URL aliases", () => {
+    assertEquals(
+      snapshotThrowableDiagnosticRedactingPath(
+        new Error("ENOENT: no such file or directory, open '/private//marker/nope'"),
+        "file:///private//marker/nope",
+        "<absolute-path>",
+      ),
+      "ENOENT: no such file or directory, open '<absolute-path>'",
+    );
+  });
+
+  it("should detect truncated single-segment absolute paths", () => {
+    for (
+      const [requestedPath, truncatedPath] of [
+        ["/definitely-private-marker", "/definitely-private-mar"],
+        ["C:\\private-marker", "c:/private-mar"],
+        ["file:///definitely-private-marker", "/definitely-private-mar"],
+      ] as const
+    ) {
+      assertEquals(
+        snapshotThrowableDiagnosticRedactingPath(
+          new Error(`open '${truncatedPath}'`),
+          requestedPath,
+          "<absolute-path>",
+        ),
+        "Filesystem operation failed for <absolute-path>",
+      );
+    }
+  });
+
   it("should normalize localhost file authorities before redacting canonical diagnostics", () => {
     for (
       const requestedPath of [

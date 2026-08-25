@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { cyan, dim } from "#veryfront/compat/console";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { formatErrorBox, formatUserError } from "./error-formatter.ts";
 import { CONFIG_NOT_FOUND } from "../error-registry.ts";
 import { ERROR_OUTPUT_MAX_LENGTH_CHARS } from "../safe-diagnostics.ts";
@@ -172,6 +173,7 @@ describe("formatUserError", () => {
   });
 
   it("should validate V8 property aliases independently of callable labels", () => {
+    const originalEnvironment = getHostEnv("VERYFRONT_ENV");
     const error = new Error("unknown error callable_alias_frames");
     error.stack = [
       "Error: unknown error callable_alias_frames",
@@ -179,7 +181,14 @@ describe("formatUserError", () => {
       "    at Object.publicAlias [as visibleAlias] (/srv/app.ts:2:1)",
     ].join("\n");
 
-    const output = formatUserError(error);
+    let output: string;
+    try {
+      setEnv("VERYFRONT_ENV", "development");
+      output = formatUserError(error);
+    } finally {
+      if (originalEnvironment === undefined) deleteEnv("VERYFRONT_ENV");
+      else setEnv("VERYFRONT_ENV", originalEnvironment);
+    }
 
     assertEquals(output.includes("private-control.example"), false);
     assertEquals(output.includes("Object.publicAlias [as visibleAlias]"), true);

@@ -484,6 +484,119 @@ describe("error-context", () => {
       assertEquals(String(diagnostic.data.errorMessage).includes("<absolute-path>"), true);
     });
 
+    it("redacts host file URL aliases with scheme controls and repeated separators", async () => {
+      const captured: { message: string; data: Record<string, unknown> }[] = [];
+      const originalLogDebug = serverLogger.debug;
+      serverLogger.debug = ((message: string, data: Record<string, unknown>) => {
+        captured.push({ message, data });
+      }) as typeof serverLogger.debug;
+
+      const cases = [
+        ["fi\nle:///private//read-marker/nope", "/private//read-marker/nope"],
+        ["fi\tle:///private//stat-marker/nope", "/private//stat-marker/nope"],
+        ["fi\rle:///private//directory-marker/nope", "/private//directory-marker/nope"],
+      ] as const;
+      try {
+        await safeFileRead(
+          {
+            fs: {
+              readFile: () => Promise.reject(new Error(`read failed for ${cases[0][1]}`)),
+            },
+          },
+          cases[0][0],
+          "read-file",
+        );
+        await safeFileStat(
+          {
+            fs: {
+              stat: () => Promise.reject(new Error(`stat failed for ${cases[1][1]}`)),
+            },
+          },
+          cases[1][0],
+          "stat-file",
+        );
+        await safeReadDir<string>(
+          {
+            fs: {
+              async *readDir(): AsyncIterable<string> {
+                yield await Promise.reject(
+                  new Error(`directory read failed for ${cases[2][1]}`),
+                );
+              },
+            },
+          },
+          cases[2][0],
+          "read-directory",
+        );
+      } finally {
+        serverLogger.debug = originalLogDebug;
+      }
+
+      assertEquals(captured.length, 3);
+      for (let index = 0; index < cases.length; index++) {
+        const diagnostic = captured[index];
+        assertExists(diagnostic);
+        assertEquals(diagnostic.data.path, "<absolute-path>");
+        assertEquals(JSON.stringify(diagnostic).includes(cases[index]![0]), false);
+        assertEquals(JSON.stringify(diagnostic).includes(cases[index]![1]), false);
+        assertEquals(String(diagnostic.data.errorMessage).includes("<absolute-path>"), true);
+      }
+    });
+
+    it("fails closed for truncated single-segment paths in every filesystem helper", async () => {
+      const captured: { message: string; data: Record<string, unknown> }[] = [];
+      const originalLogDebug = serverLogger.debug;
+      serverLogger.debug = ((message: string, data: Record<string, unknown>) => {
+        captured.push({ message, data });
+      }) as typeof serverLogger.debug;
+
+      try {
+        await safeFileRead(
+          {
+            fs: {
+              readFile: () => Promise.reject(new Error("read failed for /private-read-mar")),
+            },
+          },
+          "/private-read-marker",
+          "read-file",
+        );
+        await safeFileStat(
+          {
+            fs: {
+              stat: () => Promise.reject(new Error("stat failed for c:/private-stat-mar")),
+            },
+          },
+          "C:\\private-stat-marker",
+          "stat-file",
+        );
+        await safeReadDir<string>(
+          {
+            fs: {
+              async *readDir(): AsyncIterable<string> {
+                yield await Promise.reject(
+                  new Error("directory read failed for /private-directory-mar"),
+                );
+              },
+            },
+          },
+          "file:///private-directory-marker",
+          "read-directory",
+        );
+      } finally {
+        serverLogger.debug = originalLogDebug;
+      }
+
+      assertEquals(captured.length, 3);
+      for (const diagnostic of captured) {
+        assertEquals(diagnostic.data.path, "<absolute-path>");
+        assertEquals(
+          diagnostic.data.errorMessage,
+          "Filesystem operation failed for <absolute-path>",
+        );
+        assertEquals(diagnostic.message.includes("private"), false);
+      }
+    });
+
     it("preserves filesystem fallbacks when absolute-path classification is poisoned", async () => {
       const originalRegExpTest = RegExp.prototype.test;
       let readResult: string | null;
