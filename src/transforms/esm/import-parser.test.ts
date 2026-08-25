@@ -193,6 +193,167 @@ describe("transforms/esm/import-parser", () => {
     }
   });
 
+  it("rejects an .mdx import that escapes the project directory", async () => {
+    const stub = withStubContentProcessor();
+    const rootDir = await Deno.makeTempDir({ prefix: "vf-import-parser-boundary-" });
+    try {
+      const projectDir = join(rootDir, "project");
+      const filePath = join(projectDir, "components/snippet.mdx");
+      await Deno.mkdir(dirname(filePath), { recursive: true });
+      await Deno.writeTextFile(join(rootDir, "secret.tsx"), `export default "private";`);
+      const code = `import Secret from "../../secret.tsx";\n\n<Secret />\n`;
+      await Deno.writeTextFile(filePath, code);
+
+      const result = await parseLocalImports(
+        code,
+        filePath,
+        projectDir,
+        await getLocalAdapter(),
+      );
+
+      assertEquals(result.imports.length, 0, "an out-of-project file must not be imported");
+      assertEquals(result.missing.length, 1, "an out-of-project import must be rejected");
+    } finally {
+      stub.restore();
+      await Deno.remove(rootDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("rejects an .mdx import through a symlink outside the project directory", async () => {
+    const stub = withStubContentProcessor();
+    const rootDir = await Deno.makeTempDir({ prefix: "vf-import-parser-symlink-" });
+    try {
+      const projectDir = join(rootDir, "project");
+      const filePath = join(projectDir, "pages/index.mdx");
+      const externalDir = join(rootDir, "external");
+      await Deno.mkdir(dirname(filePath), { recursive: true });
+      await Deno.mkdir(externalDir, { recursive: true });
+      await Deno.writeTextFile(join(externalDir, "secret.tsx"), `export default "private";`);
+      await Deno.symlink(externalDir, join(projectDir, "linked"));
+      const code = `import Secret from "../linked/secret.tsx";\n\n<Secret />\n`;
+      await Deno.writeTextFile(filePath, code);
+
+      const result = await parseLocalImports(
+        code,
+        filePath,
+        projectDir,
+        await getLocalAdapter(),
+      );
+
+      assertEquals(result.imports.length, 0, "a symlink escape must not be imported");
+      assertEquals(result.missing.length, 1, "a symlink escape must be rejected");
+    } finally {
+      stub.restore();
+      await Deno.remove(rootDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("rejects compiled MDX aliases that escape the project directory", async () => {
+    const stub = withStubContentProcessor();
+    const rootDir = await Deno.makeTempDir({ prefix: "vf-import-parser-alias-boundary-" });
+    try {
+      const projectDir = join(rootDir, "project");
+      const filePath = join(projectDir, "pages/index.mdx");
+      await Deno.mkdir(dirname(filePath), { recursive: true });
+      await Deno.writeTextFile(join(rootDir, "secret.tsx"), `export default "private";`);
+      const code = `import Secret from "@/../secret.tsx";\n\n<Secret />\n`;
+
+      const result = await parseLocalImports(code, filePath, projectDir, await getLocalAdapter());
+
+      assertEquals(result.imports.length, 0, "an alias traversal must not be imported");
+      assertEquals(result.missing.length, 1, "an alias traversal must be rejected");
+    } finally {
+      stub.restore();
+      await Deno.remove(rootDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("rejects compiled MDX aliases through symlinks outside the project directory", async () => {
+    const stub = withStubContentProcessor();
+    const rootDir = await Deno.makeTempDir({ prefix: "vf-import-parser-alias-symlink-" });
+    try {
+      const projectDir = join(rootDir, "project");
+      const filePath = join(projectDir, "pages/index.mdx");
+      const externalDir = join(rootDir, "external");
+      await Deno.mkdir(dirname(filePath), { recursive: true });
+      await Deno.mkdir(externalDir, { recursive: true });
+      await Deno.writeTextFile(join(externalDir, "secret.tsx"), `export default "private";`);
+      await Deno.symlink(externalDir, join(projectDir, "linked"));
+      const code = `import Secret from "@/linked/secret.tsx";\n\n<Secret />\n`;
+
+      const result = await parseLocalImports(code, filePath, projectDir, await getLocalAdapter());
+
+      assertEquals(result.imports.length, 0, "an alias symlink escape must not be imported");
+      assertEquals(result.missing.length, 1, "an alias symlink escape must be rejected");
+    } finally {
+      stub.restore();
+      await Deno.remove(rootDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  // Regression: containment validated the symlink's realPath target but then
+  // returned the lexical path, so a link retargeted between the check and the
+  // eventual readFile escaped the project (TOCTOU). The approved canonical path
+  // is what must be recorded and read.
+  it("returns the canonical path for an in-project symlinked import", async () => {
+    const stub = withStubContentProcessor();
+    const rootDir = await Deno.makeTempDir({ prefix: "vf-import-parser-canonical-" });
+    try {
+      const projectDir = join(rootDir, "project");
+      const filePath = join(projectDir, "index.mdx");
+      await Deno.mkdir(join(projectDir, "real"), { recursive: true });
+      await Deno.writeTextFile(join(projectDir, "real/Child.tsx"), `export default () => null;`);
+      await Deno.symlink(join(projectDir, "real"), join(projectDir, "linked"));
+      const code = [
+        `import Child from "./linked/Child.tsx";`,
+        `import AliasChild from "@/linked/Child.tsx";`,
+        ``,
+        `<Child />`,
+      ].join("\n");
+      await Deno.writeTextFile(filePath, code);
+
+      const result = await parseLocalImports(code, filePath, projectDir, await getLocalAdapter());
+
+      const canonicalChild = await Deno.realPath(join(projectDir, "real/Child.tsx"));
+      assertEquals(result.missing.length, 0, "an in-project symlink must resolve");
+      assertEquals(result.imports.length, 2);
+      for (const imp of result.imports) {
+        assertEquals(
+          imp.absolutePath,
+          canonicalChild,
+          "the recorded path must be the approved canonical path, not the symlinked one",
+        );
+      }
+    } finally {
+      stub.restore();
+      await Deno.remove(rootDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  // Regression: stripping trailing separators turned a projectDir of "/" into
+  // "", so the canonical check called realPath("") and every @/ import of a
+  // root-mounted project failed, including files that exist inside it.
+  it("resolves compiled MDX aliases when the project directory is the filesystem root", async () => {
+    const stub = withStubContentProcessor();
+    const rootDir = await Deno.makeTempDir({ prefix: "vf-import-parser-root-alias-" });
+    try {
+      const filePath = join(rootDir, "pages/index.mdx");
+      await Deno.mkdir(dirname(filePath), { recursive: true });
+      await Deno.writeTextFile(join(rootDir, "Badge.tsx"), `export const Badge = () => null;`);
+      const aliasPath = join(rootDir, "Badge.tsx").replace(/^\/+/, "");
+      const code = `import { Badge } from "@/${aliasPath}";\n\n<Badge />\n`;
+
+      const result = await parseLocalImports(code, filePath, "/", await getLocalAdapter());
+
+      assertEquals(result.missing.length, 0, "a root-mounted @/ import must resolve");
+      assertEquals(result.imports.length, 1);
+      assertEquals(result.imports[0].absolutePath, await Deno.realPath(join(rootDir, "Badge.tsx")));
+    } finally {
+      stub.restore();
+      await Deno.remove(rootDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
   // Regression: an extensionless specifier is the common shape in real MDX, and
   // the rewritten absolute URL carries no extension either. Resolving it with a
   // bare existence check reported a file that exists as a missing dependency.

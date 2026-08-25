@@ -3,7 +3,7 @@ import { getEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { dirname, join, relative } from "#veryfront/compat/path";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, realPath } from "#veryfront/platform/compat/fs.ts";
 import {
   isFrameworkSourcePath,
   resolveRelativeFrameworkSourceImport,
@@ -134,7 +134,9 @@ export async function parseLocalImports(
       // this record is read back verbatim in the "Component has missing
       // dependencies" build error. Report what the author wrote instead.
       const authoredSpecifier = toAuthoredSpecifier(targetPath, specifier, filePath);
-      const resolved = targetPath ? await resolveExistingFilePath(targetPath, adapter) : null;
+      const resolved = targetPath
+        ? await resolveContainedFilePath(targetPath, projectDir, adapter)
+        : null;
 
       if (resolved) {
         const entry = { specifier: authoredSpecifier, absolutePath: resolved };
@@ -204,6 +206,53 @@ export async function parseLocalImports(
   }
 
   return { imports: localImports, cssImports, crossProjectImports, missing: missingImports };
+}
+
+function isPathWithinProject(path: string, projectDir: string): boolean {
+  const projectRelativePath = relative(projectDir, path).replaceAll("\\", "/");
+  return projectRelativePath !== ".." &&
+    !projectRelativePath.startsWith("../") &&
+    !projectRelativePath.startsWith("/");
+}
+
+async function resolveContainedFilePath(
+  targetPath: string,
+  projectDir: string,
+  adapter?: RuntimeAdapter,
+): Promise<string | null> {
+  if (!isPathWithinProject(targetPath, projectDir)) return null;
+
+  const resolved = await resolveExistingFilePath(targetPath, adapter);
+  if (!resolved) return null;
+  return await toContainedCanonicalPath(resolved, projectDir, adapter);
+}
+
+/**
+ * The canonical (symlink-free) form of `resolved` when it stays inside the
+ * project, or null when it escapes. The canonical path is what callers must
+ * record and later read: returning the lexical path instead would let a
+ * symlink retargeted between this check and the eventual `readFile` escape
+ * containment (TOCTOU).
+ */
+async function toContainedCanonicalPath(
+  resolved: string,
+  projectDir: string,
+  adapter?: RuntimeAdapter,
+): Promise<string | null> {
+  if (adapter?.fs.symlinkSemantics === "none") return resolved;
+
+  const canonicalize = adapter?.fs.realPath
+    ? (path: string) => adapter.fs.realPath!(path)
+    : adapter === undefined
+    ? realPath
+    : null;
+  if (!canonicalize) return null;
+
+  const [canonicalProjectDir, canonicalResolved] = await Promise.all([
+    canonicalize(projectDir),
+    canonicalize(resolved),
+  ]);
+  return isPathWithinProject(canonicalResolved, canonicalProjectDir) ? canonicalResolved : null;
 }
 
 /**
@@ -307,12 +356,18 @@ async function resolveAliasImportPath(
 ): Promise<string | null> {
   const normalizedPath = basePath.replace(/^\/+/, "");
   const fs = createFileSystem();
-  const projectNormalizedDir = projectDir.replace(/\/+$/, "");
+  // Strip trailing separators but preserve the filesystem root: a project
+  // mounted at "/" must not normalize to "", which realPath rejects.
+  const projectNormalizedDir = projectDir.replace(/\/+$/, "") || "/";
+  const lexicalPath = join(projectNormalizedDir, normalizedPath);
+  if (!isPathWithinProject(lexicalPath, projectNormalizedDir)) return null;
 
   if (adapter?.fs.resolveFile) {
     try {
       const resolved = await adapter.fs.resolveFile(normalizedPath);
-      if (resolved) return resolved;
+      if (resolved) {
+        return await toContainedCanonicalPath(resolved, projectNormalizedDir, adapter);
+      }
     } catch (_) {
       /* expected: resolveFile may not be supported */
       // Fall through to manual resolution
@@ -320,14 +375,7 @@ async function resolveAliasImportPath(
   }
 
   if (HAS_EXTENSION_RE.test(normalizedPath)) {
-    const absolutePath = join(projectNormalizedDir, normalizedPath);
-    try {
-      const stat = await fs.stat(absolutePath);
-      return stat.isFile ? absolutePath : null;
-    } catch (_) {
-      /* expected: file may not exist */
-      return null;
-    }
+    return await resolveContainedFilePath(lexicalPath, projectNormalizedDir, adapter);
   }
 
   const candidates = [
@@ -335,7 +383,9 @@ async function resolveAliasImportPath(
     ...EXTENSIONS.map((ext) => join(projectNormalizedDir, normalizedPath, "index" + ext)),
   ];
 
-  return await findFirstExistingFile(candidates, fs);
+  const resolved = await findFirstExistingFile(candidates, fs);
+  if (!resolved) return null;
+  return await toContainedCanonicalPath(resolved, projectNormalizedDir, adapter);
 }
 
 async function findFirstExistingFile(
