@@ -5,6 +5,18 @@
  * Ensures consistent URLs across SSR and browser for hydration parity.
  */
 
+import {
+  primordialArrayJoin as arrayJoin,
+  primordialArrayPush as arrayPush,
+} from "#veryfront/platform/compat/primordials/array.ts";
+import {
+  isEsmShUrl,
+  type ParsedEsmShUrl,
+  parseEsmShUrl,
+} from "#veryfront/transforms/shared/esm-sh-specifier.ts";
+
+export { isEsmShUrl, type ParsedEsmShUrl, parseEsmShUrl };
+
 /**
  * Default React version - used when not specified.
  *
@@ -27,6 +39,30 @@ type EsmShOptions = {
   deps?: Record<string, string>;
 };
 
+const ObjectEntries = Object.entries;
+
+function buildEsmShParams(options?: EsmShOptions): string[] {
+  const params: string[] = [];
+
+  if (options?.external?.length) {
+    arrayPush(params, `external=${arrayJoin(options.external, ",")}`);
+  }
+
+  arrayPush(params, `target=${options?.target ?? "es2022"}`);
+
+  if (options?.deps) {
+    const deps: string[] = [];
+    const entries = ObjectEntries(options.deps);
+    for (let index = 0; index < entries.length; index++) {
+      const [key, value] = entries[index]!;
+      arrayPush(deps, `${key}@${value}`);
+    }
+    arrayPush(params, `deps=${arrayJoin(deps, ",")}`);
+  }
+
+  return params;
+}
+
 /**
  * Build esm.sh URL with proper configuration.
  *
@@ -41,26 +77,27 @@ export function buildEsmShUrl(
   subpath?: string,
   options?: EsmShOptions,
 ): string {
-  const params: string[] = [];
-
-  if (options?.external?.length) {
-    params.push(`external=${options.external.join(",")}`);
-  }
-
-  params.push(`target=${options?.target ?? "es2022"}`);
-
-  if (options?.deps) {
-    const depsStr = Object.entries(options.deps)
-      .map(([k, v]) => `${k}@${v}`)
-      .join(",");
-    params.push(`deps=${depsStr}`);
-  }
+  const params = buildEsmShParams(options);
 
   const versionStr = version ? `@${version}` : "";
   const pathStr = subpath ?? "";
-  const queryStr = params.length ? `?${params.join("&")}` : "";
+  const queryStr = params.length ? `?${arrayJoin(params, "&")}` : "";
 
   return `https://esm.sh/${pkg}${versionStr}${pathStr}${queryStr}`;
+}
+
+/**
+ * Build an esm.sh package-prefix URL. esm.sh's `&option/` form keeps the
+ * trailing slash required by the import-map prefix-matching algorithm.
+ */
+function buildEsmShPrefixUrl(
+  pkg: string,
+  version: string,
+  options?: EsmShOptions,
+): string {
+  const params = buildEsmShParams(options);
+  const optionStr = params.length ? `&${arrayJoin(params, "&")}` : "";
+  return `https://esm.sh/${pkg}@${version}${optionStr}/`;
 }
 
 /**
@@ -79,6 +116,16 @@ export function buildReactUrl(
   });
 }
 
+function buildReactPrefixUrl(
+  pkg: "react" | "react-dom",
+  version: string,
+): string {
+  return buildEsmShPrefixUrl(pkg, version, {
+    external: ["react"],
+    deps: { csstype: CSSTYPE_VERSION },
+  });
+}
+
 /**
  * Get complete React import map for a specific version.
  */
@@ -90,8 +137,10 @@ export function getReactImportMap(version: string): Record<string, string> {
     "react-dom/server": buildReactUrl("react-dom", version, "/server", true),
     "react/jsx-runtime": buildReactUrl("react", version, "/jsx-runtime", true),
     "react/jsx-dev-runtime": buildReactUrl("react", version, "/jsx-dev-runtime", true),
-    // Prefix match for any react/* subpath imports
-    "react/": buildReactUrl("react", version, "/", true),
+    // Prefix matches cover future package exports without allowing a project
+    // import map to redirect React or ReactDOM subpaths.
+    "react/": buildReactPrefixUrl("react", version),
+    "react-dom/": buildReactPrefixUrl("react-dom", version),
   };
 }
 
@@ -131,12 +180,41 @@ const DEPENDENCY_PINNING_PATH_MARKER = "_pins/";
 const MODULE_SERVER_PATH_PREFIXES = ["/_vf_modules/"] as const;
 const DEPENDENCY_PINNING_PATH_KEY_PATTERN = /^on:[A-Za-z0-9._-]+$/;
 
+interface UrlComponents {
+  path: string;
+  params: URLSearchParams;
+  hash: string;
+}
+
+function splitUrlComponents(url: string): UrlComponents {
+  const hashIndex = url.indexOf("#");
+  const hash = hashIndex === -1 ? "" : url.slice(hashIndex);
+  const urlWithoutHash = hashIndex === -1 ? url : url.slice(0, hashIndex);
+  const queryIndex = urlWithoutHash.indexOf("?");
+  return {
+    path: queryIndex === -1 ? urlWithoutHash : urlWithoutHash.slice(0, queryIndex),
+    params: new URLSearchParams(
+      queryIndex === -1 ? "" : urlWithoutHash.slice(queryIndex + 1),
+    ),
+    hash,
+  };
+}
+
 function decodeDependencyPinningPathKey(encodedKey: string): string | undefined {
   try {
     const cacheKey = decodeURIComponent(encodedKey);
     return DEPENDENCY_PINNING_PATH_KEY_PATTERN.test(cacheKey) ? cacheKey : undefined;
   } catch {
     return undefined;
+  }
+}
+
+function hasMalformedPercentEncoding(value: string): boolean {
+  try {
+    decodeURIComponent(value);
+    return false;
+  } catch {
+    return true;
   }
 }
 
@@ -152,14 +230,7 @@ export function appendDependencyPinningPathKey(
 ): string {
   if (!dependencyPinningCacheKey?.startsWith("on:")) return url;
 
-  const hashIndex = url.indexOf("#");
-  const hash = hashIndex === -1 ? "" : url.slice(hashIndex);
-  const urlWithoutHash = hashIndex === -1 ? url : url.slice(0, hashIndex);
-  const queryIndex = urlWithoutHash.indexOf("?");
-  const path = queryIndex === -1 ? urlWithoutHash : urlWithoutHash.slice(0, queryIndex);
-  const params = new URLSearchParams(
-    queryIndex === -1 ? "" : urlWithoutHash.slice(queryIndex + 1),
-  );
+  const { path, params, hash } = splitUrlComponents(url);
 
   for (const prefix of MODULE_SERVER_PATH_PREFIXES) {
     const prefixIndex = path.indexOf(prefix);
@@ -262,8 +333,51 @@ export function appendSameOriginSSRDependencyPinningKey(
       return url;
     }
 
-    target.searchParams.set("ssr", "true");
-    return appendDependencyPinningKey(target.href, dependencyPinningCacheKey);
+    const params = target.searchParams;
+    params.set("pins", dependencyPinningCacheKey);
+    params.set("ssr", "true");
+    return target.toString();
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Bind a same-origin absolute module URL to an SSR dependency snapshot using
+ * the module-server path transport. Use this only when the consumer resolves
+ * `/_vf_modules/` paths through the module server instead of generic fetch.
+ */
+export function appendSameOriginSSRDependencyPinningPathKey(
+  url: string,
+  dependencyPinningCacheKey?: string,
+  moduleServerOrigin?: string,
+): string {
+  if (
+    !dependencyPinningCacheKey?.startsWith("on:") ||
+    !moduleServerOrigin ||
+    (!/^https?:\/\//i.test(url) && !url.startsWith("//"))
+  ) {
+    return url;
+  }
+
+  try {
+    const requestOrigin = new URL(moduleServerOrigin);
+    const target = new URL(url, requestOrigin);
+    if (
+      target.origin !== requestOrigin.origin ||
+      !target.pathname.startsWith("/_vf_modules/")
+    ) {
+      return url;
+    }
+
+    const moduleUrl = appendDependencyPinningPathKey(
+      `${target.pathname}${target.search}${target.hash}`,
+      dependencyPinningCacheKey,
+    );
+    const { path, params, hash } = splitUrlComponents(moduleUrl);
+
+    params.set("ssr", "true");
+    return `${path}?${params.toString()}${hash}`;
   } catch {
     return url;
   }
@@ -293,6 +407,9 @@ export function extractDependencyPinningPathKey(
     const encodedKey = separatorIndex === -1
       ? encodedKeyAndPath
       : encodedKeyAndPath.slice(0, separatorIndex);
+    if (hasMalformedPercentEncoding(encodedKey)) {
+      return { pathname, found: true, malformed: true };
+    }
     const cacheKey = decodeDependencyPinningPathKey(encodedKey);
     if (!cacheKey) {
       return { pathname, found: false, malformed: false };
@@ -303,19 +420,7 @@ export function extractDependencyPinningPathKey(
 
     const modulePath = encodedKeyAndPath.slice(separatorIndex + 1);
     if (modulePath.startsWith(DEPENDENCY_PINNING_PATH_MARKER)) {
-      const nestedKeyEnd = modulePath.indexOf(
-        "/",
-        DEPENDENCY_PINNING_PATH_MARKER.length,
-      );
-      const nestedEncodedKey = nestedKeyEnd === -1
-        ? modulePath.slice(DEPENDENCY_PINNING_PATH_MARKER.length)
-        : modulePath.slice(
-          DEPENDENCY_PINNING_PATH_MARKER.length,
-          nestedKeyEnd,
-        );
-      if (decodeDependencyPinningPathKey(nestedEncodedKey)) {
-        return { pathname, found: true, malformed: true };
-      }
+      return { pathname, found: true, malformed: true };
     }
 
     return {
@@ -358,11 +463,9 @@ export function normalizeExtension(path: string, options?: { removeExtension?: b
   return path.replace(/\.(tsx?|jsx|mdx)$/, ".js");
 }
 
-/**
- * Check if a URL is an esm.sh URL.
- */
-export function isEsmShUrl(url: string): boolean {
-  return url.startsWith("https://esm.sh/") || url.startsWith("http://esm.sh/");
+/** Rebuild an esm.sh URL with an exact version, preserving every other part. */
+export function buildPinnedEsmShUrl(parsed: ParsedEsmShUrl, version: string): string {
+  return `${parsed.origin}/${parsed.packageName}@${version}${parsed.subpath}${parsed.search}${parsed.hash}`;
 }
 
 /**

@@ -2,7 +2,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatStreamState } from "./chat-stream-handler.ts";
-import { buildStreamedAssistantMessage } from "./streamed-assistant-message.ts";
+import {
+  buildStreamedAssistantMessage,
+  isPersistedReasoningPart,
+} from "./streamed-assistant-message.ts";
 
 describe("agent/streamed-assistant-message", () => {
   it("builds an assistant message from completed stream state", () => {
@@ -70,6 +73,44 @@ describe("agent/streamed-assistant-message", () => {
         },
       ],
     });
+  });
+
+  it("treats an empty signature or redacted payload as absent", () => {
+    // `reasoning-end` assigns these on `typeof … === "string"`, so "" reaches
+    // the builder, and the SSE emission for the same part already drops it.
+    // `isPersistedReasoningPart` gates the interrupted-batch replay decision,
+    // so widening it here would both persist an empty reasoning part and make
+    // recovery fail closed on a step that exposed nothing.
+    const state: ChatStreamState = {
+      accumulatedText: "Final answer",
+      reasoningParts: [
+        { id: "reasoning_blank_signature", text: "", signature: "" },
+        { id: "reasoning_blank_redacted", text: "", redactedData: "" },
+        { id: "reasoning_blank_both", text: "", signature: "", redactedData: "" },
+        { id: "reasoning_kept", text: "kept", signature: "" },
+      ],
+      finishReason: "stop",
+      toolCalls: new Map(),
+      suppressedToolCalls: [],
+      toolResults: [],
+      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    };
+
+    const message = buildStreamedAssistantMessage(state, {
+      id: "msg_blank",
+      timestamp: 7,
+    });
+
+    assertEquals(message.parts, [
+      { type: "reasoning", text: "kept" },
+      { type: "text", text: "Final answer" },
+    ]);
+    assertEquals(isPersistedReasoningPart({ id: "a", text: "", signature: "" }), false);
+    assertEquals(isPersistedReasoningPart({ id: "b", text: "", redactedData: "" }), false);
+    assertEquals(isPersistedReasoningPart({ id: "c", text: "" }), false);
+    assertEquals(isPersistedReasoningPart({ id: "d", text: "", signature: "sig" }), true);
+    assertEquals(isPersistedReasoningPart({ id: "e", text: "", redactedData: "r" }), true);
+    assertEquals(isPersistedReasoningPart({ id: "f", text: " " }), true);
   });
 
   it("omits recoverable placeholder tool parts when assistant text exists", () => {

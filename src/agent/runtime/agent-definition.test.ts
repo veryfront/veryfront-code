@@ -1,11 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createRuntimeAgentSystemMessages,
+  getRuntimeAgentMarkdownDefinitionSchema,
   parseRuntimeAgentMarkdownDefinition,
 } from "./agent-definition.ts";
 
-Deno.test("parseRuntimeAgentMarkdownDefinition normalizes frontmatter and instructions", () => {
+it("parseRuntimeAgentMarkdownDefinition normalizes frontmatter and instructions", () => {
   const result = parseRuntimeAgentMarkdownDefinition({
     id: "support-agent",
     content: `---
@@ -39,7 +41,7 @@ Follow the support runbook.
   });
 });
 
-Deno.test("parseRuntimeAgentMarkdownDefinition falls back to id and handles boolean thinking", () => {
+it("parseRuntimeAgentMarkdownDefinition falls back to id and handles boolean thinking", () => {
   assertEquals(
     parseRuntimeAgentMarkdownDefinition({
       id: "writer",
@@ -71,7 +73,7 @@ Create a plan.
   );
 });
 
-Deno.test("parseRuntimeAgentMarkdownDefinition preserves an explicit empty skill selector", () => {
+it("parseRuntimeAgentMarkdownDefinition preserves an explicit empty skill selector", () => {
   const result = parseRuntimeAgentMarkdownDefinition({
     id: "specialist",
     content: `---
@@ -84,7 +86,7 @@ Use only the authored instructions.
   assertEquals(result.skills, []);
 });
 
-Deno.test("parseRuntimeAgentMarkdownDefinition preserves disabled skills", () => {
+it("parseRuntimeAgentMarkdownDefinition preserves disabled skills", () => {
   const result = parseRuntimeAgentMarkdownDefinition({
     id: "specialist",
     content: `---
@@ -97,7 +99,30 @@ Use only the authored instructions.
   assertEquals(result.skills, false);
 });
 
-Deno.test("parseRuntimeAgentMarkdownDefinition rejects disabled tools", () => {
+it("runtime agent definitions preserve structured system metadata", () => {
+  const instructions = [{
+    role: "system" as const,
+    content: "Cache this prefix.",
+    providerOptions: {
+      anthropic: {
+        cacheControl: { type: "ephemeral", ttl: "1h" },
+      },
+    },
+  }];
+
+  const definition = getRuntimeAgentMarkdownDefinitionSchema().parse({
+    id: "structured-agent",
+    name: "Structured agent",
+    description: "Preserves provider metadata",
+    instructions: "Cache this prefix.",
+    system: instructions,
+  });
+
+  assertEquals(definition.instructions, "Cache this prefix.");
+  assertEquals(definition.system, instructions);
+});
+
+it("parseRuntimeAgentMarkdownDefinition rejects disabled tools", () => {
   assertThrows(
     () =>
       parseRuntimeAgentMarkdownDefinition({
@@ -113,7 +138,7 @@ Use only the authored instructions.
   );
 });
 
-Deno.test("parseRuntimeAgentMarkdownDefinition rejects malformed capability selectors", () => {
+it("parseRuntimeAgentMarkdownDefinition rejects malformed capability selectors", () => {
   assertThrows(
     () =>
       parseRuntimeAgentMarkdownDefinition({
@@ -129,45 +154,89 @@ Use the selected skills.
   );
 });
 
-Deno.test("createRuntimeAgentSystemMessages inserts runtime blocks at marker", () => {
-  const result = createRuntimeAgentSystemMessages({
-    agent: {
-      id: "support",
-      name: "Support",
-      description: "Helps users",
-      instructions: "Base instructions\n\n<!-- veryfront-runtime-context -->\n\nStatic policy",
-    },
-    runtimeBlocks: ['<project_context>\nproject_reference: "project-123"\n</project_context>'],
+describe("createRuntimeAgentSystemMessages", () => {
+  it("falls back to authored instructions when structured system messages are empty", () => {
+    const result = createRuntimeAgentSystemMessages({
+      agent: {
+        id: "empty-structured-system",
+        name: "Empty structured system",
+        description: "Uses authored instructions",
+        instructions: "Keep the authored instructions.",
+        system: [],
+      },
+    });
+
+    assertEquals(result[0]?.content, "Keep the authored instructions.");
   });
 
-  assertEquals(result.length, 1);
-  assertEquals(
-    result[0]?.content,
-    'Base instructions\n\n<project_context>\nproject_reference: "project-123"\n</project_context>\n\nStatic policy',
-  );
+  it("forwards the agent's provider alias so an authored cache breakpoint is recognized", () => {
+    const result = createRuntimeAgentSystemMessages({
+      agent: {
+        id: "bedrock-agent",
+        name: "Bedrock",
+        description: "d",
+        instructions: "ignored",
+        model: "bedrock/claude-sonnet",
+        system: [{
+          role: "system",
+          content: "Base",
+          providerOptions: { bedrock: { cacheControl: { type: "ephemeral" } } },
+        }],
+      },
+    });
+
+    assertEquals(
+      result[0]?.providerOptions,
+      { bedrock: { cacheControl: { type: "ephemeral" } } },
+      "the authored bedrock breakpoint is retained and no duplicate anthropic breakpoint is appended",
+    );
+  });
+
+  it("keeps the prompt prefix static and moves runtime blocks before the authored tail", () => {
+    const result = createRuntimeAgentSystemMessages({
+      agent: {
+        id: "support",
+        name: "Support",
+        description: "Helps users",
+        instructions: "Base instructions\n\n<!-- veryfront-runtime-context -->\n\nStatic policy",
+      },
+      runtimeBlocks: ['<project_context>\nproject_reference: "project-123"\n</project_context>'],
+    });
+
+    assertEquals(result.length, 2);
+    // Layer 0 contains only the prompt prefix before the marker.
+    assertEquals(result[0]?.content, "Base instructions");
+    // The dynamic message preserves marker placement around the runtime block.
+    assertEquals(
+      result[1]?.content,
+      '<project_context>\nproject_reference: "project-123"\n</project_context>\n\nStatic policy',
+    );
+    assertEquals(result[1]?.providerOptions, undefined);
+  });
+
+  it("combines runtime blocks and environment in the dynamic tail", () => {
+    const result = createRuntimeAgentSystemMessages({
+      agent: {
+        id: "support",
+        name: "Support",
+        description: "Helps users",
+        instructions: "Base instructions",
+      },
+      runtimeBlocks: ["Dynamic context"],
+      environmentContext: "Browser timezone: UTC",
+    });
+
+    assertEquals(result.length, 2);
+    assertEquals(result[0]?.content, "Base instructions");
+    assertEquals(
+      result[1]?.content,
+      "Dynamic context\n\n<environment_context>\nBrowser timezone: UTC\n</environment_context>",
+    );
+    assertEquals(result[1]?.providerOptions, undefined);
+  });
 });
 
-Deno.test("createRuntimeAgentSystemMessages appends runtime blocks when marker is absent", () => {
-  const result = createRuntimeAgentSystemMessages({
-    agent: {
-      id: "support",
-      name: "Support",
-      description: "Helps users",
-      instructions: "Base instructions",
-    },
-    runtimeBlocks: ["Dynamic context"],
-    environmentContext: "Browser timezone: UTC",
-  });
-
-  assertEquals(result.length, 2);
-  assertEquals(result[0]?.content, "Base instructions\n\nDynamic context");
-  assertEquals(result[1], {
-    role: "system",
-    content: "<environment_context>\nBrowser timezone: UTC\n</environment_context>",
-  });
-});
-
-Deno.test("parseRuntimeAgentMarkdownDefinition parses delegates frontmatter", () => {
+it("parseRuntimeAgentMarkdownDefinition parses delegates frontmatter", () => {
   const result = parseRuntimeAgentMarkdownDefinition({
     id: "lead",
     content: `---
@@ -194,7 +263,7 @@ Work alone.
   assertEquals(noDelegates.delegates, undefined);
 });
 
-Deno.test("parseRuntimeAgentMarkdownDefinition parses first-party MCP presets", () => {
+it("parseRuntimeAgentMarkdownDefinition parses first-party MCP presets", () => {
   const result = parseRuntimeAgentMarkdownDefinition({
     id: "project-reader",
     content: `---
@@ -214,7 +283,7 @@ Read project evidence.
   }]);
 });
 
-Deno.test("parseRuntimeAgentMarkdownDefinition preserves an explicit empty delegate selector", () => {
+it("parseRuntimeAgentMarkdownDefinition preserves an explicit empty delegate selector", () => {
   const result = parseRuntimeAgentMarkdownDefinition({
     id: "writer",
     content: `---
@@ -228,7 +297,7 @@ Write copy.
   assertEquals(result.delegates, []);
 });
 
-Deno.test("parseRuntimeAgentMarkdownDefinition rejects implicit all-tools delegation", () => {
+it("parseRuntimeAgentMarkdownDefinition rejects implicit all-tools delegation", () => {
   assertThrows(
     () =>
       parseRuntimeAgentMarkdownDefinition({
@@ -245,7 +314,7 @@ Coordinate.
   );
 });
 
-Deno.test("parseRuntimeAgentMarkdownDefinition rejects scalar capability declarations", () => {
+it("parseRuntimeAgentMarkdownDefinition rejects scalar capability declarations", () => {
   assertThrows(
     () =>
       parseRuntimeAgentMarkdownDefinition({
@@ -274,7 +343,7 @@ Coordinate.
   );
 });
 
-Deno.test("parseRuntimeAgentMarkdownDefinition rejects self-delegation with a diagnostic", () => {
+it("parseRuntimeAgentMarkdownDefinition rejects self-delegation with a diagnostic", () => {
   assertThrows(
     () =>
       parseRuntimeAgentMarkdownDefinition({
@@ -291,7 +360,7 @@ Coordinate.
   );
 });
 
-Deno.test("parseRuntimeAgentMarkdownDefinition rejects provider-unsafe delegate ids", () => {
+it("parseRuntimeAgentMarkdownDefinition rejects provider-unsafe delegate ids", () => {
   assertThrows(
     () =>
       parseRuntimeAgentMarkdownDefinition({

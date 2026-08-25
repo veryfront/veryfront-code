@@ -16,6 +16,7 @@ interface PendingRequest {
 interface RequestCacheContext {
   cache: Map<string, string | null>;
   pending: Map<string, Promise<string | null>>;
+  mutationVersions: Map<string, number>;
   batchQueue: PendingRequest[];
   batchTimer: ReturnType<typeof setTimeout> | null;
 }
@@ -28,6 +29,7 @@ export function runWithCacheBatching<T>(fn: () => Promise<T>): Promise<T> {
   const context: RequestCacheContext = {
     cache: new Map(),
     pending: new Map(),
+    mutationVersions: new Map(),
     batchQueue: [],
     batchTimer: null,
   };
@@ -57,7 +59,8 @@ export async function getCachedWithBatching(
   const existingPending = ctx.pending.get(key);
   if (existingPending) return existingPending;
 
-  const promise = new Promise<string | null>((resolve, reject) => {
+  const mutationVersion = ctx.mutationVersions.get(key) ?? 0;
+  const backendPromise = new Promise<string | null>((resolve, reject) => {
     ctx.batchQueue.push({ key, resolve, reject });
 
     if (ctx.batchQueue.length >= MAX_BATCH_SIZE) {
@@ -73,14 +76,23 @@ export async function getCachedWithBatching(
     }, BATCH_DELAY_MS);
   });
 
+  // An explicit request-local set or delete supersedes a backend read that was
+  // already in flight. Return that newer local view instead of letting the
+  // pending result overwrite it when the backend eventually responds.
+  const promise = backendPromise.then((result) => {
+    if ((ctx.mutationVersions.get(key) ?? 0) !== mutationVersion) {
+      return ctx.cache.get(key) ?? null;
+    }
+    ctx.cache.set(key, result);
+    return result;
+  });
+
   ctx.pending.set(key, promise);
 
   try {
-    const result = await promise;
-    ctx.cache.set(key, result);
-    return result;
+    return await promise;
   } finally {
-    ctx.pending.delete(key);
+    if (ctx.pending.get(key) === promise) ctx.pending.delete(key);
   }
 }
 
@@ -110,7 +122,6 @@ async function flushBatch(ctx: RequestCacheContext, backend: CacheBackend): Prom
 
     for (const request of requests) {
       const value = results.get(request.key) ?? null;
-      ctx.cache.set(request.key, value);
       request.resolve(value);
     }
   } catch (error) {
@@ -131,7 +142,10 @@ async function getIndividually(
 }
 
 export function setInRequestCache(key: string, value: string | null): void {
-  asyncLocalStorage.getStore()?.cache.set(key, value);
+  const ctx = asyncLocalStorage.getStore();
+  if (!ctx) return;
+  ctx.mutationVersions.set(key, (ctx.mutationVersions.get(key) ?? 0) + 1);
+  ctx.cache.set(key, value);
 }
 
 export function getRequestCacheStats(): { hits: number; stored: number } | null {

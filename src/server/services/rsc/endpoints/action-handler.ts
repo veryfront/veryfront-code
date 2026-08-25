@@ -54,6 +54,7 @@ import {
   snapshotRscActionAuthorizationArgs,
   snapshotRscActionInvocationArgs,
 } from "./action-authorization-snapshot.ts";
+import { isInfrastructureOnlyRequestHeader } from "#veryfront/security/http/application-request.ts";
 
 const logger = serverLogger.component("rsc");
 const apply = Reflect.apply;
@@ -513,7 +514,11 @@ function createAuthorizationRequest(
   const headers = createObject(null) as Record<string, string>;
   const sourceHeaders = apply(requestHeadersGetter, request, []) as Headers;
   apply(headersForEach, sourceHeaders, [
-    (value: string, name: string) => defineImmutableData(headers, name, value),
+    (value: string, name: string) => {
+      if (!isInfrastructureOnlyRequestHeader(name)) {
+        defineImmutableData(headers, name, value);
+      }
+    },
   ]);
   freeze(headers);
 

@@ -10,17 +10,25 @@
  */
 
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { LOAD_SKILL_POLICY_CLAUSES } from "./load-skill-policy.ts";
 import { tool } from "#veryfront/tool/factory.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
+import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import {
   captureByteReadCapabilities,
   captureSnapshotReadCapability,
 } from "#veryfront/platform/adapters/file-system-capabilities.ts";
 import { createError, toError } from "#veryfront/errors";
-import { skillRegistry } from "./registry.ts";
+import { join, relative } from "#veryfront/compat/path";
+import { skillRegistryInternal } from "./registry.ts";
 import { parseSkillFrontmatter } from "./parser.ts";
-import { listStrictSkillSubdir, validateStrictSkillPath } from "./path-safety.ts";
+import {
+  listStrictSkillSubdir,
+  listStrictSkillTree,
+  validateStrictSkillPath,
+} from "./path-safety.ts";
 import { createSkillOperationBudget, type SkillOperationBudget } from "./operation-budget.ts";
 import {
   isValidSkillScriptEnvironmentKey,
@@ -29,21 +37,31 @@ import {
   SKILL_SCRIPT_MAX_ARG_BYTES_TOTAL,
   SKILL_SCRIPT_MAX_ARG_LENGTH,
   SKILL_SCRIPT_MAX_ARGS,
+  SKILL_SCRIPT_MAX_CONTENT_BYTES,
   SKILL_SCRIPT_MAX_ENV_BYTES_TOTAL,
   SKILL_SCRIPT_MAX_ENV_ENTRIES,
   SKILL_SCRIPT_MAX_ENV_KEY_LENGTH,
   SKILL_SCRIPT_MAX_ENV_VALUE_LENGTH,
   SKILL_SCRIPT_MAX_OUTPUT_BYTES,
   SKILL_SCRIPT_MAX_TIMEOUT_MS,
+  SKILL_SCRIPT_SNAPSHOT_MAX_BYTES,
+  SKILL_SCRIPT_SNAPSHOT_MAX_FILES,
   SKILL_TEXT_FILE_MAX_BYTES,
 } from "./limits.ts";
 import { getSkillScriptExecutor } from "./executor.ts";
-import type { Skill, SkillContent, SkillScriptExecutor } from "./types.ts";
+import type {
+  Skill,
+  SkillContent,
+  SkillScriptExecutor,
+  SkillScriptResult,
+  SkillScriptSnapshot,
+  SkillScriptSnapshotFile,
+} from "./types.ts";
 import {
+  isValidProviderSafeSkillId,
+  isValidSkillName,
   SKILL_ASSETS_DIR,
   SKILL_MD_FILENAME,
-  SKILL_NAME_REGEX,
-  SKILL_PROVIDER_SAFE_ID_REGEX,
   SKILL_REFERENCES_DIR,
   SKILL_RESOURCES_DIR,
   SKILL_SCRIPTS_DIR,
@@ -53,6 +71,25 @@ import {
 const MAX_SCRIPT_TIMEOUT_MS = SKILL_SCRIPT_MAX_TIMEOUT_MS;
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 const utf8Encoder = new TextEncoder();
+const freeze = Object.freeze;
+const defineOwnProperty = Object.defineProperty;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const hasOwnProperty = Object.prototype.hasOwnProperty;
+const numberIsSafeInteger = Number.isSafeInteger;
+const reflectApply = Reflect.apply;
+const arrayIncludes = Array.prototype.includes;
+const arraySlice = Array.prototype.slice;
+const arraySort = Array.prototype.sort;
+const stringReplaceAll = String.prototype.replaceAll;
+
+function appendOwnArrayElement<T>(values: T[], value: T): void {
+  defineOwnProperty(values, values.length, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+}
 
 type SkillFileKind = "reference" | "script";
 type SkillSelectorToolOptions = {
@@ -117,7 +154,7 @@ async function readSkillFile(
 }
 
 function requireExactSkillReader(
-  fileSystem: object,
+  fileSystem: FileSystemAdapter | FileSystem,
 ): (path: string, byteLimit: number) => Promise<Uint8Array> {
   const reader = captureByteReadCapabilities(fileSystem, "Skill filesystem").exact;
   if (!reader) {
@@ -190,14 +227,108 @@ function assertScriptInputs(
   }
 }
 
-function assertScriptOutput(result: { stdout: string; stderr: string }): void {
-  const bytes = utf8Encoder.encode(result.stdout).byteLength +
-    utf8Encoder.encode(result.stderr).byteLength;
+async function createScriptSnapshot(
+  skill: Skill,
+  validatedEntryPath: string,
+  entryContent: string,
+  budget: SkillOperationBudget,
+): Promise<SkillScriptSnapshot> {
+  const entryPath = reflectApply(
+    stringReplaceAll,
+    relative(skill.rootPath, validatedEntryPath),
+    ["\\", "/"],
+  ) as string;
+  const listedPaths = await listStrictSkillTree(
+    skill.rootPath,
+    SKILL_SCRIPTS_DIR,
+    skill.fsAdapter,
+    { budget },
+  );
+  let paths = listedPaths;
+  if (!(reflectApply(arrayIncludes, paths, [entryPath]) as boolean)) {
+    paths = reflectApply(arraySlice, listedPaths, []) as string[];
+    appendOwnArrayElement(paths, entryPath);
+    reflectApply(arraySort, paths, [
+      (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0,
+    ]);
+  }
+  if (paths.length > SKILL_SCRIPT_SNAPSHOT_MAX_FILES) {
+    throw new RangeError(
+      `Skill script snapshots may contain at most ${SKILL_SCRIPT_SNAPSHOT_MAX_FILES} files`,
+    );
+  }
+
+  const files: SkillScriptSnapshotFile[] = [];
+  let totalBytes = 0;
+  for (let index = 0; index < paths.length; index += 1) {
+    const path = paths[index]!;
+    const content = path === entryPath ? entryContent : await readSkillFile(
+      skill,
+      join(skill.rootPath, path),
+      SKILL_SCRIPT_MAX_CONTENT_BYTES,
+      budget,
+    );
+    totalBytes += utf8Encoder.encode(content).byteLength;
+    if (totalBytes > SKILL_SCRIPT_SNAPSHOT_MAX_BYTES) {
+      throw new RangeError(
+        `Skill script snapshots may contain at most ${SKILL_SCRIPT_SNAPSHOT_MAX_BYTES} bytes`,
+      );
+    }
+    appendOwnArrayElement(files, freeze({ path, content }));
+  }
+
+  return freeze({ entryPath, files: freeze(files) });
+}
+
+function readScriptResultField(
+  result: object,
+  field: keyof SkillScriptResult,
+): unknown {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = getOwnPropertyDescriptor(result, field);
+  } catch {
+    throw new TypeError("Skill script executor returned an invalid result");
+  }
+  if (
+    !descriptor ||
+    !(reflectApply(hasOwnProperty, descriptor, ["value"]) as boolean)
+  ) {
+    throw new TypeError(
+      `Skill script executor result must contain an own data property for "${field}"`,
+    );
+  }
+  return descriptor.value;
+}
+
+function snapshotScriptOutput(result: unknown): SkillScriptResult {
+  if (
+    (typeof result !== "object" && typeof result !== "function") ||
+    result === null ||
+    isProxyWithoutHooks(result)
+  ) {
+    throw new TypeError("Skill script executor returned an invalid result");
+  }
+
+  const stdout = readScriptResultField(result, "stdout");
+  const stderr = readScriptResultField(result, "stderr");
+  const exitCode = readScriptResultField(result, "exitCode");
+  if (typeof stdout !== "string" || typeof stderr !== "string") {
+    throw new TypeError("Skill script executor stdout and stderr must be strings");
+  }
+  if (typeof exitCode !== "number" || !numberIsSafeInteger(exitCode)) {
+    throw new TypeError("Skill script executor exitCode must be a safe integer");
+  }
+
+  const bytes = utf8Encoder.encode(stdout).byteLength +
+    utf8Encoder.encode(stderr).byteLength;
   if (bytes > SKILL_SCRIPT_MAX_OUTPUT_BYTES) {
     throw new RangeError(
       `Skill script output may contain at most ${SKILL_SCRIPT_MAX_OUTPUT_BYTES} bytes`,
     );
   }
+
+  return freeze({ stdout, stderr, exitCode });
 }
 
 /**
@@ -216,7 +347,7 @@ function resolveVisibleSkillOrThrow(
 ): Skill {
   const scope = { agentId: context?.agentId };
   const allowedSkillIds = getSelectorAllowedSkillIds(context, options);
-  const skill = skillRegistry.resolveVisibleSkill(skillId, scope);
+  const skill = skillRegistryInternal.resolveVisibleSkill(skillId, scope);
   if (skill) {
     assertSkillAllowedBySelector(skill, allowedSkillIds);
     return skill;
@@ -238,7 +369,7 @@ function resolveVisibleSkillOrThrow(
     );
   }
 
-  const visible = skillRegistry.getVisibleSkillIds(scope).join(", ");
+  const visible = skillRegistryInternal.getVisibleSkillIds(scope).join(", ");
   throw toError(
     createError({
       type: "agent",
@@ -248,11 +379,11 @@ function resolveVisibleSkillOrThrow(
 }
 
 function isUnresolvedSkillSelectorValid(skillId: string): boolean {
-  if (SKILL_NAME_REGEX.test(skillId)) {
+  if (isValidSkillName(skillId as unknown)) {
     return true;
   }
 
-  return skillId.includes("--") && SKILL_PROVIDER_SAFE_ID_REGEX.test(skillId);
+  return skillId.includes("--") && isValidProviderSafeSkillId(skillId as unknown);
 }
 
 function createSkillUnavailableError(): Error {
@@ -353,8 +484,8 @@ function assertActiveSkillFileAvailable(
 export function createLoadSkillTool(options: SkillSelectorToolOptions = {}): Tool {
   return tool({
     id: "load_skill",
-    description: "Load a skill's full instructions. Returns the skill's markdown instructions, " +
-      "allowed tools policy, and lists of available reference files and scripts.",
+    description: "Load a skill's full instructions. Returns the skill's markdown instructions " +
+      `and lists of available reference files and scripts. ${LOAD_SKILL_POLICY_CLAUSES}`,
     inputSchema: getLoadSkillInputSchema(),
     execute: async (input, context): Promise<SkillContent> => {
       const budget = createFileBudget(context);
@@ -398,7 +529,7 @@ export function createLoadSkillTool(options: SkillSelectorToolOptions = {}): Too
         skill.fsAdapter,
         { budget },
       );
-      const scripts = await listStrictSkillSubdir(
+      const scripts = await listStrictSkillTree(
         skill.rootPath,
         SKILL_SCRIPTS_DIR,
         skill.fsAdapter,
@@ -409,7 +540,6 @@ export function createLoadSkillTool(options: SkillSelectorToolOptions = {}): Too
       return {
         skillId: skill.id,
         instructions: parsed.body,
-        allowedTools: skill.metadata.allowedTools,
         references: loadableReferences,
         scripts,
       };
@@ -500,7 +630,13 @@ export function createExecuteSkillScriptTool(
       const scriptContent = await readSkillFile(
         skill,
         validatedPath,
-        SKILL_TEXT_FILE_MAX_BYTES,
+        SKILL_SCRIPT_MAX_CONTENT_BYTES,
+        budget,
+      );
+      const scriptSnapshot = await createScriptSnapshot(
+        skill,
+        validatedPath,
+        scriptContent,
         budget,
       );
       const executor = options.executor ?? getSkillScriptExecutor();
@@ -508,15 +644,15 @@ export function createExecuteSkillScriptTool(
         await executor.execute({
           scriptPath: validatedPath,
           scriptContent,
+          scriptSnapshot,
           args: input.args,
           env: input.env,
-          cwd: skill.rootPath,
+          validatedSourceRoot: skill.fsAdapter === undefined ? skill.rootPath : undefined,
           timeoutMs: budget.remainingMs(),
           abortSignal,
         })
       );
-      assertScriptOutput(result);
-      return result;
+      return snapshotScriptOutput(result);
     },
   });
 }

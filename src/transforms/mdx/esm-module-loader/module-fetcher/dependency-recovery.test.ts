@@ -2,12 +2,13 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
-import { makeTempDir, readTextFile, remove } from "#veryfront/testing/deno-compat.ts";
-import type { CacheBackend } from "#veryfront/cache/types.ts";
+import { exists, makeTempDir, readTextFile, remove } from "#veryfront/testing/deno-compat.ts";
+import { MockCacheBackend } from "#veryfront/cache/testing/index.ts";
 import { tokenizeAllVeryFrontPaths } from "#veryfront/cache";
 import { buildMdxEsmModuleRecoveryCacheKey } from "../cache-format.ts";
 import { ensureMdxModuleDependencies } from "./dependency-recovery.ts";
-import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { __setDistributedCacheAccessorForTests } from "#veryfront/transforms/esm/http-cache-wrapper.ts";
 
 const noopLog = {
   debug: () => {},
@@ -17,29 +18,10 @@ const noopLog = {
   child: () => noopLog,
 } as never;
 
-class FakeDistributedCache implements CacheBackend {
-  readonly type = "redis" as const;
-  private values = new Map<string, string>();
-
-  get(key: string): Promise<string | null> {
-    return Promise.resolve(this.values.get(key) ?? null);
-  }
-
-  set(key: string, value: string): Promise<void> {
-    this.values.set(key, value);
-    return Promise.resolve();
-  }
-
-  del(key: string): Promise<void> {
-    this.values.delete(key);
-    return Promise.resolve();
-  }
-}
-
 describe("module-fetcher/dependency-recovery", () => {
   it("recovers nested vfmod dependencies for the current content source", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-vfmod-recovery-" });
-    const distributedCache = new FakeDistributedCache();
+    const distributedCache = new MockCacheBackend({ type: "redis", ignoreTtl: true });
     const sourceDir = join(getMdxEsmCacheDir(), "project-a", "preview-main");
     const childPath = join(sourceDir, "vfmod-child.mjs");
     const grandChildPath = join(sourceDir, "vfmod-grandchild.mjs");
@@ -88,7 +70,7 @@ describe("module-fetcher/dependency-recovery", () => {
 
   it("does not recover vfmods from another content source", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-vfmod-recovery-scope-" });
-    const distributedCache = new FakeDistributedCache();
+    const distributedCache = new MockCacheBackend({ type: "redis", ignoreTtl: true });
     const sourceDir = join(getMdxEsmCacheDir(), "project-a", "preview-main");
     const childPath = join(sourceDir, "vfmod-child.mjs");
 
@@ -111,6 +93,60 @@ describe("module-fetcher/dependency-recovery", () => {
       assertEquals(result.recovered.length, 0);
       assertEquals(result.missing, [childPath]);
     } finally {
+      await remove(sourceDir, { recursive: true }).catch(() => {});
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("reports a vfmod as missing when its HTTP bundles cannot be restored", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-vfmod-recovery-bundles-" });
+    const distributedCache = new MockCacheBackend({ type: "redis", ignoreTtl: true });
+    const sourceDir = join(getMdxEsmCacheDir(), "project-a", "preview-main");
+    const childPath = join(sourceDir, "vfmod-child.mjs");
+    // A bundle hash that is not present locally and cannot be restored: the
+    // HTTP bundle cache backend is forced to null, so recovery fails without
+    // touching the network.
+    const bundlePath = join(getHttpBundleCacheDir(), "http-deadbeefdeadbeef.mjs");
+
+    __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
+    try {
+      await distributedCache.set(
+        buildMdxEsmModuleRecoveryCacheKey("project-a", "preview-main", "vfmod-child.mjs"),
+        tokenizeAllVeryFrontPaths(
+          [
+            `import bundle from "file://${bundlePath}";`,
+            `export default bundle;`,
+          ].join("\n"),
+        ),
+      );
+
+      const result = await ensureMdxModuleDependencies(
+        `import child from "file://${childPath}"; export default child;`,
+        {
+          projectId: "project-a",
+          contentSourceId: "preview-main",
+          distributedCache,
+          log: noopLog,
+        },
+      );
+
+      assertEquals(
+        result.recovered,
+        [],
+        "a vfmod with unrestorable HTTP bundles must not count as recovered",
+      );
+      assertEquals(
+        result.missing,
+        [childPath],
+        "it must be reported missing so the caller rebuilds",
+      );
+      assertEquals(
+        await exists(childPath),
+        false,
+        "the unusable vfmod must not be written to disk",
+      );
+    } finally {
+      __setDistributedCacheAccessorForTests(null);
       await remove(sourceDir, { recursive: true }).catch(() => {});
       await remove(tempDir, { recursive: true });
     }

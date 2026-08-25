@@ -10,6 +10,7 @@ import * as React from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ToggleGroup, ToggleGroupItem } from "../toggle-group.tsx";
@@ -32,7 +33,9 @@ function installDom(dom: JSDOM): () => void {
   };
 }
 
-function render(element: React.ReactElement): { host: HTMLElement; unmount: () => void } {
+function render(
+  element: React.ReactElement,
+): { host: HTMLElement; unmount: () => Promise<void> } {
   const dom = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`);
   const restore = installDom(dom);
   const host = dom.window.document.getElementById("root")!;
@@ -40,9 +43,9 @@ function render(element: React.ReactElement): { host: HTMLElement; unmount: () =
   flushSync(() => root.render(element));
   return {
     host: host as unknown as HTMLElement,
-    unmount: () => {
+    unmount: async () => {
       try {
-        root.unmount();
+        await unmountReactRoot(root);
       } finally {
         restore();
       }
@@ -60,9 +63,16 @@ function click(node: Element): void {
 function runToggleGroupConformance(
   label: string,
   Wrap: React.FC<{ children: React.ReactNode }>,
+  /**
+   * Selector unique to the engine `Wrap` installs, or `null` for the builtin.
+   * Without it the suite proves only that SOME engine produced the right DOM -
+   * a skin that ignored `useAdapter()` and imported the builtin directly would
+   * pass the "real seam" run unnoticed.
+   */
+  engineMarker: string | null,
 ): void {
   describe(`ToggleGroup adapter conformance: ${label}`, () => {
-    it("single-select: click sets aria-pressed/data-state; click again clears", () => {
+    it("single-select: click sets aria-pressed/data-state; click again clears", async () => {
       const { host, unmount } = render(
         <Wrap>
           <ToggleGroup type="single">
@@ -72,6 +82,18 @@ function runToggleGroupConformance(
         </Wrap>,
       );
       try {
+        if (engineMarker) {
+          assert(
+            host.querySelector(engineMarker),
+            `the skin resolved this engine through useAdapter() (${engineMarker})`,
+          );
+        } else {
+          assert(
+            host.querySelector("[data-alt-group]") === null &&
+              host.querySelector('[role="group"][data-type]'),
+            "the builtin engine rendered its own root",
+          );
+        }
         const [a, b] = Array.from(host.querySelectorAll("button"));
         assert(a && b, "renders two item buttons");
         assert(a!.getAttribute("aria-pressed") === "false", "a starts unpressed");
@@ -88,11 +110,11 @@ function runToggleGroupConformance(
         click(b!);
         assert(b!.getAttribute("aria-pressed") === "false", "click selected again clears it");
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
-    it("blocks native, composed-link, and consumer-cancelled toggles", () => {
+    it("blocks native, composed-link, and consumer-cancelled toggles", async () => {
       let disabledWrapperClickCount = 0;
       let disabledChildClickCount = 0;
       let disabledWrapperAuxClickCount = 0;
@@ -167,11 +189,11 @@ function runToggleGroupConformance(
         );
         assert(cancelled.getAttribute("aria-pressed") === "false", "cancelled item stays off");
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
-    it("normalizes retained uncontrolled state when selection mode changes", () => {
+    it("normalizes retained uncontrolled state when selection mode changes", async () => {
       function Probe(): React.ReactElement {
         const [multiple, setMultiple] = React.useState(true);
         return (
@@ -200,7 +222,7 @@ function runToggleGroupConformance(
         assert(items[0]?.dataset.state === "on", "first retained selection remains");
         assert(items[1]?.dataset.state === "off", "single mode drops extra retained selections");
       } finally {
-        unmount();
+        await unmount();
       }
     });
   });
@@ -208,7 +230,7 @@ function runToggleGroupConformance(
 
 // (1) builtin.
 const Identity: React.FC<{ children: React.ReactNode }> = ({ children }) => <>{children}</>;
-runToggleGroupConformance("builtin (default)", Identity);
+runToggleGroupConformance("builtin (default)", Identity, null);
 
 // (2) an INDEPENDENT contract-only engine: a distinct wrapper (`data-alt-group`)
 // + its own selection reducer, same skin + call-site.
@@ -278,4 +300,8 @@ const AltWrap: React.FC<{ children: React.ReactNode }> = ({ children }) => (
     {children}
   </UIAdapterProvider>
 );
-runToggleGroupConformance("independent adapter (contract-is-a-real-seam proof)", AltWrap);
+runToggleGroupConformance(
+  "independent adapter (contract-is-a-real-seam proof)",
+  AltWrap,
+  "[data-alt-group]",
+);

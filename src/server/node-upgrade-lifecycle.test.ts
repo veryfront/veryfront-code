@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 
-import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   type NodeUpgradeEventSource,
@@ -51,6 +56,62 @@ describe("NodeUpgradeLifecycle", () => {
     await lifecycle.dispose();
     assertEquals(terminateCalls, 1);
     assertEquals(closeCalls, 1);
+  });
+
+  it("closes clients that only expose close()", async () => {
+    const lifecycle = new NodeUpgradeLifecycle();
+    let closeOnlyCalls = 0;
+    lifecycle.track({
+      clients: [{ close: () => closeOnlyCalls++ }],
+      close(callback) {
+        callback();
+      },
+    });
+
+    await lifecycle.dispose();
+
+    assertEquals(
+      closeOnlyCalls,
+      1,
+      "a client without terminate() must still be closed during retirement",
+    );
+  });
+
+  it("refuses new work after disposal", async () => {
+    const lifecycle = new NodeUpgradeLifecycle();
+    const source = new FakeUpgradeSource();
+
+    await lifecycle.dispose();
+
+    assertEquals(lifecycle.isDisposed, true, "dispose must mark the lifecycle disposed");
+    assertThrows(
+      () => lifecycle.attach(source, () => {}),
+      Error,
+      "already disposed",
+      "a disposed lifecycle must refuse to attach a new upgrade listener",
+    );
+    assertThrows(
+      () =>
+        lifecycle.track({
+          close(callback) {
+            callback();
+          },
+        }),
+      Error,
+      "already disposed",
+      "a disposed lifecycle must refuse to track a new socket server",
+    );
+    assertThrows(
+      () => lifecycle.trackSocket({ destroy() {} }),
+      Error,
+      "already disposed",
+      "a disposed lifecycle must refuse to retain a new upgrade socket",
+    );
+    assertEquals(
+      source.listeners.size,
+      0,
+      "a refused attach must not leave a listener on the shared server",
+    );
   });
 
   it("attempts every close and aggregates cleanup failures", async () => {

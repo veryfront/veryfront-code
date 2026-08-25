@@ -54,12 +54,29 @@ describe("transforms/pipeline/context", () => {
       assertEquals(ctx.target, "ssr");
     });
 
-    it("should default dev to true", () => {
+    it("defaults dev to false so an omitted flag cannot select development", () => {
       const ctx = createTransformContextSync("code", "/file.tsx", "/project", "hash", {
         projectId: "test",
       });
 
-      assertEquals(ctx.dev, true);
+      assertEquals(ctx.dev, false);
+    });
+
+    it("uses the caller's dev flag when it is supplied", () => {
+      assertEquals(
+        createTransformContextSync("code", "/file.tsx", "/project", "hash", {
+          projectId: "test",
+          dev: true,
+        }).dev,
+        true,
+      );
+      assertEquals(
+        createTransformContextSync("code", "/file.tsx", "/project", "hash", {
+          projectId: "test",
+          dev: false,
+        }).dev,
+        false,
+      );
     });
 
     it("should use provided reactVersion", () => {
@@ -77,6 +94,16 @@ describe("transforms/pipeline/context", () => {
       });
 
       assertEquals(ctx.jsxImportSource, "react");
+    });
+
+    it("preserves the module-loading abort signal", () => {
+      const controller = new AbortController();
+      const ctx = createTransformContextSync("code", "/file.tsx", "/project", "hash", {
+        projectId: "test",
+        abortSignal: controller.signal,
+      });
+
+      assertEquals(ctx.abortSignal, controller.signal);
     });
   });
 

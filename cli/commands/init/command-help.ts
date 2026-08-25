@@ -12,6 +12,11 @@ export const initHelp: CommandHelp = {
         "Project template (minimal | ai-agent | docs-agent | agentic-workflow | multi-agent-system | coding-agent | saas-starter)",
     },
     {
+      flag: "--runtime <name>",
+      description: "Target JavaScript runtime (node | bun | deno)",
+      default: "node",
+    },
+    {
       flag: "--integrations <list>",
       description: "Service integrations for chat template (gmail,slack,github,calendar)",
     },
@@ -21,7 +26,7 @@ export const initHelp: CommandHelp = {
     },
     {
       flag: "-f, --force",
-      description: "Overwrite existing directory",
+      description: "Overwrite existing files and directories",
     },
     {
       flag: "-c, --config <file>",
@@ -49,6 +54,6 @@ export const initHelp: CommandHelp = {
     "Run without arguments for interactive wizard",
     "Interactive mode prompts for: location, template, and git initialization",
     "Use --deploy to create, push, and deploy in one step",
-    "Config file supports: name, template, integrations, skipInstall, skipEnvPrompt, env",
+    "Config file supports: name, template, runtime, integrations, skipInstall, skipEnvPrompt, env",
   ],
 };

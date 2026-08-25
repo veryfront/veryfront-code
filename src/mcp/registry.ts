@@ -20,8 +20,12 @@ export function registerTool(id: string, tool: Tool): void {
   toolRegistry.register(id, tool);
 }
 
-/** Registers resource. */
-export function registerResource(id: string, resource: Resource): void {
+/**
+ * Registers a schema-backed resource. MCP reads decode URI captures exactly
+ * once before validation; `mcp.enabled: false` hides list and read access.
+ */
+// deno-lint-ignore no-explicit-any
+export function registerResource(id: string, resource: Resource<any, any>): void {
   resourceRegistry.register(id, resource);
 }
 

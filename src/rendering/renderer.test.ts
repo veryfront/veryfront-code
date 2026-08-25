@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { buildRenderCacheKey, buildRenderCachePrefix } from "#veryfront/cache/keys.ts";
 import {
@@ -23,6 +28,7 @@ import {
   projectRenderCounts,
   releaseProjectSlot,
   RENDER_ACQUIRE_TIMEOUT_MS,
+  RENDER_MAX_CONCURRENT,
   RENDER_PER_PROJECT_LIMIT,
   renderSemaphore,
 } from "./renderer-concurrency.ts";
@@ -30,6 +36,13 @@ import {
   clearReactVersionCache,
   type DependencyPinningSource,
 } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  attachDataResponseMetadata,
+  getAttachedDataResponseMetadata,
+  unwrapDataResponseMetadataError,
+  wrapDataResponseMetadataError,
+} from "#veryfront/data/response-metadata.ts";
+import { redirect } from "#veryfront/data/helpers.ts";
 
 function getEnv(name: string): string | undefined {
   // deno-lint-ignore no-explicit-any
@@ -146,7 +159,7 @@ function makeRenderContext(): RenderContext {
     config: {} as RenderContext["config"],
     mode: "production",
     adapter: {} as RenderContext["adapter"],
-    cachePrefix: buildRenderCachePrefix("proj-1", "production", "rel-1"),
+    cachePrefix: buildRenderCachePrefix("proj-1", "production", "rel-1", "production"),
     environment: "production",
     contentSourceId: "release-rel-1",
     releaseId: "rel-1",
@@ -175,6 +188,17 @@ describe("Renderer helpers", () => {
 
     it("should handle the default concurrent value", () => {
       assertEquals(computePerProjectLimit(RENDER_MAX_CONCURRENT_DEFAULT), 10);
+    });
+
+    it("keeps the shipped per-project limit a fraction of global concurrency", () => {
+      // A CI override would make the derived default unobservable.
+      if (getEnv("RENDER_PER_PROJECT_LIMIT") !== undefined) return;
+
+      assertEquals(
+        RENDER_PER_PROJECT_LIMIT,
+        Math.ceil(RENDER_MAX_CONCURRENT / 3),
+        "the per-project limit must stay a fraction of global concurrency so one project cannot occupy every render slot",
+      );
     });
   });
 
@@ -267,9 +291,372 @@ describe("Renderer helpers", () => {
   });
 
   describe("RENDER_MAX_CONCURRENT defaults", () => {
-    it("should parse default max concurrent as 30", () => {
-      assertEquals(parseInt("30", 10), 30);
+    it("should default max concurrent to 30", () => {
+      // A CI override would make the shipped default unobservable.
+      if (getEnv("RENDER_MAX_CONCURRENT") !== undefined) return;
+
+      assertEquals(
+        RENDER_MAX_CONCURRENT,
+        RENDER_MAX_CONCURRENT_DEFAULT,
+        "default pod-wide render concurrency",
+      );
     });
+  });
+});
+
+describe("Renderer response metadata", () => {
+  it("preserves headers and cookies without caching a cookie response", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: () => Promise<RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: () =>
+          Promise.resolve({
+            html: "<html>metadata</html>",
+            frontmatter: {},
+            stream: null,
+            headers: { "x-page-state": "fresh" },
+            cookies: [{ name: "session", value: "abc", path: "/" }],
+          }),
+      },
+    });
+
+    const result = await renderer.renderPage("/metadata", makeRenderContext(), {
+      environment: "production",
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    });
+
+    assertEquals(result.headers, { "x-page-state": "fresh" });
+    assertEquals(result.cookies, [{ name: "session", value: "abc", path: "/" }]);
+    assertEquals(store.data.size, 0);
+  });
+
+  it("preserves response headers through render cache hits", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let renderCalls = 0;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: () => Promise<RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: () => {
+          renderCalls++;
+          return Promise.resolve({
+            html: "<html>cached metadata</html>",
+            frontmatter: {},
+            stream: null,
+            headers: { "x-page-state": "cacheable" },
+          });
+        },
+      },
+    });
+    const options = {
+      environment: "production" as const,
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    };
+
+    const first = await renderer.renderPage("/cached-metadata", makeRenderContext(), options);
+    const second = await renderer.renderPage("/cached-metadata", makeRenderContext(), options);
+
+    assertEquals(first.headers, { "x-page-state": "cacheable" });
+    assertEquals(second.headers, { "x-page-state": "cacheable" });
+    assertEquals(renderCalls, 1);
+  });
+
+  it("rerenders singleflight followers when the leader returns cookies", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const firstStarted = Promise.withResolvers<void>();
+    const releaseFirst = Promise.withResolvers<void>();
+    let renderCalls = 0;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (_slug: string, options?: RenderOptions) => Promise<RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: async (_slug, options) => {
+          renderCalls++;
+          if (renderCalls === 1) {
+            firstStarted.resolve();
+            await releaseFirst.promise;
+          }
+          const user = options?.request?.headers.get("x-test-user") ?? "missing";
+          return {
+            html: `<html>${user}</html>`,
+            frontmatter: {},
+            stream: null,
+            cookies: [{ name: "session", value: user, path: "/" }],
+          };
+        },
+      },
+    });
+    const baseOptions = {
+      environment: "production" as const,
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    };
+
+    const leader = renderer.renderPage("/concurrent-cookie", makeRenderContext(), {
+      ...baseOptions,
+      request: new Request("https://example.test/concurrent-cookie", {
+        headers: { "x-test-user": "leader" },
+      }),
+    });
+    await firstStarted.promise;
+    const follower = renderer.renderPage("/concurrent-cookie", makeRenderContext(), {
+      ...baseOptions,
+      request: new Request("https://example.test/concurrent-cookie", {
+        headers: { "x-test-user": "follower" },
+      }),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseFirst.resolve();
+
+    const [leaderResult, followerResult] = await Promise.all([leader, follower]);
+    assertEquals(leaderResult.cookies?.[0]?.value, "leader");
+    assertEquals(followerResult.cookies?.[0]?.value, "follower");
+    assertEquals(renderCalls, 2);
+    assertEquals(store.data.size, 0);
+  });
+
+  it("rerenders singleflight followers when the leader throws with cookies", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const firstStarted = Promise.withResolvers<void>();
+    const releaseFirst = Promise.withResolvers<void>();
+    let renderCalls = 0;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (_slug: string, options?: RenderOptions) => Promise<RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: async (_slug, options) => {
+          renderCalls++;
+          if (renderCalls === 1) {
+            firstStarted.resolve();
+            await releaseFirst.promise;
+          }
+          const user = options?.request?.headers.get("x-test-user") ?? "missing";
+          throw attachDataResponseMetadata(new Error(user), {
+            cookies: [{ name: "session", value: user, path: "/" }],
+          });
+        },
+      },
+    });
+    const baseOptions = {
+      environment: "production" as const,
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    };
+    const captureFailure = async (promise: Promise<RenderResult>): Promise<Error> => {
+      try {
+        await promise;
+      } catch (error) {
+        if (error instanceof Error) return error;
+      }
+      throw new Error("Expected render to fail");
+    };
+
+    const leader = captureFailure(
+      renderer.renderPage("/concurrent-cookie-error", makeRenderContext(), {
+        ...baseOptions,
+        request: new Request("https://example.test/concurrent-cookie-error", {
+          headers: { "x-test-user": "leader" },
+        }),
+      }),
+    );
+    await firstStarted.promise;
+    const follower = captureFailure(
+      renderer.renderPage("/concurrent-cookie-error", makeRenderContext(), {
+        ...baseOptions,
+        request: new Request("https://example.test/concurrent-cookie-error", {
+          headers: { "x-test-user": "follower" },
+        }),
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseFirst.resolve();
+
+    const [leaderError, followerError] = await Promise.all([leader, follower]);
+    assertEquals(getAttachedDataResponseMetadata(leaderError).cookies?.[0]?.value, "leader");
+    assertEquals(getAttachedDataResponseMetadata(followerError).cookies?.[0]?.value, "follower");
+    assertEquals(renderCalls, 2);
+    assertEquals(store.data.size, 0);
+  });
+
+  it("rerenders singleflight followers when the leader throws a cookie-bearing control", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const firstStarted = Promise.withResolvers<void>();
+    const releaseFirst = Promise.withResolvers<void>();
+    let renderCalls = 0;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (_slug: string, options?: RenderOptions) => Promise<RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: async (_slug, options) => {
+          renderCalls++;
+          if (renderCalls === 1) {
+            firstStarted.resolve();
+            await releaseFirst.promise;
+          }
+          const user = options?.request?.headers.get("x-test-user") ?? "missing";
+          throw redirect("/login", false, {
+            cookies: [{ name: "session", value: user, path: "/" }],
+          });
+        },
+      },
+    });
+    const baseOptions = {
+      environment: "production" as const,
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    };
+    const captureFailure = async (promise: Promise<RenderResult>): Promise<unknown> => {
+      try {
+        await promise;
+      } catch (error) {
+        return error;
+      }
+      throw new Error("Expected render to fail");
+    };
+
+    const leader = captureFailure(
+      renderer.renderPage("/concurrent-control", makeRenderContext(), {
+        ...baseOptions,
+        request: new Request("https://example.test/concurrent-control", {
+          headers: { "x-test-user": "leader" },
+        }),
+      }),
+    );
+    await firstStarted.promise;
+    const follower = captureFailure(
+      renderer.renderPage("/concurrent-control", makeRenderContext(), {
+        ...baseOptions,
+        request: new Request("https://example.test/concurrent-control", {
+          headers: { "x-test-user": "follower" },
+        }),
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseFirst.resolve();
+
+    const [leaderControl, followerControl] = await Promise.all([leader, follower]);
+    assertEquals(
+      (leaderControl as { cookies?: Array<{ value?: string }> }).cookies?.[0]?.value,
+      "leader",
+    );
+    assertEquals(
+      (followerControl as { cookies?: Array<{ value?: string }> }).cookies?.[0]?.value,
+      "follower",
+    );
+    assertEquals(renderCalls, 2);
+    assertEquals(store.data.size, 0);
+  });
+
+  it("rerenders singleflight followers when a metadata wrapper carries a cookie control", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const firstStarted = Promise.withResolvers<void>();
+    const releaseFirst = Promise.withResolvers<void>();
+    let renderCalls = 0;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (_slug: string, options?: RenderOptions) => Promise<RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: async (_slug, options) => {
+          renderCalls++;
+          if (renderCalls === 1) {
+            firstStarted.resolve();
+            await releaseFirst.promise;
+          }
+          const user = options?.request?.headers.get("x-test-user") ?? "missing";
+          throw wrapDataResponseMetadataError(
+            redirect("/login", false, {
+              cookies: [{ name: "session", value: user, path: "/" }],
+            }),
+            { headers: { "x-loader": "ready" } },
+          );
+        },
+      },
+    });
+    const baseOptions = {
+      environment: "production" as const,
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    };
+    const captureFailure = async (promise: Promise<RenderResult>): Promise<Error> => {
+      try {
+        await promise;
+      } catch (error) {
+        if (error instanceof Error) return error;
+      }
+      throw new Error("Expected render to fail");
+    };
+
+    const leader = captureFailure(
+      renderer.renderPage("/concurrent-wrapped-control", makeRenderContext(), {
+        ...baseOptions,
+        request: new Request("https://example.test/concurrent-wrapped-control", {
+          headers: { "x-test-user": "leader" },
+        }),
+      }),
+    );
+    await firstStarted.promise;
+    const follower = captureFailure(
+      renderer.renderPage("/concurrent-wrapped-control", makeRenderContext(), {
+        ...baseOptions,
+        request: new Request("https://example.test/concurrent-wrapped-control", {
+          headers: { "x-test-user": "follower" },
+        }),
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseFirst.resolve();
+
+    const [leaderError, followerError] = await Promise.all([leader, follower]);
+    const leaderControl = unwrapDataResponseMetadataError(leaderError) as {
+      cookies?: Array<{ value?: string }>;
+    };
+    const followerControl = unwrapDataResponseMetadataError(followerError) as {
+      cookies?: Array<{ value?: string }>;
+    };
+    assertEquals(leaderControl.cookies?.[0]?.value, "leader");
+    assertEquals(followerControl.cookies?.[0]?.value, "follower");
+    assertEquals(renderCalls, 2);
+    assertEquals(store.data.size, 0);
   });
 });
 
@@ -281,6 +668,45 @@ describe("Renderer release asset cache isolation", () => {
     clearReleaseAssetManifestCache();
   });
 
+  it("forwards the release identity from context to the render pipeline", async () => {
+    const renderer = new Renderer();
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let observedOptions: RenderOptions | undefined;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: RenderOptions,
+          ) => Promise<RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          observedOptions = options;
+          return Promise.resolve({
+            html: "<html>release render</html>",
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    try {
+      await renderer.renderPage("/release", makeRenderContext(), {
+        releaseAssetManifest: null,
+      });
+
+      assertEquals(observedOptions?.contentSourceId, "release-rel-1");
+      assertEquals(observedOptions?.releaseId, "rel-1");
+    } finally {
+      await renderer.destroy();
+    }
+  });
+
   it("checks the manifest-versioned cache prefix after awaiting a ready manifest", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     registerManifestFetcherForRelease(
@@ -289,7 +715,7 @@ describe("Renderer release asset cache isolation", () => {
     );
 
     const store = createInMemoryStore();
-    const manifestPrefix = buildRenderCachePrefix("proj-1", "production", "rel-1", 1);
+    const manifestPrefix = buildRenderCachePrefix("proj-1", "production", "rel-1", "production", 1);
     store.data.set(`${manifestPrefix}:page:/cached`, {
       result: {
         html: "<html>manifest cache hit</html>",
@@ -360,18 +786,81 @@ describe("Renderer release asset cache isolation", () => {
       releaseId: "rel-1",
     });
 
-    const manifestPrefix = buildRenderCachePrefix("proj-1", "production", "rel-1", 1);
-    const jitPrefix = buildRenderCachePrefix("proj-1", "production", "rel-1");
+    const manifestPrefix = buildRenderCachePrefix("proj-1", "production", "rel-1", "production", 1);
+    const jitPrefix = buildRenderCachePrefix("proj-1", "production", "rel-1", "production");
     assertEquals(result.html, "<html>fresh manifest render</html>");
     assertEquals(store.data.has(`${manifestPrefix}:page:/fresh`), true);
     assertEquals(store.data.has(`${jitPrefix}:page:/fresh`), false);
+  });
+
+  it("keeps studio-embed renders off the manifest-versioned cache prefix", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    registerManifestFetcherForRelease(
+      "rel-1",
+      () => Promise.resolve({ state: "ready", manifest_version: 1, manifest: makeReadyManifest() }),
+    );
+
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: { nonce?: string; releaseAssetManifest?: ReleaseAssetManifest | null },
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          assertEquals(
+            options?.releaseAssetManifest,
+            null,
+            "studio-embed must not receive the ready release manifest",
+          );
+          return Promise.resolve({
+            html: "<html>studio embed render</html>",
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    const result = await renderer.renderPage("/fresh", makeRenderContext(), {
+      environment: "production",
+      releaseId: "rel-1",
+      studioEmbed: true,
+    });
+
+    const manifestPrefix = buildRenderCachePrefix("proj-1", "production", "rel-1", "production", 1);
+    const jitPrefix = buildRenderCachePrefix("proj-1", "production", "rel-1", "production");
+    assertEquals(result.html, "<html>studio embed render</html>");
+    assertEquals(
+      store.data.has(`${jitPrefix}:page:/fresh`),
+      true,
+      "studio-embed renders must persist under the unversioned production prefix",
+    );
+    assertEquals(
+      store.data.has(`${manifestPrefix}:page:/fresh`),
+      false,
+      "studio-embed renders must never write into the manifest-versioned public cache",
+    );
   });
 
   it("serves stale HTML immediately and refreshes that route in the background", async () => {
     const store = createInMemoryStore();
     const ctx = {
       ...makeRenderContext(),
-      adapter: { fs: { exists: async () => true } },
+      adapter: { fs: { exists: () => Promise.resolve(true) } },
     } as unknown as RenderContext;
     const cacheKey = `${ctx.cachePrefix}:page:/stale`;
     store.data.set(cacheKey, {
@@ -466,8 +955,8 @@ describe("Renderer release asset cache isolation", () => {
       ...makeRenderContext(),
       projectId,
       projectSlug: projectId,
-      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1"),
-      adapter: { fs: { exists: async () => true } },
+      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1", "production"),
+      adapter: { fs: { exists: () => Promise.resolve(true) } },
     } as unknown as RenderContext;
     const cacheKey = `${ctx.cachePrefix}:page:/stale-at-capacity`;
     store.data.set(cacheKey, {
@@ -529,7 +1018,7 @@ describe("Renderer release asset cache isolation", () => {
     const store = createInMemoryStore();
     const ctx = {
       ...makeRenderContext(),
-      adapter: { fs: { exists: async () => true } },
+      adapter: { fs: { exists: () => Promise.resolve(true) } },
     } as unknown as RenderContext;
     const url = new URL("https://example.com/data?filter=recent");
     const requestAbort = new AbortController();
@@ -642,7 +1131,7 @@ describe("Renderer release asset cache isolation", () => {
       const store = createInMemoryStore();
       const ctx = {
         ...makeRenderContext(),
-        adapter: { fs: { exists: async () => true } },
+        adapter: { fs: { exists: () => Promise.resolve(true) } },
       } as unknown as RenderContext;
       const cacheKey = `${ctx.cachePrefix}:page:/prewarm-disabled`;
       store.data.set(cacheKey, {
@@ -728,7 +1217,7 @@ describe("Renderer release asset cache isolation", () => {
     const store = createInMemoryStore();
     const ctx = {
       ...makeRenderContext(),
-      adapter: { fs: { exists: async () => true } },
+      adapter: { fs: { exists: () => Promise.resolve(true) } },
     } as unknown as RenderContext;
     const themedCacheKey = `${ctx.cachePrefix}:page:/stale-themed:theme-dark`;
     const unthemedCacheKey = `${ctx.cachePrefix}:page:/stale-themed`;
@@ -879,7 +1368,13 @@ describe("Renderer release asset cache isolation", () => {
       pipeline: {
         renderPage: (slug, options) => {
           assertEquals(options?.releaseAssetManifest, null);
-          assertEquals(options?.nonce, slug === "/" ? "nonce-123" : undefined);
+          if (slug === "/") {
+            assertEquals(options?.nonce, "nonce-123");
+          } else {
+            assertEquals(typeof options?.nonce, "string");
+            assertEquals(options?.nonce?.length, 32);
+            assertEquals(options?.nonce === "nonce-123", false);
+          }
           renderedSlugs.push(slug);
           renderRequests.set(slug, {
             request: options?.request,
@@ -915,7 +1410,7 @@ describe("Renderer release asset cache isolation", () => {
     });
     await waitForProductionPrewarm(renderer);
 
-    const prefix = buildRenderCachePrefix("proj-1", "production", "rel-1");
+    const prefix = buildRenderCachePrefix("proj-1", "production", "rel-1", "production");
     assertEquals(result.html, "<html>/</html>");
     assertEquals(renderedSlugs.includes("/blog"), true);
     assertEquals(renderedSlugs.includes("/about"), true);
@@ -935,6 +1430,44 @@ describe("Renderer release asset cache isolation", () => {
       assertEquals(prewarm?.request?.headers.has("authorization"), false);
       assertEquals(prewarm?.request?.headers.has("cookie"), false);
       assertEquals(prewarm?.request?.headers.has("x-preview-context"), false);
+    }
+  });
+
+  it("bounds remembered prewarm contexts", async () => {
+    const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const remember = (renderer as unknown as {
+      rememberProductionPrewarm(key: string, promise: Promise<void>): void;
+    }).rememberProductionPrewarm.bind(renderer);
+
+    // Well past the documented bound, so the eviction loop has to fire.
+    const attempts = 600;
+    for (let index = 0; index < attempts; index++) {
+      remember(`key-${index}`, Promise.resolve());
+    }
+
+    const contexts = (renderer as unknown as {
+      productionPrewarmContexts: Map<string, Promise<void>>;
+    }).productionPrewarmContexts;
+
+    try {
+      assertEquals(
+        contexts.size < attempts,
+        true,
+        "remembered prewarm contexts must stay bounded so multi-tenant pods cannot grow without limit",
+      );
+      assertEquals(
+        contexts.has("key-0"),
+        false,
+        "the oldest remembered prewarm context must be evicted first",
+      );
+      assertEquals(
+        contexts.has(`key-${attempts - 1}`),
+        true,
+        "the newest key must survive eviction",
+      );
+    } finally {
+      await renderer.destroy();
     }
   });
 
@@ -1080,7 +1613,7 @@ describe("Renderer release asset cache isolation", () => {
       ...makeRenderContext(),
       projectId,
       projectSlug: projectId,
-      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1"),
+      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1", "production"),
     };
     const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
     (renderer as unknown as { initialized: boolean }).initialized = true;
@@ -1150,7 +1683,7 @@ describe("Renderer release asset cache isolation", () => {
       ...makeRenderContext(),
       projectId,
       projectSlug: projectId,
-      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1"),
+      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1", "production"),
     };
     const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
     (renderer as unknown as { initialized: boolean }).initialized = true;
@@ -1312,7 +1845,7 @@ describe("Renderer release asset cache isolation", () => {
       ...makeRenderContext(),
       projectId,
       projectSlug: projectId,
-      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1"),
+      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1", "production"),
     };
     const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
     (renderer as unknown as { initialized: boolean }).initialized = true;
@@ -1514,7 +2047,11 @@ describe("Renderer release asset cache isolation", () => {
     );
 
     try {
-      await assertRejects(() => renders.at(-1)!, Error, "Service is overloaded");
+      await assertRejects(
+        () => renders.at(-1)!,
+        Error,
+        "Render request capacity exhausted",
+      );
       assertEquals(renderCalls, 1);
     } finally {
       renderGate.resolve();
@@ -1609,13 +2146,103 @@ describe("Renderer release asset cache isolation", () => {
     assertEquals(renderCalls, 1);
   });
 
+  it("rebinds the sealed cache nonce to each caller's own response nonce", async () => {
+    const projectId = `nonce-project-${crypto.randomUUID()}`;
+    const ctx = {
+      ...makeRenderContext(),
+      projectId,
+      projectSlug: projectId,
+      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1", "production"),
+    };
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+
+    const renderGate = Promise.withResolvers<void>();
+    const renderStarted = Promise.withResolvers<void>();
+    let renderCalls = 0;
+
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: { nonce?: string },
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          renderCalls++;
+          renderStarted.resolve();
+          return renderGate.promise.then(() => ({
+            html: `<html><script nonce="${options?.nonce}">boot()</script></html>`,
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          }));
+        },
+      },
+    });
+
+    const sharedOptions = {
+      cacheKey: "nonce-render",
+      environment: "production" as const,
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    };
+    const leaderRender = renderer.renderPage("/nonce", ctx, {
+      ...sharedOptions,
+      nonce: "nonce-123",
+    });
+    await renderStarted.promise;
+
+    const followerRender = renderer.renderPage("/nonce", ctx, {
+      ...sharedOptions,
+      nonce: "nonce-456",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    renderGate.resolve();
+
+    const leader = await leaderRender;
+    const follower = await followerRender;
+
+    assertEquals(renderCalls, 1, "the follower must join the leader's flight");
+    assertStringIncludes(
+      leader.html,
+      '<script nonce="nonce-123">',
+      "the leader must receive its own response nonce, not the sealed cache placeholder",
+    );
+    assertStringIncludes(
+      follower.html,
+      '<script nonce="nonce-456">',
+      "a follower must have the cached placeholder rebound to its own nonce",
+    );
+    assertEquals(
+      leader.html.includes("vf-cache-"),
+      false,
+      "the internal cache nonce placeholder must never reach a response",
+    );
+    assertEquals(
+      follower.html.includes("vf-cache-"),
+      false,
+      "the internal cache nonce placeholder must never reach a response",
+    );
+  });
+
   it("keeps a cacheable leader queued after its first caller disconnects", async () => {
     const projectId = `shared-queued-project-${crypto.randomUUID()}`;
     const ctx = {
       ...makeRenderContext(),
       projectId,
       projectSlug: projectId,
-      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1"),
+      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1", "production"),
     };
     const store = createInMemoryStore();
     const renderer = new Renderer({ cache: { store } });
@@ -1694,7 +2321,7 @@ describe("Renderer release asset cache isolation", () => {
       ...makeRenderContext(),
       projectId,
       projectSlug: projectId,
-      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1"),
+      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1", "production"),
     };
     const store = createInMemoryStore();
     const renderer = new Renderer({ cache: { store } });
@@ -1943,7 +2570,7 @@ describe("Renderer dependency pin cache isolation", () => {
       releaseId: undefined,
       branch: "feature",
       proxyToken: "request-scoped-token",
-      cachePrefix: buildRenderCachePrefix("proj-1", "preview", "feature"),
+      cachePrefix: buildRenderCachePrefix("proj-1", "preview", "feature", "production"),
     } as RenderContext;
 
     try {
@@ -2035,7 +2662,7 @@ describe("Renderer dependency pin cache isolation", () => {
       environment: "preview",
       contentSourceId: "preview-main",
       releaseId: undefined,
-      cachePrefix: buildRenderCachePrefix("proj-1", "preview", "main"),
+      cachePrefix: buildRenderCachePrefix("proj-1", "preview", "main", "production"),
     } as RenderContext;
 
     try {

@@ -18,6 +18,8 @@ export interface WebhookDiscoveryOptions {
   config?: VeryfrontConfig;
   /** Explicit webhook directory override relative to `projectDir`. */
   webhooksDir?: string;
+  /** Explicit host-owned capability for a trusted local or dedicated runtime. */
+  allowHostProjectCodeExecution?: boolean;
 }
 
 /** Valid webhooks and bounded per-file discovery diagnostics. */
@@ -41,5 +43,6 @@ export async function discoverWebhooks(
     sourceKind: "webhook",
     validate: isWebhookDefinition,
     normalize: normalizeWebhookDefinition,
+    allowHostProjectCodeExecution: options.allowHostProjectCodeExecution,
   });
 }

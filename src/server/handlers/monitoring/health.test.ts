@@ -5,11 +5,30 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "../types.ts";
 import { HealthHandler, isServerInitialized, setServerInitialized } from "./health.handler.ts";
 
+function createReadinessCtx(overrides: {
+  stat?: () => Promise<unknown>;
+  proxyMode?: boolean;
+}): HandlerContext {
+  return {
+    adapter: { fs: { stat: overrides.stat ?? (async () => ({ isDirectory: true })) } },
+    projectDir: "/project",
+    securityConfig: undefined,
+    config: overrides.proxyMode === undefined
+      ? undefined
+      : { fs: { veryfront: { proxyMode: overrides.proxyMode } } },
+  } as unknown as HandlerContext;
+}
+
 describe("server/handlers/monitoring/health", () => {
   describe("setServerInitialized / isServerInitialized", () => {
+    // This test must run first: it observes the untouched module default, so nothing
+    // before it may call setServerInitialized.
     it("should default to false", () => {
-      setServerInitialized(false);
-      assertEquals(isServerInitialized(), false);
+      assertEquals(
+        isServerInitialized(),
+        false,
+        "readiness must start false so /readyz fails closed before initialization",
+      );
     });
 
     it("should set to true", () => {
@@ -46,10 +65,161 @@ describe("server/handlers/monitoring/health", () => {
       const handler = new HealthHandler();
       const handlerPatterns = handler.metadata.patterns;
       assertExists(handlerPatterns);
+      assertEquals(
+        handlerPatterns.length,
+        3,
+        "health handler must declare exactly three probe patterns",
+      );
 
       for (const pattern of handlerPatterns) {
-        if (typeof pattern === "string") continue;
-        assertEquals(pattern.exact, true);
+        assertEquals(
+          typeof pattern === "string",
+          false,
+          "health patterns must be exact-match objects, not bare strings",
+        );
+        assertEquals(
+          (pattern as { exact?: boolean }).exact,
+          true,
+          "health probe patterns must be exact so /healthz/<suffix> does not match",
+        );
+      }
+    });
+
+    it("answers /healthz with the liveness document", async () => {
+      const handler = new HealthHandler();
+      const result = await handler.handle(
+        new Request("https://example.com/healthz"),
+        createReadinessCtx({}),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200, "liveness must answer 200");
+      assertEquals(
+        await result.response.json(),
+        { service: "veryfront-server", status: "ok" },
+        "liveness body must identify the service",
+      );
+    });
+
+    it("fails /readyz closed before the server is initialized", async () => {
+      const handler = new HealthHandler();
+      setServerInitialized(false);
+      const result = await handler.handle(
+        new Request("https://example.com/readyz"),
+        createReadinessCtx({}),
+      );
+
+      assertExists(result.response);
+      assertEquals(
+        result.response.status,
+        503,
+        "readiness must fail closed before the server is initialized",
+      );
+      assertEquals(
+        await result.response.text(),
+        "not-ready",
+        "readiness body must say not-ready before init",
+      );
+    });
+
+    it("reports /readyz ready once initialized and the project directory exists", async () => {
+      const handler = new HealthHandler();
+      setServerInitialized(true);
+      try {
+        const result = await handler.handle(
+          new Request("https://example.com/readyz"),
+          createReadinessCtx({ stat: async () => ({ isDirectory: true }) }),
+        );
+
+        assertExists(result.response);
+        assertEquals(
+          result.response.status,
+          200,
+          "an initialized server with a project dir is ready",
+        );
+        assertEquals(await result.response.text(), "ready", "readiness body must say ready");
+      } finally {
+        setServerInitialized(false);
+      }
+    });
+
+    it("fails /readyz closed when the project directory is missing", async () => {
+      const handler = new HealthHandler();
+      setServerInitialized(true);
+      try {
+        const result = await handler.handle(
+          new Request("https://example.com/readyz"),
+          createReadinessCtx({ stat: () => Promise.reject(new Error("missing")) }),
+        );
+
+        assertExists(result.response);
+        assertEquals(
+          result.response.status,
+          503,
+          "a missing project directory must not report ready",
+        );
+        assertEquals(
+          await result.response.text(),
+          "not-ready",
+          "readiness body must say not-ready",
+        );
+      } finally {
+        setServerInitialized(false);
+      }
+    });
+
+    it("fails /readyz closed when the project path is not a directory", async () => {
+      const handler = new HealthHandler();
+      setServerInitialized(true);
+      try {
+        // stat() resolving is not enough: checkReadiness requires an actual
+        // directory, so a plain file at the project path must stay not-ready.
+        const result = await handler.handle(
+          new Request("https://example.com/readyz"),
+          createReadinessCtx({ stat: async () => ({ isDirectory: false }) }),
+        );
+
+        assertExists(result.response);
+        assertEquals(
+          result.response.status,
+          503,
+          "a project path that is not a directory must not report ready",
+        );
+        assertEquals(
+          await result.response.text(),
+          "not-ready",
+          "readiness body must say not-ready when the project path is not a directory",
+        );
+      } finally {
+        setServerInitialized(false);
+      }
+    });
+
+    it("skips the project directory check in proxy mode", async () => {
+      const handler = new HealthHandler();
+      setServerInitialized(true);
+      let statCalls = 0;
+      try {
+        const result = await handler.handle(
+          new Request("https://example.com/readyz"),
+          createReadinessCtx({
+            proxyMode: true,
+            stat: () => {
+              statCalls++;
+              throw new Error("stat must not be called in proxy mode");
+            },
+          }),
+        );
+
+        assertExists(result.response);
+        assertEquals(
+          result.response.status,
+          200,
+          "proxy mode must report ready without a project dir",
+        );
+        assertEquals(statCalls, 0, "proxy mode must not stat the project directory");
+      } finally {
+        setServerInitialized(false);
       }
     });
 

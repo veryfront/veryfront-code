@@ -37,6 +37,11 @@ describe("mcp/elicitation", () => {
     });
     assertEquals(request.method, "elicitation/create");
     assertEquals(request.params.mode, "url");
+    assertEquals(
+      request.params.message,
+      "Please authorize with GitHub",
+      "url elicitation forwards the caller's message to the client",
+    );
     assertEquals(request.params.url, "https://example.com/auth");
     assertEquals(request.params.elicitationId, "elicit-123");
   });

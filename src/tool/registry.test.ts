@@ -3,14 +3,14 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool } from "./factory.ts";
-import { toolRegistry, toolToProviderDefinition } from "./registry.ts";
+import { toolRegistry, toolRegistryInternal, toolToProviderDefinition } from "./registry.ts";
 import type { Tool } from "./types.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { runWithRegistryTransaction } from "#veryfront/registry/project-scoped-registry-manager.ts";
 
 describe("tool registry", () => {
   afterEach(() => {
-    toolRegistry.clearAll();
+    toolRegistryInternal.clearAll();
   });
 
   it("should prefer pre-converted schemas for provider definitions", () => {
@@ -61,6 +61,9 @@ describe("tool registry", () => {
         properties: { query: { type: "string" } },
       },
       mcp: {
+        enabled: true,
+        requiresAuth: true,
+        cachePolicy: "cache-first",
         title: "Search",
         annotations: { readOnlyHint: true },
       },
@@ -92,6 +95,57 @@ describe("tool registry", () => {
       title: "Search",
       annotations: { readOnlyHint: true },
     });
+  });
+
+  it("rejects malformed MCP metadata on manually constructed tools", () => {
+    const manualTool: Tool = {
+      id: "manual-tool",
+      type: "function",
+      description: "Manually constructed",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      inputSchemaJson: { type: "object" },
+      execute: async () => null,
+      mcp: {
+        annotations: {
+          destructiveHint: "yes",
+        } as unknown as { destructiveHint: boolean },
+      },
+    };
+
+    assertThrows(
+      () => toolToProviderDefinition(manualTool),
+      TypeError,
+      "annotations",
+    );
+  });
+
+  it("rejects malformed MCP transport metadata on manually constructed tools", () => {
+    const createManualTool = (mcp: Tool["mcp"]): Tool => ({
+      id: "manual-tool",
+      type: "function",
+      description: "Manually constructed",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      inputSchemaJson: { type: "object" },
+      execute: async () => null,
+      mcp,
+    });
+
+    assertThrows(
+      () =>
+        toolToProviderDefinition(
+          createManualTool({ requiresAuth: "yes" } as unknown as Tool["mcp"]),
+        ),
+      TypeError,
+      "requiresAuth",
+    );
+    assertThrows(
+      () =>
+        toolToProviderDefinition(
+          createManualTool({ cachePolicy: "forever" } as unknown as Tool["mcp"]),
+        ),
+      TypeError,
+      "cachePolicy",
+    );
   });
 
   it("should return provider definitions for all registered tools", () => {
@@ -211,7 +265,7 @@ describe("tool registry", () => {
         execute: async () => null,
       });
 
-      toolRegistry.registerShared("shadowed-tool", sharedTool);
+      toolRegistryInternal.registerShared("shadowed-tool", sharedTool);
       // Project-scoped registration with a different definition must NOT
       // conflict with the shared entry — projects shadow shared tools.
       toolRegistry.register("shadowed-tool", projectTool);
@@ -228,11 +282,40 @@ describe("tool registry", () => {
       });
 
       assertThrows(
-        () => toolRegistry.registerShared(localIntegrationShadow.id, localIntegrationShadow),
+        () =>
+          toolRegistryInternal.registerShared(
+            localIntegrationShadow.id,
+            localIntegrationShadow,
+          ),
         VeryfrontError,
         "reserved integration tool namespace",
       );
       assertEquals(toolRegistry.has(localIntegrationShadow.id), false);
+    });
+
+    it("rejects a reserved integration tool id registered under a benign key", () => {
+      const shadow = tool({
+        id: "gmail__list_emails",
+        description: "Local integration shadow",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => [],
+      });
+
+      assertThrows(
+        () => toolRegistry.register("safe-name", shadow),
+        VeryfrontError,
+        "reserved integration tool namespace",
+      );
+      assertThrows(
+        () => toolRegistryInternal.registerShared("safe-name", shadow),
+        VeryfrontError,
+        "reserved integration tool namespace",
+      );
+      assertEquals(
+        toolRegistry.has("safe-name"),
+        false,
+        "benign key must not hold a reserved-namespace tool",
+      );
     });
 
     it("two agents created concurrently with the same-named but different tools — second registration throws", async () => {

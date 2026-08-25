@@ -1,9 +1,10 @@
-import { assertRejects } from "#veryfront/testing/assert";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { describe, it } from "#veryfront/testing/bdd";
 import { remove, writeTextFile } from "#veryfront/testing/deno-compat";
 import { getAdapter } from "#veryfront/platform";
 import { clearConfigCache, getConfig } from "#veryfront/config";
+import { VeryfrontError } from "#veryfront/errors";
 import { withTestContext } from "../../_helpers/context.ts";
 
 async function setupConfig(
@@ -48,11 +49,16 @@ describe("Config validation", () => {
       } as const`,
       );
 
-      await assertRejects(
+      const error = await assertRejects(
         () => getConfig(context.projectDir, adapter),
-        Error,
-        'Unrecognized key: "notARealKey"',
+        VeryfrontError,
       );
+      assert(error instanceof VeryfrontError);
+      assertEquals(error.slug, "config-validation-failed");
+      assertEquals(error.context, {
+        field: "<root>",
+        expected: 'Unrecognized key: "notARealKey"',
+      });
 
       clearConfigCache();
     });

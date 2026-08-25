@@ -59,12 +59,31 @@ describe("cli/help/tips", () => {
         assertEquals(templates.includes(template), true);
       }
     });
+
+    it("aligns every template description in the same column", () => {
+      // The list is a table: ragged padding made `docs-agent` and `minimal`
+      // hang their descriptions in different columns from the rest.
+      // deno-lint-ignore no-control-regex
+      const plain = getInitTemplates().replace(/\x1b\[[0-9;]*m/g, "");
+      const columns = plain
+        .split("\n")
+        .filter((line) => line.includes("•"))
+        .map((line) => line.indexOf("- "));
+      assertEquals(columns.length, 7);
+      assertEquals(new Set(columns).size, 1, `misaligned columns: ${columns.join(", ")}`);
+    });
   });
 
   describe("getPostDeployTips", () => {
     it("should mention veryfront open", () => {
       assertEquals(getPostDeployTips().includes("veryfront open"), true);
       assertEquals(getPostDeployTips().includes("npx"), false);
+    });
+
+    it("labels veryfront open as the dashboard, not the deployed site", () => {
+      // `open` builds https://veryfront.com/projects/<slug> URLs, so a bare
+      // "Open:" label reads as an offer to open the deployment itself.
+      assertEquals(getPostDeployTips().includes("Dashboard:"), true);
     });
 
     it("does not add a generic next-steps block", () => {

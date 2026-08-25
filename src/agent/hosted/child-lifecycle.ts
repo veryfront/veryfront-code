@@ -4,6 +4,7 @@ import {
   type ChildRunExecutionSnapshot,
   getChildRunSnapshotUsage,
 } from "../child-run/execution-snapshot.ts";
+import { sanitizeUrlCredentials } from "#veryfront/utils";
 import { resolveKnownProviderTerminalError } from "../streaming/stream-outcome.ts";
 import { isChildRunAbortError } from "../child-run/execution-support.ts";
 import {
@@ -129,6 +130,25 @@ class HostedChildExecutionFailure extends Error {
   }
 }
 
+/**
+ * Terminal error code for a child whose work finished but whose terminal state
+ * could not be persisted. Distinct from an execution failure code on purpose:
+ * the child produced its result, the run record did not survive it.
+ */
+export const HOSTED_CHILD_FINALIZATION_FAILED_CODE = "CHILD_FINALIZATION_FAILED";
+
+function buildFinalizationFailureState(
+  completedState: HostedChildLifecycleTerminalState,
+  error: unknown,
+): HostedChildLifecycleTerminalState {
+  return {
+    status: "failed",
+    usage: completedState.usage,
+    terminalErrorCode: HOSTED_CHILD_FINALIZATION_FAILED_CODE,
+    terminalErrorMessage: error instanceof Error ? error.message : String(error),
+  };
+}
+
 async function dispatchTerminalState(
   adapter: HostedChildLifecycleAdapter,
   terminalState: HostedChildLifecycleTerminalState,
@@ -180,7 +200,35 @@ export async function runHostedChildLifecycle<TResult>(
     ? await options.resolveCompletedState(result)
     : { status: "completed" as const };
 
-  await dispatchTerminalState(options.adapter, terminalState);
+  try {
+    await dispatchTerminalState(options.adapter, terminalState);
+  } catch (lifecycleError) {
+    // Same guard the failure path above uses. Without a handler the error still
+    // propagates, which is the long-standing contract for this function.
+    if (!options.onLifecycleError) {
+      throw lifecycleError;
+    }
+
+    try {
+      await options.onLifecycleError(lifecycleError);
+    } catch {
+      // An observability callback must not change the outcome. Letting it throw
+      // here would reach the outer catch, which relabels with executionFailedCode
+      // and dispatches `failed` — the double dispatch this guard exists to stop.
+      // Same reasoning as durable-child-fork-execution.ts:884-888.
+    }
+
+    // Deliberately not re-dispatched: the adapter has already rejected this
+    // run's terminal state, so dispatching `failed` on top would write a second
+    // terminal state. Reporting through the return value keeps a persistence
+    // failure distinguishable from an execution failure, which the caller's
+    // `executionFailedCode` would not.
+    return {
+      status: "failed",
+      error: lifecycleError,
+      terminalState: buildFinalizationFailureState(terminalState, lifecycleError),
+    };
+  }
 
   return {
     status: "completed",
@@ -232,6 +280,62 @@ function wrapSkippableTerminalPersistence(
   };
 }
 
+const CANCELLED_TERMINAL_MESSAGE = "Child run cancelled";
+/** An incidental cause on a cancelled run: enough to identify it, not the whole story. */
+const MAX_CANCELLED_CAUSE_LENGTH = 200;
+/**
+ * A failed run's message is the primary explanation a user reads to find out why
+ * their agent failed, so it keeps far more room than an incidental cause. Real
+ * provider validation errors survive intact; only bulk payloads are cut.
+ */
+const MAX_FAILURE_MESSAGE_LENGTH = 4_000;
+
+/**
+ * Bound and sanitize error text on its way to a durable run record.
+ *
+ * `terminalErrorMessage` is persisted by `finalizeConversationAgentRun`, and
+ * AGENTS.md:96-101 bars sensitive values in error messages — naming provider
+ * response bodies and raw prompts explicitly. Credential-bearing URLs are
+ * stripped and the text is cut to an excerpt, the same treatment
+ * `sanitizeDiscoveryErrorMessage` applies to surfaced error text.
+ *
+ * Applied to every branch rather than only the ones known to carry external
+ * text, so "everything written to terminalErrorMessage is sanitized and bounded"
+ * holds as an invariant instead of a case-by-case argument.
+ */
+function boundTerminalErrorText(value: string, maxLength: number): string {
+  const sanitized = sanitizeUrlCredentials(value);
+  return sanitized.length <= maxLength ? sanitized : `${sanitized.slice(0, maxLength - 3)}...`;
+}
+
+/**
+ * A run torn down mid-flight reports `cancelled`, but the error that surfaced is
+ * not always the abort itself — an aborted signal makes any error in flight look
+ * like a cancellation. Keep the cancelled status and append the real cause, so a
+ * failure that merely coincided with teardown is still diagnosable.
+ *
+ * The cause reaches a durable run record, so it is sanitized and bounded before
+ * it is carried: credential-bearing URLs are stripped, and a bulk payload such as
+ * a provider response body is cut to an excerpt rather than persisted whole. Same
+ * treatment `sanitizeDiscoveryErrorMessage` applies to surfaced error text.
+ *
+ * Only the code is contractual here; `shouldBlockHostedChildSameTurnRetry`
+ * matches on `terminalErrorCode` precisely because the message is not.
+ */
+function resolveCancelledTerminalMessage(error: unknown): string {
+  if (isChildRunAbortError(error)) {
+    return CANCELLED_TERMINAL_MESSAGE;
+  }
+
+  const cause = boundTerminalErrorText(
+    error instanceof Error ? error.message : String(error),
+    MAX_CANCELLED_CAUSE_LENGTH,
+  );
+  return cause.length === 0
+    ? CANCELLED_TERMINAL_MESSAGE
+    : `${CANCELLED_TERMINAL_MESSAGE}: ${cause}`;
+}
+
 function resolveHostedChildExecutionErrorState(
   error: unknown,
   input: {
@@ -248,7 +352,7 @@ function resolveHostedChildExecutionErrorState(
     return {
       status: error.status,
       terminalErrorCode: resolveHostedChildTerminalErrorCode(error.status),
-      terminalErrorMessage: error.message,
+      terminalErrorMessage: boundTerminalErrorText(error.message, MAX_FAILURE_MESSAGE_LENGTH),
     };
   }
 
@@ -257,7 +361,10 @@ function resolveHostedChildExecutionErrorState(
     return {
       status: "failed",
       terminalErrorCode: providerError?.code ?? input.executionFailedCode,
-      terminalErrorMessage: providerError?.message ?? error.message,
+      terminalErrorMessage: boundTerminalErrorText(
+        providerError?.message ?? error.message,
+        MAX_FAILURE_MESSAGE_LENGTH,
+      ),
       usage: toHostedChildLifecycleUsage(error.usage),
     };
   }
@@ -266,7 +373,7 @@ function resolveHostedChildExecutionErrorState(
     return {
       status: "cancelled",
       terminalErrorCode: "CANCELLED",
-      terminalErrorMessage: "Child run cancelled",
+      terminalErrorMessage: resolveCancelledTerminalMessage(error),
       usage: toHostedChildLifecycleUsage(getChildRunSnapshotUsage(input.getExecutionSnapshot())),
     };
   }
@@ -274,7 +381,10 @@ function resolveHostedChildExecutionErrorState(
   return {
     status: "failed",
     terminalErrorCode: input.executionFailedCode,
-    terminalErrorMessage: error instanceof Error ? error.message : String(error),
+    terminalErrorMessage: boundTerminalErrorText(
+      error instanceof Error ? error.message : String(error),
+      MAX_FAILURE_MESSAGE_LENGTH,
+    ),
     usage: toHostedChildLifecycleUsage(getChildRunSnapshotUsage(input.getExecutionSnapshot())),
   };
 }

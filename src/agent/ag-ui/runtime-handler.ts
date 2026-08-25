@@ -12,6 +12,7 @@ import {
   parseAgUiRuntimeRequestOrError,
 } from "../runtime/ag-ui-contract.ts";
 import { extractRequest } from "./request-shared.ts";
+import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
 import { type AgUiResumeValue, buildMergedAgUiTools } from "./tool-shared.ts";
 import { normalizeAgUiRuntimeMessages } from "./runtime-support.ts";
 import {
@@ -358,7 +359,10 @@ export type AgUiRuntimeHandlerExecute = (
 ) => Promise<Response> | Response;
 
 export interface AgUiRuntimeRequestGateInput {
+  /** Original request for trusted framework admission and authentication only. */
   request: Request;
+  /** Detached request safe to retain or pass into application callbacks. */
+  applicationRequest: Request;
 }
 
 export type AgUiRuntimeRequestGate = (
@@ -410,24 +414,28 @@ export function createAgUiRuntimeHandler(
 
   return async function POST(requestOrCtx: unknown): Promise<Response> {
     const request = extractRequest(requestOrCtx);
+    const applicationRequest = createApplicationRequest(request);
 
     try {
-      const gateResult = await config.beforeParse?.({ request });
+      const gateResult = await config.beforeParse?.({ request, applicationRequest });
       if (isResponseLike(gateResult)) {
         return gateResult;
       }
 
-      const parsed = await parseAgUiRuntimeRequestOrError(request);
+      const parsed = await parseAgUiRuntimeRequestOrError(applicationRequest);
       if (isResponseLike(parsed)) {
         if (config.validationErrorResponse) {
-          return await config.validationErrorResponse({ request, response: parsed });
+          return await config.validationErrorResponse({
+            request: applicationRequest,
+            response: parsed,
+          });
         }
 
         return parsed;
       }
 
       const context = typeof config.context === "function"
-        ? await config.context(request)
+        ? await config.context(applicationRequest)
         : config.context ?? {};
 
       const createDefaultResponse = config.agent
@@ -515,7 +523,7 @@ export function createAgUiRuntimeHandler(
 
       if (config.execute) {
         return await config.execute({
-          request,
+          request: applicationRequest,
           agUiInput: parsed,
           context,
           createDefaultResponse: createDefaultResponseWithLifecycle,
@@ -549,9 +557,7 @@ export function createAgUiRuntimeHandler(
       }
 
       return Response.json(
-        {
-          error: error instanceof Error ? error.message : "Internal server error",
-        },
+        { error: "Internal server error" },
         { status: 500 },
       );
     }

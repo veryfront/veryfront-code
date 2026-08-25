@@ -1,18 +1,23 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { useLocalReactForSSRTests } from "#veryfront/react/compat/ssr-adapter/test-setup.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  __setServerModuleLoaderForTests,
+  resetReactCache,
+} from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 import { RSCRenderer } from "./rsc-renderer.ts";
 import * as React from "react";
+import * as ReactDOMServer from "react-dom/server";
 
-describe("rendering/rsc/server-renderer/rsc-renderer", {
-  sanitizeResources: false,
-  sanitizeOps: false,
-}, () => {
+const PROJECT_DIR = "test-project";
+
+describe("rendering/rsc/server-renderer/rsc-renderer", () => {
   describe("RSCRenderer constructor", () => {
     it("should create renderer with empty client manifest", () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
       assertEquals(renderer instanceof RSCRenderer, true);
     });
@@ -20,7 +25,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
     it("should create renderer with production mode", () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
         mode: "production",
       });
       assertEquals(renderer instanceof RSCRenderer, true);
@@ -29,31 +34,110 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
     it("should create renderer with development mode", () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
         mode: "development",
       });
       assertEquals(renderer instanceof RSCRenderer, true);
     });
 
-    it("retains the configured React version for server rendering", () => {
+    it("defaults an omitted mode to production", () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
-        projectDir: "/tmp/test-project",
-        reactVersion: "18.3.1",
+        projectDir: PROJECT_DIR,
       });
 
       assertEquals(
-        (renderer as unknown as { reactVersion?: string }).reactVersion,
-        "18.3.1",
+        (renderer as unknown as { mode?: string }).mode,
+        "production",
       );
+      assertEquals(
+        (renderer as unknown as { clientModuleStrategy?: string }).clientModuleStrategy,
+        "rsc-module",
+      );
+    });
+
+    it("retains the configured React version for server rendering", async () => {
+      const versions: string[] = [];
+      resetReactCache();
+      __setServerModuleLoaderForTests((_url, label, reactVersion) => {
+        versions.push(reactVersion);
+        return Promise.resolve(label === "React" ? { default: React } : ReactDOMServer);
+      });
+
+      try {
+        const renderer = new RSCRenderer({
+          clientManifest: new Map(),
+          projectDir: PROJECT_DIR,
+          reactVersion: "18.3.1",
+        });
+
+        await renderer.renderToPayload(() => React.createElement("div", null, "v"));
+
+        assertEquals(
+          new Set(versions),
+          new Set(["18.3.1"]),
+          "the configured React version must reach the SSR adapter",
+        );
+      } finally {
+        useLocalReactForSSRTests();
+      }
+    });
+
+    it("lets a per-call React version override the configured one", async () => {
+      const versions: string[] = [];
+      resetReactCache();
+      __setServerModuleLoaderForTests((_url, label, reactVersion) => {
+        versions.push(reactVersion);
+        return Promise.resolve(label === "React" ? { default: React } : ReactDOMServer);
+      });
+
+      try {
+        const renderer = new RSCRenderer({
+          clientManifest: new Map(),
+          projectDir: PROJECT_DIR,
+          reactVersion: "18.3.1",
+        });
+
+        await renderer.renderToPayload(
+          () => React.createElement("div", null, "v"),
+          {},
+          { reactVersion: "19.2.4" },
+        );
+
+        assertEquals(
+          new Set(versions),
+          new Set(["19.2.4"]),
+          "the per-call React version must win over the configured one",
+        );
+      } finally {
+        useLocalReactForSSRTests();
+      }
     });
   });
 
   describe("renderToPayload", () => {
+    it("rethrows render failures instead of returning empty html", async () => {
+      const renderer = new RSCRenderer({
+        clientManifest: new Map(),
+        projectDir: PROJECT_DIR,
+      });
+
+      function Boom(): never {
+        throw new Error("boom");
+      }
+
+      await assertRejects(
+        () => renderer.renderToPayload(Boom),
+        Error,
+        "boom",
+        "a throwing server component must surface to the caller",
+      );
+    });
+
     it("should render a simple HTML element", async () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
 
       function SimpleComponent() {
@@ -69,7 +153,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
     it("should render a React element directly", async () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
 
       const element = React.createElement("p", null, "direct element") as React.ReactElement;
@@ -80,7 +164,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
     it("should return empty clientRefs for server-only components", async () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
 
       function ServerOnly() {
@@ -108,7 +192,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
             },
           ],
         ]),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
 
       const payload = await renderer.renderToPayload(ClientComponent, { label: "Save" });
@@ -168,7 +252,10 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
             },
           ],
         ]),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
+        // The tree assertions below describe the development payload. Say so:
+        // the payload carries `tree` only in development mode.
+        mode: "development",
       });
 
       const payload = await renderer.renderToPayload(Page);
@@ -205,7 +292,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
             },
           ],
         ]),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
         mode: "production",
       });
 
@@ -217,7 +304,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
       );
       assertEquals(payload.html.includes("/_veryfront/fs/"), false);
       assertEquals(
-        payload.html.includes(btoa("/tmp/test-project/app/ClientComponent.tsx")),
+        payload.html.includes(btoa(`${PROJECT_DIR}/app/ClientComponent.tsx`)),
         false,
       );
       assertEquals(
@@ -239,11 +326,12 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
             {
               id: "LegacyClient",
               path: "/_veryfront/fs/legacy-client.js",
+              contentHash: "rev-b",
               exports: ["default"],
             },
           ],
         ]),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
         mode: "production",
       });
 
@@ -251,9 +339,14 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
 
       assertStringIncludes(
         payload.html,
-        'data-client-ref="/_veryfront/fs/legacy-client.js#default"',
+        'data-client-ref="/_veryfront/fs/legacy-client.js?v=rev-b#default"',
+        "legacy client module URLs carry the content version",
       );
-      assertEquals(payload.clientRefs.LegacyClient, "/_veryfront/fs/legacy-client.js");
+      assertEquals(
+        payload.clientRefs.LegacyClient,
+        "/_veryfront/fs/legacy-client.js?v=rev-b",
+        "the legacy client ref keeps its cache-busting version",
+      );
     });
 
     it("keeps local production client references on the filesystem module endpoint", async () => {
@@ -270,11 +363,12 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
               id: "ClientComponent",
               path: "/_veryfront/fs/YXBwL0NsaWVudENvbXBvbmVudC50c3g",
               rel: "app/ClientComponent.tsx",
+              contentHash: "rev-a",
               exports: ["default"],
             },
           ],
         ]),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
         mode: "production",
         clientModuleStrategy: "fs",
       });
@@ -283,7 +377,8 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
 
       assertStringIncludes(
         payload.html,
-        'data-client-ref="/_veryfront/fs/YXBwL0NsaWVudENvbXBvbmVudC50c3g#default"',
+        'data-client-ref="/_veryfront/fs/YXBwL0NsaWVudENvbXBvbmVudC50c3g?v=rev-a#default"',
+        "fs client module URLs carry the content version",
       );
       assertEquals(payload.tree, undefined);
     });
@@ -306,7 +401,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
             },
           ],
         ]),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
         mode: "development",
         clientModuleStrategy: "rsc-module",
       });
@@ -341,7 +436,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
             },
           ],
         ]),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
 
       const payload = await renderer.renderToPayload(ServerParent);
@@ -374,7 +469,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
             },
           ],
         ]),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
         mode: "production",
       });
 
@@ -404,7 +499,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
             },
           ],
         ]),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
 
       const payload = await renderer.renderToPayload(NamedWidget);
@@ -433,7 +528,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
             },
           ],
         ]),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
 
       const payload = await renderer.renderToPayload(Widget);
@@ -447,7 +542,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
     it("should accept custom props", async () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
 
       function PropsComponent(props: { name: string }) {
@@ -461,7 +556,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
     it("should handle component returning null", async () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
 
       function NullComponent() {
@@ -517,7 +612,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
             },
           ],
         ]),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
 
       const firstRender = renderer.renderToPayload(DelayedFirst);
@@ -537,7 +632,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
     it("should clear client refs between renders", async () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
-        projectDir: "/tmp/test-project",
+        projectDir: PROJECT_DIR,
       });
 
       function Comp1() {

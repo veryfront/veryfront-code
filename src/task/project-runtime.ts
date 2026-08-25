@@ -28,6 +28,8 @@ export interface ProjectTaskRuntimeOptions {
   debug?: boolean;
   /** Reject the discovery when any colocated project primitive fails to load. */
   throwOnErrors?: boolean;
+  /** Explicit host-owned capability for a trusted local or dedicated runtime. */
+  allowHostProjectCodeExecution?: boolean;
 }
 
 function formatRuntimeDiscoveryError(error: DiscoveryResult["errors"][number]): string {
@@ -52,6 +54,7 @@ export async function discoverProjectTaskRuntime(
     fsAdapter: options.fsAdapter,
     cacheKey: options.cacheKey,
     verbose: options.debug,
+    allowHostProjectCodeExecution: options.allowHostProjectCodeExecution,
   });
 
   if (options.throwOnErrors && discovery.errors.length > 0) {

@@ -2,12 +2,17 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import {
   DEFAULT_HOSTED_CHILD_AGENT_ID,
+  getHostedChildForkToolInputSchema,
   hostedChildForkToolInputSchema,
   MAX_HOSTED_CHILD_DELEGATION_DEPTH,
+  MAX_HOSTED_CHILD_PROJECT_REFERENCE_INPUT_CODE_UNITS,
   resolveHostedChildForkRuntimeConfig,
   resolveHostedChildForkThinkingOverride,
   withHostedChildInvocationContext,
 } from "./child-tool-input.ts";
+import { schemaToJsonSchema } from "#veryfront/schemas/index.ts";
+import { INVALID_AGENT_PROJECT_REFERENCE_MESSAGE } from "../project/context.ts";
+import { MAX_OPAQUE_ID_CODE_UNITS } from "#veryfront/utils/project-identity.ts";
 
 Deno.test("hostedChildForkToolInputSchema accepts the hosted child fork fields", () => {
   const parsed = hostedChildForkToolInputSchema.parse({
@@ -141,6 +146,79 @@ Deno.test("hostedChildForkToolInputSchema rejects negative thinking budgets", ()
   });
 
   assertEquals(result.success, false);
+});
+
+Deno.test("hostedChildForkToolInputSchema rejects unsafe project references", () => {
+  for (
+    const projectReference of [
+      "",
+      "project-\n123",
+      "p".repeat(MAX_OPAQUE_ID_CODE_UNITS + 1),
+    ]
+  ) {
+    const result = hostedChildForkToolInputSchema.safeParse({
+      description: "invalid project",
+      prompt: "Try an invalid project reference.",
+      context: {},
+      project_reference: projectReference,
+    });
+
+    assertEquals(result.success, false);
+    if (result.success) {
+      throw new Error("Expected invalid hosted child fork input");
+    }
+    const error = result.error as { issues?: Array<{ message?: string }> };
+    assertEquals(
+      error.issues?.[0]?.message,
+      projectReference.length > MAX_OPAQUE_ID_CODE_UNITS
+        ? `Too big: expected string to have <=${MAX_OPAQUE_ID_CODE_UNITS} characters`
+        : INVALID_AGENT_PROJECT_REFERENCE_MESSAGE,
+    );
+  }
+});
+
+Deno.test("hostedChildForkToolInputSchema trims project references", () => {
+  const result = hostedChildForkToolInputSchema.parse({
+    description: "switch project",
+    prompt: "Open the requested project.",
+    project_reference: "  project-123  ",
+  });
+
+  assertEquals(result.project_reference, "project-123");
+});
+
+Deno.test("hostedChildForkToolInputSchema trims project references before enforcing canonical length", () => {
+  const canonicalReference = "p".repeat(MAX_OPAQUE_ID_CODE_UNITS);
+  const result = hostedChildForkToolInputSchema.parse({
+    description: "switch project",
+    prompt: "Open the requested project.",
+    project_reference: ` ${canonicalReference} `,
+  });
+
+  assertEquals(result.project_reference, canonicalReference);
+});
+
+Deno.test("hostedChildForkToolInputSchema rejects raw project-reference payloads beyond the DoS bound", () => {
+  const result = hostedChildForkToolInputSchema.safeParse({
+    description: "switch project",
+    prompt: "Open the requested project.",
+    project_reference: `${
+      " ".repeat(MAX_HOSTED_CHILD_PROJECT_REFERENCE_INPUT_CODE_UNITS)
+    }project-123`,
+  });
+
+  assertEquals(result.success, false);
+});
+
+Deno.test("hosted child fork JSON Schema exposes project-reference input bounds", () => {
+  const schema = schemaToJsonSchema(getHostedChildForkToolInputSchema());
+  const projectReference = schema.properties?.project_reference as
+    | Record<string, unknown>
+    | undefined;
+
+  assertEquals(projectReference?.type, "string");
+  assertEquals(projectReference?.minLength, 1);
+  assertEquals(projectReference?.maxLength, MAX_HOSTED_CHILD_PROJECT_REFERENCE_INPUT_CODE_UNITS);
 });
 
 Deno.test("DEFAULT_HOSTED_CHILD_AGENT_ID names the hosted child runtime agent", () => {

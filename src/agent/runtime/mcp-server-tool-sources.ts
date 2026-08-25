@@ -35,7 +35,7 @@ export const VERYFRONT_API_MCP_SOURCE_ID = "veryfront-platform-mcp";
 /** Canonical source id for the Veryfront Studio MCP server. */
 export const VERYFRONT_STUDIO_MCP_SOURCE_ID = "studio-mcp";
 
-const LOCAL_RUNTIME_BOOLEAN_TOOL_NAMES = new Set(["bash", "invoke_agent"]);
+const RUNTIME_PROVIDED_BOOLEAN_TOOL_NAMES = new Set(["bash", "invoke_agent"]);
 
 function hasVisibleRegistryTool(toolName: string, agentId?: string): boolean {
   if (agentId !== undefined) {
@@ -65,7 +65,7 @@ export function getRequestedUnresolvedBooleanToolNames(input: {
       entry === true &&
       !hasVisibleRegistryTool(toolName, input.agentId) &&
       !availableToolNames.has(toolName) &&
-      !LOCAL_RUNTIME_BOOLEAN_TOOL_NAMES.has(toolName)
+      !RUNTIME_PROVIDED_BOOLEAN_TOOL_NAMES.has(toolName)
     )
     .map(([toolName]) => toolName)
     .sort();
@@ -104,7 +104,6 @@ function createMcpServerToolSource(server: AgentHttpMcpServerConfig): RemoteTool
     id: server.id,
     endpoint: (context) => resolveValue(server.transport.url, context),
     headers: (context) => resolveHeaders(server.auth, context),
-    ...(server.fetch ? { fetch: server.fetch } : {}),
   });
 
   return wrapRemoteToolSourceWithMcpPolicy(source, server.toolPolicy, {
@@ -136,7 +135,12 @@ export function constrainRuntimeRemoteToolSources(
   return sourcesToConstrain.map((source) => createMcpToolPolicySource(source, policy));
 }
 
-const REMOTE_TOOL_CREDENTIAL_CONTEXT_KEYS = ["authToken", "runId", "agentId"] as const;
+const REMOTE_TOOL_CREDENTIAL_CONTEXT_KEYS = [
+  "authToken",
+  "runId",
+  "runIdBindsToolAuthorization",
+  "agentId",
+] as const;
 
 function withBoundRemoteToolContext(
   context: ToolExecutionContext | undefined,
@@ -145,8 +149,17 @@ function withBoundRemoteToolContext(
 ): ToolExecutionContext {
   const mergedContext = { ...(context ?? {}) };
   for (const key of keys) {
+    if (key === "runIdBindsToolAuthorization") {
+      if (boundContext.runId === undefined) continue;
+      if (boundContext.runIdBindsToolAuthorization !== undefined) {
+        mergedContext.runIdBindsToolAuthorization = boundContext.runIdBindsToolAuthorization;
+      } else {
+        delete mergedContext.runIdBindsToolAuthorization;
+      }
+      continue;
+    }
     if (boundContext[key] !== undefined) {
-      mergedContext[key] = boundContext[key];
+      (mergedContext as Record<string, unknown>)[key] = boundContext[key];
     }
   }
   return mergedContext;

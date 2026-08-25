@@ -83,7 +83,9 @@ export async function analyzeChunksCommand(
         "Detected heavy UI libraries shared across pages. Break them into dedicated chunks.",
       );
     }
-  } catch {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    cliLogger.error(`Failed to analyze chunks: ${message}`);
     exit(1);
   }
 }

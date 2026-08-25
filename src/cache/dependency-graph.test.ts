@@ -17,6 +17,18 @@ describe("DependencyGraph", () => {
       expect(graph.getDirectDependencies("/a.ts")).toEqual(["/b.ts", "/c.ts"]);
     });
 
+    it("drops reverse edges for imports a module no longer has", () => {
+      const graph = new DependencyGraph();
+      graph.addModule("/a.ts", ["/b.ts", "/c.ts"]);
+      // Re-adding REPLACES the dependency set: the dropped import must lose its
+      // reverse edge, otherwise invalidation runs against stale dependencies.
+      graph.addModule("/a.ts", ["/b.ts"]);
+
+      expect(graph.getDependents("/c.ts")).not.toContain("/a.ts");
+      expect(graph.getDependents("/b.ts")).toContain("/a.ts");
+      expect(graph.getDirectDependencies("/a.ts")).toEqual(["/b.ts"]);
+    });
+
     it("should return empty array for unknown module", () => {
       const graph = new DependencyGraph();
       expect(graph.getDirectDependencies("/unknown.ts")).toEqual([]);

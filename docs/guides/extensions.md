@@ -18,6 +18,18 @@ see [Framework extensions](../concepts/framework-extensions.md).
 - For a local extension: a folder under `extensions/` with a default-exported
   factory (see [Extension authoring](./extension-authoring.md)).
 
+## Where extensions run
+
+Extensions run wherever you run the project: `veryfront dev`, `veryfront
+start`, and any runtime you host yourself.
+
+Veryfront Cloud is the exception. It reads a project's configuration file as
+data rather than importing it, so a configuration file that imports an
+extension factory cannot be evaluated there. `veryfront deploy` refuses such a
+configuration before it creates a release, and names the line it refused. Keep
+a configuration file that Veryfront Cloud serves to literals and the
+`defineConfig`, `defineConfigWithEnv`, `getEnv` and `mergeConfigs` helpers.
+
 ## Enable an extension
 
 Add extension factories to `veryfront.config.ts`:
@@ -59,6 +71,59 @@ veryfront dev
 ```
 
 If the extension factory throws during setup, the dev server reports the setup error. For local extensions, edit the extension source and save `veryfront.config.ts` to force reload during development.
+
+## Enable legacy decorator metadata
+
+The default esbuild transform supports decorator syntax but does not emit
+TypeScript runtime type metadata. Install the explicit SWC bundler extension
+when class-validator, TypeORM, or a dependency-injection library needs
+`design:type`, `design:paramtypes`, or `design:returntype`:
+
+```bash
+npm install @veryfront/ext-bundler-swc
+```
+
+Select it in executable local or standalone configuration:
+
+```ts
+import { defineConfig } from "veryfront";
+import extSwc from "@veryfront/ext-bundler-swc";
+
+export default defineConfig({
+  extensions: [extSwc()],
+});
+```
+
+Enable legacy decorators and metadata in `tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  }
+}
+```
+
+The extension follows inherited TypeScript configuration and initializes the
+reflection runtime before decorated modules are evaluated. Without the
+extension, esbuild remains the default and ignores `emitDecoratorMetadata`.
+Projects that use standard decorators or validation libraries without runtime
+type reflection do not need the extension.
+
+Isolated route preparation follows inherited configuration only inside the
+project boundary, including project-owned `node_modules`. Copy an external
+workspace configuration into the project before using it in an isolated
+runtime. Trusted host execution can follow configuration outside the project.
+
+Enabling `experimentalDecorators` routes local Deno API modules through
+per-route SWC bundles. Separate route bundles do not share module-level state
+from a common project import. The extension reads only the two decorator flags
+from TypeScript configuration; other TypeScript emit settings are not forwarded
+to SWC. The active legacy transform rejects source-map requests because it does
+not compose SWC and esbuild maps yet. Review the extension package README before
+treating module singletons or compiler-specific output as part of your route
+contract.
 
 ## Authorize React Server Actions
 
@@ -161,32 +226,34 @@ fallback.
 
 ## Enable Node.js WebSocket upgrades
 
-Install the explicit Node.js transport extension:
+The standard `veryfront` npm/CLI distribution installs and auto-activates the
+Node.js transport extension, including for local HMR. Custom Node service
+distributions must install it alongside `veryfront`:
 
 ```bash
 deno add npm:@veryfront/ext-node-websocket-ws
 ```
 
-Add it to `veryfront.config.ts`:
+No `veryfront.config.ts` entry is required. To disable the builtin when
+WebSocket support is intentionally unavailable, use:
 
 ```ts
 import { defineConfig } from "veryfront";
-import extNodeWebSocketWs from "@veryfront/ext-node-websocket-ws";
 
 export default defineConfig({
-  extensions: [extNodeWebSocketWs()],
+  extensions: [{ name: "ext-node-websocket-ws", enabled: false }],
 });
 ```
 
-Restart the Node.js server after changing the configuration. HTTP serving does
-not require this extension. Without it, Node.js WebSocket upgrades fail closed
-with an error that names the required package.
+HTTP serving does not require the provider. Without it, Node.js WebSocket
+upgrades fail closed with an error that names the required package.
 
 ## First-party extension areas
 
 | Area          | Example package                              | Contract family   |
 | ------------- | -------------------------------------------- | ----------------- |
 | Auth          | `@veryfront/ext-auth-jwt`                    | `AuthProvider`    |
+| Build         | `@veryfront/ext-bundler-swc`                 | `Bundler`         |
 | Cache         | `@veryfront/ext-cache-redis`                 | `TokenCacheStore` |
 | Content       | `@veryfront/ext-content-mdx`                 | content parsing   |
 | CSS           | `@veryfront/ext-css-tailwind`                | CSS processing    |
@@ -207,7 +274,7 @@ replacement passes preflight.
 
 ## Verify it worked
 
-Restart `veryfront dev` after editing `veryfront.config.ts`:
+Restart `veryfront dev` after changing extension configuration:
 
 - The dev log should print a setup line for each loaded extension.
 - Any contract the extension provides should now be resolvable through the

@@ -17,17 +17,27 @@ import {
   parseRuntimeAgentRunInvocationHostedChatRequestFromRequest,
 } from "../hosted/chat-request-parser.ts";
 import { executeHostedDurableChatRun } from "../hosted/durable-chat-run-start.ts";
-import { type HostedServiceAuthenticatedRequest, HostedServiceAuthError } from "./auth.ts";
+import {
+  type HostedServiceAuthenticatedRequest,
+  HostedServiceAuthError,
+  type HostedServiceRunEventAppendTokenVerification,
+} from "./auth.ts";
 import { createRequestAuthCache } from "./request-auth-cache.ts";
+import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
 import { isResponseLike } from "./response-like.ts";
 import type { AgUiRuntimeRequest } from "../runtime/ag-ui-contract.ts";
 import {
   type HostedRuntimeSourceIdentity,
   snapshotHostedRuntimeSourceIdentity,
 } from "../hosted/runtime-source-binding.ts";
+import { runWithHostedRequestPreparationSignal } from "./request-preparation-context.ts";
+import {
+  runWithVerifiedHostedRunEventWriterRequest,
+} from "../hosted/child-run-event-writer-token.ts";
 
 /** Public API contract for hosted agent service routes logger. */
 export type HostedAgentServiceRoutesLogger = {
+  warn?: (message: string, metadata?: Record<string, unknown>) => void;
   error(message: string, metadata?: Record<string, unknown>): void;
 };
 
@@ -62,10 +72,12 @@ export type HostedAgentServiceStreamExecutionInput<TExecution extends object> = 
 export type AgentServiceStreamExecutionInput<TExecution extends object> =
   HostedAgentServiceStreamExecutionInput<TExecution>;
 
-/** Input payload for hosted agent service detached execution. */
+/** Input delivered to a hosted agent-service detached execution callback. */
 export type HostedAgentServiceDetachedExecutionInput<TExecution extends object> = {
   execution: TExecution;
   abortSignal: AbortSignal;
+  /** Required application-facing request clone with internal control headers removed. */
+  rawRequest: Request;
 };
 
 /** Input payload for agent service detached execution. */
@@ -104,7 +116,7 @@ export type HostedAgentServiceRouteSetOptions<TExecution extends object> = {
     token: string;
     projectId: string;
     runId: string;
-  }) => Promise<boolean>;
+  }) => Promise<HostedServiceRunEventAppendTokenVerification>;
   tracker: DetachedRunTracker<AgUiResumeValue>;
   prepareExecution: (req: ParsedHostedChatRequest) => Promise<TExecution>;
   streamExecutionToAgUiResponse: (
@@ -250,7 +262,10 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     const runId = parsedRequest.agUiInput?.runId;
 
     try {
-      const execution = await options.prepareExecution(parsedRequest);
+      const execution = await runWithHostedRequestPreparationSignal(
+        input.request.signal,
+        () => options.prepareExecution(parsedRequest),
+      );
       return await options.streamExecutionToAgUiResponse({
         ...execution,
         requestAbortSignal: input.request.signal,
@@ -268,8 +283,8 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
   }
 
   const hostedAgUiRuntimeHandler = createAgUiRuntimeHandler({
-    beforeParse: async ({ request }) => {
-      const result = await authenticateAgUiRequest(request);
+    beforeParse: async ({ applicationRequest }) => {
+      const result = await authenticateAgUiRequest(applicationRequest);
       return isResponseLike(result) ? result : undefined;
     },
     validationErrorResponse: ({ response }) => createHostedAgUiValidationErrorResponse(response),
@@ -285,12 +300,21 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     request: Request;
     requestOrCtx?: unknown;
   }): Promise<Response> {
+    const requestOrCtx = input.requestOrCtx instanceof Request ? input.request : input.requestOrCtx;
     return executeHostedDurableChatRun({
       req: input.req,
       rawRequest: input.request,
-      requestOrCtx: input.requestOrCtx,
+      requestOrCtx,
       tracker: options.tracker,
-      prepareExecution: options.prepareExecution,
+      prepareExecution: (request) =>
+        runWithHostedRequestPreparationSignal(
+          input.request.signal,
+          () =>
+            runWithVerifiedHostedRunEventWriterRequest(
+              input.req,
+              () => options.prepareExecution(request),
+            ),
+        ),
       startDetachedExecution: options.startDetachedExecution,
       cleanupExecution: options.cleanupExecution,
       resolveAuthError: (error) =>
@@ -309,6 +333,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     requestOrCtx?: unknown;
   }): Promise<Response> {
     return trace("handler.durableChatRunExecute", async () => {
+      const applicationRequest = createApplicationRequest(input.request);
       const req = await parseHostedChatRequestFromRequest(input.request, {
         authenticate: options.authenticateRequest,
         verifyProjectAccess: ({ projectId, authToken }) =>
@@ -321,7 +346,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
 
       return executeParsedDurableChatRun({
         req,
-        request: input.request,
+        request: applicationRequest,
         requestOrCtx: input.requestOrCtx,
       });
     });
@@ -333,6 +358,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     runId?: string;
   }): Promise<Response> {
     return trace("handler.runtimeAgentRunInvocationExecute", async () => {
+      const applicationRequest = createApplicationRequest(input.request);
       const req = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(input.request, {
         authenticate: options.authenticateRequest,
         verifyProjectAccess: ({ projectId, authToken }) =>
@@ -350,7 +376,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
 
       return executeParsedDurableChatRun({
         req,
-        request: input.request,
+        request: applicationRequest,
         requestOrCtx: input.requestOrCtx,
       });
     });

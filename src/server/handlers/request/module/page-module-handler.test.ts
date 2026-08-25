@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
 import type { HandlerContext, HandlerResult } from "../../types.ts";
@@ -24,7 +24,6 @@ function makeCtx(projectDir: string): HandlerContext {
     projectDir,
     adapter: createMockAdapter(),
     securityConfig: null,
-    cspUserHeader: null,
   };
 }
 
@@ -209,16 +208,81 @@ describe("server/handlers/request/module/page-module-handler", () => {
         "http://localhost/_veryfront/pages/index.js?visible=yes",
       );
 
+      const noCacheCtx: HandlerContext = { ...makeCtx("/tmp/test-project"), isLocalProject: true };
+      const noCacheResponse = await callPageModule(
+        new Request("http://localhost/_veryfront/pages/index.js"),
+        noCacheCtx,
+      );
+      assertEquals(noCacheResponse.status, 200);
+      const etag = noCacheResponse.headers.get("etag");
+      assertExists(etag, "a served page module must carry a validator");
+      assertEquals(
+        noCacheResponse.headers.get("cache-control"),
+        "no-cache, no-store, must-revalidate",
+        "a no-cache context must not get the short cache mode",
+      );
+      await noCacheResponse.text();
+
+      const productionResponse = await callPageModule(
+        new Request("http://localhost/_veryfront/pages/index.js"),
+        {
+          ...makeCtx("/tmp/test-project"),
+          isLocalProject: false,
+          resolvedEnvironment: "production",
+          releaseId: "rel-1",
+        },
+      );
+      assertEquals(productionResponse.status, 200);
+      assertEquals(
+        productionResponse.headers.get("cache-control"),
+        "public, max-age=0",
+        "a hosted production context must use the short cache mode",
+      );
+      await productionResponse.text();
+
+      const revalidated = await callPageModule(
+        new Request("http://localhost/_veryfront/pages/index.js", {
+          headers: { "if-none-match": etag },
+        }),
+        noCacheCtx,
+      );
+      assertEquals(revalidated.status, 304, "a matching validator must answer 304");
+      assertEquals(revalidated.headers.get("etag"), etag, "the 304 must echo the validator");
+      assertEquals(await revalidated.text(), "", "a 304 must not carry the module body");
+
       const staleSnapshotResponse = await callPageModule(
         new Request("http://localhost/_veryfront/pages/index.js?pins=on%3Amissing"),
         makeCtx("/tmp/test-project"),
       );
       assertEquals(staleSnapshotResponse.status, 409);
       assertEquals(staleSnapshotResponse.headers.get("cache-control"), "no-store");
-      assertEquals(renderCalls, 1);
+      assertEquals(renderCalls, 4);
     } finally {
       restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
       clearReactVersionCache();
     }
+  });
+
+  it("hides internal render error details from the client", async () => {
+    setRendererInitializer(
+      createInitializer(() => {
+        throw new Error("/abs/path/src/x.tsx: Unexpected token");
+      }),
+    );
+
+    const response = await callPageModule(
+      new Request("http://localhost/_veryfront/pages/index.js"),
+      makeCtx("/tmp/test-project"),
+    );
+
+    assertEquals(response.status, 500);
+    const body = await response.text();
+    assertEquals(
+      body,
+      "Failed to generate module",
+      "internal error text must never reach the client",
+    );
+    assertEquals(body.includes("/abs/path"), false, "server paths must not leak to the client");
+    assertEquals(body.includes("Unexpected token"), false, "compiler messages must not leak");
   });
 });

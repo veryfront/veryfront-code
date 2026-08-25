@@ -1,0 +1,44 @@
+import { tool } from "veryfront/tool";
+import { defineSchema } from "veryfront/schemas";
+import { createSlackClient } from "../lib/slack-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
+
+export default tool({
+  id: "slack-send-message",
+  description: "Send a message to a Slack channel",
+  inputSchema: defineSchema((v) => v.object({
+    channel: v
+      .string()
+      .describe("Channel ID or name (e.g., 'C1234567890' or '#general')"),
+    text: v.string().min(1).describe("Message text to send"),
+    threadTs: v
+      .string()
+      .optional()
+      .describe("Thread timestamp to reply to (for threaded messages)"),
+  }))(),
+  execute: async ({ channel, text, threadTs }, context) => {
+    const userId = requireUserIdFromContext(context);
+
+    try {
+      const slack = createSlackClient(userId);
+      const result = await slack.sendMessage(channel, text, { threadTs });
+
+      return {
+        success: true,
+        messageTs: result.ts,
+        channel: result.channel,
+        message: threadTs
+          ? `Reply sent to thread in ${channel}.`
+          : `Message sent to ${channel}.`,
+      };
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("not connected")) {
+        return {
+          error: "Slack not connected. Please connect your Slack account.",
+          connectUrl: "/api/auth/slack",
+        };
+      }
+      throw error;
+    }
+  },
+});

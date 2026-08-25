@@ -285,3 +285,61 @@ Deno.test("createHostedWebFetchTool rejects responses above the byte cap", async
     "response exceeds maximum size",
   );
 });
+
+Deno.test("createHostedWebFetchTool rejects non-2xx responses", async () => {
+  const tool = createTestWebFetchTool({
+    fetch: () =>
+      Promise.resolve(
+        new Response("missing", {
+          status: 404,
+          headers: { "content-type": "text/plain" },
+        }),
+      ),
+  });
+
+  await assertRejects(
+    () => tool.execute?.({ url: "https://example.com/missing" }) as Promise<unknown>,
+    Error,
+    "web_fetch failed with HTTP 404",
+    "error pages must not be returned as document content",
+  );
+});
+
+Deno.test("createHostedWebFetchTool fails when the response exceeds timeoutMs", async () => {
+  const tool = createTestWebFetchTool({
+    timeoutMs: 1,
+    fetch: (_input, init) =>
+      new Promise((_resolve, reject) => {
+        const signal = (init as globalThis.RequestInit | undefined)?.signal;
+        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+      }),
+  });
+
+  await assertRejects(
+    () => tool.execute?.({ url: "https://example.com/slow" }) as Promise<unknown>,
+    Error,
+    "web_fetch timed out after 1ms",
+    "a fetch that outlives timeoutMs must surface as a timeout",
+  );
+});
+
+Deno.test("createHostedWebFetchTool rejects URLs that embed credentials", async () => {
+  let fetchCalls = 0;
+  const tool = createTestWebFetchTool({
+    fetch: () => {
+      fetchCalls++;
+      return Promise.resolve(new Response("secret page", { status: 200 }));
+    },
+  });
+
+  await assertRejects(
+    () => tool.execute?.({ url: "https://user:pass@public.example/doc" }) as Promise<unknown>,
+    Error,
+    "web_fetch does not support credentials in URLs",
+  );
+  assertEquals(
+    fetchCalls,
+    0,
+    "credential-bearing URLs must be rejected before any network request",
+  );
+});

@@ -2,6 +2,7 @@ import type { DiagnosticResult } from "./types.ts";
 import { cliLogger } from "#cli/utils";
 import { DEFAULT_DEV_PORT } from "#cli/shared/constants";
 import { formatError } from "../../utils/string.ts";
+import { loadConfigOrNull } from "./project-config.ts";
 
 const FETCH_TIMEOUT_MS = 2000;
 
@@ -35,21 +36,46 @@ function getHashFromManifest(json: unknown): string | null {
   return typeof hash === "string" ? hash : null;
 }
 
-export async function checkRSCFlag(): Promise<DiagnosticResult> {
+/**
+ * Resolves RSC exactly the way the server does: an explicit
+ * `experimental.rsc` in `veryfront.config` wins, and `VERYFRONT_EXPERIMENTAL_RSC`
+ * decides otherwise. Throws if the flag cannot be resolved.
+ */
+async function resolveRscEnabled(projectDir?: string): Promise<boolean> {
+  const { isRSCEnabled } = await import("veryfront/utils");
+  const config = projectDir ? await loadConfigOrNull(projectDir) : null;
+  return isRSCEnabled(config ?? undefined);
+}
+
+/**
+ * Whether the experimental RSC surface is opted into for this project.
+ *
+ * The RSC endpoint probes only mean something when RSC is on, so doctor uses
+ * this to skip them rather than warn about endpoints the server never serves.
+ */
+export async function isRscDiagnosticsEnabled(projectDir?: string): Promise<boolean> {
   try {
-    const { isRscExperimentalEnabled } = await import("veryfront/config");
-    const isEnabled = isRscExperimentalEnabled();
+    return await resolveRscEnabled(projectDir);
+  } catch (error) {
+    cliLogger.debug("Failed to read the RSC experimental flag:", error);
+    return false;
+  }
+}
+
+export async function checkRSCFlag(projectDir?: string): Promise<DiagnosticResult> {
+  try {
+    const isEnabled = await resolveRscEnabled(projectDir);
 
     return {
       name: "RSC Flag",
-      status: isEnabled ? "pass" : "warn",
-      message: isEnabled ? "enabled" : "VERYFRONT_EXPERIMENTAL_RSC not set",
+      status: "pass",
+      message: isEnabled ? "enabled" : "disabled (experimental, opt-in)",
     };
   } catch (error) {
     return {
       name: "RSC Flag",
       status: "warn",
-      message: `env read failed: ${formatError(error)}`,
+      message: `flag read failed: ${formatError(error)}`,
     };
   }
 }

@@ -25,6 +25,7 @@ import type {
   UseChatResult,
 } from "#veryfront/agent/react/use-chat/types.ts";
 import { generateClientId } from "#veryfront/agent/react/use-chat/utils.ts";
+import { csrfMutationHeaders } from "#veryfront/security/csrf/browser-mutation-headers.ts";
 
 type UseChatStreamHandler = typeof handleAgUiStreamingResponse;
 
@@ -108,6 +109,26 @@ interface ResettableUseChatResult extends UseChatResult {
   reset: (messages?: ChatMessage[]) => void;
 }
 
+/**
+ * The core chat session hook: manages messages, streaming status, input, submit,
+ * regenerate, and branch navigation for a conversation. Powers `<Chat>` (L1) and
+ * is the L3 headless entry point for building a fully custom chat UI.
+ *
+ * @example
+ * ```tsx
+ * import { useChat } from "veryfront/chat";
+ *
+ * export default function AssistantChat() {
+ *   const chat = useChat();
+ *   return (
+ *     <form onSubmit={chat.handleSubmit}>
+ *       <input value={chat.input} onChange={chat.handleInputChange} />
+ *       <button disabled={chat.isLoading}>Send</button>
+ *     </form>
+ *   );
+ * }
+ * ```
+ */
 export function useChat(options: UseChatOptions = {}): UseChatResult {
   const { reset, ...chat } = useChatState(options);
   void reset;
@@ -194,6 +215,7 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
       message: {
         text: string;
         files?: ChatFilePart[];
+        model?: string;
         baseMessages?: ChatMessage[];
         userMessageId?: string;
       },
@@ -220,20 +242,26 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
       let didError = false;
       try {
         const allMessages = [...base, userMessage];
+        const requestModel = message.model ?? model;
 
         const abortController = new AbortController();
         abortControllerRef.current = abortController;
 
         const response = await fetch(api, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...options.headers,
-          },
+          // Production enables CSRF by default, so this POST has to echo the
+          // `__Host-vf_csrf` cookie or the server answers 403. Development
+          // issues the same cookie without enforcing it so this path is tested.
+          headers: csrfMutationHeaders(api, {
+            headers: {
+              "Content-Type": "application/json",
+              ...options.headers,
+            },
+          }),
           credentials: options.credentials,
           body: JSON.stringify({
             messages: allMessages,
-            ...(model ? { model } : {}),
+            ...(requestModel ? { model: requestModel } : {}),
             ...options.body,
           }),
           signal: abortController.signal,
@@ -277,7 +305,7 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
           setStreamingMessageId(currentMessageIdRef.current);
         };
         // Mutable local — updated by onData before onMessage/onUpdate use it.
-        let serverModel: string | undefined = model;
+        let serverModel: string | undefined = requestModel;
         setActiveModel((current) =>
           isLatestRequest(requestIdRef.current, requestId) ? undefined : current
         );

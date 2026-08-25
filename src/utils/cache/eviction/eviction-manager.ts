@@ -155,12 +155,12 @@ export class EvictionManager<TEntry extends EvictableEntry> {
   isExpired(entry: TEntry, ttl?: number, now: number = Date.now()): boolean {
     const expiry = entry.expiry;
     if (typeof expiry === "number") {
-      return now > expiry;
+      return now >= expiry;
     }
 
     const timestamp = entry.timestamp;
     if (typeof timestamp === "number" && typeof ttl === "number") {
-      return now - timestamp > ttl;
+      return now - timestamp >= ttl;
     }
 
     return false;

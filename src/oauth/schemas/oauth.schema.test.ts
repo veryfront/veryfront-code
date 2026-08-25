@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#std/assert";
+import { it } from "#veryfront/testing/bdd.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import {
   getAuthorizationUrlOptionsSchema,
   getOAuthProviderConfigSchema,
@@ -20,7 +21,7 @@ const PROVIDER_CONFIG = {
   clientSecretEnvVar: "CLIENT_SECRET",
 };
 
-Deno.test("OAuth schemas accept the hardened public contracts", () => {
+it("OAuth schemas accept the hardened public contracts", () => {
   const parsedConfig = getOAuthServiceConfigSchema().safeParse({
     ...PROVIDER_CONFIG,
     serviceId: "provider.service-1",
@@ -56,7 +57,7 @@ Deno.test("OAuth schemas accept the hardened public contracts", () => {
   );
 });
 
-Deno.test("OAuth schemas reject values that constructors reject", () => {
+it("OAuth schemas reject values that constructors reject", () => {
   for (
     const config of [
       { ...PROVIDER_CONFIG, additionalAuthParams: { state: "fixed" } },
@@ -95,7 +96,7 @@ Deno.test("OAuth schemas reject values that constructors reject", () => {
   );
 });
 
-Deno.test("OAuth provider schemas reject unsafe URLs and invalid numeric bounds", () => {
+it("OAuth provider schemas reject unsafe URLs and invalid numeric bounds", () => {
   for (
     const authorizationUrl of [
       "not a URL",
@@ -134,7 +135,7 @@ Deno.test("OAuth provider schemas reject unsafe URLs and invalid numeric bounds"
   }
 });
 
-Deno.test("OAuth schemas reject blank credentials, tokens, codes, and scopes", () => {
+it("OAuth schemas reject blank credentials, tokens, codes, and scopes", () => {
   assertEquals(
     getOAuthProviderConfigSchema().safeParse({
       ...PROVIDER_CONFIG,
@@ -174,7 +175,7 @@ Deno.test("OAuth schemas reject blank credentials, tokens, codes, and scopes", (
   );
 });
 
-Deno.test("OAuth request schemas bound state and validate redirects and PKCE", () => {
+it("OAuth request schemas bound state and validate redirects and PKCE", () => {
   assertEquals(
     getAuthorizationUrlOptionsSchema().safeParse({ state: "x".repeat(1_025) }).success,
     false,
@@ -183,6 +184,41 @@ Deno.test("OAuth request schemas bound state and validate redirects and PKCE", (
     getAuthorizationUrlOptionsSchema().safeParse({ redirectUri: "javascript:alert(1)" }).success,
     false,
   );
+  for (
+    const [schemaName, accepts] of [
+      [
+        "the OAuth state schema",
+        (redirectUri: string) =>
+          getOAuthStateSchema().safeParse({
+            state: "state",
+            redirectUri,
+            scopes: ["read"],
+            createdAt: Date.now(),
+          }).success,
+      ],
+      [
+        "the authorization URL options schema",
+        (redirectUri: string) =>
+          getAuthorizationUrlOptionsSchema().safeParse({ redirectUri }).success,
+      ],
+      [
+        "the token exchange options schema",
+        (redirectUri: string) =>
+          getTokenExchangeOptionsSchema().safeParse({ code: "code", redirectUri }).success,
+      ],
+    ] as const
+  ) {
+    assertEquals(
+      accepts("http://attacker.test/callback"),
+      false,
+      `${schemaName} must reject plain HTTP on a non-loopback host`,
+    );
+    assertEquals(
+      accepts("http://127.0.0.1:8787/callback"),
+      true,
+      `${schemaName} must accept explicit loopback HTTP`,
+    );
+  }
   assertEquals(
     getAuthorizationUrlOptionsSchema().safeParse({
       additionalParams: { STATE: "attacker-controlled" },
@@ -238,7 +274,7 @@ Deno.test("OAuth request schemas bound state and validate redirects and PKCE", (
   assertEquals(getterCalls, 0);
 });
 
-Deno.test("OAuth token exchange results enforce success and failure invariants", () => {
+it("OAuth token exchange results enforce success and failure invariants", () => {
   assertEquals(
     getTokenExchangeResultSchema().safeParse({
       success: true,
@@ -264,7 +300,7 @@ Deno.test("OAuth token exchange results enforce success and failure invariants",
   }
 });
 
-Deno.test("every built-in OAuth provider config satisfies the public service schema", () => {
+it("every built-in OAuth provider config satisfies the public service schema", () => {
   const configs = Object.entries(providerCatalog).filter(([name]) => name.endsWith("Config"));
   assertEquals(configs.length > 0, true);
 

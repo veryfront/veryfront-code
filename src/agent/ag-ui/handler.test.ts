@@ -157,6 +157,7 @@ describe("agent/ag-ui-handler", () => {
     assertEquals(testAgent.capturedContext?.tenant, "acme");
     assertEquals(testAgent.capturedContext?.threadId !== undefined, true);
     assertEquals(testAgent.capturedContext?.runId !== undefined, true);
+    assertEquals(testAgent.capturedContext?.runIdBindsToolAuthorization, false);
     assertEquals(
       testAgent.capturedContext?.agUi,
       {
@@ -178,6 +179,59 @@ describe("agent/ag-ui-handler", () => {
     assertStringIncludes(body, '"provider":"anthropic"');
     assertStringIncludes(body, '"model":"anthropic/claude-sonnet-4-6"');
     assertStringIncludes(body, '"delta":"hello from runtime"');
+    assertStringIncludes(body, `"runId":"${testAgent.capturedContext?.runId}"`);
+  });
+
+  it("keeps a client-supplied direct AG-UI run ID eligible for binding", async () => {
+    const testAgent = createTestAgent();
+    const handler = createAgUiHandler({ agent: testAgent.agent });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: "run_client_1",
+          messages: [{
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          }],
+        }),
+      }),
+    );
+
+    assertEquals(response.status, 200);
+    assertEquals(testAgent.capturedContext?.runId, "run_client_1");
+    assertEquals(testAgent.capturedContext?.runIdBindsToolAuthorization, undefined);
+    assertStringIncludes(await response.text(), '"runId":"run_client_1"');
+  });
+
+  it("keeps client run IDs non-binding in a trusted local eval context", async () => {
+    const testAgent = createTestAgent();
+    const handler = createAgUiHandler({
+      agent: testAgent.agent,
+      context: { runIdBindsToolAuthorization: false },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: "eval-run-local",
+          messages: [{
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          }],
+        }),
+      }),
+    );
+
+    assertEquals(response.status, 200);
+    assertEquals(testAgent.capturedContext?.runId, "eval-run-local");
+    assertEquals(testAgent.capturedContext?.runIdBindsToolAuthorization, false);
   });
 
   it("omits provider-owned remote tool history before direct streaming", async () => {
@@ -370,6 +424,8 @@ describe("agent/ag-ui-handler", () => {
       _messages,
       context,
     ): Promise<ReadableStream<Uint8Array>> {
+      assertEquals(context?.runId, "run_data_1");
+      assertEquals(context?.runIdBindsToolAuthorization, undefined);
       const publishDataEvent = context?.publishDataEvent;
       if (typeof publishDataEvent === "function") {
         await publishDataEvent({
@@ -433,23 +489,46 @@ describe("agent/ag-ui-handler", () => {
     const testAgent = createTestAgent();
     const handler = createAgUiHandler({
       agent: testAgent.agent,
-      context: { tenant: "acme" },
-      beforeStream: ({ lastUserText, context }) => ({
-        prepend: [{
-          role: "user",
-          parts: [{
-            type: "text",
-            text: `Retrieved context for: ${lastUserText}`,
+      context: (request) => {
+        assertEquals(request.headers.get("authorization"), "Bearer public-user");
+        assertEquals(request.headers.get("cookie"), "session=public");
+        assertEquals(request.headers.get("x-token"), null);
+        assertEquals(request.headers.get("x-project-id"), null);
+        return { tenant: "acme" };
+      },
+      beforeStream: ({ request, lastUserText, context }) => {
+        assertEquals(request.headers.get("authorization"), "Bearer public-user");
+        assertEquals(request.headers.get("x-forwarded-host"), null);
+        assertEquals(request.headers.get("x-veryfront-dispatch-jws"), null);
+        return {
+          prepend: [{
+            role: "user",
+            parts: [{
+              type: "text",
+              text: `Retrieved context for: ${lastUserText}`,
+            }],
           }],
-        }],
-        context: { ...context, retrieval: "complete" },
-      }),
+          context: {
+            threadId: context.threadId,
+            runId: context.runId,
+            retrieval: "complete",
+          },
+        };
+      },
     });
 
     const response = await handler(
       new Request("http://localhost/api/ag-ui", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer public-user",
+          Cookie: "session=public",
+          "x-token": "host-secret",
+          "x-project-id": "infrastructure-project",
+          "x-forwarded-host": "trusted-proxy.example",
+          "x-veryfront-dispatch-jws": "signed-infrastructure-token",
+        },
         body: JSON.stringify({
           messages: [{
             id: "msg-1",
@@ -472,6 +551,7 @@ describe("agent/ag-ui-handler", () => {
     );
     assertEquals(testAgent.capturedMessages[1]?.id, "msg-1");
     assertEquals(testAgent.capturedContext?.retrieval, "complete");
+    assertEquals(testAgent.capturedContext?.runIdBindsToolAuthorization, false);
   });
 
   it("lets beforeStream short-circuit AG-UI requests", async () => {
@@ -715,6 +795,7 @@ describe("agent/ag-ui-handler", () => {
       isError: boolean;
     }>();
     const originalStream = AgentRuntime.prototype.stream;
+    let streamedRunId: string | undefined;
 
     AgentRuntime.prototype.stream = async function (
       messages,
@@ -793,7 +874,11 @@ describe("agent/ag-ui-handler", () => {
       });
 
       assertEquals(messages[0]?.role, "user");
-      assertEquals(context?.runId, "run_1");
+      if (typeof context?.runId !== "string") throw new Error("Expected a generated run ID");
+      streamedRunId = context.runId;
+      assertMatch(streamedRunId, /^run_[a-z0-9]+$/);
+      assertEquals(context.replacement, true);
+      assertEquals(context.runIdBindsToolAuthorization, false);
       return stream;
     };
 
@@ -801,6 +886,13 @@ describe("agent/ag-ui-handler", () => {
       const handler = createAgUiHandler({
         agent: createTestAgent().agent,
         sessionManager,
+        beforeStream: ({ context }) => ({
+          context: {
+            threadId: context.threadId,
+            runId: context.runId,
+            replacement: true,
+          },
+        }),
       });
 
       const response = await handler(
@@ -808,7 +900,6 @@ describe("agent/ag-ui-handler", () => {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            runId: "run_1",
             threadId: crypto.randomUUID(),
             messages: [{
               id: "msg-1",
@@ -821,9 +912,10 @@ describe("agent/ag-ui-handler", () => {
       );
 
       assertEquals(response.status, 200);
+      if (streamedRunId === undefined) throw new Error("Expected the runtime to capture a run ID");
 
       const bodyPromise = response.text();
-      const submitOutcome = sessionManager.submitSignal("run_1", {
+      const submitOutcome = sessionManager.submitSignal(streamedRunId, {
         waitKey: "tool-call-1",
         value: { result: { approved: true }, isError: false },
       });
@@ -866,6 +958,108 @@ describe("agent/ag-ui-handler", () => {
       await response.text(),
       "Injected AG-UI tools require a public RunResumeSessionManager",
     );
+  });
+
+  it("returns 409 for a duplicate run id while the first run is still open", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const originalStream = AgentRuntime.prototype.stream;
+    let openController: ReadableStreamDefaultController<Uint8Array> | undefined;
+
+    AgentRuntime.prototype.stream = async function (): Promise<ReadableStream<Uint8Array>> {
+      return new ReadableStream<Uint8Array>({
+        start(controller) {
+          openController = controller;
+        },
+      });
+    } as typeof AgentRuntime.prototype.stream;
+
+    try {
+      const handler = createAgUiHandler({
+        agent: createTestAgent().agent,
+        sessionManager,
+      });
+      const body = JSON.stringify({
+        threadId: crypto.randomUUID(),
+        runId: "run_dupe_1",
+        messages: [{
+          id: "msg-1",
+          role: "user",
+          parts: [{ type: "text", text: "hello" }],
+        }],
+        tools: [{ name: "client_confirm" }],
+      });
+      const agUiDuplicateRequest = () =>
+        new Request("http://localhost/api/ag-ui", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+        });
+
+      const first = await handler(agUiDuplicateRequest());
+      assertEquals(first.status, 200, "the first run must stream normally");
+
+      const second = await handler(agUiDuplicateRequest());
+      assertEquals(second.status, 409, "a duplicate active runId must conflict, not 500");
+      assertEquals(
+        await second.json(),
+        { error: "Run already active" },
+        "409 body must match the documented conflict shape",
+      );
+
+      openController?.close();
+      await first.text();
+    } finally {
+      AgentRuntime.prototype.stream = originalStream;
+    }
+  });
+
+  it("releases the run when stream startup fails", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const originalStream = AgentRuntime.prototype.stream;
+
+    AgentRuntime.prototype.stream = function (): Promise<ReadableStream<Uint8Array>> {
+      return Promise.reject(new Error("stream startup failed"));
+    } as typeof AgentRuntime.prototype.stream;
+
+    try {
+      const handler = createAgUiHandler({
+        agent: createTestAgent().agent,
+        sessionManager,
+      });
+
+      const response = await handler(
+        new Request("http://localhost/api/ag-ui", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            threadId: crypto.randomUUID(),
+            runId: "run_release_1",
+            messages: [{
+              id: "msg-1",
+              role: "user",
+              parts: [{ type: "text", text: "hello" }],
+            }],
+            tools: [{ name: "client_confirm" }],
+          }),
+        }),
+      );
+
+      assertEquals(response.status, 500, "a failed stream start must surface as a server error");
+      assertEquals(await response.json(), { error: "Internal server error" });
+      assertEquals(
+        sessionManager.getRunStatus("run_release_1"),
+        null,
+        "a failed stream start must release the run instead of leaving it active",
+      );
+    } finally {
+      AgentRuntime.prototype.stream = originalStream;
+    }
   });
 });
 
@@ -917,8 +1111,9 @@ function createFinishingAgent(
           controller.close();
         },
       });
-      // A successful run reports its finalized response; a failing one never does.
-      if (!failMidStream && response) input.onFinish?.(response);
+      // A run may finalize server-side and still fail during flush, so the
+      // finalized response is reported whenever the agent has one.
+      if (response) input.onFinish?.(response);
       return {
         toDataStreamResponse: () =>
           new Response(stream, { headers: { "Content-Type": "text/event-stream" } }),
@@ -986,12 +1181,16 @@ describe("agent/ag-ui-handler onComplete (server-side persistence)", () => {
     });
 
     const response = await handler(agUiRequest());
+    // The onComplete decision runs synchronously with the stream close, so a
+    // fully drained body is enough to observe that the callback never fired.
     const body = await response.text();
-    // Let the stream's finally settle before asserting the callback never ran.
-    await new Promise((r) => setTimeout(r, 0));
 
     assertStringIncludes(body, "event: RunError");
-    assertEquals(calls, 0);
+    assertEquals(
+      calls,
+      0,
+      "onComplete must not fire after a RunError, even when the run already reported a finalized response",
+    );
   });
 
   it("does not fire when the run produced no finalized response", async () => {

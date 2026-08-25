@@ -1,4 +1,4 @@
-import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { getEnv, getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 import { getHostTelemetryEnv } from "#veryfront/observability/tracing/telemetry-env.ts";
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
 import { DEFAULT_DEV_SERVER_PORT, MAX_PORT, MIN_PORT } from "#veryfront/utils/constants/network.ts";
@@ -264,6 +264,18 @@ export function refreshEnvironmentConfig(): EnvironmentConfig {
   return _environmentConfig;
 }
 
+/**
+ * Record the "config read before .env load" ordering diagnostic.
+ *
+ * This is a framework-internal signal: the only fix it names — run `loadEnv`
+ * first — belongs to framework code, never to the application developer. It can
+ * fire in a perfectly healthy user session because a second copy of the
+ * framework may be loaded from the project's own `node_modules` mid-request
+ * (globally installed CLI plus a local `veryfront` dependency), and that copy
+ * never runs `loadEnv`. The returned snapshot is still correct there, so the
+ * message stays on the debug channel and only escalates to `warn` — with a
+ * stack — when someone opts in via `VERYFRONT_DEBUG_RUNTIME_ENV`.
+ */
 function warnEarlyAccess(): void {
   if (warnedEarlyEnvConfig) return;
   warnedEarlyEnvConfig = true;
@@ -273,9 +285,9 @@ function warnEarlyAccess(): void {
   const debugStack = getEnv("VERYFRONT_DEBUG_RUNTIME_ENV");
   if (debugStack === "1" || debugStack === "true") {
     logger.warn(message, { stack: new Error().stack });
-  } else {
-    logger.warn(message);
+    return;
   }
+  logger.debug(message);
 }
 
 export function getEnvironmentConfig(): EnvironmentConfig {
@@ -283,7 +295,7 @@ export function getEnvironmentConfig(): EnvironmentConfig {
     return _environmentConfig;
   }
 
-  // Env not loaded yet - return uncached snapshot with warning
+  // Env not loaded yet - return uncached snapshot, recording the ordering diagnostic
   if (!hasEnvLoaded()) {
     warnEarlyAccess();
     return Object.freeze(readEnvSnapshot());

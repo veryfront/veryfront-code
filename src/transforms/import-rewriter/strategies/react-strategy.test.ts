@@ -108,12 +108,20 @@ describe("ReactStrategy", () => {
 
     it("should rewrite react/jsx-runtime", () => {
       const result = strategy.rewrite(makeInfo("react/jsx-runtime"), makeCtx());
-      assertEquals(result.specifier?.includes("jsx-runtime") ?? false, true);
+      assertEquals(
+        result.specifier,
+        "https://esm.sh/react@19.1.1/jsx-runtime?external=react&target=es2022&deps=csstype@3.2.3",
+        "jsx-runtime must resolve to the pinned, react-externalized esm.sh URL",
+      );
     });
 
     it("should handle unknown react/* subpaths via prefix", () => {
       const result = strategy.rewrite(makeInfo("react/some-custom-export"), makeCtx());
-      assertEquals(result.specifier !== null, true);
+      assertEquals(
+        result.specifier,
+        "https://esm.sh/react@19.1.1&external=react&target=es2022&deps=csstype@3.2.3/some-custom-export",
+        "an unknown react/* subpath must be appended to the pinned react prefix URL",
+      );
     });
 
     it("should return null for non-react specifier that somehow matches", () => {
@@ -163,19 +171,20 @@ describe("ReactStrategy", () => {
     });
 
     it("does not schedule exact react or react-dom pins", async () => {
-      const ctx = makeCtx({
-        dependencyPinningCacheKey: "on:snapshot-exact",
-        dependencyPinningDependencies: {
-          react: "19.1.1",
-          "react-dom": "v19.1.1",
-        },
+      const ctx = await makeAuthorizedContext({
+        react: "19.1.1",
+        "react-dom": "v19.1.1",
       });
 
       strategy.rewrite(makeInfo("react"), ctx);
       strategy.rewrite(makeInfo("react-dom"), ctx);
       await _pendingResolutions();
 
-      assertEquals(postedSpecifiers, []);
+      assertEquals(
+        postedSpecifiers,
+        [],
+        "exact react and react-dom pins must not be scheduled for resolution",
+      );
     });
 
     it("does not schedule from off or unknown snapshots", async () => {

@@ -1,14 +1,26 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import * as React from "react";
+import * as actualReactDOMServer from "react-dom/server";
 import type { ReactDOMServer } from "../react/compat/ssr-adapter/server-loader.ts";
 import {
+  __injectProjectReactForTests,
   __injectReactDOMServerForTests,
   resetReactCache,
 } from "../react/compat/ssr-adapter/server-loader.ts";
 import { SSRRenderer } from "./ssr-renderer.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { ColorModeScript } from "#veryfront/react/components/ui/color-mode.tsx";
+import { Head } from "#veryfront/react/runtime/core.ts";
+import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
+import { resolveCommittedHeadFromHTML } from "./orchestrator/html-head.ts";
 
 type PipeableSSRStream = ReturnType<NonNullable<ReactDOMServer["renderToPipeableStream"]>>;
 
@@ -49,7 +61,10 @@ describe("rendering/ssr-renderer", () => {
       renderToStaticMarkup: () => "<div>static</div>",
       renderToReadableStream: undefined,
       renderToPipeableStream: (_element, options) => {
-        queueMicrotask(() => options?.onShellReady?.());
+        queueMicrotask(() => {
+          options?.onShellReady?.();
+          options?.onAllReady?.();
+        });
         return createPipeableSSRStream(
           () => {},
           () => {
@@ -66,9 +81,201 @@ describe("rendering/ssr-renderer", () => {
     );
 
     assertEquals(result.stream instanceof ReadableStream, true);
+    const allReady =
+      (result.stream as ReadableStream<Uint8Array> & { allReady?: Promise<unknown> }).allReady;
+    assertExists(
+      allReady,
+      "pipeable true-streaming must carry allReady onto the converted ReadableStream so ssr.service can observe late redirect/notFound errors",
+    );
+    await allReady;
     await result.stream?.cancel(new Error("stop"));
     await result.stream?.cancel(new Error("stop again"));
     assertEquals(abortCount, 1);
+  });
+
+  it("forwards the response nonce to React-owned streaming scripts", async () => {
+    let observedNonce: string | undefined;
+    const streamAllReady: Promise<void> = Promise.resolve();
+    __injectReactDOMServerForTests({
+      renderToString: () => "<div>unused</div>",
+      renderToStaticMarkup: () => "<div>static</div>",
+      renderToReadableStream: (_element, options) => {
+        observedNonce = options?.nonce;
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("<div>streamed</div>"));
+            controller.close();
+          },
+        });
+        return Promise.resolve(
+          Object.assign(stream, { allReady: streamAllReady }) as Awaited<
+            ReturnType<NonNullable<ReactDOMServer["renderToReadableStream"]>>
+          >,
+        );
+      },
+    });
+
+    const renderer = new SSRRenderer("production");
+    const result = await renderer.renderToHTML(
+      React.createElement("div"),
+      { mode: "production", wantsStream: true, nonce: "response-nonce" },
+    );
+
+    assertEquals(observedNonce, "response-nonce");
+    assertStrictEquals(
+      (result.stream as ReadableStream<Uint8Array> & { allReady?: Promise<unknown> }).allReady,
+      streamAllReady,
+      "readable-stream true-streaming must carry allReady onto the returned stream so ssr.service can observe late redirect/notFound errors",
+    );
+    await result.stream?.cancel();
+  });
+
+  it("keeps the CSP nonce through real SSR globals and a suspended retry", async () => {
+    __injectReactDOMServerForTests(actualReactDOMServer, React.version);
+    __injectProjectReactForTests(React, React.version);
+    const renderer = new SSRRenderer(
+      "production",
+      undefined,
+      undefined,
+      undefined,
+      { react: { version: React.version } } as VeryfrontConfig,
+    );
+    async function SuspendedColorModeScript() {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      return React.createElement(ColorModeScript);
+    }
+
+    const rendered = await runWithHeadCollector(
+      (renderContext) =>
+        renderer.renderToHTML(
+          React.createElement(
+            React.Suspense,
+            { fallback: React.createElement("p", null, "loading") },
+            React.createElement(SuspendedColorModeScript),
+          ),
+          {
+            mode: "production",
+            wantsStream: false,
+            nonce: "response-nonce",
+            renderContext,
+          },
+        ),
+      { nonce: "response-nonce" },
+    );
+
+    assertStringIncludes(
+      rendered.result.html,
+      '<script nonce="response-nonce">',
+    );
+  });
+
+  it("retains request-bound Head authority after a true stream leaves async storage", async () => {
+    __injectReactDOMServerForTests(actualReactDOMServer, React.version);
+    __injectProjectReactForTests(React, React.version);
+    const renderer = new SSRRenderer(
+      "production",
+      undefined,
+      undefined,
+      undefined,
+      { react: { version: React.version } } as VeryfrontConfig,
+    );
+    const release = Promise.withResolvers<void>();
+    async function SuspendedHead() {
+      await release.promise;
+      return React.createElement(
+        Head,
+        null,
+        React.createElement("title", null, "Async title"),
+      );
+    }
+
+    const rendered = await runWithHeadCollector(
+      (renderContext) =>
+        renderer.renderToHTML(
+          React.createElement(
+            React.Suspense,
+            { fallback: React.createElement("p", null, "loading") },
+            React.createElement(SuspendedHead),
+          ),
+          {
+            mode: "production",
+            wantsStream: true,
+            nonce: "stream-nonce",
+            renderContext,
+          },
+        ),
+      { nonce: "stream-nonce" },
+    );
+
+    release.resolve();
+    const html = await new Response(rendered.result.stream).text();
+    const head = resolveCommittedHeadFromHTML(html, rendered.head);
+    assertEquals(head?.title, "Async title");
+  });
+
+  it("isolates concurrent suspended streams and their nonces", async () => {
+    __injectReactDOMServerForTests(actualReactDOMServer, React.version);
+    __injectProjectReactForTests(React, React.version);
+    const renderer = new SSRRenderer(
+      "production",
+      undefined,
+      undefined,
+      undefined,
+      { react: { version: React.version } } as VeryfrontConfig,
+    );
+    const firstRelease = Promise.withResolvers<void>();
+    const secondRelease = Promise.withResolvers<void>();
+
+    const startRequest = (title: string, nonce: string, release: Promise<void>) => {
+      async function SuspendedRequestContent() {
+        await release;
+        return React.createElement(
+          React.Fragment,
+          null,
+          React.createElement(
+            Head,
+            null,
+            React.createElement("title", null, title),
+          ),
+          React.createElement(ColorModeScript),
+        );
+      }
+      return runWithHeadCollector(
+        (renderContext) =>
+          renderer.renderToHTML(
+            React.createElement(
+              React.Suspense,
+              { fallback: React.createElement("p", null, "loading") },
+              React.createElement(SuspendedRequestContent),
+            ),
+            {
+              mode: "production",
+              wantsStream: true,
+              nonce,
+              renderContext,
+            },
+          ),
+        { nonce },
+      );
+    };
+
+    const [first, second] = await Promise.all([
+      startRequest("First title", "first-nonce", firstRelease.promise),
+      startRequest("Second title", "second-nonce", secondRelease.promise),
+    ]);
+    secondRelease.resolve();
+    firstRelease.resolve();
+    const [firstHtml, secondHtml] = await Promise.all([
+      new Response(first.result.stream).text(),
+      new Response(second.result.stream).text(),
+    ]);
+
+    assertEquals(resolveCommittedHeadFromHTML(firstHtml, first.head)?.title, "First title");
+    assertEquals(resolveCommittedHeadFromHTML(secondHtml, second.head)?.title, "Second title");
+    assertStringIncludes(firstHtml, 'nonce="first-nonce"');
+    assertStringIncludes(secondHtml, 'nonce="second-nonce"');
+    assertEquals(firstHtml.includes('nonce="second-nonce"'), false);
+    assertEquals(secondHtml.includes('nonce="first-nonce"'), false);
   });
 
   it("applies Web Stream backpressure to a pipeable producer", async () => {
@@ -177,17 +384,19 @@ describe("rendering/ssr-renderer", () => {
     __injectReactDOMServerForTests({
       renderToString: () => "<div>unused</div>",
       renderToStaticMarkup: () => "<div>static</div>",
-      renderToReadableStream: async () =>
-        new ReadableStream<Uint8Array>({
-          pull(controller) {
-            controller.enqueue(new Uint8Array([1, 2, 3, 4, 5]));
-          },
-          cancel() {
-            cancelled = true;
-          },
-        }) as Awaited<
-          ReturnType<NonNullable<ReactDOMServer["renderToReadableStream"]>>
-        >,
+      renderToReadableStream: () =>
+        Promise.resolve(
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              controller.enqueue(new Uint8Array([1, 2, 3, 4, 5]));
+            },
+            cancel() {
+              cancelled = true;
+            },
+          }) as Awaited<
+            ReturnType<NonNullable<ReactDOMServer["renderToReadableStream"]>>
+          >,
+        ),
     });
 
     const renderer = new SSRRenderer("production");
@@ -337,6 +546,31 @@ describe("rendering/ssr-renderer", () => {
 
     assertEquals(result.html, "<div>string</div>");
     assertEquals(identifierPrefix, "vf");
+  });
+
+  it("rejects with a render error when the adapter produces no output", async () => {
+    __injectReactDOMServerForTests({
+      renderToString: () => "",
+      renderToStaticMarkup: () => "",
+      renderToReadableStream: undefined,
+      renderToPipeableStream: undefined,
+    });
+
+    const renderer = new SSRRenderer("production");
+    const error = await assertRejects(
+      () =>
+        renderer.renderToHTML(
+          React.createElement("div"),
+          { mode: "production", wantsStream: true },
+        ),
+      Error,
+    );
+
+    assertStringIncludes(
+      String(error),
+      "SSR failed - no output",
+      "a render that produces no output must surface a RENDER_ERROR, never a blank success",
+    );
   });
 
   it("reports an explicit project React version before the first render", () => {

@@ -2,6 +2,8 @@ export interface RuntimeMetadata {
   readonly specificationVersion?: string;
   readonly provider?: string;
   readonly modelId?: string;
+  /** Canonical underlying model provider when a gateway runtime masks it. */
+  readonly modelProvider?: string;
   readonly [key: string]: unknown;
 }
 
@@ -60,7 +62,11 @@ export type RuntimeAssistantContentPart =
  * view, which also includes provider-executed assistant tool results.
  */
 export type RuntimePromptMessage =
-  | { role: "system"; content: string }
+  | {
+    role: "system";
+    content: string;
+    providerOptions?: Record<string, unknown>;
+  }
   | {
     role: "user";
     content: Array<
@@ -161,6 +167,8 @@ export type RuntimeResponseFormat =
     strict?: boolean;
   };
 
+export type RuntimeStructuredOutputVariant = Exclude<RuntimeResponseFormat["type"], "text">;
+
 /**
  * Canonical request contract passed to `ModelRuntime` generation hooks.
  *
@@ -194,10 +202,19 @@ export interface ModelRuntimeCallOptions {
 
 /** Explicit behavioral support advertised by a model runtime. */
 export interface ModelRuntimeCapabilities {
-  /** Whether the runtime accepts and can emit tool calls. Defaults to true for legacy runtimes. */
+  /**
+   * Whether the runtime accepts and can emit tool calls. Omission preserves
+   * legacy behavior: false for legacy local runtimes and true otherwise.
+   */
   readonly toolCalling?: boolean;
-  /** Whether the runtime accepts JSON or JSON-schema response formats. */
-  readonly structuredOutput?: boolean;
+  /**
+   * Whether the runtime accepts structured response formats.
+   *
+   * `true` means every provider-neutral structured variant is accepted. An
+   * array narrows support to specific variants, for providers that support
+   * JSON Schema but not schemaless JSON mode.
+   */
+  readonly structuredOutput?: boolean | readonly RuntimeStructuredOutputVariant[];
 }
 
 /** Public API contract for model runtime. */
@@ -205,7 +222,10 @@ export interface ModelRuntime<
   CallOptions = unknown,
   ContentPart = unknown,
 > extends RuntimeMetadata {
-  /** Where inference executes. Omitted runtimes are treated as remote. */
+  /**
+   * Where inference executes. When omitted, legacy `provider: "local"`,
+   * `local/*` model IDs, and `_isVfLocalModel` markers remain server-local.
+   */
   readonly executionMode?: "remote" | "server-local";
   /** Provider behavior, kept separate from execution placement. */
   readonly runtimeCapabilities?: ModelRuntimeCapabilities;

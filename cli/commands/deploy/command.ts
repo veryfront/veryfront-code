@@ -30,6 +30,7 @@ import type { DeployResult } from "../../shared/deployment/result.ts";
  */
 export const getDeployArgsSchema = defineSchema((v) =>
   v.object({
+    projectSlug: v.string().min(1).optional(),
     projectDir: v.string().optional(),
     branch: v.string().min(1).optional(),
     env: v.string().min(1).default("production"),
@@ -60,6 +61,7 @@ export type DeployOptions = Omit<ParsedDeployOptions, "skipSourcePush"> & {
  * Parse CLI arguments into validated DeployOptions
  */
 export const parseDeployArgs = createArgParser(DeployArgsSchema, {
+  projectSlug: CommonArgs.projectSlug,
   projectDir: CommonArgs.projectDir,
   branch: CommonArgs.branch,
   env: CommonArgs.env,
@@ -87,15 +89,18 @@ function deployRunner(options: DeployOptions): DeployProject {
 }
 
 function toDeployRequest(options: DeployOptions) {
+  // Naming a project promotes what that project already has. Deploy must never
+  // upload the working directory into a project the caller only named by slug:
+  // the directory is unrelated to that project by construction.
+  const promoteOnly = options.skipSourcePush || options.projectSlug !== undefined;
   return {
     projectDir: options.projectDir ?? cwd(),
+    ...(options.projectSlug === undefined ? {} : { projectSlug: options.projectSlug }),
     branch: options.branch,
     environment: options.env,
     releaseName: options.releaseName,
     mode: options.dryRun ? "dry-run" as const : "apply" as const,
-    source: options.skipSourcePush
-      ? { kind: "already-pushed" as const }
-      : { kind: "ensure-pushed" as const },
+    source: promoteOnly ? { kind: "already-pushed" as const } : { kind: "ensure-pushed" as const },
   };
 }
 
@@ -107,8 +112,9 @@ function formatDryRunActions(plan: DeployPlan): string {
 
 function logDryRunPlan(plan: DeployPlan, quiet: boolean): void {
   if (quiet) return;
-  const suffix = plan.projectId ? "" : ` for project ${plan.projectSlug}`;
-  logInfo(`Would ${formatDryRunActions(plan)}${suffix}`);
+  // A dry run exists to be read before the real one, so it always names the
+  // project it resolved: which project is what an operator gets wrong.
+  logInfo(`Would ${formatDryRunActions(plan)} for project ${plan.projectSlug}`);
 }
 
 function commandStepName(stepName: DeployStepName): string {
@@ -127,13 +133,15 @@ async function deployCommandHuman(options: DeployOptions): Promise<DeployResult 
     progressText = next;
     spinner.update(next);
   };
-  let warning: string | null = null;
+  // Collected, not overwritten: a deploy can raise more than one warning, and
+  // the one an operator most needs is not reliably the last.
+  const warnings: string[] = [];
   let outcome: DeployProjectOutcome;
   try {
     outcome = await deployRunner(options).execute(toDeployRequest(options), {
       onEvent(event) {
         if (event.kind === "warning") {
-          warning = event.message;
+          warnings.push(event.message);
           return;
         }
         updateProgress(deployProgressText(event, env, verbose));
@@ -189,7 +197,7 @@ async function deployCommandHuman(options: DeployOptions): Promise<DeployResult 
     logInfo(`  Control plane: ${result.controlPlane}`);
   }
 
-  if (warning) logWarning(warning);
+  for (const message of warnings) logWarning(message);
 
   if (verbose) {
     const { getPostDeployTips } = await import("../../help/tips.ts");

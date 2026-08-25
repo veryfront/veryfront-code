@@ -28,12 +28,31 @@ export interface SecurityConfig {
       maxAge?: number;
     };
   csrf?: boolean | import("../security/csrf/helpers.ts").CsrfConfig;
-  csp?: Partial<Record<string, string | string[]>>;
+  /**
+   * Extra CSP sources, merged into the platform baseline. `null` drops the
+   * baseline's optional sources for that directive while keeping the ones the
+   * renderer requires.
+   */
+  csp?: Partial<Record<string, string | string[] | null>>;
+  /**
+   * Origins derived from the project's own released source, merged between the
+   * platform floor and `csp`.
+   *
+   * Platform-owned: `deriveSecurityContext` overwrites whatever a project
+   * config carries under this key, because `SecurityConfig` has an index
+   * signature and would otherwise let a project declare its own derived layer.
+   * Projects extend the policy through `csp`, which is merged on top of this.
+   */
+  derivedCsp?: import("../security/http/derived-csp-origins.ts").DerivedCspOrigins;
   coop?: "same-origin" | "same-origin-allow-popups" | "unsafe-none";
   corp?: "same-origin" | "same-site" | "cross-origin";
   coep?: "require-corp" | "unsafe-none";
   hsts?: { maxAge: number; includeSubDomains?: boolean; preload?: boolean };
   remoteHosts?: string[];
+  redirects?: {
+    /** Exact external HTTP(S) origins allowed in addition to the request origin. */
+    allowedOrigins: string[];
+  };
   headers?: Record<string, string>;
   [key: string]: unknown;
 }
@@ -43,7 +62,8 @@ export interface HandlerContext {
   adapter: RuntimeAdapter;
   moduleServerUrl?: string;
   securityConfig: SecurityConfig | null;
-  cspUserHeader: string | null;
+  /** Browser-visible HTTP(S) origin resolved at the trusted request boundary. */
+  requestOrigin?: string | null;
   debug?: boolean;
   config?: VeryfrontConfig;
   /** Parsed domain info from request host header */
@@ -54,6 +74,12 @@ export interface HandlerContext {
   projectId?: string;
   /** Release ID (from domain lookup for production custom domains) */
   releaseId?: string;
+  /** Canonical branch ID supplied by the operator-authenticated proxy. */
+  branchId?: string;
+  /** Canonical branch name paired with branchId by the operator-authenticated proxy. */
+  branchName?: string;
+  /** Canonical project default branch name supplied by the operator-authenticated proxy. */
+  defaultBranchName?: string;
   /** OAuth token from proxy (via x-token header) */
   proxyToken?: string;
   /** Actual environment name from API (e.g., "Development", "Production") */
@@ -68,6 +94,14 @@ export interface HandlerContext {
   requestContext?: RequestContext;
   /** Whether this request targets a local filesystem project (per-request, from adapter resolution). */
   isLocalProject?: boolean;
+  /**
+   * Host-owned capability for executing this runtime's project code in the
+   * server process. Dedicated single-project runtimes may grant it without
+   * enabling development-only local-project behavior.
+   */
+  allowHostProjectCodeExecution?: boolean;
+  /** Whether this request is executing in the shared multi-project proxy runtime. */
+  isProxyMode?: boolean;
   /** Environment ID for per-project env var resolution (from proxy x-environment-id header) */
   environmentId?: string;
   /**

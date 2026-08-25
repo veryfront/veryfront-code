@@ -1,12 +1,19 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../transforms/mdx/compiler/__tests__/content-processor-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import * as React from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
+import { type MDXLoadModuleOptions, mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import type { EntityInfo } from "#veryfront/types";
 import { handleMDXPage, prepareMDXPageBundles } from "./page-rendering.ts";
+import { PageRenderer } from "./page-renderer.ts";
 import {
   __setServerModuleLoaderForTests,
   resetReactCache,
@@ -76,35 +83,19 @@ describe("rendering/page-rendering", () => {
     assertEquals(serverModuleCode.includes("/_veryfront/fs/"), false);
   });
 
-  it("refreshes preview caches and retries once when MDX ESM imports have stale exports", async () => {
+  it("does not refresh preview caches for a render failure that is not an ESM export mismatch", async () => {
     const pageInfo = createMDXPageInfo("# MDX Probe");
     const originalLoadModuleESM = mdxRenderer.loadModuleESM;
     let loadAttempts = 0;
     let sourceRefreshes = 0;
 
     const adapter = {
-      id: "deno",
-      name: "test",
-      capabilities: {
-        typescript: true,
-        jsx: true,
-        http2: false,
-        websocket: false,
-        workers: false,
-        fileWatching: false,
-        shell: false,
-        kvStore: false,
-        writableFs: true,
-      },
       fs: {
         refreshSourceSnapshot: () => {
           sourceRefreshes++;
           return Promise.resolve();
         },
       },
-      env: {},
-      server: {},
-      serve: () => Promise.reject(new Error("not used")),
     } as unknown as RuntimeAdapter;
 
     const mutableRenderer = mdxRenderer as unknown as {
@@ -113,35 +104,55 @@ describe("rendering/page-rendering", () => {
 
     mutableRenderer.loadModuleESM = () => {
       loadAttempts++;
-      if (loadAttempts === 1) {
-        throw new Error(
-          "The requested module 'file:///cache/vfmod.mjs' does not provide an export named 'default'",
-        );
-      }
-
-      return Promise.resolve({
-        default: () => null,
-      });
+      throw new Error("boom");
     };
 
     try {
-      await handleMDXPage(
-        pageInfo,
-        "probe",
-        "/project",
-        {},
-        async () => ({ compiledCode: "", frontmatter: {}, headings: [] }),
-        adapter,
-        {
-          projectId: "project-1",
-          projectSlug: "project-slug",
-          contentSourceId: "preview-main",
-          studioEmbed: true,
-        },
+      const error = await assertRejects(
+        () =>
+          handleMDXPage(
+            pageInfo,
+            "probe",
+            "/project",
+            {},
+            () => Promise.resolve({ compiledCode: "", frontmatter: {}, headings: [] }),
+            adapter,
+            {
+              projectId: "project-1",
+              projectSlug: "project-slug",
+              contentSourceId: "preview-main",
+              studioEmbed: true,
+            },
+          ),
+        Error,
+        "Failed to import MDX page via ESM",
+      );
+      assertInstanceOf(
+        error,
+        Error,
+        "handleMDXPage must reject with an Error carrying the original render failure",
       );
 
-      assertEquals(loadAttempts, 2);
-      assertEquals(sourceRefreshes, 1);
+      assertEquals(
+        error.message.includes("after cache refresh"),
+        false,
+        "an unrelated render failure must not be reported as a post-recovery failure",
+      );
+      assertStringIncludes(
+        error.message,
+        "boom",
+        "the original render failure must be preserved",
+      );
+      assertEquals(
+        loadAttempts,
+        1,
+        "a render failure that is not an ESM export mismatch must not be retried",
+      );
+      assertEquals(
+        sourceRefreshes,
+        0,
+        "a render failure that is not an ESM export mismatch must not flush the preview source snapshot",
+      );
     } finally {
       mutableRenderer.loadModuleESM = originalLoadModuleESM;
     }
@@ -159,10 +170,11 @@ describe("rendering/page-rendering", () => {
     const mutableRenderer = mdxRenderer as unknown as {
       loadModuleESM: typeof mdxRenderer.loadModuleESM;
     };
-    mutableRenderer.loadModuleESM = ((...args: unknown[]) => {
-      moduleReactVersion = args[6];
+    mutableRenderer.loadModuleESM = (_compiledProgramCode, options) => {
+      const loadOptions = options as MDXLoadModuleOptions | undefined;
+      moduleReactVersion = loadOptions?.reactVersion;
       return Promise.resolve({ default: () => null });
-    }) as typeof mdxRenderer.loadModuleESM;
+    };
 
     try {
       await handleMDXPage(
@@ -170,7 +182,7 @@ describe("rendering/page-rendering", () => {
         "probe",
         "/project",
         {},
-        async () => ({ compiledCode: "", frontmatter: {}, headings: [] }),
+        () => Promise.resolve({ compiledCode: "", frontmatter: {}, headings: [] }),
         {
           fs: {},
         } as unknown as RuntimeAdapter,
@@ -184,6 +196,136 @@ describe("rendering/page-rendering", () => {
 
       assertEquals(loadedUrls.some((url) => url.includes("react@18.3.1")), true);
       assertEquals(moduleReactVersion, "18.3.1");
+    } finally {
+      mutableRenderer.loadModuleESM = originalLoadModuleESM;
+    }
+  });
+
+  it("threads the trusted local-project identity from PageRenderer into MDX loading", async () => {
+    __setServerModuleLoaderForTests(() => Promise.resolve({ default: React }));
+
+    const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+    const mutableRenderer = mdxRenderer as unknown as {
+      loadModuleESM: typeof mdxRenderer.loadModuleESM;
+    };
+    let observedIsLocalProject: unknown;
+    mutableRenderer.loadModuleESM = (_compiledProgramCode, options) => {
+      const loadOptions = options as MDXLoadModuleOptions | undefined;
+      observedIsLocalProject = loadOptions?.isLocalProject;
+      return Promise.resolve({ default: () => null });
+    };
+
+    const renderer = new PageRenderer({
+      projectDir: "/project",
+      mode: "development",
+      environment: "preview",
+      config: { react: { version: "19.1.1" } },
+      adapter: { fs: {} } as unknown as RuntimeAdapter,
+      componentRegistry: {
+        prepareDependencySnapshot: () => Promise.resolve("off"),
+        getAllAsComponents: () => ({}),
+      } as never,
+      compileMDX: () => Promise.resolve({ compiledCode: "", frontmatter: {}, headings: [] }),
+      isLocalProject: true,
+    });
+
+    try {
+      await renderer.preparePageBundles(
+        createMDXPageInfo("# Local MDX probe"),
+        "probe",
+        undefined,
+        {
+          projectId: "local-project",
+          projectSlug: "local-project",
+          contentSourceId: "local-main",
+          url: new URL("http://localhost/probe"),
+        },
+      );
+
+      assertEquals(observedIsLocalProject, true);
+    } finally {
+      mutableRenderer.loadModuleESM = originalLoadModuleESM;
+    }
+  });
+
+  it("threads the render mode from PageRenderer into MDX module loading", async () => {
+    __setServerModuleLoaderForTests(() => Promise.resolve({ default: React }));
+
+    const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+    const mutableRenderer = mdxRenderer as unknown as {
+      loadModuleESM: typeof mdxRenderer.loadModuleESM;
+    };
+    const observedModes: unknown[] = [];
+    mutableRenderer.loadModuleESM = (_compiledProgramCode, options) => {
+      observedModes.push((options as MDXLoadModuleOptions | undefined)?.mode);
+      return Promise.resolve({ default: () => null });
+    };
+
+    const renderMDXWithMode = async (mode: "development" | "production") => {
+      const renderer = new PageRenderer({
+        projectDir: "/project",
+        mode,
+        // Hosted preview: the request vocabulary says preview while the
+        // compile vocabulary says production, so the production case proves
+        // the compile half is what reaches the loader.
+        environment: "preview",
+        config: { react: { version: "19.1.1" } },
+        adapter: { fs: {} } as unknown as RuntimeAdapter,
+        componentRegistry: {
+          prepareDependencySnapshot: () => Promise.resolve("off"),
+          getAllAsComponents: () => ({}),
+        } as never,
+        compileMDX: () => Promise.resolve({ compiledCode: "", frontmatter: {}, headings: [] }),
+      });
+
+      await renderer.preparePageBundles(
+        createMDXPageInfo("# Mode probe"),
+        "probe",
+        undefined,
+        {
+          projectId: "mode-project",
+          projectSlug: "mode-project",
+          contentSourceId: "release-1",
+          url: new URL("http://localhost/probe"),
+        },
+      );
+    };
+
+    try {
+      await renderMDXWithMode("production");
+      await renderMDXWithMode("development");
+
+      assertEquals(observedModes, ["production", "development"]);
+    } finally {
+      mutableRenderer.loadModuleESM = originalLoadModuleESM;
+    }
+  });
+
+  it("compiles MDX modules for production when the caller names no render mode", async () => {
+    __setServerModuleLoaderForTests(() => Promise.resolve({ default: React }));
+
+    const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+    const mutableRenderer = mdxRenderer as unknown as {
+      loadModuleESM: typeof mdxRenderer.loadModuleESM;
+    };
+    let observedMode: unknown;
+    mutableRenderer.loadModuleESM = (_compiledProgramCode, options) => {
+      observedMode = (options as MDXLoadModuleOptions | undefined)?.mode;
+      return Promise.resolve({ default: () => null });
+    };
+
+    try {
+      await handleMDXPage(
+        createMDXPageInfo("# Default mode probe"),
+        "probe",
+        "/project",
+        {},
+        () => Promise.resolve({ compiledCode: "", frontmatter: {}, headings: [] }),
+        { fs: {} } as unknown as RuntimeAdapter,
+        { projectId: "default-mode-project", contentSourceId: "release-1" },
+      );
+
+      assertEquals(observedMode, "production");
     } finally {
       mutableRenderer.loadModuleESM = originalLoadModuleESM;
     }

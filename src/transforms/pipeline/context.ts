@@ -6,6 +6,7 @@ import type {
   TransformStage,
   TransformTarget,
 } from "./types.ts";
+import { canonicalizeServerExternalPackages } from "#veryfront/config/server-external-packages.ts";
 
 function buildContext(
   source: string,
@@ -24,7 +25,10 @@ function buildContext(
     projectDir,
     projectId: options.projectId,
     target,
-    dev: options.dev ?? true,
+    // Defaults to production. Every pipeline entry passes `dev` explicitly;
+    // an entry that forgets must degrade to production semantics, never to
+    // an unminified, untree-shaken development build on a hosted render.
+    dev: options.dev ?? false,
     contentHash,
     moduleServerUrl: options.moduleServerUrl,
     moduleServerOrigin: options.moduleServerOrigin,
@@ -36,11 +40,13 @@ function buildContext(
     metadata: new Map(),
     studioEmbed: options.studioEmbed,
     reactVersion,
+    serverExternalPackages: canonicalizeServerExternalPackages(options.serverExternalPackages),
     dependencyPinningCacheKey: options.dependencyPinningCacheKey,
     dependencyPinningDependencies: options.dependencyPinningDependencies,
     dependencyPinningSource: options.dependencyPinningSource,
     onDependencyResolutionObserved: options.onDependencyResolutionObserved,
     onProgress: options.onProgress,
+    abortSignal: options.abortSignal,
   };
 }
 

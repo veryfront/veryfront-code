@@ -51,7 +51,7 @@ export type StartNodeVeryfrontServerOptions = {
   logger?: VeryfrontServiceServerLogger;
   signals?: readonly NodeJS.Signals[];
   hardShutdownTimeoutMs?: number;
-  /** Explicit Node WebSocket implementation; upgrades fail closed when omitted. */
+  /** Extension-provided Node WebSocket implementation; upgrades fail closed when omitted. */
   nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider>;
 };
 

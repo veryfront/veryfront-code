@@ -13,6 +13,7 @@
 import { serverLogger } from "#veryfront/utils";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { metrics } from "#veryfront/observability";
+import { escapeHtml } from "#veryfront/utils/html-escape.ts";
 
 const logger = serverLogger.component("route-module-manifest");
 
@@ -204,7 +205,7 @@ export function generateModulePreloadHintsFromManifest(
   if (modules.length === 0) return [];
 
   return modules.slice(0, maxHints).map((path) => {
-    const url = `/_vf_modules/${path}`;
+    const url = escapeHtml(`/_vf_modules/${path}`);
     return `<link rel="modulepreload" href="${url}">`;
   });
 }

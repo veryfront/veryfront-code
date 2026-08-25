@@ -1,23 +1,209 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withEnv } from "#veryfront/testing/deno-compat.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   createRemoteMCPToolSource,
+  createRemoteMCPToolSourceFactoryWithTransport,
   MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
   MAX_REMOTE_MCP_TOOL_DEFINITIONS,
   MAX_REMOTE_MCP_TOOL_LIST_PAGES,
   MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES,
 } from "./remote-mcp.ts";
+import { getToolResultError } from "./result.ts";
 
 describe("tool/remote-mcp", () => {
-  it("normalizes non-Error caller abort reasons", async () => {
+  it("uses host transport only for an exact trusted endpoint", async () => {
+    let transportCalls = 0;
+    const createSource = createRemoteMCPToolSourceFactoryWithTransport({
+      trustedEndpoints: ["http://veryfront-api/mcp"],
+      requestFetch: async (_input, init) => {
+        transportCalls++;
+        const body = JSON.parse(String(init && "body" in init ? init.body : undefined)) as {
+          id: string;
+        };
+        return Response.json({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: { tools: [] },
+        });
+      },
+    });
+    const source = createSource({
+      id: "control-plane",
+      endpoint: "http://veryfront-api/mcp",
+    });
+
+    assertEquals(await source.listTools(), []);
+    assertEquals(transportCalls, 1);
+  });
+
+  it("normalizes default ports before matching exact trusted endpoints", async () => {
+    let transportCalls = 0;
+    const createSource = createRemoteMCPToolSourceFactoryWithTransport({
+      trustedEndpoints: ["http://veryfront-api:80/mcp"],
+      requestFetch: async (_input, init) => {
+        transportCalls++;
+        const body = JSON.parse(String(init && "body" in init ? init.body : undefined)) as {
+          id: string;
+        };
+        return Response.json({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: { tools: [] },
+        });
+      },
+    });
+
+    await createSource({ endpoint: "http://veryfront-api/mcp" }).listTools();
+    assertEquals(transportCalls, 1);
+  });
+
+  it("keeps trailing-slash mismatches guarded and snapshots the allowlist", async () => {
+    let transportCalls = 0;
+    const trustedEndpoints = ["http://169.254.169.254/latest/meta-data/"];
+    const createSource = createRemoteMCPToolSourceFactoryWithTransport({
+      trustedEndpoints,
+      requestFetch: async () => {
+        transportCalls++;
+        return Response.json({});
+      },
+    });
+    trustedEndpoints.push("http://169.254.169.254/latest/meta-data");
+
+    const source = createSource({
+      endpoint: "http://169.254.169.254/latest/meta-data",
+    });
+    await assertRejects(
+      () => source.listTools(),
+      Error,
+      "Outbound network egress blocked",
+    );
+    assertEquals(transportCalls, 0);
+  });
+
+  it("keeps unmatched endpoints on guarded transport", async () => {
+    let transportCalls = 0;
+    const createSource = createRemoteMCPToolSourceFactoryWithTransport({
+      trustedEndpoints: ["http://veryfront-api/mcp"],
+      requestFetch: async () => {
+        transportCalls++;
+        return Response.json({});
+      },
+    });
+
+    for (
+      const endpoint of [
+        "http://169.254.169.254/latest/meta-data",
+        () => "http://169.254.169.254/latest/meta-data",
+      ]
+    ) {
+      const source = createSource({ id: "untrusted", endpoint });
+      await assertRejects(
+        () => source.listTools(),
+        Error,
+        "Outbound network egress blocked",
+      );
+    }
+    assertEquals(transportCalls, 0);
+  });
+
+  it("uses host transport for dynamic project-scoped endpoints with query parameters", async () => {
+    let transportCalls = 0;
+    const requestUrls: string[] = [];
+    const createSource = createRemoteMCPToolSourceFactoryWithTransport({
+      trustedEndpoints: ["http://veryfront-api/mcp"],
+      requestFetch: async (input, init) => {
+        transportCalls++;
+        requestUrls.push(String(input));
+        const body = JSON.parse(String(init && "body" in init ? init.body : undefined)) as {
+          id: string;
+        };
+        return Response.json({ jsonrpc: "2.0", id: body.id, result: { tools: [] } });
+      },
+    });
+    let projectId = "project-1";
+    const source = createSource({
+      endpoint: () => `http://veryfront-api/projects/${projectId}/mcp?environment=staging`,
+    });
+
+    assertEquals(await source.listTools(), []);
+    projectId = "project-2";
+    assertEquals(await source.listTools(), []);
+    assertEquals(transportCalls, 2);
+    assertEquals(requestUrls, [
+      "http://veryfront-api/projects/project-1/mcp?environment=staging",
+      "http://veryfront-api/projects/project-2/mcp?environment=staging",
+    ]);
+  });
+
+  it("uses the request URL's origin and path, not query values, for trusted transport", async () => {
+    let transportCalls = 0;
+    const createSource = createRemoteMCPToolSourceFactoryWithTransport({
+      trustedEndpoints: ["http://veryfront-api/mcp"],
+      requestFetch: async (_input, init) => {
+        transportCalls++;
+        const body = JSON.parse(String(init && "body" in init ? init.body : undefined)) as {
+          id: string;
+        };
+        return Response.json({ jsonrpc: "2.0", id: body.id, result: { tools: [] } });
+      },
+    });
+
+    await createSource({
+      endpoint: "http://veryfront-api/mcp?redirect=http://169.254.169.254/latest/meta-data",
+    }).listTools();
+    assertEquals(transportCalls, 1);
+
+    for (
+      const endpoint of [
+        "http://veryfront-api.evil.com/mcp?target=http://veryfront-api/mcp",
+        "http://veryfront-api/mcp/../../../admin?target=/mcp",
+      ]
+    ) {
+      await assertRejects(
+        () => createSource({ endpoint }).listTools(),
+        Error,
+        "Outbound network egress blocked",
+      );
+    }
+    assertEquals(transportCalls, 1);
+  });
+
+  it("rejects invalid trusted endpoints when the factory is created", () => {
+    const error = assertThrows(
+      () =>
+        createRemoteMCPToolSourceFactoryWithTransport({
+          trustedEndpoints: ["https://user:secret@example.com/mcp"],
+          requestFetch: fetch,
+        }),
+      TypeError,
+      "trusted endpoint",
+    );
+    assertInstanceOf(error, TypeError);
+    assertEquals(error.message, "Invalid trusted endpoint");
+  });
+
+  it("rejects an already-aborted caller without invoking transport", async () => {
+    let transportCalls = 0;
     const controller = new AbortController();
     controller.abort("caller stopped");
-    const source = createRemoteMCPToolSource({
+    const createSource = createRemoteMCPToolSourceFactoryWithTransport({
+      trustedEndpoints: ["https://93.184.216.34"],
+      requestFetch: async () => {
+        transportCalls++;
+        throw new Error("transport should not run");
+      },
+    });
+    const source = createSource({
       id: "docs",
-      endpoint: "https://mcp.test",
-      fetch: () => Promise.reject("caller stopped"),
+      endpoint: "https://93.184.216.34",
     });
 
     await assertRejects(
@@ -25,6 +211,27 @@ describe("tool/remote-mcp", () => {
       Error,
       "Remote MCP request was aborted",
     );
+    assertEquals(transportCalls, 0);
+  });
+
+  it("rejects internal MCP endpoints before invoking the configured transport", async () => {
+    let calls = 0;
+    const source = createRemoteMCPToolSource({
+      id: "private",
+      endpoint: "http://169.254.169.254/latest/meta-data",
+    });
+
+    await withMockFetch(() => {
+      calls++;
+      return Promise.resolve(Response.json({}));
+    }, async () => {
+      await assertRejects(
+        () => source.listTools(),
+        Error,
+        "internal host",
+      );
+    });
+    assertEquals(calls, 0);
   });
 
   it("lists tools from a remote MCP server using the standard JSON-RPC contract", async () => {
@@ -36,7 +243,7 @@ describe("tool/remote-mcp", () => {
 
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: (context) => `https://mcp.test/${context?.projectId ?? "default"}`,
+      endpoint: (context) => `https://93.184.216.34/${context?.projectId ?? "default"}`,
       headers: (context) => ({
         Authorization: "Bearer remote-token",
         "x-project-id": String(context?.projectId ?? ""),
@@ -69,7 +276,7 @@ describe("tool/remote-mcp", () => {
       async () => await source.listTools({ projectId: "proj_123" }),
     );
 
-    assertEquals(requestUrl, "https://mcp.test/proj_123");
+    assertEquals(requestUrl, "https://93.184.216.34/proj_123");
     assertEquals(requestMethod, "POST");
     assertEquals(projectHeader, "proj_123");
     assertEquals(acceptHeader, "application/json, text/event-stream");
@@ -90,7 +297,7 @@ describe("tool/remote-mcp", () => {
   it("returns structured MCP tool errors instead of throwing for callTool isError results", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
       headers: { Authorization: "Bearer remote-token" },
     });
 
@@ -119,7 +326,7 @@ describe("tool/remote-mcp", () => {
     let requestBody: Record<string, unknown> | undefined;
     const source = createRemoteMCPToolSource({
       id: "veryfront-mcp",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
       headers: { Authorization: "Bearer remote-token" },
     });
 
@@ -160,10 +367,117 @@ describe("tool/remote-mcp", () => {
     });
   });
 
+  it("omits non-binding run ids from MCP call metadata", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    await withEnv({ VERYFRONT_API_BASE_URL: "https://93.184.216.34" }, async () => {
+      const source = createRemoteMCPToolSource({
+        id: "veryfront-mcp",
+        endpoint: "https://93.184.216.34/mcp",
+      });
+
+      await withMockFetch(
+        async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          requestBody = await request.json();
+          return Response.json({
+            jsonrpc: "2.0",
+            id: "veryfront-mcp:tools:call:gmail__get_profile",
+            result: { content: [], structuredContent: { ok: true } },
+          });
+        },
+        async () =>
+          await source.executeTool("gmail__get_profile", {}, {
+            runId: "run-local",
+            runIdBindsToolAuthorization: false,
+            agentId: "gmail-agent",
+          }),
+      );
+
+      assertEquals(requestBody, {
+        jsonrpc: "2.0",
+        id: "veryfront-mcp:tools:call:gmail__get_profile",
+        method: "tools/call",
+        params: {
+          name: "gmail__get_profile",
+          arguments: {},
+          _meta: { agent_id: "gmail-agent" },
+        },
+      });
+    });
+  });
+
+  it("omits non-binding run ids from project-scoped control-plane MCP metadata", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    await withEnv({ VERYFRONT_API_BASE_URL: "https://93.184.216.34" }, async () => {
+      const source = createRemoteMCPToolSource({
+        id: "veryfront-mcp",
+        endpoint: "https://93.184.216.34/projects/project-1/mcp?environment=staging",
+      });
+
+      await withMockFetch(
+        async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          requestBody = await request.json();
+          return Response.json({
+            jsonrpc: "2.0",
+            id: "veryfront-mcp:tools:call:gmail__get_profile",
+            result: { content: [], structuredContent: { ok: true } },
+          });
+        },
+        async () =>
+          await source.executeTool("gmail__get_profile", {}, {
+            runId: "run-local",
+            runIdBindsToolAuthorization: false,
+            agentId: "gmail-agent",
+          }),
+      );
+
+      assertEquals(
+        (requestBody as { params?: { _meta?: Record<string, unknown> } }).params?._meta,
+        { agent_id: "gmail-agent" },
+      );
+    });
+  });
+
+  it("keeps run ids for same-origin MCP servers outside the control-plane path", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    await withEnv({ VERYFRONT_API_BASE_URL: "https://93.184.216.34" }, async () => {
+      const source = createRemoteMCPToolSource({
+        id: "third-party-mcp",
+        endpoint: "https://93.184.216.34/custom-mcp",
+      });
+
+      await withMockFetch(
+        async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          requestBody = await request.json();
+          return Response.json({
+            jsonrpc: "2.0",
+            id: "third-party-mcp:tools:call:search",
+            result: { content: [], structuredContent: { ok: true } },
+          });
+        },
+        async () =>
+          await source.executeTool("search", {}, {
+            runId: "run-local",
+            runIdBindsToolAuthorization: false,
+            agentId: "gmail-agent",
+          }),
+      );
+
+      // The marker means "not a Veryfront authorization binding", not "secret".
+      // Third-party servers still get the id for correlation.
+      assertEquals(
+        (requestBody as { params?: { _meta?: Record<string, unknown> } }).params?._meta,
+        { run_id: "run-local", agent_id: "gmail-agent" },
+      );
+    });
+  });
+
   it("prefers structuredContent for MCP isError tool results", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
       headers: { Authorization: "Bearer remote-token" },
     });
 
@@ -191,10 +505,48 @@ describe("tool/remote-mcp", () => {
     });
   });
 
+  it("passes successful MCP tool results that mention OAuth failure tokens through untouched", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://93.184.216.34",
+    });
+
+    const textResult = await withMockFetch(async () =>
+      Response.json({
+        jsonrpc: "2.0",
+        id: "docs:tools:call:search_docs",
+        result: {
+          content: [{
+            type: "text",
+            text: "The invalid_grant error means the refresh token expired.",
+          }],
+        },
+      }), async () => await source.executeTool("search_docs", { query: "invalid_grant" }));
+
+    assertEquals(
+      textResult,
+      "The invalid_grant error means the refresh token expired.",
+      "successful tool text mentioning invalid_grant must pass through untouched",
+    );
+
+    const structuredResult = await withMockFetch(async () =>
+      Response.json({
+        jsonrpc: "2.0",
+        id: "docs:tools:call:search_docs",
+        result: { structuredContent: { doc: "expired_token appears in this doc" } },
+      }), async () => await source.executeTool("search_docs", { query: "expired_token" }));
+
+    assertEquals(
+      structuredResult,
+      { doc: "expired_token appears in this doc" },
+      "successful structuredContent mentioning expired_token must pass through untouched",
+    );
+  });
+
   it("preserves MCP isError when structuredContent lacks an error field", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
 
     const result = await withMockFetch(async () =>
@@ -218,10 +570,69 @@ describe("tool/remote-mcp", () => {
     });
   });
 
+  it("falls back to MCP text diagnostics when structuredContent is empty", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://93.184.216.34/mcp",
+    });
+
+    const result = await withMockFetch(async () =>
+      Response.json({
+        jsonrpc: "2.0",
+        id: "veryfront-mcp:tools:call:create_agent",
+        result: {
+          isError: true,
+          structuredContent: {},
+          content: [{
+            text: "[already_exists] Agent already exists",
+          }],
+        },
+      }), async () =>
+      await source.executeTool("create_agent", { id: "writer" }, {
+        toolCallId: "tool-call-123",
+      }));
+
+    assertEquals(result, {
+      error: "already_exists",
+      code: "already_exists",
+      message: "[already_exists] Agent already exists",
+      correlation_id: "tool-call-123",
+    });
+    assertEquals(getToolResultError(result), "[already_exists] Agent already exists");
+  });
+
+  it("bounds local tool-call correlation ids in text error results", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://93.184.216.34/mcp",
+    });
+    const oversizedToolCallId = `tool-${"x".repeat(252)}`;
+
+    const result = await withMockFetch(async () =>
+      Response.json({
+        jsonrpc: "2.0",
+        id: "veryfront-mcp:tools:call:create_agent",
+        result: {
+          isError: true,
+          content: [{ text: "Agent already exists" }],
+        },
+      }), async () =>
+      await source.executeTool("create_agent", { id: "writer" }, {
+        toolCallId: oversizedToolCallId,
+      }));
+
+    assertEquals(result, {
+      error: "tool_error",
+      code: "tool_error",
+      message: "Agent already exists",
+      correlation_id: oversizedToolCallId.slice(0, 256),
+    });
+  });
+
   it("wraps non-object structured MCP errors with a canonical marker", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
 
     const result = await withMockFetch(async () =>
@@ -245,7 +656,7 @@ describe("tool/remote-mcp", () => {
   it("normalizes remote MCP tool responses with generic error markers", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
 
     const result = await withMockFetch(async () =>
@@ -261,7 +672,8 @@ describe("tool/remote-mcp", () => {
       }), async () => await source.executeTool("search_docs", { query: "auth" }));
 
     assertEquals(result, {
-      error: "tool_error",
+      error: "rate_limited",
+      code: "rate_limited",
       message: "Try again later",
     });
   });
@@ -269,7 +681,7 @@ describe("tool/remote-mcp", () => {
   it("normalizes OAuth invalid_grant refresh failures into reconnect-required tool output", async () => {
     const source = createRemoteMCPToolSource({
       id: "veryfront-mcp",
-      endpoint: "https://api.example.com/mcp",
+      endpoint: "https://93.184.216.34/mcp",
       headers: { Authorization: "Bearer remote-token" },
     });
 
@@ -296,7 +708,7 @@ describe("tool/remote-mcp", () => {
       error: "reconnect_required",
       code: "OAUTH_TOKEN_EXPIRED",
       integration: "calendar",
-      connectUrl: "https://api.example.com/oauth/connect/calendar?projectId=project-1",
+      connectUrl: "https://93.184.216.34/oauth/connect/calendar?projectId=project-1",
       message: "Calendar needs to be reconnected before this tool can run.",
     });
   });
@@ -304,7 +716,7 @@ describe("tool/remote-mcp", () => {
   it("normalizes JSON-RPC invalid_grant errors into reconnect-required tool output", async () => {
     const source = createRemoteMCPToolSource({
       id: "veryfront-mcp",
-      endpoint: "https://api.example.com/mcp",
+      endpoint: "https://93.184.216.34/mcp",
     });
 
     const result = await withMockFetch(
@@ -324,15 +736,77 @@ describe("tool/remote-mcp", () => {
       error: "reconnect_required",
       code: "OAUTH_TOKEN_EXPIRED",
       integration: "calendar",
-      connectUrl: "https://api.example.com/oauth/connect/calendar?projectId=project-1",
+      connectUrl: "https://93.184.216.34/oauth/connect/calendar?projectId=project-1",
       message: "Calendar needs to be reconnected before this tool can run.",
     });
+  });
+
+  it("returns structured JSON-RPC tool errors with correlation context", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://93.184.216.34/mcp",
+    });
+
+    const result = await withMockFetch(async () =>
+      Response.json({
+        jsonrpc: "2.0",
+        id: "veryfront-mcp:tools:call:update_skill",
+        error: {
+          code: -32602,
+          message: "Skill validation failed",
+          data: {
+            code: "invalid_skill",
+            request_id: "request-123",
+            field: "instructions",
+          },
+        },
+      }), async () => await source.executeTool("update_skill", { skill_id: "writer" }));
+
+    assertEquals(result, {
+      error: "invalid_skill",
+      code: "invalid_skill",
+      message: "Skill validation failed",
+      request_id: "request-123",
+      json_rpc_code: -32602,
+    });
+    assertEquals(getToolResultError(result), "Skill validation failed");
+  });
+
+  it("rejects malformed JSON-RPC tool error envelopes", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://93.184.216.34/mcp",
+    });
+
+    for (
+      const error of [
+        null,
+        "failed",
+        { message: "Missing error code" },
+        { code: -32603, message: " " },
+      ]
+    ) {
+      await assertRejects(
+        () =>
+          withMockFetch(
+            async () =>
+              Response.json({
+                jsonrpc: "2.0",
+                id: "veryfront-mcp:tools:call:update_skill",
+                error,
+              }),
+            async () => await source.executeTool("update_skill", {}),
+          ),
+        Error,
+        "malformed JSON-RPC error object",
+      );
+    }
   });
 
   it("normalizes HTTP invalid_grant failures into reconnect-required tool output", async () => {
     const source = createRemoteMCPToolSource({
       id: "veryfront-mcp",
-      endpoint: "https://api.example.com/mcp",
+      endpoint: "https://93.184.216.34/mcp",
     });
 
     const result = await withMockFetch(
@@ -348,7 +822,7 @@ describe("tool/remote-mcp", () => {
       error: "reconnect_required",
       code: "OAUTH_TOKEN_EXPIRED",
       integration: "calendar",
-      connectUrl: "https://api.example.com/oauth/connect/calendar?projectId=project-1",
+      connectUrl: "https://93.184.216.34/oauth/connect/calendar?projectId=project-1",
       message: "Calendar needs to be reconnected before this tool can run.",
     });
   });
@@ -356,7 +830,7 @@ describe("tool/remote-mcp", () => {
   it("does not surface remote HTTP error bodies", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
 
     const error = await assertRejects(
@@ -372,12 +846,31 @@ describe("tool/remote-mcp", () => {
     assertEquals(error.message, "Remote MCP request failed (500)");
   });
 
+  it("keeps unexpected tool transport failures on the exception path", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://93.184.216.34/mcp",
+    });
+
+    const error = await assertRejects(
+      () =>
+        withMockFetch(
+          async () => new Response("private payload <TOKEN>", { status: 503 }),
+          async () => await source.executeTool("create_agent", { id: "writer" }),
+        ),
+      Error,
+    );
+
+    assertInstanceOf(error, Error);
+    assertEquals(error.message, "Remote MCP request failed (503)");
+  });
+
   it("preserves caller accept types while adding the MCP-required media types", async () => {
     let acceptHeader = "";
 
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
       headers: {
         Accept: "application/vnd.custom+json",
       },
@@ -408,7 +901,7 @@ describe("tool/remote-mcp", () => {
   it("parses JSON-RPC results from SSE responses when the MCP server negotiates text/event-stream", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
 
     const tools = await withMockFetch(
@@ -439,7 +932,7 @@ describe("tool/remote-mcp", () => {
   it("applies the tools/list response limit to SSE catalogs", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
     const padding = "x".repeat(MAX_REMOTE_MCP_CALL_RESPONSE_BYTES + 1_024);
 
@@ -464,7 +957,7 @@ describe("tool/remote-mcp", () => {
   it("throws when the remote MCP server responds with a JSON-RPC error", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
 
     await assertRejects(
@@ -486,7 +979,7 @@ describe("tool/remote-mcp", () => {
   it("rejects successful list responses whose declared body exceeds the limit", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
 
     await assertRejects(
@@ -510,7 +1003,7 @@ describe("tool/remote-mcp", () => {
     let canceled = false;
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -539,7 +1032,7 @@ describe("tool/remote-mcp", () => {
   it("rejects JSON-RPC responses with a mismatched protocol version or request id", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
 
     await assertRejects(
@@ -576,7 +1069,7 @@ describe("tool/remote-mcp", () => {
   it("selects only the matching JSON-RPC response from an SSE stream", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
 
     const tools = await withMockFetch(
@@ -600,7 +1093,7 @@ describe("tool/remote-mcp", () => {
   it("rejects malformed tool entries atomically instead of returning a partial catalog", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
 
     await assertRejects(
@@ -642,7 +1135,7 @@ describe("tool/remote-mcp", () => {
     for (const tool of cases) {
       const source = createRemoteMCPToolSource({
         id: "docs",
-        endpoint: "https://mcp.test",
+        endpoint: "https://93.184.216.34",
       });
       await assertRejects(
         () =>
@@ -664,7 +1157,7 @@ describe("tool/remote-mcp", () => {
   it("rejects compact remote schemas above the structural node budget", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
     const emptyValue: unknown[] = [];
     const inputSchema = { enum: new Array(4_096).fill(emptyValue) };
@@ -691,7 +1184,7 @@ describe("tool/remote-mcp", () => {
     let callCount = 0;
     const duplicateSource = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
 
     await assertRejects(
@@ -721,7 +1214,7 @@ describe("tool/remote-mcp", () => {
     callCount = 0;
     const repeatedCursorSource = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
     await assertRejects(
       () =>
@@ -748,7 +1241,7 @@ describe("tool/remote-mcp", () => {
   it("rejects catalogs above the definition and pagination ceilings", async () => {
     const oversizedCatalogSource = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
     const tools = Array.from(
       { length: MAX_REMOTE_MCP_TOOL_DEFINITIONS + 1 },
@@ -777,7 +1270,7 @@ describe("tool/remote-mcp", () => {
     let page = 0;
     const endlessSource = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
     await assertRejects(
       () =>
@@ -801,7 +1294,7 @@ describe("tool/remote-mcp", () => {
   it("rejects unsafe endpoints and disables redirects for authenticated requests", async () => {
     const credentialEndpointSource = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://user:secret@mcp.test",
+      endpoint: "https://user:secret@93.184.216.34",
     });
     await assertRejects(
       () => credentialEndpointSource.listTools(),
@@ -812,40 +1305,43 @@ describe("tool/remote-mcp", () => {
     let redirectMode: RequestRedirect | undefined;
     const redirectSafeSource = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
       headers: { Authorization: "Bearer remote-token" },
-      fetch: (async (_input: RequestInfo | URL, init?: RequestInit) => {
-        redirectMode = init?.redirect;
-        return Response.json({
-          jsonrpc: "2.0",
-          id: "docs:tools:list",
-          result: { tools: [] },
-        });
-      }) as typeof fetch,
     });
 
-    await redirectSafeSource.listTools();
-    assertEquals(redirectMode, "error");
+    await withMockFetch(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      redirectMode = init?.redirect;
+      return Response.json({
+        jsonrpc: "2.0",
+        id: "docs:tools:list",
+        result: { tools: [] },
+      });
+    }, async () => await redirectSafeSource.listTools());
+    // The guarded transport must observe redirects itself so it can reject the
+    // destination before fetch follows it. The caller-visible mode remains
+    // `error`: any redirect response is rejected by guardedOutboundFetch.
+    assertEquals(redirectMode, "manual");
   });
 
   it("rejects cyclic outbound arguments before invoking the remote fetch", async () => {
     let fetchCalled = false;
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
-      fetch: (async () => {
-        fetchCalled = true;
-        return Response.json({});
-      }) as typeof fetch,
+      endpoint: "https://93.184.216.34",
     });
-    const cyclic: Record<string, unknown> = {};
-    cyclic.self = cyclic;
+    await withMockFetch(async () => {
+      fetchCalled = true;
+      return Response.json({});
+    }, async () => {
+      const cyclic: Record<string, unknown> = {};
+      cyclic.self = cyclic;
 
-    await assertRejects(
-      () => source.executeTool("search_docs", cyclic),
-      TypeError,
-      "bounded JSON object",
-    );
+      await assertRejects(
+        () => source.executeTool("search_docs", cyclic),
+        TypeError,
+        "bounded JSON object",
+      );
+    });
     assertEquals(fetchCalled, false);
   });
 });

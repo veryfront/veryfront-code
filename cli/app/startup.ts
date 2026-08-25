@@ -1,7 +1,13 @@
 /**
- * Startup Animation
+ * Startup Progress
  *
- * Shows the startup animation with boxed view and shimmer effect.
+ * The three-step checklist shown while the CLI comes up. Steps advance when
+ * the work they name actually finishes. The module owns the spinner cadence
+ * but never the pace. Nothing here sleeps, so startup costs what the work
+ * costs.
+ *
+ * The clock and the terminal are injected, so the frame sequence is reachable
+ * from a test without a real terminal or a real wait.
  */
 
 import { writeStdout } from "veryfront/platform";
@@ -11,36 +17,91 @@ import {
   incrementFrame,
   renderStartup,
   setStepActive,
+  type StartupState,
 } from "./views/startup.ts";
 
+/** How often the active step's spinner advances. */
+export const SPINNER_INTERVAL_MS = 60;
+
+export interface StartupProgress {
+  /** Mark the step at `index` active, everything before it is done. */
+  begin(index: number): void;
+  /** Mark every step done, paint a final time, and stop animating. */
+  finish(): void;
+  /**
+   * Stop animating without claiming success, leaving the failed step visible
+   * as the last one that was active. Use when startup threw.
+   */
+  stop(): void;
+}
+
+/** The terminal and the clock, injected so tests can supply their own. */
+export interface StartupProgressDeps {
+  write: (text: string) => void;
+  setInterval: (fn: () => void, ms: number) => number;
+  clearInterval: (handle: number) => void;
+}
+
+function platformDeps(): StartupProgressDeps {
+  return {
+    write: (text) => writeStdout(text),
+    setInterval: (fn, ms) => setInterval(fn, ms),
+    clearInterval: (handle) => clearInterval(handle),
+  };
+}
+
 /**
- * Show startup animation with boxed view and shimmer effect
+ * Begin painting the startup checklist. Returns a handle the caller advances
+ * as each piece of real work completes.
+ *
+ * Stays in the alternate screen on `finish()` so the dashboard can take over
+ * in place.
  */
-export async function showStartup(steps: string[]): Promise<void> {
-  const write = (text: string): void => writeStdout(text);
+export function startStartupProgress(
+  stepLabels: string[],
+  deps: StartupProgressDeps = platformDeps(),
+): StartupProgress {
+  let state: StartupState = createStartupState(stepLabels);
+  let ticking = true;
 
-  write(screen.altOn + cursor.hide);
+  const paint = (): void => {
+    deps.write(cursor.moveTo(1, 1) + screen.clearDown + "\n" + renderStartup(state));
+  };
 
-  let startupState = createStartupState(steps);
+  deps.write(screen.altOn + cursor.hide);
+  paint();
 
-  // Show each step with spinning avatar animation
-  for (let i = 0; i < steps.length; i++) {
-    startupState = setStepActive(startupState, i);
+  const handle = deps.setInterval(() => {
+    state = incrementFrame(state);
+    paint();
+  }, SPINNER_INTERVAL_MS);
 
-    // Animate spinning avatar (16 frames at 60ms = ~1s per step for full rotation)
-    const framesPerStep = 16;
-    for (let f = 0; f < framesPerStep; f++) {
-      write(cursor.moveTo(1, 1) + screen.clearDown + "\n" + renderStartup(startupState));
-      startupState = incrementFrame(startupState);
-      await new Promise((r) => setTimeout(r, 60));
-    }
-  }
+  return {
+    begin(index: number): void {
+      if (!ticking) return;
+      state = setStepActive(state, index);
+      paint();
+    },
 
-  // Mark all steps done - logo fills up and holds before transitioning
-  startupState = setStepActive(startupState, steps.length);
-  write(cursor.moveTo(1, 1) + screen.clearDown + "\n" + renderStartup(startupState));
-  await new Promise((r) => setTimeout(r, 400));
+    finish(): void {
+      if (!ticking) return;
+      ticking = false;
+      // Past the last index, every step reads as done.
+      state = setStepActive(state, stepLabels.length);
+      deps.clearInterval(handle);
+      paint();
+    },
 
-  // Don't exit alternate screen - let app.start() continue in it
-  // Dashboard takes over directly from here
+    stop(): void {
+      if (!ticking) return;
+      ticking = false;
+      deps.clearInterval(handle);
+      paint();
+      // finish() stays in the alternate screen because the dashboard takes
+      // over in place. A failure does not: the caller rethrows, so leaving it
+      // on would print the error into a buffer nobody sees and exit with the
+      // cursor still hidden.
+      deps.write(cursor.show + screen.altOff);
+    },
+  };
 }

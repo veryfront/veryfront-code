@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { schedule } from "./factory.ts";
@@ -69,6 +69,30 @@ describe("schedule/factory", () => {
       concurrencyPolicy: "Forbid",
     });
     assertEquals(isScheduleDefinition(definition), true);
+  });
+
+  it("treats undefined non-agent conversation fields as omitted", () => {
+    const taskDefinition = schedule({
+      id: "conditional-task",
+      schedule: "0 */6 * * *",
+      target: {
+        kind: "task",
+        id: "run-triage-sweep",
+        conversationMode: undefined,
+      },
+    });
+    const workflowDefinition = schedule({
+      id: "conditional-workflow",
+      schedule: "0 */6 * * *",
+      target: {
+        kind: "workflow",
+        id: "billing/sync",
+        conversationId: undefined,
+      },
+    });
+
+    assertEquals(taskDefinition.target, { kind: "task", id: "run-triage-sweep" });
+    assertEquals(workflowDefinition.target, { kind: "workflow", id: "billing/sync" });
   });
 
   it("preserves optional execution controls", () => {
@@ -187,6 +211,14 @@ describe("schedule/factory", () => {
           { ...base, ["line\nbreak"]: true },
           'Schedule configuration["line\\nbreak"] is not supported.',
         ],
+        [
+          { ...base, ["x".repeat(100)]: true },
+          `Schedule configuration["${"x".repeat(80)}…"] is not supported.`,
+        ],
+        [
+          { ...base, [`${"x".repeat(79)}\u{1F600}${"y".repeat(20)}`]: true },
+          `Schedule configuration["${"x".repeat(79)}…"] is not supported.`,
+        ],
       ] as const
     ) {
       assertThrows(
@@ -260,15 +292,21 @@ describe("schedule/factory", () => {
   });
 
   it("rejects malformed schedule health configuration", () => {
+    const positiveIntegerMessage =
+      "Schedule health.maxStalenessSeconds must be a positive integer within the safe integer range.";
+
     for (
-      const health of [
-        {},
-        { maxStalenessSeconds: 0 },
-        { maxStalenessSeconds: 1.5 },
-        { maxStalenessSeconds: 60, unexpected: true },
-      ]
+      const [health, message] of [
+        [{}, positiveIntegerMessage],
+        [{ maxStalenessSeconds: 0 }, positiveIntegerMessage],
+        [{ maxStalenessSeconds: 1.5 }, positiveIntegerMessage],
+        [
+          { maxStalenessSeconds: 60, unexpected: true },
+          "Schedule health.unexpected is not supported.",
+        ],
+      ] as const
     ) {
-      assertThrows(
+      const error = assertThrows(
         () =>
           schedule({
             id: "triage-sweep",
@@ -276,7 +314,19 @@ describe("schedule/factory", () => {
             target: { kind: "task", id: "run-triage-sweep" },
             health: health as never,
           }),
-        Error,
+        VeryfrontError,
+        message,
+        `health ${JSON.stringify(health)} must be rejected with the expected message`,
+      );
+      assertInstanceOf(
+        error,
+        VeryfrontError,
+        `health ${JSON.stringify(health)} must be rejected with a VeryfrontError`,
+      );
+      assertEquals(
+        error.slug,
+        "schedule-config-invalid",
+        `health ${JSON.stringify(health)} must carry the schedule-config-invalid slug`,
       );
     }
   });
@@ -428,7 +478,7 @@ describe("schedule/factory", () => {
             },
           ] as never,
         }),
-      Error,
+      VeryfrontError,
       "resources[0].id is required.",
     );
 
@@ -446,7 +496,7 @@ describe("schedule/factory", () => {
             },
           ] as never,
         }),
-      Error,
+      VeryfrontError,
       "resources[0].parent must be an object.",
     );
 
@@ -464,7 +514,7 @@ describe("schedule/factory", () => {
             },
           ],
         }),
-      Error,
+      VeryfrontError,
       "resources[0].parent.kind is required.",
     );
 
@@ -486,7 +536,7 @@ describe("schedule/factory", () => {
             },
           ],
         }),
-      Error,
+      VeryfrontError,
       "resources[0].parent.id is required.",
     );
 
@@ -504,7 +554,7 @@ describe("schedule/factory", () => {
             },
           ],
         }),
-      Error,
+      VeryfrontError,
       "integration must use a lowercase integration identifier",
     );
 
@@ -522,7 +572,7 @@ describe("schedule/factory", () => {
             },
           ],
         }),
-      Error,
+      VeryfrontError,
       "resources[0].kind must use a lowercase resource kind",
     );
   });
@@ -547,7 +597,7 @@ describe("schedule/factory", () => {
             },
           ],
         }),
-      Error,
+      VeryfrontError,
       "duplicate integration slack",
     );
   });
@@ -635,7 +685,7 @@ describe("schedule/factory", () => {
             tokenId: "must-not-be-source-owned",
           }] as never,
         }),
-      Error,
+      VeryfrontError,
       "integrationRequirements[0].tokenId is not supported",
     );
   });
@@ -943,9 +993,432 @@ describe("schedule/factory", () => {
             target: { kind: "workflow", id: "escalate-ticket" },
           },
         ),
+        {
+          id: "daily-triage",
+          schedule: "0 8 * * mon-fri",
+          target: { kind: "workflow", id: "escalate-ticket" },
+        },
+        {
+          id: "daily-triage",
+          schedule: "  0 8 * * 1-5  ",
+          target: { kind: "workflow", id: "escalate-ticket" },
+        },
       ]
     ) {
       assertEquals(isScheduleDefinition(value), false);
     }
+  });
+});
+
+describe("schedule/factory agent targets", () => {
+  const conversationId = "11111111-1111-4111-8111-111111111111";
+
+  it("carries agent conversation addressing and message content", () => {
+    const definition = schedule({
+      id: "triage-new-cases",
+      schedule: "*/10 * * * *",
+      target: { kind: "agent", id: "case-triage", conversationMode: "create_new" },
+      agentMessage: { prompt: "Triage every open case created since the last run." },
+    });
+
+    assertEquals(definition, {
+      id: "triage-new-cases",
+      schedule: "*/10 * * * *",
+      target: { kind: "agent", id: "case-triage", conversationMode: "create_new" },
+      agentMessage: { prompt: "Triage every open case created since the last run." },
+    });
+    assertEquals(isScheduleDefinition(definition), true);
+  });
+
+  it("carries an existing conversation id alongside its mode", () => {
+    const definition = schedule({
+      id: "triage-new-cases",
+      schedule: "*/10 * * * *",
+      target: {
+        kind: "agent",
+        id: "case-triage",
+        conversationMode: "existing",
+        conversationId,
+      },
+    });
+
+    assertEquals(definition.target, {
+      kind: "agent",
+      id: "case-triage",
+      conversationMode: "existing",
+      conversationId,
+    });
+    assertEquals(isScheduleDefinition(definition), true);
+  });
+
+  it("leaves an agent schedule without conversation or message fields unchanged", () => {
+    const definition = schedule({
+      id: "triage-new-cases",
+      schedule: "*/10 * * * *",
+      target: { kind: "agent", id: "case-triage" },
+    });
+
+    assertEquals(definition, {
+      id: "triage-new-cases",
+      schedule: "*/10 * * * *",
+      target: { kind: "agent", id: "case-triage" },
+    });
+    assertEquals(isScheduleDefinition(definition), true);
+  });
+
+  it("keeps the legacy input._schedule_target conversation mapping working", () => {
+    const definition = schedule({
+      id: "triage-new-cases",
+      schedule: "*/10 * * * *",
+      target: { kind: "agent", id: "case-triage" },
+      input: { _schedule_target: { conversationMode: "create_new" } },
+    });
+
+    assertEquals(definition.target, { kind: "agent", id: "case-triage" });
+    assertEquals(definition.input, {
+      _schedule_target: { conversationMode: "create_new" },
+    });
+    assertEquals(isScheduleDefinition(definition), true);
+  });
+
+  it("preserves non-agent input fields named _schedule_target as ordinary JSON", () => {
+    for (
+      const [target, legacyValue] of [
+        [{ kind: "task", id: "sync-helpdesk" }, "create_new"],
+        [{ kind: "workflow", id: "billing/sync" }, ["create_new"]],
+        [
+          { kind: "task", id: "sync-helpdesk" },
+          { conversationmode: "existing", applicationField: true },
+        ],
+      ] as const
+    ) {
+      const definition = schedule({
+        id: "sync-helpdesk",
+        schedule: "*/10 * * * *",
+        target,
+        input: { _schedule_target: legacyValue, applicationPayload: true },
+      });
+
+      assertEquals(definition.target, target);
+      assertEquals(definition.input, {
+        _schedule_target: legacyValue,
+        applicationPayload: true,
+      });
+      assertEquals(isScheduleDefinition(definition), true);
+    }
+  });
+
+  it("accepts the same conversation pair declared on target and input._schedule_target", () => {
+    const definition = schedule({
+      id: "triage-new-cases",
+      schedule: "*/10 * * * *",
+      target: {
+        kind: "agent",
+        id: "case-triage",
+        conversationMode: "existing",
+        conversationId,
+      },
+      input: {
+        _schedule_target: { conversationMode: "existing", conversationId },
+      },
+    });
+
+    assertEquals(definition.target, {
+      kind: "agent",
+      id: "case-triage",
+      conversationMode: "existing",
+      conversationId,
+    });
+    assertEquals(definition.input, {
+      _schedule_target: { conversationMode: "existing", conversationId },
+    });
+    assertEquals(isScheduleDefinition(definition), true);
+  });
+
+  it("rejects a conversation mode that disagrees with input._schedule_target", () => {
+    assertThrows(
+      () =>
+        schedule({
+          id: "triage-new-cases",
+          schedule: "*/10 * * * *",
+          target: { kind: "agent", id: "case-triage", conversationMode: "create_new" },
+          input: { _schedule_target: { conversationMode: "none" } },
+        }),
+      VeryfrontError,
+      "Schedule target.conversationMode and input._schedule_target.conversationMode are both set to different values. Declare it in one place.",
+    );
+  });
+
+  it("rejects a conversation id that disagrees with input._schedule_target", () => {
+    assertThrows(
+      () =>
+        schedule({
+          id: "triage-new-cases",
+          schedule: "*/10 * * * *",
+          target: {
+            kind: "agent",
+            id: "case-triage",
+            conversationMode: "existing",
+            conversationId,
+          },
+          input: {
+            _schedule_target: {
+              conversationMode: "existing",
+              conversationId: "22222222-2222-4222-8222-222222222222",
+            },
+          },
+        }),
+      VeryfrontError,
+      "Schedule target.conversationId and input._schedule_target.conversationId are both set to different values. Declare it in one place.",
+    );
+  });
+
+  it("rejects invalid conversation addressing in the legacy input._schedule_target channel", () => {
+    for (
+      const [legacyTarget, message] of [
+        [
+          null,
+          "Schedule input._schedule_target must be an object.",
+        ],
+        [
+          "create_new",
+          "Schedule input._schedule_target must be an object.",
+        ],
+        [
+          ["create_new"],
+          "Schedule input._schedule_target must be an object.",
+        ],
+        [
+          { conversationMode: "bogus" },
+          "Schedule input._schedule_target.conversationMode must be create_new, existing, or none.",
+        ],
+        [
+          { conversationMode: "existing" },
+          "Schedule input._schedule_target.conversationId is required when conversationMode is existing.",
+        ],
+        [
+          { conversationmode: "existing" },
+          "Schedule input._schedule_target.conversationmode is not supported.",
+        ],
+        [
+          { conversationMode: "create_new", conversationId },
+          "Schedule input._schedule_target.conversationId is allowed only when conversationMode is existing.",
+        ],
+        [
+          { conversationMode: "existing", conversationId: "not-a-uuid" },
+          "Schedule input._schedule_target.conversationId must be a UUID or null.",
+        ],
+      ] as const
+    ) {
+      assertThrows(
+        () =>
+          schedule({
+            id: "triage-new-cases",
+            schedule: "*/10 * * * *",
+            target: { kind: "agent", id: "case-triage" },
+            input: { _schedule_target: legacyTarget },
+          }),
+        VeryfrontError,
+        message,
+      );
+    }
+  });
+
+  it("keeps every well-formed legacy-only conversation declaration valid and unchanged", () => {
+    for (
+      const legacyTarget of [
+        { conversationMode: "create_new" },
+        { conversationMode: "none" },
+        { conversationMode: "existing", conversationId },
+        { conversationMode: "create_new", conversationId: null },
+      ] as const
+    ) {
+      const definition = schedule({
+        id: "triage-new-cases",
+        schedule: "*/10 * * * *",
+        target: { kind: "agent", id: "case-triage" },
+        input: { _schedule_target: { ...legacyTarget } },
+      });
+
+      assertEquals(definition.target, { kind: "agent", id: "case-triage" });
+      assertEquals(definition.input, { _schedule_target: { ...legacyTarget } });
+      assertEquals(isScheduleDefinition(definition), true);
+    }
+  });
+
+  it("accepts the same prompt declared on agentMessage and input", () => {
+    const definition = schedule({
+      id: "triage-new-cases",
+      schedule: "*/10 * * * *",
+      target: { kind: "agent", id: "case-triage" },
+      agentMessage: { prompt: "Triage every open case." },
+      input: { prompt: "Triage every open case." },
+    });
+
+    assertEquals(definition.agentMessage, { prompt: "Triage every open case." });
+    assertEquals(definition.input, { prompt: "Triage every open case." });
+    assertEquals(isScheduleDefinition(definition), true);
+  });
+
+  it("rejects a prompt that disagrees with the legacy input.prompt channel", () => {
+    assertThrows(
+      () =>
+        schedule({
+          id: "triage-new-cases",
+          schedule: "*/10 * * * *",
+          target: { kind: "agent", id: "case-triage" },
+          agentMessage: { prompt: "Triage every open case." },
+          input: { prompt: "Something else." },
+        }),
+      VeryfrontError,
+      "Schedule agentMessage.prompt and input.prompt are both set to different values. Declare it in one place.",
+    );
+  });
+
+  it("omits an agent message that carries no prompt", () => {
+    const definition = schedule({
+      id: "triage-new-cases",
+      schedule: "*/10 * * * *",
+      target: { kind: "agent", id: "case-triage" },
+      agentMessage: {},
+    });
+
+    assertEquals(definition, {
+      id: "triage-new-cases",
+      schedule: "*/10 * * * *",
+      target: { kind: "agent", id: "case-triage" },
+    });
+    assertEquals(Object.hasOwn(definition, "agentMessage"), false);
+    assertEquals(isScheduleDefinition(definition), true);
+  });
+
+  it("rejects unsupported target keys instead of dropping them", () => {
+    for (
+      const [config, message] of [
+        [
+          {
+            id: "triage-new-cases",
+            schedule: "*/10 * * * *",
+            target: { kind: "agent", id: "case-triage", conversationmode: "create_new" },
+          },
+          "Schedule target.conversationmode is not supported.",
+        ],
+        [
+          {
+            id: "triage-new-cases",
+            schedule: "*/10 * * * *",
+            target: { kind: "task", id: "sync-helpdesk", conversationMode: "create_new" },
+          },
+          "Schedule target.conversationMode is not supported.",
+        ],
+        [
+          {
+            id: "triage-new-cases",
+            schedule: "*/10 * * * *",
+            target: { kind: "workflow", id: "escalate-ticket", conversationId },
+          },
+          "Schedule target.conversationId is not supported.",
+        ],
+      ] as const
+    ) {
+      assertThrows(() => schedule(config as never), VeryfrontError, message);
+    }
+  });
+
+  it("rejects invalid agent conversation relationships", () => {
+    for (
+      const [target, message] of [
+        [
+          { kind: "agent", id: "case-triage", conversationMode: "resume" },
+          "Schedule target.conversationMode must be create_new, existing, or none.",
+        ],
+        [
+          { kind: "agent", id: "case-triage", conversationMode: "existing" },
+          "Schedule target.conversationId is required when conversationMode is existing.",
+        ],
+        [
+          { kind: "agent", id: "case-triage", conversationMode: "create_new", conversationId },
+          "Schedule target.conversationId is allowed only when conversationMode is existing.",
+        ],
+        [
+          {
+            kind: "agent",
+            id: "case-triage",
+            conversationMode: "existing",
+            conversationId: "not-a-uuid",
+          },
+          "Schedule target.conversationId must be a UUID or null.",
+        ],
+      ] as const
+    ) {
+      assertThrows(
+        () =>
+          schedule(
+            { id: "triage-new-cases", schedule: "*/10 * * * *", target } as never,
+          ),
+        VeryfrontError,
+        message,
+      );
+    }
+  });
+
+  it("rejects agent messages on non-agent targets and invalid prompts", () => {
+    for (
+      const [config, message] of [
+        [
+          {
+            id: "triage-new-cases",
+            schedule: "*/10 * * * *",
+            target: { kind: "workflow", id: "escalate-ticket" },
+            agentMessage: { prompt: "Unused." },
+          },
+          "Schedule agentMessage is supported only for agent targets.",
+        ],
+        [
+          {
+            id: "triage-new-cases",
+            schedule: "*/10 * * * *",
+            target: { kind: "agent", id: "case-triage" },
+            agentMessage: { promptTemplate: "Unsupported." },
+          },
+          "Schedule agentMessage.promptTemplate is not supported.",
+        ],
+        [
+          {
+            id: "triage-new-cases",
+            schedule: "*/10 * * * *",
+            target: { kind: "agent", id: "case-triage" },
+            agentMessage: { prompt: "   " },
+          },
+          "Schedule agentMessage.prompt must be a non-empty string.",
+        ],
+        [
+          {
+            id: "triage-new-cases",
+            schedule: "*/10 * * * *",
+            target: { kind: "agent", id: "case-triage" },
+            agentMessage: { prompt: "a".repeat(20_001) },
+          },
+          "Schedule agentMessage.prompt must be at most 20000 characters.",
+        ],
+      ] as const
+    ) {
+      assertThrows(() => schedule(config as never), VeryfrontError, message);
+    }
+  });
+
+  it("keeps a multi-line prompt canonical across a definition round trip", () => {
+    const definition = schedule({
+      id: "triage-new-cases",
+      schedule: "*/10 * * * *",
+      target: { kind: "agent", id: "case-triage" },
+      agentMessage: { prompt: "Triage open cases.\nSummarize each one." },
+    });
+
+    assertEquals(isScheduleDefinition(definition), true);
+    assertEquals(
+      definition.agentMessage?.prompt,
+      "Triage open cases.\nSummarize each one.",
+    );
   });
 });

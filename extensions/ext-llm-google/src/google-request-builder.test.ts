@@ -5,7 +5,10 @@ import {
   buildGoogleGenerateContentRequest,
   type RuntimeToolDefinition,
 } from "./google-request-builder.ts";
-import { createGoogleProviderMetadata } from "./google-thought-signatures.ts";
+import {
+  createGoogleProviderMetadata,
+  reconcileGoogleProviderMetadata,
+} from "./google-thought-signatures.ts";
 
 function createWarningCollector() {
   const warnings: Array<{
@@ -55,6 +58,19 @@ function buildGoogleAssistantReplay(
   );
 }
 
+function buildGoogleAssistantReplayFromMetadata(
+  providerMetadata: Record<string, unknown>,
+  content: readonly RuntimeAssistantContentPart[],
+) {
+  return buildGoogleGenerateContentRequest(
+    "google",
+    {
+      prompt: [{ role: "assistant", content, providerMetadata }],
+    },
+    createWarningCollector(),
+  );
+}
+
 function nestedGoogleArguments(wrappers: number): Record<string, unknown> {
   let value: Record<string, unknown> = { leaf: true };
   for (let index = 0; index < wrappers; index += 1) {
@@ -68,6 +84,18 @@ function assertJsonEquals(actual: unknown, expected: unknown): void {
     JSON.parse(JSON.stringify(actual)),
     JSON.parse(JSON.stringify(expected)),
   );
+}
+
+async function runNoBrandEval(script: string): Promise<unknown> {
+  const output = await new Deno.Command(Deno.execPath(), {
+    args: ["eval", "--config=deno.json", script],
+    cwd: new URL("../../../", import.meta.url),
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  const stderr = new TextDecoder().decode(output.stderr);
+  assertEquals(output.code, 0, stderr);
+  return JSON.parse(new TextDecoder().decode(output.stdout));
 }
 
 describe("ext-llm-google/google-request-builder", () => {
@@ -211,7 +239,9 @@ describe("ext-llm-google/google-request-builder", () => {
           allowedFunctionNames: ["lookup"],
         },
       },
-      generationConfig: { temperature: 0.9 },
+      // Provider options replace generationConfig, but the requested response
+      // format is re-pinned afterwards so an override cannot drop it.
+      generationConfig: { temperature: 0.9, responseMimeType: "application/json" },
       labels: { tenant: "acme" },
       cachedContent: "cachedContents/abc",
       safetySettings: [{ category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }],
@@ -221,8 +251,69 @@ describe("ext-llm-google/google-request-builder", () => {
     assertEquals(warnings.drain().map((warning) => warning.setting), [
       "presencePenalty",
       "frequencyPenalty",
-      "responseFormat",
     ]);
+  });
+
+  it("pins structured JSON Schema after provider generationConfig overrides", () => {
+    const schema = {
+      type: "object",
+      $defs: {
+        forecast: {
+          type: "object",
+          properties: { city: { type: "string" } },
+          required: ["city"],
+        },
+      },
+      $ref: "#/$defs/forecast",
+    };
+
+    const body = buildGoogleGenerateContentRequest(
+      "google",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Forecast" }] }],
+        responseFormat: { type: "json_schema", name: "Forecast", schema },
+        providerOptions: {
+          google: {
+            generationConfig: {
+              temperature: 0.9,
+              responseMimeType: "text/plain",
+              responseSchema: { type: "object", properties: {} },
+              responseJsonSchema: { type: "string" },
+            },
+          },
+        },
+      },
+      createWarningCollector(),
+    );
+
+    assertEquals(body.generationConfig, {
+      temperature: 0.9,
+      responseMimeType: "application/json",
+      responseJsonSchema: schema,
+    });
+  });
+
+  it("normalizes provider generationConfig before pinning structured output", () => {
+    const schema = { type: "object", properties: { ok: { type: "boolean" } } };
+
+    const body = buildGoogleGenerateContentRequest(
+      "google",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Status" }] }],
+        responseFormat: { type: "json_schema", name: "Status", schema },
+        providerOptions: {
+          google: {
+            generationConfig: ["bad", "shape"],
+          },
+        },
+      },
+      createWarningCollector(),
+    );
+
+    assertEquals(body.generationConfig, {
+      responseMimeType: "application/json",
+      responseJsonSchema: schema,
+    });
   });
 
   it("accepts only the explicitly supported Google provider-tool schemas", () => {
@@ -482,6 +573,90 @@ describe("ext-llm-google/google-request-builder", () => {
       role: "model",
       parts: rawAssistantParts,
     }]);
+  });
+
+  it("reconciles suppressed calls without stripping surviving signatures", () => {
+    const suppressedPart = {
+      functionCall: { id: "stale-1", name: "missing_tool", args: {} },
+      thoughtSignature: "stale-signature",
+    };
+    const survivingPart = {
+      functionCall: { id: "lookup-1", name: "lookup", args: { query: "Veryfront" } },
+      thoughtSignature: "surviving-signature",
+    };
+    const metadata = createGoogleProviderMetadata([suppressedPart, survivingPart]);
+    if (metadata === undefined) {
+      throw new Error("Expected signed Google provider metadata");
+    }
+
+    assertJsonEquals(
+      reconcileGoogleProviderMetadata(metadata, [{ id: "stale-1", name: "missing_tool" }]),
+      {
+        google: {
+          rawAssistantParts: [survivingPart],
+          rawAssistantPartIndexes: [1],
+        },
+      },
+    );
+    assertEquals(
+      reconcileGoogleProviderMetadata(metadata, [{ id: "absent", name: "missing_tool" }]),
+      metadata,
+    );
+    assertEquals(
+      reconcileGoogleProviderMetadata(metadata, [
+        { id: "stale-1", name: "missing_tool" },
+        { id: "lookup-1", name: "lookup" },
+      ]),
+      undefined,
+    );
+
+    const unsignedSurvivor = createGoogleProviderMetadata([
+      suppressedPart,
+      { functionCall: { id: "lookup-1", name: "lookup", args: {} } },
+    ]);
+    if (unsignedSurvivor === undefined) {
+      throw new Error("Expected mixed Google provider metadata");
+    }
+    assertThrows(
+      () =>
+        reconcileGoogleProviderMetadata(unsignedSurvivor, [{
+          id: "stale-1",
+          name: "missing_tool",
+        }]),
+      TypeError,
+      "could not preserve a surviving signed tool call",
+    );
+  });
+
+  it("keeps anonymous raw-position ids stable after suppressing an earlier call", () => {
+    const suppressedPart = {
+      functionCall: { name: "missing_tool", args: {} },
+      thoughtSignature: "stale-signature",
+    };
+    const survivingPart = {
+      functionCall: { name: "lookup", args: { query: "Veryfront" } },
+      thoughtSignature: "surviving-signature",
+    };
+    const metadata = createGoogleProviderMetadata([suppressedPart, survivingPart]);
+    if (metadata === undefined) {
+      throw new Error("Expected signed Google provider metadata");
+    }
+    const reconciled = reconcileGoogleProviderMetadata(metadata, [{
+      id: "tool-0",
+      name: "missing_tool",
+    }]);
+    if (reconciled === undefined) {
+      throw new Error("Expected surviving Google provider metadata");
+    }
+
+    const body = buildGoogleAssistantReplayFromMetadata(reconciled, [{
+      type: "tool-call",
+      toolCallId: "tool-1",
+      toolName: "lookup",
+      input: { query: "Veryfront" },
+    }]);
+
+    assertJsonEquals(body.contents, [{ role: "model", parts: [survivingPart] }]);
   });
 
   it("accepts raw-position and legacy occurrence ids while preserving exact correlation", () => {
@@ -1325,6 +1500,68 @@ describe("ext-llm-google/google-request-builder", () => {
       "Google provider metadata namespace must be an enumerable data property",
     );
     assertEquals(googleGetterReads, 0);
+  });
+
+  it("accepts plain thought-signature and grounding metadata without Proxy detection", async () => {
+    const result = await runNoBrandEval(`
+      Object.defineProperty(globalThis, "caches", {
+        configurable: true,
+        value: {},
+      });
+      Object.defineProperty(globalThis, "WebSocketPair", {
+        configurable: true,
+        value: function WebSocketPair() {},
+      });
+
+      const { canIdentifyProxyWithoutHooks } = await import(
+        "./src/platform/compat/error-introspection.ts"
+      );
+      const { buildGoogleGenerateContentRequest } = await import(
+        "./extensions/ext-llm-google/src/google-request-builder.ts"
+      );
+      const { createGoogleProviderMetadata } = await import(
+        "./extensions/ext-llm-google/src/google-thought-signatures.ts"
+      );
+
+      const metadata = createGoogleProviderMetadata(
+        [{ text: "Private thought.", thought: true, thoughtSignature: "sig_edge" }],
+        { source: "google-search" },
+      );
+      const body = buildGoogleGenerateContentRequest(
+        "google",
+        {
+          prompt: [{
+            role: "assistant",
+            content: [{ type: "reasoning", text: "Private thought." }],
+            providerMetadata: metadata,
+          }],
+        },
+        { push() {}, drain() { return []; } },
+      );
+      console.log(JSON.stringify({
+        canIdentifyProxyWithoutHooks,
+        metadata,
+        parts: body.contents[0].parts,
+      }));
+    `);
+    assertEquals(result, {
+      canIdentifyProxyWithoutHooks: false,
+      metadata: {
+        google: {
+          rawAssistantParts: [{
+            text: "Private thought.",
+            thought: true,
+            thoughtSignature: "sig_edge",
+          }],
+          groundingMetadata: { source: "google-search" },
+        },
+      },
+      parts: [{
+        text: "Private thought.",
+        thought: true,
+        thoughtSignature: "sig_edge",
+      }],
+    });
   });
 
   it("enforces the exact Google raw-part count boundary", () => {

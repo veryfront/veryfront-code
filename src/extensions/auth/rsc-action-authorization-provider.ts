@@ -21,7 +21,7 @@ const objectPrototype = Object.prototype;
 const ownKeys = Reflect.ownKeys;
 const NativeTypeError = TypeError;
 
-function hasOwn(value: object, key: PropertyKey): boolean {
+function hasOwn(value: PropertyDescriptor, key: PropertyKey): boolean {
   return apply(hasOwnProperty, value, [key]) as boolean;
 }
 

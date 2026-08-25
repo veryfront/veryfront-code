@@ -3,7 +3,7 @@ import type { HandlerContext } from "../../types.ts";
 import type { SSRRenderOptions, SSRServiceLike } from "../../../services/rendering/ssr.service.ts";
 
 export function createMockAdapter(): RuntimeAdapter {
-  return {
+  const adapter = {
     id: "memory",
     name: "mock",
     capabilities: {
@@ -31,7 +31,8 @@ export function createMockAdapter(): RuntimeAdapter {
     },
     server: { createHandler: () => () => new Response() },
     serve: () => Promise.resolve({ close: () => Promise.resolve() } as any),
-  } as unknown as RuntimeAdapter;
+  };
+  return adapter as RuntimeAdapter & typeof adapter;
 }
 
 export function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
@@ -39,7 +40,6 @@ export function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext
     projectDir: "/tmp/test-project",
     adapter: createMockAdapter(),
     securityConfig: null,
-    cspUserHeader: null,
     ...overrides,
   };
 }

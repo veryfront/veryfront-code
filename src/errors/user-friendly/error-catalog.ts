@@ -1,4 +1,5 @@
 import type { ErrorSolution as CatalogErrorSolution } from "../catalog/types.ts";
+import { buildErrorDocsUrl } from "../diagnostic-policy.ts";
 
 export type ErrorSolution = Pick<CatalogErrorSolution, "message" | "steps" | "example" | "docs">;
 
@@ -70,7 +71,7 @@ export default async function ServerComponent() {
 'use client';
 export default function ClientComponent({ data }) {
 }`,
-    docs: "https://veryfront.com/docs/errors/client-boundary-violation",
+    docs: buildErrorDocsUrl("client-boundary-violation"),
   },
 
   "import-not-found": {

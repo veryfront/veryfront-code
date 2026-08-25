@@ -43,6 +43,12 @@ export const DEFAULT_LOGIN_TIMEOUT_MS = 120_000;
 export const SHUTDOWN_TIMEOUT_MS = 3_000;
 export const REQUEST_TIMEOUT_MS = 3_000;
 
+/**
+ * Dashboard page where users mint a Veryfront API token.
+ * `/settings/api-keys` is a legacy path that 301-redirects here.
+ */
+export const API_KEYS_URL = "veryfront.com/account/api-keys";
+
 export const CONFIG_DIR_NAME = "veryfront";
 export const TOKEN_FILE_NAME = "token";
 export const TOKEN_FILE_PERMISSIONS = 0o600;

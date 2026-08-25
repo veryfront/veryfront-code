@@ -11,17 +11,27 @@ import { SSRModuleLoader } from "./ssr-module-loader/index.ts";
 import { extractComponent } from "./extract-component.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveDependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { TransformedModuleCoordinator } from "./transformed-module-coordinator.ts";
+
+const transformedModuleFileSystem = createFileSystem();
+const transformedModuleCoordinator = new TransformedModuleCoordinator(
+  transformedModuleFileSystem,
+);
 
 export async function loadModuleFromSource(
   source: string,
   filePath: string,
   projectDir: string,
   adapter: RuntimeAdapter,
-  options?: LoadComponentOptions,
+  options: LoadComponentOptions,
 ): Promise<Record<string, unknown>> {
   const fileName = filePath.split("/").pop() ?? filePath;
   const projectId = options?.projectId ?? projectDir;
-  const dev = options?.dev ?? true;
+  // `dev` is required by the type, so a TypeScript caller cannot reach this
+  // without it. The `?? false` is the runtime half of the same rule: if an
+  // untyped caller ever supplies nothing, production is the safe landing.
+  const dev = options?.dev ?? false;
   const ssr = options?.ssr ?? true;
 
   return await withSpan(
@@ -46,11 +56,13 @@ export async function loadModuleFromSource(
           dev,
           contentSourceId: options?.contentSourceId,
           reactVersion: options?.reactVersion,
+          serverExternalPackages: options?.serverExternalPackages,
           moduleServerOrigin,
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
           dependencyPinningDependencies: dependencySnapshot.dependencies,
           dependencyPinningSource,
           mode: options?.mode,
+          signal: options?.signal,
         });
 
         return await loader.loadRawModule(filePath, source);
@@ -64,6 +76,7 @@ export async function loadModuleFromSource(
         vendorBundleHash: options?.vendorBundleHash,
         ssr: false,
         reactVersion: options?.reactVersion,
+        serverExternalPackages: options?.serverExternalPackages,
         dependencyPinningCacheKey: dependencySnapshot.cacheKey,
         dependencyPinningDependencies: dependencySnapshot.dependencies,
         dependencyPinningSource,
@@ -82,11 +95,13 @@ export async function loadModuleFromSource(
       const componentFile = join(tmpDir, normalizeModulePath(relativeFilePath));
 
       const componentDir = componentFile.substring(0, componentFile.lastIndexOf("/"));
-      const fs = createFileSystem();
-      await fs.mkdir(componentDir, { recursive: true });
-      await fs.writeTextFile(componentFile, transformedCode);
-
-      return await import(`file://${componentFile}?t=${Date.now()}`);
+      await transformedModuleFileSystem.mkdir(componentDir, { recursive: true });
+      return await transformedModuleCoordinator.importTransformedModule(
+        componentFile,
+        transformedCode,
+        await computeHash(transformedCode),
+        tmpDir,
+      );
     },
     {
       "react.file": fileName,
@@ -102,7 +117,7 @@ export async function loadComponentFromSource(
   filePath: string,
   projectDir: string,
   adapter: RuntimeAdapter,
-  options?: LoadComponentOptions,
+  options: LoadComponentOptions,
 ): Promise<React.ComponentType<Record<string, unknown>>> {
   const mod = await loadModuleFromSource(source, filePath, projectDir, adapter, options);
   return extractComponent(mod, filePath);

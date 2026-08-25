@@ -78,6 +78,22 @@ describe("agent/invoke-agent-child-runs", () => {
       ],
     });
 
+    assertEquals(
+      buildInvokeAgentChildRunStateDelta({ ...BASE_INPUT, status: "running" }).delta[0]?.op,
+      "replace",
+      "later lifecycle updates replace the existing entry rather than re-adding it",
+    );
+    assertEquals(
+      buildInvokeAgentChildRunStateDelta({ ...BASE_INPUT, status: "completed" }).delta[0]?.op,
+      "replace",
+      "a completed lifecycle update replaces the existing entry rather than re-adding it",
+    );
+    assertEquals(
+      buildInvokeAgentChildRunStateDelta({ ...BASE_INPUT, status: "completed" }).delta[0]?.path,
+      "/invokeAgentChildRuns/tool~1call~01",
+      "tool call id escaping is identical on the replace path",
+    );
+
     assertEquals(buildInvokeAgentChildRunProgressEvents(BASE_INPUT), [
       {
         type: "STATE_DELTA",

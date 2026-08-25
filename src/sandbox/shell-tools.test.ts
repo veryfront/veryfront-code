@@ -7,7 +7,9 @@ import {
   normalizeBashToolSet,
   renameSandboxFileTools,
 } from "./shell-tools.ts";
+import { createToolsFromHostDefinitions } from "#veryfront/tool/host-tools.ts";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
+import type { JsonSchema } from "#veryfront/tool/schema/json-schema.ts";
 
 describe("sandbox/shell-tools", () => {
   it("renames bash-tool file tools to sandbox-scoped names", () => {
@@ -23,12 +25,28 @@ describe("sandbox/shell-tools", () => {
     assertExists(tools.sandbox_read_file);
     assertStringIncludes(
       String(tools.sandbox_read_file.description),
-      "sandbox /workspace filesystem only",
+      "Read a file from the sandbox",
+    );
+    assertStringIncludes(
+      String(tools.sandbox_read_file.description),
+      "does NOT read project files stored in Veryfront",
+    );
+    assertStringIncludes(
+      String(tools.sandbox_read_file.description),
+      "get_file/get_files",
     );
     assertExists(tools.sandbox_write_file);
     assertStringIncludes(
       String(tools.sandbox_write_file.description),
-      "sandbox /workspace filesystem only",
+      "Write a file inside the sandbox",
+    );
+    assertStringIncludes(
+      String(tools.sandbox_write_file.description),
+      "does NOT update project files stored in Veryfront",
+    );
+    assertStringIncludes(
+      String(tools.sandbox_write_file.description),
+      "create_file/update_file",
     );
     assertEquals(tools.readFile, undefined);
     assertEquals(tools.writeFile, undefined);
@@ -108,6 +126,59 @@ describe("sandbox/shell-tools", () => {
     assertEquals(receivedToolCallId, "call_123");
   });
 
+  it("keeps typed properties alongside untyped sub-schemas", () => {
+    const normalized = normalizeBashToolSet({
+      bash: {
+        description: "Run commands",
+        inputSchemaJson: {
+          type: "object",
+          properties: {
+            command: { type: "string" },
+            options: { description: "extra" },
+          },
+          required: ["command"],
+        },
+      },
+    });
+
+    assertEquals(
+      normalized.bash?.inputSchemaJson,
+      {
+        type: "object",
+        properties: {
+          command: { type: "string" },
+          options: { description: "extra" },
+        },
+        required: ["command"],
+      },
+      "a typed property survives alongside an untyped but non-empty sub-schema",
+    );
+  });
+
+  it("round-trips nested JSON Schema keywords", () => {
+    const inputSchemaJson: JsonSchema = {
+      type: "object",
+      properties: {
+        tags: { type: "array", items: { type: "string" }, minItems: 1 },
+        mode: { type: "string", enum: ["fast", "slow"], default: "fast" },
+        target: { anyOf: [{ type: "string" }, { type: "number" }] },
+        pair: { type: "array", prefixItems: [{ type: "string" }, { type: "number" }] },
+        version: { const: 2 },
+      },
+      required: ["tags"],
+    };
+
+    const normalized = normalizeBashToolSet({
+      bash: { description: "Run commands", inputSchemaJson },
+    });
+
+    assertEquals(
+      normalized.bash?.inputSchemaJson,
+      inputSchemaJson,
+      "nested JSON Schema keywords round-trip through normalizeJsonSchema",
+    );
+  });
+
   it("uses the tool map key when bash-tool definitions omit an id", () => {
     const normalized = normalizeBashToolSet({
       bash: {
@@ -183,6 +254,40 @@ describe("sandbox/shell-tools", () => {
       properties: {},
       additionalProperties: true,
     });
+  });
+
+  it("materializes parser schemas with methods named like JSON Schema keywords", () => {
+    class ExternalParserSchema {
+      default = () => this;
+
+      parse(input: unknown) {
+        return input;
+      }
+    }
+
+    const createExternalTool = () => ({
+      description: "Use a sandbox tool",
+      inputSchema: new ExternalParserSchema(),
+      execute: () => ({ ok: true }),
+    });
+    const normalized = renameSandboxFileTools(
+      normalizeBashToolSet({
+        bash: createExternalTool(),
+        readFile: createExternalTool(),
+        writeFile: createExternalTool(),
+      }),
+    );
+
+    assertEquals(normalized.bash?.inputSchemaJson, {
+      type: "object",
+      properties: {},
+      additionalProperties: true,
+    });
+    assertEquals(Object.keys(createToolsFromHostDefinitions(normalized)), [
+      "bash",
+      "sandbox_read_file",
+      "sandbox_write_file",
+    ]);
   });
 
   it("handles invalid definitions gracefully", () => {

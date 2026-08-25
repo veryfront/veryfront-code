@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { airtableConfig } from "../oauth/providers/common.ts";
 import { connectors, icons } from "./_data.ts";
@@ -353,8 +358,40 @@ describe("integration endpoint specs", () => {
     assertEquals(toolIds.includes("update_record"), false);
     assertEquals(toolIds.includes("delete_record"), false);
     assertEquals(getTool("salesforce", "create_case").requiresWrite, true);
+    assertEquals(
+      Object.keys(getTool("salesforce", "create_case").endpoint?.body ?? {}).sort(),
+      [
+        "AccountId",
+        "ContactId",
+        "Description",
+        "Origin",
+        "OwnerId",
+        "Priority",
+        "Reason",
+        "Status",
+        "Subject",
+        "SuppliedEmail",
+        "Type",
+      ],
+    );
     assertEquals(getTool("salesforce", "add_case_comment").endpoint?.method, "POST");
     assertEquals(getTool("salesforce", "update_case").endpoint?.method, "PATCH");
+    assertEquals(
+      Object.keys(getTool("salesforce", "update_case").endpoint?.body ?? {}).sort(),
+      [
+        "AccountId",
+        "ContactId",
+        "Description",
+        "Origin",
+        "OwnerId",
+        "Priority",
+        "Reason",
+        "Status",
+        "Subject",
+        "SuppliedEmail",
+        "Type",
+      ],
+    );
 
     const servicenowQuery = getTool("servicenow", "query_table");
     assertEquals(servicenowQuery.requiresWrite, false);
@@ -392,6 +429,45 @@ describe("integration endpoint specs", () => {
         "run_soql_query",
       ],
     );
+  });
+
+  it("opts only scoped Salesforce SOQL defaults into model-facing schemas", () => {
+    const connector = getConnector("salesforce");
+    const exposedToolIds: string[] = [];
+    let exposedDefaults = 0;
+
+    for (const tool of connector.tools) {
+      const query = tool.endpoint?.params?.q;
+      if (query?.default === undefined) continue;
+
+      if (tool.id === "salesforce__list_case_activity") {
+        assertEquals(
+          query.exposeDefault,
+          undefined,
+          "Expected unscoped CaseComment query to stay out of model-facing schemas",
+        );
+        continue;
+      }
+
+      assertEquals(
+        query.exposeDefault,
+        true,
+        `Expected ${tool.id} to expose its safe SOQL default`,
+      );
+      assertExists(tool.id, "Expected exposed Salesforce tools to declare an id");
+      exposedToolIds.push(tool.id);
+      exposedDefaults += 1;
+    }
+
+    assertEquals(exposedToolIds, [
+      "salesforce__find_customer",
+      "salesforce__search_accounts",
+      "salesforce__search_contacts",
+      "salesforce__list_cases",
+      "salesforce__search_knowledge_articles",
+      "salesforce__list_opportunities",
+    ]);
+    assertEquals(exposedDefaults, 6);
   });
 
   it("declares Service Cloud support tools", () => {
@@ -538,6 +614,9 @@ describe("integration endpoint specs", () => {
   });
 
   it("publishes all connector tool IDs with their integration namespace prefix", () => {
+    const seenToolIds = new Set<string>();
+    let toolCount = 0;
+
     for (const connector of connectors) {
       const prefix = `${connector.name}__`;
 
@@ -553,45 +632,68 @@ describe("integration endpoint specs", () => {
           tool.id.lastIndexOf("__"),
           `Expected ${connector.name}:${tool.id} to contain a single namespace separator`,
         );
+        assertEquals(
+          seenToolIds.has(tool.id),
+          false,
+          `Duplicate canonical tool ID ${tool.id} (second occurrence in ${connector.name})`,
+        );
+        seenToolIds.add(tool.id);
+        toolCount += 1;
       }
     }
 
+    assertEquals(
+      seenToolIds.size,
+      toolCount,
+      "every catalog tool ID must be unique across all connectors",
+    );
     assertExists(getTool("harvest", "harvest__list_accounts"));
   });
 
   it("keeps source connector template tool IDs prefixed before generation", async () => {
-    for await (const entry of Deno.readDir("cli/templates/integrations")) {
+    let inspectedTemplates = 0;
+    let checkedToolIds = 0;
+
+    for await (const entry of Deno.readDir("templates/integrations")) {
       if (!entry.isDirectory || entry.name === "_base") continue;
 
+      let raw: string;
       try {
-        const raw = await Deno.readTextFile(
-          `cli/templates/integrations/${entry.name}/connector.json`,
+        raw = await Deno.readTextFile(
+          `templates/integrations/${entry.name}/connector.json`,
         );
-        const connector = JSON.parse(raw) as {
-          name?: string;
-          tools?: Array<{ id?: string }>;
-        };
-        const connectorName = connector.name ?? entry.name;
-        const prefix = `${connectorName}__`;
-
-        for (const tool of connector.tools ?? []) {
-          if (!tool.id) continue;
-          assertEquals(
-            tool.id.startsWith(prefix),
-            true,
-            `Expected ${entry.name}:${tool.id} to start with ${prefix}`,
-          );
-          assertEquals(
-            tool.id.indexOf("__"),
-            tool.id.lastIndexOf("__"),
-            `Expected ${entry.name}:${tool.id} to contain a single namespace separator`,
-          );
-        }
       } catch (error) {
-        if (error instanceof Deno.errors.NotFound) continue;
+        if (error instanceof Deno.errors.NotFound) {
+          throw new Error(`templates/integrations/${entry.name} has no connector.json`);
+        }
         throw error;
       }
+      const connector = JSON.parse(raw) as {
+        name?: string;
+        tools?: Array<{ id?: string }>;
+      };
+      inspectedTemplates += 1;
+      const connectorName = connector.name ?? entry.name;
+      const prefix = `${connectorName}__`;
+
+      for (const tool of connector.tools ?? []) {
+        if (!tool.id) continue;
+        assertEquals(
+          tool.id.startsWith(prefix),
+          true,
+          `Expected ${entry.name}:${tool.id} to start with ${prefix}`,
+        );
+        assertEquals(
+          tool.id.indexOf("__"),
+          tool.id.lastIndexOf("__"),
+          `Expected ${entry.name}:${tool.id} to contain a single namespace separator`,
+        );
+        checkedToolIds += 1;
+      }
     }
+
+    assert(inspectedTemplates > 0, "expected at least one connector template to be inspected");
+    assert(checkedToolIds > 0, "expected at least one template tool id to be checked");
   });
 
   it("uses the documented SAP supplier invoice release function import", () => {
@@ -1337,7 +1439,7 @@ describe("integration endpoint specs", () => {
 
     for await (
       const entry of Deno.readDir(
-        "cli/templates/integrations/airtable/files/tools",
+        "templates/integrations/airtable/files/tools",
       )
     ) {
       if (entry.isFile && entry.name.endsWith(".ts")) {
@@ -1355,10 +1457,10 @@ describe("integration endpoint specs", () => {
     const createRecords = getTool("airtable", "create_records");
     const createTable = getTool("airtable", "create_table");
     const createRecordsTool = await Deno.readTextFile(
-      "cli/templates/integrations/airtable/files/tools/create-records.ts",
+      "templates/integrations/airtable/files/tools/create-records.ts",
     );
     const createTableTool = await Deno.readTextFile(
-      "cli/templates/integrations/airtable/files/tools/create-table.ts",
+      "templates/integrations/airtable/files/tools/create-table.ts",
     );
 
     assertStringIncludes(
@@ -1380,7 +1482,7 @@ describe("integration endpoint specs", () => {
 
     for await (
       const entry of Deno.readDir(
-        "cli/templates/integrations/github/files/tools",
+        "templates/integrations/github/files/tools",
       )
     ) {
       if (entry.isFile && entry.name.endsWith(".ts")) {
@@ -1401,7 +1503,7 @@ describe("integration endpoint specs", () => {
 
     for await (
       const entry of Deno.readDir(
-        "cli/templates/integrations/gmail/files/tools",
+        "templates/integrations/gmail/files/tools",
       )
     ) {
       if (entry.isFile && entry.name.endsWith(".ts")) {
@@ -1426,7 +1528,7 @@ describe("integration endpoint specs", () => {
 
     for (const fileName of requiredToolFiles) {
       const source = await Deno.readTextFile(
-        `cli/templates/integrations/outlook/files/tools/${fileName}`,
+        `templates/integrations/outlook/files/tools/${fileName}`,
       );
       assertStringIncludes(source, "tool({");
     }
@@ -1458,7 +1560,7 @@ describe("integration endpoint specs", () => {
     const toolFiles: string[] = [];
     for await (
       const entry of Deno.readDir(
-        "cli/templates/integrations/sheets/files/tools",
+        "templates/integrations/sheets/files/tools",
       )
     ) {
       if (entry.isFile && entry.name.endsWith(".ts")) {

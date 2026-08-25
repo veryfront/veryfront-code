@@ -10,6 +10,9 @@ import { LAYOUT_EXTENSIONS, type LayoutExtension } from "./types.ts";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { LAYOUT_NOT_FOUND } from "#veryfront/errors";
+import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import { ensureDefaultParserContracts } from "#veryfront/extensions/parser/defaults.ts";
+import type { ASTNode, CodeParser } from "#veryfront/extensions/parser/index.ts";
 
 const logger = rendererLogger.component("layout-collector");
 
@@ -32,6 +35,225 @@ function resolvePagePath(pageFilePath: string, projectDir: string): string {
 
 function getLayoutKind(path: string): "mdx" | "tsx" {
   return path.endsWith(".mdx") || path.endsWith(".md") ? "mdx" : "tsx";
+}
+
+function isAstNode(value: unknown): value is ASTNode {
+  return typeof value === "object" && value !== null &&
+    typeof (value as { type?: unknown }).type === "string";
+}
+
+function getProgramBody(ast: ASTNode): ASTNode[] {
+  const program = isAstNode(ast.program) ? ast.program : ast;
+  return Array.isArray(program.body) ? program.body.filter(isAstNode) : [];
+}
+
+function getIdentifierName(node: unknown): string | undefined {
+  if (!isAstNode(node) || node.type !== "Identifier") return undefined;
+  return typeof node.name === "string" ? node.name : undefined;
+}
+
+function getExportedName(node: unknown): string | undefined {
+  const identifier = getIdentifierName(node);
+  if (identifier) return identifier;
+  if (!isAstNode(node)) return undefined;
+  return (node.type === "StringLiteral" || node.type === "Literal") &&
+      typeof node.value === "string"
+    ? node.value
+    : undefined;
+}
+
+function unwrapTsExpression(node: ASTNode): ASTNode {
+  let current = node;
+  while (
+    current.type === "TSAsExpression" ||
+    current.type === "TSSatisfiesExpression" ||
+    current.type === "TSTypeAssertion" ||
+    current.type === "TSNonNullExpression" ||
+    current.type === "TypeCastExpression" ||
+    current.type === "ParenthesizedExpression"
+  ) {
+    if (!isAstNode(current.expression)) break;
+    current = current.expression;
+  }
+  return current;
+}
+
+function getLiteralLayoutValue(node: unknown): boolean | string | undefined {
+  if (!isAstNode(node)) return undefined;
+  const literal = unwrapTsExpression(node);
+  if (
+    literal.type === "TemplateLiteral" && Array.isArray(literal.expressions) &&
+    literal.expressions.length === 0 && Array.isArray(literal.quasis) &&
+    literal.quasis.length === 1
+  ) {
+    const quasi = literal.quasis[0];
+    const value = isAstNode(quasi) && typeof quasi.value === "object" && quasi.value !== null
+      ? quasi.value as { cooked?: unknown; raw?: unknown }
+      : undefined;
+    if (value) {
+      return typeof value.cooked === "string"
+        ? value.cooked
+        : typeof value.raw === "string"
+        ? value.raw
+        : undefined;
+    }
+  }
+  if (
+    literal.type !== "BooleanLiteral" && literal.type !== "StringLiteral" &&
+    literal.type !== "Literal"
+  ) {
+    return undefined;
+  }
+  return typeof literal.value === "boolean" || typeof literal.value === "string"
+    ? literal.value
+    : undefined;
+}
+
+function getObjectLayoutValue(node: unknown): boolean | string | undefined {
+  if (!isAstNode(node)) return undefined;
+  const object = unwrapTsExpression(node);
+  if (object.type !== "ObjectExpression" || !Array.isArray(object.properties)) return undefined;
+
+  let layoutValue: boolean | string | undefined;
+  for (const property of object.properties) {
+    if (isAstNode(property) && property.type === "SpreadElement") {
+      layoutValue = undefined;
+      continue;
+    }
+    if (
+      !isAstNode(property) ||
+      (property.type !== "ObjectProperty" && property.type !== "Property" &&
+        property.type !== "ObjectMethod")
+    ) {
+      layoutValue = undefined;
+      continue;
+    }
+
+    const literalKey = isAstNode(property.key) && typeof property.key.value === "string"
+      ? property.key.value
+      : undefined;
+    const key = property.computed === true
+      ? literalKey
+      : getIdentifierName(property.key) ?? literalKey;
+    if (property.computed === true && key === undefined) {
+      layoutValue = undefined;
+      continue;
+    }
+    if (key !== "layout") continue;
+    layoutValue = property.type === "ObjectMethod"
+      ? undefined
+      : getLiteralLayoutValue(property.value);
+  }
+
+  return layoutValue;
+}
+
+export async function extractTsxLayoutSignal(
+  source: string,
+  filePath: string,
+): Promise<boolean | string | undefined> {
+  await ensureDefaultParserContracts();
+  const parser = tryResolve<CodeParser>("CodeParser");
+  if (!parser) return undefined;
+
+  let ast: ASTNode;
+  try {
+    ast = await parser.parse({ code: source, filePath });
+  } catch {
+    return undefined;
+  }
+
+  const constBindings = new Map<string, unknown>();
+  const exportedBindings = new Map<"layout" | "frontmatter", string>();
+  for (const statement of getProgramBody(ast)) {
+    let declaration = statement;
+    let isInlineExport = false;
+
+    if (statement.type === "ExportNamedDeclaration") {
+      if (
+        statement.exportKind !== "type" && statement.source == null &&
+        Array.isArray(statement.specifiers)
+      ) {
+        for (const specifier of statement.specifiers) {
+          if (
+            !isAstNode(specifier) || specifier.type !== "ExportSpecifier" ||
+            specifier.exportKind === "type"
+          ) {
+            continue;
+          }
+          const exportedName = getExportedName(specifier.exported);
+          const localName = getIdentifierName(specifier.local);
+          if (
+            (exportedName === "layout" || exportedName === "frontmatter") &&
+            localName && !exportedBindings.has(exportedName)
+          ) {
+            exportedBindings.set(exportedName, localName);
+          }
+        }
+      }
+
+      if (!isAstNode(statement.declaration)) continue;
+      declaration = statement.declaration;
+      isInlineExport = true;
+    }
+
+    if (
+      declaration.type !== "VariableDeclaration" || declaration.kind !== "const" ||
+      !Array.isArray(declaration.declarations)
+    ) {
+      continue;
+    }
+
+    for (const declarator of declaration.declarations) {
+      if (!isAstNode(declarator) || declarator.type !== "VariableDeclarator") continue;
+      const name = getIdentifierName(declarator.id);
+      if (!name) continue;
+      if (!constBindings.has(name)) constBindings.set(name, declarator.init);
+      if (
+        isInlineExport && (name === "layout" || name === "frontmatter") &&
+        !exportedBindings.has(name)
+      ) {
+        exportedBindings.set(name, name);
+      }
+    }
+  }
+
+  const frontmatterBinding = exportedBindings.get("frontmatter");
+  const directBinding = exportedBindings.get("layout");
+  const frontmatterLayout = frontmatterBinding
+    ? getObjectLayoutValue(constBindings.get(frontmatterBinding))
+    : undefined;
+  const directLayout = directBinding
+    ? getLiteralLayoutValue(constBindings.get(directBinding))
+    : undefined;
+  return frontmatterLayout ?? directLayout;
+}
+
+/**
+ * Merges the per-page layout signal of a tsx/jsx/ts/js page into its
+ * frontmatter. Md/mdx pages carry the signal in their YAML frontmatter, which
+ * is already parsed onto the entity. Tsx pages cannot start with a YAML block,
+ * so their signal is read from top-level module exports instead:
+ * `export const layout = false | "Name"` or
+ * `export const frontmatter = { layout: … }`.
+ */
+async function withModuleLayoutSignal(pageInfo: EntityInfo): Promise<EntityInfo> {
+  if (pageInfo.entity.frontmatter.layout !== undefined) return pageInfo;
+  if (getLayoutKind(pageInfo.entity.path) !== "tsx") return pageInfo;
+
+  const source = pageInfo.entity.content;
+  if (!source) return pageInfo;
+
+  const layout = await extractTsxLayoutSignal(source, pageInfo.entity.path);
+  if (layout === undefined) return pageInfo;
+
+  return {
+    ...pageInfo,
+    entity: {
+      ...pageInfo.entity,
+      frontmatter: { ...pageInfo.entity.frontmatter, layout },
+    },
+  };
 }
 
 /**
@@ -96,6 +318,7 @@ export interface LayoutCollectionResult {
 export interface LayoutCollectorOptions {
   projectDir: string;
   projectId?: string;
+  contentSourceId?: string;
   adapter: RuntimeAdapter;
   config: VeryfrontConfig;
   compileMDX: (
@@ -108,6 +331,7 @@ export interface LayoutCollectorOptions {
 export class LayoutCollector {
   private projectDir: string;
   private projectId?: string;
+  private contentSourceId?: string;
   private adapter: RuntimeAdapter;
   private config: VeryfrontConfig;
   private compileMDX: (
@@ -119,6 +343,7 @@ export class LayoutCollector {
   constructor(options: LayoutCollectorOptions) {
     this.projectDir = options.projectDir;
     this.projectId = options.projectId;
+    this.contentSourceId = options.contentSourceId;
     this.adapter = options.adapter;
     this.config = options.config;
     this.compileMDX = options.compileMDX;
@@ -142,7 +367,11 @@ export class LayoutCollector {
           return { layoutBundle: undefined, nestedLayouts: [] };
         }
 
-        const layoutValue = pageInfo.entity.frontmatter.layout as string | boolean | undefined;
+        const resolvedPageInfo = await withModuleLayoutSignal(pageInfo);
+        const layoutValue = resolvedPageInfo.entity.frontmatter.layout as
+          | string
+          | boolean
+          | undefined;
         if (layoutValue === false || layoutValue === "false") {
           logger.debug("Layout explicitly disabled via frontmatter", {
             pagePath,
@@ -156,7 +385,7 @@ export class LayoutCollector {
 
         const { layoutBundle, layoutPath, layoutName } = await withSpan(
           SpanNames.LAYOUT_COLLECT_NAMED,
-          () => this.collectNamedLayoutWithPath(pageInfo),
+          () => this.collectNamedLayoutWithPath(resolvedPageInfo),
           {
             "layout.page_path": pagePath,
             "layout.config_layout": this.config?.layout || "none",
@@ -164,7 +393,7 @@ export class LayoutCollector {
         );
 
         return this.processLayoutResult(
-          pageInfo,
+          resolvedPageInfo,
           hasExplicitFrontmatterLayout,
           layoutBundle,
           layoutPath,
@@ -266,7 +495,7 @@ export class LayoutCollector {
     logger.debug("Layout entity found:", { found: !!layoutInfo, layoutName });
 
     if (!layoutInfo) {
-      const source = typeof layoutValue === "string" ? "frontmatter" : "config";
+      const source = typeof layoutValue === "string" ? "page metadata" : "config";
       throw LAYOUT_NOT_FOUND.create({
         detail:
           `Layout "${layoutName}" not found. Specified in ${source} for page "${pageInfo.entity.path}". Check that the layout file exists.`,
@@ -334,12 +563,20 @@ export class LayoutCollector {
       this.config,
     );
 
-    return this.collectLayoutsUnified(pageFilePath, rootDir);
+    const snapshotVersion = await this.adapter.fs.getSourceSnapshotVersion?.();
+    const contentSourceId = this.contentSourceId === undefined
+      ? snapshotVersion === undefined ? undefined : `snapshot-${snapshotVersion}`
+      : snapshotVersion === undefined
+      ? this.contentSourceId
+      : `${this.contentSourceId}:snapshot-${snapshotVersion}`;
+
+    return this.collectLayoutsUnified(pageFilePath, rootDir, contentSourceId);
   }
 
   private async collectLayoutsUnified(
     pageFilePath: string,
     rootDir: string,
+    contentSourceId: string | undefined,
   ): Promise<LayoutItem[]> {
     logger.debug("collectLayoutsUnified", {
       pageFilePath,
@@ -352,6 +589,11 @@ export class LayoutCollector {
       rootDir,
       this.projectDir,
       this.adapter,
+      {
+        projectId: this.projectId,
+        contentSourceId,
+        cache: this.projectId !== undefined && contentSourceId !== undefined,
+      },
     );
 
     if (nestedLayouts.length > 0) {

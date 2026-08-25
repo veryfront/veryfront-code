@@ -114,6 +114,8 @@ export async function transformModuleToServable(
         transformOpts.dependencyPinningSource,
       onDependencyResolutionObserved: options.ssrRewriteOptions.onDependencyResolutionObserved ??
         transformOpts.onDependencyResolutionObserved,
+      serverExternalPackages: options.ssrRewriteOptions.serverExternalPackages ??
+        transformOpts.serverExternalPackages,
     });
   } else if (options.releaseRewriteOptions) {
     code = await rewriteReleaseDependencyImportsForModule(code, options.releaseRewriteOptions);

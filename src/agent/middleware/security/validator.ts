@@ -1,5 +1,6 @@
 import type { AgentContext, AgentResponse, Message } from "../../types.ts";
 import { createError, toError } from "#veryfront/errors";
+import { getOutputSchemaParser } from "../../output-schema.ts";
 
 export interface SecurityConfig {
   /** Input validation rules */
@@ -98,6 +99,48 @@ const PII_REPLACEMENTS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/g, label: "[CREDIT_CARD]" },
 ];
 
+function freshStatefulPattern(pattern: RegExp): RegExp {
+  if (!pattern.global && !pattern.sticky) return pattern;
+
+  const matcher = new RegExp(pattern.source, pattern.flags);
+  if (pattern.sticky) matcher.lastIndex = pattern.lastIndex;
+  return matcher;
+}
+
+function advanceStringIndex(input: string, index: number, unicode: boolean): number {
+  if (!unicode) return index + 1;
+  return index + ((input.codePointAt(index) ?? 0) > 0xffff ? 2 : 1);
+}
+
+function redactBlockedPattern(input: string, pattern: RegExp): string {
+  const matcher = freshStatefulPattern(pattern);
+  if (!matcher.sticky) return input.replace(matcher, "[REDACTED]");
+
+  // replace() resets global sticky regexes to index 0, and Bun does not
+  // currently honor lastIndex for non-global sticky replacements. Use exec and
+  // splice matches so every supported runtime starts at the caller-configured
+  // position without mutating the caller-owned pattern.
+  let redacted = "";
+  let cursor = 0;
+  let matched = false;
+
+  for (let match = matcher.exec(input); match; match = matcher.exec(input)) {
+    redacted += `${input.slice(cursor, match.index)}[REDACTED]`;
+    cursor = match.index + match[0].length;
+    matched = true;
+    if (!matcher.global) break;
+    if (match[0].length === 0) {
+      matcher.lastIndex = advanceStringIndex(
+        input,
+        cursor,
+        matcher.unicode || matcher.unicodeSets,
+      );
+    }
+  }
+
+  return matched ? redacted + input.slice(cursor) : input;
+}
+
 /**
  * Input Validator
  */
@@ -128,7 +171,10 @@ export class InputValidator {
     }
 
     for (const pattern of this.config.blockedPatterns ?? []) {
-      if (!pattern.test(input)) continue;
+      // Blocked pattern groups are shared module-level objects reused across
+      // requests. Test stateful patterns through a fresh matcher so lastIndex
+      // cannot skip a repeat match and caller-owned patterns remain untouched.
+      if (!freshStatefulPattern(pattern).test(input)) continue;
 
       violations.push({
         type: "input",
@@ -198,7 +244,9 @@ export class OutputFilter {
     let filtered = output;
 
     for (const pattern of this.config.blockedPatterns ?? []) {
-      if (!pattern.test(filtered)) continue;
+      // See InputValidator.validate: shared /g patterns must not carry
+      // lastIndex across calls or require caller-owned regexes to be mutable.
+      if (!freshStatefulPattern(pattern).test(filtered)) continue;
 
       violations.push({
         type: "output",
@@ -207,7 +255,7 @@ export class OutputFilter {
         pattern,
       });
 
-      filtered = filtered.replace(pattern, "[REDACTED]");
+      filtered = redactBlockedPattern(filtered, pattern);
     }
 
     if (this.config.filterPII) {
@@ -242,6 +290,43 @@ function reportViolations(
 ): void {
   if (!onViolation) return;
   for (const violation of violations) onViolation(violation);
+}
+
+async function filterStructuredOutputValue(
+  value: unknown,
+  outputFilter: OutputFilter,
+): Promise<{
+  value: unknown;
+  violations: SecurityViolation[];
+}> {
+  if (typeof value === "string") {
+    const result = await outputFilter.filter(value);
+    return { value: result.filtered, violations: result.violations };
+  }
+
+  if (Array.isArray(value)) {
+    const filteredItems = [];
+    const violations: SecurityViolation[] = [];
+    for (const item of value) {
+      const result = await filterStructuredOutputValue(item, outputFilter);
+      filteredItems.push(result.value);
+      violations.push(...result.violations);
+    }
+    return { value: filteredItems, violations };
+  }
+
+  if (isRecord(value)) {
+    const filteredObject: Record<string, unknown> = {};
+    const violations: SecurityViolation[] = [];
+    for (const [key, item] of Object.entries(value)) {
+      const result = await filterStructuredOutputValue(item, outputFilter);
+      filteredObject[key] = result.value;
+      violations.push(...result.violations);
+    }
+    return { value: filteredObject, violations };
+  }
+
+  return { value, violations: [] };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -319,6 +404,18 @@ export function securityMiddleware(
     const outputFiltering = await outputFilter.filter(result.text);
     reportViolations(outputFiltering.violations, config.onViolation);
 
-    return { ...result, text: outputFiltering.filtered };
+    if (!("object" in result) || result.object === undefined) {
+      return { ...result, text: outputFiltering.filtered };
+    }
+
+    const objectFiltering = await filterStructuredOutputValue(result.object, outputFilter);
+    reportViolations(objectFiltering.violations, config.onViolation);
+    const parseOutput = getOutputSchemaParser(result);
+    if (parseOutput) {
+      const object = await parseOutput(outputFiltering.filtered);
+      return { ...result, text: outputFiltering.filtered, object };
+    }
+
+    return { ...result, text: outputFiltering.filtered, object: objectFiltering.value };
   };
 }

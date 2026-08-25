@@ -9,9 +9,11 @@
  */
 
 import { basename, dirname } from "#veryfront/compat/path";
+import { getDeferredExtensionState } from "./deferred-extension.ts";
 import * as defaultDiscovery from "./discovery.ts";
 import type { BoundExtensionEntrypoint } from "./entrypoint-identity.ts";
 import { loadExtensionFactory as defaultLoadFactory } from "./factory-loader.ts";
+import { FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES } from "./first-party-defaults.ts";
 import { ExtensionLoader } from "./loader.ts";
 import type {
   Extension,
@@ -69,6 +71,18 @@ export interface OrchestrateOptions {
 let orchestrationTail: Promise<void> = Promise.resolve();
 let activeLoader: ExtensionLoader | undefined;
 let failedCandidate: ExtensionLoader | undefined;
+const FIRST_PARTY_BUILTIN_PACKAGE_TO_EXTENSION = new Map(
+  FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES.map((policy) => [
+    `@veryfront/${policy.sourceDirectory}`,
+    policy.name,
+  ]),
+);
+const FIRST_PARTY_BUILTIN_EXTENSION_TO_PACKAGE = new Map(
+  FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES.map((policy) => [
+    policy.name,
+    `@veryfront/${policy.sourceDirectory}`,
+  ]),
+);
 
 function isDisableDirective(
   entry: ExtensionConfigEntry,
@@ -115,6 +129,30 @@ interface PackageLoadCandidate {
 interface ProjectLoadCandidate {
   extensionName?: string;
   target: FactoryLoadTarget;
+}
+
+function buildDisableFilters(
+  disables: Array<{ name: string; enabled: false }>,
+): { extensionNames: Set<string>; packageNames: Set<string> } {
+  const extensionNames = new Set<string>();
+  const packageNames = new Set<string>();
+  for (const { name } of disables) {
+    extensionNames.add(name);
+    packageNames.add(name);
+    const extensionName = FIRST_PARTY_BUILTIN_PACKAGE_TO_EXTENSION.get(name);
+    if (extensionName) extensionNames.add(extensionName);
+    const packageName = FIRST_PARTY_BUILTIN_EXTENSION_TO_PACKAGE.get(name);
+    if (packageName) packageNames.add(packageName);
+  }
+  return { extensionNames, packageNames };
+}
+
+function isDeferredBuiltinPackageHit(
+  hit: PackageLoadCandidate,
+  ordinaryBuiltinExtensionNames: ReadonlySet<string>,
+): boolean {
+  const extensionName = FIRST_PARTY_BUILTIN_PACKAGE_TO_EXTENSION.get(hit.packageName);
+  return extensionName !== undefined && !ordinaryBuiltinExtensionNames.has(extensionName);
 }
 
 /**
@@ -173,7 +211,15 @@ async function orchestrateExtensionGeneration(
   // extensions the user has explicitly turned off. A factory whose module
   // fails to import or invoke would otherwise take down bootstrap even
   // though the user asked for it to be disabled.
-  const disabledNames = new Set(disables.map((d) => d.name));
+  const disabled = buildDisableFilters(disables);
+  // First-party deferred packages stay lazy even when a reduced caller omits
+  // their candidate. Ordinary builtins are exempt so package discovery keeps
+  // its documented priority over direct builtin entries with the same name.
+  const ordinaryBuiltinExtensionNames = new Set(
+    (options.builtinExtensions ?? [])
+      .filter((entry) => getDeferredExtensionState(entry) === undefined)
+      .map((entry) => entry.extension.name),
+  );
 
   let packageHits: PackageLoadCandidate[];
   let projectHits: ProjectLoadCandidate[];
@@ -217,14 +263,20 @@ async function orchestrateExtensionGeneration(
   // This prevents an import map from redirecting the authorized package name.
   const enabledPackageTargets = packageHits
     .filter((hit) => defaultDiscovery.resolvePackageActivation(hit.metadata) === "auto")
-    .filter((hit) => !disabledNames.has(hit.packageName))
+    .filter((hit) =>
+      !disabled.packageNames.has(hit.packageName) &&
+      !disabled.extensionNames.has(hit.packageName) &&
+      !isDeferredBuiltinPackageHit(hit, ordinaryBuiltinExtensionNames)
+    )
     .map((hit) => hit.target);
 
   // Project paths have the shape `<projectDir>/extensions/<name>/src/index.ts`
   // (or `<projectDir>/extensions/<name>/index.ts`). `mergeExtensions` is the
   // safety net for any path whose name cannot be derived.
   const enabledProjectTargets = projectHits
-    .filter((hit) => hit.extensionName === undefined || !disabledNames.has(hit.extensionName))
+    .filter((hit) =>
+      hit.extensionName === undefined || !disabled.extensionNames.has(hit.extensionName)
+    )
     .map((hit) => hit.target);
 
   // Local-file paths cannot be reliably filtered pre-load: the filename
@@ -251,7 +303,7 @@ async function orchestrateExtensionGeneration(
     packageResolved,
     projectResolved,
     localResolved,
-    disables,
+    [...disabled.extensionNames].map((name) => ({ name, enabled: false as const })),
     options.builtinExtensions,
   );
 

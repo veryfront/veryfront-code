@@ -74,5 +74,103 @@ describe("UrlStrategy", () => {
       );
       assertEquals(specifier, null);
     });
+
+    it("should pin an unversioned URL from the project dependency map", () => {
+      const { specifier } = urlStrategy.rewrite(
+        makeInfo("https://esm.sh/lodash"),
+        makeCtx({
+          dependencyPinningCacheKey: "on:abc",
+          dependencyPinningDependencies: { lodash: "4.17.21" },
+        }),
+      );
+      assertEquals(
+        specifier,
+        "https://esm.sh/lodash@4.17.21?external=react,react-dom&target=es2022",
+      );
+    });
+
+    it("should pin an unversioned scoped URL with a subpath", () => {
+      const { specifier } = urlStrategy.rewrite(
+        makeInfo("https://esm.sh/@dnd-kit/core/dist"),
+        makeCtx({
+          dependencyPinningCacheKey: "on:abc",
+          dependencyPinningDependencies: { "@dnd-kit/core": "6.1.0" },
+        }),
+      );
+      assertEquals(
+        specifier,
+        "https://esm.sh/@dnd-kit/core@6.1.0/dist?external=react,react-dom&target=es2022",
+      );
+    });
+
+    it("should not override a version already present in the URL", () => {
+      const { specifier } = urlStrategy.rewrite(
+        makeInfo("https://esm.sh/lodash@4.17.20"),
+        makeCtx({
+          dependencyPinningCacheKey: "on:abc",
+          dependencyPinningDependencies: { lodash: "4.17.21" },
+        }),
+      );
+      assertEquals(specifier?.includes("lodash@4.17.20"), true);
+      assertEquals(specifier?.includes("4.17.21"), false);
+    });
+
+    it("should leave the URL unversioned when the flag is off", () => {
+      const { specifier } = urlStrategy.rewrite(
+        makeInfo("https://esm.sh/lodash"),
+        makeCtx({
+          dependencyPinningCacheKey: "off",
+          dependencyPinningDependencies: { lodash: "4.17.21" },
+        }),
+      );
+      assertEquals(specifier, "https://esm.sh/lodash?external=react,react-dom&target=es2022");
+    });
+
+    it("should leave the URL unversioned when the declaration is a range", () => {
+      // Ranges are handed to the platform resolver; the render proceeds
+      // unversioned until an exact declaration is written back.
+      const { specifier } = urlStrategy.rewrite(
+        makeInfo("https://esm.sh/lodash"),
+        makeCtx({
+          dependencyPinningCacheKey: "on:abc",
+          dependencyPinningDependencies: { lodash: "^4.17.0" },
+        }),
+      );
+      assertEquals(specifier?.includes("@^4"), false);
+      assertEquals(specifier?.includes("lodash?"), true);
+    });
+
+    it("should leave the URL unversioned when the package is undeclared", () => {
+      const { specifier } = urlStrategy.rewrite(
+        makeInfo("https://esm.sh/recharts"),
+        makeCtx({
+          dependencyPinningCacheKey: "on:abc",
+          dependencyPinningDependencies: { lodash: "4.17.21" },
+        }),
+      );
+      assertEquals(specifier, "https://esm.sh/recharts?external=react,react-dom&target=es2022");
+    });
+
+    it("should not pin react, which owns its own resolution ladder", () => {
+      const { specifier } = urlStrategy.rewrite(
+        makeInfo("https://esm.sh/react"),
+        makeCtx({
+          dependencyPinningCacheKey: "on:abc",
+          dependencyPinningDependencies: { react: "18.0.0" },
+        }),
+      );
+      assertEquals(specifier?.includes("react@18.0.0"), false);
+    });
+
+    it("should leave an esm.sh build-prefixed URL untouched", () => {
+      const { specifier } = urlStrategy.rewrite(
+        makeInfo("https://esm.sh/v135/lodash@4.17.21"),
+        makeCtx({
+          dependencyPinningCacheKey: "on:abc",
+          dependencyPinningDependencies: { lodash: "4.17.99" },
+        }),
+      );
+      assertEquals(specifier?.includes("4.17.99"), false);
+    });
   });
 });

@@ -1,8 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import {
+  createProxyRoutingInvalidationRejectionThrottle,
   handleProxyRoutingInvalidationRequest,
   PROXY_ROUTING_INVALIDATION_PATH,
   type ProxyRoutingInvalidationEvent,
@@ -188,6 +189,82 @@ describe("proxy routing invalidation ingress", () => {
     });
   });
 
+  it("rejects publisher results whose convergence contradicts its counts", async () => {
+    // A bus that claims convergence while no replica acknowledged would tell the
+    // deploying control plane the old release is no longer being served.
+    const body = createBody();
+    const { jws, publicKeyPem } = await createDispatchSignature(body);
+    const contradictoryResults = [
+      { acknowledged: 0, converged: true, recipients: 0 },
+      { acknowledged: 1, converged: true, recipients: 2 },
+      { acknowledged: 3, converged: false, recipients: 2 },
+    ];
+
+    for (const result of contradictoryResults) {
+      const label = JSON.stringify(result);
+      const response = await handleProxyRoutingInvalidationRequest(
+        new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+          method: "POST",
+          headers: { "x-veryfront-dispatch-jws": jws },
+          body,
+        }),
+        {
+          publicKeyPem,
+          publisher: {
+            publish: () => Promise.resolve(result),
+          },
+        },
+      );
+
+      assertEquals(
+        response.status,
+        503,
+        `an inconsistent publisher result must not be reported as success: ${label}`,
+      );
+      assertEquals(
+        await response.json(),
+        { error: "Routing invalidation did not converge" },
+        `an invalid publisher result must return the generic failure body, not the raw counts: ${label}`,
+      );
+    }
+  });
+
+  it("rejects malformed invalidation input before it reaches the publisher", async () => {
+    // The 400 gate runs before the signature gate, so it is what stands between
+    // an unauthenticated caller and caller-shaped audience/project claims.
+    const { publicKeyPem } = await createDispatchSignature(createBody());
+    const valid = JSON.parse(createBody()) as Record<string, unknown>;
+    const malformedBodies: Array<[string, string]> = [
+      ["a body that is not JSON at all", "{ not json"],
+      ["an unsupported version", JSON.stringify({ ...valid, version: 2 })],
+      ["an uppercase project slug", JSON.stringify({ ...valid, projectSlug: "Demo-Project" })],
+      ["a project slug with a leading hyphen", JSON.stringify({ ...valid, projectSlug: "-demo" })],
+      ["an empty release id", JSON.stringify({ ...valid, releaseId: "" })],
+    ];
+    const published: ProxyRoutingInvalidationEvent[] = [];
+
+    for (const [label, malformed] of malformedBodies) {
+      const response = await handleProxyRoutingInvalidationRequest(
+        new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+          method: "POST",
+          body: malformed,
+        }),
+        {
+          publicKeyPem,
+          publisher: {
+            publish: (event) => {
+              published.push(event);
+              return Promise.resolve({ acknowledged: 1, converged: true, recipients: 1 });
+            },
+          },
+        },
+      );
+
+      assertEquals(response.status, 400, `${label} must be rejected as malformed input`);
+      assertEquals(published.length, 0, `${label} must never reach the publisher`);
+    }
+  });
+
   it("fails closed when signing verification is not configured", async () => {
     const response = await handleProxyRoutingInvalidationRequest(
       new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
@@ -218,10 +295,14 @@ describe("proxy routing invalidation ingress", () => {
       },
     });
     const response = await handleProxyRoutingInvalidationRequest(
-      new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
-        method: "POST",
-        body,
-      }),
+      new Request(
+        `http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`,
+        {
+          method: "POST",
+          body,
+          duplex: "half",
+        } as RequestInit & { duplex: "half" },
+      ),
       {
         publicKeyPem: "configured",
         publisher: {
@@ -234,4 +315,250 @@ describe("proxy routing invalidation ingress", () => {
     assertEquals(cancelled, true);
     assertEquals(pulls < 10, true);
   });
+  it("logs why a routing invalidation signature was rejected", async () => {
+    // A silent 401 is why this path stayed inert in production for a month:
+    // the proxy answered every invalidation with 401 and logged nothing, so
+    // neither the sender nor the pod logs named a cause.
+    const body = createBody();
+    const { jws, publicKeyPem } = await createDispatchSignature(body);
+    const tampered = jws.slice(0, -4) + (jws.endsWith("AAAA") ? "BBBB" : "AAAA");
+    const warnings: Array<{ message: string; extra?: Record<string, unknown> }> = [];
+    const response = await handleProxyRoutingInvalidationRequest(
+      new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+        method: "POST",
+        headers: { "x-veryfront-dispatch-jws": tampered },
+        body,
+      }),
+      {
+        publicKeyPem,
+        logger: {
+          warn: (message, extra) => warnings.push({ message, extra }),
+        },
+        publisher: {
+          publish: () => Promise.resolve({ acknowledged: 1, converged: true, recipients: 1 }),
+        },
+      },
+    );
+
+    assertEquals(response.status, 401);
+    assertEquals(warnings.length, 1);
+    const [warning] = warnings;
+    assertEquals(typeof warning?.extra?.reason, "string");
+    assertStringIncludes(String(warning?.extra?.reason), "signature verification failed");
+    // The rejected credential must never reach the log.
+    const serialized = JSON.stringify(warnings);
+    assertEquals(serialized.includes(tampered), false);
+    assertEquals(serialized.includes(tampered.split(".")[2] ?? ""), false);
+  });
+
+  it("keeps caller-supplied identifiers out of a rejected invalidation warning", async () => {
+    // Nothing in the body is trustworthy on this path: verification has already
+    // failed, so every identifier is attacker-chosen. Logging them lets an
+    // unauthenticated caller pin a forged rejection on someone else's project
+    // and turns each request into ~4.5KB of caller-controlled log volume, which
+    // AGENTS.md ("Secret and internal-detail safety") forbids. The reason is
+    // minted by our own verification code, so it stays.
+    const body = createBody();
+    const { jws, publicKeyPem } = await createDispatchSignature(body);
+    const tampered = jws.slice(0, -4) + (jws.endsWith("AAAA") ? "BBBB" : "AAAA");
+    const warnings: Array<{ message: string; extra?: Record<string, unknown> }> = [];
+    const response = await handleProxyRoutingInvalidationRequest(
+      new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+        method: "POST",
+        headers: { "x-veryfront-dispatch-jws": tampered },
+        body,
+      }),
+      {
+        publicKeyPem,
+        logger: {
+          warn: (message, extra) => warnings.push({ message, extra }),
+        },
+        publisher: {
+          publish: () => Promise.resolve({ acknowledged: 1, converged: true, recipients: 1 }),
+        },
+      },
+    );
+
+    assertEquals(response.status, 401);
+    assertEquals(warnings.length, 1);
+    assertStringIncludes(String(warnings[0]?.extra?.reason), "signature verification failed");
+    const serialized = JSON.stringify(warnings);
+    for (
+      const identifier of [
+        "proj-1",
+        "demo-project",
+        "deployment-1",
+        "environment-1",
+        "production",
+        "release-1",
+      ]
+    ) {
+      assertEquals(
+        serialized.includes(identifier),
+        false,
+        `rejection warning leaked the caller-supplied identifier ${identifier}`,
+      );
+    }
+  });
+
+  it("logs the missing-signature rejection without inventing a verification reason", async () => {
+    const body = createBody();
+    const warnings: Array<{ message: string; extra?: Record<string, unknown> }> = [];
+    const response = await handleProxyRoutingInvalidationRequest(
+      new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+        method: "POST",
+        body,
+      }),
+      {
+        publicKeyPem: "configured",
+        logger: {
+          warn: (message, extra) => warnings.push({ message, extra }),
+        },
+        publisher: {
+          publish: () => Promise.resolve({ acknowledged: 1, converged: true, recipients: 1 }),
+        },
+      },
+    );
+
+    assertEquals(response.status, 401);
+    assertEquals(warnings.length, 1);
+    assertStringIncludes(String(warnings[0]?.extra?.reason), "missing");
+  });
+
+  it("keeps a failing log sink from upgrading a rejection into a 500", async () => {
+    // Diagnosability must not cost availability: a transport or serialization
+    // failure in the warning sink cannot be allowed to rewrite the answer.
+    const body = createBody();
+    const { jws, publicKeyPem } = await createDispatchSignature(body);
+    const tampered = jws.slice(0, -4) + (jws.endsWith("AAAA") ? "BBBB" : "AAAA");
+    const logger = {
+      warn: (): void => {
+        throw new Error("sink down");
+      },
+    };
+    const publisher = {
+      publish: () => Promise.resolve({ acknowledged: 1, converged: true, recipients: 1 }),
+    };
+
+    const rejected = await handleProxyRoutingInvalidationRequest(
+      new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+        method: "POST",
+        headers: { "x-veryfront-dispatch-jws": tampered },
+        body,
+      }),
+      { publicKeyPem, logger, publisher },
+    );
+
+    assertEquals(rejected.status, 401, "a throwing log sink must not change the rejection status");
+    assertEquals(
+      await rejected.json(),
+      { error: "Invalid routing invalidation signature" },
+      "the generic rejection body must be preserved",
+    );
+
+    const accepted = await handleProxyRoutingInvalidationRequest(
+      new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+        method: "POST",
+        headers: { "x-veryfront-dispatch-jws": jws },
+        body,
+      }),
+      { publicKeyPem, logger, publisher },
+    );
+
+    assertEquals(
+      accepted.status,
+      200,
+      "a throwing log sink must not poison a later valid invalidation",
+    );
+  });
+
+  it("coalesces repeated rejections of one class into a counted warning", async () => {
+    // Unauthenticated callers reach this path, so one log write per request is
+    // an amplification lever. The first rejection must still warn immediately —
+    // suppressing it would rebuild the silence that hid this bug for a month.
+    const body = createBody();
+    const warnings: Array<{ message: string; extra?: Record<string, unknown> }> = [];
+    let clockMs = 0;
+    const rejectionThrottle = createProxyRoutingInvalidationRejectionThrottle({
+      nowMs: () => clockMs,
+      windowMs: 60_000,
+    });
+    const reject = (): Promise<Response> =>
+      handleProxyRoutingInvalidationRequest(
+        new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+          method: "POST",
+          body,
+        }),
+        {
+          publicKeyPem: "configured",
+          logger: {
+            warn: (message, extra) => warnings.push({ message, extra }),
+          },
+          publisher: {
+            publish: () => Promise.resolve({ acknowledged: 1, converged: true, recipients: 1 }),
+          },
+          rejectionThrottle,
+        },
+      );
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      assertEquals((await reject()).status, 401);
+      clockMs += 1_000;
+    }
+    assertEquals(warnings.length, 1);
+    assertEquals(warnings[0]?.extra?.coalescedSincePreviousWarning, undefined);
+
+    clockMs += 60_000;
+    assertEquals((await reject()).status, 401);
+    assertEquals(warnings.length, 2);
+    assertEquals(warnings[1]?.extra?.coalescedSincePreviousWarning, 4);
+    assertStringIncludes(String(warnings[1]?.extra?.reason), "missing");
+
+    // An NTP step backwards must not silence the class until the clock catches up.
+    clockMs -= 300_000;
+    assertEquals((await reject()).status, 401);
+    assertEquals(
+      warnings.length,
+      3,
+      "a backwards clock step must expire the window instead of silencing the class",
+    );
+  });
+
+  it("buckets unforeseen rejection classes into a shared overflow class", () => {
+    // Mirrors MAX_TRACKED_REJECTION_CLASSES in routing-invalidation.ts: the map
+    // is capped so an error type carrying a dynamic name cannot grow it forever.
+    const maxTrackedRejectionClasses = 32;
+    const throttle = createProxyRoutingInvalidationRejectionThrottle({
+      nowMs: () => 0,
+      windowMs: 60_000,
+    });
+
+    for (let index = 0; index < maxTrackedRejectionClasses; index += 1) {
+      assertEquals(
+        throttle.admit(`class-${index}`),
+        0,
+        `the first rejection of class-${index} must warn immediately`,
+      );
+    }
+
+    assertEquals(
+      throttle.admit("class-overflow-a"),
+      0,
+      "the first overflow-class rejection still warns",
+    );
+    assertEquals(
+      throttle.admit("class-overflow-b"),
+      null,
+      "a second distinct unforeseen class must coalesce into the shared overflow bucket rather than grow the map",
+    );
+  });
+
+  // Deliberately no in-process "missing SchemaValidator" test. One was written
+  // and removed: `lazySchema` memoises a materialized schema permanently, so an
+  // in-process `unregister("SchemaValidator")` is a no-op once any earlier test
+  // in this file has parsed a JWS — and an invalid `publicKeyPem` makes WebCrypto
+  // throw "Invalid key data" first regardless. It asserted only that some reason
+  // string existed, which every rejection path satisfies, so it would have passed
+  // with the fix deleted. The production failure mode needs a clean process and is
+  // covered by cli/commands/serve/proxy-runtime-schema-contracts.test.ts.
 });

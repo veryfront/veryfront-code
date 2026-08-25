@@ -22,18 +22,27 @@ function createMockAdapter(files: Record<string, string> = {}): RuntimeAdapter {
   } as unknown as RuntimeAdapter;
 }
 
-function createMockCompileMDX(): (
+type CompileCall = [string, Record<string, unknown> | undefined, string | undefined];
+
+function createMockCompileMDX(calls: CompileCall[] = []): (
   content: string,
   frontmatter?: Record<string, unknown>,
   filePath?: string,
 ) => Promise<MdxBundle> {
-  return async (content: string) => ({
-    compiledCode: `compiled:${content}`,
-    frontmatter: {},
-    globals: {},
-    headings: [],
-    nodeMap: new Map(),
-  });
+  return async (
+    content: string,
+    frontmatter?: Record<string, unknown>,
+    filePath?: string,
+  ) => {
+    calls.push([content, frontmatter, filePath]);
+    return {
+      compiledCode: `compiled:${content}`,
+      frontmatter: {},
+      globals: {},
+      headings: [],
+      nodeMap: new Map(),
+    };
+  };
 }
 
 describe("rendering/layouts/utils/compiler", () => {
@@ -56,7 +65,8 @@ describe("rendering/layouts/utils/compiler", () => {
 
     it("should skip mdx layouts that already have a bundle", async () => {
       const adapter = createMockAdapter({ "/layout.mdx": "# Hello" });
-      const compile = createMockCompileMDX();
+      const calls: CompileCall[] = [];
+      const compile = createMockCompileMDX(calls);
       const existingBundle = {
         compiledCode: "already compiled",
         frontmatter: {},
@@ -69,6 +79,7 @@ describe("rendering/layouts/utils/compiler", () => {
       ];
       await compileMDXLayouts(layouts, compile, adapter);
       assertEquals(layouts[0].bundle?.compiledCode, "already compiled");
+      assertEquals(calls.length, 0, "an already-bundled layout must not be recompiled");
     });
 
     it("should skip mdx layouts without a path", async () => {
@@ -83,12 +94,24 @@ describe("rendering/layouts/utils/compiler", () => {
 
     it("should compile mdx layouts and assign bundles", async () => {
       const adapter = createMockAdapter({ "/layout.mdx": "# Title\n\nContent" });
-      const compile = createMockCompileMDX();
+      const calls: CompileCall[] = [];
+      const compile = createMockCompileMDX(calls);
       const layouts: LayoutItem[] = [
         { kind: "mdx", path: "/layout.mdx" } as unknown as LayoutItem,
       ];
       await compileMDXLayouts(layouts, compile, adapter);
       assertEquals(layouts[0].bundle?.compiledCode, "compiled:# Title\n\nContent");
+      assertEquals(calls.length, 1, "one compile call per uncompiled mdx layout");
+      assertEquals(
+        calls[0][1],
+        { isLayout: true },
+        "layout MDX must be compiled with the isLayout frontmatter flag so it is not reclassified as a page",
+      );
+      assertEquals(
+        calls[0][2],
+        "/layout.mdx",
+        "compileMDX must receive the layout file path for compile-error reporting",
+      );
     });
 
     it("should compile multiple mdx layouts in parallel", async () => {

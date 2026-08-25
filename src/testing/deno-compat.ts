@@ -16,7 +16,7 @@
 
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { scaleMs } from "./timing.ts";
-import { TIMEOUT_ERROR } from "#veryfront/errors";
+import { TIMEOUT_ERROR } from "#veryfront/errors/error-registry/general.ts";
 
 export {
   chmod,

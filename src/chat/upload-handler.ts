@@ -32,6 +32,7 @@ import { isProduction } from "#veryfront/platform/environment.ts";
 import { CONFIG_INVALID } from "#veryfront/errors";
 import { isSafeBlobId } from "#veryfront/workflow/blob/blob-id.ts";
 import { serverLogger } from "#veryfront/utils";
+import { resolveValidatedRequest } from "#veryfront/security/input-validation/handler.ts";
 import * as nodeBuffer from "node:buffer";
 
 /** 25 MB default cap. Attachments are references, not bulk transfer. */
@@ -104,7 +105,14 @@ function sanitizeFileName(raw: string): string {
   return cleaned || "untitled";
 }
 
-function resolveStorage(config: ChatUploadHandlerConfig): BlobStorage {
+/**
+ * Select the blob backend for chat uploads: an explicitly configured storage
+ * wins, then Veryfront Cloud once deployed, then local disk.
+ *
+ * Exported so the deployment-dependent selection can be pinned by a test
+ * without performing a real upload.
+ */
+export function resolveStorage(config: ChatUploadHandlerConfig): BlobStorage {
   if (config.storage) return config.storage;
   // Cloud storage only when actually deployed. In local dev the cloud bootstrap
   // is present (you're logged in) but the project isn't, so default to disk.
@@ -158,7 +166,7 @@ function fallbackUrl(requestUrl: string, id: string): string {
 }
 
 function normalizeMediaType(value: string): string {
-  const candidate = value.trim();
+  const candidate = value.split(";", 1)[0]?.trim() ?? "";
   return MEDIA_TYPE_PATTERN.test(candidate) ? candidate : "application/octet-stream";
 }
 
@@ -512,5 +520,13 @@ export function createChatUploadHandler(
     }
   }
 
-  return { POST, GET, DELETE };
+  // Resolve at the boundary rather than at each use. The pages executor calls
+  // method handlers with its APIContext, and these handlers read `signal`,
+  // `headers` and `url` as well as the body, so unwrapping one of them would
+  // still leave the rest reading from the context.
+  return {
+    POST: (request: Request) => POST(resolveValidatedRequest(request)),
+    GET: (request: Request) => GET(resolveValidatedRequest(request)),
+    DELETE: (request: Request) => DELETE(resolveValidatedRequest(request)),
+  };
 }

@@ -25,14 +25,14 @@ export async function compileMdx(options: ContentCompileOptions): Promise<Conten
   const remarkPlugins = [
     ...getRemarkPlugins(),
     ...additionalRemarkPlugins,
-  ] as unknown as PluggableList;
+  ] as PluggableList;
   const rehypePlugins = [
     ...getRehypePlugins(),
     ...additionalRehypePlugins,
-  ] as unknown as PluggableList;
+  ] as PluggableList;
 
   if (studioEmbed && filePath) {
-    rehypePlugins.push([rehypeNodePositions, { filePath }] as unknown as Pluggable);
+    rehypePlugins.push([rehypeNodePositions, { filePath }] as Pluggable);
   }
 
   const { body: extractedBody, frontmatter: extractedFrontmatter } = extractFrontmatter(

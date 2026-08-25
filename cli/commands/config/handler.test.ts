@@ -17,6 +17,28 @@ const CONFIG_ENV_KEYS = [
   "VERYFRONT_DEBUG",
 ] as const;
 
+const TOKEN_STORE_ENV_KEYS = [
+  ...CONFIG_ENV_KEYS,
+  "XDG_CONFIG_HOME",
+] as const;
+
+async function withTokenStore(
+  storedToken: string | null,
+  fn: () => Promise<void>,
+): Promise<void> {
+  const configHome = await Deno.makeTempDir();
+  try {
+    if (storedToken !== null) {
+      await Deno.mkdir(join(configHome, "veryfront"), { recursive: true });
+      await Deno.writeTextFile(join(configHome, "veryfront", "token"), `${storedToken}\n`);
+    }
+    Deno.env.set("XDG_CONFIG_HOME", configHome);
+    await fn();
+  } finally {
+    await Deno.remove(configHome, { recursive: true });
+  }
+}
+
 async function withSavedEnv(
   keys: readonly string[],
   fn: () => Promise<void> | void,
@@ -109,13 +131,15 @@ describe("Config Command", () => {
   });
 
   describe("detectConfigSource", () => {
-    it("detects config file in current project", async () => {
-      const { cwd } = await import("veryfront/platform");
-      const source = await detectConfigSource(cwd());
-      // Project may or may not have a config file — just verify it returns string or null
-      assertEquals(
-        source === null || typeof source === "string",
-        true,
+    it("detects config file in project", async () => {
+      await withTempConfigProject(
+        { "veryfront.config.ts": "export default {};\n" },
+        async (projectDir) => {
+          assertEquals(
+            await detectConfigSource(projectDir),
+            "veryfront.config.ts",
+          );
+        },
       );
     });
 
@@ -215,6 +239,49 @@ describe("Config Command", () => {
 
           assertEquals(data.projectSlug, "tenant-project-id-from-env");
           assertEquals(data.configSource, null);
+        });
+      });
+    });
+
+    it("reports a stored login token as authenticated", async () => {
+      await withSavedEnv(TOKEN_STORE_ENV_KEYS, async () => {
+        await withTokenStore("stored-session-token", async () => {
+          await withTempConfigProject({}, async (projectDir) => {
+            const data = await getConfigCommandData(projectDir);
+
+            assertEquals(data.hasStoredToken, true);
+            assertEquals(data.hasApiToken, false);
+            assertEquals(data.authenticated, true);
+          });
+        });
+      });
+    });
+
+    it("reports VERYFRONT_API_TOKEN as authenticated without a stored token", async () => {
+      await withSavedEnv(TOKEN_STORE_ENV_KEYS, async () => {
+        await withTokenStore(null, async () => {
+          Deno.env.set("VERYFRONT_API_TOKEN", "vf_env_token");
+          await withTempConfigProject({}, async (projectDir) => {
+            const data = await getConfigCommandData(projectDir);
+
+            assertEquals(data.hasStoredToken, false);
+            assertEquals(data.hasApiToken, true);
+            assertEquals(data.authenticated, true);
+          });
+        });
+      });
+    });
+
+    it("reports no authentication when neither a token store nor an env token exists", async () => {
+      await withSavedEnv(TOKEN_STORE_ENV_KEYS, async () => {
+        await withTokenStore(null, async () => {
+          await withTempConfigProject({}, async (projectDir) => {
+            const data = await getConfigCommandData(projectDir);
+
+            assertEquals(data.hasStoredToken, false);
+            assertEquals(data.hasApiToken, false);
+            assertEquals(data.authenticated, false);
+          });
         });
       });
     });

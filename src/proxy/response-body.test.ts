@@ -45,6 +45,38 @@ describe("proxy response body reader", () => {
     );
   });
 
+  // Zero-length chunks skip the byte accounting entirely, so the fixture emits
+  // one more than MAX_RESPONSE_BODY_CHUNKS to exercise the independent guard.
+  // Keeping it finite makes a broken guard fail the rejection assertion instead
+  // of hanging the test worker forever.
+  it("rejects an upstream stream that emits too many empty chunks", async () => {
+    let emitted = 0;
+    const totalChunks = 65_537;
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (emitted >= totalChunks) {
+            controller.close();
+            return;
+          }
+          emitted++;
+          controller.enqueue(new Uint8Array(0));
+        },
+      }),
+    );
+
+    await assertRejects(
+      () => readProxyResponseBytes(response, 16),
+      ProxyResponseBodyError,
+      "too-many-chunks",
+    );
+    assertEquals(
+      emitted,
+      totalChunks,
+      "the chunk guard must trip on the first chunk beyond MAX_RESPONSE_BODY_CHUNKS",
+    );
+  });
+
   it("rejects invalid UTF-8 instead of replacing bytes", async () => {
     const response = new Response(new Uint8Array([0xc3, 0x28]));
 

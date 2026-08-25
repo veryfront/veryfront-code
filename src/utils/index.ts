@@ -38,7 +38,13 @@ export {
 export type { LogEntry, Logger, RequestContext } from "./logger/index.ts";
 
 // Redaction / URL sanitization helpers
-export { redactSensitive, sanitizeUrlCredentials, sanitizeUrlForSpan } from "./logger/redact.ts";
+export {
+  type RedactedValue,
+  redactForSerialization,
+  redactSensitive,
+  sanitizeUrlCredentials,
+  sanitizeUrlForSpan,
+} from "./logger/redact.ts";
 
 export {
   BREAKPOINT_LG,
@@ -122,6 +128,8 @@ export {
 } from "./base64url.ts";
 
 export { sleep } from "./sleep.ts";
+export { awaitAbortable, createAbortError, throwIfAborted } from "./abort.ts";
+export { hasProjectIdentityControlCharacters, isCanonicalProjectSlug } from "./project-identity.ts";
 
 export { createSubscriberSet, type SubscriberSet } from "./subscriber-set.ts";
 
@@ -138,7 +146,9 @@ export { isCompiledBinary } from "./platform.ts";
 export {
   computeIntegrity,
   createLockfileManager,
+  getLockfileEntryForBuild,
   type LockfileManager,
+  setLockfileEntryForBuild,
 } from "./import-lockfile.ts";
 
 export { endRequest, isEnabled, startRequest, startTimer, timeAsync } from "./perf-timer.ts";

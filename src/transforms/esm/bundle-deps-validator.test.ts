@@ -1,9 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { extractBundleDeps, findParentBundleWithEmbeddedUrl } from "./bundle-deps-validator.ts";
+import { makeTempDir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
+import type { CacheBackend } from "#veryfront/cache/types.ts";
+import {
+  extractBundleDeps,
+  findParentBundleWithEmbeddedUrl,
+  validateBundleDepsExist,
+} from "./bundle-deps-validator.ts";
+import { markDegradedArtifact } from "./degraded-artifact.ts";
+import { MAX_CACHED_HTTP_BUNDLE_BYTES } from "./http-bundle-file.ts";
+import { __setDistributedCacheAccessorForTests } from "./http-cache-wrapper.ts";
 import { embedSourceUrl } from "./source-url-embed.ts";
 
 describe("transforms/esm/bundle-deps-validator", () => {
@@ -99,15 +108,122 @@ describe("transforms/esm/bundle-deps-validator", () => {
     });
   });
 
+  describe("validateBundleDepsExist", () => {
+    const depHash = "a1b2c3d4";
+    const depPath = `http-${depHash}.mjs`;
+
+    // Keys are stored under the version-free `{prefix}:{hash}` suffix so the
+    // test never has to track the wrapper's cache-key version.
+    function createBundleCacheBackend(
+      entries: Record<string, string>,
+      reads: string[],
+    ): CacheBackend {
+      const values = new Map(Object.entries(entries));
+      return {
+        type: "memory",
+        get: (key) => {
+          const match = /^[^:]+:([^:]+):(.+)$/.exec(key);
+          const suffixKey = match ? `${match[1]}:${match[2]}` : key;
+          reads.push(suffixKey);
+          return Promise.resolve(values.get(suffixKey) ?? null);
+        },
+        set: () => Promise.resolve(),
+        del: () => Promise.resolve(),
+      };
+    }
+
+    async function bundleFileExists(path: string): Promise<boolean> {
+      try {
+        await createFileSystem().stat(path);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    async function assertRecoveryRejected(recoveredCode: string, why: string): Promise<void> {
+      const cacheDir = await makeTempDir();
+      __setDistributedCacheAccessorForTests(() =>
+        Promise.resolve(createBundleCacheBackend({ [`code:${depHash}`]: recoveredCode }, []))
+      );
+
+      try {
+        assertEquals(
+          await validateBundleDepsExist([{ path: depPath, hash: depHash }], cacheDir),
+          false,
+          why,
+        );
+        assertEquals(
+          await bundleFileExists(join(cacheDir, `http-${depHash}.mjs`)),
+          false,
+          "a rejected recovery must never be written to the local cache",
+        );
+      } finally {
+        await remove(cacheDir, { recursive: true });
+      }
+    }
+
+    afterEach(() => {
+      __setDistributedCacheAccessorForTests(null);
+    });
+
+    it("rejects a recovered dep that is marked degraded", async () => {
+      await assertRecoveryRejected(
+        markDegradedArtifact("export const value = 1;\n"),
+        "a degraded recovered dep is rejected",
+      );
+    });
+
+    it("rejects a recovered dep carrying another environment's absolute cache paths", async () => {
+      await assertRecoveryRejected(
+        `import "file:///other-pod/.cache/veryfront-http-bundle/http-abc.mjs";\n`,
+        "a recovered dep with foreign absolute cache paths is rejected",
+      );
+    });
+
+    it("rejects a recovered dep larger than the cached bundle byte limit", async () => {
+      await assertRecoveryRejected(
+        "a".repeat(MAX_CACHED_HTTP_BUNDLE_BYTES + 1),
+        "an oversized recovered dep is rejected",
+      );
+    });
+
+    it("fails the graph closed for an invalid bundle hash", async () => {
+      const cacheDir = await makeTempDir();
+      const reads: string[] = [];
+      __setDistributedCacheAccessorForTests(() =>
+        Promise.resolve(createBundleCacheBackend({}, reads))
+      );
+
+      try {
+        assertEquals(
+          await validateBundleDepsExist(
+            [{ path: "http-zz../etc.mjs", hash: "zz../etc" }],
+            cacheDir,
+          ),
+          false,
+          "an invalid bundle hash fails the graph closed",
+        );
+        assertEquals(
+          reads,
+          [],
+          "an invalid bundle hash must never reach the distributed cache",
+        );
+      } finally {
+        await remove(cacheDir, { recursive: true });
+      }
+    });
+  });
+
   it("finds SHA-256-named parent bundles during local recovery", async () => {
-    const cacheDir = await Deno.makeTempDir();
+    const cacheDir = await makeTempDir();
     const parentHash = "d9daafa3b706faf7af89c03417596d23beed4c1ae964d7ee7ead5d335b683412";
     const targetHash = "915c2e2f2105f33640de7ae9d5252b1edb798614e5958f63cd7acef23e501124";
     const parentPath = join(cacheDir, `http-${parentHash}.mjs`);
     const sourceUrl = "https://modules.example.com/parent.js";
 
     try {
-      await Deno.writeTextFile(
+      await writeTextFile(
         parentPath,
         embedSourceUrl(`import "./http-${targetHash}.mjs";`, sourceUrl),
       );
@@ -117,7 +233,7 @@ describe("transforms/esm/bundle-deps-validator", () => {
         { path: parentPath, sourceUrl },
       );
     } finally {
-      await Deno.remove(cacheDir, { recursive: true });
+      await remove(cacheDir, { recursive: true });
     }
   });
 });

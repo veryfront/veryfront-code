@@ -394,6 +394,13 @@ function reduceNonTextProtocolEvent(
       if (!tool || tool.providerExecuted !== true || tool.phase !== "running") {
         return failProtocol(state, emit, elapsedMs);
       }
+      if (event.type === "provider_tool_result" && event.preliminary === true) {
+        // Preliminary output proves the provider is still working. It is not a
+        // terminal transition and must leave the running tool eligible for the
+        // final result that follows.
+        emit({ class: "semantic", event });
+        return { state, semanticProgress: true };
+      }
       const phase = event.type === "provider_tool_result"
         ? event.isError ? "failed" : "succeeded"
         : event.type === "provider_tool_denied"
@@ -441,6 +448,9 @@ function reduceNonTextProtocolEvent(
       state.snapshot = {
         ...state.snapshot,
         finishReason: event.finishReason,
+        ...(event.providerMetadata === undefined
+          ? {}
+          : { providerMetadata: event.providerMetadata }),
         phase: terminalPhase,
         hasSemanticProgress: true,
       };

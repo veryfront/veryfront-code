@@ -1,7 +1,8 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
+import { FakeTime } from "#std/testing/time";
 
-import { ProviderRequestError } from "veryfront/provider/shared";
+import { ProviderOverloadedError, ProviderRequestError } from "veryfront/provider/shared";
 
 import { MAX_ANTHROPIC_RAW_ASSISTANT_METADATA_BYTES } from "./anthropic-native-content.ts";
 import { createAnthropicModelRuntime } from "./anthropic-provider.ts";
@@ -3689,7 +3690,7 @@ describe("anthropic-provider", () => {
       assertEquals(dropped, ["temperature", "topP"]);
     });
 
-    it("warns on non-text responseFormat", async () => {
+    it("warns on a schemaless json responseFormat", async () => {
       const runtime = createAnthropicModelRuntime({
         apiKey: "k",
         baseURL: "https://example.anthropic.test/v1",
@@ -3701,6 +3702,82 @@ describe("anthropic-provider", () => {
       });
       const dropped = settings(result);
       assertEquals(dropped, ["responseFormat"]);
+    });
+
+    it("emits Anthropic output_config when responseFormat is structured", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          captured = JSON.parse(readRequestBody(init) ?? "{}");
+          return Promise.resolve(okResponse());
+        },
+      }, "claude-sonnet-4-20250514");
+      const schema = {
+        type: "object",
+        properties: { name: { type: "string" } },
+        required: ["name"],
+      };
+      const result = await runtime.doGenerate({
+        prompt: [userPrompt],
+        responseFormat: { type: "json_schema", name: "Person", schema, strict: true },
+      });
+      const body = captured as { output_config?: unknown } | null;
+      // The schema is closed on the way out: Anthropic rejects an object schema
+      // that does not explicitly set additionalProperties: false.
+      assertEquals(body!.output_config, {
+        format: { type: "json_schema", schema: { ...schema, additionalProperties: false } },
+      });
+      assertEquals(settings(result), []);
+    });
+
+    it("keeps requested output_config ahead of raw provider options", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          captured = JSON.parse(readRequestBody(init) ?? "{}");
+          return Promise.resolve(okResponse());
+        },
+      }, "claude-sonnet-4-20250514");
+      const schema = {
+        type: "object",
+        properties: { name: { type: "string" } },
+        required: ["name"],
+      };
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        providerOptions: {
+          anthropic: {
+            output_config: { format: { type: "text" } },
+          },
+        },
+        responseFormat: { type: "json_schema", name: "Person", schema },
+      });
+
+      const body = captured as { output_config?: unknown } | null;
+      // The schema is closed on the way out: Anthropic rejects an object schema
+      // that does not explicitly set additionalProperties: false.
+      assertEquals(body!.output_config, {
+        format: { type: "json_schema", schema: { ...schema, additionalProperties: false } },
+      });
+    });
+
+    it("advertises JSON Schema structured output only for supported model families", () => {
+      const supported = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () => Promise.resolve(okResponse()),
+      }, "claude-sonnet-4-5-20250929");
+      const unsupported = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () => Promise.resolve(okResponse()),
+      }, "claude-sonnet-4-20250514");
+      assertEquals(supported.runtimeCapabilities?.structuredOutput, ["json_schema"]);
+      assertEquals(unsupported.runtimeCapabilities?.structuredOutput, false);
     });
   });
 
@@ -4194,6 +4271,623 @@ describe("anthropic-provider", () => {
       });
       const body = captured as { stop_sequences?: string[] } | null;
       assertEquals(body?.stop_sequences, ["a", "b", "c", "d"]);
+    });
+  });
+  describe("Anthropic in-stream retryable errors", () => {
+    const encoder = new TextEncoder();
+
+    function sse(...events: Record<string, unknown>[]): string[] {
+      return events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+    }
+
+    function streamResponse(chunks: string[]): Response {
+      return new Response(
+        ReadableStream.from(chunks.map((chunk) => encoder.encode(chunk))),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    }
+
+    const OVERLOADED = sse({
+      type: "error",
+      error: { type: "overloaded_error", message: "Overloaded" },
+    });
+
+    const SUCCESS = sse(
+      { type: "message_start", message: { usage: { input_tokens: 3 } } },
+      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: "hello" },
+      },
+      { type: "content_block_stop", index: 0 },
+      {
+        type: "message_delta",
+        delta: { stop_reason: "end_turn" },
+        usage: { output_tokens: 2 },
+      },
+      { type: "message_stop" },
+    );
+
+    function runtimeFor(responses: (() => Response)[]) {
+      const sentBodies: Record<string, unknown>[] = [];
+      let attempts = 0;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          sentBodies.push(raw ? JSON.parse(raw) : {});
+          const next = responses[Math.min(attempts, responses.length - 1)];
+          attempts++;
+          if (!next) throw new Error("No stubbed response for this attempt");
+          return Promise.resolve(next());
+        },
+      }, "claude-opus-4-6");
+      return { runtime, attemptCount: () => attempts, sentBodies };
+    }
+
+    it("replays the request when the stream errors as overloaded before any output", async () => {
+      const { runtime, attemptCount } = runtimeFor([
+        () => streamResponse(OVERLOADED),
+        () => streamResponse(SUCCESS),
+      ]);
+
+      const result = await runtime.doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        maxOutputTokens: 64,
+      });
+      const parts = await collectAsync(result.stream);
+
+      assertEquals(attemptCount(), 2);
+      assertEquals(
+        parts.some((part) =>
+          (part as { type?: string; delta?: string }).type === "text-delta" &&
+          (part as { delta?: string }).delta === "hello"
+        ),
+        true,
+      );
+      assertEquals(
+        parts.filter((part) => (part as { type?: string }).type === "finish").length,
+        1,
+      );
+    });
+
+    it("does not replay once the stream has produced output", async () => {
+      const partialThenOverloaded = [
+        ...sse(
+          { type: "message_start", message: { usage: { input_tokens: 3 } } },
+          { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+          {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "text_delta", text: "partial" },
+          },
+        ),
+        ...OVERLOADED,
+      ];
+      const { runtime, attemptCount } = runtimeFor([
+        () => streamResponse(partialThenOverloaded),
+        () => streamResponse(SUCCESS),
+      ]);
+
+      const result = await runtime.doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        maxOutputTokens: 64,
+      });
+
+      await assertRejects(
+        () => collectAsync(result.stream),
+        ProviderOverloadedError,
+        "provider overloaded",
+      );
+      assertEquals(attemptCount(), 1);
+    });
+
+    it("does not replay a non-retryable in-stream error", async () => {
+      const { runtime, attemptCount } = runtimeFor([
+        () =>
+          streamResponse(sse({
+            type: "error",
+            error: { type: "authentication_error", message: "bad key" },
+          })),
+        () => streamResponse(SUCCESS),
+      ]);
+
+      const result = await runtime.doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        maxOutputTokens: 64,
+      });
+
+      await assertRejects(() => collectAsync(result.stream), ProviderRequestError);
+      assertEquals(attemptCount(), 1);
+    });
+
+    it("replays a pause_turn continuation that overloads before its first part", async () => {
+      const pauseTurn = sse(
+        { type: "message_start", message: { usage: { input_tokens: 3 } } },
+        { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "first" } },
+        { type: "content_block_stop", index: 0 },
+        {
+          type: "message_delta",
+          delta: { stop_reason: "pause_turn" },
+          usage: { output_tokens: 1 },
+        },
+        { type: "message_stop" },
+      );
+      const { runtime, attemptCount, sentBodies } = runtimeFor([
+        () => streamResponse(pauseTurn),
+        () => streamResponse(OVERLOADED),
+        () => streamResponse(SUCCESS),
+      ]);
+
+      const result = await runtime.doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        maxOutputTokens: 64,
+      });
+      const parts = await collectAsync(result.stream);
+
+      assertEquals(attemptCount(), 3);
+      // The replay must re-issue the continuation, not the original turn.
+      // Sending `body` again would drop the paused assistant content and
+      // silently restart the turn.
+      const messageCounts = sentBodies.map((sent) =>
+        Array.isArray((sent as { messages?: unknown[] }).messages)
+          ? (sent as { messages: unknown[] }).messages.length
+          : 0
+      );
+      assertEquals(messageCounts, [1, 2, 2]);
+      const deltas = parts
+        .filter((part) => (part as { type?: string }).type === "text-delta")
+        .map((part) => (part as { delta?: string }).delta);
+      assertEquals(deltas, ["first", "hello"]);
+      assertEquals(
+        parts.filter((part) => (part as { type?: string }).type === "finish").length,
+        1,
+      );
+    });
+
+    it("gives a pause_turn continuation its own replay budget", async () => {
+      const pauseTurn = sse(
+        { type: "message_start", message: { usage: { input_tokens: 3 } } },
+        { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "first" } },
+        { type: "content_block_stop", index: 0 },
+        {
+          type: "message_delta",
+          delta: { stop_reason: "pause_turn" },
+          usage: { output_tokens: 1 },
+        },
+        { type: "message_stop" },
+      );
+      // The first request spends BOTH replays. The continuation is a distinct
+      // request in a new idle window, so an exhausted count must not carry
+      // into it and kill an otherwise recoverable run.
+      const { runtime, attemptCount } = runtimeFor([
+        () => streamResponse(OVERLOADED),
+        () => streamResponse(OVERLOADED),
+        () => streamResponse(pauseTurn),
+        () => streamResponse(OVERLOADED),
+        () => streamResponse(SUCCESS),
+      ]);
+
+      const result = await runtime.doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        maxOutputTokens: 64,
+      });
+      const parts = await collectAsync(result.stream);
+
+      assertEquals(attemptCount(), 5);
+      const deltas = parts
+        .filter((part) => (part as { type?: string }).type === "text-delta")
+        .map((part) => (part as { delta?: string }).delta);
+      assertEquals(deltas, ["first", "hello"]);
+    });
+
+    it("shares one header budget across initial stream requests and in-stream replays", async () => {
+      const originalNow = performance.now;
+      let now = 0;
+      const { runtime, attemptCount } = runtimeFor([
+        () => streamResponse(OVERLOADED),
+        () => streamResponse(SUCCESS),
+      ]);
+
+      try {
+        performance.now = () => now;
+        const result = await runtime.doStream({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+          maxOutputTokens: 64,
+        });
+        now = 41_000;
+
+        await assertRejects(
+          () => collectAsync(result.stream),
+          ProviderOverloadedError,
+          "provider overloaded",
+        );
+        assertEquals(attemptCount(), 1);
+      } finally {
+        performance.now = originalNow;
+      }
+    });
+
+    it("still grants a pause_turn continuation its pre-header retry budget after a long turn", async () => {
+      const originalNow = performance.now;
+      let now = 0;
+      const pauseTurn = sse(
+        { type: "message_start", message: { usage: { input_tokens: 3 } } },
+        { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "first" } },
+        { type: "content_block_stop", index: 0 },
+        {
+          type: "message_delta",
+          delta: { stop_reason: "pause_turn" },
+          usage: { output_tokens: 1 },
+        },
+        { type: "message_stop" },
+      );
+      let attempts = 0;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () => {
+          attempts++;
+          // The first turn streams for 60s before it pauses.
+          if (attempts === 1) {
+            now = 60_000;
+            return Promise.resolve(streamResponse(pauseTurn));
+          }
+          // The continuation's first attempt gets a transient 529 BEFORE any
+          // headers. requestStream retries that on its own, but only while it
+          // has header budget left. A budget anchored at doStream entry is
+          // already spent here, so the retry never happens and the run dies.
+          if (attempts === 2) {
+            return Promise.resolve(
+              new Response(JSON.stringify({ type: "error" }), {
+                status: 529,
+                headers: { "content-type": "application/json" },
+              }),
+            );
+          }
+          return Promise.resolve(streamResponse(SUCCESS));
+        },
+      }, "claude-opus-4-6");
+
+      try {
+        performance.now = () => now;
+        const result = await runtime.doStream({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+          maxOutputTokens: 64,
+        });
+        const parts = await collectAsync(result.stream);
+        const deltas = parts
+          .filter((part) => (part as { type?: string }).type === "text-delta")
+          .map((part) => (part as { delta?: string }).delta);
+        assertEquals(deltas, ["first", "hello"]);
+        assertEquals(attempts, 3);
+      } finally {
+        performance.now = originalNow;
+      }
+    });
+
+    it("clamps replay header waits to the remaining shared header budget", async () => {
+      const originalNow = performance.now;
+      let now = 0;
+      let attempts = 0;
+      let resolveReplayStarted: (() => void) | undefined;
+      let resolveReplayAborted: (() => void) | undefined;
+      const replayStarted = new Promise<void>((resolve) => {
+        resolveReplayStarted = resolve;
+      });
+      const replayAborted = new Promise<void>((resolve) => {
+        resolveReplayAborted = resolve;
+      });
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          attempts++;
+          if (attempts === 1) {
+            return Promise.resolve(streamResponse(OVERLOADED));
+          }
+
+          const signal = init && "signal" in init ? init.signal : undefined;
+          if (!(signal instanceof AbortSignal)) {
+            return Promise.reject(new Error("Replay request did not receive an AbortSignal"));
+          }
+          resolveReplayStarted?.();
+          signal.addEventListener("abort", () => {
+            now = 40_000;
+            resolveReplayAborted?.();
+          }, { once: true });
+          return new Promise<Response>((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+        },
+      }, "claude-opus-4-6");
+
+      try {
+        performance.now = () => now;
+        const result = await runtime.doStream({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+          maxOutputTokens: 64,
+        });
+        now = 39_980;
+        const collectPromise = collectAsync(result.stream);
+
+        await waitWithin(replayStarted, 1_500);
+        await waitWithin(replayAborted, 500);
+        await assertRejects(
+          () => collectPromise,
+          ProviderRequestError,
+          "request timed out",
+        );
+        assertEquals(attempts, 2);
+      } finally {
+        performance.now = originalNow;
+      }
+    });
+
+    it("caps how long a replay may wait for headers", async () => {
+      // The replay never gets headers. Only a budget handed to requestStream
+      // can end it; without one it inherits the 40s default.
+      const originalNow = performance.now;
+      const realSetTimeout = globalThis.setTimeout;
+      const realClearTimeout = globalThis.clearTimeout;
+      using time = new FakeTime(0);
+      const signals: AbortSignal[] = [];
+      let attempts = 0;
+      let replayStartedAt: number | undefined;
+      let replayAbortedAt: number | undefined;
+      let resolveReplayStarted: (() => void) | undefined;
+      let resolveReplayAborted: (() => void) | undefined;
+      const replayStarted = new Promise<void>((resolve, reject) => {
+        const timeoutId = realSetTimeout(
+          () => reject(new Error("Replay request did not start")),
+          500,
+        );
+        resolveReplayStarted = () => {
+          realClearTimeout(timeoutId);
+          resolve();
+        };
+      });
+      const replayAborted = new Promise<void>((resolve, reject) => {
+        const timeoutId = realSetTimeout(
+          () => reject(new Error("Replay request did not abort")),
+          500,
+        );
+        resolveReplayAborted = () => {
+          realClearTimeout(timeoutId);
+          resolve();
+        };
+      });
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          attempts++;
+          const signal = init && "signal" in init ? init.signal : undefined;
+          if (signal instanceof AbortSignal) signals.push(signal);
+          if (attempts === 1) return Promise.resolve(streamResponse(OVERLOADED));
+          // Headers never arrive; only the deadline can end this. Reject on
+          // abort the way a real fetch does, rather than leaving a promise
+          // pending forever - `--trace-leaks` fails a shard on that, and a
+          // test should not plant one.
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener(
+              "abort",
+              () => {
+                replayAbortedAt = performance.now();
+                resolveReplayAborted?.();
+                reject(new DOMException("Aborted", "AbortError"));
+              },
+              { once: true },
+            );
+            replayStartedAt = performance.now();
+            resolveReplayStarted?.();
+          });
+        },
+      }, "claude-opus-4-6");
+
+      try {
+        performance.now = () => time.now;
+        const result = await runtime.doStream({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+          maxOutputTokens: 64,
+        });
+
+        const collectPromise = collectAsync(result.stream);
+        collectPromise.catch(() => {});
+        await time.tickAsync(1_000);
+        await replayStarted;
+        assertEquals(attempts, 2);
+        assertEquals(signals[1]?.aborted, false);
+
+        await time.tickAsync(9_999);
+        assertEquals(signals[1]?.aborted, false);
+        await time.tickAsync(1);
+        await replayAborted;
+
+        await assertRejects(
+          () => collectPromise,
+          ProviderRequestError,
+          "request timed out",
+        );
+        assertEquals(signals[1]?.aborted, true);
+        if (replayStartedAt === undefined || replayAbortedAt === undefined) {
+          throw new Error("Replay timing was not captured");
+        }
+        assertEquals(replayAbortedAt - replayStartedAt, 10_000);
+      } finally {
+        performance.now = originalNow;
+      }
+    });
+
+    it("bounds the replays and surfaces the provider failure when they are exhausted", async () => {
+      const { runtime, attemptCount } = runtimeFor([() => streamResponse(OVERLOADED)]);
+
+      const result = await runtime.doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        maxOutputTokens: 64,
+      });
+
+      await assertRejects(
+        () => collectAsync(result.stream),
+        ProviderOverloadedError,
+        "provider overloaded",
+      );
+      assertEquals(attemptCount(), 3);
+    });
+
+    // A paused response split around its last visible part: the trailer that
+    // carries `pause_turn` is gated so a test can spend the idle window
+    // between the last yielded part and the continuation.
+    const PAUSE_HEAD = sse(
+      { type: "message_start", message: { usage: { input_tokens: 3 } } },
+      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "first" } },
+      { type: "content_block_stop", index: 0 },
+    );
+    const PAUSE_TAIL = sse(
+      {
+        type: "message_delta",
+        delta: { stop_reason: "pause_turn" },
+        usage: { output_tokens: 1 },
+      },
+      { type: "message_stop" },
+    );
+
+    function gatedPauseResponse(tailGate: Promise<void>): Response {
+      return new Response(
+        ReadableStream.from((async function* () {
+          for (const chunk of PAUSE_HEAD) yield encoder.encode(chunk);
+          await tailGate;
+          for (const chunk of PAUSE_TAIL) yield encoder.encode(chunk);
+        })()),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    }
+
+    // Pull parts until a pull stays pending. With the trailer gated that can
+    // only mean every visible part of the paused response was yielded, so the
+    // idle window is anchored at the mocked clock's current value. The still
+    // pending pull comes back wrapped in an object: returning it bare from an
+    // async function would make the returned promise adopt it, and awaiting
+    // the drain would then deadlock on the very pull it reports.
+    async function drainUntilPending(
+      iterator: AsyncIterator<unknown>,
+    ): Promise<{ pendingNext: Promise<IteratorResult<unknown>> }> {
+      let pendingNext = iterator.next();
+      while (true) {
+        const settled = await new Promise<boolean>((resolve) => {
+          const timer = setTimeout(() => resolve(false), 100);
+          const onSettled = () => {
+            clearTimeout(timer);
+            resolve(true);
+          };
+          pendingNext.then(onSettled, onSettled);
+        });
+        if (!settled) return { pendingNext };
+        const { done } = await pendingNext;
+        if (done) throw new Error("stream ended before the pause_turn trailer");
+        pendingNext = iterator.next();
+      }
+    }
+
+    it("carries the spent idle window into a pause_turn continuation", async () => {
+      const originalNow = performance.now;
+      let now = 0;
+      let attempts = 0;
+      let releaseTail!: () => void;
+      const tailGate = new Promise<void>((resolve) => {
+        releaseTail = resolve;
+      });
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () => {
+          attempts++;
+          if (attempts === 1) return Promise.resolve(gatedPauseResponse(tailGate));
+          return Promise.resolve(streamResponse(SUCCESS));
+        },
+      }, "claude-opus-4-6");
+
+      try {
+        performance.now = () => now;
+        const result = await runtime.doStream({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+          maxOutputTokens: 64,
+        });
+        const { pendingNext } = await drainUntilPending(result.stream[Symbol.asyncIterator]());
+        // The paused response spends the whole idle window finishing after
+        // its last visible part. The watchdog window that part opened is
+        // over, so the continuation must not be granted a fresh budget.
+        now = 41_000;
+        releaseTail();
+
+        await assertRejects(
+          () => pendingNext,
+          ProviderRequestError,
+          "header budget",
+        );
+        assertEquals(attempts, 1);
+      } finally {
+        performance.now = originalNow;
+      }
+    });
+
+    it("clamps a pause_turn continuation's header wait to the remaining idle window", async () => {
+      const originalNow = performance.now;
+      let now = 0;
+      let attempts = 0;
+      let releaseTail!: () => void;
+      const tailGate = new Promise<void>((resolve) => {
+        releaseTail = resolve;
+      });
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          attempts++;
+          if (attempts === 1) return Promise.resolve(gatedPauseResponse(tailGate));
+          // The continuation's headers never arrive; only its deadline can
+          // end the wait. Reject on abort the way a real fetch does.
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              now = 40_000;
+              reject(new DOMException("Aborted", "AbortError"));
+            }, { once: true });
+          });
+        },
+      }, "claude-opus-4-6");
+
+      try {
+        performance.now = () => now;
+        const result = await runtime.doStream({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+          maxOutputTokens: 64,
+        });
+        const { pendingNext } = await drainUntilPending(result.stream[Symbol.asyncIterator]());
+        // Most of the idle window is gone by the time the turn pauses. The
+        // continuation may only wait out the remainder, not the 30-second
+        // per-attempt default.
+        now = 39_000;
+        releaseTail();
+
+        const startedAt = Date.now();
+        await assertRejects(
+          () => pendingNext,
+          ProviderRequestError,
+          "request timed out",
+        );
+        const elapsedMs = Date.now() - startedAt;
+
+        assertEquals(elapsedMs < 25_000, true, `continuation waited ${elapsedMs}ms for headers`);
+        assertEquals(attempts, 2);
+      } finally {
+        performance.now = originalNow;
+      }
     });
   });
 });

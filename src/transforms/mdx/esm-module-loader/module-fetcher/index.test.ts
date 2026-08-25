@@ -2,15 +2,17 @@ import "#veryfront/schemas/_test-setup.ts";
 /** @module transforms/mdx/esm-module-loader/module-fetcher/index.test */
 
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { join } from "#veryfront/compat/path";
+import { VeryfrontError } from "#veryfront/errors";
 import {
   CircularModuleDependencyError,
   createModuleFetcherContext,
   endRenderSession,
   fetchAndCacheModule,
+  hasRenderSession,
   rewriteDntImports,
   startRenderSession,
 } from "./index.ts";
@@ -20,10 +22,22 @@ import {
   ModuleSourceLimitError,
 } from "./limits.ts";
 import { MAX_MDX_MODULE_CODE_BYTES } from "./limits.ts";
-import { FRAMEWORK_ROOT, HASH_SEED_FNV1A } from "../constants.ts";
-import { resolveVeryfrontModuleUrl } from "../../../veryfront-module-urls.ts";
+import { FRAMEWORK_ROOT } from "../constants.ts";
+import { rewriteVeryfrontImports } from "./import-rewriter.ts";
+import { findNestedImports, hasUnresolvedImports } from "./nested-imports.ts";
+import { hashString } from "../utils/hash.ts";
 import { MDX_ESM_CACHE_NAMESPACE } from "../cache-format.ts";
 import { normalizePath } from "./module-cache.ts";
+import { hashString as hashCacheString } from "#veryfront/cache/hash.ts";
+
+function cacheKeyForDependencies(
+  dependencies: Readonly<Record<string, string>>,
+): string {
+  const sortedEntries = Object.entries(dependencies).sort(([left], [right]) =>
+    left.localeCompare(right)
+  );
+  return `on:${hashCacheString(JSON.stringify(sortedEntries))}`;
+}
 
 function getTransformCacheKey(
   projectId: string,
@@ -39,61 +53,14 @@ function getVersionedPathCacheKey(normalizedPath: string, reactVersion: string):
   return `${MDX_ESM_CACHE_NAMESPACE}:${reactVersion}:${normalizedPath}`;
 }
 
-function rewriteVeryfrontImports(code: string): string {
-  return code.replace(/from\s*["'](veryfront\/[^"']+)["']/g, (_match, specifier: string) => {
-    const mapped = resolveVeryfrontModuleUrl(specifier);
-    return `from "${mapped ?? specifier}"`;
+describe("module-fetcher", () => {
+  // Transforming a real module starts esbuild's child process; stop it so the
+  // handle does not leak into a later suite.
+  afterAll(async () => {
+    const { stop } = await import("veryfront/extensions/bundler");
+    await stop();
   });
-}
 
-function findNestedImports(moduleCode: string): {
-  vfModules: Array<{ original: string; path: string }>;
-  relative: Array<{ original: string; path: string }>;
-} {
-  const VF_MODULE_IMPORT_PATTERN = /from\s*["'](\/?_vf_modules\/[^"'?]+)(?:\?[^"']*)?["']/g;
-  const RELATIVE_IMPORT_PATTERN = /from\s*["'](\.\.?\/[^"'?]+)(?:\?[^"']*)?["']/g;
-
-  const vfModules: Array<{ original: string; path: string }> = [];
-  const relative: Array<{ original: string; path: string }> = [];
-
-  for (const match of moduleCode.matchAll(VF_MODULE_IMPORT_PATTERN)) {
-    const path = match[1];
-    if (path) vfModules.push({ original: match[0], path: path.replace(/^\//, "") });
-  }
-
-  for (const match of moduleCode.matchAll(RELATIVE_IMPORT_PATTERN)) {
-    const path = match[1];
-    if (path) relative.push({ original: match[0], path });
-  }
-
-  return { vfModules, relative };
-}
-
-function hasUnresolvedImports(moduleCode: string): { count: number; paths: string[] } {
-  const UNRESOLVED_VF_MODULES_PATTERN = /from\s*["'](\/?_vf_modules\/[^"']+)["']/g;
-  const matches = [...moduleCode.matchAll(UNRESOLVED_VF_MODULES_PATTERN)];
-
-  return {
-    count: matches.length,
-    paths: matches
-      .map((m) => m[1])
-      .filter((p): p is string => p !== undefined)
-      .slice(0, 5),
-  };
-}
-
-function hashString(input: string): string {
-  let hash = HASH_SEED_FNV1A >>> 0;
-
-  for (let i = 0; i < input.length; i++) {
-    hash ^= input.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-
-  return (hash >>> 0).toString(16);
-}
-
-describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () => {
   describe("getTransformCacheKey", () => {
     it("includes namespace, project, path, and hash", () => {
       const key = getTransformCacheKey(
@@ -145,7 +112,10 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     it("rewrites known veryfront/* imports to /_vf_modules/ paths", () => {
       const code = `import Head from "veryfront/head";`;
       const result = rewriteVeryfrontImports(code);
-      assertEquals(result, `import Head from "/_vf_modules/_veryfront/react/runtime/core.js";`);
+      assertEquals(
+        result,
+        `import Head from "/_vf_modules/_veryfront/react/runtime/core.js?ssr=true";`,
+      );
     });
 
     it("rewrites veryfront/router", () => {
@@ -153,7 +123,7 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
       const result = rewriteVeryfrontImports(code);
       assertEquals(
         result,
-        `import { useRouter } from "/_vf_modules/_veryfront/react/runtime/core.js";`,
+        `import { useRouter } from "/_vf_modules/_veryfront/react/runtime/core.js?ssr=true";`,
       );
     });
 
@@ -177,7 +147,10 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     it("handles single-quoted imports", () => {
       const code = `import Head from 'veryfront/head';`;
       const result = rewriteVeryfrontImports(code);
-      assertEquals(result, `import Head from "/_vf_modules/_veryfront/react/runtime/core.js";`);
+      assertEquals(
+        result,
+        `import Head from "/_vf_modules/_veryfront/react/runtime/core.js?ssr=true";`,
+      );
     });
 
     it("does not rewrite non-veryfront imports", () => {
@@ -484,6 +457,140 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     });
   });
 
+  describe("dependency pinning path transport", () => {
+    it("resolves a matching pinned path through a non-local project adapter", async () => {
+      const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-pinned-cache-" });
+      const projectDir = await makeTempDir({ prefix: "vf-mdx-pinned-proj-" });
+      const dependencies = {};
+      const cacheKey = cacheKeyForDependencies(dependencies);
+      const resolvedPaths: string[] = [];
+      const adapter = {
+        env: { get: (_key: string) => undefined },
+        fs: {
+          resolveFile: (path: string) => {
+            resolvedPaths.push(path);
+            return Promise.resolve(
+              path === "components/Child" ? "/virtual/components/Child.ts" : null,
+            );
+          },
+          readFile: (path: string) => {
+            if (path !== "/virtual/components/Child.ts") {
+              throw new Error(`Unexpected file read: ${path}`);
+            }
+            return Promise.resolve("export const child = true;");
+          },
+        },
+      } as unknown as RuntimeAdapter;
+
+      try {
+        const ctx = createModuleFetcherContext(
+          esmCacheDir,
+          adapter,
+          projectDir,
+          "proj-pinned",
+          {
+            isLocalProject: false,
+            strictMissingModules: true,
+            dependencyPinningCacheKey: cacheKey,
+            dependencyPinningDependencies: dependencies,
+          },
+        );
+
+        const result = await fetchAndCacheModule(
+          `/_vf_modules/_pins/${encodeURIComponent(cacheKey)}/components/Child.js`,
+          ctx,
+        );
+
+        assertEquals(typeof result, "string");
+        assertEquals(resolvedPaths, ["components/Child"]);
+      } finally {
+        await remove(esmCacheDir, { recursive: true });
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    for (
+      const [name, path, slug, message] of [
+        [
+          "a different request snapshot",
+          "/_vf_modules/_pins/on%3Asnapshot-b/components/Child.js",
+          "dependency-pin-mismatch",
+          "does not match the request snapshot",
+        ],
+        [
+          "a malformed path",
+          "/_vf_modules/_pins/on%3Asnapshot-a",
+          "dependency-pin-malformed",
+          "Malformed dependency snapshot module path",
+        ],
+        [
+          "a nested reserved path with malformed percent encoding",
+          "/_vf_modules/_pins/on%3Asnapshot-a/_pins/%E0%A4%A/components/Child.js",
+          "dependency-pin-malformed",
+          "Malformed dependency snapshot module path",
+        ],
+      ] as const
+    ) {
+      it(`rejects ${name} before adapter access`, async () => {
+        let resolveCount = 0;
+        const adapter = {
+          env: { get: (_key: string) => undefined },
+          fs: {
+            resolveFile: () => {
+              resolveCount++;
+              return Promise.resolve(null);
+            },
+          },
+        } as unknown as RuntimeAdapter;
+        const ctx = createModuleFetcherContext("/cache", adapter, "/project", "proj-pinned", {
+          dependencyPinningCacheKey: "on:snapshot-a",
+          strictMissingModules: false,
+        });
+
+        const error = await assertRejects(
+          () => fetchAndCacheModule(path, ctx),
+          VeryfrontError,
+          message,
+        );
+        if (!(error instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
+        assertEquals(error.slug, slug);
+        assertEquals(resolveCount, 0);
+      });
+    }
+
+    it("treats decodable non-key _pins segments as ordinary source paths", async () => {
+      let resolveCount = 0;
+      const adapter = {
+        env: { get: (_key: string) => undefined },
+        fs: {
+          resolveFile: () => {
+            resolveCount++;
+            return Promise.resolve(null);
+          },
+        },
+      } as unknown as RuntimeAdapter;
+      const ctx = createModuleFetcherContext("/cache", adapter, "/project", "proj-pinned", {
+        dependencyPinningCacheKey: "on:snapshot-a",
+      });
+
+      for (
+        const path of [
+          "/_vf_modules/_pins/project-dir/components/Child.js",
+          "/_vf_modules/_pins/not-a-snapshot/components/Child.js",
+        ]
+      ) {
+        const error = await assertRejects(
+          () => fetchAndCacheModule(path, ctx),
+          Error,
+          "[MDX] Missing module",
+        );
+        if (!(error instanceof Error)) throw new Error("expected Error");
+        assertEquals(error.name, "MissingModuleError");
+      }
+      assertEquals(resolveCount > 0, true);
+    });
+  });
+
   describe("circular imports", () => {
     function createCircularAdapter(): any {
       const sourceByPath = new Map<string, string>([
@@ -529,25 +636,6 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
           CircularModuleDependencyError,
           "Circular module dependency detected",
         );
-      } finally {
-        await remove(esmCacheDir, { recursive: true });
-        await remove(projectDir, { recursive: true });
-      }
-    });
-
-    it("falls back to stub resolution in non-strict mode", async () => {
-      const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-cycle-nonstrict-cache-" });
-      const projectDir = await makeTempDir({ prefix: "vf-mdx-cycle-nonstrict-proj-" });
-      const adapter = createCircularAdapter();
-
-      try {
-        const ctx = createModuleFetcherContext(esmCacheDir, adapter, projectDir, "proj-cycle", {
-          strictMissingModules: false,
-        });
-
-        const result = await fetchAndCacheModule("/_vf_modules/a.js", ctx);
-        assertEquals(typeof result, "string");
-        assertEquals(result?.endsWith(".mjs"), true);
       } finally {
         await remove(esmCacheDir, { recursive: true });
         await remove(projectDir, { recursive: true });
@@ -690,7 +778,17 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     it("startRenderSession and endRenderSession lifecycle", () => {
       const sessionId = `test-session-${Date.now()}`;
       startRenderSession(sessionId, "test-project", "/");
+      assertEquals(
+        hasRenderSession(sessionId),
+        true,
+        "startRenderSession must register the session",
+      );
       endRenderSession(sessionId);
+      assertEquals(
+        hasRenderSession(sessionId),
+        false,
+        "endRenderSession must tear the session down",
+      );
     });
 
     it("endRenderSession with unknown session does not throw", () => {
@@ -702,8 +800,16 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
       const id2 = `s2-${Date.now()}`;
       startRenderSession(id1, "proj-a", "/a");
       startRenderSession(id2, "proj-b", "/b");
+      assertEquals(hasRenderSession(id1), true, "the first session must stay registered");
+      assertEquals(hasRenderSession(id2), true, "the second session must stay registered");
       endRenderSession(id1);
+      assertEquals(
+        hasRenderSession(id2),
+        true,
+        "ending one session must not tear down a concurrent one",
+      );
       endRenderSession(id2);
+      assertEquals(hasRenderSession(id2), false, "the second session is torn down in turn");
     });
   });
 });

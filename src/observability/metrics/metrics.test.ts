@@ -1,7 +1,31 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  _resetShimForTests,
+  installGlobalTelemetryAPI,
+  type Meter,
+  type MetricsAPI,
+} from "#veryfront/observability/tracing/api-shim.ts";
 import { MetricsManager } from "./manager.ts";
+
+/** Metrics API double that records every instrument the manager creates. */
+function createRecordingMetricsApi(created: string[]): MetricsAPI {
+  const instrument = (name: string) => {
+    created.push(name);
+    return { add: () => {}, record: () => {} };
+  };
+  const meter: Meter = {
+    createCounter: (name) => instrument(name),
+    createUpDownCounter: (name) => instrument(name),
+    createHistogram: (name) => instrument(name),
+    createObservableGauge: (name) => {
+      created.push(name);
+      return { addCallback: () => {}, removeCallback: () => {} };
+    },
+  };
+  return { getMeter: () => meter };
+}
 
 function createMockAdapter(
   envVars: Record<string, string> = {},
@@ -149,9 +173,30 @@ describe("Metrics Module", () => {
     });
 
     it("should skip duplicate initialization attempts", async () => {
-      await manager.initialize({ enabled: false });
-      await manager.initialize({ enabled: true });
-      assertEquals(manager.isEnabled(), false);
+      const created: string[] = [];
+      const owner = installGlobalTelemetryAPI({
+        metricsApi: createRecordingMetricsApi(created),
+      });
+
+      try {
+        await manager.initialize({ enabled: false, prefix: "first" });
+        await manager.initialize({ enabled: true, prefix: "second" });
+
+        assertEquals(
+          created,
+          [],
+          "a duplicate initialize must not create instruments from the second config",
+        );
+        assertEquals(
+          manager.isEnabled(),
+          false,
+          "the first disabled configuration still owns the manager",
+        );
+      } finally {
+        manager.shutdown();
+        owner.dispose();
+        _resetShimForTests();
+      }
     });
 
     it("should accept partial config", async () => {

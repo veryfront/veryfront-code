@@ -125,13 +125,13 @@ flowchart TD
 ## Skills
 
 Skill code turns `SKILL.md` directories into agent-usable instruction packs
-with metadata validation, optional reference files, optional executable
-scripts, and tool restrictions.
+with metadata validation, optional reference files, and optional executable
+scripts. A skill never widens or narrows the tools a run can call.
 
 ```mermaid
 flowchart TD
   skillDir[Skill directory] --> parse[Parse SKILL.md frontmatter and content]
-  parse --> validate[Validate metadata and allowed tool patterns]
+  parse --> validate[Validate metadata]
   validate --> registry[Register skill]
   registry --> manifest[Build skill manifest prompt]
   manifest --> agent[Agent runtime]
@@ -139,7 +139,7 @@ flowchart TD
   load --> active[Active skill context]
   active --> reference[load_skill_reference]
   active --> script[execute_skill_script]
-  active --> filter[Allowed tool filtering]
+  active --> gate[Gate skill reference and script tools]
   reference --> safety[Path safety checks]
   script --> executor[Local or cloud script executor]
 ```
@@ -149,16 +149,17 @@ flowchart TD
 3. Prompt augmentation summarizes available skills for agent planning.
 4. Built-in skill tools load instructions, read reference files, and execute
    scripts.
-5. Allowed-tool policy filters callable tools while a skill is active.
+5. Skill tool availability gates `load_skill_reference` and
+   `execute_skill_script` on the files the active skill advertises.
 6. Path-safety helpers reject traversal and symlink escapes before reading
    skill files.
 7. Script execution selects local subprocess execution or cloud sandbox
    execution based on runtime credentials.
 
-Skills provide instruction packs and tool policy. They are not workflows,
+Skills provide instruction packs. They are not workflows,
 runs, or local tool definitions. Skills are configured through project
-discovery and `agent({ skills })`; parser, registry, tool, and policy helpers
-are available from the public `veryfront/skill` package subpath.
+discovery and `agent({ skills })`; parser, registry, and tool helpers are
+available from the public `veryfront/skill` package subpath.
 
 ## Boundaries
 
@@ -198,7 +199,8 @@ are available from the public `veryfront/skill` package subpath.
   params validation, or registry lookup.
 - Add skill parser tests when changing frontmatter shape, validation, defaults,
   or metadata limits.
-- Add allowed-tool tests when changing exact-match or prefix-match policy.
+- Add skill tool availability tests when changing which skill infrastructure
+  tools a loaded skill exposes.
 - Add path-safety tests when changing reference, asset, or script file access.
 - Add skill executor tests when changing local execution, cloud execution,
   timeout handling, or environment forwarding.
@@ -230,7 +232,8 @@ compatibility Adapter over `runStreamLifecycle()`
 (`src/agent/streaming/lifecycle/runner.ts`); the rollout mode
 (`VF_STREAM_LIFECYCLE_MODE`: `legacy | shadow | active`, default `legacy`)
 selects the legacy reader, a read-only shadow comparison, or the lifecycle
-runner.
+runner. Setting the mode back to `legacy` restores the compatibility reader as
+the rollout rollback path without a provider redeploy.
 
 Provider idle time accrues only while one provider read is pending: the
 first-progress, semantic-idle, tool-input-idle, and commit-grace budgets pause

@@ -1,5 +1,9 @@
-import { assertEquals, assertStringIncludes } from "#std/assert";
-import { describe, it } from "#std/testing/bdd";
+import { STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES } from "#veryfront/extensions/first-party-defaults.ts";
+import {
+  assertEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   BROWSER_SAFE_CLIENT_MODULES,
   BROWSER_SAFE_EXPORTS,
@@ -16,7 +20,7 @@ import {
   type RootPackageConfig,
 } from "./npm-extension-package-metadata.ts";
 
-Deno.test("exports agent skill helpers as a public package subpath", async () => {
+it("exports agent skill helpers as a public package subpath", async () => {
   const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
   const exports = denoConfig.exports as Record<string, string>;
   const imports = denoConfig.imports as Record<string, string>;
@@ -25,7 +29,7 @@ Deno.test("exports agent skill helpers as a public package subpath", async () =>
   assertEquals(imports["veryfront/skill"], "./src/skill/index.ts");
 });
 
-Deno.test("exports the UI adapter contract as a public package subpath", async () => {
+it("exports the UI adapter contract as a public package subpath", async () => {
   const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
   const exports = denoConfig.exports as Record<string, string>;
   const imports = denoConfig.imports as Record<string, string>;
@@ -35,7 +39,7 @@ Deno.test("exports the UI adapter contract as a public package subpath", async (
   assertEquals(imports["veryfront/ui/adapter"], contract);
 });
 
-Deno.test("exports CLI framework dependencies as public package subpaths", async () => {
+it("exports CLI framework dependencies as public package subpaths", async () => {
   const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
   const exports = denoConfig.exports as Record<string, string>;
   const imports = denoConfig.imports as Record<string, string>;
@@ -51,7 +55,7 @@ Deno.test("exports CLI framework dependencies as public package subpaths", async
   }
 });
 
-Deno.test("npm package provenance metadata points at veryfront-code", async () => {
+it("npm package provenance metadata points at veryfront-code", async () => {
   const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
 
   assertStringIncludes(
@@ -65,7 +69,7 @@ Deno.test("npm package provenance metadata points at veryfront-code", async () =
   assertEquals(source.includes("github.com/veryfront/veryfront.git"), false);
 });
 
-Deno.test("root npm build metadata does not inject extension implementation dependencies", async () => {
+it("root npm build metadata does not inject extension implementation dependencies", async () => {
   const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
 
   for (const packageName of ["@kreuzberg/node", "better-sqlite3"]) {
@@ -77,33 +81,56 @@ Deno.test("root npm build metadata does not inject extension implementation depe
   }
 });
 
-Deno.test("root npm CLI package declares auto-loaded first-party extensions after local install", async () => {
+it("standard npm extension policy covers baseline app and developer features", () => {
+  assertEquals([...STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES], [
+    "ext-bundler-esbuild",
+    "ext-content-mdx",
+    "ext-css-tailwind",
+    "ext-dev-ui-react",
+    "ext-node-websocket-ws",
+    "ext-parser-babel",
+    "ext-yaml",
+  ]);
+});
+
+it("root npm CLI package declares standard extensions after local install", async () => {
   const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
   const installIndex = source.indexOf(
     "const { code } = await npmInstall.output();",
   );
-  for (
-    const packageName of [
-      "@veryfront/ext-bundler-esbuild",
-      "@veryfront/ext-content-mdx",
-      "@veryfront/ext-css-tailwind",
-      "@veryfront/ext-parser-babel",
-    ]
-  ) {
-    const dependencyAssignment =
-      `pkg.dependencies["${packageName}"] = version;`;
-    const dependencyIndex = source.indexOf(dependencyAssignment);
+  const dependencyLoop =
+    "for (const extensionDirectory of STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES)";
+  const dependencyIndex = source.indexOf(dependencyLoop);
 
-    assertStringIncludes(source, dependencyAssignment);
-    assertEquals(
-      dependencyIndex > installIndex,
-      true,
-      `${packageName} dependency must be added after build-local npm install so prerelease builds do not require the extension to already be published`,
-    );
-  }
+  assertStringIncludes(source, dependencyLoop);
+  assertStringIncludes(
+    source,
+    "pkg.dependencies[`@veryfront/${extensionDirectory}`] = version;",
+  );
+  assertEquals(
+    dependencyIndex > installIndex,
+    true,
+    "standard extension dependencies must be added after the build-local npm install",
+  );
 });
 
-Deno.test("npm publish version bump pins first-party extension dependencies to the publish version", async () => {
+it("npm lifecycle probe installs auto-loaded extensions in a real consumer layout", async () => {
+  const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
+
+  assertStringIncludes(source, '"--install-links"');
+  assertStringIncludes(source, 'const agent = await import("veryfront/agent")');
+  assertStringIncludes(source, "agent.parseRuntimeSkillMetadata(");
+  assertStringIncludes(
+    source,
+    "...STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES.map",
+  );
+  assertStringIncludes(
+    source,
+    "Deno.realPath(`./npm/extensions/${extensionDirectory}`)",
+  );
+});
+
+it("npm publish version bump pins first-party extension dependencies to the publish version", async () => {
   const packageDir = await Deno.makeTempDir();
   const packagePath = `${packageDir}/package.json`;
   const publishVersion = "0.1.1016-rc.123";
@@ -120,7 +147,9 @@ Deno.test("npm publish version bump pins first-party extension dependencies to t
             "@veryfront/ext-bundler-esbuild": "0.1.1016",
             "@veryfront/ext-content-mdx": "^0.1.1016",
             "@veryfront/ext-css-tailwind": "^0.1.1016",
+            "@veryfront/ext-node-websocket-ws": "^0.1.1016",
             "@veryfront/ext-parser-babel": "^0.1.1016",
+            "@veryfront/ext-yaml": "^0.1.1016",
             "@veryfront/not-an-extension": "^0.1.1016",
             zod: "4.3.6",
           },
@@ -160,7 +189,9 @@ Deno.test("npm publish version bump pins first-party extension dependencies to t
       "@veryfront/ext-bundler-esbuild": publishVersion,
       "@veryfront/ext-content-mdx": publishVersion,
       "@veryfront/ext-css-tailwind": publishVersion,
+      "@veryfront/ext-node-websocket-ws": publishVersion,
       "@veryfront/ext-parser-babel": publishVersion,
+      "@veryfront/ext-yaml": publishVersion,
       "@veryfront/not-an-extension": "^0.1.1016",
       zod: "4.3.6",
     });
@@ -172,7 +203,75 @@ Deno.test("npm publish version bump pins first-party extension dependencies to t
   }
 });
 
-Deno.test("npm publish orders extensions before the root package", async () => {
+// @veryfront/ext-content-mdx is published as an optional *peer* of the root
+// package. RC builds publish every package under a -rc.N version, so if the
+// bump skips peerDependencies the root package ships pointing at a version that
+// was never published and the optional peer can never be installed.
+it("npm publish version bump pins first-party extension peers to the publish version", async () => {
+  const packageDir = await Deno.makeTempDir();
+  const packagePath = `${packageDir}/package.json`;
+  const publishVersion = "0.1.1240-rc.7";
+
+  try {
+    await Deno.writeTextFile(
+      packagePath,
+      JSON.stringify(
+        {
+          name: "veryfront",
+          version: "0.1.1240",
+          dependencies: {
+            "@veryfront/ext-css-tailwind": "0.1.1240",
+          },
+          peerDependencies: {
+            "@veryfront/ext-content-mdx": "0.1.1240",
+            "@huggingface/transformers": "^4.2.0",
+            react: "^19.0.0",
+          },
+          peerDependenciesMeta: {
+            "@veryfront/ext-content-mdx": { optional: true },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const output = await new Deno.Command("bash", {
+      args: [
+        "-c",
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          'VERSION="$PUBLISH_VERSION" update_package_version "$PACKAGE_DIR"',
+        ].join("\n"),
+      ],
+      env: {
+        PACKAGE_DIR: packageDir,
+        PUBLISH_VERSION: publishVersion,
+        SCRIPT_PATH: `${Deno.cwd()}/scripts/ci/publish-npm-packages.sh`,
+      },
+      stderr: "piped",
+      stdout: "piped",
+    }).output();
+
+    assertEquals(output.code, 0, new TextDecoder().decode(output.stderr));
+
+    const pkg = JSON.parse(await Deno.readTextFile(packagePath));
+    assertEquals(pkg.peerDependencies, {
+      "@veryfront/ext-content-mdx": publishVersion,
+      // Third-party optional peers keep their compatibility ranges.
+      "@huggingface/transformers": "^4.2.0",
+      react: "^19.0.0",
+    });
+    assertEquals(pkg.peerDependenciesMeta, {
+      "@veryfront/ext-content-mdx": { optional: true },
+    });
+  } finally {
+    await Deno.remove(packageDir, { recursive: true });
+  }
+});
+
+it("npm publish orders extensions before the root package", async () => {
   const packageRoot = await Deno.makeTempDir();
 
   try {
@@ -207,7 +306,7 @@ Deno.test("npm publish orders extensions before the root package", async () => {
   }
 });
 
-Deno.test("npm publish skips extension packages marked publish false", async () => {
+it("npm publish skips extension packages marked publish false", async () => {
   const packageRoot = await Deno.makeTempDir();
 
   try {
@@ -306,7 +405,12 @@ const ROOT_BUNDLED_EXTENSIONS = new Set([
   "ext-eval-report-mlflow",
 ]);
 
-Deno.test("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests", async () => {
+// The framework and ext-dev-ui-react both consume the application's React
+// generation. These remain root dependencies so npm resolves one React graph
+// instead of treating the extension's use as private implementation detail.
+const ROOT_SHARED_EXTENSION_DEPENDENCIES = new Set(["react", "react-dom"]);
+
+it("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests", async () => {
   const denoConfig = JSON.parse(
     await Deno.readTextFile("deno.json"),
   ) as RootPackageConfig;
@@ -340,7 +444,8 @@ Deno.test("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests",
 
     for (const dependency of dependencies) {
       assertEquals(
-        owned.has(dependency) || optionalPeers.has(dependency),
+        owned.has(dependency) || optionalPeers.has(dependency) ||
+          ROOT_SHARED_EXTENSION_DEPENDENCIES.has(dependency),
         true,
         `${dependency} (declared by ${manifestPath}) must be added to EXTENSION_OWNED_DEPENDENCIES so it does not leak into root veryfront npm installs`,
       );
@@ -357,6 +462,47 @@ describe("normalizeNpmPackageMetadata", () => {
     assertEquals(pkg.files, ["esm", "script", "bin", "README.md"]);
   });
 
+  // veryfront@0.1.1239 listed @veryfront/ext-content-mdx under runtime
+  // `dependencies`, which drags @mdx-js/mdx -> @types/mdx@2.0.14 into every
+  // consumer's node_modules/@types. That file references the *global* JSX
+  // namespace, which @types/react@19 no longer declares, so `npm install
+  // veryfront` broke a previously-clean `tsc --noEmit` in projects that do not
+  // set skipLibCheck. Nothing in the four TS2503 errors names Veryfront.
+  //
+  // `optionalDependencies` does NOT fix this: npm installs optional
+  // dependencies by default and only tolerates their *failure*. Verified with
+  // npm 11.12.1 — a package.json whose sole entry is
+  // `optionalDependencies: { "@mdx-js/mdx": "3.1.1" }` still produces
+  // node_modules/@types/mdx and still fails `tsc --noEmit` with the same four
+  // errors. Only an optional peer keeps the package out of the tree, which is
+  // the mechanism ROOT_OPTIONAL_RUNTIME_PEERS already uses.
+  it("keeps the MDX content extension out of automatic npm installs", () => {
+    const pkg = normalizeNpmPackageMetadata({
+      dependencies: {
+        "@veryfront/ext-bundler-esbuild": "0.1.1239",
+        "@veryfront/ext-content-mdx": "0.1.1239",
+        "@veryfront/ext-css-tailwind": "0.1.1239",
+        zod: "4.3.6",
+      },
+    });
+
+    assertEquals(pkg.dependencies, {
+      "@veryfront/ext-bundler-esbuild": "0.1.1239",
+      "@veryfront/ext-css-tailwind": "0.1.1239",
+      zod: "4.3.6",
+    });
+    // An optionalDependency would still be installed, so the move has to land
+    // on peerDependencies + peerDependenciesMeta.optional.
+    assertEquals(pkg.optionalDependencies, undefined);
+    assertEquals(
+      pkg.peerDependencies?.["@veryfront/ext-content-mdx"],
+      "0.1.1239",
+    );
+    assertEquals(pkg.peerDependenciesMeta?.["@veryfront/ext-content-mdx"], {
+      optional: true,
+    });
+  });
+
   it("keeps opt-in feature packages out of automatic npm installs", () => {
     const pkg = normalizeNpmPackageMetadata({
       dependencies: {
@@ -367,7 +513,7 @@ describe("normalizeNpmPackageMetadata", () => {
         "@opentelemetry/sdk-metrics": "2.8.0",
         "@opentelemetry/sdk-node": "0.218.0",
         "@sentry/deno": "10.68.0",
-        "brace-expansion": "5.0.8",
+        "brace-expansion": "5.0.9",
         "gaxios": "7.2.0",
         "gcp-metadata": "8.1.2",
         "protobufjs": "7.6.5",
@@ -569,11 +715,15 @@ describe("npm supply-chain policy", () => {
 
   it("packs and exercises auto-loaded extensions in npm install smoke tests", async () => {
     const source = await Deno.readTextFile("scripts/test/npm-install-smoke.sh");
+    assertStringIncludes(source, "--allow-run=tar");
     const autoLoadedExtensions = [
       "ext-bundler-esbuild",
       "ext-content-mdx",
       "ext-css-tailwind",
+      "ext-dev-ui-react",
+      "ext-node-websocket-ws",
       "ext-parser-babel",
+      "ext-yaml",
     ];
 
     for (const extensionName of autoLoadedExtensions) {
@@ -593,6 +743,11 @@ describe("npm supply-chain policy", () => {
     assertStringIncludes(source, "getDeferredExtensionState(resolved)");
     assertStringIncludes(source, "await deferred.load(logger)");
     assertStringIncludes(source, "app/page.tsx");
+    assertStringIncludes(source, "materializeScaffold");
+    assertStringIncludes(source, "template: 'ai-agent'");
+    assertStringIncludes(source, "published ai-agent starter");
+    assertStringIncludes(source, "dev --port");
+    assertStringIncludes(source, ">Assistant</title>");
   });
 
   it("loads CLI command handlers after global routing decisions", async () => {
@@ -625,12 +780,14 @@ describe("npm supply-chain policy", () => {
       "ext-bundler-esbuild",
       "ext-content-mdx",
       "ext-css-tailwind",
+      "ext-node-websocket-ws",
       "ext-db-sqlite",
       "ext-document-kreuzberg",
       "ext-eval-report-mlflow",
       "ext-observability-opentelemetry",
       "ext-observability-sentry",
       "ext-parser-babel",
+      "ext-yaml",
       "ext-sandbox-shell-tools",
     ];
 
@@ -725,12 +882,17 @@ describe("npm supply-chain policy", () => {
   });
 
   it("uses native Node timers so root imports can release background intervals", async () => {
-    const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
+    const rootSource = await Deno.readTextFile(
+      new URL("build-npm-dnt.ts", import.meta.url),
+    );
+    const extensionSource = await Deno.readTextFile(
+      new URL("build-npm-extension-packages.ts", import.meta.url),
+    );
 
-    assertStringIncludes(source, "timers: false");
-    assertEquals(source.includes("timers: true"), false);
-    assertStringIncludes(source, 'VF_DISABLE_LRU_INTERVAL: "0"');
-    assertStringIncludes(source, "await verifyNpmRootImportLifecycle();");
+    assertEquals(rootSource.includes("timers:"), false);
+    assertEquals(extensionSource.includes("timers:"), false);
+    assertStringIncludes(rootSource, 'VF_DISABLE_LRU_INTERVAL: "0"');
+    assertStringIncludes(rootSource, "await verifyNpmRootImportLifecycle();");
   });
 
   it("exercises the root-bundled MLflow exporter in the npm lifecycle probe", async () => {

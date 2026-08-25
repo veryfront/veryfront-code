@@ -7,7 +7,6 @@ import { createDataInstruments } from "./data-instruments.ts";
 import { createErrorInstruments } from "./error-instruments.ts";
 import { createHttpInstruments } from "./http-instruments.ts";
 import { createMemoryInstruments, createMemoryObservableBindings } from "./memory-instruments.ts";
-import { createModelCallContextInstruments } from "./model-call-context-instruments.ts";
 import { installObservableCallbacks } from "./observable-callbacks.ts";
 import { createRenderInstruments } from "./render-instruments.ts";
 import { createRscInstruments } from "./rsc-instruments.ts";
@@ -66,12 +65,6 @@ export function createEmptyInstruments(): MetricsInstruments {
     streamLifecycleSemanticIdleDuration: null,
     streamLifecycleToolInputDuration: null,
     streamLifecycleToolExecutionDuration: null,
-    modelCallContextWriterOutcomeCounter: null,
-    modelCallContextBarrierOutcomeCounter: null,
-    modelCallContextLogicalByteLength: null,
-    modelCallContextPartCount: null,
-    modelCallContextAppendRequestCount: null,
-    modelCallContextRecorderBarrierDuration: null,
   };
 }
 
@@ -104,7 +97,6 @@ export function initializeInstruments(
       ...createMemoryInstruments(meter, config),
       ...createErrorInstruments(meter, config),
       ...createStreamLifecycleInstruments(meter, config),
-      ...createModelCallContextInstruments(meter, config),
     };
     const dispose = installObservableCallbacks([
       ...createCacheObservableBindings(instruments, runtimeState),

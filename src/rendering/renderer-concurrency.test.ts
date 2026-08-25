@@ -164,6 +164,43 @@ describe("project render slots", () => {
     }
   });
 
+  it("disables per-project limits when RENDER_PER_PROJECT_LIMIT is 0", async () => {
+    const previousLimit = Deno.env.get("RENDER_PER_PROJECT_LIMIT");
+    Deno.env.set("RENDER_PER_PROJECT_LIMIT", "0");
+    try {
+      const concurrency = await import(
+        `./renderer-concurrency.ts?zero-limit=${crypto.randomUUID()}`
+      );
+      const projectId = `project-${crypto.randomUUID()}`;
+
+      assertEquals(
+        concurrency.RENDER_PER_PROJECT_LIMIT,
+        0,
+        "an explicit 0 must survive parsing",
+      );
+      for (let attempt = 0; attempt < 3; attempt++) {
+        assertEquals(
+          await concurrency.acquireProjectSlot(projectId),
+          true,
+          "a disabled per-project limit must never refuse a render slot",
+        );
+      }
+
+      await concurrency.releaseProjectSlot(projectId);
+      assertEquals(
+        concurrency.projectRenderCounts.has(projectId),
+        false,
+        "the disabled path must not record per-project counts",
+      );
+    } finally {
+      if (previousLimit === undefined) {
+        Deno.env.delete("RENDER_PER_PROJECT_LIMIT");
+      } else {
+        Deno.env.set("RENDER_PER_PROJECT_LIMIT", previousLimit);
+      }
+    }
+  });
+
   it("queues foreground waiters in FIFO order", async () => {
     const previousLimit = Deno.env.get("RENDER_PER_PROJECT_LIMIT");
     const previousQueueSize = Deno.env.get("RENDER_PER_PROJECT_QUEUE_SIZE");

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   isWebSocketUpgrade,
@@ -57,13 +57,12 @@ describe("platform/compat/http/websocket", () => {
 
     it("should throw when called with a non-upgradeable request", () => {
       // Deno.upgradeWebSocket throws if the request isn't a real WS upgrade request
-      const request = new Request("http://localhost/ws");
-      try {
-        upgradeWebSocket(request);
-        assertEquals(true, false, "Should have thrown");
-      } catch (e) {
-        assertExists(e);
-      }
+      assertThrows(
+        () => upgradeWebSocket(new Request("http://localhost/ws")),
+        Error,
+        "requires an Upgrade: websocket request",
+        "a request without Upgrade: websocket must be rejected",
+      );
     });
 
     it("passes idleTimeout through to Deno upgrade options", () => {

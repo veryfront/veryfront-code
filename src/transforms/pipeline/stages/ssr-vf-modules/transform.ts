@@ -217,6 +217,7 @@ async function transformAndCacheFallbackDep(
     ctx.reactVersion,
     ctx.projectDir,
     depContent,
+    ctx.importMapFingerprint,
   );
   // Prefer the main path's fully-resolved cache entry when present —
   // that output is strictly higher quality than what the fallback
@@ -337,10 +338,12 @@ async function rewriteFallbackRelativeImports(
   // from file://, and Node rejects `import ... from "https:"`
   // (ERR_UNSUPPORTED_ESM_URL_SCHEME); leaving the remote specifier in would
   // break SSR under Node whenever a deep framework file hits this fallback.
-  const importMap = await loadImportMap(ctx.projectDir);
+  const importMap = ctx.importMap ?? (await loadImportMap(ctx.projectDir));
   const cacheResult = await cacheHttpImportsToLocal(rewritten, {
     cacheDir: getHttpBundleCacheDir(),
     importMap,
+    abortSignal: ctx.abortSignal,
+    onProgress: ctx.onProgress,
     reactVersion: ctx.reactVersion,
   });
   return cacheResult.code;
@@ -364,6 +367,7 @@ export async function transformFrameworkCode(
     ctx.reactVersion,
     ctx.projectDir,
     content,
+    ctx.importMapFingerprint,
   );
   const ancestry = ctx.transformAncestry ?? new Set<string>();
 
@@ -428,6 +432,7 @@ async function transformFrameworkCodeUncoalesced(
     ctx.reactVersion,
     ctx.projectDir,
     content,
+    ctx.importMapFingerprint,
   );
   const cached = frameworkFileCache.get(transformKey);
   if (cached) {
@@ -554,6 +559,7 @@ async function transformFrameworkCodeUncoalesced(
             ctx.reactVersion,
             ctx.projectDir,
             depContent,
+            ctx.importMapFingerprint,
           );
           const existingFileUrl = frameworkFileCache.get(dependencyTransformKey);
           if (existingFileUrl) {
@@ -640,10 +646,12 @@ async function transformFrameworkCodeUncoalesced(
     transformed = await stripJsonAttributesFromModuleImports(transformed);
 
     // Cache HTTP imports to local filesystem
-    const importMap = await loadImportMap(ctx.projectDir);
+    const importMap = ctx.importMap ?? (await loadImportMap(ctx.projectDir));
     const cacheResult = await cacheHttpImportsToLocal(transformed, {
       cacheDir: getHttpBundleCacheDir(),
       importMap,
+      abortSignal: ctx.abortSignal,
+      onProgress: ctx.onProgress,
       reactVersion: ctx.reactVersion,
     });
 
@@ -676,6 +684,7 @@ export async function resolveAndTransformVeryfrontImport(
       ctx.reactVersion,
       ctx.projectDir,
       content,
+      ctx.importMapFingerprint,
     );
     const cached = veryfrontTransformCache.get(transformKey);
     if (cached) {
@@ -730,7 +739,7 @@ export async function resolveAndTransformVeryfrontImport(
  * Drop `with { type: "json" }` from imports that now point at a JavaScript
  * module.
  *
- * A framework import of a `.json` file (`#veryfront/server/dev-ui/manifest.json`)
+ * A framework import of a `.json` file (for example, generated metadata)
  * is resolved by transforming the JSON into a cached `.mjs` that default-exports
  * the data. The attribute on the importer describes the *original* target, so
  * leaving it in place makes the runtime reject the rewritten import with
@@ -755,11 +764,14 @@ export async function transformFrameworkSource(
   projectDir: string,
   fs: ReturnType<typeof createFileSystem>,
   onProgress?: TransformContext["onProgress"],
+  importMap?: TransformContext["importMap"],
+  importMapFingerprint?: string,
+  abortSignal?: AbortSignal,
 ): Promise<string> {
   return transformFrameworkCode(
     content,
     sourcePath,
-    { reactVersion, projectDir, fs, onProgress },
+    { reactVersion, projectDir, fs, onProgress, importMap, importMapFingerprint, abortSignal },
     true,
   );
 }

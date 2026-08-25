@@ -6,10 +6,10 @@ order: 28
 
 Veryfront supports two agent composition patterns:
 
-- Wrap agents as tools with `agentAsTool` or `getAgentsAsTools`.
+- Let one agent call others by naming them in `delegates`.
 - Run agents as ordered workflow steps.
 
-Use agent-as-tool when the parent should choose the order at runtime. Use a workflow when the order is known in advance.
+Use delegation when the parent should choose the order at runtime. Use a workflow when the order is known in advance.
 
 Each agent can omit `model` and use `openai/gpt-5.4-nano`, set `"auto"` for runtime selection, or set an explicit `provider/model` override when you need one.
 
@@ -17,6 +17,12 @@ Each agent can omit `model` and use `openai/gpt-5.4-nano`, set `"auto"` for runt
 
 - At least two agents in `agents/` (see [Agents](./agents.md)).
 - A configured provider (see [Providers](./providers.md)).
+
+Direct local delegation does not require a Veryfront account. Set a direct
+provider key, run `veryfront dev`, and use `delegates` on the parent agent. The
+runtime runs the delegates in-process and gives the parent one scoped tool for
+each allowed agent. Veryfront Cloud is only required when you choose hosted run
+or control-plane capabilities.
 
 ## Agent-as-tool
 
@@ -51,21 +57,20 @@ export default agent({
 
 ```ts
 // agents/orchestrator.ts
-import { agent, getAgentsAsTools } from "veryfront/agent";
+import { agent } from "veryfront/agent";
 
 export default agent({
   id: "orchestrator",
   system:
     "You coordinate research and writing. Use the researcher to gather facts, then the writer to produce the article.",
-  tools: getAgentsAsTools({
-    researcher: "Research a topic using web search",
-    writer: "Write an article from research notes",
-  }),
+  delegates: ["researcher", "writer"],
   maxSteps: 10,
 });
 ```
 
-`getAgentsAsTools()` wraps each agent as a tool. The orchestrator decides when to call each agent based on its system prompt. Each sub-agent runs its own tool loop independently.
+Each id in `delegates` becomes an `agent_<id>` tool. The orchestrator decides when to call each agent based on its system prompt, and each sub-agent runs its own tool loop independently.
+
+Name the delegates rather than building the tools yourself. Discovery loads `agents/` in filename order, so a top-level `getAgentsAsTools()` in `orchestrator.ts` runs before `researcher.ts` and `writer.ts` have registered and returns nothing. `delegates` resolves each agent when the run starts, so load order cannot matter. Reach for `agentAsTool()` or `getAgentsAsTools()` only where you register the agents yourself and control the order.
 
 ### Invoke the orchestrator
 
@@ -130,13 +135,14 @@ Break the task down. Use agent_researcher to gather facts, then agent_writer to
 produce the final copy.
 ```
 
-Set `delegates: []` when an agent must not delegate. Hosted runtimes retain the
-legacy generic `invoke_agent` tool only for older definitions where
-`delegates` is absent; direct runtimes do not add it automatically.
-Self-delegation and delegate ids that cannot form a valid provider tool name
-are rejected with explicit diagnostics. Declare direct tools by name when
-using `delegates`; `tools: true` is intentionally rejected because it would
-hide the agent's capability boundary.
+Set `delegates: []` when an agent must not delegate. `invoke_agent` is the
+generic platform tool for dynamic agent selection. Enable it explicitly in a
+direct runtime with `tools: { invoke_agent: true }`; hosted runtimes expose it
+when generic delegation is allowed and `delegates` is absent. Self-delegation
+and delegate ids that cannot form a valid provider tool name are rejected with
+explicit diagnostics. Declare direct tools by name when using `delegates`;
+`tools: true` is intentionally rejected because it would hide the agent's
+capability boundary.
 
 Hosted nested delegation carries trusted invocation lineage from parent to
 child runs. The root conversation and run stay stable, the immediate parent is
@@ -145,7 +151,8 @@ nested levels.
 
 ## Workflow-based composition
 
-For deterministic multi-agent pipelines, use [workflows](./workflows.md):
+For multi-agent pipelines with explicit execution order, use
+[workflows](./workflows.md):
 
 ```ts
 // workflows/article-pipeline.ts
@@ -173,7 +180,8 @@ Start this workflow from an API route, task, or tool. The [Workflows](./workflow
 | **Agent-as-tool** | The orchestrator decides dynamically which agents to call and in what order |
 | **Workflow**      | The execution order is known in advance: sequential, parallel, or branching |
 
-Agent-as-tool is more flexible but harder to predict. Workflows are deterministic and easier to debug.
+Agent-as-tool is more flexible but harder to predict. Workflows make execution
+order explicit and easier to debug.
 
 ## Agent registry
 

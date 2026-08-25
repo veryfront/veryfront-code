@@ -98,22 +98,46 @@ interface DebugContextResult {
   error?: string;
 }
 
+function isNameResolutionError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === "AbortError") return false;
+  if (!(error instanceof Error)) return false;
+  const cause = error.cause instanceof Error ? error.cause.message : "";
+  const message = `${error.message} ${cause}`.toLowerCase();
+  return message.includes("dns error") ||
+    message.includes("failed to lookup address") ||
+    message.includes("enotfound") ||
+    message.includes("eai_again") ||
+    message.includes("name or service not known");
+}
+
+async function fetchDebugContext(input: GetDebugContextInput): Promise<Response> {
+  const host = input.project ? `${input.project}.localhost` : "localhost";
+  const url = `http://${host}:${input.port}/_vf_debug/context`;
+  try {
+    return await fetch(url);
+  } catch (error) {
+    if (!input.project || !isNameResolutionError(error)) throw error;
+    // This tool has no preview input. x-project-slug preserves project identity
+    // only; future preview support must retain the virtual-host environment.
+    return await fetch(`http://127.0.0.1:${input.port}/_vf_debug/context`, {
+      headers: { "x-project-slug": input.project },
+    });
+  }
+}
+
 export const vfGetDebugContext: MCPTool<GetDebugContextInput, DebugContextResult> = {
   name: "vf_get_debug_context",
   title: "Debug Context",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need the dev server's debug context including project slug, environment, request context mode, and multi-project configuration. Returns project info and server mode. Do not use for error details — use vf_get_errors instead.",
+    "Use this when you need the dev server's debug context including project slug, environment, request context mode, and multi-project configuration. Returns project info and server mode. Do not use for error details. Use vf_get_errors instead.",
   inputSchema: getDebugContextInput,
   execute: (input) =>
     withSpan(
       "cli.mcp.tool.vf_get_debug_context",
       async () => {
-        const host = input.project ? `${input.project}.veryfront.me` : "veryfront.me";
-        const url = `http://${host}:${input.port}/_vf_debug/context`;
-
         try {
-          const response = await fetch(url);
+          const response = await fetchDebugContext(input);
           if (!response.ok) {
             return {
               success: false,
@@ -170,7 +194,7 @@ export const vfTriggerHmr: MCPTool<TriggerHmrInput, TriggerHmrResult> = {
     openWorldHint: false,
   },
   description:
-    "Use this when you need to force an HMR update for a specific file path. Sends a WebSocket reload notification to connected browsers. Returns success status and active listener count. Do not use if no browser is connected — check vf_get_flywheel_status first.",
+    "Use this when you need to force an HMR update for a specific file path. Sends a WebSocket reload notification to connected browsers. Returns success status and active listener count. Do not use if no browser is connected. Check vf_get_flywheel_status first.",
   inputSchema: triggerHmrInput,
   execute: (input) => {
     const metrics = ReloadNotifier.getMetrics();
@@ -230,7 +254,7 @@ export const vfPreviewRoute: MCPTool<PreviewRouteInput, PreviewRouteResult> = {
   title: "Preview Route",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need to test-render a route and inspect the response. Returns rendered output, HTTP status, and render time. Note: API routes may have side effects. Do not use for listing routes — use vf_list_routes instead.",
+    "Use this when you need to test-render a route and inspect the response. Returns rendered output, HTTP status, and render time. Note: API routes may have side effects. Do not use for listing routes. Use vf_list_routes instead.",
   inputSchema: previewRouteInput,
   execute: (input) =>
     withSpan(
@@ -316,7 +340,7 @@ export const vfWaitForReady: MCPTool<WaitForReadyInput, WaitForReadyResult> = {
   title: "Wait for Ready",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need to wait for the dev server to become ready after restart. Polls the health endpoint until responsive. Returns success status and elapsed time. Do not use for error counts or uptime — use vf_get_status instead.",
+    "Use this when you need to wait for the dev server to become ready after restart. Polls the health endpoint until responsive. Returns success status and elapsed time. Do not use for error counts or uptime. Use vf_get_status instead.",
   inputSchema: waitForReadyInput,
   execute: (input) =>
     withSpan(
@@ -409,7 +433,7 @@ export const vfGetFlywheelStatus: MCPTool<GetFlywheelStatusInput, FlywheelStatus
   title: "Flywheel Status",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need a comprehensive status overview combining server health, error counts, and HMR statistics. Returns server status, error/log counts, and HMR metrics in one response. Do not use for detailed error or log content — use vf_get_errors or vf_get_logs instead.",
+    "Use this when you need a comprehensive status overview combining server health, error counts, and HMR statistics. Returns server status, error/log counts, and HMR metrics in one response. Do not use for detailed error or log content. Use vf_get_errors or vf_get_logs instead.",
   inputSchema: getFlywheelStatusInput,
   execute: (input) =>
     withSpan(

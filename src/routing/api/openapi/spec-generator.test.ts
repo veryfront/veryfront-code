@@ -1,8 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { specToYaml } from "./spec-generator.ts";
+import { generateOpenAPISpec, specToYaml } from "./spec-generator.ts";
 import type { OpenAPISpec } from "./types.ts";
+import { ApiRouteMatcher } from "../api-route-matcher.ts";
 
 function assertIncludes(haystack: string, needle: string): void {
   assertEquals(haystack.includes(needle), true);
@@ -13,6 +14,14 @@ function assertNotIncludes(haystack: string, needle: string): void {
 }
 
 describe("routing/api/openapi/spec-generator", () => {
+  it("rejects route imports without an explicit trusted-local capability", async () => {
+    await assertRejects(
+      () => generateOpenAPISpec(new ApiRouteMatcher(), "/project", {} as never),
+      TypeError,
+      "explicit trusted-local route execution",
+    );
+  });
+
   describe("specToYaml()", () => {
     it("should convert a minimal spec to YAML", () => {
       const spec: OpenAPISpec = {

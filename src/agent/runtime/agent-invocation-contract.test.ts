@@ -14,6 +14,7 @@ const inputAnchorMessageId = "10000000-1000-4000-8000-100000000003";
 const userId = "10000000-1000-4000-8000-100000000004";
 const projectId = "10000000-1000-4000-8000-100000000005";
 const branchId = "10000000-1000-4000-8000-100000000006";
+const environmentId = "10000000-1000-4000-8000-100000000007";
 
 function createInvocation(overrides: Record<string, unknown> = {}) {
   return {
@@ -76,6 +77,16 @@ describe("agent/runtime-agent-invocation-contract", () => {
     assertEquals(parsed.credentials?.authToken, "request-scoped-user-token");
   });
 
+  it("preserves explicit delegation denial across the control-plane transform", () => {
+    const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      allowDelegation: false,
+    }));
+    const request = buildRuntimeAgentControlPlaneStreamRequestFromInvocation(parsed);
+
+    assertEquals(parsed.allowDelegation, false);
+    assertEquals(request.allowDelegation, false);
+  });
+
   it("accepts main branch runtime targets without branch or environment selectors", () => {
     const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
       run: {
@@ -101,6 +112,10 @@ describe("agent/runtime-agent-invocation-contract", () => {
     }));
 
     assertEquals(parsed.run.project.runtimeTargetKind, "main_branch");
+    const nonMainDefault = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      agentSource: { type: "branch", branch: "trunk" },
+    }));
+    assertEquals(nonMainDefault.agentSource, { type: "branch", branch: "trunk" });
     assertThrows(() =>
       RuntimeAgentRunInvocationSchema.parse(createInvocation({
         run: {
@@ -123,16 +138,44 @@ describe("agent/runtime-agent-invocation-contract", () => {
   });
 
   it("requires an immutable release for environment agent sources", () => {
-    assertThrows(() =>
-      RuntimeAgentRunInvocationSchema.parse(createInvocation({
-        agentSource: {
-          type: "environment",
-          environmentName: "Production",
+    const unpinned = createInvocation({
+      run: {
+        ...createInvocation().run,
+        project: {
+          projectId,
+          projectSlug: "demo-project",
+          runtimeTargetKind: "environment",
+          runtimeTargetEnvironmentId: environmentId,
         },
-      }))
+      },
+      agentSource: {
+        type: "environment",
+        environmentName: "Production",
+      },
+    });
+    assertThrows(
+      () => RuntimeAgentRunInvocationSchema.parse(unpinned),
+      Error,
+      "releaseId",
+      "environment agent sources must be pinned to an immutable release",
+    );
+    const unpinnedResult = RuntimeAgentRunInvocationSchema.safeParse(unpinned);
+    assertEquals(
+      unpinnedResult.success ? [] : unpinnedResult.issues.map((issue) => issue.path),
+      [["agentSource", "releaseId"]],
+      "the only rejection must be the missing releaseId, not the target binding rule",
     );
 
     const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      run: {
+        ...createInvocation().run,
+        project: {
+          projectId,
+          projectSlug: "demo-project",
+          runtimeTargetKind: "environment",
+          runtimeTargetEnvironmentId: environmentId,
+        },
+      },
       agentSource: {
         type: "environment",
         environmentName: "Production",
@@ -147,9 +190,96 @@ describe("agent/runtime-agent-invocation-contract", () => {
     });
   });
 
+  it("rejects agent sources that do not match the selected runtime target", () => {
+    assertThrows(
+      () =>
+        RuntimeAgentRunInvocationSchema.parse(createInvocation({
+          run: {
+            ...createInvocation().run,
+            project: {
+              projectId,
+              projectSlug: "demo-project",
+              runtimeTargetKind: "environment",
+              runtimeTargetEnvironmentId: environmentId,
+            },
+          },
+          agentSource: { type: "branch", branch: "main" },
+        })),
+      Error,
+      "environment runtime target requires an environment agent source",
+    );
+  });
+
+  it("rejects a release agent source outside a main-branch runtime target", () => {
+    assertThrows(
+      () =>
+        RuntimeAgentRunInvocationSchema.parse(createInvocation({
+          agentSource: { type: "release", releaseId: "release-1" },
+        })),
+      Error,
+      "release agent source requires a main-branch runtime target",
+      "a release source must not bind to a preview branch target",
+    );
+
+    assertThrows(
+      () =>
+        RuntimeAgentRunInvocationSchema.parse(createInvocation({
+          run: {
+            ...createInvocation().run,
+            project: {
+              projectId,
+              projectSlug: "demo-project",
+              runtimeTargetKind: "environment",
+              runtimeTargetEnvironmentId: environmentId,
+            },
+          },
+          agentSource: { type: "release", releaseId: "release-1" },
+        })),
+      Error,
+      "release agent source requires a main-branch runtime target",
+      "a release source must not bind to an environment target",
+    );
+  });
+
+  it("accepts a release agent source on a main-branch runtime target", () => {
+    const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      run: {
+        ...createInvocation().run,
+        project: { projectId, projectSlug: "demo-project" },
+      },
+      agentSource: { type: "release", releaseId: "release-1" },
+    }));
+
+    assertEquals(
+      parsed.agentSource,
+      { type: "release", releaseId: "release-1" },
+      "a release source must bind to a main-branch target",
+    );
+    const request = buildRuntimeAgentControlPlaneStreamRequestFromInvocation(parsed);
+    assertEquals(
+      request.agentSource,
+      { type: "release", releaseId: "release-1" },
+      "the release source must reach the control-plane request unchanged",
+    );
+  });
+
   it("requires an exact source for every runtime invocation", () => {
-    assertThrows(() =>
-      RuntimeAgentRunInvocationSchema.parse(createInvocation({ agentSource: undefined }))
+    const result = RuntimeAgentRunInvocationSchema.safeParse(
+      createInvocation({ agentSource: undefined }),
+    );
+    assertEquals(
+      result.success,
+      false,
+      "an invocation without an agentSource must be rejected by validation",
+    );
+    assertEquals(
+      result.success
+        ? false
+        : result.issues.some((issue) =>
+          issue.path.join(".") === "agentSource" && issue.code === "invalid_type"
+        ),
+      true,
+      "a missing agentSource must surface as an invalid_type issue on agentSource, not a refinement crash",
     );
   });
 
@@ -267,11 +397,43 @@ describe("agent/runtime-agent-invocation-contract", () => {
       messages: parsed.messages,
       tools: parsed.tools,
       context: parsed.context,
+      runtimeTargetKind: "preview_branch",
+      runtimeTargetEnvironmentId: null,
       runtimeTargetBranchId: branchId,
       credentials: parsed.credentials,
       agentSource: parsed.agentSource,
       forwardedProps: parsed.forwardedProps,
     });
+  });
+
+  it("preserves the verified target environment on control-plane stream requests", () => {
+    const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      run: {
+        agentServiceId: "veryfront-platform-agent",
+        agentId: "builder",
+        conversationId,
+        runId: "run_root_1",
+        messageId,
+        inputAnchorMessageId,
+        requestedByUserId: userId,
+        project: {
+          projectId,
+          projectSlug: "demo-project",
+          runtimeTargetKind: "environment",
+          runtimeTargetEnvironmentId: environmentId,
+        },
+      },
+      agentSource: {
+        type: "environment",
+        environmentName: "Production",
+        releaseId: "release-1",
+      },
+    }));
+
+    const request = buildRuntimeAgentControlPlaneStreamRequestFromInvocation(parsed);
+
+    assertEquals(request.runtimeTargetEnvironmentId, environmentId);
+    assertEquals(request.runtimeTargetBranchId, null);
   });
 
   it("preserves the selected project agent config on control-plane stream requests", () => {

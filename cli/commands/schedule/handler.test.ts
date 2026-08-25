@@ -1,22 +1,31 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { clearProjectAgentRuntimeRegistries } from "../../../src/agent/project/agent-runtime.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
+import { VeryfrontError } from "veryfront/errors";
 import type { CreateScheduleRunFromSourceResult, Run, VeryfrontRunsClient } from "veryfront/runs";
+import type { ScheduleDefinition } from "veryfront/schedule";
 import { setJsonMode } from "../../shared/json-output.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
 import {
+  createLocalScheduleTimeout,
   formatRemoteScheduleRunOutput,
   handleScheduleCommand,
+  normalizeLocalScheduleInput,
   resolveRemoteScheduleTarget,
+  toScheduleAgentOptions,
   waitForRemoteScheduleRun,
 } from "./handler.ts";
 
-const originalCwd = Deno.cwd();
 const originalExit = Deno.exit;
-const originalFetch = globalThis.fetch;
 const originalConsoleLog = console.log;
 const environmentNames = [
   "VERYFRONT_API_URL",
@@ -31,6 +40,7 @@ const originalEnvironment = Object.fromEntries(
 const projectId = "22222222-2222-4222-8222-222222222222";
 const scheduleId = "33333333-3333-4333-8333-333333333333";
 const runId = "run_11111111-1111-4111-8111-111111111111";
+const TEST_PUBLIC_API_ORIGIN = "https://93.184.216.34";
 
 class ExitSentinel extends Error {
   constructor(readonly code: number) {
@@ -116,10 +126,9 @@ function restoreEnvironment(): void {
 
 describe("schedule command", () => {
   afterEach(() => {
-    Deno.chdir(originalCwd);
     // deno-lint-ignore no-explicit-any
     (Deno as any).exit = originalExit;
-    globalThis.fetch = originalFetch;
+    restoreMockFetch();
     console.log = originalConsoleLog;
     setJsonMode(false);
     restoreEnvironment();
@@ -165,7 +174,7 @@ describe("schedule command", () => {
       await Deno.writeTextFile(
         `${projectDir}/veryfront.json`,
         JSON.stringify({
-          apiUrl: "https://api.from-config.test",
+          apiUrl: TEST_PUBLIC_API_ORIGIN,
           apiToken: "config-token",
           projectSlug: "json-only-project",
         }) + "\n",
@@ -180,23 +189,24 @@ describe("schedule command", () => {
       Deno.env.delete("VERYFRONT_PROJECT_SLUG");
       Deno.env.set("XDG_CONFIG_HOME", configHome);
       _resetEnvironmentConfig();
-      Deno.chdir(projectDir);
       setJsonMode(true);
       console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
-      globalThis.fetch = (async (
-        input: string | URL | Request,
-        init?: RequestInit,
-      ) => {
-        const url = typeof input === "string"
-          ? input
-          : input instanceof URL
-          ? input.toString()
-          : input.url;
-        requests.push({ url, init });
-        const response = responses.shift();
-        if (!response) throw new Error(`Unexpected request: ${url}`);
-        return response;
-      }) as typeof fetch;
+      installMockFetch(
+        (async (
+          input: string | URL | Request,
+          init?: RequestInit,
+        ) => {
+          const url = typeof input === "string"
+            ? input
+            : input instanceof URL
+            ? input.toString()
+            : input.url;
+          requests.push({ url, init });
+          const response = responses.shift();
+          if (!response) throw new Error(`Unexpected request: ${url}`);
+          return response;
+        }) as typeof fetch,
+      );
       // deno-lint-ignore no-explicit-any
       (Deno as any).exit = (code = 0) => {
         throw new ExitSentinel(code);
@@ -206,6 +216,7 @@ describe("schedule command", () => {
       try {
         await handleScheduleCommand({
           _: ["schedule", "run", "process-job-submissions"],
+          "project-dir": projectDir,
           remote: true,
           json: true,
         } as ParsedArgs);
@@ -216,9 +227,9 @@ describe("schedule command", () => {
 
       assertEquals(exitCode, 0);
       assertEquals(requests.map((request) => request.url), [
-        "https://api.from-config.test/projects/json-only-project/schedules?status=active&source_trigger_id=process-job-submissions",
-        `https://api.from-config.test/projects/json-only-project/schedules/${scheduleId}/runs`,
-        `https://api.from-config.test/runs/${encodeURIComponent(runId)}`,
+        `${TEST_PUBLIC_API_ORIGIN}/projects/json-only-project/schedules?status=active&source_trigger_id=process-job-submissions`,
+        `${TEST_PUBLIC_API_ORIGIN}/projects/json-only-project/schedules/${scheduleId}/runs`,
+        `${TEST_PUBLIC_API_ORIGIN}/runs/${encodeURIComponent(runId)}`,
       ]);
       assertEquals(
         requests.map((request) => new Headers(request.init?.headers).get("Authorization")),
@@ -251,7 +262,6 @@ describe("schedule command", () => {
         },
       });
     } finally {
-      Deno.chdir(originalCwd);
       await stopEsbuild();
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(configHome, { recursive: true });
@@ -270,6 +280,71 @@ describe("schedule command", () => {
       "Remote schedule runs use the source already pushed to Veryfront and do not accept --input.",
     );
   });
+
+  it("propagates a configured local timeout signal to the target", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-schedule-local-timeout-" });
+    const output: string[] = [];
+
+    try {
+      await Deno.mkdir(`${projectDir}/schedules`, { recursive: true });
+      await Deno.mkdir(`${projectDir}/tasks`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/veryfront.config.ts`,
+        "export default {};\n",
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/schedules/timed-task.ts`,
+        [
+          "export default {",
+          '  id: "timed-task",',
+          '  schedule: "0 8 * * *",',
+          '  target: { kind: "task", id: "signal-aware" },',
+          "  timeoutSeconds: 30,",
+          "};",
+          "",
+        ].join("\n"),
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/tasks/signal-aware.ts`,
+        [
+          "export default {",
+          '  name: "Signal aware",',
+          "  run({ signal }) {",
+          "    return { signalPresent: signal instanceof AbortSignal };",
+          "  },",
+          "};",
+          "",
+        ].join("\n"),
+      );
+
+      setJsonMode(true);
+      console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
+      // deno-lint-ignore no-explicit-any
+      (Deno as any).exit = (code = 0) => {
+        throw new ExitSentinel(code);
+      };
+
+      let exitCode: number | undefined;
+      try {
+        await handleScheduleCommand({
+          _: ["schedule", "run", "timed-task"],
+          "project-dir": projectDir,
+          json: true,
+        } as ParsedArgs);
+      } catch (error) {
+        if (!(error instanceof ExitSentinel)) throw error;
+        exitCode = error.code;
+      }
+
+      assertEquals(exitCode, 0);
+      assertEquals(JSON.parse(output.at(-1) ?? "{}").data.output, {
+        signalPresent: true,
+      });
+    } finally {
+      await stopEsbuild();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
 });
 
 describe("remote schedule polling", () => {
@@ -279,6 +354,43 @@ describe("remote schedule polling", () => {
     assertEquals(
       resolveRemoteScheduleTarget(makeRun({ target: "eval:unsupported" }), fallback),
       fallback,
+    );
+    assertEquals(
+      resolveRemoteScheduleTarget(makeRun({ target: "task:Invalid Target" }), fallback),
+      fallback,
+    );
+    assertEquals(
+      resolveRemoteScheduleTarget(makeRun({ target: `task:${"x".repeat(257)}` }), fallback),
+      fallback,
+    );
+    assertThrows(
+      () =>
+        resolveRemoteScheduleTarget(
+          makeRun({ target: "eval:unsupported" }),
+          { kind: "task", id: "Invalid Target" } as never,
+        ),
+      Error,
+      "Remote schedule returned an invalid target.",
+    );
+  });
+
+  it("preserves fallback conversation addressing when the run target matches", () => {
+    const fallback = {
+      kind: "agent" as const,
+      id: "job-submission-orchestrator",
+      conversationMode: "create_new" as const,
+    };
+
+    assertEquals(
+      resolveRemoteScheduleTarget(
+        makeRun({ target: "agent:job-submission-orchestrator" }),
+        fallback,
+      ),
+      fallback,
+    );
+    assertEquals(
+      resolveRemoteScheduleTarget(makeRun({ target: "agent:different-orchestrator" }), fallback),
+      { kind: "agent", id: "different-orchestrator" },
     );
   });
 
@@ -340,6 +452,29 @@ describe("remote schedule polling", () => {
     );
 
     assertEquals(run.status, "completed");
+  });
+
+  it("rejects invalid cloud timeout metadata before polling", async () => {
+    let polls = 0;
+    const client = {
+      get: () => {
+        polls++;
+        return Promise.resolve(makeRun());
+      },
+    } satisfies Pick<VeryfrontRunsClient, "get">;
+
+    for (const timeoutSeconds of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      await assertRejects(
+        () =>
+          waitForRemoteScheduleRun(
+            client,
+            makeAcceptedScheduleRun(timeoutSeconds),
+          ),
+        Error,
+        "Remote schedule returned an invalid execution timeout.",
+      );
+    }
+    assertEquals(polls, 0);
   });
 
   it("does not spend the execution timeout while the remote run is queued", async () => {
@@ -513,6 +648,34 @@ describe("remote schedule polling", () => {
     );
   });
 
+  it("falls back when the cloud run records an unsafe timeout", async () => {
+    const client = {
+      get: () =>
+        Promise.resolve(
+          makeRun({
+            status: "running",
+            completed_at: null,
+            timeout_seconds: Number.MAX_SAFE_INTEGER + 1,
+            started_at: "1970-01-01T00:00:00.000Z",
+          }),
+        ),
+    } satisfies Pick<VeryfrontRunsClient, "get">;
+    let now = 0;
+
+    await assertRejects(
+      () =>
+        waitForRemoteScheduleRun(client, makeAcceptedScheduleRun(1), {
+          now: () => now,
+          sleep: () => {
+            now += 32_000;
+            return Promise.resolve();
+          },
+        }),
+      Error,
+      `Timed out waiting for scheduled run: ${runId}`,
+    );
+  });
+
   it("stops polling when a remote run never leaves the queue", async () => {
     const client = {
       get: () =>
@@ -533,6 +696,275 @@ describe("remote schedule polling", () => {
         }),
       Error,
       `Timed out waiting for scheduled run to start: ${runId}`,
+    );
+  });
+});
+
+describe("local schedule execution boundaries", () => {
+  it("requires input overrides to contain a JSON object", () => {
+    const input = { queue: "priority" };
+    assertEquals(normalizeLocalScheduleInput(input), input);
+
+    for (const value of [null, "priority", 42, true, []]) {
+      const error = assertThrows(
+        () => normalizeLocalScheduleInput(value),
+        VeryfrontError,
+        "--input JSON file must contain a JSON object.",
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "invalid-argument");
+    }
+  });
+
+  it("preserves long execution deadlines with bounded timer chunks", () => {
+    const callbacks: Array<() => void> = [];
+    const delays: number[] = [];
+    const timeout = createLocalScheduleTimeout(5, {
+      maxDelaySeconds: 2,
+      setTimer: (callback, delayMs) => {
+        callbacks.push(callback);
+        delays.push(delayMs);
+        return callbacks.length as unknown as ReturnType<typeof setTimeout>;
+      },
+      clearTimer: () => {},
+    });
+
+    assertEquals(timeout.signal?.aborted, false);
+    assertEquals(delays, [2_000]);
+
+    callbacks.shift()?.();
+    assertEquals(timeout.signal?.aborted, false);
+    assertEquals(delays, [2_000, 2_000]);
+
+    callbacks.shift()?.();
+    assertEquals(timeout.signal?.aborted, false);
+    assertEquals(delays, [2_000, 2_000, 1_000]);
+
+    callbacks.shift()?.();
+    assertEquals(timeout.signal?.aborted, true);
+    assertEquals(timeout.signal?.reason instanceof DOMException, true);
+    assertEquals(timeout.signal?.reason.name, "TimeoutError");
+  });
+
+  it("disposes the active execution timer after completion", () => {
+    const cleared: number[] = [];
+    const timeout = createLocalScheduleTimeout(30, {
+      setTimer: () => 17 as unknown as ReturnType<typeof setTimeout>,
+      clearTimer: (timerId) => cleared.push(timerId as unknown as number),
+    });
+
+    timeout.dispose();
+    timeout.dispose();
+
+    assertEquals(cleared, [17]);
+    assertEquals(timeout.signal?.aborted, false);
+    assertEquals(createLocalScheduleTimeout(undefined).signal, undefined);
+  });
+});
+
+describe("schedule/handler agent run options", () => {
+  const agentSchedule = {
+    id: "triage-new-cases",
+    schedule: "*/10 * * * *",
+    target: { kind: "agent", id: "case-triage" },
+  } as const satisfies ScheduleDefinition;
+
+  it("reads the conversation mode from the canonical target", () => {
+    const error = assertThrows(
+      () =>
+        toScheduleAgentOptions(
+          {
+            ...agentSchedule,
+            target: {
+              kind: "agent",
+              id: "case-triage",
+              conversationMode: "existing",
+              conversationId: "11111111-1111-4111-8111-111111111111",
+            },
+          },
+          {},
+        ),
+      VeryfrontError,
+      "Local scheduled agent runs cannot attach to an existing cloud conversation.",
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "invalid-argument");
+  });
+
+  it("still reads the legacy input._schedule_target conversation mode", () => {
+    const error = assertThrows(
+      () =>
+        toScheduleAgentOptions(agentSchedule, {
+          _schedule_target: {
+            conversationMode: "existing",
+            conversationId: "11111111-1111-4111-8111-111111111111",
+          },
+        }),
+      VeryfrontError,
+      "Local scheduled agent runs cannot attach to an existing cloud conversation.",
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "invalid-argument");
+  });
+
+  it("rejects a misspelled legacy key in an operator --input file", () => {
+    const error = assertThrows(
+      () =>
+        toScheduleAgentOptions(agentSchedule, {
+          _schedule_target: { converstionMode: "existing" },
+        }),
+      VeryfrontError,
+      "Schedule input._schedule_target.converstionMode is not supported.",
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "invalid-argument");
+  });
+
+  it("rejects an unusable legacy conversation mode in an operator --input file", () => {
+    const error = assertThrows(
+      () =>
+        toScheduleAgentOptions(agentSchedule, {
+          _schedule_target: { conversationMode: "bogus" },
+        }),
+      VeryfrontError,
+      "Schedule input._schedule_target.conversationMode must be create_new, existing, or none.",
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "invalid-argument");
+  });
+
+  it("keeps a well-formed legacy declaration working", () => {
+    const options = toScheduleAgentOptions(agentSchedule, {
+      _schedule_target: { conversationMode: "create_new" },
+    });
+
+    assertEquals(typeof options.agentInput, "string");
+  });
+
+  it("allows every other conversation mode", () => {
+    const options = toScheduleAgentOptions(
+      {
+        ...agentSchedule,
+        target: { kind: "agent", id: "case-triage", conversationMode: "create_new" },
+      },
+      {},
+    );
+
+    assertEquals(options.agentInput, "Run scheduled agent case-triage for triage-new-cases");
+  });
+
+  // A `--input` file replaces the authored input without passing through
+  // `schedule()`, so the agreement both fallbacks rely on is re-established
+  // here instead of assumed.
+  it("rejects an input prompt that disagrees with the definition prompt", () => {
+    const error = assertThrows(
+      () =>
+        toScheduleAgentOptions(
+          { ...agentSchedule, agentMessage: { prompt: "DEFINITION PROMPT" } },
+          { prompt: "OPERATOR OVERRIDE" },
+        ),
+      VeryfrontError,
+      "Schedule agentMessage.prompt and input.prompt are both set to different values. Declare it in one place.",
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "invalid-argument");
+  });
+
+  it("rejects an input conversation mode that disagrees with the definition target", () => {
+    const error = assertThrows(
+      () =>
+        toScheduleAgentOptions(
+          {
+            ...agentSchedule,
+            target: { kind: "agent", id: "case-triage", conversationMode: "create_new" },
+          },
+          {
+            _schedule_target: {
+              conversationMode: "existing",
+              conversationId: "11111111-1111-4111-8111-111111111111",
+            },
+          },
+        ),
+      VeryfrontError,
+      "Schedule target.conversationMode and input._schedule_target.conversationMode are both set to different values. Declare it in one place.",
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "invalid-argument");
+  });
+
+  it("rejects an input conversation id that disagrees with the definition target", () => {
+    const error = assertThrows(
+      () =>
+        toScheduleAgentOptions(
+          {
+            ...agentSchedule,
+            target: {
+              kind: "agent",
+              id: "case-triage",
+              conversationMode: "existing",
+              conversationId: "22222222-2222-4222-8222-222222222222",
+            },
+          },
+          {
+            _schedule_target: {
+              conversationMode: "existing",
+              conversationId: "11111111-1111-4111-8111-111111111111",
+            },
+          },
+        ),
+      VeryfrontError,
+      "Schedule target.conversationId and input._schedule_target.conversationId are both set to different values. Declare it in one place.",
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "invalid-argument");
+  });
+
+  it("accepts a conversation mode declared identically in both places", () => {
+    const options = toScheduleAgentOptions(
+      {
+        ...agentSchedule,
+        target: { kind: "agent", id: "case-triage", conversationMode: "create_new" },
+        agentMessage: { prompt: "Triage every open case." },
+      },
+      {
+        _schedule_target: { conversationMode: "create_new" },
+        prompt: "Triage every open case.",
+      },
+    );
+
+    assertEquals(options.agentInput, "Triage every open case.");
+  });
+
+  // Reading either copy yields the authored prompt: a disagreement is rejected
+  // above, so the fallback can never drop author-supplied content.
+  it("reads the prompt from either declaration", () => {
+    assertEquals(
+      toScheduleAgentOptions(
+        { ...agentSchedule, agentMessage: { prompt: "Triage every open case." } },
+        { prompt: "Triage every open case." },
+      ).agentInput,
+      "Triage every open case.",
+    );
+    assertEquals(
+      toScheduleAgentOptions(
+        { ...agentSchedule, agentMessage: { prompt: "Triage every open case." } },
+        {},
+      ).agentInput,
+      "Triage every open case.",
+    );
+    assertEquals(
+      toScheduleAgentOptions(agentSchedule, { prompt: "Legacy prompt." }).agentInput,
+      "Legacy prompt.",
+    );
+  });
+
+  it("returns no agent options for non-agent targets", () => {
+    assertEquals(
+      toScheduleAgentOptions(
+        { ...agentSchedule, target: { kind: "workflow", id: "escalate-ticket" } },
+        { _schedule_target: { conversationMode: "existing" } },
+      ),
+      {},
     );
   });
 });

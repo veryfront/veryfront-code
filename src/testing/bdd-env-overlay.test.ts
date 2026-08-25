@@ -9,6 +9,8 @@ const BEFORE_EACH_ENV_KEY = "VF_TEST_BEFORE_EACH_ENV_OVERLAY";
 const originalBeforeEachValue = getEnv(BEFORE_EACH_ENV_KEY);
 const SUITE_ENV_KEY = "VF_TEST_SUITE_ENV_OVERLAY";
 const originalSuiteValue = getEnv(SUITE_ENV_KEY);
+const OUTER_SUITE_ENV_KEY = "VF_TEST_OUTER_SUITE_ENV_OVERLAY";
+const INNER_SUITE_ENV_KEY = "VF_TEST_INNER_SUITE_ENV_OVERLAY";
 
 describe("BDD environment overlay", { ignore: !isDeno }, () => {
   afterEach(() => {
@@ -63,6 +65,7 @@ describe("BDD suite-wide environment", { ignore: !isDeno }, () => {
   });
 
   afterAll(() => {
+    assertEquals(getEnv(SUITE_ENV_KEY), "suite-value");
     if (originalSuiteValue === undefined) {
       deleteEnv(SUITE_ENV_KEY);
     } else {
@@ -72,6 +75,28 @@ describe("BDD suite-wide environment", { ignore: !isDeno }, () => {
 
   it("makes beforeAll environment changes visible to tests", () => {
     assertEquals(getEnv(SUITE_ENV_KEY), "suite-value");
+  });
+});
+
+describe("BDD nested suite-wide environment", { ignore: !isDeno }, () => {
+  beforeAll(() => {
+    setEnv(OUTER_SUITE_ENV_KEY, "outer-value");
+  });
+
+  describe("nested suite", () => {
+    beforeAll(() => {
+      setEnv(INNER_SUITE_ENV_KEY, "inner-value");
+    });
+
+    it("inherits outer values and adds nested values", () => {
+      assertEquals(getEnv(OUTER_SUITE_ENV_KEY), "outer-value");
+      assertEquals(getEnv(INNER_SUITE_ENV_KEY), "inner-value");
+    });
+  });
+
+  it("does not expose nested beforeAll changes to the parent suite", () => {
+    assertEquals(getEnv(OUTER_SUITE_ENV_KEY), "outer-value");
+    assertEquals(getEnv(INNER_SUITE_ENV_KEY), undefined);
   });
 });
 

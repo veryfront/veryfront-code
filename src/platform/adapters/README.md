@@ -237,7 +237,8 @@ interface FSAdapterConfig {
     };
     retry?: {
       maxRetries?: number;
-      retryDelay?: number;
+      initialDelay?: number;
+      maxDelay?: number;
     };
   };
 }

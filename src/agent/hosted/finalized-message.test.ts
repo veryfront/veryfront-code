@@ -92,6 +92,82 @@ Deno.test("buildFinalizedMessageState fails local web_fetch input-available tool
   ]);
 });
 
+Deno.test("buildFinalizedMessageState marks incomplete tool parts as stopped instead of errored when aborted", () => {
+  const result = buildFinalizedMessageState({
+    responseMessage: {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-bash",
+          toolCallId: "call-1",
+          input: { command: "ls" },
+          state: "input-available",
+        },
+      ],
+    },
+    isAborted: true,
+    finalStep: { text: "" },
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+
+  assertEquals(
+    result.hasIncompleteFinalizedToolParts,
+    false,
+    "aborted runs must not be flagged as incomplete tool failures",
+  );
+  assertEquals(
+    result.persistedMessage.parts,
+    [
+      {
+        type: "tool-bash",
+        toolCallId: "call-1",
+        input: { command: "ls" },
+        state: "output-error",
+        errorText: "Stopped by user",
+      },
+    ],
+    "aborted persisted message must carry the stopped tool part",
+  );
+  assertEquals(
+    result.sanitizedFinalizedMessage.parts,
+    result.persistedMessage.parts,
+    "aborted runs must not convert tool parts to the tool error text",
+  );
+});
+
+Deno.test("buildDetachedFallbackMessageState leaves unfinished tool calls untouched when aborted", () => {
+  const result = buildDetachedFallbackMessageState({
+    capturedMessageId: "captured-1",
+    finalStep: {
+      text: "",
+      toolCalls: [{ toolCallId: "call-1", toolName: "bash", input: { command: "ls" } }],
+    },
+    isAborted: true,
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+
+  assertEquals(
+    result.hasIncompleteFallbackToolParts,
+    false,
+    "aborted detached runs must not be flagged as incomplete tool failures",
+  );
+  assertEquals(
+    result.finalizedFallbackMessage.parts.some((part) =>
+      "state" in part && part.state === "output-error"
+    ),
+    false,
+    "aborted detached runs must not convert tool parts to output-error",
+  );
+  assertEquals(
+    result.finalizedFallbackMessage.parts.some((part) =>
+      part.type === "dynamic-tool" && part.toolName === "bash" && part.state === "input-available"
+    ),
+    true,
+    "the unfinished tool call must still be present in the fallback message",
+  );
+});
+
 Deno.test("buildDetachedFallbackMessageState uses the captured message id for detached fallback messages", () => {
   const result = buildDetachedFallbackMessageState({
     capturedMessageId: "captured-1",

@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
 import { afterAll, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { RSCDevServerHandler } from "./handler.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
@@ -14,7 +15,6 @@ import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 
 describe(
   "RSCDevServerHandler",
-  { sanitizeResources: false, sanitizeOps: false },
   () => {
     let handler: RSCDevServerHandler;
 
@@ -27,13 +27,31 @@ describe(
       handler = new RSCDevServerHandler("/tmp/test-project");
     });
 
-    describe("constructor", { sanitizeOps: false, sanitizeResources: false }, () => {
+    describe("constructor", () => {
       it("should create handler with project directory", () => {
         expect(handler).toBeDefined();
       });
+
+      it("passes project module options to the render handler", () => {
+        const localHandler = new RSCDevServerHandler("/tmp/test-project", {
+          isLocalProject: true,
+          config: { build: { serverExternalPackages: ["knex"] } },
+        });
+        const moduleOptions = (localHandler as unknown as {
+          renderHandler: {
+            moduleOptions: {
+              isLocalProject?: boolean;
+              serverExternalPackages?: readonly string[];
+            };
+          };
+        }).renderHandler.moduleOptions;
+
+        assertEquals(moduleOptions.isLocalProject, true);
+        assertEquals(moduleOptions.serverExternalPackages, ["knex"]);
+      });
     });
 
-    describe("handlePage", { sanitizeOps: false, sanitizeResources: false }, () => {
+    describe("handlePage", () => {
       it("should return page response for valid pathname", async () => {
         const response = await handler.handlePage("/test", new URLSearchParams());
 
@@ -79,7 +97,7 @@ describe(
       });
     });
 
-    describe("handleManifest", { sanitizeOps: false, sanitizeResources: false }, () => {
+    describe("handleManifest", () => {
       it("should return manifest response", async () => {
         const response = await handler.handleManifest();
 
@@ -91,7 +109,20 @@ describe(
         const response = await handler.handleManifest();
         const text = await response.text();
 
-        expect(() => JSON.parse(text)).not.toThrow();
+        const body = JSON.parse(text) as {
+          components: Record<string, string>;
+          modules: unknown[];
+        };
+        assertEquals(
+          body.components,
+          {},
+          "an uninitialized renderer must not publish any client component entries",
+        );
+        assertEquals(
+          body.modules,
+          [],
+          "an uninitialized renderer must not publish any client module refs",
+        );
       });
 
       it("keeps render, React, and manifest module URLs on historical snapshot A after B is current", async () => {

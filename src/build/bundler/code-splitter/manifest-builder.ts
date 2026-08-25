@@ -79,6 +79,22 @@ export async function getChunkInfo(
   };
 }
 
+/**
+ * Recovers the esbuild entry name from an entry output path relative to `outDir`.
+ *
+ * `createBuildContext` sets `entryNames: "[name]"`, so an entry declared as
+ * `name` is written to `<outDir>/<name>.js`. That makes the output path the
+ * reliable link back to the name a route was registered under in `routeMap`.
+ *
+ * The metafile's `entryPoint` cannot serve this purpose. esbuild reports it
+ * relative to the process working directory rather than as the absolute path
+ * the route declared, and its basename discards the entry name outright, so
+ * `app/page.tsx` reduces to `page` for every App Router route.
+ */
+function entryNameFromOutputPath(relativeOutputPath: string): string {
+  return relativeOutputPath.replace(/\.js$/, "");
+}
+
 /** Adds a route entry to the manifest */
 function addRouteToManifest(
   manifest: ChunkManifest,
@@ -89,7 +105,7 @@ function addRouteToManifest(
 ): void {
   if (!output.entryPoint) return;
 
-  const entryName = extractEntryName(output.entryPoint);
+  const entryName = entryNameFromOutputPath(relativePath);
   const routePath = routeMap.get(entryName) ?? `/${entryName}`;
 
   manifest.routes[routePath] = {

@@ -36,6 +36,8 @@ export interface ModalState {
 export interface ModalContentProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Extra node rendered before `children` -- used by Drawer for the drag handle. */
   lead?: React.ReactNode;
+  /** React 19: ref is a regular prop, forwarded to (merged onto) the panel node. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 type ModalBtnProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -81,11 +83,13 @@ function isFocusableElement(value: Element | null): value is HTMLElement {
   return value !== null && typeof (value as HTMLElement).focus === "function";
 }
 
-function useModalContentEffect(
+/** Run the shared modal focus, stack, scroll-lock, and dismissal lifecycle. */
+export function useModalContentEffect(
   open: boolean,
   setOpen: (open: boolean) => void,
   ref: React.RefObject<HTMLElement | null>,
   triggerRef: React.RefObject<HTMLButtonElement | null>,
+  dismissOnEscape = true,
 ): void {
   React.useEffect(() => {
     const panel = ref.current;
@@ -103,7 +107,9 @@ function useModalContentEffect(
     const unregisterDismissableLayer = registerDismissableLayer(
       document,
       () => ref.current,
-      () => setOpen(false),
+      () => {
+        if (dismissOnEscape) setOpen(false);
+      },
     );
     const onKey = (e: KeyboardEvent) => {
       if (!isTopModal() || e.defaultPrevented) return;
@@ -142,7 +148,21 @@ function useModalContentEffect(
         : null;
       if (restoreTarget) focusWithoutScroll(restoreTarget);
     };
-  }, [open, ref, setOpen, triggerRef]);
+  }, [dismissOnEscape, open, ref, setOpen, triggerRef]);
+}
+
+/** Resolve a token scope outside any clipping modal panel for a modal portal. */
+export function getModalTokenScope(
+  document: Document,
+  anchor: HTMLElement | null,
+): HTMLElement {
+  const activeScope = document.activeElement?.closest<HTMLElement>(UI_SCOPE_SELECTOR);
+  const scopes = document.querySelectorAll<HTMLElement>(UI_SCOPE_SELECTOR);
+  return anchor?.closest<HTMLElement>(UI_SCOPE_SELECTOR) ??
+    modalStacks.get(document)?.at(-1)?.closest<HTMLElement>(UI_SCOPE_SELECTOR) ??
+    activeScope ??
+    (scopes.length === 1 ? scopes[0]! : undefined) ??
+    document.body;
 }
 
 /**
@@ -287,6 +307,7 @@ export function createModalSurfaceParts(name: string) {
       children,
       lead,
       id,
+      ref,
       "aria-label": ariaLabel,
       "aria-labelledby": labelledBy,
       ...props
@@ -294,6 +315,12 @@ export function createModalSurfaceParts(name: string) {
   ): React.ReactElement | null {
     const ctx = useModal();
     const panelRef = React.useRef<HTMLDivElement>(null);
+    // Merge the internal panel ref (read by the focus/dismiss effects) with any
+    // consumer ref, so `<DialogContent ref={...}>` reaches the panel node too.
+    const setPanelNode = React.useMemo(
+      () => composeRefs<HTMLDivElement>(panelRef, ref),
+      [ref],
+    );
     const resolvedId = id ?? ctx.defaultContentId;
     const [portalReady, setPortalReady] = React.useState(false);
     React.useEffect(() => setPortalReady(true), []);
@@ -314,7 +341,7 @@ export function createModalSurfaceParts(name: string) {
     const document = trigger?.ownerDocument ?? globalThis.document;
     if (!document?.body) return null;
     const container = trigger?.closest<HTMLElement>("[data-vf-modal-content]") ??
-      trigger?.closest<HTMLElement>(UI_SCOPE_SELECTOR) ?? document.body;
+      getModalTokenScope(document, trigger);
     return createPortal(
       <div className="fixed inset-0 z-50">
         <div
@@ -324,7 +351,7 @@ export function createModalSurfaceParts(name: string) {
         />
         <div
           {...props}
-          ref={panelRef}
+          ref={setPanelNode}
           id={resolvedId}
           data-vf-modal-content=""
           role="dialog"

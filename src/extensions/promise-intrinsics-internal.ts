@@ -39,7 +39,7 @@ defineProperty(
 );
 freeze(safePromiseSpeciesHolder);
 
-function hasOwn(object: object, key: PropertyKey): boolean {
+function hasOwn(object: PropertyDescriptor, key: PropertyKey): boolean {
   return apply(hasOwnProperty, object, [key]) as boolean;
 }
 

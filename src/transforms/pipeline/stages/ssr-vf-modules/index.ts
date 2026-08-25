@@ -1,4 +1,10 @@
 import { CIRCULAR_DEPENDENCY } from "#veryfront/errors";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
+import type {
+  TransformProgressEvent,
+  TransformProgressListener,
+} from "#veryfront/transforms/progress.ts";
+import { waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
 
 /**
  * SSR VF Modules Stage - resolves /_vf_modules/_veryfront/ paths to framework source.
@@ -35,6 +41,7 @@ import {
   EXTENSIONS,
   FRAMEWORK_LOOKUPS,
   FRAMEWORK_ROOT,
+  frameworkFileTransformFlight,
   frameworkTransformFlight,
   LOG_PREFIX,
 } from "./constants.ts";
@@ -83,6 +90,108 @@ function logInitOnce(): void {
   });
 }
 
+interface FrameworkTransformAbortState {
+  controller: AbortController;
+  waiters: number;
+  settled: boolean;
+  listeners: Set<TransformProgressListener>;
+  lastEvent?: TransformProgressEvent;
+}
+
+const frameworkTransformAbortStates = new Map<string, FrameworkTransformAbortState>();
+
+function notifyFrameworkTransformProgress(
+  key: string,
+  listener: TransformProgressListener,
+  event: TransformProgressEvent,
+): void {
+  try {
+    listener(event);
+  } catch (error) {
+    logger.debug(`${LOG_PREFIX} Progress listener failed`, { key, error });
+  }
+}
+
+async function runFrameworkTransformFlight(
+  key: string,
+  operation: (
+    abortSignal: AbortSignal,
+    reportProgress: TransformProgressListener,
+  ) => Promise<string>,
+  options: {
+    abortSignal?: AbortSignal;
+    onProgress?: TransformProgressListener;
+  },
+): Promise<string> {
+  options.abortSignal?.throwIfAborted();
+  const hasExistingFlight = frameworkTransformFlight.has(key);
+  let state = frameworkTransformAbortStates.get(key);
+  if (!hasExistingFlight || !state) {
+    state = {
+      controller: new AbortController(),
+      waiters: 0,
+      settled: false,
+      listeners: new Set(),
+    };
+    frameworkTransformAbortStates.set(key, state);
+  }
+  const flightState = state;
+  flightState.waiters++;
+  const progressListener: TransformProgressListener | undefined = options.onProgress
+    ? (event) => options.onProgress?.(event)
+    : undefined;
+  if (progressListener) {
+    flightState.listeners.add(progressListener);
+    if (flightState.lastEvent) {
+      notifyFrameworkTransformProgress(key, progressListener, flightState.lastEvent);
+    }
+  }
+
+  try {
+    const flight = frameworkTransformFlight.do(key, async () => {
+      const reportProgress: TransformProgressListener = (event) => {
+        if (frameworkTransformAbortStates.get(key) !== flightState) return;
+        flightState.lastEvent = event;
+        for (const listener of flightState.listeners) {
+          notifyFrameworkTransformProgress(key, listener, event);
+        }
+      };
+      try {
+        return await operation(flightState.controller.signal, reportProgress);
+      } finally {
+        flightState.settled = true;
+        if (
+          flightState.waiters === 0 &&
+          frameworkTransformAbortStates.get(key) === flightState
+        ) {
+          frameworkTransformAbortStates.delete(key);
+        }
+      }
+    });
+    return await waitForSharedPromise(flight, options.abortSignal);
+  } finally {
+    if (progressListener) flightState.listeners.delete(progressListener);
+    flightState.waiters = Math.max(0, flightState.waiters - 1);
+    if (flightState.waiters === 0 && !flightState.settled) {
+      if (frameworkTransformAbortStates.get(key) === flightState) {
+        frameworkTransformFlight.forget(key);
+        frameworkFileTransformFlight.forget(key);
+        frameworkTransformAbortStates.delete(key);
+      }
+      flightState.controller.abort(
+        options.abortSignal?.reason ??
+          new DOMException("The framework transform was canceled", "AbortError"),
+      );
+    }
+    if (
+      flightState.waiters === 0 && flightState.settled &&
+      frameworkTransformAbortStates.get(key) === flightState
+    ) {
+      frameworkTransformAbortStates.delete(key);
+    }
+  }
+}
+
 // Export internal functions for testing
 export const _testExports = {
   findVfModuleImports,
@@ -94,6 +203,7 @@ export const _testExports = {
   FRAMEWORK_ROOT,
   EMBEDDED_SRC_DIR,
   EXTENSIONS,
+  runFrameworkTransformFlight,
 };
 
 export const ssrVfModulesPlugin: TransformPlugin = {
@@ -146,31 +256,43 @@ export const ssrVfModulesPlugin: TransformPlugin = {
         });
 
         const reactVersion = ctx.reactVersion ?? REACT_DEFAULT_VERSION;
+        const importMap = ctx.metadata?.get("importMap") as ImportMapConfig | undefined;
+        const importMapFingerprint = ctx.metadata?.get("importMapFingerprint") as
+          | string
+          | undefined;
         const transformKey = buildFrameworkTransformCacheKey(
           resolved.sourcePath,
           reactVersion,
           ctx.projectDir,
           resolved.content,
+          importMapFingerprint,
         );
-        const cachePath = await frameworkTransformFlight.do(transformKey, async () => {
-          const transformed = await transformFrameworkSource(
-            resolved.content,
-            resolved.sourcePath,
-            reactVersion,
-            ctx.projectDir,
-            fs,
-            ctx.onProgress,
-          );
+        const cachePath = await runFrameworkTransformFlight(
+          transformKey,
+          async (abortSignal, reportProgress) => {
+            const transformed = await transformFrameworkSource(
+              resolved.content,
+              resolved.sourcePath,
+              reactVersion,
+              ctx.projectDir,
+              fs,
+              reportProgress,
+              importMap,
+              importMapFingerprint,
+              abortSignal,
+            );
 
-          // Skip cycle placeholders - don't cache or use them
-          if (isCyclePlaceholder(transformed)) {
-            throw CIRCULAR_DEPENDENCY.create({
-              detail: `Cycle detected while transforming ${vfModulePath}`,
-            });
-          }
+            // Skip cycle placeholders - don't cache or use them
+            if (isCyclePlaceholder(transformed)) {
+              throw CIRCULAR_DEPENDENCY.create({
+                detail: `Cycle detected while transforming ${vfModulePath}`,
+              });
+            }
 
-          return await cacheTransformedCode(transformed, vfModulePath, fs);
-        });
+            return await cacheTransformedCode(transformed, vfModulePath, fs);
+          },
+          { abortSignal: ctx.abortSignal, onProgress: ctx.onProgress },
+        );
         replacements.set(vfModulePath, `file://${cachePath}`);
         ctx.onProgress?.({ phase: "framework:entry-transformed", filePath: resolved.sourcePath });
 

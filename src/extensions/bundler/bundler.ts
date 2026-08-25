@@ -98,6 +98,14 @@ export interface BundleOptions {
   logLevel?: "silent" | "error" | "warning" | "info" | "debug" | "verbose";
   /** Emit a dependency-graph {@link Metafile} in the result. */
   metafile?: boolean;
+  /**
+   * Cancels the bundle operation. Implementations must stop active work rather
+   * than only rejecting the caller while compilation continues in the
+   * background.
+   */
+  signal?: AbortSignal;
+  /** Resolved legacy TypeScript decorator flags for this project boundary. */
+  typescriptDecoratorOptions?: TypeScriptDecoratorOptions;
 
   /** Extra implementation-specific options. */
   [key: string]: unknown;
@@ -261,6 +269,8 @@ export interface BundlerPlugin {
 export interface BuildContext {
   /** Re-run the build with cached state. */
   rebuild(): Promise<BundleResult>;
+  /** Cancel the active rebuild, when the implementation supports it. */
+  cancel?(): Promise<void>;
   /** Release context resources. */
   dispose(): Promise<void>;
 }
@@ -278,6 +288,8 @@ export interface BuildFailure extends Error {
  * optimized output suitable for deployment or development.
  */
 export interface Bundler {
+  /** Decide whether resolved project flags require bundled local TypeScript execution. */
+  shouldBundleTypeScript?(options: TypeScriptDecoratorOptions): boolean;
   /** Bundle one or more entry points into output files. */
   bundle(options: BundleOptions): Promise<BundleResult>;
   /** Transform a single source string without writing to disk. */
@@ -286,4 +298,10 @@ export interface Bundler {
   context?(options: BundleOptions): Promise<BuildContext>;
   /** Release bundler resources (child processes, watchers, etc.). */
   stop?(): Promise<void>;
+}
+
+/** Compiler flags that control legacy TypeScript decorator transformation. */
+export interface TypeScriptDecoratorOptions {
+  readonly experimentalDecorators: boolean;
+  readonly emitDecoratorMetadata: boolean;
 }

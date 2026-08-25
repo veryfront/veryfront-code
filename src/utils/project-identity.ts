@@ -19,6 +19,21 @@ function isAsciiLetterOrDigit(code: number): boolean {
   );
 }
 
+function isWellFormedUtf16(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = charCodeAt(value, index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      if (index + 1 >= value.length) return false;
+      const low = charCodeAt(value, index + 1);
+      if (low < 0xdc00 || low > 0xdfff) return false;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /** Whether a string contains a Unicode Cc control code point. */
 export function hasProjectIdentityControlCharacters(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
@@ -41,6 +56,7 @@ export function isCanonicalOpaqueProjectIdentifier(value: unknown): value is str
     typeof value === "string" &&
     value.length > 0 &&
     value.length <= MAX_OPAQUE_ID_CODE_UNITS &&
+    isWellFormedUtf16(value) &&
     value === normalizeProjectSlug(value) &&
     !hasProjectIdentityControlCharacters(value)
   );

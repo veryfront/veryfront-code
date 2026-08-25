@@ -1,9 +1,19 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { register, reset } from "../../extensions/contracts.ts";
 import type { DocumentExtractor } from "../../extensions/compat/native-services.ts";
-import { importClaudeAgentSDK, importKreuzberg, importTransformers } from "./opaque-deps.ts";
+import {
+  importClaudeAgentSDK,
+  importKreuzberg,
+  importTransformers,
+  injectedClaudeAgentSdkMock,
+} from "./opaque-deps.ts";
 
 const stubKreuzbergModule = {
   extractBytes: async (_data: Uint8Array, _mimeType: string) => ({ content: "stub-content" }),
@@ -40,31 +50,20 @@ describe("platform/compat/opaque-deps", () => {
       }
     });
 
-    it("should not return mock when __vfMockClaudeSDK has no query property", {
-      sanitizeOps: false,
-      sanitizeResources: false,
-    }, () => {
-      (globalThis as Record<string, unknown>).__vfMockClaudeSDK = { notQuery: true };
-      try {
-        const result = importClaudeAgentSDK();
-        // Should try real import (will likely fail), not return mock
-        result.catch(() => {});
-      } finally {
-        delete (globalThis as Record<string, unknown>).__vfMockClaudeSDK;
+    it("only accepts an injected mock that exposes query", () => {
+      for (const bad of [{ notQuery: true }, "not-an-object", 0, null, undefined, []]) {
+        assertEquals(
+          injectedClaudeAgentSdkMock(bad),
+          undefined,
+          `${JSON.stringify(bad)} must not be accepted as an injected SDK mock`,
+        );
       }
-    });
-
-    it("should not return mock when __vfMockClaudeSDK is a primitive", {
-      sanitizeOps: false,
-      sanitizeResources: false,
-    }, () => {
-      (globalThis as Record<string, unknown>).__vfMockClaudeSDK = "not-an-object";
-      try {
-        const result = importClaudeAgentSDK();
-        result.catch(() => {});
-      } finally {
-        delete (globalThis as Record<string, unknown>).__vfMockClaudeSDK;
-      }
+      const good = { query: () => "mock" };
+      assertStrictEquals(
+        injectedClaudeAgentSdkMock(good),
+        good,
+        "a mock with query is returned as-is",
+      );
     });
   });
 

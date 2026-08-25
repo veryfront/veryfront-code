@@ -59,7 +59,6 @@ describe("provider/runtime-loader/provider-endpoints", () => {
         "file:///tmp/provider",
         "javascript:alert(1)",
         "not a URL",
-        "https://user:private-password@gateway.example.test/v1",
       ]
     ) {
       assertThrows(
@@ -75,5 +74,20 @@ describe("provider/runtime-loader/provider-endpoints", () => {
         "non-empty trimmed string",
       );
     }
+  });
+
+  it("rejects base URLs that embed credentials in the userinfo", () => {
+    assertThrows(
+      () => getOpenAIResponsesUrl("https://token-only@gateway.example.test/v1"),
+      TypeError,
+      "must not contain embedded credentials",
+      "a username-only userinfo must be rejected by the credentials branch",
+    );
+    assertThrows(
+      () => getOpenAIResponsesUrl("https://user:private-password@gateway.example.test/v1"),
+      TypeError,
+      "must not contain embedded credentials",
+      "a user:password userinfo must be rejected by the credentials branch",
+    );
   });
 });

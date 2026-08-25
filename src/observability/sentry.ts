@@ -35,26 +35,14 @@ let initializingConfig: Required<SentryConfig> | undefined;
 let installedConfig: Required<SentryConfig> | undefined;
 let missingDsnWarningEmitted = false;
 
-/**
- * Resolve the compatibility-release Sentry flag.
- *
- * Explicit false always disables reporting. While the flag is unset (or is an
- * unrecognized value), callers retain their pre-flag behavior until managed
- * deployments have been migrated to explicit values.
- */
-export function isSentryEnabled(
-  enabled: string | undefined,
-  legacyEnabled: boolean,
-): boolean {
+/** Return whether Sentry is explicitly enabled. */
+export function isSentryEnabled(enabled: string | undefined): boolean {
   switch (enabled?.trim().toLowerCase()) {
     case "true":
     case "1":
       return true;
-    case "false":
-    case "0":
-      return false;
     default:
-      return legacyEnabled;
+      return false;
   }
 }
 
@@ -63,8 +51,7 @@ export function resolveSentryConfigFromEnv(
 ): SentryConfig | undefined {
   const reporterSelected = getEnv("VERYFRONT_ERROR_REPORTER")?.trim().toLowerCase() ===
     SENTRY_ERROR_REPORTER;
-  const enabled = getEnv("SENTRY_ENABLED");
-  if (!reporterSelected || !isSentryEnabled(enabled, reporterSelected)) {
+  if (!reporterSelected || !isSentryEnabled(getEnv("SENTRY_ENABLED"))) {
     return undefined;
   }
 
@@ -162,7 +149,7 @@ function sentryConfigsEqual(
 function shouldWarnAboutMissingDsn(): boolean {
   const reporterSelected = getEnv("VERYFRONT_ERROR_REPORTER")?.trim().toLowerCase() ===
     SENTRY_ERROR_REPORTER;
-  return reporterSelected && isSentryEnabled(getEnv("SENTRY_ENABLED"), false) &&
+  return reporterSelected && isSentryEnabled(getEnv("SENTRY_ENABLED")) &&
     !getEnv("SENTRY_DSN")?.trim();
 }
 

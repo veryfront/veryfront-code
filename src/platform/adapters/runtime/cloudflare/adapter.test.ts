@@ -1,6 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertInstanceOf,
+  assertRejects,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { CloudflareAdapter, createCloudflareAdapter } from "./adapter.ts";
 import type { KVNamespace } from "./types.ts";
 
@@ -72,11 +78,23 @@ describe("CloudflareAdapter", () => {
 
     it("fails closed instead of pretending to open a listener", async () => {
       const adapter = new CloudflareAdapter(mockEnv);
-      await assertRejects(
+      const error = await assertRejects(
         () => adapter.serve(() => new Response("test")),
-        Error,
+        VeryfrontError,
         "fetch handler",
       );
+
+      assertInstanceOf(
+        error,
+        VeryfrontError,
+        "serve() must reject with a VeryfrontError",
+      );
+      assertEquals(
+        error.slug,
+        "not-supported",
+        "serve() must raise the NOT_SUPPORTED registry error",
+      );
+      assertEquals(error.status, 501, "NOT_SUPPORTED must map to HTTP 501");
     });
 
     it("shutdown should complete without error", async () => {

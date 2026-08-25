@@ -4,6 +4,7 @@ import {
   isTextPreviewFile,
 } from "../../chat/types.ts";
 import { NETWORK_ERROR } from "#veryfront/errors";
+import { isGenuineUserTurnMessage } from "./runtime-message-origin.ts";
 
 const MAX_INLINE_FILE_CONTENT_CHARS = 200_000;
 const MAX_TOTAL_INLINE_FILE_CONTENT_CHARS = 400_000;
@@ -213,7 +214,7 @@ type InlineFileContent = {
 
 function findNewestUserMessageIndex(messages: readonly ChatUiMessage[]): number {
   for (let index = messages.length - 1; index >= 0; index--) {
-    if (messages[index]?.role === "user") {
+    if (messages[index] && isGenuineUserTurnMessage(messages[index]!)) {
       return index;
     }
   }

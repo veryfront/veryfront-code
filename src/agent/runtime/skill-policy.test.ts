@@ -2,124 +2,83 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  applySkillActivationResult,
   enforceSkillPolicy,
-  extractSkillPolicy,
   extractSkillToolAvailability,
   hasSubmittedFormInputResult,
   hydrateActiveSkillStateFromMessages,
-  removeFormInputAfterSubmission,
+  INACTIVE_SKILL_TOOL_AVAILABILITY,
+  isSkillBodyLoadRequest,
 } from "./skill-policy-enforcement.ts";
 import type { Message } from "../types.ts";
+import {
+  SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
+  SKILL_SUBDIR_MAX_ENTRIES,
+} from "#veryfront/skill/limits.ts";
+import { markRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
 
 describe("src/agent/runtime skill policy helpers", () => {
-  describe("extractSkillPolicy", () => {
-    it("should return undefined for null/non-object results", () => {
-      assertEquals(extractSkillPolicy(null), undefined);
-      assertEquals(extractSkillPolicy(undefined), undefined);
-      assertEquals(extractSkillPolicy("string"), undefined);
-      assertEquals(extractSkillPolicy(42), undefined);
-    });
-
-    it("should return undefined when allowedTools key is absent", () => {
-      assertEquals(extractSkillPolicy({ instructions: "do stuff" }), undefined);
-    });
-
-    it("should return undefined when allowedTools is explicitly undefined", () => {
-      assertEquals(extractSkillPolicy({ allowedTools: undefined }), undefined);
-    });
-
-    it("should return valid string array as-is", () => {
-      assertEquals(extractSkillPolicy({ allowedTools: ["Read", "Write"] }), ["Read", "Write"]);
-    });
-
-    it("should return valid wildcard patterns", () => {
-      assertEquals(extractSkillPolicy({ allowedTools: ["api:*", "Read"] }), ["api:*", "Read"]);
-    });
-
-    it("should fail closed (empty array) for non-array allowedTools", () => {
-      assertEquals(extractSkillPolicy({ allowedTools: "Read Write" }), []);
-      assertEquals(extractSkillPolicy({ allowedTools: 123 }), []);
-      assertEquals(extractSkillPolicy({ allowedTools: true }), []);
-      assertEquals(extractSkillPolicy({ allowedTools: { Read: true } }), []);
-    });
-
-    it("should fail closed (empty array) for array with non-string entries", () => {
-      assertEquals(extractSkillPolicy({ allowedTools: ["Read", 123] }), []);
-      assertEquals(extractSkillPolicy({ allowedTools: [null, "Write"] }), []);
-    });
-
-    it("should fail closed (empty array) for invalid patterns", () => {
-      assertEquals(extractSkillPolicy({ allowedTools: ["Bash(git:*)"] }), []);
-    });
-
-    // Critical regression test: skill A (restricted) -> skill B (no restrictions)
-    // must NOT accidentally grant unrestricted access
-    it("should distinguish undefined (no restrictions) from empty result (no tools)", () => {
-      // Skill with no allowedTools key -> no restrictions
-      const noKey = extractSkillPolicy({ instructions: "hi" });
-      assertEquals(noKey, undefined);
-
-      // Skill with invalid allowedTools -> fail closed (no tools)
-      const invalid = extractSkillPolicy({ allowedTools: 42 });
-      assertEquals(invalid, []);
-
-      // These are semantically different:
-      // undefined -> "no restrictions, all tools allowed"
-      // [] -> "empty policy, no tools allowed"
-    });
-  });
-
   describe("enforceSkillPolicy", () => {
-    it("should allow any tool when no policy and no mustLoadFirst", () => {
-      const result = enforceSkillPolicy("Read", undefined, false);
+    it("should allow any tool when no policy is active", () => {
+      const result = enforceSkillPolicy("Read");
       assertEquals(result, { allowed: true });
     });
 
-    it("should reject non-skill tools for empty policy", () => {
-      const result = enforceSkillPolicy("Read", [], false);
-      assertEquals(result.allowed, false);
-    });
-
-    it("should reject non-skill tools when mustLoadSkillFirst is true", () => {
-      const result = enforceSkillPolicy("Read", undefined, true);
-      assertEquals(result.allowed, false);
-      assertEquals("error" in result && result.error.includes("load_skill"), true);
-    });
-
-    it("should allow load_skill even when mustLoadSkillFirst is true", () => {
-      const result = enforceSkillPolicy("load_skill", undefined, true);
-      assertEquals(result, { allowed: true });
-    });
-
-    it("should allow tool matching active policy", () => {
-      const result = enforceSkillPolicy("Read", ["Read", "Write"], false);
-      assertEquals(result, { allowed: true });
-    });
-
-    it("should reject tool not in active policy", () => {
-      const result = enforceSkillPolicy("Bash", ["Read", "Write"], false);
-      assertEquals(result.allowed, false);
-    });
-
-    it("blocks intake and skill reload tools after a submitted form without blocking delegation", () => {
+    it("blocks repeated intake after a submitted form without blocking skill references", () => {
+      const formResult = enforceSkillPolicy("form_input", {
+        hasSubmittedFormInput: true,
+      });
+      assertEquals(formResult.allowed, false);
       assertEquals(
-        enforceSkillPolicy("form_input", ["studio_suggestions"], false).allowed,
+        enforceSkillPolicy("load_skill", {
+          activeSkillId: "plan",
+          hasSubmittedFormInput: true,
+          skillToolAvailability: {
+            hasActiveSkill: true,
+            references: ["references/guide.md"],
+            scripts: [],
+          },
+          toolInput: { skillId: "plan", file: "references/guide.md" },
+        }),
+        { allowed: true },
+      );
+      assertEquals(
+        enforceSkillPolicy("load_skill", {
+          activeSkillId: "plan",
+          hasSubmittedFormInput: true,
+          toolInput: { skillId: "plan" },
+        }).allowed,
         false,
       );
-      for (const toolName of ["form_input", "load_skill"]) {
-        const result = enforceSkillPolicy(toolName, [toolName], false, {
-          hasSubmittedFormInput: true,
-        });
-        assertEquals(result.allowed, false);
-      }
       assertEquals(
-        enforceSkillPolicy("invoke_agent", ["invoke_agent"], false, {
+        enforceSkillPolicy("load_skill", {
+          activeSkillId: "plan",
+          hasSubmittedFormInput: true,
+          toolInput: { skillId: "research", file: "references/guide.md" },
+        }).allowed,
+        false,
+      );
+      assertEquals(
+        enforceSkillPolicy("load_skill", {
+          activeSkillId: "plan",
+          hasSubmittedFormInput: true,
+          skillToolAvailability: {
+            hasActiveSkill: true,
+            references: ["references/guide.md"],
+            scripts: [],
+          },
+          toolInput: { skillId: "plan", file: "resources/secret.md" },
+        }).allowed,
+        false,
+      );
+      assertEquals(
+        enforceSkillPolicy("invoke_agent", {
           hasSubmittedFormInput: true,
         }),
         { allowed: true },
       );
       assertEquals(
-        enforceSkillPolicy("create_agent", ["create_agent"], false, {
+        enforceSkillPolicy("create_agent", {
           hasSubmittedFormInput: true,
         }),
         { allowed: true },
@@ -127,14 +86,22 @@ describe("src/agent/runtime skill policy helpers", () => {
     });
 
     it("should always allow load_skill regardless of policy", () => {
-      assertEquals(enforceSkillPolicy("load_skill", ["Read"], false), { allowed: true });
-      assertEquals(enforceSkillPolicy("load_skill_reference", ["Read"], false).allowed, false);
-      assertEquals(enforceSkillPolicy("execute_skill_script", ["Read"], false).allowed, false);
+      assertEquals(enforceSkillPolicy("load_skill"), { allowed: true });
+      assertEquals(
+        enforceSkillPolicy("load_skill_reference"),
+        {
+          allowed: false,
+          error:
+            'Tool "load_skill_reference" is unavailable because no skill is loaded. Call load_skill first.',
+        },
+        "no-skill-loaded denial must point the model at load_skill",
+      );
+      assertEquals(enforceSkillPolicy("execute_skill_script").allowed, false);
     });
 
-    it("allows load_skill_reference only when the active skill advertised references", () => {
+    it("allows load_skill_reference only when the active skill advertises a reference", () => {
       assertEquals(
-        enforceSkillPolicy("load_skill_reference", ["Read"], false, {
+        enforceSkillPolicy("load_skill_reference", {
           skillToolAvailability: {
             hasActiveSkill: true,
             references: ["references/guide.md"],
@@ -144,19 +111,30 @@ describe("src/agent/runtime skill policy helpers", () => {
         { allowed: true },
       );
 
-      const result = enforceSkillPolicy("load_skill_reference", ["Read"], false, {
-        skillToolAvailability: {
-          hasActiveSkill: true,
-          references: [],
-          scripts: [],
+      const result = enforceSkillPolicy(
+        "load_skill_reference",
+        {
+          skillToolAvailability: {
+            hasActiveSkill: true,
+            references: [],
+            scripts: [],
+          },
         },
-      });
-      assertEquals(result.allowed, false);
+      );
+      assertEquals(
+        result,
+        {
+          allowed: false,
+          error:
+            'Tool "load_skill_reference" is unavailable because the active skill advertises no matching file.',
+        },
+        "an active skill with no matching file must not tell the model to retry load_skill",
+      );
     });
 
-    it("allows execute_skill_script only when the active skill advertised scripts", () => {
+    it("allows execute_skill_script only when the active skill advertises a script", () => {
       assertEquals(
-        enforceSkillPolicy("execute_skill_script", ["Read"], false, {
+        enforceSkillPolicy("execute_skill_script", {
           skillToolAvailability: {
             hasActiveSkill: true,
             references: [],
@@ -166,64 +144,106 @@ describe("src/agent/runtime skill policy helpers", () => {
         { allowed: true },
       );
 
-      const result = enforceSkillPolicy("execute_skill_script", ["Read"], false, {
-        skillToolAvailability: {
-          hasActiveSkill: true,
-          references: [],
-          scripts: [],
+      const result = enforceSkillPolicy(
+        "execute_skill_script",
+        {
+          skillToolAvailability: {
+            hasActiveSkill: true,
+            references: [],
+            scripts: [],
+          },
         },
-      });
-      assertEquals(result.allowed, false);
+      );
+      assertEquals(
+        result,
+        {
+          allowed: false,
+          error:
+            'Tool "execute_skill_script" is unavailable because the active skill advertises no matching file.',
+        },
+        "an active skill with no matching script must not tell the model to retry load_skill",
+      );
+    });
+  });
+
+  describe("isSkillBodyLoadRequest", () => {
+    it("distinguishes body activation from reference reads and malformed calls", () => {
+      assertEquals(
+        isSkillBodyLoadRequest("load_skill", { skillId: "research" }),
+        true,
+      );
+      assertEquals(
+        isSkillBodyLoadRequest("load_skill", {
+          skillId: "research",
+          file: "references/guide.md",
+        }),
+        false,
+      );
+      assertEquals(isSkillBodyLoadRequest("load_skill", {}), false);
+      assertEquals(
+        isSkillBodyLoadRequest("other_tool", { skillId: "research" }),
+        false,
+      );
     });
 
-    it("should allow wildcard-matched tools", () => {
-      const result = enforceSkillPolicy("api:list-users", ["api:*"], false);
-      assertEquals(result, { allowed: true });
-    });
+    it("does not invoke an accessor-backed file property", () => {
+      let reads = 0;
+      const input = Object.defineProperty(
+        { skillId: "research" },
+        "file",
+        {
+          enumerable: true,
+          get() {
+            reads += 1;
+            return undefined;
+          },
+        },
+      );
 
-    it("should reject tools not matching wildcard", () => {
-      const result = enforceSkillPolicy("db:query", ["api:*"], false);
-      assertEquals(result.allowed, false);
-    });
-
-    // Skill A -> Skill B policy transition simulation
-    it("should enforce new policy after skill switch", () => {
-      // Skill A: only Read allowed
-      const policyA: string[] = ["Read"];
-      assertEquals(enforceSkillPolicy("Read", policyA, false), { allowed: true });
-      assertEquals(enforceSkillPolicy("Write", policyA, false).allowed, false);
-
-      // Skill B: only Write allowed
-      const policyB: string[] = ["Write"];
-      assertEquals(enforceSkillPolicy("Write", policyB, false), { allowed: true });
-      assertEquals(enforceSkillPolicy("Read", policyB, false).allowed, false);
-
-      // Skill C: no restrictions (undefined)
-      assertEquals(enforceSkillPolicy("Read", undefined, false), { allowed: true });
-      assertEquals(enforceSkillPolicy("Write", undefined, false), { allowed: true });
-      assertEquals(enforceSkillPolicy("Bash", undefined, false), { allowed: true });
+      assertEquals(isSkillBodyLoadRequest("load_skill", input), false);
+      assertEquals(reads, 0);
     });
   });
 
   describe("extractSkillToolAvailability", () => {
     it("extracts references and scripts from load_skill results", () => {
+      const references = [
+        "references/guide.md",
+        "resources/schema.json",
+        "assets/template.txt",
+      ];
+      const scripts = ["scripts/run.sh"];
+      const availability = extractSkillToolAvailability({
+        skillId: "support",
+        instructions: "# Support",
+        references,
+        scripts,
+      });
+
+      references.push("references/injected.md");
+      scripts.length = 0;
+
       assertEquals(
-        extractSkillToolAvailability({
-          instructions: "# Support",
-          references: ["references/guide.md"],
-          scripts: ["scripts/run.sh"],
-        }),
+        availability,
         {
           hasActiveSkill: true,
-          references: ["references/guide.md"],
+          references: [
+            "references/guide.md",
+            "resources/schema.json",
+            "assets/template.txt",
+          ],
           scripts: ["scripts/run.sh"],
         },
       );
+      assertEquals(Object.isFrozen(availability), true);
+      assertEquals(Object.isFrozen(availability?.references), true);
+      assertEquals(Object.isFrozen(availability?.scripts), true);
     });
 
     it("returns an active skill with empty file capabilities for no-reference skills", () => {
       assertEquals(
         extractSkillToolAvailability({
+          skillId: "support",
           instructions: "# Support",
           allowedTools: ["search_knowledge"],
           references: [],
@@ -237,6 +257,80 @@ describe("src/agent/runtime skill policy helpers", () => {
       );
     });
 
+    it("fails closed on non-canonical or cross-directory file capabilities", () => {
+      assertEquals(
+        extractSkillToolAvailability({
+          skillId: "support",
+          instructions: "# Support",
+          references: ["references/guide.md", "../secret.md"],
+          scripts: ["scripts/run.sh"],
+        }),
+        {
+          hasActiveSkill: true,
+          references: [],
+          scripts: ["scripts/run.sh"],
+        },
+      );
+      assertEquals(
+        extractSkillToolAvailability({
+          skillId: "support",
+          instructions: "# Support",
+          references: ["scripts/not-a-reference.md"],
+          scripts: ["references/not-a-script.sh"],
+        }),
+        {
+          hasActiveSkill: true,
+          references: [],
+          scripts: [],
+        },
+      );
+    });
+
+    it("deduplicates file capabilities without retaining caller arrays", () => {
+      assertEquals(
+        extractSkillToolAvailability({
+          skillId: "support",
+          instructions: "# Support",
+          references: ["references/guide.md", "references/guide.md"],
+          scripts: ["scripts/run.sh", "scripts/run.sh"],
+        }),
+        {
+          hasActiveSkill: true,
+          references: ["references/guide.md"],
+          scripts: ["scripts/run.sh"],
+        },
+      );
+    });
+
+    it("accepts the exact merged reference budget and rejects overflow", () => {
+      const prefixes = ["references", "resources", "assets"];
+      const references = prefixes.flatMap((prefix) =>
+        Array.from(
+          { length: SKILL_SUBDIR_MAX_ENTRIES },
+          (_unused, index) => `${prefix}/${index}.txt`,
+        )
+      );
+      assertEquals(references.length, SKILL_LOADABLE_REFERENCE_MAX_ENTRIES);
+      assertEquals(
+        extractSkillToolAvailability({
+          skillId: "support",
+          instructions: "# Support",
+          references,
+          scripts: [],
+        })?.references?.length,
+        SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
+      );
+      assertEquals(
+        extractSkillToolAvailability({
+          skillId: "support",
+          instructions: "# Support",
+          references: [...references, "assets/overflow.txt"],
+          scripts: [],
+        })?.references,
+        [],
+      );
+    });
+
     it("ignores non-load-skill error results", () => {
       assertEquals(
         extractSkillToolAvailability({
@@ -247,157 +341,131 @@ describe("src/agent/runtime skill policy helpers", () => {
     });
   });
 
-  describe("removeFormInputAfterSubmission", () => {
-    it("removes form_input from the active policy after a submitted form result", () => {
+  describe("applySkillActivationResult", () => {
+    it("commits a validated activation atomically and preserves it for references/errors", () => {
+      const initial = {
+        activeSkillId: undefined,
+        activeSkillToolAvailability: INACTIVE_SKILL_TOOL_AVAILABILITY,
+        activeSkillDelegationOverrides: undefined,
+      };
+      const activated = applySkillActivationResult(initial, {
+        skillId: "research",
+        instructions: "# Research",
+        allowedTools: ["web_search"],
+        references: ["references/guide.md"],
+        scripts: [],
+        model: "openai/gpt-5.1",
+        maxSteps: 12,
+      });
+
+      assertEquals(activated, {
+        activeSkillId: "research",
+        activeSkillToolAvailability: {
+          hasActiveSkill: true,
+          references: ["references/guide.md"],
+          scripts: [],
+        },
+        activeSkillDelegationOverrides: {
+          model: "openai/gpt-5.1",
+          maxSteps: 12,
+        },
+      });
       assertEquals(
-        removeFormInputAfterSubmission("form_input", { submitted: true }, undefined, [
-          "form_input",
-          "studio_suggestions",
-          "create_file",
-        ]),
-        ["studio_suggestions", "create_file"],
+        applySkillActivationResult(activated, {
+          skillId: "research",
+          file: "references/guide.md",
+          content: "# Guide",
+        }),
+        activated,
+      );
+      assertEquals(
+        applySkillActivationResult(activated, { error: "Reference unavailable" }),
+        activated,
+      );
+      assertEquals(
+        applySkillActivationResult(activated, {
+          skillId: "unsafe",
+          instructions: "# Unsafe",
+          isError: true,
+        }),
+        activated,
       );
     });
 
-    it("keeps form_input available for non-submitted or non-form tool results", () => {
-      assertEquals(
-        removeFormInputAfterSubmission("form_input", { submitted: false }, "plan", [
-          "form_input",
-          "studio_suggestions",
-        ]),
-        ["form_input", "studio_suggestions"],
+    it("does not invoke accessors or partially replace active state", () => {
+      let reads = 0;
+      const hostile = Object.defineProperty(
+        {
+          skillId: "hostile",
+          instructions: "# Hostile",
+        },
+        "allowedTools",
+        {
+          enumerable: true,
+          get() {
+            reads += 1;
+            return ["unsafe"];
+          },
+        },
       );
-      assertEquals(
-        removeFormInputAfterSubmission("web_search", { submitted: true }, "plan", [
-          "form_input",
-          "web_search",
-        ]),
-        ["form_input", "web_search"],
-      );
+      const initial = {
+        activeSkillId: "safe",
+        activeSkillToolAvailability: {
+          hasActiveSkill: true,
+          references: [],
+          scripts: [],
+        },
+        activeSkillDelegationOverrides: undefined,
+      };
+
+      assertEquals(applySkillActivationResult(initial, hostile), {
+        activeSkillId: "hostile",
+        activeSkillToolAvailability: {
+          hasActiveSkill: true,
+          references: [],
+          scripts: [],
+        },
+        activeSkillDelegationOverrides: {},
+      });
+      assertEquals(reads, 0);
     });
 
-    it("narrows terminal starter skills to read, write, and suggestion tools after submission", () => {
-      assertEquals(
-        removeFormInputAfterSubmission("form_input", { submitted: true }, "plan", [
-          "form_input",
-          "studio_suggestions",
-          "list_files",
-          "get_file",
-          "search_files",
-          "create_file",
-          "update_file",
-          "web_search",
-        ]),
-        [
-          "studio_suggestions",
-          "list_files",
-          "get_file",
-          "search_files",
-          "create_file",
-          "update_file",
-        ],
-      );
-      assertEquals(
-        removeFormInputAfterSubmission(
-          "form_input",
-          { submitted: true },
-          "create-agentic-workflow",
-          [
-            "form_input",
-            "studio_suggestions",
-            "list_files",
-            "create_file",
-          ],
-        ),
-        ["studio_suggestions", "list_files", "create_file"],
-      );
-    });
+    it("does not throw when activation capability arrays trap length reads", () => {
+      let lengthReads = 0;
+      const hostileReferences = new Proxy(["references/guide.md"], {
+        getOwnPropertyDescriptor(target, key) {
+          if (key === "length") {
+            lengthReads += 1;
+            throw new Error("length trap");
+          }
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      });
+      const initial = {
+        activeSkillId: undefined,
+        activeSkillToolAvailability: INACTIVE_SKILL_TOOL_AVAILABILITY,
+        activeSkillDelegationOverrides: undefined,
+      };
 
-    it("keeps agent design tools available after create-agent intake", () => {
       assertEquals(
-        removeFormInputAfterSubmission("form_input", { submitted: true }, "create-agent", [
-          "form_input",
-          "studio_suggestions",
-          "create_agent",
-          "create_skill",
-          "create_tool",
-          "create_file",
-          "update_file",
-          "list_integrations",
-          "get_integration",
-          "get_user_oauth_status",
-          "list_user_oauth_integrations",
-          "web_fetch",
-        ]),
-        [
-          "studio_suggestions",
-          "create_agent",
-          "create_skill",
-          "create_tool",
-          "create_file",
-          "update_file",
-          "list_integrations",
-          "get_integration",
-          "get_user_oauth_status",
-          "list_user_oauth_integrations",
-          "web_fetch",
-        ],
+        applySkillActivationResult(initial, {
+          skillId: "safe",
+          instructions: "# Safe",
+          allowedTools: ["Read"],
+          references: hostileReferences,
+          scripts: [],
+        }),
+        {
+          activeSkillId: "safe",
+          activeSkillToolAvailability: {
+            hasActiveSkill: true,
+            references: [],
+            scripts: [],
+          },
+          activeSkillDelegationOverrides: {},
+        },
       );
-    });
-
-    it("keeps workflow primitive tools available after create-agentic-workflow intake", () => {
-      assertEquals(
-        removeFormInputAfterSubmission(
-          "form_input",
-          { submitted: true },
-          "create-agentic-workflow",
-          [
-            "form_input",
-            "studio_suggestions",
-            "create_workflow",
-            "create_agent",
-            "create_skill",
-            "create_tool",
-            "list_files",
-            "get_file",
-            "search_files",
-            "create_file",
-            "update_file",
-            "web_search",
-            "web_fetch",
-          ],
-        ),
-        [
-          "studio_suggestions",
-          "create_workflow",
-          "create_agent",
-          "create_skill",
-          "create_tool",
-          "list_files",
-          "get_file",
-          "search_files",
-          "create_file",
-          "update_file",
-          "web_search",
-          "web_fetch",
-        ],
-      );
-    });
-
-    it("keeps source tools for research after submission but closes project inspection", () => {
-      assertEquals(
-        removeFormInputAfterSubmission("form_input", { submitted: true }, "research", [
-          "form_input",
-          "studio_suggestions",
-          "web_search",
-          "web_fetch",
-          "list_files",
-          "get_file",
-          "create_file",
-          "update_file",
-        ]),
-        ["studio_suggestions", "web_search", "web_fetch", "create_file", "update_file"],
-      );
+      assertEquals(lengthReads, 0);
     });
   });
 
@@ -442,6 +510,45 @@ describe("src/agent/runtime skill policy helpers", () => {
       );
       assertEquals(
         hasSubmittedFormInputResult([{
+          id: "tool_form_input_conflicting",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "form_input_conflicting",
+            toolName: "form_input",
+            result: {
+              submitted: false,
+              values: { submitted: true },
+              response: { submitted: true },
+            },
+          }],
+        }]),
+        false,
+      );
+      let submittedReads = 0;
+      const accessorResult = Object.defineProperty({}, "submitted", {
+        enumerable: true,
+        get() {
+          submittedReads += 1;
+          return true;
+        },
+      });
+      assertEquals(
+        hasSubmittedFormInputResult([{
+          id: "tool_form_input_accessor",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "form_input_accessor",
+            toolName: "form_input",
+            result: accessorResult,
+          }],
+        }]),
+        false,
+      );
+      assertEquals(submittedReads, 0);
+      assertEquals(
+        hasSubmittedFormInputResult([{
           id: "tool_form_input_nested",
           role: "tool",
           parts: [{
@@ -466,6 +573,27 @@ describe("src/agent/runtime skill policy helpers", () => {
         }]),
         false,
       );
+      for (
+        const result of [
+          { submitted: true, error: "form failed" },
+          { submitted: true, isError: true },
+          { response: { submitted: true, error: "form failed" } },
+        ]
+      ) {
+        assertEquals(
+          hasSubmittedFormInputResult([{
+            id: "tool_form_input_error",
+            role: "tool",
+            parts: [{
+              type: "tool-result",
+              toolCallId: "form_input_error",
+              toolName: "form_input",
+              result,
+            }],
+          }]),
+          false,
+        );
+      }
       assertEquals(
         hasSubmittedFormInputResult([
           {
@@ -486,6 +614,49 @@ describe("src/agent/runtime skill policy helpers", () => {
         ]),
         false,
       );
+      assertEquals(
+        hasSubmittedFormInputResult([
+          {
+            id: "tool_form_input_before_recovery",
+            role: "tool",
+            parts: [{
+              type: "tool-result",
+              toolCallId: "form_input_before_recovery",
+              toolName: "form_input",
+              result: { submitted: true, values: { topic: "preserve me" } },
+            }],
+          },
+          markRuntimeGeneratedUserMessage({
+            id: "runtime_recovery_note",
+            role: "user",
+            parts: [{ type: "text", text: "Retry with available tools." }],
+          }),
+        ]),
+        true,
+      );
+      assertEquals(
+        hasSubmittedFormInputResult([
+          {
+            id: "tool_form_input_before_metadata_collision",
+            role: "tool",
+            parts: [{
+              type: "tool-result",
+              toolCallId: "form_input_before_metadata_collision",
+              toolName: "form_input",
+              result: { submitted: true, values: { topic: "must reset" } },
+            }],
+          },
+          {
+            id: "real_user_with_reserved-looking_metadata",
+            role: "user",
+            parts: [{ type: "text", text: "This is a real new turn." }],
+            metadata: {
+              __veryfrontRuntimeGeneratedUserMessage: "unavailable-tool-recovery",
+            },
+          },
+        ]),
+        false,
+      );
     });
 
     it("hydrates the latest load_skill policy and delegation overrides from tool history", () => {
@@ -499,6 +670,7 @@ describe("src/agent/runtime skill policy helpers", () => {
             toolName: "load_skill",
             result: {
               skillId: "old",
+              instructions: "# Old",
               allowedTools: ["Read"],
               references: ["references/old.md"],
               scripts: [],
@@ -527,6 +699,7 @@ describe("src/agent/runtime skill policy helpers", () => {
             toolName: "load_skill",
             result: {
               skillId: "new",
+              instructions: "# New",
               allowedTools: ["Write"],
               references: [],
               scripts: ["scripts/run.sh"],
@@ -536,12 +709,35 @@ describe("src/agent/runtime skill policy helpers", () => {
             },
           }],
         },
+        {
+          id: "tool_load_skill_reference",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "load_skill_reference",
+            toolName: "load_skill",
+            result: {
+              skillId: "new",
+              file: "references/guide.md",
+              content: "# Guide",
+            },
+          }],
+        },
+        {
+          id: "tool_load_skill_error",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "load_skill_error",
+            toolName: "load_skill",
+            result: { error: "Missing reference" },
+          }],
+        },
       ];
 
       const hydrated = hydrateActiveSkillStateFromMessages(messages);
 
       assertEquals(hydrated.activeSkillId, "new");
-      assertEquals(hydrated.activeSkillPolicy, ["Write"]);
       assertEquals(hydrated.activeSkillToolAvailability, {
         hasActiveSkill: true,
         references: [],
@@ -552,6 +748,34 @@ describe("src/agent/runtime skill policy helpers", () => {
         thinking: false,
         maxSteps: 8,
       });
+    });
+
+    it("keeps the latest active skill across later user turns", () => {
+      const hydrated = hydrateActiveSkillStateFromMessages([
+        {
+          id: "skill-result",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "load-skill",
+            toolName: "load_skill",
+            result: {
+              skillId: "review",
+              instructions: "# Review",
+              allowedTools: ["Read"],
+              references: [],
+              scripts: [],
+            },
+          }],
+        },
+        {
+          id: "later-user-turn",
+          role: "user",
+          parts: [{ type: "text", text: "Continue the conversation" }],
+        },
+      ]);
+
+      assertEquals(hydrated.activeSkillId, "review");
     });
   });
 });

@@ -250,6 +250,7 @@ export interface ConversationRunEventQueueController {
         | "cursor_mismatch_ambiguous"
         | "non_appendable"
         | "ignorable_append_rejection"
+        | "run_terminal"
         | "payload_too_large"
         | "auth_rejected";
     }
@@ -276,6 +277,7 @@ export interface ConversationRunEventQueueController {
       | "cursor_mismatch_ambiguous"
       | "non_appendable"
       | "ignorable_append_rejection"
+      | "run_terminal"
       | "payload_too_large"
       | "auth_rejected";
   };
@@ -409,6 +411,7 @@ export const getConversationRunErrorSchema = defineSchema((v) =>
   v.object({
     detail: v.string().min(1).optional(),
     error: v.string().min(1).optional(),
+    slug: v.string().min(1).optional(),
   })
 );
 

@@ -1,10 +1,24 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { FileSystemAdapter, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
-import { discoverWorkflows, findWorkflowById } from "./workflow-discovery.ts";
+import {
+  createWorkflowRegistry,
+  type DiscoveredWorkflow,
+  discoverWorkflows as discoverWorkflowsRaw,
+  findWorkflowById as findWorkflowByIdRaw,
+} from "./workflow-discovery.ts";
+
+const discoverWorkflows: typeof discoverWorkflowsRaw = (options) =>
+  discoverWorkflowsRaw({ ...options, allowHostProjectCodeExecution: true });
+const findWorkflowById: typeof findWorkflowByIdRaw = (workflowId, options) =>
+  findWorkflowByIdRaw(workflowId, {
+    ...options,
+    allowHostProjectCodeExecution: true,
+  });
 
 function createMockAdapter(files: Record<string, string>): FileSystemAdapter {
   const normalize = (path: string): string => path.replace(/^\/project\/?/, "").replace(/^\/+/, "");
@@ -189,6 +203,47 @@ describe(
       assertEquals(workflow?.exportName, "pingWorkflow");
     });
 
+    it("does not evaluate tenant workflow files without trusted-local execution", async () => {
+      const adapter = createRuntimeAdapter({
+        "/project/workflows/ping.ts": [
+          'import { workflow } from "veryfront/workflow";',
+          "export default workflow({",
+          '  id: "ping",',
+          '  description: "Ping workflow",',
+          "  steps: [],",
+          "});",
+        ].join("\n"),
+      });
+
+      const result = await discoverWorkflowsRaw({
+        projectDir: "/project",
+        adapter,
+        config: { fs: { type: "veryfront-api" } } as never,
+      });
+
+      assertEquals(
+        result.workflows,
+        [],
+        "tenant workflow files must not be evaluated without trusted-local execution",
+      );
+      assertStringIncludes(
+        result.errors[0]?.error ?? "",
+        "requires explicit trusted-local execution",
+      );
+
+      const found = await findWorkflowByIdRaw("ping", {
+        projectDir: "/project",
+        adapter,
+        config: { fs: { type: "veryfront-api" } } as never,
+      });
+
+      assertEquals(
+        found,
+        null,
+        "findWorkflowById must not resolve a definition it was never allowed to evaluate",
+      );
+    });
+
     it("does not discover legacy app/workflows files by default", async () => {
       const adapter = createRuntimeAdapter({
         "/project/app/workflows/legacy-ping.ts": [
@@ -208,6 +263,169 @@ describe(
 
       assertEquals(result.errors, []);
       assertEquals(result.workflows, []);
+    });
+
+    it("returns an empty result when the workflow directory is absent", async () => {
+      const result = await discoverWorkflows({
+        projectDir: "/project",
+        adapter: createRuntimeAdapter({}),
+        config: { fs: { type: "veryfront-api" } } as never,
+      });
+
+      assertEquals(result, { workflows: [], errors: [] });
+    });
+
+    it("keeps valid sibling exports after rejecting malformed definitions", async () => {
+      const adapter = createRuntimeAdapter({
+        "/project/workflows/mixed.ts": [
+          "const accessor = Object.defineProperty({ steps: [] }, 'id', {",
+          "  enumerable: true,",
+          "  get() { throw new Error('workflow id accessor executed'); },",
+          "});",
+          "export { accessor };",
+          "export const malformed = { id: 'malformed', steps: null };",
+          "export const valid = { id: 'valid', steps: [] };",
+        ].join("\n"),
+      });
+
+      const result = await discoverWorkflows({
+        projectDir: "/project",
+        adapter,
+        config: { fs: { type: "veryfront-api" } } as never,
+      });
+
+      assertEquals(result.workflows.map((workflow) => workflow.id), ["valid"]);
+      assertEquals(Object.isFrozen(result.workflows[0]?.definition), true);
+      assertEquals(result.errors.length, 2);
+      assertEquals(
+        result.errors.some((entry) => entry.error.includes("accessor executed")),
+        false,
+      );
+    });
+
+    it("rejects duplicate workflow IDs deterministically", async () => {
+      const adapter = createRuntimeAdapter({
+        "/project/workflows/z.ts": "export default { id: 'duplicate', steps: [] };",
+        "/project/workflows/a.ts": "export default { id: 'duplicate', steps: [] };",
+      });
+
+      const result = await discoverWorkflows({
+        projectDir: "/project",
+        adapter,
+        config: { fs: { type: "veryfront-api" } } as never,
+      });
+
+      assertEquals(result.workflows, []);
+      assertEquals(result.errors.map((entry) => entry.filePath), [
+        "workflows/a.ts",
+        "workflows/z.ts",
+      ]);
+      assertEquals(
+        result.errors.every((entry) => entry.error.includes('Duplicate workflow id "duplicate"')),
+        true,
+      );
+      assertEquals(
+        await findWorkflowById("duplicate", {
+          projectDir: "/project",
+          adapter,
+          config: { fs: { type: "veryfront-api" } } as never,
+        }),
+        null,
+      );
+    });
+
+    it("sorts discovered workflows independently of adapter enumeration order", async () => {
+      const adapter = createRuntimeAdapter({
+        "/project/workflows/z.ts": "export default { id: 'zeta', steps: [] };",
+        "/project/workflows/a.ts": "export default { id: 'alpha', steps: [] };",
+      });
+
+      const result = await discoverWorkflows({
+        projectDir: "/project",
+        adapter,
+        config: { fs: { type: "veryfront-api" } } as never,
+      });
+
+      assertEquals(result.workflows.map((workflow) => workflow.id), ["alpha", "zeta"]);
+    });
+
+    it("rejects workflow roots that escape the project", async () => {
+      const adapter = createRuntimeAdapter({});
+      let existsCalls = 0;
+      adapter.fs.exists = () => {
+        existsCalls++;
+        return Promise.resolve(false);
+      };
+
+      const result = await discoverWorkflows({
+        projectDir: "/project",
+        workflowsDir: "../outside",
+        adapter,
+      });
+
+      assertEquals(result.workflows, []);
+      assertEquals(result.errors.length, 1);
+      assertStringIncludes(result.errors[0]!.error, "stay within the project");
+      assertEquals(existsCalls, 0);
+    });
+
+    it("requires explicit authority before executing project workflow code", async () => {
+      const result = await discoverWorkflowsRaw({
+        projectDir: "/project",
+        adapter: createRuntimeAdapter({
+          "/project/workflows/ping.ts": "export default { id: 'ping', steps: [] };",
+        }),
+        config: { fs: { type: "veryfront-api" } } as never,
+      });
+
+      assertEquals(result.workflows, []);
+      assertEquals(result.errors.length, 1);
+    });
+
+    it("creates a registry without silently overwriting duplicate IDs", () => {
+      const definition = { id: "duplicate", steps: [] };
+      const workflows: DiscoveredWorkflow[] = [
+        { id: "duplicate", filePath: "workflows/a.ts", exportName: "default", definition },
+        { id: "duplicate", filePath: "workflows/b.ts", exportName: "default", definition },
+      ];
+
+      assertThrows(
+        () => createWorkflowRegistry(workflows),
+        VeryfrontError,
+        'Duplicate workflow id "duplicate"',
+      );
+    });
+
+    it("snapshots each registry id before checking and inserting it", () => {
+      let idReads = 0;
+      const shifting = Object.defineProperty(
+        {
+          filePath: "workflows/a.ts",
+          exportName: "default",
+          definition: { id: "duplicate", steps: [] },
+        },
+        "id",
+        {
+          enumerable: true,
+          get() {
+            idReads++;
+            return idReads === 1 ? "duplicate" : idReads === 2 ? "other" : "duplicate";
+          },
+        },
+      ) as unknown as DiscoveredWorkflow;
+      const duplicate: DiscoveredWorkflow = {
+        id: "duplicate",
+        filePath: "workflows/b.ts",
+        exportName: "default",
+        definition: { id: "duplicate", steps: [] },
+      };
+
+      assertThrows(
+        () => createWorkflowRegistry([shifting, duplicate]),
+        VeryfrontError,
+        'Duplicate workflow id "duplicate"',
+      );
+      assertEquals(idReads, 1);
     });
   },
 );

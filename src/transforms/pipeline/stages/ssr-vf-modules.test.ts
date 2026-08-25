@@ -8,7 +8,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * @see ssr-vf-modules.ts
  */
 
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
@@ -23,6 +23,7 @@ import {
   _testExports,
   cacheTransformedCode,
   frameworkFileCache,
+  frameworkFileTransformFlight,
   frameworkTransformFlight,
   transformFrameworkSource,
   transformingFiles,
@@ -33,6 +34,8 @@ import type { TransformContext } from "../types.ts";
 const { findVfModuleImports, findRelativeImports, FRAMEWORK_ROOT, EMBEDDED_SRC_DIR, EXTENSIONS } =
   _testExports;
 
+// esbuild starts a child process that lives across tests, so we disable sanitizers here;
+// see src/transforms/pipeline/stages/ssr-vf-modules/transform.test.ts.
 describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () => {
   describe("findVfModuleImports", () => {
     it("finds single /_vf_modules/ import", async () => {
@@ -92,9 +95,11 @@ describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("ignores string literals without from keyword", async () => {
-      const code = `const path = "/_vf_modules/something";`;
+      // The literal carries the framework prefix, so only the import-vs-string
+      // distinction can reject it - not the prefix filter.
+      const code = `const path = "/_vf_modules/_veryfront/react/components/Head.js";`;
       const imports = await findVfModuleImports(code);
-      assertEquals(imports, []);
+      assertEquals(imports, [], "a plain string constant is not an import");
     });
   });
 
@@ -218,6 +223,133 @@ describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () 
       );
       assertEquals(frameworkTransformFlight.size, 0);
     });
+
+    it("keeps shared framework work alive for an active render", async () => {
+      const firstController = new AbortController();
+      const secondController = new AbortController();
+      const started = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const firstProgress: string[] = [];
+      const secondProgress: string[] = [];
+      let executions = 0;
+      let sharedSignalAborted = false;
+      let reportProgress!: (event: { phase: string }) => void;
+      const key = `framework-cancellation-${crypto.randomUUID()}`;
+
+      const first = _testExports.runFrameworkTransformFlight(
+        key,
+        async (abortSignal, publishProgress) => {
+          executions++;
+          reportProgress = publishProgress;
+          abortSignal.addEventListener("abort", () => sharedSignalAborted = true, {
+            once: true,
+          });
+          started.resolve();
+          await release.promise;
+          abortSignal.throwIfAborted();
+          return "transformed";
+        },
+        {
+          abortSignal: firstController.signal,
+          onProgress: (event) => firstProgress.push(event.phase),
+        },
+      );
+      await started.promise;
+
+      const second = _testExports.runFrameworkTransformFlight(
+        key,
+        () => {
+          executions++;
+          return Promise.resolve("unexpected second execution");
+        },
+        {
+          abortSignal: secondController.signal,
+          onProgress: (event) => secondProgress.push(event.phase),
+        },
+      );
+      reportProgress({ phase: "framework:test-shared" });
+
+      firstController.abort(new DOMException("first render canceled", "AbortError"));
+      await assertRejects(() => first, DOMException, "first render canceled");
+      assertEquals(sharedSignalAborted, false);
+
+      reportProgress({ phase: "framework:test-follower" });
+      release.resolve();
+      assertEquals(await second, "transformed");
+      assertEquals(executions, 1);
+      assertEquals(firstProgress, ["framework:test-shared"]);
+      assertEquals(secondProgress, ["framework:test-shared", "framework:test-follower"]);
+      assertEquals(frameworkTransformFlight.size, 0);
+    });
+
+    it("cancels orphaned framework work after its last render detaches", async () => {
+      const controller = new AbortController();
+      const started = Promise.withResolvers<void>();
+      const sharedAborted = Promise.withResolvers<unknown>();
+      const abortReason = new DOMException("last render canceled", "AbortError");
+
+      const pending = _testExports.runFrameworkTransformFlight(
+        `framework-orphan-${crypto.randomUUID()}`,
+        (abortSignal) => {
+          started.resolve();
+          return new Promise<string>((_resolve, reject) => {
+            abortSignal.addEventListener("abort", () => {
+              sharedAborted.resolve(abortSignal.reason);
+              reject(abortSignal.reason);
+            }, { once: true });
+          });
+        },
+        { abortSignal: controller.signal },
+      );
+      await started.promise;
+
+      controller.abort(abortReason);
+      const error = await assertRejects(() => pending);
+      assertEquals(error, abortReason);
+      assertEquals(await sharedAborted.promise, abortReason);
+    });
+
+    it("does not attach a new render to an aborted framework flight", async () => {
+      const key = `framework-aborted-flight-${crypto.randomUUID()}`;
+      const firstController = new AbortController();
+      const firstStarted = Promise.withResolvers<void>();
+      const releaseFirst = Promise.withResolvers<string>();
+      const abortReason = new DOMException("first render canceled", "AbortError");
+      let replacementExecutions = 0;
+      let replacement: Promise<string> | undefined;
+
+      const first = _testExports.runFrameworkTransformFlight(
+        key,
+        (abortSignal) =>
+          frameworkFileTransformFlight.do(key, () => {
+            firstStarted.resolve();
+            abortSignal.addEventListener("abort", () => {
+              replacement = _testExports.runFrameworkTransformFlight(
+                key,
+                () =>
+                  frameworkFileTransformFlight.do(key, () => {
+                    replacementExecutions++;
+                    return Promise.resolve("fresh transform");
+                  }),
+                {},
+              );
+            }, { once: true });
+            return releaseFirst.promise;
+          }),
+        { abortSignal: firstController.signal },
+      );
+      await firstStarted.promise;
+      firstController.abort(abortReason);
+      assertEquals(await assertRejects(() => first), abortReason);
+
+      try {
+        assertEquals(replacementExecutions, 1);
+        assertEquals(await replacement!, "fresh transform");
+      } finally {
+        releaseFirst.resolve("stale transform");
+        await replacement?.catch(() => {});
+      }
+    });
   });
 
   describe("React URL consistency", () => {
@@ -294,6 +426,8 @@ describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () 
   });
 });
 
+// esbuild starts a child process that lives across tests, so we disable sanitizers here;
+// see src/transforms/pipeline/stages/ssr-vf-modules/transform.test.ts.
 describe("ssr-vf-modules integration", { sanitizeOps: false, sanitizeResources: false }, () => {
   it("resolves Head.tsx from /_vf_modules/ path", async () => {
     const fs = createFileSystem();
@@ -369,6 +503,8 @@ describe("ssr-vf-modules integration", { sanitizeOps: false, sanitizeResources: 
   });
 });
 
+// esbuild starts a child process that lives across tests, so we disable sanitizers here;
+// see src/transforms/pipeline/stages/ssr-vf-modules/transform.test.ts.
 describe("ssr-vf-modules relative import resolution", {
   sanitizeOps: false,
   sanitizeResources: false,
@@ -504,6 +640,8 @@ describe("ssr-vf-modules relative import resolution", {
   });
 });
 
+// esbuild starts a child process that lives across tests, so we disable sanitizers here;
+// see src/transforms/pipeline/stages/ssr-vf-modules/transform.test.ts.
 describe("ssr-vf-modules non-framework source skipping", {
   sanitizeOps: false,
   sanitizeResources: false,
@@ -557,38 +695,34 @@ describe("ssr-vf-modules non-framework source skipping", {
   });
 
   it("resolveRelativeFrameworkImport resolves dnt shim paths at package root", async () => {
-    // When a framework source file imports ../_dnt.shims.js, the path resolves
+    // When a framework source file imports ../../_dnt.shims.js, the path resolves
     // to FRAMEWORK_ROOT/_dnt.shims.js which is outside src/ and should be
     // skipped by the transform (not recursively processed).
+    //
+    // The shim only ships in npm/dnt builds, so existence is stubbed through the
+    // resolver's injectable existsFn rather than gating the assertions on the
+    // checkout layout.
     const { resolveRelativeFrameworkImport } = _testExports;
     const fs = createFileSystem();
-
-    // Simulate a file in src/something/ importing ../../_dnt.shims.js
-    // which would resolve to FRAMEWORK_ROOT/_dnt.shims.js
+    const shimPath = `${FRAMEWORK_ROOT}/_dnt.shims.js`;
     const sourcePath = `${FRAMEWORK_ROOT}/src/some/module.ts`;
 
-    // Check if _dnt.shims.js exists at root (only in npm/dnt builds)
-    const shimPath = `${FRAMEWORK_ROOT}/_dnt.shims.js`;
-    const shimExists = await fs.exists(shimPath);
+    const resolved = await resolveRelativeFrameworkImport(
+      "../../_dnt.shims.js",
+      sourcePath,
+      fs,
+      (path: string) => Promise.resolve(path === shimPath),
+    );
 
-    if (shimExists) {
-      const resolved = await resolveRelativeFrameworkImport(
-        "../../_dnt.shims.js",
-        sourcePath,
-        fs,
-      );
-      assertEquals(resolved !== null, true, "Should resolve _dnt.shims.js path");
+    assertEquals(resolved, shimPath, "Should resolve ../../_dnt.shims.js to the package-root shim");
 
-      // Verify it's outside framework source directories
-      const frameworkSrcDir = `${FRAMEWORK_ROOT}/src/`;
-      const embeddedPrefix = `${EMBEDDED_SRC_DIR}/`;
-      assertEquals(
-        resolved!.startsWith(frameworkSrcDir) || resolved!.startsWith(embeddedPrefix),
-        false,
-        "Resolved dnt shim path should be outside framework source dirs",
-      );
-    }
-    // If shims don't exist (source dev mode), the test passes - the guard
-    // only matters in npm/dnt package builds
+    // Verify it's outside framework source directories
+    const frameworkSrcDir = `${FRAMEWORK_ROOT}/src/`;
+    const embeddedPrefix = `${EMBEDDED_SRC_DIR}/`;
+    assertEquals(
+      resolved!.startsWith(frameworkSrcDir) || resolved!.startsWith(embeddedPrefix),
+      false,
+      "Resolved dnt shim path should be outside framework source dirs",
+    );
   });
 });

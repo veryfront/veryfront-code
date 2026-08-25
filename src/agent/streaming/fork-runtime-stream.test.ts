@@ -1,12 +1,17 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
+import {
+  assertEquals,
+  assertExists,
+  assertInstanceOf,
+  assertRejects,
+} from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { type ModelRuntime, registerModelProvider } from "#veryfront/provider";
 import { createToolsFromRemoteDefinitions, type RemoteToolSource } from "#veryfront/tool";
 import type { AgentResponse, Message as AgentMessage } from "../schemas/index.ts";
-import type { ModelCallContext } from "../../runtime/model-call-context.ts";
-import { runWithModelCallRecorder } from "../../runtime/model-call-recorder-context.ts";
+import type { AgentRunModelCallContextEvent } from "../../runtime/model-call-context.ts";
+import { runWithRunEventSink } from "../../runtime/run-event-sink-context.ts";
 import {
   applyPartToStreamedStepState,
   buildForkRuntimeStepFromResponse,
@@ -19,6 +24,7 @@ import {
   mapAgUiRuntimeEventToForkParts,
   resolveForkRuntimeContinuationState,
   resolveForkStepResponse,
+  runAgentRuntimeForkStep,
   type RunAgentRuntimeForkStepInput,
   shouldContinueForkRuntimeStep,
   startAgentRuntimeFork,
@@ -39,6 +45,48 @@ function createRuntimeEventStream(
       controller.close();
     },
   });
+}
+
+function observeUnhandledRejections(): {
+  readonly unhandledRejections: unknown[];
+  readonly dispose: () => void;
+} {
+  const unhandledRejections: unknown[] = [];
+  const globalEventTarget = globalThis as typeof globalThis & {
+    addEventListener?: typeof globalThis.addEventListener;
+    removeEventListener?: typeof globalThis.removeEventListener;
+  };
+
+  if (
+    typeof globalEventTarget.addEventListener === "function" &&
+    typeof globalEventTarget.removeEventListener === "function"
+  ) {
+    const handler = (event: PromiseRejectionEvent) => {
+      unhandledRejections.push(event.reason);
+      event.preventDefault();
+    };
+    globalEventTarget.addEventListener("unhandledrejection", handler);
+    return {
+      unhandledRejections,
+      dispose: () => globalEventTarget.removeEventListener?.("unhandledrejection", handler),
+    };
+  }
+
+  const nodeProcess = (globalThis as { process?: typeof import("node:process") }).process;
+  if (
+    nodeProcess && typeof nodeProcess.on === "function" && typeof nodeProcess.off === "function"
+  ) {
+    const handler = (reason: unknown) => {
+      unhandledRejections.push(reason);
+    };
+    nodeProcess.on("unhandledRejection", handler);
+    return {
+      unhandledRejections,
+      dispose: () => nodeProcess.off("unhandledRejection", handler),
+    };
+  }
+
+  throw new Error("No unhandled rejection observer is available");
 }
 
 describe("agent/fork-runtime-stream", () => {
@@ -357,14 +405,188 @@ describe("agent/fork-runtime-stream", () => {
     });
   });
 
-  it("does not leak unhandled rejections from side promises when the fork stream fails", async () => {
-    const unhandledRejections: unknown[] = [];
-    const handler = (event: PromiseRejectionEvent) => {
-      unhandledRejections.push(event.reason);
-      event.preventDefault();
+  it("uses the step preparer forkToolNames override for the child step", async () => {
+    const capturedInputs: RunAgentRuntimeForkStepInput[] = [];
+    const response: AgentResponse = {
+      text: "Done.",
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          timestamp: 2,
+          parts: [{ type: "text", text: "Done." }],
+        },
+      ],
+      toolCalls: [],
+      status: "completed",
     };
+    const streamResult = startAgentRuntimeFork({
+      apiUrl: "https://api.example.com",
+      authToken: "auth-token",
+      projectId: "project-1",
+      model: "model-1",
+      maxSteps: 1,
+      prompt: "Do the work.",
+      forkToolNames: ["create_file"],
+      runtimeTools: {},
+      buildInstructions: () => "Base instructions.",
+      prepareStep: ({ messages, buildInstructions }) => ({
+        messages,
+        system: buildInstructions(),
+        forkToolNames: ["create_file", "gmail__list_emails"],
+      }),
+      runStep: async (input) => {
+        capturedInputs.push(input);
+        return {
+          stream: createRuntimeEventStream([{ type: "text-delta", delta: "Done." }]),
+          responsePromise: Promise.resolve(response),
+        };
+      },
+    });
 
-    globalThis.addEventListener("unhandledrejection", handler);
+    for await (const _part of streamResult.fullStream) {
+      // Drain the stream so the step runs.
+    }
+    await streamResult.steps;
+
+    assertEquals(
+      capturedInputs[0]?.forkToolNames,
+      ["create_file", "gmail__list_emails"],
+      "prepared forkToolNames must reach the child step",
+    );
+  });
+
+  it("preserves structured provider options in the default fork step runner", async () => {
+    const providerId = "fork-structured-system";
+    let observedSystem: unknown;
+    const model: ModelRuntime = {
+      provider: providerId,
+      modelId: `${providerId}/demo`,
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "Done." }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream(options: unknown) {
+        observedSystem = (options as { prompt?: unknown[] }).prompt?.filter((message) =>
+          (message as { role?: unknown }).role === "system"
+        );
+        return {
+          stream: new ReadableStream<unknown>({
+            start(controller) {
+              controller.enqueue({ type: "text-delta", text: "Done." });
+              controller.enqueue({ type: "finish", finishReason: "stop" });
+              controller.close();
+            },
+          }),
+        };
+      },
+    };
+    const unregister = registerModelProvider(providerId, () => model);
+    try {
+      const result = await runAgentRuntimeForkStep({
+        apiUrl: "https://api.example.com",
+        authToken: "test-token",
+        projectId: "project-1",
+        model: `${providerId}/demo`,
+        messages: [{
+          id: "user-1",
+          role: "user",
+          parts: [{ type: "text", text: "Do the work." }],
+        }],
+        system: [{
+          role: "system",
+          content: "Cached fork instructions.",
+          providerOptions: {
+            anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+          },
+        }],
+        forkToolNames: [],
+        runtimeTools: {},
+      });
+
+      await new Response(result.stream).text();
+      await result.responsePromise;
+      assertEquals((observedSystem as unknown[] | undefined)?.[0], {
+        role: "system",
+        content: "Cached fork instructions.",
+        providerOptions: {
+          anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+        },
+      });
+    } finally {
+      unregister();
+    }
+  });
+
+  it("rejects the response promise when the fork step starts with an aborted signal", async () => {
+    const providerId = "fork-aborted-step";
+    const model: ModelRuntime = {
+      provider: providerId,
+      modelId: `${providerId}/demo`,
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "Done." }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return {
+          stream: new ReadableStream<unknown>({
+            start(controller) {
+              controller.enqueue({ type: "text-delta", text: "Done." });
+              controller.enqueue({ type: "finish", finishReason: "stop" });
+              controller.close();
+            },
+          }),
+        };
+      },
+    };
+    const unregister = registerModelProvider(providerId, () => model);
+    const controller = new AbortController();
+    controller.abort();
+
+    try {
+      const result = await runAgentRuntimeForkStep({
+        apiUrl: "https://api.example.com",
+        authToken: "test-token",
+        projectId: "project-1",
+        model: `${providerId}/demo`,
+        messages: [{
+          id: "user-1",
+          role: "user",
+          parts: [{ type: "text", text: "Do the work." }],
+        }],
+        system: "Fork instructions.",
+        abortSignal: controller.signal,
+        forkToolNames: [],
+        runtimeTools: {},
+      });
+
+      const error = await assertRejects(() => result.responsePromise, Error);
+      assertInstanceOf(
+        error,
+        Error,
+        "an aborted fork step must reject with an Error",
+      );
+      assertEquals(
+        error.name,
+        "AbortError",
+        "an aborted fork step must settle responsePromise",
+      );
+
+      await new Response(result.stream).text().catch(() => undefined);
+    } finally {
+      unregister();
+    }
+  });
+
+  it("does not leak unhandled rejections from side promises when the fork stream fails", async () => {
+    const unhandledRejectionObserver = observeUnhandledRejections();
+
     try {
       const streamError = new Error("provider failed");
       const streamResult = startAgentRuntimeFork({
@@ -399,11 +621,11 @@ describe("agent/fork-runtime-stream", () => {
       assertEquals(thrown, streamError);
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      assertEquals(unhandledRejections, []);
+      assertEquals(unhandledRejectionObserver.unhandledRejections, []);
       await assertRejects(() => Promise.resolve(streamResult.steps), Error, "provider failed");
       await assertRejects(() => Promise.resolve(streamResult.totalUsage), Error, "provider failed");
     } finally {
-      globalThis.removeEventListener("unhandledrejection", handler);
+      unhandledRejectionObserver.dispose();
     }
   });
 
@@ -561,7 +783,7 @@ describe("agent/fork-runtime-stream", () => {
     const forkTools = { upload_attachment: uploadAttachment };
 
     const childParts: ForkPart[][] = [];
-    const childContexts: ModelCallContext[][] = [];
+    const childContexts: AgentRunModelCallContextEvent[][] = [];
     for (const childOrdinal of [1, 2]) {
       const { streamResult, forkToolNames } = startAgentRuntimeForkWithHostTools({
         apiUrl: "https://api.example.com",
@@ -580,10 +802,10 @@ describe("agent/fork-runtime-stream", () => {
       assertEquals(forkToolNames, ["upload_attachment"]);
 
       const parts: ForkPart[] = [];
-      const contexts: ModelCallContext[] = [];
-      await runWithModelCallRecorder(
-        (context) => {
-          contexts.push(context);
+      const contexts: AgentRunModelCallContextEvent[] = [];
+      await runWithRunEventSink(
+        (event) => {
+          contexts.push(event as unknown as AgentRunModelCallContextEvent);
         },
         async () => {
           for await (const part of streamResult.fullStream) {

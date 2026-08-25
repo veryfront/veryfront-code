@@ -1,94 +1,67 @@
 ---
-title: "Deploy project"
-description: "Build and deploy a Veryfront project."
-order: 7
+title: "Deploy with Veryfront Cloud"
+description: "Push and deploy an existing Veryfront project."
+order: 9
 ---
+
+Deploy a project that already works locally. For a guided first project that
+also uses the AI Gateway, follow the [Cloud quickstart](./cloud-quickstart.md).
 
 ## Prerequisites
 
-- A project that runs locally with `veryfront dev` (see
-  [Create project](./create-project.md)).
-- For Veryfront Cloud: run `veryfront login` or set `VERYFRONT_API_TOKEN`. See
-  [Configuration](../guides/configuration.md).
-- For another host: any container or Node-compatible runtime that can serve the
-  build output.
+- A project that works with `veryfront dev`.
+- A Veryfront account.
 
-## Build
-
-Create a production build:
+## Sign in
 
 ```bash
-veryfront build
+veryfront login
 ```
 
-This writes the production output to `dist/`.
+For CI, set `VERYFRONT_API_TOKEN` instead. See
+[Configuration](../guides/configuration.md).
 
-## Run the production build locally
-
-Stop the dev server, then serve the production build:
+## Push a preview
 
 ```bash
-veryfront serve
+npx veryfront@latest push
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Confirm the same pages and
-endpoints work.
+Push creates or links the Cloud project, uploads the current source, and prints
+the protected preview URL. Open that URL in a browser signed in as a project
+member and verify the route you plan to deploy.
 
-## Preview on Veryfront Cloud
-
-Create or link the cloud project and push the current source to its preview:
+## Deploy to production
 
 ```bash
-npx veryfront push
+npx veryfront@latest deploy --env production
 ```
 
-`veryfront push` stores local project identity in ignored
-`.veryfront/project.json`, records the pushed source digest in
-`.veryfront/push-receipt.json`, and prints the preview URL. It does not write
-`veryfront.json`.
-
-Push preserves remote-only files by default. Use
-`npx veryfront push --prune --dry-run` to preview an exact remote mirror, then
-run `npx veryfront push --prune` only when those deletions are intentional.
-
-For a preview deployment per branch:
-
-```bash
-npx veryfront push --branch feature-x
-```
-
-## Deploy to Veryfront Cloud
-
-After checking the preview, deploy the exact pushed source digest:
-
-```bash
-npx veryfront deploy --env production
-```
-
-Deploy uses the last verified Push receipt, verifies the release source digest,
-waits for browser assets, and prints the environment URL. If no Push receipt
-exists, Deploy first runs a quiet Push so a first deployment still works as one
-command.
-
-Project reference precedence is `VERYFRONT_PROJECT_SLUG` or environment
-configuration, then `veryfront.config.ts`, then legacy `veryfront.json`, then
-lower-level tenant or project-ID environment references, then the ignored local
-link.
-
-## Deploy somewhere else
-
-For a non-Cloud target, run `veryfront build` and ship the `dist/` output. See
-[Building and deploying](../guides/deploying.md).
+Deploy prints the environment URL after it uses the source from Push.
 
 ## Verify it worked
 
-After Deploy completes, run:
+Open the URL Deploy printed in a browser signed in as a project member. Confirm
+the same page, API route, or agent behavior you checked in the preview.
+
+If you did not record the URL, open the deployed site with:
 
 ```bash
-veryfront open
+veryfront open --site
 ```
 
-The deployed page and API routes respond.
+`veryfront open` opens the project in the Cloud dashboard. It does not open the
+deployed site.
 
-For an automated production workflow, see
-[Deploy from CI](../guides/deploy-from-ci.md).
+Veryfront Cloud environments are protected by default. An unauthenticated
+request is redirected to sign-in, and `VERYFRONT_API_TOKEN` does not open a
+protected environment on its own. Deploy exchanges it for a short-lived
+environment access token, probes the environment with that, and reports
+`urlVerification: "served"` in `--json` output once the app answers. To make the
+environment public, open **Environments** in Veryfront Studio, select the
+environment, enable **Public Environment**, and confirm **Make Public**.
+
+See [Cloud environment access](../guides/cloud-environment-access.md) for
+authenticated requests and status codes. See
+[Deployment behavior](../guides/deploying.md) for Push, Deploy, project-link,
+and URL details.

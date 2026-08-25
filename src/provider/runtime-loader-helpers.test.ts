@@ -8,6 +8,7 @@ import {
   snapshotJsonValue,
   stringifyJsonValue,
   stringifyToolArguments,
+  stringifyToolResultValue,
   unwrapToolInputSchema,
 } from "./runtime-loader.ts";
 
@@ -49,10 +50,43 @@ describe("provider/runtime-loader helpers", () => {
     assertEquals(warnings.drain(), []);
   });
 
-  it("always returns JSON text for serializable provider tool values", () => {
+  it("always returns JSON text for serializable provider values", () => {
     assertEquals(stringifyJsonValue({ ok: true }), '{"ok":true}');
-    assertEquals(stringifyJsonValue("text"), '"text"');
     assertEquals(stringifyJsonValue(null), "null");
+    assertEquals(stringifyJsonValue(42), "42");
+    assertEquals(stringifyJsonValue("text"), '"text"');
+  });
+
+  it("preserves string tool results without weakening general JSON serialization", () => {
+    assertEquals(stringifyToolResultValue("text"), "text");
+    assertEquals(stringifyToolResultValue(""), "");
+    assertEquals(stringifyToolResultValue('{"ok":true}'), '{"ok":true}');
+    assertEquals(stringifyToolResultValue({ ok: true }), '{"ok":true}');
+  });
+
+  it("matches JSON.stringify on undefined members without loosening the strict snapshot", () => {
+    // The load_skill result from run b2eca9d0, whose undefined allowedTools
+    // aborted the next model call.
+    const toolResult = {
+      skillId: "morning-email-summary",
+      instructions: "# Instructions",
+      allowedTools: undefined,
+      references: [],
+      scripts: [],
+    };
+    assertEquals(stringifyToolResultValue(toolResult), JSON.stringify(toolResult));
+    assertEquals(stringifyJsonValue({ a: undefined, b: 1 }), '{"b":1}');
+    assertEquals(stringifyJsonValue({ a: undefined }), "{}");
+    assertEquals(stringifyJsonValue([1, undefined, 2]), "[1,null,2]");
+    assertEquals(
+      stringifyJsonValue({ nested: { a: undefined, b: [undefined] } }),
+      '{"nested":{"b":[null]}}',
+    );
+
+    // The audit primitive stays fail-closed.
+    assertThrows(() => snapshotJsonValue({ value: undefined }), TypeError);
+    assertThrows(() => snapshotJsonValue([undefined]), TypeError);
+    assertEquals(jsonValuesEqual({ hidden: undefined }, {}), false);
   });
 
   it("preserves provider-native tool argument text without weakening structured serialization", () => {
@@ -138,6 +172,106 @@ describe("provider/runtime-loader helpers", () => {
       TypeError,
       "must not contain Proxy values",
     );
+  });
+
+  it("fails closed for object snapshots without Proxy detection", async () => {
+    const script = `
+      Object.defineProperty(globalThis, "caches", {
+        configurable: true,
+        value: {},
+      });
+      Object.defineProperty(globalThis, "WebSocketPair", {
+        configurable: true,
+        value: function WebSocketPair() {},
+      });
+
+      const {
+        canIdentifyProxyWithoutHooks,
+      } = await import("./src/platform/compat/error-introspection.ts");
+      const { jsonValuesEqual, snapshotJsonValue, stringifyJsonValue } = await import(
+        "./src/provider/runtime-loader.ts"
+      );
+
+      let calls = 0;
+      let getterCalls = 0;
+      const accessor = Object.defineProperty({}, "safe", {
+        enumerable: true,
+        get() {
+          getterCalls += 1;
+          return true;
+        },
+      });
+      const proxy = new Proxy({ safe: true }, {
+        getPrototypeOf(target) {
+          calls += 1;
+          return Reflect.getPrototypeOf(target);
+        },
+        getOwnPropertyDescriptor(target, property) {
+          calls += 1;
+          return Reflect.getOwnPropertyDescriptor(target, property);
+        },
+        ownKeys(target) {
+          calls += 1;
+          return Reflect.ownKeys(target);
+        },
+      });
+
+      const result = {
+        canIdentifyProxyWithoutHooks,
+        primitive: snapshotJsonValue("safe"),
+        calls,
+        plainObject: "",
+        providerObject: "",
+        providerAccessor: stringifyJsonValue(accessor),
+        providerEquality: jsonValuesEqual('{"safe":true}', { safe: true }, true),
+        getterCalls,
+        proxy: "",
+        providerProxy: "",
+      };
+      try {
+        snapshotJsonValue({ safe: true });
+      } catch (error) {
+        result.plainObject = error instanceof Error ? error.message : String(error);
+      }
+      try {
+        result.providerObject = stringifyJsonValue({ safe: true });
+      } catch (error) {
+        result.providerObject = error instanceof Error ? error.message : String(error);
+      }
+      try {
+        snapshotJsonValue(proxy);
+      } catch (error) {
+        result.proxy = error instanceof Error ? error.message : String(error);
+      }
+      try {
+        stringifyJsonValue({ nested: proxy });
+      } catch (error) {
+        result.providerProxy = error instanceof Error ? error.message : String(error);
+      }
+      console.log(JSON.stringify(result));
+    `;
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: ["eval", "--config=deno.json", script],
+      cwd: new URL("../../", import.meta.url),
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const stderr = new TextDecoder().decode(output.stderr);
+    assertEquals(output.code, 0, stderr);
+
+    const result = JSON.parse(new TextDecoder().decode(output.stdout));
+    assertEquals(result, {
+      canIdentifyProxyWithoutHooks: false,
+      primitive: "safe",
+      calls: 0,
+      plainObject: "Provider JSON snapshot cannot inspect object values without Proxy detection",
+      providerObject: '{"safe":true}',
+      providerAccessor: '{"safe":true}',
+      providerEquality: true,
+      getterCalls: 1,
+      proxy: "Provider JSON snapshot cannot inspect object values without Proxy detection",
+      providerProxy: "Provider tool value must be JSON-serializable",
+    });
   });
 
   it("serializes only owned snapshots without invoking getters or toJSON", () => {
@@ -492,6 +626,51 @@ describe("provider/runtime-loader helpers", () => {
     ) {
       assertThrows(() => snapshotJsonValue(null, options), TypeError);
     }
+  });
+
+  it("reads snapshot options only from own data properties", () => {
+    const optionKeys = [
+      "maxDepth",
+      "maxNodes",
+      "maxBytes",
+      "sortObjectKeys",
+    ] as const;
+
+    for (let index = 0; index < optionKeys.length; index += 1) {
+      const key = optionKeys[index]!;
+      let getterCalls = 0;
+      const options = Object.defineProperty({}, key, {
+        configurable: true,
+        get() {
+          getterCalls += 1;
+          return key === "sortObjectKeys" ? false : 1;
+        },
+      });
+
+      assertThrows(
+        () => snapshotJsonValue(null, options),
+        TypeError,
+        "options must use own data properties",
+      );
+      assertEquals(getterCalls, 0);
+    }
+
+    const inheritedOptions = Object.create({
+      maxDepth: 0,
+      maxNodes: 1,
+      maxBytes: 1,
+      sortObjectKeys: false,
+    });
+    assertEquals(
+      Object.keys(snapshotJsonValue({ b: 2, a: 1 }, inheritedOptions) as object),
+      ["a", "b"],
+    );
+    assertEquals(
+      Object.keys(
+        snapshotJsonValue({ b: 2, a: 1 }, { sortObjectKeys: false }) as object,
+      ),
+      ["b", "a"],
+    );
   });
 
   it("makes JSON equality fail closed without invoking accessors or serialization hooks", () => {

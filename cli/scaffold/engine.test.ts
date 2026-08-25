@@ -3,6 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#std/path.ts";
+import { filenameToId } from "#veryfront/discovery/discovery-utils.ts";
 import { planScaffold, scaffoldProjectFile } from "./engine.ts";
 
 async function withTempProject(fn: (projectDir: string) => Promise<void>): Promise<void> {
@@ -24,7 +25,16 @@ describe("scaffold engine", () => {
     );
     assertEquals(
       planScaffold({ projectDir, type: "api", name: "users/[id]" }).files[0]?.path,
-      "/project/app/users/[id]/route.ts",
+      "/project/app/api/users/[id]/route.ts",
+    );
+    // An explicit "api/" prefix must not be doubled up.
+    assertEquals(
+      planScaffold({ projectDir, type: "api", name: "api/users/[id]" }).files[0]?.path,
+      "/project/app/api/users/[id]/route.ts",
+    );
+    assertEquals(
+      planScaffold({ projectDir, type: "api", name: "api" }).files[0]?.path,
+      "/project/app/api/route.ts",
     );
     assertEquals(
       planScaffold({ projectDir, type: "layout", name: "admin" }).files[0]?.path,
@@ -43,6 +53,10 @@ describe("scaffold engine", () => {
     assertEquals(
       planScaffold({ projectDir, router, type: "api", name: "users/[id]" }).files[0]?.path,
       "/project/pages/api/users/[id].ts",
+    );
+    assertEquals(
+      planScaffold({ projectDir, router, type: "api", name: "api" }).files[0]?.path,
+      "/project/pages/api/index.ts",
     );
     assertEquals(
       planScaffold({ projectDir, router, type: "layout", name: "main" }).files[0]?.path,
@@ -105,6 +119,21 @@ describe("scaffold engine", () => {
       assertStringIncludes(content, "execute: ({ input }) =>");
       assertEquals(content.includes("execute: async"), false);
     });
+  });
+
+  it("gives a scaffolded tool the same id discovery derives from its filename", () => {
+    const projectDir = "/project";
+
+    for (const name of ["get-weather", "get weather", "search_docs", "searchDocs"]) {
+      const file = planScaffold({ projectDir, type: "tool", name }).files[0]!;
+      const discoveredId = filenameToId(file.path);
+
+      assertStringIncludes(
+        file.content,
+        `id: "${discoveredId}",`,
+        `scaffolded tool "${name}" must declare the id discovery derives from ${file.path}`,
+      );
+    }
   });
 
   it("uses the slug as the generated agent id", async () => {

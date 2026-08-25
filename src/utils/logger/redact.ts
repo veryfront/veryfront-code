@@ -21,18 +21,93 @@
 export const REDACTED = "[REDACTED]";
 
 const apply = Reflect.apply;
+const arrayPop = Array.prototype.pop;
+const arrayPush = Array.prototype.push;
 const NativeUint32Array = Uint32Array;
+const arrayIsArray = Array.isArray;
+const arrayPrototype = Array.prototype;
+const bigIntToString = BigInt.prototype.toString;
+const NativeMap = Map;
+const mapDelete = Map.prototype.delete;
+const mapGet = Map.prototype.get;
+const mapKeys = Map.prototype.keys;
+const mapSet = Map.prototype.set;
+const objectDefineProperty = Object.defineProperty;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectGetPrototypeOf = Object.getPrototypeOf;
+const objectHasOwn = Object.hasOwn;
+const objectPrototype = Object.prototype;
+const NativeSet = Set;
+const nativeDecodeURIComponent = decodeURIComponent;
+const NativeURL = URL;
+const numberIsFinite = Number.isFinite;
+const numberIsInteger = Number.isInteger;
 const regExpExec = RegExp.prototype.exec;
-const regExpReplace = RegExp.prototype[Symbol.replace];
+const regExpGlobalGetter = objectGetOwnPropertyDescriptor(RegExp.prototype, "global")!.get!;
+const regExpUnicodeGetter = objectGetOwnPropertyDescriptor(RegExp.prototype, "unicode")!.get!;
 const stringCharCodeAt = String.prototype.charCodeAt;
+const stringIncludes = String.prototype.includes;
+const stringIndexOf = String.prototype.indexOf;
 const stringSlice = String.prototype.slice;
+const stringStartsWith = String.prototype.startsWith;
 const stringToLowerCase = String.prototype.toLowerCase;
+const setAdd = Set.prototype.add;
+const setDelete = Set.prototype.delete;
+const setHas = Set.prototype.has;
+const mapIteratorNext = objectGetPrototypeOf(new NativeMap().keys()).next;
+const mapSizeGetter = objectGetOwnPropertyDescriptor(Map.prototype, "size")!.get!;
+const urlHostGetter = objectGetOwnPropertyDescriptor(NativeURL.prototype, "host")!.get!;
+const urlOriginGetter = objectGetOwnPropertyDescriptor(NativeURL.prototype, "origin")!.get!;
+const urlPasswordGetter = objectGetOwnPropertyDescriptor(NativeURL.prototype, "password")!.get!;
+const urlPathnameGetter = objectGetOwnPropertyDescriptor(NativeURL.prototype, "pathname")!.get!;
+const urlProtocolGetter = objectGetOwnPropertyDescriptor(NativeURL.prototype, "protocol")!.get!;
+const urlUsernameGetter = objectGetOwnPropertyDescriptor(NativeURL.prototype, "username")!.get!;
 const NON_ALPHANUMERIC_PATTERN = /[^a-z0-9]/g;
+const CAMEL_CASE_BOUNDARY_PATTERN = /([a-z0-9])([A-Z])/g;
+const ACRONYM_BOUNDARY_PATTERN = /([A-Z])([A-Z][a-z])/g;
+const PROVIDER_CREDENTIAL_PATTERN =
+  /\b(?:sk-[A-Za-z0-9._-]{8,}|gh[po]_[A-Za-z0-9._-]{8,}|xox[baprs]-[A-Za-z0-9._-]{8,}|eyJ[A-Za-z0-9._-]{8,})\b/g;
+
+function replaceWithCapturedExec(
+  input: string,
+  pattern: RegExp,
+  replacement: string | ((match: RegExpExecArray) => string),
+): string {
+  const global = apply(regExpGlobalGetter, pattern, []) as boolean;
+  const unicode = apply(regExpUnicodeGetter, pattern, []) as boolean;
+  let cursor = 0;
+  let matched = false;
+  let result = "";
+
+  pattern.lastIndex = 0;
+  try {
+    while (true) {
+      const match = apply(regExpExec, pattern, [input]) as RegExpExecArray | null;
+      if (match === null) break;
+
+      const text = match[0];
+      const start = match.index;
+      result += sliceString(input, cursor, start);
+      result += typeof replacement === "string" ? replacement : replacement(match);
+      cursor = start + text.length;
+      matched = true;
+
+      if (!global) break;
+      if (text.length === 0) {
+        pattern.lastIndex = advanceStringIndex(input, start, unicode);
+      }
+    }
+  } finally {
+    pattern.lastIndex = 0;
+  }
+
+  return matched ? result + sliceString(input, cursor) : input;
+}
 
 /** Strip all non-alphanumeric characters and lowercase, used for key normalization. */
 function normalizeToAlphanumeric(s: string): string {
   const lowercase = apply(stringToLowerCase, s, []) as string;
-  return apply(regExpReplace, NON_ALPHANUMERIC_PATTERN, [lowercase, ""]) as string;
+  return replaceWithCapturedExec(lowercase, NON_ALPHANUMERIC_PATTERN, "");
 }
 
 const FORWARD_SLASH_CODE_UNIT = 47;
@@ -44,6 +119,16 @@ const ASCII_LOWERCASE_OFFSET = 32;
 
 function stringCodeUnitAt(value: string, index: number): number {
   return apply(stringCharCodeAt, value, [index]) as number;
+}
+
+function advanceStringIndex(value: string, index: number, unicode: boolean): number {
+  const next = index + 1;
+  if (!unicode || next >= value.length) return next;
+
+  const first = stringCodeUnitAt(value, index);
+  if (first < 0xd800 || first > 0xdbff) return next;
+  const second = stringCodeUnitAt(value, next);
+  return second >= 0xdc00 && second <= 0xdfff ? index + 2 : next;
 }
 
 function sliceString(value: string, start: number, end?: number): string {
@@ -62,6 +147,25 @@ function isAsciiLetterCodeUnit(codeUnit: number): boolean {
     ? codeUnit + ASCII_LOWERCASE_OFFSET
     : codeUnit;
   return lowercase >= 97 && lowercase <= 122;
+}
+
+function splitIdentifierTokens(value: string): string[] {
+  const tokens: string[] = [];
+  let tokenStart = 0;
+
+  for (let index = 0; index <= value.length; index++) {
+    const codeUnit = index === value.length ? -1 : stringCodeUnitAt(value, index);
+    const isIdentifierCodeUnit = (codeUnit >= 97 && codeUnit <= 122) ||
+      (codeUnit >= 48 && codeUnit <= 57);
+    if (isIdentifierCodeUnit) continue;
+
+    if (index > tokenStart) {
+      tokens[tokens.length] = sliceString(value, tokenStart, index);
+    }
+    tokenStart = index + 1;
+  }
+
+  return tokens;
 }
 
 function isWindowsPath(path: string): boolean {
@@ -153,10 +257,9 @@ export function redactPathFromText(
  * a lowercased, non-alphanumeric-stripped form of the key, so `API-Key`,
  * `api_key`, and `apiKey` all collapse to `apikey` and match.
  *
- * Deliberately omitted to avoid false positives that swamp real logs:
- * - bare `"auth"` (would mask `author`); `authorization`/`authToken` are still
- *   covered via `authorization`/`token`.
- * - short tokens like `"dsn"`/`"sas"` (would mask `feedsNamespace`, etc.).
+ * Bare `"auth"` is matched separately as an exact normalized key so `author`
+ * remains visible. Short tokens like `"dsn"`/`"sas"` are deliberately omitted
+ * to avoid masking keys such as `feedsNamespace`.
  */
 const SENSITIVE_KEY_PATTERNS = [
   "password",
@@ -170,6 +273,7 @@ const SENSITIVE_KEY_PATTERNS = [
   "accesskey",
   "privatekey",
   "credential",
+  "authheader",
   "authorization",
   "cookie",
   "bearer",
@@ -189,7 +293,7 @@ const SENSITIVE_KEY_PATTERNS = [
 const SENSITIVE_KEY_CACHE_MAX_SIZE = 512;
 /** Avoid retaining attacker-controlled, oversized property names in the cache. */
 const SENSITIVE_KEY_CACHE_MAX_KEY_LENGTH = 128;
-const sensitiveKeyCache = new Map<string, boolean>();
+const sensitiveKeyCache = new NativeMap<string, boolean>();
 
 /** Stop traversing past this depth to keep the pass cheap and stack-safe. */
 const MAX_DEPTH = 16;
@@ -197,6 +301,10 @@ const MAX_DEPTH = 16;
 const MAX_CONTAINER_ENTRIES = 1_024;
 /** Bound aggregate work across an entire redaction call, not per branch. */
 const MAX_TRAVERSAL_NODES = 4_096;
+/** Bound hostile or cyclic prototype walks while looking for serializers. */
+const MAX_SERIALIZATION_HOOK_PROTOTYPES = 64;
+/** Bound the quadratic identifier-token scan used for free-text assignments. */
+const MAX_ASSIGNMENT_KEY_LENGTH = 256;
 
 /**
  * Whether a context key names a credential and should have its value masked.
@@ -209,19 +317,24 @@ const MAX_TRAVERSAL_NODES = 4_096;
 export function isSensitiveKey(key: string): boolean {
   const cacheable = key.length <= SENSITIVE_KEY_CACHE_MAX_KEY_LENGTH;
   if (cacheable) {
-    const cached = sensitiveKeyCache.get(key);
+    const cached = apply(mapGet, sensitiveKeyCache, [key]) as boolean | undefined;
     if (cached !== undefined) return cached;
   }
 
   const normalized = normalizeToAlphanumeric(key);
-  const sensitive = SENSITIVE_KEY_PATTERNS.some((pattern) => normalized.includes(pattern));
+  let sensitive = normalized === "auth";
+  for (let index = 0; !sensitive && index < SENSITIVE_KEY_PATTERNS.length; index++) {
+    sensitive = apply(stringIncludes, normalized, [SENSITIVE_KEY_PATTERNS[index]]) as boolean;
+  }
 
   if (cacheable) {
-    if (sensitiveKeyCache.size >= SENSITIVE_KEY_CACHE_MAX_SIZE) {
-      const oldestKey = sensitiveKeyCache.keys().next().value as string | undefined;
-      if (oldestKey !== undefined) sensitiveKeyCache.delete(oldestKey);
+    const cacheSize = apply(mapSizeGetter, sensitiveKeyCache, []) as number;
+    if (cacheSize >= SENSITIVE_KEY_CACHE_MAX_SIZE) {
+      const iterator = apply(mapKeys, sensitiveKeyCache, []) as MapIterator<string>;
+      const oldestKey = (apply(mapIteratorNext, iterator, []) as IteratorResult<string>).value;
+      if (oldestKey !== undefined) apply(mapDelete, sensitiveKeyCache, [oldestKey]);
     }
-    sensitiveKeyCache.set(key, sensitive);
+    apply(mapSet, sensitiveKeyCache, [key, sensitive]);
   }
 
   return sensitive;
@@ -249,10 +362,48 @@ interface RedactionBudget {
  */
 function classifyArray(value: object): boolean | null {
   try {
-    return Array.isArray(value);
+    return arrayIsArray(value);
   } catch {
     return null;
   }
+}
+
+function hasSeenSerializationHookOwner(seenOwners: object[], owner: object): boolean {
+  for (let index = 0; index < seenOwners.length; index++) {
+    if (seenOwners[index] === owner) return true;
+  }
+  return false;
+}
+
+/**
+ * Read a deliberate serialization hook without consulting hooks installed on
+ * the intrinsic Object or Array prototypes. Custom and platform prototypes
+ * such as Date and URL remain supported through data-property methods.
+ */
+function readSerializationHook(value: object): unknown {
+  let owner: object | null = value;
+  const seenOwners: object[] = [];
+  let prototypesVisited = 0;
+  while (owner !== null) {
+    if (owner === objectPrototype || owner === arrayPrototype) return undefined;
+    if (
+      prototypesVisited >= MAX_SERIALIZATION_HOOK_PROTOTYPES ||
+      hasSeenSerializationHookOwner(seenOwners, owner)
+    ) {
+      throw new TypeError("serialization hook prototype chain is cyclic or too deep");
+    }
+    prototypesVisited++;
+    apply(arrayPush, seenOwners, [owner]);
+    const descriptor = objectGetOwnPropertyDescriptor(owner, "toJSON");
+    if (descriptor !== undefined) {
+      if (!objectHasOwn(descriptor, "value")) {
+        throw new TypeError("serialization hooks must be data properties");
+      }
+      return descriptor.value;
+    }
+    owner = objectGetPrototypeOf(owner);
+  }
+  return undefined;
 }
 
 function redactValue(
@@ -269,9 +420,11 @@ function redactValue(
   budget.remainingNodes--;
 
   if (typeof value === "string") return sanitizeUrlCredentials(value);
-  if (typeof value === "bigint") return mode === "serialization" ? value.toString() : value;
+  if (typeof value === "bigint") {
+    return mode === "serialization" ? apply(bigIntToString, value, []) as string : value;
+  }
   if (typeof value === "number") {
-    return mode === "serialization" && !Number.isFinite(value) ? null : value;
+    return mode === "serialization" && !numberIsFinite(value) ? null : value;
   }
   if (typeof value === "boolean" || value === null) return value;
   if (typeof value === "undefined" || typeof value === "function" || typeof value === "symbol") {
@@ -282,12 +435,12 @@ function redactValue(
   if (arrayClassification === null) return REDACTED;
 
   if (arrayClassification) {
-    if (depth >= MAX_DEPTH || seen.has(value)) return REDACTED;
-    seen.add(value);
+    if (depth >= MAX_DEPTH || apply(setHas, seen, [value])) return REDACTED;
+    apply(setAdd, seen, [value]);
     try {
       const arrayValue = value as unknown[];
       const length = arrayValue.length;
-      if (!Number.isInteger(length) || length < 0 || length > MAX_CONTAINER_ENTRIES) {
+      if (!numberIsInteger(length) || length < 0 || length > MAX_CONTAINER_ENTRIES) {
         return REDACTED;
       }
       const redacted: unknown[] = mode === "compatible" ? new Array(length) : [];
@@ -298,7 +451,7 @@ function redactValue(
         if (mode === "compatible") {
           redacted[index] = item;
         } else {
-          redacted.push(item);
+          apply(arrayPush, redacted, [item]);
         }
       }
       return redacted;
@@ -307,7 +460,7 @@ function redactValue(
       // serialized contents unknowable, so the complete array fails closed.
       return REDACTED;
     } finally {
-      seen.delete(value);
+      apply(setDelete, seen, [value]);
     }
   }
 
@@ -319,10 +472,10 @@ function redactValue(
   // returns an object, array, or scalar, the serialization API redacts *that*
   // snapshot. The compatibility API keeps scalar serializers such as Date and
   // URL intact, preserving the established generic return contract.
-  if (depth >= MAX_DEPTH || seen.has(value)) return REDACTED;
+  if (depth >= MAX_DEPTH || apply(setHas, seen, [value])) return REDACTED;
   let toJSON: unknown;
   try {
-    toJSON = (value as Record<string, unknown>).toJSON;
+    toJSON = readSerializationHook(value);
   } catch {
     // Accessors can throw before a serializer is callable. Never inspect the
     // raw object after that because its eventual serialization is unknown.
@@ -330,7 +483,7 @@ function redactValue(
   }
 
   if (typeof toJSON === "function") {
-    seen.add(value);
+    apply(setAdd, seen, [value]);
     try {
       const serialized = apply(toJSON, value, []);
       if (mode === "serialization") {
@@ -352,22 +505,22 @@ function redactValue(
       // skipped) through: fail closed.
       return REDACTED;
     } finally {
-      seen.delete(value);
+      apply(setDelete, seen, [value]);
     }
   }
 
-  seen.add(value);
+  apply(setAdd, seen, [value]);
   try {
     const out: Record<string, unknown> = {};
     const record = value as Record<string, unknown>;
     let propertyCount = 0;
     for (const key in record) {
-      if (!Object.hasOwn(record, key)) continue;
+      if (!objectHasOwn(record, key)) continue;
       propertyCount++;
       if (propertyCount > MAX_CONTAINER_ENTRIES) return REDACTED;
 
       if (isSensitiveKey(key)) {
-        Object.defineProperty(out, key, {
+        objectDefineProperty(out, key, {
           configurable: true,
           enumerable: true,
           value: REDACTED,
@@ -382,7 +535,7 @@ function redactValue(
       if (mode === "serialization" && child === undefined) continue;
       const redactedChild = redactValue(child, depth + 1, seen, mode, budget);
       if (budget.exhausted) return REDACTED;
-      Object.defineProperty(out, key, {
+      objectDefineProperty(out, key, {
         configurable: true,
         enumerable: true,
         value: redactedChild,
@@ -395,7 +548,7 @@ function redactValue(
     // unredacted object through: fail closed.
     return REDACTED;
   } finally {
-    seen.delete(value);
+    apply(setDelete, seen, [value]);
   }
 }
 
@@ -410,7 +563,7 @@ function redactValue(
  * functions, symbols, and custom `toJSON` implementations must be normalized.
  */
 export function redactSensitive<T>(context: T): T {
-  return redactValue(context, 0, new Set<object>(), "compatible", {
+  return redactValue(context, 0, new NativeSet<object>(), "compatible", {
     remainingNodes: MAX_TRAVERSAL_NODES,
     exhausted: false,
   }) as T;
@@ -423,7 +576,7 @@ export function redactSensitive<T>(context: T): T {
  * closed. Objects with `toJSON` are snapshotted exactly once before redaction.
  */
 export function redactForSerialization(context: unknown): RedactedValue {
-  return redactValue(context, 0, new Set<object>(), "serialization", {
+  return redactValue(context, 0, new NativeSet<object>(), "serialization", {
     remainingNodes: MAX_TRAVERSAL_NODES,
     exhausted: false,
   }) as RedactedValue;
@@ -457,7 +610,12 @@ const SENSITIVE_URL_PARAMS = [
   "x-goog-signature",
 ] as const;
 
-const NORMALIZED_SENSITIVE_URL_PARAMS = new Set(SENSITIVE_URL_PARAMS.map(normalizeToAlphanumeric));
+const NORMALIZED_SENSITIVE_URL_PARAMS = new NativeSet<string>();
+for (let index = 0; index < SENSITIVE_URL_PARAMS.length; index++) {
+  apply(setAdd, NORMALIZED_SENSITIVE_URL_PARAMS, [
+    normalizeToAlphanumeric(SENSITIVE_URL_PARAMS[index]!),
+  ]);
+}
 
 const URL_USERINFO_RE = /(\b[a-z][a-z0-9+.-]*:\/\/|\/\/)([^/?#\s]+)@/gi;
 const HORIZONTAL_WHITESPACE_URL_USERINFO_RE =
@@ -483,7 +641,7 @@ function isHorizontalAssignmentBoundary(character: string): boolean {
 
 function isAsciiLetter(character: string | undefined): boolean {
   if (!character) return false;
-  const code = character.charCodeAt(0);
+  const code = stringCodeUnitAt(character, 0);
   return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
 }
 
@@ -493,7 +651,7 @@ function isAssignmentKeyStartCharacter(character: string | undefined): boolean {
 
 function isAssignmentKeyCharacter(character: string | undefined): boolean {
   if (!character) return false;
-  const code = character.charCodeAt(0);
+  const code = stringCodeUnitAt(character, 0);
   return (
     isAssignmentKeyStartCharacter(character) ||
     (code >= 48 && code <= 57) ||
@@ -552,7 +710,7 @@ function assignmentValueEndsAt(input: string, start: number): boolean {
 function redactAssignmentValue(input: string, start: number): RedactedAssignmentValue {
   let scanStart = start;
   let preserveValueQuote = true;
-  if (input.startsWith(REDACTED, start)) {
+  if (apply(stringStartsWith, input, [REDACTED, start])) {
     const markerEnd = start + REDACTED.length;
     if (assignmentValueEndsAt(input, markerEnd)) {
       return {
@@ -585,6 +743,7 @@ function redactAssignmentValue(input: string, start: number): RedactedAssignment
       if (character === quote) {
         if (quoteStart === scanStart && expectedClosings.length === 0) {
           wrapperQuoteClosed = true;
+          return { end: index + 1, replacement: replacement() };
         }
         quote = "";
         quoteStart = -1;
@@ -600,7 +759,7 @@ function redactAssignmentValue(input: string, start: number): RedactedAssignment
       continue;
     }
     if (character === "{" || character === "[") {
-      expectedClosings.push(character === "{" ? "}" : "]");
+      apply(arrayPush, expectedClosings, [character === "{" ? "}" : "]"]);
       index++;
       continue;
     }
@@ -608,10 +767,10 @@ function redactAssignmentValue(input: string, start: number): RedactedAssignment
       expectedClosings.length > 0 &&
       (character === "}" || character === "]")
     ) {
-      if (expectedClosings.at(-1) !== character) {
+      if (expectedClosings[expectedClosings.length - 1] !== character) {
         return { end: input.length, replacement: replacement() };
       }
-      expectedClosings.pop();
+      apply(arrayPop, expectedClosings, []);
       index++;
       if (
         expectedClosings.length === 0 &&
@@ -655,7 +814,7 @@ function redactCredentialAssignments(
     match = apply(regExpExec, prefixPattern, [input]) as RegExpExecArray | null
   ) {
     const key = match[keyGroup]!;
-    if (!isSensitiveKey(key)) continue;
+    if (!isSensitiveAssignmentKey(key)) continue;
 
     const valueStart = prefixPattern.lastIndex;
     const boundary = urlParameterBoundaryGroup === undefined
@@ -664,7 +823,7 @@ function redactCredentialAssignments(
     const markerEnd = valueStart + REDACTED.length;
     if (
       (boundary === "?" || boundary === "&" || boundary === ";") &&
-      input.startsWith(REDACTED, valueStart) &&
+      apply(stringStartsWith, input, [REDACTED, valueStart]) &&
       input[markerEnd] === "#"
     ) {
       // The URL-parameter pass already bounded this credential at the URI
@@ -683,19 +842,68 @@ function redactCredentialAssignments(
   return cursor === 0 ? input : result + sliceString(input, cursor);
 }
 
+/**
+ * Classify free-text assignment keys without applying the structured-key
+ * substring policy to ordinary words. Identifier and camel-case boundaries
+ * still recognize `refreshToken`, `client_secret`, and `x-api-key`, while
+ * words such as `mapping` and `considered` stay intact.
+ */
+function isSensitiveAssignmentKey(key: string): boolean {
+  // The token-range classifier below is quadratic in the number of identifier
+  // tokens. Oversized attacker-controlled keys fail closed before that work.
+  if (key.length > MAX_ASSIGNMENT_KEY_LENGTH) return true;
+
+  const withAcronymBoundaries = replaceWithCapturedExec(
+    key,
+    ACRONYM_BOUNDARY_PATTERN,
+    (match) => `${match[1]} ${match[2]}`,
+  );
+  const withBoundaries = replaceWithCapturedExec(
+    withAcronymBoundaries,
+    CAMEL_CASE_BOUNDARY_PATTERN,
+    (match) => `${match[1]} ${match[2]}`,
+  );
+  const lowercase = apply(stringToLowerCase, withBoundaries, []) as string;
+  const tokens = splitIdentifierTokens(lowercase);
+
+  for (let start = 0; start < tokens.length; start++) {
+    if (tokens[start]!.length === 0) continue;
+    let candidate = "";
+    for (let end = start; end < tokens.length; end++) {
+      const token = tokens[end]!;
+      if (token.length === 0) continue;
+      candidate += token;
+      for (let index = 0; index < SENSITIVE_KEY_PATTERNS.length; index++) {
+        if (candidate === SENSITIVE_KEY_PATTERNS[index]) return true;
+      }
+    }
+  }
+
+  return tokens.length === 1 && tokens[0] === "auth";
+}
+
 function isStandaloneUrlAuthorityBeforeWhitespace(
   scheme: string,
   user: string,
   password: string,
 ): boolean {
-  const whitespaceIndex = password.search(/[ \t]/);
+  let whitespaceIndex = -1;
+  for (let index = 0; index < password.length; index++) {
+    const codeUnit = stringCodeUnitAt(password, index);
+    if (codeUnit === 0x20 || codeUnit === 0x09) {
+      whitespaceIndex = index;
+      break;
+    }
+  }
   if (whitespaceIndex < 0) return false;
 
   const authority = `${user}:${sliceString(password, 0, whitespaceIndex)}`;
   const candidate = scheme === "//" ? `https://${authority}` : `${scheme}${authority}`;
   try {
-    const url = new URL(candidate);
-    return url.username.length === 0 && url.password.length === 0;
+    const url = new NativeURL(candidate);
+    const username = apply(urlUsernameGetter, url, []) as string;
+    const password = apply(urlPasswordGetter, url, []) as string;
+    return username.length === 0 && password.length === 0;
   } catch {
     return false;
   }
@@ -706,7 +914,7 @@ function decodeUrlParameterName(value: string): string {
   for (let pass = 0; pass < MAX_URL_PARAMETER_DECODE_PASSES; pass++) {
     let next: string;
     try {
-      next = decodeURIComponent(decoded);
+      next = nativeDecodeURIComponent(decoded);
     } catch {
       break;
     }
@@ -722,8 +930,10 @@ function decodeUrlParameterName(value: string): string {
  * {@link redactSensitive}, which is key-based, this scrubs secrets embedded in
  * the *value* itself:
  *
- * - URL userinfo: `http://user:pass@host` → `http://user:[REDACTED]@host`
- * - sensitive query params: `?access_token=abc` → `?access_token=[REDACTED]`
+ * - URL userinfo: `https://user:password@example.test/path` -> `https://user:[REDACTED]@example.test/path`
+ * - sensitive query params: `?access_token=abc` -> `?access_token=[REDACTED]`
+ * - credential assignments: `refreshToken=abc` -> `refreshToken=[REDACTED]`
+ * - common provider tokens: `Using token sk-...` -> `Using token [REDACTED]`
  *
  * It is intentionally tolerant: it operates on any string (a DSN, a Mongo URI,
  * an axios error message containing a URL) via regex rather than requiring a
@@ -734,10 +944,13 @@ export function sanitizeUrlCredentials(input: string): string {
   if (typeof input !== "string" || input.length === 0) return input;
 
   // 1) userinfo: scheme://user:pass@  → mask the password (and any bare creds).
-  let out = apply(regExpReplace, URL_USERINFO_RE, [
+  let out = replaceWithCapturedExec(
     input,
-    (_match: string, scheme: string, userinfo: string) => {
-      const colon = userinfo.indexOf(":");
+    URL_USERINFO_RE,
+    (match) => {
+      const scheme = match[1]!;
+      const userinfo = match[2]!;
+      const colon = apply(stringIndexOf, userinfo, [":"]) as number;
       if (colon === -1) {
         // `scheme://token@host` — the whole userinfo is credential-like.
         return `${scheme}${REDACTED}@`;
@@ -745,70 +958,78 @@ export function sanitizeUrlCredentials(input: string): string {
       const user = sliceString(userinfo, 0, colon);
       return `${scheme}${user}:${REDACTED}@`;
     },
-  ]) as string;
-  out = apply(regExpReplace, HORIZONTAL_WHITESPACE_URL_USERINFO_RE, [
+  );
+  out = replaceWithCapturedExec(
     out,
-    (
-      match: string,
-      scheme: string,
-      user: string,
-      password: string,
-    ) => {
+    HORIZONTAL_WHITESPACE_URL_USERINFO_RE,
+    (match) => {
+      const scheme = match[1]!;
+      const user = match[2]!;
+      const password = match[3]!;
       // Do not reinterpret a complete URL followed later by an email address
       // on the same line as malformed userinfo. Raw-horizontal-whitespace
       // recovery is limited to explicit `user:password` shapes whose prefix
       // cannot already be parsed as a standalone authority.
       if (isStandaloneUrlAuthorityBeforeWhitespace(scheme, user, password)) {
-        return match;
+        return match[0];
       }
       return `${scheme}${user}:${REDACTED}@`;
     },
-  ]) as string;
+  );
 
   // 2) sensitive query/fragment params: `key=value` → `key=[REDACTED]`.
   // Match `?key=`, `#key=`, `&key=`, and `;key=` separators and stop at the
   // next delimiter. OAuth implicit-flow tokens commonly appear after `#`.
-  out = apply(regExpReplace, /([?#&;])([-a-z0-9_.%\[\]]+)=([^&#;\s]*)/gi, [
+  out = replaceWithCapturedExec(
     out,
-    (match: string, sep: string, key: string, _val: string) => {
+    /([?#&;])([-a-z0-9_.%\[\]]+)=([^&#;\s]*)/gi,
+    (match) => {
+      const sep = match[1]!;
+      const key = match[2]!;
       const decodedKey = decodeUrlParameterName(key);
-      const sensitive = NORMALIZED_SENSITIVE_URL_PARAMS.has(normalizeToAlphanumeric(decodedKey)) ||
+      const sensitive = apply(setHas, NORMALIZED_SENSITIVE_URL_PARAMS, [
+        normalizeToAlphanumeric(decodedKey),
+      ]) ||
         isSensitiveKey(decodedKey);
-      return sensitive ? `${sep}${key}=${REDACTED}` : match;
+      return sensitive ? `${sep}${key}=${REDACTED}` : match[0];
     },
-  ]) as string;
+  );
 
   // 3) Cookie header values.
   // Cookie headers can carry multiple independent credentials separated by
   // semicolons (and Set-Cookie attributes can contain commas). Mask the entire
   // header line before the generic assignment scanner can stop at the first
   // delimiter and expose later values.
-  out = apply(regExpReplace, /(^|[^a-z0-9_-])((?:set-cookie|cookie)\s*:\s*)[^\r\n]*/gi, [
+  out = replaceWithCapturedExec(
     out,
-    (_match: string, boundary: string, prefix: string) => `${boundary}${prefix}${REDACTED}`,
-  ]) as string;
+    /(^|[^a-z0-9_-])((?:set-cookie|cookie)\s*:\s*)[^\r\n]*/gi,
+    (match) => `${match[1]}${match[2]}${REDACTED}`,
+  );
 
   // 4) Header-shaped authorization values and standalone auth schemes.
   // Authorization schemes are extensible (AWS SigV4, Digest, custom proxy
   // schemes, and others), so mask the complete line instead of trying to
   // enumerate schemes or parse their credential-bearing parameters.
-  out = apply(regExpReplace, /\b(authorization\s*[:=]\s*)[^\r\n]*/gi, [
+  out = replaceWithCapturedExec(
     out,
-    (_match: string, prefix: string) => `${prefix}${REDACTED}`,
-  ]) as string;
-  out = apply(
-    regExpReplace,
+    /\b(authorization\s*[:=]\s*)[^\r\n]*/gi,
+    (match) => `${match[1]}${REDACTED}`,
+  );
+  out = replaceWithCapturedExec(
+    out,
     /\b(bearer|basic)(\s+)(?:"[^"\r\n]*"|'[^'\r\n]*'|[a-z0-9._~+/=-]+)/gi,
-    [
-      out,
-      (_match: string, scheme: string, whitespace: string) => `${scheme}${whitespace}${REDACTED}`,
-    ],
-  ) as string;
+    (match) => `${match[1]}${match[2]}${REDACTED}`,
+  );
 
-  // 5) Credential assignments embedded in free-form messages/errors. Match
-  // generic identifier-shaped keys and delegate classification to the same
-  // deny-list used for structured context. This keeps JSON snippets, header
-  // dumps, and ordinary `key=value` text from drifting to a weaker policy.
+  // 5) Common provider token shapes can appear as bare values without an
+  // assignment delimiter, for example `Using token sk-...`.
+  out = replaceWithCapturedExec(out, PROVIDER_CREDENTIAL_PATTERN, REDACTED);
+
+  // 6) Credential assignments embedded in free-form messages/errors. Match
+  // generic identifier-shaped keys and apply the same credential vocabulary
+  // at identifier boundaries. This keeps JSON snippets, header dumps, and
+  // ordinary `key=value` text from drifting to a weaker policy without
+  // masking benign words that merely contain a short pattern.
   // Handle quoted JSON/object keys first and preserve their quoting so the
   // sanitized text remains intelligible and structurally valid.
   out = redactCredentialAssignments(
@@ -827,19 +1048,19 @@ export function sanitizeUrlCredentials(input: string): string {
 }
 
 function firstUrlDelimiterIndex(input: string): number {
-  const queryIndex = input.indexOf("?");
-  const hashIndex = input.indexOf("#");
+  const queryIndex = apply(stringIndexOf, input, ["?"]) as number;
+  const hashIndex = apply(stringIndexOf, input, ["#"]) as number;
   if (queryIndex === -1) return hashIndex;
   if (hashIndex === -1) return queryIndex;
-  return Math.min(queryIndex, hashIndex);
+  return queryIndex < hashIndex ? queryIndex : hashIndex;
 }
 
 function sanitizeProtocolRelativeUrlForSpan(input: string): string | null {
-  if (!input.startsWith("//")) return null;
+  if (!apply(stringStartsWith, input, ["//"])) return null;
 
   try {
-    const url = new URL(`https:${input}`);
-    return `//${url.host}${url.pathname}`;
+    const url = new NativeURL(`https:${input}`);
+    return `//${apply(urlHostGetter, url, [])}${apply(urlPathnameGetter, url, [])}`;
   } catch (_) {
     return null;
   }
@@ -858,17 +1079,21 @@ export function sanitizeUrlForSpan(input: string): string {
   if (typeof input !== "string" || input.length === 0) return input;
 
   try {
-    const url = new URL(input);
-    if (url.protocol === "blob:") {
+    const url = new NativeURL(input);
+    const protocol = apply(urlProtocolGetter, url, []) as string;
+    const pathname = apply(urlPathnameGetter, url, []) as string;
+    const origin = apply(urlOriginGetter, url, []) as string;
+    if (protocol === "blob:") {
       try {
-        const embeddedUrl = new URL(url.pathname);
-        return embeddedUrl.origin === "null" ? "blob:" : `blob:${embeddedUrl.origin}`;
+        const embeddedUrl = new NativeURL(pathname);
+        const embeddedOrigin = apply(urlOriginGetter, embeddedUrl, []) as string;
+        return embeddedOrigin === "null" ? "blob:" : `blob:${embeddedOrigin}`;
       } catch (_) {
         return "blob:";
       }
     }
-    if (url.origin !== "null") return `${url.origin}${url.pathname}`;
-    if (/^[a-z][a-z0-9+.-]*:/i.test(input)) return url.protocol;
+    if (origin !== "null") return `${origin}${pathname}`;
+    if (apply(regExpExec, /^[a-z][a-z0-9+.-]*:/i, [input]) !== null) return protocol;
   } catch (_) {
     // Relative or malformed URL-shaped strings are handled by the fallback.
   }

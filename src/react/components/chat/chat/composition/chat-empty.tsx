@@ -28,8 +28,6 @@ export interface ChatEmptyProps {
    * sending a longer prompt (e.g. from `getAgentPromptSuggestionItems`).
    */
   suggestions?: Array<string | PromptSuggestion>;
-  /** @deprecated Use `onSuggestionSelect` for the full suggestion object. */
-  onSuggestionClick?: (prompt: string) => void;
   /** Receives the selected `{ label, prompt }` object. */
   onSuggestionSelect?: (suggestion: PromptSuggestion) => void;
   quickActions?: QuickAction[];
@@ -41,14 +39,18 @@ export interface ChatEmptyProps {
   ref?: React.Ref<HTMLDivElement>;
 }
 
-/** Render chat empty. */
+/**
+ * Render the chat empty state. It renders whatever it is given and never hides
+ * itself: in a custom layout, gate it on the thread being empty with
+ * `<Chat.If condition={(ctx) => ctx.isEmpty}>`. The `<Chat>` preset does this
+ * for you.
+ */
 export function ChatEmpty(
   {
     icon,
     title = "What can I help with?",
     description,
     suggestions,
-    onSuggestionClick,
     onSuggestionSelect,
     quickActions,
     onQuickAction,
@@ -78,7 +80,6 @@ export function ChatEmpty(
                 key={`${item.label}-${index}`}
                 onClick={() => {
                   onSuggestionSelect?.(item);
-                  onSuggestionClick?.(item.prompt);
                 }}
               >
                 {item.label}

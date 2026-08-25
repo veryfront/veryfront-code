@@ -63,12 +63,54 @@ describe("rendering/rsc/hydrate-client", () => {
     );
   });
 
+  it("rejects client refs outside the Veryfront module namespace", () => {
+    assertEquals(
+      parseClientRef("https://evil.example/x.js#default"),
+      null,
+      "absolute cross-origin refs are rejected",
+    );
+    assertEquals(
+      parseClientRef("//evil.example/x.js#default"),
+      null,
+      "protocol-relative refs are rejected",
+    );
+    assertEquals(parseClientRef("foo/bar.js#default"), null, "bare relative refs are rejected");
+    assertEquals(
+      parseClientRef("/_veryfront/fs/x.js"),
+      null,
+      "a ref without an export fragment is rejected",
+    );
+    assertEquals(
+      parseClientRef("/other/x.js#default"),
+      null,
+      "non-/_veryfront absolute paths are rejected",
+    );
+  });
+
   it("reads the serialized props emitted for a client boundary", () => {
     const element = {
       dataset: { rscProps: '{"label":"Save","count":2}' },
     } as unknown as HTMLElement;
 
     assertEquals(readClientBoundaryProps(element), { label: "Save", count: 2 });
+  });
+
+  it("falls back to empty props for malformed boundary props", () => {
+    for (const serialized of ["{invalid", "[1,2]", "null", '"x"']) {
+      assertEquals(
+        readClientBoundaryProps(
+          { dataset: { rscProps: serialized } } as unknown as HTMLElement,
+        ),
+        {},
+        `${serialized} must fall back to empty props`,
+      );
+    }
+
+    assertEquals(
+      readClientBoundaryProps({ dataset: {} } as unknown as HTMLElement),
+      {},
+      "a boundary without serialized props must yield empty props",
+    );
   });
 
   it("reads the versioned recursive children emitted for a client boundary", () => {
@@ -242,6 +284,19 @@ describe("rendering/rsc/hydrate-client", () => {
     assertEquals(probedUrls, [expectedUrl]);
     assertEquals(cacheModes, ["no-store"]);
     assertEquals(reloads, 1);
+  });
+
+  it("does not resolve a reference with neither a module URL nor a rel", async () => {
+    assertEquals(
+      await importClientModule(
+        { version: 1, hash: "a", modules: [] },
+        { exportName: "default" },
+        "rsc-module",
+        {},
+      ),
+      null,
+      "a reference with neither moduleUrl nor rel must not resolve",
+    );
   });
 
   it("does not probe an unpinned client-boundary import failure", async () => {

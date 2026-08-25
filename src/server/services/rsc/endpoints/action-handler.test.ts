@@ -446,6 +446,54 @@ describe(
         assertEquals(await response.json(), { ok: true, result: 5 });
       });
 
+      for (
+        const appDirectory of ["../../etc", "src/app/../../.."]
+      ) {
+        it(`rejects an app directory that escapes the project tree (${appDirectory})`, async () => {
+          const calls: string[] = [];
+          const adapter = createMockAdapter({
+            stat: (path) => {
+              calls.push(path);
+              return Promise.reject(new Error("not found"));
+            },
+            readFile: (path) => {
+              calls.push(path);
+              return Promise.reject(new Error("not found"));
+            },
+          });
+          const req = new Request("http://localhost/_veryfront/rsc/action", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ id: "add", args: [] }),
+          });
+
+          const response = await handleActionRequestWithAuthorizationProvider(
+            {
+              req,
+              projectDir: "/virtual/project",
+              projectId: "virtual-project",
+              contentSourceId: "preview-main",
+              adapter,
+              config: { directories: { app: appDirectory } },
+              mode: "development",
+            },
+            allowActionAuthorization,
+          );
+
+          assertEquals(response.status, 400, "an app root outside the project must be refused");
+          assertEquals(
+            await response.json(),
+            { ok: false, error: "invalid action root" },
+            "the refusal names the invalid action root",
+          );
+          assertEquals(
+            calls,
+            [],
+            "no filesystem access may happen once the action root escapes projectDir",
+          );
+        });
+      }
+
       it("keeps a snapshot-A action on A after package state advances to B", async () => {
         const projectDir = await Deno.makeTempDir({
           prefix: "vf-rsc-action-historical-pins-",

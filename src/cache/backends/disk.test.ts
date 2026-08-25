@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertMatch, assertRejects, assertThrows } from "@std/assert";
 import { join } from "#veryfront/compat/path/index.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { logger } from "#veryfront/utils";
 import { DiskCacheBackend } from "./disk.ts";
 import { CacheValueTooLargeError } from "../bounded-read.ts";
@@ -87,6 +88,26 @@ Deno.test("DiskCacheBackend", async (t) => {
     assertEquals(await backend.get("hello"), "world");
   });
 
+  await t.step("restricts cache directory and entry permissions", async () => {
+    if (Deno.build.os === "windows") return;
+    const isolatedDir = Deno.makeTempDirSync();
+    const backend = new DiskCacheBackend(isolatedDir);
+    const cacheDir = join(isolatedDir, "veryfront-files");
+
+    await backend.set("perm", "v");
+
+    assertEquals(
+      (await Deno.stat(cacheDir)).mode! & 0o777,
+      0o700,
+      "the disk cache directory must not be group or world accessible",
+    );
+    assertEquals(
+      (await Deno.stat(join(cacheDir, await onlyCacheFileName(cacheDir)))).mode! & 0o777,
+      0o600,
+      "disk cache entries may embed tokens and must be owner-only",
+    );
+  });
+
   await t.step("get returns null for invalid cache envelope fields", async () => {
     const isolatedDir = join(Deno.makeTempDirSync(), "invalid-envelope-get");
     const backend = new DiskCacheBackend(isolatedDir);
@@ -134,9 +155,12 @@ Deno.test("DiskCacheBackend", async (t) => {
     await backend.set(key, "val", 0);
     await new Promise((r) => setTimeout(r, 5));
 
-    const originalDel = backend.del.bind(backend);
-    (backend as unknown as { del: (entryKey: string) => Promise<void> }).del = (entryKey: string) =>
-      entryKey === key ? Promise.reject(new Error("delete rejected")) : originalDel(entryKey);
+    const internals = backend as unknown as {
+      expireEntry: (entryKey: string) => Promise<void>;
+    };
+    const originalExpire = internals.expireEntry.bind(backend);
+    internals.expireEntry = (entryKey: string) =>
+      entryKey === key ? Promise.reject(new Error("delete rejected")) : originalExpire(entryKey);
 
     const debugCapture = captureDebugLogs();
     try {
@@ -154,7 +178,7 @@ Deno.test("DiskCacheBackend", async (t) => {
       assertEquals(JSON.stringify(context).includes(key), false);
     } finally {
       debugCapture.restore();
-      (backend as unknown as { del: (entryKey: string) => Promise<void> }).del = originalDel;
+      internals.expireEntry = originalExpire;
     }
   });
 
@@ -210,22 +234,37 @@ Deno.test("DiskCacheBackend", async (t) => {
     const fileName = await onlyCacheFileName(cacheDir);
     await new Promise((r) => setTimeout(r, 5));
 
-    const originalDel = backend.del.bind(backend);
-    (backend as unknown as { del: (entryKey: string) => Promise<void> }).del = () =>
-      Promise.reject(new Error("delete rejected"));
+    const internals = backend as unknown as {
+      expireEntry: (entryKey: string) => Promise<void>;
+    };
+    const originalExpire = internals.expireEntry.bind(backend);
+    internals.expireEntry = () => Promise.reject(new Error("delete rejected"));
 
     const debugCapture = captureDebugLogs();
     try {
       assertEquals(await backend.get(key), null);
-      await new Promise((r) => setTimeout(r, 5));
+      await waitFor(
+        () =>
+          debugCapture.entries.some((entry) =>
+            entry.message === "[DiskCache] Expired entry cleanup failed"
+          ),
+        {
+          interval: 1,
+          timeout: 1_000,
+          message: "expired-entry cleanup diagnostic was not emitted",
+        },
+      );
 
       // The digest is the prefix of the SHA-256 that names the file, so an
       // operator can still walk from a log line to the entry on disk.
-      const context = debugCapture.entries[0]?.args[0] as Record<string, unknown> | undefined;
+      const diagnostic = debugCapture.entries.find((entry) =>
+        entry.message === "[DiskCache] Expired entry cleanup failed"
+      );
+      const context = diagnostic?.args[0] as Record<string, unknown> | undefined;
       assertEquals(fileName.startsWith(String(context?.keyDigest)), true);
     } finally {
       debugCapture.restore();
-      (backend as unknown as { del: (entryKey: string) => Promise<void> }).del = originalDel;
+      internals.expireEntry = originalExpire;
     }
   });
 
@@ -246,10 +285,47 @@ Deno.test("DiskCacheBackend", async (t) => {
     assertEquals(await backend.get("ttl-short"), null);
   });
 
+  await t.step("rejects non-finite and out-of-range TTLs", async () => {
+    const backend = makeBackend();
+    await assertRejects(
+      () => backend.set("ttl-infinite", "v", Infinity),
+      RangeError,
+      "Disk cache TTL must be finite",
+    );
+    await assertRejects(
+      () => backend.set("ttl-nan", "v", NaN),
+      RangeError,
+      "Disk cache TTL must be finite",
+    );
+    await assertRejects(
+      () => backend.set("ttl-negative", "v", -Date.now()),
+      RangeError,
+      "Disk cache TTL is outside the supported range",
+    );
+    assertEquals(
+      await backend.get("ttl-infinite"),
+      null,
+      "a rejected TTL must not leave a permanently unreadable entry behind",
+    );
+  });
+
   await t.step("no TTL means never expire", async () => {
     const backend = makeBackend();
     await backend.set("no-ttl", "forever");
     assertEquals(await backend.get("no-ttl"), "forever");
+    assertEquals(
+      await backend.getRemainingTtlSeconds("no-ttl"),
+      Infinity,
+      "entries written without a TTL must report an unbounded remaining TTL so multi-tier backfill still runs",
+    );
+
+    const elapsed = new DiskCacheBackend(join(Deno.makeTempDirSync(), "ttl-elapsed"));
+    await elapsed.set("ttl-zero", "val", 0);
+    assertEquals(
+      await elapsed.getRemainingTtlSeconds("ttl-zero"),
+      null,
+      "an expired entry must report no remaining TTL",
+    );
   });
 
   await t.step("keys with path separators", async () => {
@@ -273,6 +349,25 @@ Deno.test("DiskCacheBackend", async (t) => {
       () => Deno.stat(join(isolatedDir, "escape")),
       Deno.errors.NotFound,
     );
+  });
+
+  await t.step("escape-encodes Windows reserved device namespaces", async () => {
+    for (const reserved of ["con", "aux", "nul", "com1"]) {
+      const isolatedDir = Deno.makeTempDirSync();
+      const backend = new DiskCacheBackend(isolatedDir, reserved);
+      await backend.set("k", "v");
+
+      assertEquals(
+        [...Deno.readDirSync(join(isolatedDir, "veryfront-files"))][0]?.name,
+        `~${reserved}`,
+        `Windows reserved namespace ${reserved} must be escape-encoded`,
+      );
+      assertEquals(
+        await backend.get("k"),
+        "v",
+        `escaped namespace ${reserved} must still round-trip values`,
+      );
+    }
   });
 
   await t.step("rejects unsupported constructor limits and namespace lengths", () => {
@@ -379,6 +474,30 @@ Deno.test("DiskCacheBackend", async (t) => {
     const largeValue = "x".repeat(100_000);
     await backend.set("large", largeValue);
     assertEquals(await backend.get("large"), largeValue);
+  });
+
+  await t.step("write-time sweep reclaims expired cache files", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "expiry-prune-sweep");
+    const backend = new DiskCacheBackend(isolatedDir);
+    const cacheDir = join(isolatedDir, "veryfront-files");
+
+    // The first write on a fresh backend only arms the sweep; the second runs it.
+    await backend.set("doomed", "v", 0);
+    const doomedFile = await onlyCacheFileName(cacheDir);
+    await backend.set("keep", "v");
+
+    const survivors = await cacheFileNames(cacheDir);
+    assertEquals(
+      survivors.length,
+      1,
+      "the write-time sweep must reclaim expired cache files",
+    );
+    assertEquals(
+      survivors.includes(doomedFile),
+      false,
+      "the expired entry must be the file the sweep reclaimed",
+    );
+    assertEquals(await backend.get("keep"), "v", "the unexpired entry must survive the sweep");
   });
 
   await t.step("bounded reads preserve valid oversized entries", async () => {

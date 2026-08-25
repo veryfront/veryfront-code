@@ -32,7 +32,10 @@ export interface RenderHandlerModuleOptions {
   projectId?: string;
   projectSlug?: string;
   contentSourceId?: string;
+  serverExternalPackages?: readonly string[];
   dependencyPinningSource?: DependencyPinningSourceInput;
+  /** Server-trusted local-project identity for dev-only module-server fallback. */
+  isLocalProject?: boolean;
   reactVersion?: (snapshot: DependencyPinningSnapshot) => Promise<string>;
   runtimeAdapter?: () => Promise<RuntimeAdapter>;
   moduleLoader?: typeof loadModuleFromSource;
@@ -153,19 +156,21 @@ export class RenderHandler {
         "server",
       );
 
-      return await mdxRenderer.loadModuleESM(
-        compiled.compiledCode,
+      return await mdxRenderer.loadModuleESM(compiled.compiledCode, {
         adapter,
-        this.moduleOptions.projectId ?? this.projectDir,
-        this.projectDir,
-        this.moduleOptions.projectSlug,
-        this.moduleOptions.contentSourceId,
+        projectId: this.moduleOptions.projectId ?? this.projectDir,
+        projectDir: this.projectDir,
+        projectSlug: this.moduleOptions.projectSlug,
+        contentSourceId: this.moduleOptions.contentSourceId,
+        mode: this.mode,
         reactVersion,
-        dependencySnapshot.cacheKey,
-        dependencySnapshot.dependencies,
-        this.moduleOptions.dependencyPinningSource,
+        serverExternalPackages: this.moduleOptions.serverExternalPackages,
+        dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+        dependencyPinningDependencies: dependencySnapshot.dependencies,
+        dependencyPinningSource: this.moduleOptions.dependencyPinningSource,
         moduleServerOrigin,
-      ) as Record<string, unknown>;
+        isLocalProject: this.moduleOptions.isLocalProject === true,
+      }) as Record<string, unknown>;
     }
 
     if (!adapter) {
@@ -186,6 +191,7 @@ export class RenderHandler {
       dev: this.mode === "development",
       mode: this.mode === "development" ? "preview" : "production",
       reactVersion,
+      serverExternalPackages: this.moduleOptions.serverExternalPackages,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
       dependencyPinningSource: this.moduleOptions.dependencyPinningSource,

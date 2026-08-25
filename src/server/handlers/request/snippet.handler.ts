@@ -4,12 +4,15 @@ import { serverLogger } from "#veryfront/utils";
 import { renderSnippet } from "#veryfront/rendering/snippet-renderer.ts";
 import {
   createErrorResponse,
+  createErrorResponseFromDefinition,
   FILE_NOT_FOUND,
   getErrorMessage,
+  PROJECT_EXECUTION_UNAVAILABLE,
   SECURITY_VIOLATION,
   VeryfrontError,
 } from "#veryfront/errors";
 import { validatePath, ValidationPresets } from "#veryfront/security";
+import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 import {
   createHandlerDependencyPinningSource,
   getHandlerDependencyPinningIdentity,
@@ -19,6 +22,12 @@ const logger = serverLogger.component("snippet-handler");
 
 const PRIORITY_SNIPPET = 450;
 
+export interface SnippetHandlerDeps {
+  renderSnippet: typeof renderSnippet;
+}
+
+const defaultDeps: SnippetHandlerDeps = { renderSnippet };
+
 export class SnippetHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "SnippetHandler",
@@ -26,12 +35,34 @@ export class SnippetHandler extends BaseHandler {
     patterns: [{ pattern: /^\/(@\/|@components\/)/, method: "GET" }],
   };
 
+  constructor(private readonly deps: SnippetHandlerDeps = defaultDeps) {
+    super();
+  }
+
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const url = new URL(req.url);
     const { pathname } = url;
 
     if (!pathname.startsWith("/@/") && !pathname.startsWith("/@components/")) {
       return this.continue();
+    }
+
+    if (requiresIsolatedProjectRuntime(ctx)) {
+      const problem = createErrorResponseFromDefinition(
+        PROJECT_EXECUTION_UNAVAILABLE,
+        {
+          detail:
+            "Shared runtimes require a dedicated isolated project runtime for snippet rendering",
+          instance: pathname,
+        },
+      );
+      const response = this.createResponseBuilder(ctx)
+        .withCORS(req, ctx.securityConfig?.cors)
+        .withSecurity(ctx.securityConfig ?? undefined, req)
+        .withCache("no-store")
+        .withHeaders(problem.headers)
+        .build(problem.body, problem.status);
+      return Promise.resolve(this.respond(response));
     }
 
     logger.debug("Handling snippet request", {
@@ -73,13 +104,14 @@ export class SnippetHandler extends BaseHandler {
         const isDev = !!ctx.isLocalProject;
         const dependencyIdentity = getHandlerDependencyPinningIdentity(ctx);
 
-        const result = await renderSnippet(content, {
+        const result = await this.deps.renderSnippet(content, {
           mode: isDev ? "development" : "production",
           projectDir: ctx.projectDir,
           adapter: stableAdapter,
           isLocalProject: ctx.isLocalProject,
           projectId: dependencyIdentity.projectId,
           contentSourceId: dependencyIdentity.contentSourceId,
+          releaseId: dependencyIdentity.releaseId,
           dependencyPinningSource: createHandlerDependencyPinningSource(ctx),
           filePath: admittedPath,
           moduleServerUrl,

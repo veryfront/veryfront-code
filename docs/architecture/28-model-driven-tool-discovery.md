@@ -1,130 +1,144 @@
-# 28 — Model-Driven Tool Discovery and On-Demand Loading
+# Model-driven tool discovery and on-demand loading
 
-Status: design accepted, implementation in progress (veryfront-studio#5916).
+Status: shipped. Implemented as deferred schema loading around `tool_search`.
 
 ## Responsibility
 
-Let an agent run discover authorized MCP capabilities and activate a small,
-task-relevant subset mid-run, so the initial model request never has to carry
-every tool schema and no tool silently disappears because of provider caps.
+Let an agent run reach any authorized tool without carrying every tool schema in
+the initial model request, and without a tool silently disappearing because of a
+provider cap.
 
-## Problem (current state)
+## Problem this solved
 
-`prepareHostedChatRuntimeToolAssembly` unions local, remote (MCP), and
-provider-native tool names, sorts them alphabetically, and caps the list with
+`prepareHostedChatRuntimeToolAssembly` used to union local, remote (MCP), and
+provider-native tool names, sort them alphabetically, and cap the list with
 `selectProviderCompatibleToolNames` (OpenAI: `OPENAI_MAX_TOOLS = 128`). Local
-tools are pinned via `requiredToolNames`; the remaining budget fills with
-remote tools **in alphabetical order**. With ~253 discovered MCP tools, every
-remote tool past the cut line vanishes deterministically — reads early in the
-alphabet survive, later writes (`update_agent`) disappear. This produced the
-partial-update incident in veryfront-studio#5906.
+tools were pinned; the remaining budget filled with remote tools in
+alphabetical order. With a catalog larger than the cap, every remote tool past
+the cut line vanished deterministically: reads early in the alphabet survived,
+later writes disappeared.
 
-`docs/architecture/21-agent-tool-registration-current-state.md` already flags
-the underlying gaps: tool filtering "should be a named policy, not a loose
-string array", and list handling should be explicit and bounded.
+`docs/architecture/21-agent-tool-registration-current-state.md` records the
+related registration-surface gaps.
 
-## Design
+## Design as shipped
 
-Two new host tools, siblings of `load_skill` in ergonomics and authorization
-posture:
+One framework-owned model-facing tool, `tool_search`, plus a run-local exposure
+state. There is no separate activation call: a search loads the matching schemas
+for the next step.
 
-### `search_tools` — metadata search, side-effect-free
+The contract lives in `src/agent/runtime/tool-exposure.ts`.
 
-- Input: `{ query?: string, names?: string[], limit?: number }`. `names` is an
-  exact-name lookup; `query` is keyword search over name + description.
-- Output per result: `{ name, description, source, state }` where `state` is
-  `active | available | requires_grant`. **No input schemas** are returned.
-- Search space: the run's *authorized* catalog only — the same
-  project/integration gating as `filterProjectScopedRemoteToolDefinitions`.
-  Hard-unauthorized tools are invisible; grant-recoverable tools surface as
-  `requires_grant` so the model can tell the user what to connect instead of
-  concluding the capability does not exist.
+### Loading mode
 
-### `load_tools` — activation, capability change
+`prepareHostedChatRuntimeToolAssembly` resolves a `RuntimeToolLoadingMode` from
+`input.allowedToolNames`: an explicit `null` (no binding) selects `deferred`, and
+any set selects `eager`. The mode selection is a source excerpt, not a copyable
+example. Read it in
+[`chat-runtime-tool-assembly.ts`](../../src/agent/hosted/chat-runtime-tool-assembly.ts).
 
-- Input: `{ names: string[] }`. No prior `search_tools` call is required —
-  when the model already knows the tool name (from the prompt, a skill
-  procedure, or an earlier run) activation is a single round-trip.
-- Validates every name against the authorized catalog. Unknown or
-  unauthorized names fail the whole call with a per-name reason — no partial
-  activation, mirroring the atomicity lesson of veryfront-studio#5906.
-- **Refuse, never evict**: if activation would exceed the resolved provider
-  budget (`getProviderToolProfile(model).maxTools` minus pinned tools), the
-  call fails with the exact overflow count. Core/bound tools are never
-  evictable; there is no LRU. Deterministic refusal is debuggable; silent
-  eviction reintroduces the disappearing-tool bug class.
-- On success the activated names join the run's activated set and the
-  response instructs the model that the tools are callable from the next step.
+- **deferred**: the agent has no explicit `tools` binding. The model initially
+  sees only `tool_search` plus the `load_skill` bootstrap tool when the run
+  authorizes it. `form_input` remains authorized but deferred until a search
+  loads it. Bootstrap tools are filtered against the authorized set, so a run
+  that does not authorize `load_skill` exposes `tool_search` alone. That is why
+  the measurement below reports one initially exposed tool. Its deterministic
+  fixture authorizes exactly 64 generated tools and does not authorize
+  `load_skill`.
+- **eager**: the agent declares a binding. The bound set is exposed directly and
+  `selectProviderCompatibleToolNames` still applies, so a binding larger than
+  the provider cap is still truncated in alphabetical order after local tools
+  are pinned. Bindings are normally well under the cap, but nothing enforces
+  that. The guarantee below is specific to deferred mode.
 
-## How activation reaches the model (per-step flow)
+### Why the cap no longer truncates
 
-1. The activated set lives on the per-run runtime context — the same bag as
-   `RuntimeLoadSkillToolContext.loadedSkillResponses` — never in
-   `ProjectScopedRegistryManager` (that is project-scoped; activation is
-   run-scoped by definition, which also satisfies the no-leak criterion).
-2. `prepareHostedChildForkRuntimeStepMessages` already rebuilds instructions
-   every step; `withRuntimeToolInventory` is idempotent by design. The step
-   preparation reads `pinned ∪ activated` from the live run context instead of
-   a fixed `forkToolNames`, so the next model step sees the refreshed
-   inventory and the new tool schemas.
-3. Assembly changes in `prepareHostedChatRuntimeToolAssembly`: remote names no
-   longer flood the union. Initial inventory = local/configured tools +
-   provider-native + `search_tools`/`load_tools` (added to the essential set
-   in `runtime-essential-tools.ts`, so they are never truncated). The
-   alphabetical `.sort()` before capping remains only as a stable tiebreak for
-   already-selected names, never as a selection mechanism.
+In deferred mode the authorization catalog is not passed through the provider
+cap:
 
-## Authorization: three independent gates
+```ts
+const availableToolNames = toolLoadingMode === "deferred"
+  ? authorizedToolNames
+  : selectProviderCompatibleToolNames(authorizedToolNames, { ... });
+```
 
-1. **Discovery** — `search_tools` searches only the authorized catalog.
-2. **Activation** — `load_tools` re-validates names against the catalog.
-3. **Execution** — unchanged: `prepareExecution` in
-   `project-scoped-remote-tools.ts` re-checks allowance at call time. The
-   activated set feeds `isRemoteToolNameAllowed`, so a tool that was never
-   activated cannot execute even if a schema leaks into a request.
+`compatibleRemoteToolNames` likewise keeps the full remote set in deferred mode.
+The cap governs what is visible to the model on a given step, never what is
+searchable or executable. Alphabetical position stops being a selection
+mechanism.
 
-## Binding-policy interaction
+### `tool_search`
 
-Two hardening rules govern how the agent's configured `tools` binding interacts
-with discovery and activation.
+- Schema-free results: `{ name, description, status: "available" | "loaded" }`.
+  Input schemas are never returned by a search.
+- Searches the run's authorized catalog only, under the same project and
+  integration gating as the eager path.
+- Deterministic, case-insensitive matching. Underscores are treated as spaces.
+  Ranking: exact name, then name substring, then description substring.
+- Bounded on every axis: query bytes, candidate count, per-schema depth, node
+  count and byte size, and total loaded schema budget. See the `TOOL_SEARCH_*`
+  constants in `tool-exposure.ts`.
+- Matching schemas are loaded into `ToolExposureState.loadedToolNames` and are
+  callable from the next model step.
+- Configured provider-native tools supported by the selected model enter the
+  authorized catalog as schema-free name and description records. A matching
+  search attaches the provider's native schema on the next model step. The
+  runtime never treats that record as a local executable tool.
 
-**Deny-all excludes discovery tools.** When `allowedToolNames` resolves to an
-empty set (explicit `tools: []` binding or a per-run `allowedTools: []`
-override), `search_tools` and `load_tools` are not force-added even when
-`includeRuntimeEssentialToolsWhenEmpty` is set. Activating new tools is a
-broader capability than running pre-configured skills (`load_skill`, which is
-still injectable for skill-enabled empty bindings); the two are treated
-asymmetrically under deny-all.
+## Authorization: two independent gates
 
-**Activation is bounded by the binding policy.** `load_tools` accepts a
-`bindingPolicy` option (`ReadonlySet<string> | null`). When set, the authorized
-catalog is intersected with the policy before name validation: names outside the
-policy return the same `unknown_tool` reason as genuinely unknown names (no
-distinguishability). `null` or omitted means unrestricted (`tools: true`).
+1. **Discovery**: `tool_search` searches only the authorized catalog.
+2. **Execution**: `prepareExecution` in
+   `project-scoped-remote-tools.ts` re-checks remote allowance at call time via
+   `isRemoteToolNameAllowed`. Provider-native exposure is intersected with the
+   current configured provider tools and selected model support before each
+   step. A schema reaching an earlier request is not sufficient to execute.
 
 ## Durability and resume
 
-Activation is persisted as a `CUSTOM` conversation run event
-(`encodeCustomDataEvent`) with payload `{ kind: "tools_activated", names }`
-(and `tools_activation_rejected` with reasons for diagnostics). Resume replays
-the event stream, so a resumed run rehydrates its activated set — resumption
-never silently downgrades capability. Studio renders these events to explain
-why a tool appeared or was refused.
+Exposure state is persisted as a private durable checkpoint event,
+`AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT`, carrying a versioned
+`ToolExposureCheckpoint`. `restoreToolExposureState` rehydrates it, so a resumed
+run keeps the schemas it had already loaded instead of starting from an empty
+set. Restoration returns exposure, not authorization: execution still re-checks
+`isRemoteToolNameAllowed`, so a tool whose permissions changed between steps
+becomes unavailable at call time even though its schema was restored.
 
-## Out of scope (unchanged from the issue)
+The checkpoint is versioned: v1 names were lexicographically sorted, v2
+preserves oldest-to-newest recency.
 
-- Sending every MCP schema to every request.
-- Replacing the curated static binding that mitigates #5906 today — it
-  becomes the *initial* inventory rather than the *only* inventory.
+Exposure state is run-local by construction. `ToolExposureState` is created per
+child run and lives outside any project-scoped registry, so a loaded set cannot
+leak across runs.
+
+## Measured effect
+
+`docs/evidence/deferred-tool-discovery-hi-anthropic.json`, a committed live
+measurement against a 64-tool fixture on Anthropic:
+
+| Metric                 | Value                 |
+| ---------------------- | --------------------- |
+| authorized tools       | 64                    |
+| initially exposed      | 1 (`tool_search`)     |
+| baseline input tokens  | 5276                  |
+| effective input tokens | 648                   |
+| reduction              | 87.7% (threshold 60%) |
+
+`scripts/verify-tool-search-live.ts` reproduces the measurement.
+
+## Out of scope
+
+- Sending every schema to every request.
 - Bypassing agent, project, integration, or user capability rules.
 
-## Risks
+## Notes for future work
 
-- The inventory system-message format is asserted verbatim in
-  `tool-inventory.test.ts`; refresh semantics must not change the message
-  contract without updating consumers.
-- Dynamic input schemas (the `load_skill` enum-narrowing trick) can bloat if
-  the catalog is huge; `load_tools` therefore validates server-side and keeps
-  its schema static (`names: string[]`), unlike `load_skill`.
-- Per-name failure reasons must not leak other tenants' tool existence: the
-  unauthorized and nonexistent cases return the same `unknown_tool` reason.
+- Deferred mode is conditional on the agent having no explicit binding. A bound
+  agent whose binding exceeds the provider cap still takes the eager path.
+- An earlier design proposed a separate `search_tools` and `load_tools` pair
+  with its own activation events and per-run activated set. It was superseded by
+  `tool_search`, and its unwired implementation has been removed. The public
+  input fields that could still gate a catalog for an external caller
+  (`activatedRemoteToolNames`, `toolDiscoveryContext`, `pinnedToolNames`,
+  `getActivatedToolNames`) are retained and marked deprecated, because removing
+  them would silently widen the catalog for callers that rely on them.

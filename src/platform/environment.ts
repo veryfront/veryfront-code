@@ -8,7 +8,13 @@
  * @module platform/environment
  */
 
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+// Import from process/env.ts, not the process.ts barrel. This module is
+// reachable from the `veryfront/chat` client entry, and the barrel also
+// re-exports runCommand from process/command.ts, which pulls
+// platform/compat/dynamic-import.ts and its `new Function` into the client
+// bundle. Project pages ship a CSP without 'unsafe-eval', so that throws
+// EvalError and kills hydration before first paint.
+import { getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 
 export type Environment = "development" | "production" | "test";
 

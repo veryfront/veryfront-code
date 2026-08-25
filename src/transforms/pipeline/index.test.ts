@@ -11,7 +11,7 @@ import {
 } from "#veryfront/testing/deno-compat.ts";
 import { join } from "#veryfront/compat/path";
 import * as esbuild from "veryfront/extensions/bundler";
-import { runPipeline, transformToESM } from "./index.ts";
+import { runPipeline, TransformStage, transformToESM } from "./index.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
 import {
@@ -36,7 +36,6 @@ import { computeShortContentHash } from "../esm/transform-utils.ts";
 
 describe(
   "transformToESM readFile routing",
-  { sanitizeResources: false, sanitizeOps: false },
   () => {
     afterAll(async () => {
       await esbuild.stop();
@@ -76,7 +75,16 @@ export default function App() { return dep; }`;
           projectId: "test-project",
         });
 
-        assertEquals(readCalls.includes(externalFile), false);
+        assertEquals(
+          readCalls.includes(externalFile),
+          false,
+          "external file:// deps must bypass the adapter",
+        );
+        assertEquals(
+          readCalls.includes(mainFile),
+          true,
+          "in-project files must be read through the adapter so depsHash is computed",
+        );
       } finally {
         await remove(projectDir, { recursive: true });
         await remove(externalDir, { recursive: true });
@@ -131,6 +139,267 @@ export default function App() { return dep; }`;
       } finally {
         setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
         clearReactVersionCache();
+        destroyTransformCache();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("invalidates cached transforms when the project import map changes", async () => {
+      const projectDir = await makeTempDir({ prefix: "vf-pipeline-import-map-" });
+      const mainFile = join(projectDir, "main.ts");
+      const denoJsonPath = join(projectDir, "deno.json");
+      const source = `import value from "project-alias"; export default value;`;
+      const options = {
+        projectId: "import-map-cache-project",
+        dev: false,
+        ssr: true,
+      };
+
+      try {
+        destroyTransformCache();
+        await writeTextFile(mainFile, source);
+        await writeTextFile(
+          denoJsonPath,
+          JSON.stringify({ imports: { "project-alias": "/project-v1.js" } }),
+        );
+        const first = await runPipeline(source, mainFile, projectDir, options);
+
+        await writeTextFile(
+          denoJsonPath,
+          JSON.stringify({ imports: { "project-alias": "/project-v2.js" } }),
+        );
+        const second = await runPipeline(source, mainFile, projectDir, options);
+
+        assertEquals(first.code.includes("/project-v1.js"), true);
+        assertEquals(second.cached, false);
+        assertEquals(second.code.includes("/project-v2.js"), true);
+        assertEquals(second.code.includes("/project-v1.js"), false);
+      } finally {
+        destroyTransformCache();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("uses one preloaded SSR import-map snapshot for cache identity and stages", async () => {
+      const projectDir = await makeTempDir({ prefix: "vf-pipeline-preloaded-map-" });
+      const mainFile = join(projectDir, "main.ts");
+      const denoJsonPath = join(projectDir, "deno.json");
+      const source = `import value from "project-alias"; export default value;`;
+      const options = {
+        projectId: "preloaded-import-map-cache-project",
+        dev: false,
+        ssr: true,
+        preloadedImportMap: {
+          imports: { "project-alias": "/preloaded-v1.js" },
+          scopes: {},
+        },
+      };
+
+      try {
+        destroyTransformCache();
+        await writeTextFile(mainFile, source);
+        await writeTextFile(
+          denoJsonPath,
+          JSON.stringify({ imports: { "project-alias": "/disk-v2.js" } }),
+        );
+
+        const first = await runPipeline(source, mainFile, projectDir, options);
+        const second = await runPipeline(source, mainFile, projectDir, options);
+        const changed = await runPipeline(source, mainFile, projectDir, {
+          ...options,
+          preloadedImportMap: {
+            imports: { "project-alias": "/preloaded-v2.js" },
+            scopes: {},
+          },
+        });
+
+        assertEquals(first.cached, false);
+        assertEquals(first.code.includes("/preloaded-v1.js"), true);
+        assertEquals(first.code.includes("/disk-v2.js"), false);
+        assertEquals(second.cached, true);
+        assertEquals(second.code.includes("/preloaded-v1.js"), true);
+        assertEquals(changed.cached, false);
+        assertEquals(changed.code.includes("/preloaded-v2.js"), true);
+        assertEquals(changed.code.includes("/preloaded-v1.js"), false);
+      } finally {
+        destroyTransformCache();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("isolates identified custom plugin output and disables caching without an identity", async () => {
+      const projectDir = await makeTempDir({ prefix: "vf-pipeline-custom-plugin-" });
+      const mainFile = join(projectDir, "main.ts");
+      const source = "export const value = 1;";
+      const options = {
+        projectId: "custom-plugin-cache-project",
+        dev: false,
+        ssr: false,
+      };
+
+      try {
+        destroyTransformCache();
+        const first = await runPipeline(source, mainFile, projectDir, options, {
+          plugins: [{
+            name: "custom-output",
+            stage: TransformStage.FINALIZE,
+            cacheIdentity: "custom-output@1",
+            transform: (ctx) => `${ctx.code}\n/* custom-v1 */`,
+          }],
+        });
+        const changed = await runPipeline(source, mainFile, projectDir, options, {
+          plugins: [{
+            name: "custom-output",
+            stage: TransformStage.FINALIZE,
+            cacheIdentity: "custom-output@2",
+            transform: (ctx) => `${ctx.code}\n/* custom-v2 */`,
+          }],
+        });
+
+        assertEquals(first.code.includes("custom-v1"), true);
+        assertEquals(changed.cached, false);
+        assertEquals(changed.code.includes("custom-v2"), true);
+        assertEquals(changed.code.includes("custom-v1"), false);
+
+        destroyTransformCache();
+        let calls = 0;
+        const unidentified = {
+          plugins: [{
+            name: "unidentified-output",
+            stage: TransformStage.FINALIZE,
+            transform: (ctx: { code: string }) => {
+              calls++;
+              return `${ctx.code}\n/* unidentified-${calls} */`;
+            },
+          }],
+        };
+        const uncachedFirst = await runPipeline(
+          source,
+          mainFile,
+          projectDir,
+          options,
+          unidentified,
+        );
+        const uncachedSecond = await runPipeline(
+          source,
+          mainFile,
+          projectDir,
+          options,
+          unidentified,
+        );
+
+        assertEquals(uncachedFirst.cached, false);
+        assertEquals(uncachedSecond.cached, false);
+        assertEquals(calls, 2);
+        assertEquals(uncachedSecond.code.includes("unidentified-2"), true);
+      } finally {
+        destroyTransformCache();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("binds custom plugin execution to its cache-identity snapshot", async () => {
+      const projectDir = await makeTempDir({ prefix: "vf-pipeline-plugin-snapshot-" });
+      const mainFile = join(projectDir, "main.ts");
+      const dependencyFile = join(projectDir, "dependency.ts");
+      const source = `import "./dependency.ts"; export const value = 1;`;
+      const plugin = {
+        name: "mutable-output",
+        stage: TransformStage.FINALIZE,
+        cacheIdentity: "mutable-output@1",
+        transform: (ctx: { code: string }) => `${ctx.code}\n/* snapshot-v1 */`,
+      };
+
+      try {
+        destroyTransformCache();
+        await writeTextFile(mainFile, source);
+        await writeTextFile(dependencyFile, "export const dependency = 1;");
+
+        const result = await runPipeline(
+          source,
+          mainFile,
+          projectDir,
+          {
+            projectId: "plugin-snapshot-cache-project",
+            dev: false,
+            ssr: false,
+            readFile: async (path) => {
+              plugin.transform = (ctx) => `${ctx.code}\n/* mutated-v2 */`;
+              return await readTextFile(path);
+            },
+          },
+          { plugins: [plugin] },
+        );
+
+        assertEquals(result.code.includes("snapshot-v1"), true);
+        assertEquals(result.code.includes("mutated-v2"), false);
+      } finally {
+        destroyTransformCache();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("uses captured array operations for custom plugin execution", async () => {
+      const projectDir = await makeTempDir({ prefix: "vf-pipeline-plugin-primordials-" });
+      const mainFile = join(projectDir, "main.ts");
+      const source = "export const value = 1;";
+      const originalArrayIterator = Array.prototype[Symbol.iterator];
+      const originalArraySort = Array.prototype.sort;
+      const isSentinelPipeline = (values: unknown[]): boolean => {
+        for (let index = 0; index < values.length; index++) {
+          const value = values[index] as { name?: unknown } | undefined;
+          if (value?.name === "sentinel-early" || value?.name === "sentinel-late") return true;
+        }
+        return false;
+      };
+
+      try {
+        destroyTransformCache();
+        await writeTextFile(mainFile, source);
+        Reflect.set(Array.prototype, Symbol.iterator, function (this: unknown[]) {
+          const values = this as unknown[];
+          if (isSentinelPipeline(values)) {
+            return { next: () => ({ done: true, value: undefined }) };
+          }
+          return Reflect.apply(originalArrayIterator, values, []);
+        });
+        Reflect.set(Array.prototype, "sort", function (
+          this: unknown[],
+          compare?: (left: unknown, right: unknown) => number,
+        ) {
+          if (isSentinelPipeline(this)) return this;
+          return Reflect.apply(originalArraySort, this, [compare]);
+        });
+
+        const result = await runPipeline(
+          source,
+          mainFile,
+          projectDir,
+          { projectId: "plugin-primordial-project", dev: false, ssr: false },
+          {
+            plugins: [{
+              name: "sentinel-late",
+              stage: TransformStage.FINALIZE + 0.75,
+              cacheIdentity: "sentinel-late@1",
+              transform: (ctx) => `${ctx.code}\n/* sentinel-late */`,
+            }, {
+              name: "sentinel-early",
+              stage: TransformStage.FINALIZE + 0.25,
+              cacheIdentity: "sentinel-early@1",
+              transform: (ctx) => `${ctx.code}\n/* sentinel-early */`,
+            }],
+          },
+        );
+
+        assertEquals(result.code.includes("sentinel-early"), true);
+        assertEquals(result.code.includes("sentinel-late"), true);
+        assertEquals(
+          result.code.indexOf("sentinel-early") < result.code.indexOf("sentinel-late"),
+          true,
+        );
+      } finally {
+        Reflect.set(Array.prototype, Symbol.iterator, originalArrayIterator);
+        Reflect.set(Array.prototype, "sort", originalArraySort);
         destroyTransformCache();
         await remove(projectDir, { recursive: true });
       }

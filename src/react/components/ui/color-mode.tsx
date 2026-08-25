@@ -9,6 +9,7 @@
 import * as React from "react";
 import { createStrictContext } from "../create-strict-context.ts";
 import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
+import { useDocumentNonce } from "./csp-nonce.ts";
 
 type ColorMode = "light" | "dark" | "system";
 type ResolvedColorMode = "light" | "dark";
@@ -158,6 +159,7 @@ export function ColorModeScript({
   storageKey?: string;
   attribute?: "class" | "data-theme";
 }): React.ReactElement {
+  const nonce = useDocumentNonce();
   const applyAttribute = attribute === "class"
     ? 'd.classList.add(r);d.classList.remove(r==="dark"?"light":"dark")'
     : 'd.setAttribute("data-theme",r)';
@@ -166,7 +168,7 @@ export function ColorModeScript({
   });if(m!=="light"&&m!=="dark"&&m!=="system")m=${
     jsonForInlineScript(defaultMode)
   };var r=m==="system"?globalThis.matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light":m;var d=document.documentElement;${applyAttribute};d.style.colorScheme=r}catch(e){}})()`;
-  return <script dangerouslySetInnerHTML={{ __html: script }} />;
+  return <script nonce={nonce} dangerouslySetInnerHTML={{ __html: script }} />;
 }
 ColorModeScript.displayName = "ColorModeScript";
 

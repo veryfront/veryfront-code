@@ -10,6 +10,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 function createMockAdapter(
   existingFiles: Set<string> = new Set(),
+  counter: { statCalls: number } = { statCalls: 0 },
 ): RuntimeAdapter {
   return {
     fs: {
@@ -22,6 +23,7 @@ function createMockAdapter(
       writeFile: async () => {},
       mkdir: async () => {},
       stat: async (path: string) => {
+        counter.statCalls++;
         if (existingFiles.has(path)) {
           return { isFile: true, isDirectory: false, size: 100 };
         }
@@ -41,8 +43,74 @@ describe("rendering/layouts/utils/discovery", () => {
       assertEquals(stats.size, 0);
     });
 
-    it("should clear cache for specific project", () => {
-      clearLayoutDiscoveryCache("/project");
+    it("should clear cache for specific project", async () => {
+      clearLayoutDiscoveryCache();
+      const counterA = { statCalls: 0 };
+      const counterB = { statCalls: 0 };
+      const adapterA = createMockAdapter(
+        new Set(["/project-a/pages/layout.mdx"]),
+        counterA,
+      );
+      const adapterB = createMockAdapter(
+        new Set(["/project-b/pages/layout.mdx"]),
+        counterB,
+      );
+
+      await discoverNestedLayouts(
+        "/project-a/pages/index.mdx",
+        "/project-a",
+        "/project-a",
+        adapterA,
+        { projectId: "project-a", contentSourceId: "snapshot-a" },
+      );
+      await discoverNestedLayouts(
+        "/project-b/pages/index.mdx",
+        "/project-b",
+        "/project-b",
+        adapterB,
+        { projectId: "project-b", contentSourceId: "snapshot-b" },
+      );
+      assertEquals(
+        getLayoutDiscoveryCacheStats().size,
+        2,
+        "each project must get its own discovery cache entry",
+      );
+
+      clearLayoutDiscoveryCache("/project-a");
+      assertEquals(
+        getLayoutDiscoveryCacheStats().size,
+        1,
+        "clearing one project must evict only that project's entries",
+      );
+
+      const statCallsA = counterA.statCalls;
+      const statCallsB = counterB.statCalls;
+
+      await discoverNestedLayouts(
+        "/project-a/pages/index.mdx",
+        "/project-a",
+        "/project-a",
+        adapterA,
+        { projectId: "project-a", contentSourceId: "snapshot-a" },
+      );
+      assertEquals(
+        counterA.statCalls > statCallsA,
+        true,
+        "the cleared project must re-stat the filesystem instead of serving a stale cache entry",
+      );
+
+      await discoverNestedLayouts(
+        "/project-b/pages/index.mdx",
+        "/project-b",
+        "/project-b",
+        adapterB,
+        { projectId: "project-b", contentSourceId: "snapshot-b" },
+      );
+      assertEquals(
+        counterB.statCalls,
+        statCallsB,
+        "clearing one project must leave another project's cache entry intact",
+      );
     });
   });
 
@@ -64,6 +132,7 @@ describe("rendering/layouts/utils/discovery", () => {
         "/project",
         "/project",
         adapter,
+        { projectId: "project", contentSourceId: "snapshot-empty" },
       );
       assertEquals(layouts.length, 0);
     });
@@ -77,6 +146,7 @@ describe("rendering/layouts/utils/discovery", () => {
         "/project",
         "/project",
         adapter,
+        { projectId: "project", contentSourceId: "snapshot-mdx" },
       );
       assertEquals(layouts.length, 1);
       assertEquals(layouts[0].kind, "mdx");
@@ -92,9 +162,20 @@ describe("rendering/layouts/utils/discovery", () => {
         "/project",
         "/project",
         adapter,
+        { projectId: "project", contentSourceId: "snapshot-tsx" },
       );
       assertEquals(layouts.length, 1);
       assertEquals(layouts[0].kind, "tsx");
+      assertEquals(
+        layouts[0].path,
+        "/project/pages/layout.tsx",
+        "tsx layout path must be the discovered file",
+      );
+      assertEquals(
+        layouts[0].componentPath,
+        "/project/pages/layout.tsx",
+        "tsx layouts must carry componentPath or the compiler and applicator skip them",
+      );
     });
 
     it("should discover layout in root directory", async () => {
@@ -106,6 +187,7 @@ describe("rendering/layouts/utils/discovery", () => {
         "/project",
         "/project",
         adapter,
+        { projectId: "project", contentSourceId: "snapshot-root" },
       );
       assertEquals(layouts.length, 1);
       assertEquals(layouts[0].path, "/project/layout.mdx");
@@ -123,13 +205,24 @@ describe("rendering/layouts/utils/discovery", () => {
         "/project",
         "/project",
         adapter,
+        { projectId: "project", contentSourceId: "snapshot-ancestors" },
       );
-      assertEquals(layouts.length >= 1, true);
+      assertEquals(
+        layouts.map((l) => l.path),
+        ["/project/pages/layout.tsx", "/project/pages/blog/layout.mdx"],
+        "ancestor layouts must be ordered outermost (root) first so the applicator wraps the innermost layout last",
+      );
+      assertEquals(
+        layouts.map((l) => l.kind),
+        ["tsx", "mdx"],
+        "each discovered layout must keep the kind matching its extension",
+      );
     });
 
     it("should use cache on repeated calls", async () => {
       const files = new Set(["/project/layout.mdx"]);
-      const adapter = createMockAdapter(files);
+      const counter = { statCalls: 0 };
+      const adapter = createMockAdapter(files, counter);
       clearLayoutDiscoveryCache();
 
       const layouts1 = await discoverNestedLayouts(
@@ -137,14 +230,27 @@ describe("rendering/layouts/utils/discovery", () => {
         "/project",
         "/project",
         adapter,
+        { projectId: "project", contentSourceId: "snapshot-cache" },
       );
+      const statCallsAfterFirst = counter.statCalls;
       const layouts2 = await discoverNestedLayouts(
         "/project/page.mdx",
         "/project",
         "/project",
         adapter,
+        { projectId: "project", contentSourceId: "snapshot-cache" },
       );
       assertEquals(layouts1.length, layouts2.length);
+      assertEquals(
+        layouts1 === layouts2,
+        true,
+        "repeat discovery must return the cached layout array, not a recomputed one",
+      );
+      assertEquals(
+        counter.statCalls,
+        statCallsAfterFirst,
+        "a cached discovery must not re-stat the ancestor chain",
+      );
       const stats = getLayoutDiscoveryCacheStats();
       assertEquals(stats.size >= 1, true);
     });
@@ -157,6 +263,7 @@ describe("rendering/layouts/utils/discovery", () => {
         "/project",
         "/project",
         adapter,
+        { projectId: "project", contentSourceId: "snapshot-nested" },
       );
       assertEquals(Array.isArray(layouts), true);
     });

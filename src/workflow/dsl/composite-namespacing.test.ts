@@ -1,0 +1,106 @@
+import "#veryfront/schemas/_test-setup.ts";
+/**
+ * Composite Namespacing Tests
+ *
+ * Composite builders prefix child IDs into their own namespace. Every
+ * reference to those IDs has to move with them, otherwise the child graph
+ * cannot resolve its own dependencies.
+ */
+
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { branch } from "./branch.ts";
+import { parallel } from "./parallel.ts";
+import { step } from "./step.ts";
+import type { BranchNodeConfig, ParallelNodeConfig, WorkflowNode } from "../types.ts";
+import { buildGraph } from "../executor/dag/graph.ts";
+
+function dependentStep(id: string, dependsOn: string[]): WorkflowNode {
+  return { ...step(id, { tool: "noop" }), dependsOn };
+}
+
+function parallelConfig(node: WorkflowNode): ParallelNodeConfig {
+  return node.config as ParallelNodeConfig;
+}
+
+function branchConfig(node: WorkflowNode): BranchNodeConfig {
+  return node.config as BranchNodeConfig;
+}
+
+describe("composite node namespacing", () => {
+  it("rebases dependsOn references inside a parallel node", () => {
+    const node = parallel("fanout", [
+      step("first", { tool: "noop" }),
+      dependentStep("second", ["first"]),
+    ]);
+
+    const config = parallelConfig(node);
+    assertEquals(config.nodes.map((child) => child.id), ["fanout/first", "fanout/second"]);
+    assertEquals(config.nodes[1]?.dependsOn, ["fanout/first"]);
+
+    // The child graph is what the executor actually runs; it must resolve.
+    buildGraph(config.nodes);
+  });
+
+  it("rebases dependsOn references inside both branch arms", () => {
+    const node = branch("review", {
+      condition: () => true,
+      then: [step("draft", { tool: "noop" }), dependentStep("publish", ["draft"])],
+      else: [step("reject", { tool: "noop" }), dependentStep("notify", ["reject"])],
+    });
+
+    const config = branchConfig(node);
+    assertEquals(config.then.map((child) => child.id), [
+      "review/then/draft",
+      "review/then/publish",
+    ]);
+    assertEquals(config.then[1]?.dependsOn, ["review/then/draft"]);
+    buildGraph(config.then);
+
+    assertEquals(config.else?.map((child) => child.id), [
+      "review/else/reject",
+      "review/else/notify",
+    ]);
+    assertEquals(config.else?.[1]?.dependsOn, ["review/else/reject"]);
+    buildGraph(config.else ?? []);
+  });
+
+  it("rebases descendants of a nested composite into the outer namespace", () => {
+    const node = parallel("outer", [
+      branch("inner", {
+        condition: () => true,
+        then: [step("draft", { tool: "noop" }), dependentStep("publish", ["draft"])],
+      }),
+    ]);
+
+    const inner = parallelConfig(node).nodes[0];
+    assertEquals(inner?.id, "outer/inner");
+
+    const nested = branchConfig(inner as WorkflowNode);
+    assertEquals(nested.then.map((child) => child.id), [
+      "outer/inner/then/draft",
+      "outer/inner/then/publish",
+    ]);
+    assertEquals(nested.then[1]?.dependsOn, ["outer/inner/then/draft"]);
+    buildGraph(nested.then);
+  });
+
+  it("leaves already-namespaced children and their references untouched", () => {
+    const node = parallel("fanout", [
+      step("fanout/first", { tool: "noop" }),
+      dependentStep("fanout/second", ["fanout/first"]),
+    ]);
+
+    const config = parallelConfig(node);
+    assertEquals(config.nodes.map((child) => child.id), ["fanout/first", "fanout/second"]);
+    assertEquals(config.nodes[1]?.dependsOn, ["fanout/first"]);
+  });
+
+  it("preserves an empty dependency list", () => {
+    const node = parallel("fanout", [
+      dependentStep("only", []),
+    ]);
+
+    assertEquals(parallelConfig(node).nodes[0]?.dependsOn, []);
+  });
+});

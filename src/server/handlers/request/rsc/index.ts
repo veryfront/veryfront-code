@@ -24,6 +24,7 @@ import {
   createHandlerDependencyPinningSource,
   getHandlerDependencyPinningIdentity,
 } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
+import { isHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 
 export class RSCHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -71,6 +72,7 @@ export class RSCHandler extends BaseHandler {
             adapter: ctx.adapter,
             config: ctx.config,
             isLocalProject,
+            allowHostProjectCodeExecution: isHostProjectCodeExecutionAllowed(ctx),
             mode: isRSCProductionMode(ctx) ? "production" : "development",
             nonce,
           });

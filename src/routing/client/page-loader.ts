@@ -2,6 +2,10 @@ import { rendererLogger } from "#veryfront/utils";
 import { NETWORK_ERROR } from "#veryfront/errors/error-registry.ts";
 import { isFullHTMLDocument } from "#veryfront/html/html-detection.ts";
 import { parsePageDataFromHTML, routeRequiresDocumentNavigation } from "./dom-utils.ts";
+import {
+  findServerHydrationDataElement,
+  type HydrationDataDocumentLike,
+} from "#veryfront/html/hydration-data-element.ts";
 
 export type {
   ClientRouteHeadEntry,
@@ -17,10 +21,9 @@ import type { RouteData, SpaPageData } from "./types.ts";
 const logger = rendererLogger.component("veryfront");
 
 const MAX_CACHE_SIZE = 50;
-const HYDRATION_DATA_ID = "veryfront-hydration-data";
 const DEPENDENCY_PINNING_RESPONSE_HEADER = "x-veryfront-dependency-pins";
 
-type HydrationDocument = Pick<Document, "getElementById">;
+type HydrationDocument = HydrationDataDocumentLike;
 type DocumentReloader = (url: string) => void;
 
 function reloadBrowserDocument(url: string): void {
@@ -33,7 +36,7 @@ function readDependencyPinningCacheKey(doc?: HydrationDocument): string {
   if (!doc) return "off";
 
   try {
-    const hydrationDataElement = doc.getElementById(HYDRATION_DATA_ID);
+    const hydrationDataElement = findServerHydrationDataElement(doc);
     if (!hydrationDataElement?.textContent) return "off";
 
     const hydrationData = JSON.parse(hydrationDataElement.textContent) as {

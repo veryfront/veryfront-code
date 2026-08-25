@@ -163,6 +163,8 @@ describe("cache/testing/mock-backend", () => {
       await assertRejects(
         () => mock.get("bad-key"),
         Error,
+        "Mock cache error",
+        "a failing key must reject with the default mock error",
       );
     });
 
@@ -175,6 +177,8 @@ describe("cache/testing/mock-backend", () => {
       await assertRejects(
         () => mock.set("bad-key", "value"),
         Error,
+        "Mock cache error",
+        "a failing key must reject with the default mock error",
       );
     });
 
@@ -184,11 +188,39 @@ describe("cache/testing/mock-backend", () => {
         errorMessage: "Custom error",
       });
 
-      try {
-        await mock.get("key");
-      } catch (e) {
-        assertEquals((e as Error).message, "Custom error");
-      }
+      await assertRejects(
+        () => mock.get("key"),
+        Error,
+        "Custom error",
+        "a failing mock must surface the configured error message",
+      );
+    });
+  });
+
+  describe("type and ignoreTtl options", () => {
+    it("defaults to the memory discriminant", () => {
+      assertEquals(new MockCacheBackend().type, "memory");
+    });
+
+    it("reports the configured type so distributed-only gates accept it", () => {
+      const mock = new MockCacheBackend({ type: "redis" });
+      assertEquals(mock.type, "redis");
+    });
+
+    it("never expires entries when ignoreTtl is set", async () => {
+      const mock = new MockCacheBackend({ ignoreTtl: true });
+      // A negative TTL is already expired for a TTL-honoring backend.
+      await mock.set("key", "value", -1);
+      await mock.setBatch([{ key: "batch", value: "batched", ttl: -1 }]);
+
+      assertEquals(await mock.get("key"), "value");
+      assertEquals(await mock.get("batch"), "batched");
+    });
+
+    it("honors TTL when ignoreTtl is not set", async () => {
+      const mock = new MockCacheBackend();
+      await mock.set("key", "value", -1);
+      assertEquals(await mock.get("key"), null);
     });
   });
 

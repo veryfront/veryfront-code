@@ -8,7 +8,7 @@
  * Zero tolerance: ANY failure blocks push
  */
 
-import type { Page } from "npm:playwright@1.59.0/test";
+import type { Page } from "npm:playwright@1.60.0/test";
 import { expect, test } from "./fixtures/playwright.ts";
 import { getProjectsToTest } from "./helpers/projects.ts";
 import { getRuntimeForPlaywrightProject } from "./helpers/runtime.ts";
@@ -17,8 +17,8 @@ import { getRuntimeForPlaywrightProject } from "./helpers/runtime.ts";
  * Projects to test.
  *
  * Configure via environment variables:
- *   E2E_PROJECT=myproject PW_DISABLE_TS_ESM=1 npx playwright test --config=tests/e2e/playwright.config.cjs
- *   E2E_PROJECTS="proj1,proj2" PW_DISABLE_TS_ESM=1 npx playwright test --config=tests/e2e/playwright.config.cjs
+ *   E2E_PROJECT=myproject deno task test:e2e:playwright tests/e2e/smoke.playwright.ts
+ *   E2E_PROJECTS="proj1,proj2" deno task test:e2e:playwright tests/e2e/smoke.playwright.ts
  *   PLAYWRIGHT_PROJECT=preview-host deno task test:e2e:playwright
  *
  * If neither is set, uses example projects for demonstration.
@@ -65,7 +65,8 @@ for (const subdomain of PROJECTS) {
 
     test("API routes respond with JSON", async ({ request }, testInfo) => {
       const runtime = getRuntimeForPlaywrightProject(testInfo.project.name);
-      const response = await request.get(`${runtime.getUrl(subdomain)}/api/status`);
+      const apiRequest = runtime.getApiRequest(subdomain, "/api/status");
+      const response = await request.get(apiRequest.url, { headers: apiRequest.headers });
 
       expect(response.ok()).toBeTruthy();
       expect(response.headers()["content-type"]).toContain("application/json");
@@ -139,7 +140,7 @@ for (const subdomain of PROJECTS) {
         "branch preview coverage only applies to preview hosts",
       );
 
-      const branchPreviewUrl = `http://${subdomain}--feature.preview.lvh.me:8080`;
+      const branchPreviewUrl = `http://${subdomain}--feature.preview.localhost:8080`;
       const response = await visit(page, `${branchPreviewUrl}/`);
 
       expect(response?.ok()).toBeTruthy();

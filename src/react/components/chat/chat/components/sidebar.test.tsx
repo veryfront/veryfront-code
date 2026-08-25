@@ -6,10 +6,13 @@
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { renderToString } from "react-dom/server";
+import * as React from "react";
 import { JSDOM } from "npm:jsdom@28.0.0";
-import { assert } from "#veryfront/testing/assert.ts";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ChatSidebar, useChatSidebarItem } from "./sidebar.tsx";
+import { ChatSidebarRenameEditor } from "./sidebar-rename-editor.tsx";
 import { ConversationsProvider } from "../contexts/conversations-context.tsx";
 import { memoryConversationStore } from "../persistence/memory-conversation-store.ts";
 import type { Conversation, ConversationSummary } from "../persistence/conversation-store.ts";
@@ -19,6 +22,13 @@ function installDom(): () => void {
     url: "https://example.com/",
   });
   const window = dom.window;
+  // React DOM is initialized before this per-test browser exists, so its text-input
+  // event adapter uses the legacy listener API. JSDOM omits that API; supplying the
+  // listener-shaped methods keeps keyboard tests on the same React event path.
+  Object.defineProperties(window.HTMLElement.prototype, {
+    attachEvent: { configurable: true, value: () => {} },
+    detachEvent: { configurable: true, value: () => {} },
+  });
   const keys = [
     "window",
     "document",
@@ -27,6 +37,10 @@ function installDom(): () => void {
     "Node",
     "Element",
     "HTMLElement",
+    "HTMLInputElement",
+    "Event",
+    "FocusEvent",
+    "KeyboardEvent",
     "localStorage",
   ] as const;
   const previous: Record<string, unknown> = {};
@@ -39,6 +53,10 @@ function installDom(): () => void {
     Node: window.Node,
     Element: window.Element,
     HTMLElement: window.HTMLElement,
+    HTMLInputElement: window.HTMLInputElement,
+    Event: window.Event,
+    FocusEvent: window.FocusEvent,
+    KeyboardEvent: window.KeyboardEvent,
     localStorage: window.localStorage,
   });
   window.localStorage.clear();
@@ -83,7 +101,7 @@ describe("ChatSidebar — conversation-native", () => {
       assert(html.includes("First chat"), "lists the first conversation from context");
       assert(html.includes("Second chat"), "lists the second conversation from context");
 
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await settle();
     } finally {
       restoreDom();
@@ -119,26 +137,11 @@ describe("ChatSidebar — conversation-native", () => {
         "the primary action carries the conversation label",
       );
 
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await settle();
     } finally {
       restoreDom();
     }
-  });
-
-  it("keeps the legacy fill prop in embedded layouts", () => {
-    const html = renderToString(
-      <ChatSidebar
-        fill
-        conversations={[summary("x", "Embedded chat", 5000)]}
-        activeId="x"
-        onSelect={() => {}}
-        onDelete={() => {}}
-      />,
-    );
-    const railClass = html.match(/data-vf-chat="" class="([^"]*)"/)?.[1] ?? "";
-    assert(railClass.includes("w-full"), "fill keeps the embedded rail full-width");
-    assert(!railClass.includes("w-60"), "fill omits standalone fixed-width chrome");
   });
 });
 
@@ -186,5 +189,492 @@ describe("ChatSidebar.Item — menu compound (E4 acid test)", () => {
     );
     // The composed row still renders (the built-in row is reused, not replaced).
     assert(html.includes("Row title"), "the row renders from the composed Item");
+  });
+
+  it("honors composed Menu children once the row menu opens", async () => {
+    const restoreDom = installDom();
+    try {
+      const root = createRoot(document.getElementById("root")!);
+      flushSync(() => {
+        root.render(
+          <ChatSidebar.Root
+            conversations={[summary("x", "Row title", 5000)]}
+            activeId="x"
+            onSelect={() => {}}
+            onDelete={() => {}}
+            onRename={() => {}}
+          >
+            <ChatSidebar.List>
+              <ChatSidebar.Item conversation={summary("x", "Row title", 5000)}>
+                <ChatSidebar.Item.Menu>
+                  <ChatSidebar.Item.Rename />
+                  <ChatSidebar.Item.Delete />
+                  <div data-archive="">Archive</div>
+                </ChatSidebar.Item.Menu>
+              </ChatSidebar.Item>
+            </ChatSidebar.List>
+          </ChatSidebar.Root>,
+        );
+      });
+      flushSync(() => {
+        document.querySelector<HTMLButtonElement>(
+          'button[aria-label="More actions for Row title"]',
+        )?.click();
+      });
+      await settle();
+
+      assert(
+        document.querySelector("[data-archive]"),
+        "custom Archive entry renders inside the composed menu",
+      );
+      const entries = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+        .map((el) => el.textContent);
+      assert(
+        entries.includes("Rename") && entries.includes("Delete"),
+        "built-in entries still render when composed explicitly",
+      );
+
+      await unmountReactRoot(root);
+      await settle();
+    } finally {
+      restoreDom();
+    }
+  });
+
+  it("commits a trimmed title through onRename and skips blank or unchanged titles", async () => {
+    const restoreDom = installDom();
+    const calls: Array<[string, string]> = [];
+    function StartRename(): React.ReactElement {
+      const { startRename } = useChatSidebarItem();
+      return <button type="button" data-start-rename="" onClick={startRename}>Rename</button>;
+    }
+    const typeAndEnter = async (value: string): Promise<void> => {
+      flushSync(() => {
+        document.querySelector<HTMLButtonElement>("[data-start-rename]")?.click();
+      });
+      await settle();
+      const input = document.querySelector<HTMLInputElement>("input");
+      assert(input, "starting a rename mounts the inline editor");
+      const setValue = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      assert(setValue, "JSDOM exposes the native input value setter");
+      input.focus();
+      // React DOM booted without a document, so its text-input change adapter
+      // polls the value on key events instead of listening for `input`; a keyup
+      // after setting the native value is what surfaces `onChange` here.
+      flushSync(() => {
+        setValue.call(input, value);
+        input.dispatchEvent(new KeyboardEvent("keyup", { key: "e", bubbles: true }));
+      });
+      flushSync(() => {
+        input.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+        );
+      });
+    };
+
+    try {
+      const root = createRoot(document.getElementById("root")!);
+      flushSync(() => {
+        root.render(
+          <ChatSidebar.Root
+            conversations={[summary("x", "Old", 5000)]}
+            activeId="x"
+            onSelect={() => {}}
+            onDelete={() => {}}
+            onRename={(id, title) => calls.push([id, title])}
+          >
+            <ChatSidebar.List>
+              <ChatSidebar.Item conversation={summary("x", "Old", 5000)}>
+                <StartRename />
+              </ChatSidebar.Item>
+            </ChatSidebar.List>
+          </ChatSidebar.Root>,
+        );
+      });
+
+      await typeAndEnter("   ");
+      await typeAndEnter("Old");
+      assertEquals(calls, [], "blank or unchanged titles do not call onRename");
+
+      await typeAndEnter("  New title  ");
+      assertEquals(calls, [["x", "New title"]], "commit passes the trimmed title");
+
+      await unmountReactRoot(root);
+      await settle();
+    } finally {
+      restoreDom();
+    }
+  });
+
+  it("keeps the row ref attached while inline rename is active", async () => {
+    const restoreDom = installDom();
+    const itemRef = React.createRef<HTMLDivElement>();
+    function StartRename(): React.ReactElement {
+      const { startRename } = useChatSidebarItem();
+      return <button type="button" data-start-rename="" onClick={startRename}>Rename</button>;
+    }
+
+    try {
+      const root = createRoot(document.getElementById("root")!);
+      flushSync(() => {
+        root.render(
+          <ChatSidebar.Root
+            conversations={[summary("x", "Row title", 5000)]}
+            activeId="x"
+            onSelect={() => {}}
+            onDelete={() => {}}
+            onRename={() => {}}
+          >
+            <ChatSidebar.List>
+              <ChatSidebar.Item
+                ref={itemRef}
+                className="custom-row"
+                conversation={summary("x", "Row title", 5000)}
+              >
+                <StartRename />
+              </ChatSidebar.Item>
+            </ChatSidebar.List>
+          </ChatSidebar.Root>,
+        );
+      });
+      assert(itemRef.current, "the display row owns the consumer ref");
+
+      flushSync(() => {
+        document.querySelector<HTMLButtonElement>("[data-start-rename]")?.click();
+      });
+
+      assert(itemRef.current, "the inline rename row keeps the consumer ref attached");
+      assert(
+        itemRef.current.classList.contains("custom-row"),
+        "the rename row keeps custom styling",
+      );
+      assert(itemRef.current.querySelector("input"), "the ref targets the active rename row");
+
+      await unmountReactRoot(root);
+      await settle();
+    } finally {
+      restoreDom();
+    }
+  });
+});
+
+describe("ChatSidebar.Item.Title: composable row label", () => {
+  it("exposes the Title leaf off the compound", () => {
+    assert(typeof ChatSidebar.Item.Title === "function", "Item.Title is addressable");
+  });
+
+  it("composes the row label alongside a sibling", () => {
+    const html = renderToString(
+      <ChatSidebar.Root
+        conversations={[summary("x", "Row title", 5000)]}
+        activeId="x"
+        onSelect={() => {}}
+        onDelete={() => {}}
+      >
+        <ChatSidebar.List>
+          <ChatSidebar.Item conversation={summary("x", "Row title", 5000)}>
+            <ChatSidebar.Item.Title />
+            <span data-badge="">badge</span>
+          </ChatSidebar.Item>
+        </ChatSidebar.List>
+      </ChatSidebar.Root>,
+    );
+    assert(html.includes(">Row title<"), "the Title leaf renders the conversation title");
+    assert(html.includes("data-badge"), "the sibling badge renders next to the title");
+    const primaryActionClass = html.match(/<button[^>]*class="([^"]*)"[^>]*>/)?.[1] ?? "";
+    const titleClass = html.match(/<span[^>]*class="([^"]*)"[^>]*>Row title/)?.[1] ?? "";
+    assert(
+      primaryActionClass.includes("flex items-center gap-1"),
+      "the primary action keeps the composed label and badge on one row",
+    );
+    assert(
+      titleClass.includes("min-w-0 flex-1"),
+      "the title shrinks before its sibling badge",
+    );
+    assertEquals(
+      html.split(">Row title<").length - 1,
+      1,
+      "the composed Title replaces the default title (no duplicate label)",
+    );
+  });
+
+  it("forwards native span props from the Title leaf", () => {
+    const html = renderToString(
+      <ChatSidebar.Root
+        conversations={[summary("x", "Row title", 5000)]}
+        activeId="x"
+        onSelect={() => {}}
+        onDelete={() => {}}
+      >
+        <ChatSidebar.List>
+          <ChatSidebar.Item conversation={summary("x", "Row title", 5000)}>
+            <ChatSidebar.Item.Title id="custom-title" data-title="" />
+          </ChatSidebar.Item>
+        </ChatSidebar.List>
+      </ChatSidebar.Root>,
+    );
+    assert(html.includes('id="custom-title"'), "Title forwards native span props");
+    assert(html.includes('data-title=""'), "Title forwards data attributes");
+  });
+
+  it("keeps a composed Menu sibling in the action slot (no default duplicate)", () => {
+    const html = renderToString(
+      <ChatSidebar.Root
+        conversations={[summary("x", "Row title", 5000)]}
+        activeId="x"
+        onSelect={() => {}}
+        onDelete={() => {}}
+      >
+        <ChatSidebar.List>
+          <ChatSidebar.Item conversation={summary("x", "Row title", 5000)}>
+            <ChatSidebar.Item.Title />
+            <ChatSidebar.Item.Menu />
+          </ChatSidebar.Item>
+        </ChatSidebar.List>
+      </ChatSidebar.Root>,
+    );
+    assertEquals(
+      html.split("More actions for Row title").length - 1,
+      1,
+      "exactly one menu trigger renders, the composed Menu instead of a second default",
+    );
+    assert(html.includes(">Row title<"), "the composed Title still renders the label");
+  });
+
+  it("partitions Title and Menu leaves grouped in a fragment", () => {
+    const html = renderToString(
+      <ChatSidebar.Root
+        conversations={[summary("x", "Row title", 5000)]}
+        activeId="x"
+        onSelect={() => {}}
+        onDelete={() => {}}
+      >
+        <ChatSidebar.List>
+          <ChatSidebar.Item conversation={summary("x", "Row title", 5000)}>
+            {React.createElement(
+              React.Fragment,
+              null,
+              <ChatSidebar.Item.Title />,
+              <span data-badge="">badge</span>,
+              <ChatSidebar.Item.Menu />,
+            )}
+          </ChatSidebar.Item>
+        </ChatSidebar.List>
+      </ChatSidebar.Root>,
+    );
+    assertEquals(
+      html.split("More actions for Row title").length - 1,
+      1,
+      "the fragment's Menu fills the action slot without a default duplicate",
+    );
+    assert(html.includes(">Row title<"), "the fragment's Title fills the row body");
+    assert(html.includes("data-badge"), "sibling fragments preserve other body content");
+  });
+
+  it("preserves keyed-fragment identity for stateful title siblings", async () => {
+    const restoreDom = installDom();
+    let mounts = 0;
+    function StatefulBadge(): React.ReactElement {
+      const [mountId] = React.useState(() => ++mounts);
+      return <span data-mount-id={mountId}>badge</span>;
+    }
+
+    try {
+      const root = createRoot(document.getElementById("root")!);
+      const renderItem = (fragmentKey: string) => (
+        <ChatSidebar.Root
+          conversations={[summary("x", "Row title", 5000)]}
+          activeId="x"
+          onSelect={() => {}}
+          onDelete={() => {}}
+        >
+          <ChatSidebar.List>
+            <ChatSidebar.Item conversation={summary("x", "Row title", 5000)}>
+              <React.Fragment key={fragmentKey}>
+                <ChatSidebar.Item.Title />
+                <StatefulBadge />
+              </React.Fragment>
+            </ChatSidebar.Item>
+          </ChatSidebar.List>
+        </ChatSidebar.Root>
+      );
+
+      flushSync(() => root.render(renderItem("first")));
+      assertEquals(document.querySelector("[data-mount-id]")?.getAttribute("data-mount-id"), "1");
+
+      flushSync(() => root.render(renderItem("second")));
+      assertEquals(
+        document.querySelector("[data-mount-id]")?.getAttribute("data-mount-id"),
+        "2",
+        "changing the parent fragment key remounts its stateful descendants",
+      );
+
+      await unmountReactRoot(root);
+      await settle();
+    } finally {
+      restoreDom();
+    }
+  });
+
+  it("keeps state with fragment paths that contain key separators", async () => {
+    const restoreDom = installDom();
+    let mounts = 0;
+    function StatefulBadge({ label }: { label: string }): React.ReactElement {
+      const [mountId] = React.useState(() => ++mounts);
+      return <span data-badge={label} data-mount-id={mountId}>{label}</span>;
+    }
+
+    try {
+      const root = createRoot(document.getElementById("root")!);
+      const renderItem = (reverse: boolean) => {
+        const direct = (
+          <React.Fragment key="a/.0">
+            <StatefulBadge label="direct" />
+          </React.Fragment>
+        );
+        const nested = (
+          <React.Fragment key="a">
+            <React.Fragment>
+              <StatefulBadge label="nested" />
+            </React.Fragment>
+          </React.Fragment>
+        );
+        return (
+          <ChatSidebar.Root
+            conversations={[summary("x", "Row title", 5000)]}
+            activeId="x"
+            onSelect={() => {}}
+            onDelete={() => {}}
+          >
+            <ChatSidebar.List>
+              <ChatSidebar.Item conversation={summary("x", "Row title", 5000)}>
+                <ChatSidebar.Item.Title />
+                {reverse ? [nested, direct] : [direct, nested]}
+              </ChatSidebar.Item>
+            </ChatSidebar.List>
+          </ChatSidebar.Root>
+        );
+      };
+
+      flushSync(() => root.render(renderItem(false)));
+      assertEquals(
+        document.querySelector('[data-badge="direct"]')?.getAttribute("data-mount-id"),
+        "1",
+      );
+      assertEquals(
+        document.querySelector('[data-badge="nested"]')?.getAttribute("data-mount-id"),
+        "2",
+      );
+
+      flushSync(() => root.render(renderItem(true)));
+      assertEquals(
+        document.querySelector('[data-badge="direct"]')?.getAttribute("data-mount-id"),
+        "1",
+        "state follows the direct fragment after reordering",
+      );
+      assertEquals(
+        document.querySelector('[data-badge="nested"]')?.getAttribute("data-mount-id"),
+        "2",
+        "state follows the nested fragment after reordering",
+      );
+
+      await unmountReactRoot(root);
+      await settle();
+    } finally {
+      restoreDom();
+    }
+  });
+
+  it("regression: a childless Item still renders the default title", () => {
+    const html = renderToString(
+      <ChatSidebar.Root
+        conversations={[summary("x", "Row title", 5000)]}
+        activeId="x"
+        onSelect={() => {}}
+        onDelete={() => {}}
+      >
+        <ChatSidebar.List>
+          <ChatSidebar.Item conversation={summary("x", "Row title", 5000)} />
+        </ChatSidebar.List>
+      </ChatSidebar.Root>,
+    );
+    assert(html.includes(">Row title<"), "the childless row renders the default title");
+    assertEquals(
+      html.split(">Row title<").length - 1,
+      1,
+      "the default title renders exactly once",
+    );
+  });
+});
+
+describe("ChatSidebarRenameEditor", () => {
+  async function runKeyboardCompletion(key: "Enter" | "Escape"): Promise<[number, number]> {
+    const restoreDom = installDom();
+    let commits = 0;
+    let cancels = 0;
+
+    try {
+      const root = createRoot(document.getElementById("root")!);
+      flushSync(() => {
+        root.render(
+          <ChatSidebarRenameEditor
+            value="Row title"
+            onChange={() => {}}
+            onCommit={() => commits++}
+            onCancel={() => cancels++}
+          />,
+        );
+      });
+      const input = document.querySelector<HTMLInputElement>("input")!;
+      input.focus();
+      flushSync(() => {
+        input.dispatchEvent(
+          new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
+        );
+        input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+      });
+
+      await unmountReactRoot(root);
+      await settle();
+      return [commits, cancels];
+    } finally {
+      restoreDom();
+    }
+  }
+
+  it("does not commit twice when Enter is followed by blur", async () => {
+    assertEquals(await runKeyboardCompletion("Enter"), [1, 0]);
+  });
+
+  it("does not commit after Escape is followed by blur", async () => {
+    assertEquals(await runKeyboardCompletion("Escape"), [0, 1]);
+  });
+
+  it("gives the editor a stable contextual accessible name", async () => {
+    const restoreDom = installDom();
+    try {
+      const root = createRoot(document.getElementById("root")!);
+      const renderEditor = (value: string) => (
+        <ChatSidebarRenameEditor
+          value={value}
+          onChange={() => {}}
+          onCommit={() => {}}
+          onCancel={() => {}}
+        />
+      );
+      flushSync(() => root.render(renderEditor("Original title")));
+      const input = document.querySelector<HTMLInputElement>("input")!;
+      assertEquals(input.getAttribute("aria-label"), "Rename Original title");
+
+      flushSync(() => root.render(renderEditor("Edited title")));
+      assertEquals(input.getAttribute("aria-label"), "Rename Original title");
+      await unmountReactRoot(root);
+      await settle();
+    } finally {
+      restoreDom();
+    }
   });
 });

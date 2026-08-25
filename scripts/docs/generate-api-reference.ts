@@ -8,12 +8,18 @@
  *
  * Usage: deno task docs
  *        deno task docs -- --output ../../docs/docs/code/api-reference
+ *        deno task docs:api-reference:check  (regenerate to a temp dir and diff against the committed tree)
  */
 
 import { parseArgs } from "#std/flags";
 import { ensureDir } from "#std/fs/ensure-dir";
 import { COMMANDS } from "../../cli/help/command-definitions.ts";
 import type { CommandCategory, CommandHelp } from "../../cli/help/types.ts";
+import {
+  type BarrelJSDoc,
+  normalizePublicDocText,
+  parseBarrelJSDoc,
+} from "./barrel-jsdoc.ts";
 
 const ROOT = Deno.cwd();
 
@@ -22,6 +28,7 @@ const ROOT = Deno.cwd();
 // ---------------------------------------------------------------------------
 
 const args = parseArgs(Deno.args, {
+  boolean: ["check"],
   string: ["output", "source-base-url"],
   default: {
     output: "docs/api-reference",
@@ -29,9 +36,14 @@ const args = parseArgs(Deno.args, {
   },
 });
 
-const OUTPUT_DIR = args.output.startsWith("/")
+/** In --check mode, regenerate into a temp dir and diff against this tree. */
+const COMMITTED_DIR = args.output.startsWith("/")
   ? args.output
   : `${ROOT}/${args.output}`;
+const CHECK_MODE = args.check === true;
+const OUTPUT_DIR = CHECK_MODE
+  ? await Deno.makeTempDir({ prefix: "veryfront-api-reference-check-" })
+  : COMMITTED_DIR;
 const VERYFRONT_DIR = `${OUTPUT_DIR}/veryfront`;
 const SOURCE_BASE_URL = String(args["source-base-url"]).replace(/\/+$/, "");
 
@@ -68,12 +80,6 @@ interface DeepImport {
 interface ModuleGroup {
   parent: ExportEntry;
   deepImports: DeepImport[];
-}
-
-interface BarrelJSDoc {
-  description: string;
-  moduleName: string;
-  examples: Array<{ title: string; code: string }>;
 }
 
 interface TsType {
@@ -232,12 +238,6 @@ interface SourceDocStats {
   documented: number;
   missing: number;
 }
-
-const EMPTY_BARREL_JSDOC: BarrelJSDoc = {
-  description: "",
-  moduleName: "",
-  examples: [],
-};
 
 // ---------------------------------------------------------------------------
 // Curated import snippets: show the most representative imports per module
@@ -741,6 +741,10 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     getConnector: "Look up connector config by name from registry",
     getConnectorNames: "Return readonly array of all connector names",
     getIcon: "Return SVG icon string for integration by name",
+    getRemoteIntegrationToolDiscovery:
+      "List integration tools with a typed available or unavailable status",
+    getRemoteIntegrationToolDefinitions:
+      "List integration tool definitions, returning an empty list when discovery is unavailable",
     listConnectors: "Return readonly array of all connectors",
     registerIntegrationMCP:
       "Register integration tools into the MCP tool registry",
@@ -751,6 +755,8 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     IntegrationMCPConfig: "Configuration for registering integrations into MCP",
     IntegrationName: "Union type of valid integration name literals",
     IntegrationPrompt: "Predefined prompt template for integration use",
+    RemoteIntegrationToolDiscoveryResult:
+      "Typed integration tool catalog status for the current run",
     IntegrationTool: "Integration tool with endpoint execution spec",
     IntegrationToolMeta: "Tool metadata: name, description, write requirements",
     OAuthConfig: "OAuth/API key authentication type and parameters",
@@ -909,114 +915,6 @@ function getModuleGroups(): ModuleGroup[] {
     .map((slug) => groups.get(slug)!)
     .filter(Boolean)
     .sort((a, b) => a.parent.importPath.localeCompare(b.parent.importPath));
-}
-
-// ---------------------------------------------------------------------------
-// 2. Parse barrel JSDoc
-// ---------------------------------------------------------------------------
-
-function parseBarrelJSDoc(content: string): BarrelJSDoc {
-  const trimmed = content.trimStart();
-  if (!trimmed.startsWith("/**")) {
-    return EMPTY_BARREL_JSDOC;
-  }
-
-  const endIdx = trimmed.indexOf("*/");
-  if (endIdx === -1) {
-    return EMPTY_BARREL_JSDOC;
-  }
-
-  const block = trimmed.slice(3, endIdx);
-  const lines = block.split("\n").map((l) => l.replace(/^\s*\*\s?/, ""));
-
-  let moduleName = "";
-  const descLines: string[] = [];
-  const examples: Array<{ title: string; code: string }> = [];
-  let inExample = false;
-  let exampleTitle = "";
-  let exampleLines: string[] = [];
-  let inCodeBlock = false;
-
-  const finishExample = (): void => {
-    finalizeExample(examples, exampleTitle, exampleLines);
-    exampleTitle = "";
-    exampleLines = [];
-  };
-
-  for (const line of lines) {
-    if (line.startsWith("@module")) {
-      moduleName = line.replace("@module", "").trim();
-      continue;
-    }
-
-    if (line.startsWith("@example")) {
-      finishExample();
-      exampleTitle = line.replace("@example", "").trim();
-      exampleLines = [];
-      inExample = true;
-      inCodeBlock = false;
-      continue;
-    }
-
-    if (line.startsWith("@")) {
-      finishExample();
-      inExample = false;
-      continue;
-    }
-
-    if (inExample) {
-      if (line.startsWith("```")) {
-        inCodeBlock = !inCodeBlock;
-      }
-      exampleLines.push(line);
-    } else if (!moduleName || descLines.length > 0 || line.trim()) {
-      if (!line.startsWith("@")) {
-        descLines.push(line);
-      }
-    }
-  }
-
-  finishExample();
-
-  const description = normalizePublicDocText(
-    descLines.join(" ").replace(/\s+/g, " ").trim(),
-  );
-  return { description, moduleName, examples };
-}
-
-function normalizePublicDocText(text: string): string {
-  const withoutInlineJsDocLinks = text.replace(
-    /\{@(?:link|linkcode|linkplain)\s+([^}]+)\}/g,
-    (_match, rawTarget: string) => {
-      const target = rawTarget.trim();
-      const pipeIndex = target.indexOf("|");
-      const display = pipeIndex >= 0
-        ? target.slice(pipeIndex + 1).trim()
-        : target.match(/^\S+\s+(.+)$/)?.[1]?.trim() || target;
-      return `\`${display.replace(/`/g, "\\`")}\``;
-    },
-  );
-
-  return withoutInlineJsDocLinks
-    .replace(/`[^`]*`|[<>]/g, (token) => {
-      if (token.startsWith("`")) return token;
-      return token === "<" ? "&lt;" : "&gt;";
-    })
-    .replace(/[\u2013\u2014]/g, "-")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function finalizeExample(
-  examples: Array<{ title: string; code: string }>,
-  title: string,
-  lines: string[],
-): void {
-  if (lines.length === 0) {
-    return;
-  }
-
-  examples.push({ title, code: lines.join("\n") });
 }
 
 // ---------------------------------------------------------------------------
@@ -1503,6 +1401,20 @@ function pushNodeSummary(
   description: string,
   sourceHref: string,
 ): void {
+  const existing = target.find((summary) => summary.name === name);
+  if (existing) {
+    if (!existing.description && description) {
+      existing.description = description;
+    }
+    if (
+      sourceHref &&
+      (!existing.sourceHref ||
+        (!existing.sourceHref.includes("#L") && sourceHref.includes("#L")))
+    ) {
+      existing.sourceHref = sourceHref;
+    }
+    return;
+  }
   target.push({ name, description, sourceHref });
 }
 
@@ -1647,9 +1559,27 @@ interface APIDocs {
 
 const API_DOCS: Record<string, APIDocs> = {
   "veryfront/agent": {
-    functions: { agent: { configType: "AgentConfig" } },
-    methods: { Agent: "Agent instance" },
-    expandTypes: ["AgentConfig", "MemoryConfig", "EdgeConfig"],
+    functions: {
+      agent: { configType: "AgentConfig" },
+      createHostedRunEventWriterCapability: {},
+    },
+    methods: {
+      Agent: "Agent instance",
+      HostedRunEventWriterCapability: "Exact-run event-writer authority",
+    },
+    expandTypes: [
+      "AgentConfig",
+      "MemoryConfig",
+      "EdgeConfig",
+      "ParsedHostedChatRequest",
+      "PrepareHostedConversationRootRunContextInput",
+      "HostedDurableChildForkRunContextInput",
+      "ExecuteHostedChildForkWithPreparedToolsInput",
+      "ExecuteHostedDurableChildForkInput",
+      "DefaultHostedInvokeAgentToolOptions",
+      "HostedDurableRunStartExecutionInput",
+      "HostedAgentServiceDetachedExecutionInput",
+    ],
   },
   "veryfront/tool": {
     functions: { tool: { configType: "ToolConfig" } },
@@ -1672,6 +1602,7 @@ const API_DOCS: Record<string, APIDocs> = {
     expandTypes: [
       "CorsOptions",
       "RateLimitOptions",
+      "MemoryRateLimitStoreOptions",
       "LoggerOptions",
       "TimeoutOptions",
     ],
@@ -2054,7 +1985,7 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
     description: "Resource description",
     pattern: "URI template pattern for parameterized resources",
     mimeType: "Content MIME type",
-    paramsSchema: "Zod schema for URI parameters",
+    paramsSchema: "Schema that validates and transforms URI parameters",
     load: "Function returning resource content",
     subscribe: "Async iterable for real-time resource updates",
     handler: "Function returning resource content",
@@ -2459,6 +2390,11 @@ function generateMD(
     lines.push("");
   }
 
+  if (jsdoc.remarks) {
+    lines.push(jsdoc.remarks);
+    lines.push("");
+  }
+
   // Import snippet: use curated priority list
   const priorityNames = IMPORT_PRIORITY[entry.importPath];
   const allExportNames = new Set([
@@ -2553,7 +2489,11 @@ function generateMD(
       lines.push("| Name | Description | Source |");
       lines.push("|------|-------------|--------|");
       for (const e of items) {
-        lines.push(`| \`${e.name}\` | ${e.description} | ${sourceCell(e)} |`);
+        lines.push(
+          `| \`${e.name}\` | ${escapeMarkdownTableCell(e.description)} | ${
+            sourceCell(e)
+          } |`,
+        );
       }
       lines.push("");
     }
@@ -2572,6 +2512,10 @@ function generateMD(
       lines.push("");
       if (di.jsdoc.description) {
         lines.push(di.jsdoc.description);
+        lines.push("");
+      }
+      if (di.jsdoc.remarks) {
+        lines.push(di.jsdoc.remarks);
         lines.push("");
       }
       lines.push("```ts");
@@ -2603,9 +2547,9 @@ function generateMD(
         lines.push("|------|-------------|--------|");
         for (const item of items) {
           lines.push(
-            `| \`${item.name}\` | ${item.description || ""} | ${
-              sourceCell(item)
-            } |`,
+            `| \`${item.name}\` | ${
+              escapeMarkdownTableCell(item.description)
+            } | ${sourceCell(item)} |`,
           );
         }
         lines.push("");
@@ -2636,6 +2580,10 @@ function pickDeepImportSample(
 
 function sourceCell(summary: ExportSummary): string {
   return summary.sourceHref ? `[source](${summary.sourceHref})` : "";
+}
+
+function escapeMarkdownTableCell(value: string): string {
+  return value.replaceAll("|", "\\|");
 }
 
 // ---------------------------------------------------------------------------
@@ -2720,6 +2668,7 @@ async function main() {
     documented: 0,
     missing: 0,
   };
+  const generatedPaths: string[] = [];
 
   for (const [idx, group] of groups.entries()) {
     const entry = group.parent;
@@ -2743,6 +2692,7 @@ async function main() {
       jsdoc = {
         description: entry.syntheticDescription ?? "",
         moduleName: entry.importPath,
+        remarks: "",
         examples: [],
       };
     } else {
@@ -2752,7 +2702,7 @@ async function main() {
         jsdoc = parseBarrelJSDoc(content);
       } catch (err) {
         console.warn(`  Could not read ${entry.filePath}: ${err}`);
-        jsdoc = { description: "", moduleName: "", examples: [] };
+        jsdoc = { description: "", moduleName: "", remarks: "", examples: [] };
       }
       nodes = await getDenoDoc(entry.filePath);
       addSourceDocStats(sourceDocStats, summarizeSourceDocs(nodes));
@@ -2769,7 +2719,12 @@ async function main() {
         const content = await Deno.readTextFile(absFilePath);
         deepJsdoc = parseBarrelJSDoc(content);
       } catch {
-        deepJsdoc = { description: "", moduleName: "", examples: [] };
+        deepJsdoc = {
+          description: "",
+          moduleName: "",
+          remarks: "",
+          examples: [],
+        };
       }
       const deepNodes = await getDenoDoc(deep.filePath);
       addSourceDocStats(sourceDocStats, summarizeSourceDocs(deepNodes));
@@ -2783,6 +2738,7 @@ async function main() {
     );
     const outPath = `${VERYFRONT_DIR}/${entry.slug}.md`;
     await Deno.writeTextFile(outPath, md);
+    generatedPaths.push(outPath);
     console.log(`  Wrote ${outPath}`);
   }
 
@@ -2790,6 +2746,7 @@ async function main() {
   const indexMD = normalizeGeneratedMarkdown(generateReadmeMD(indexData));
   const indexPath = `${OUTPUT_DIR}/index.md`;
   await Deno.writeTextFile(indexPath, indexMD);
+  generatedPaths.push(indexPath);
   try {
     await Deno.remove(`${OUTPUT_DIR}/overview.md`);
   } catch (err) {
@@ -2800,6 +2757,7 @@ async function main() {
   } catch (err) {
     if (!(err instanceof Deno.errors.NotFound)) throw err;
   }
+  await formatGeneratedMarkdown(generatedPaths);
   console.log(`\nWrote ${indexPath}`);
   console.log(`Generated ${groups.length} MD files in ${VERYFRONT_DIR}`);
   console.log(
@@ -2807,8 +2765,95 @@ async function main() {
   );
 }
 
-main();
+let referenceIsCurrent = true;
+try {
+  await main();
+  if (CHECK_MODE) referenceIsCurrent = await checkCommittedReference();
+} finally {
+  // The check output is disposable even when generation or comparison fails.
+  // Keeping cleanup around the complete operation avoids leaking a large
+  // generated tree after a failed `deno doc` or formatter subprocess.
+  if (CHECK_MODE) await Deno.remove(OUTPUT_DIR, { recursive: true });
+}
+if (!referenceIsCurrent) Deno.exit(1);
 
 function normalizeGeneratedMarkdown(markdown: string): string {
   return markdown.replace(/[\u2013\u2014]/g, "-");
+}
+
+/** List generated reference files (relative paths) under a reference root. */
+async function listReferenceFiles(dir: string): Promise<string[]> {
+  const paths: string[] = [];
+  try {
+    await Deno.stat(`${dir}/index.md`);
+    paths.push("index.md");
+  } catch (err) {
+    if (!(err instanceof Deno.errors.NotFound)) throw err;
+  }
+  try {
+    for await (const entry of Deno.readDir(`${dir}/veryfront`)) {
+      if (entry.isFile && entry.name.endsWith(".md")) {
+        paths.push(`veryfront/${entry.name}`);
+      }
+    }
+  } catch (err) {
+    if (!(err instanceof Deno.errors.NotFound)) throw err;
+  }
+  paths.sort();
+  return paths;
+}
+
+/**
+ * Compare the freshly generated reference (in the temp OUTPUT_DIR) against the
+ * committed tree. Returns true when the committed tree is current; otherwise
+ * prints the drifted files and returns false so the caller can exit non-zero
+ * after cleaning up the temp directory.
+ */
+async function checkCommittedReference(): Promise<boolean> {
+  const generated = await listReferenceFiles(OUTPUT_DIR);
+  const committed = await listReferenceFiles(COMMITTED_DIR);
+
+  const missing = generated.filter((path) => !committed.includes(path));
+  const stale = committed.filter((path) => !generated.includes(path));
+  const changed: string[] = [];
+  for (const path of generated) {
+    if (!committed.includes(path)) continue;
+    const [expected, actual] = await Promise.all([
+      Deno.readTextFile(`${OUTPUT_DIR}/${path}`),
+      Deno.readTextFile(`${COMMITTED_DIR}/${path}`),
+    ]);
+    if (expected !== actual) changed.push(path);
+  }
+
+  if (missing.length === 0 && stale.length === 0 && changed.length === 0) {
+    console.log(
+      `\n${COMMITTED_DIR} is current (${generated.length} files).`,
+    );
+    return true;
+  }
+
+  console.error(`\n${COMMITTED_DIR} is stale:`);
+  for (const path of missing) console.error(`  missing:  ${path}`);
+  for (const path of stale) console.error(`  stale:    ${path}`);
+  for (const path of changed) console.error(`  outdated: ${path}`);
+  console.error(
+    "Run `deno task docs` and commit the result to update the generated API reference.",
+  );
+  return false;
+}
+
+async function formatGeneratedMarkdown(paths: string[]): Promise<void> {
+  const result = await new Deno.Command(Deno.execPath(), {
+    args: ["fmt", `--config=${ROOT}/deno.json`, ...paths],
+    stdout: "null",
+    stderr: "piped",
+  }).output();
+  if (result.code === 0) return;
+
+  const stderr = new TextDecoder().decode(result.stderr).trim();
+  throw new Error(
+    `Failed to format generated API reference Markdown (exit ${result.code})${
+      stderr ? `: ${stderr}` : ""
+    }`,
+  );
 }

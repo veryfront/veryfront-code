@@ -1,6 +1,15 @@
-import { assertEquals, assertStringIncludes, assertThrows } from "#std/assert";
+import {
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
-import { createDntExtensionEntryPoints } from "./build-npm-extension-packages.ts";
+import {
+  assertPackageEntryPointsExist,
+  createDntExtensionEntryPoints,
+  extensionPackageEntryPointPaths,
+} from "./build-npm-extension-packages.ts";
 import {
   bareImportPackageNames,
   createExtensionPackageSpec,
@@ -61,6 +70,31 @@ describe("manifestDependencies", () => {
     assertEquals(manifestDependencies(manifest), { sharp: "0.35.3" });
   });
 
+  it("pins SQLite to a release that ships prebuilt binaries", async () => {
+    const manifest = JSON.parse(
+      await Deno.readTextFile("extensions/ext-db-sqlite/deno.json"),
+    ) as ExtensionManifest;
+
+    assertEquals(manifestDependencies(manifest)["better-sqlite3"], "13.0.3");
+  });
+
+  it("rejects native dependencies pinned below their prebuilt-binary floor", () => {
+    const manifest: ExtensionManifest = {
+      name: "@veryfront/ext-db-sqlite",
+      exports: "./src/index.ts",
+      veryfront: { extension: true },
+      imports: {
+        "better-sqlite3": "npm:better-sqlite3@9.6.0",
+      },
+    };
+
+    assertThrows(
+      () => manifestDependencies(manifest),
+      Error,
+      "better-sqlite3@9.6.0 predates 13.0.0",
+    );
+  });
+
   it("pins bash-tool's required AI SDK peer in the sandbox extension", async () => {
     const manifest = JSON.parse(
       await Deno.readTextFile(
@@ -109,6 +143,37 @@ describe("manifestDependencies", () => {
 });
 
 describe("createExtensionPackageSpec", () => {
+  it("publishes local first-party extension imports as same-release dependencies", () => {
+    const manifest: ExtensionManifest = {
+      name: "@veryfront/ext-bundler-swc",
+      exports: "./src/index.ts",
+      veryfront: { extension: true },
+      imports: {
+        "@veryfront/ext-bundler-esbuild":
+          "../ext-bundler-esbuild/src/index.ts",
+      },
+    };
+
+    const spec = createExtensionPackageSpec({
+      manifestPath: "extensions/ext-bundler-swc/deno.json",
+      manifest,
+      rootConfig,
+      rootDir: "/repo",
+      version: "0.1.985",
+      license: "Apache-2.0",
+    });
+
+    assertEquals(spec.packageJson.dependencies, {
+      "@veryfront/ext-bundler-esbuild": "0.1.985",
+    });
+    assertEquals(
+      spec.dntMappings[
+        "file:///repo/extensions/ext-bundler-esbuild/src/index.ts"
+      ],
+      { name: "@veryfront/ext-bundler-esbuild", version: "0.1.985" },
+    );
+  });
+
   it("externalizes every public Veryfront contract consumed by Redis", async () => {
     const [manifest, actualRootConfig] = await Promise.all([
       Deno.readTextFile("extensions/ext-redis/deno.json").then((source) =>
@@ -622,6 +687,70 @@ describe("createDntExtensionEntryPoints", () => {
         { name: "./deno", path: "/repo/extensions/ext-alpha/src/deno.ts" },
       ],
     );
+  });
+});
+
+describe("generated extension package entry points", () => {
+  it("collects every file from nested and conditional package exports", () => {
+    assertEquals(
+      extensionPackageEntryPointPaths({
+        main: "./esm/index.js",
+        module: "./esm/index.js",
+        types: "./esm/index.d.ts",
+        exports: {
+          ".": {
+            import: {
+              types: "./esm/src/index.d.ts",
+              default: "./esm/src/index.js",
+            },
+          },
+          "./node": [null, { import: "./esm/node.js" }],
+        },
+      }),
+      [
+        "./esm/index.d.ts",
+        "./esm/index.js",
+        "./esm/node.js",
+        "./esm/src/index.d.ts",
+        "./esm/src/index.js",
+      ],
+    );
+  });
+
+  it("rejects a package whose declared public entry point was not emitted", async () => {
+    const outDir = await Deno.makeTempDir();
+    try {
+      await Deno.mkdir(`${outDir}/esm/src`, { recursive: true });
+      await Deno.writeTextFile(`${outDir}/esm/src/index.js`, "export {};\n");
+
+      await assertPackageEntryPointsExist({
+        outDir,
+        packageName: "@veryfront/ext-example",
+        packageJson: {
+          exports: { ".": { import: "./esm/src/index.js" } },
+        },
+      });
+
+      await assertRejects(
+        () =>
+          assertPackageEntryPointsExist({
+            outDir,
+            packageName: "@veryfront/ext-example",
+            packageJson: {
+              exports: {
+                ".": {
+                  import: "./esm/src/index.js",
+                  types: "./esm/src/index.d.ts",
+                },
+              },
+            },
+          }),
+        Error,
+        "@veryfront/ext-example package entry point ./esm/src/index.d.ts was not emitted",
+      );
+    } finally {
+      await Deno.remove(outDir, { recursive: true });
+    }
   });
 });
 

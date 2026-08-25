@@ -5,6 +5,7 @@
 import { join } from "#veryfront/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { getFrameworkRootFromMeta } from "#veryfront/platform/compat/vfs-paths.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
@@ -12,6 +13,15 @@ import { isCompiledBinary } from "#veryfront/utils/platform.ts";
 import { fnv1aHash, hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 
 export const LOG_PREFIX = "[SSR-VF-MODULES]";
+
+// Framework transforms can run after project code has modified shared
+// prototypes. Quote each primitive directly with the captured intrinsic so an
+// inherited Array.prototype.toJSON cannot collapse otherwise distinct keys.
+const JSONStringify = JSON.stringify;
+
+function quoteCacheIdentityPart(value: string): string {
+  return JSONStringify(value);
+}
 
 // Extensions to try when resolving framework files
 export const EXTENSIONS = [".tsx", ".ts", ".jsx", ".js"];
@@ -73,11 +83,20 @@ export function buildFrameworkTransformCacheKey(
   reactVersion: string,
   projectDir: string,
   sourceContent: string,
+  importMapFingerprint?: string,
 ): string {
   const contentFingerprint = `${sourceContent.length}:${hashCodeHex(sourceContent)}:${
     fnv1aHash(sourceContent)
   }`;
-  return JSON.stringify([projectDir, reactVersion, identifier, contentFingerprint]);
+  const projectPart = quoteCacheIdentityPart(projectDir);
+  const reactPart = quoteCacheIdentityPart(reactVersion);
+  const identifierPart = quoteCacheIdentityPart(identifier);
+  const contentPart = quoteCacheIdentityPart(contentFingerprint);
+  if (importMapFingerprint === undefined) {
+    return `[${projectPart},${reactPart},${identifierPart},${contentPart}]`;
+  }
+  const importMapPart = quoteCacheIdentityPart(importMapFingerprint);
+  return `[${projectPart},${reactPart},${importMapPart},${identifierPart},${contentPart}]`;
 }
 
 // Maximum entries for the per-process framework transform caches.
@@ -114,6 +133,9 @@ export interface TransformContext {
   reactVersion: string;
   projectDir: string;
   fs: ReturnType<typeof createFileSystem>;
+  abortSignal?: AbortSignal;
+  importMap?: ImportMapConfig;
+  importMapFingerprint?: string;
   onProgress?: TransformProgressListener;
   /** Transform keys already visited by the current recursive traversal. */
   transformAncestry?: ReadonlySet<string>;

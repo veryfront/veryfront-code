@@ -20,6 +20,7 @@ const DEFAULT_MAX_ENVELOPE_FUTURE_MS = 5_000;
 const INTEGRITY_SECRET_ENV_VAR = "VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET";
 const EVENT_SIGNATURE_DOMAIN = "vf-proxy-routing-invalidation:event:v1";
 const ACK_SIGNATURE_DOMAIN = "vf-proxy-routing-invalidation:ack:v1";
+const reflectApply = Reflect.apply;
 
 type RedisListener = (message: string, channel: string) => void;
 type SignatureDomain = "event" | "ack";
@@ -79,6 +80,18 @@ function encodedByteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }
 
+function observeRedisReady(
+  client: RoutingInvalidationRedisClient,
+  listener: () => void,
+): void {
+  if (!client.on) return;
+  try {
+    reflectApply(client.on, client, ["ready", listener]);
+  } catch {
+    // Injected clients only guarantee support for error listeners.
+  }
+}
+
 function parseSignedEnvelope(message: string): SignedRoutingInvalidationEnvelope | null {
   if (encodedByteLength(message) > MAX_SIGNED_ENVELOPE_BYTES) return null;
   let parsed: unknown;
@@ -88,7 +101,7 @@ function parseSignedEnvelope(message: string): SignedRoutingInvalidationEnvelope
     return null;
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-  const envelope = parsed as Record<string, unknown>;
+  const envelope = parsed as Partial<SignedRoutingInvalidationEnvelope>;
   if (
     envelope.version !== 1 ||
     typeof envelope.issuedAtMs !== "number" ||
@@ -102,7 +115,7 @@ function parseSignedEnvelope(message: string): SignedRoutingInvalidationEnvelope
   ) {
     return null;
   }
-  return envelope as unknown as SignedRoutingInvalidationEnvelope;
+  return envelope as SignedRoutingInvalidationEnvelope;
 }
 
 function signatureDomainPrefix(domain: SignatureDomain): string {
@@ -223,7 +236,7 @@ function parseEvent(message: string): ProxyRoutingInvalidationEvent | null {
     return null;
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-  const event = parsed as Record<string, unknown>;
+  const event = parsed as Partial<ProxyRoutingInvalidationEvent>;
   if (
     event.version !== 1 ||
     typeof event.eventId !== "string" || !event.eventId ||
@@ -236,7 +249,7 @@ function parseEvent(message: string): ProxyRoutingInvalidationEvent | null {
   ) {
     return null;
   }
-  return event as unknown as ProxyRoutingInvalidationEvent;
+  return event as ProxyRoutingInvalidationEvent;
 }
 
 function parseAcknowledgement(message: string): RoutingInvalidationAcknowledgement | null {
@@ -248,14 +261,14 @@ function parseAcknowledgement(message: string): RoutingInvalidationAcknowledgeme
     return null;
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-  const acknowledgement = parsed as Record<string, unknown>;
+  const acknowledgement = parsed as Partial<RoutingInvalidationAcknowledgement>;
   if (
     typeof acknowledgement.eventId !== "string" || !acknowledgement.eventId ||
     typeof acknowledgement.replicaId !== "string" || !acknowledgement.replicaId
   ) {
     return null;
   }
-  return acknowledgement as unknown as RoutingInvalidationAcknowledgement;
+  return acknowledgement as RoutingInvalidationAcknowledgement;
 }
 
 async function createDefaultClient(redisUrl: string): Promise<RoutingInvalidationRedisClient> {
@@ -285,6 +298,12 @@ async function closeClient(
       error: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+function isExpectedSocketRecycle(error: unknown): error is Error {
+  return error instanceof Error &&
+    error.constructor.name === "SocketClosedUnexpectedlyError" &&
+    error.message === "Socket closed unexpectedly";
 }
 
 export async function startProxyRoutingInvalidationBus(
@@ -391,14 +410,42 @@ export async function startProxyRoutingInvalidationBus(
     return processing;
   };
 
-  const logRedisError = (error: unknown) => {
-    options.logger?.error(
-      "Proxy routing invalidation Redis error",
-      error instanceof Error ? error : new Error(String(error)),
-    );
+  const observeRedisClient = (
+    client: RoutingInvalidationRedisClient,
+    clientRole: "publisher" | "subscriber",
+  ): void => {
+    let hasBeenReady = false;
+    let recoveryPending = false;
+
+    observeRedisReady(client, () => {
+      if (hasBeenReady && recoveryPending) {
+        options.logger?.info(
+          clientRole === "subscriber"
+            ? "Proxy routing invalidation Redis subscriber reconnected and resubscribed"
+            : "Proxy routing invalidation Redis publisher reconnected",
+          { clientRole },
+        );
+      }
+      hasBeenReady = true;
+      recoveryPending = false;
+    });
+    client.on?.("error", (error) => {
+      recoveryPending ||= hasBeenReady;
+      if (hasBeenReady && isExpectedSocketRecycle(error)) {
+        options.logger?.warn(
+          "Proxy routing invalidation Redis socket closed; reconnecting",
+          { clientRole },
+        );
+        return;
+      }
+      options.logger?.error(
+        "Proxy routing invalidation Redis error",
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    });
   };
-  publishClient.on?.("error", logRedisError);
-  subscribeClient.on?.("error", logRedisError);
+  observeRedisClient(publishClient, "publisher");
+  observeRedisClient(subscribeClient, "subscriber");
 
   try {
     await Promise.all([publishClient.connect(), subscribeClient.connect()]);

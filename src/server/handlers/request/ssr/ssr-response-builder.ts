@@ -13,8 +13,9 @@ import { getContentType } from "../../utils/content-types.ts";
 import type { SSRRenderResult } from "../../../services/rendering/ssr.service.ts";
 import { ErrorPages } from "../../../utils/error-html.ts";
 import type { ResponseBuilder } from "#veryfront/security/http/response/builder.ts";
-import { addNonceToHtmlStream, addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
+import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
 import { serverLogger } from "#veryfront/utils";
+import { appendDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
 
 const logger = serverLogger.component("ssr-response-builder");
 
@@ -45,16 +46,17 @@ export async function buildSSRResponse(
 
   // Streaming response path
   if (result.isStreaming && result.stream) {
-    const response = builder
+    const responseBuilder = builder
       .withCORS(req, ctx.securityConfig?.cors)
       .withSecurity(ctx.securityConfig ?? undefined, req)
       .withClientHints()
-      .withCache(result.cacheStrategy)
-      .withContentType(
-        getContentType(".html"),
-        addNonceToHtmlStream(result.stream, builder.nonce),
-        result.status,
-      );
+      .withCache(result.cacheStrategy);
+    appendDataResponseMetadata(responseBuilder.headers, result);
+    const response = responseBuilder.withContentType(
+      getContentType(".html"),
+      result.stream,
+      result.status,
+    );
 
     if (!isHeadRequest) return response;
 
@@ -64,20 +66,29 @@ export async function buildSSRResponse(
 
   // ETag match → 304 Not Modified (production only)
   if (!isDev && !builder.nonce && result.etag && hasMatchingEtag(req, result.etag)) {
-    return builder
+    const responseBuilder = builder
       .withCORS(req, ctx.securityConfig?.cors)
       .withSecurity(ctx.securityConfig ?? undefined, req)
-      .withCache(result.cacheStrategy)
-      .notModified(result.etag);
+      .withCache(result.cacheStrategy);
+    appendDataResponseMetadata(responseBuilder.headers, result);
+    return responseBuilder.notModified(result.etag);
   }
 
   // Buffered response path
-  const content = typeof result.html === "string"
+  const renderedContent = typeof result.html === "string"
     ? result.html
     : typeof result.stream === "string"
     ? result.stream
-    : ErrorPages.serverError();
-  const html = addNonceToHtmlTags(content, builder.nonce);
+    : undefined;
+  // Rendered application HTML already contains nonces on framework-owned
+  // tags. Never bless arbitrary application markup at the response boundary.
+  // The fallback error document is framework-owned, so its fixed inline tags
+  // can receive the response nonce safely.
+  const html = renderedContent === undefined
+    ? addNonceToHtmlTags(ErrorPages.serverError(), builder.nonce)
+    : result.htmlProvenance === "framework"
+    ? addNonceToHtmlTags(renderedContent, builder.nonce)
+    : renderedContent;
   const body = isHeadRequest ? null : html;
 
   let response = builder
@@ -87,6 +98,7 @@ export async function buildSSRResponse(
 
   if (!result.isStreaming) response = response.withClientHints();
   if (result.etag) response = response.withETag(result.etag);
+  appendDataResponseMetadata(response.headers, result);
 
   const finalResponse = response.withContentType(
     getContentType(".html"),

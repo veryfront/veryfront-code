@@ -20,6 +20,36 @@ describe("ssr-vf-modules/specifier-resolver", () => {
     assertEquals(resolveSpecifier("../missing.js"), null);
   });
 
+  it("falls through to the single-instance React bundle for bare React specifiers", () => {
+    const resolveSpecifier = createFrameworkSpecifierResolver({
+      denoConfigStubUrl: "file:///cache/deno-config.mjs",
+      veryfrontReplacements: new Map(),
+      relativeReplacements: new Map(),
+      reactVersion: "19.2.4",
+    });
+
+    assertStringIncludes(
+      resolveSpecifier("react") ?? "",
+      "https://esm.sh/react@19.2.4?",
+      "bare react must resolve to the shared esm.sh bundle, not stay a bare specifier",
+    );
+    assertStringIncludes(
+      resolveSpecifier("react-dom/client") ?? "",
+      "https://esm.sh/react-dom@19.2.4/client?external=react",
+      "react-dom subpaths must keep react external so a single React instance is shared",
+    );
+    assertStringIncludes(
+      resolveSpecifier("react/jsx-runtime") ?? "",
+      "https://esm.sh/react@19.2.4/jsx-runtime?external=react",
+      "the JSX runtime must resolve against the same React version",
+    );
+    assertEquals(
+      resolveSpecifier("lodash"),
+      null,
+      "non-React bare specifiers are left for the caller to resolve",
+    );
+  });
+
   it("resolves React specifiers through the shared React import map fallback", () => {
     assertEquals(resolveReactSpecifier("react", "19.2.4"), buildReactUrl("react", "19.2.4"));
     assertEquals(

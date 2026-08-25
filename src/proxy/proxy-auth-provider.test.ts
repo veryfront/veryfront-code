@@ -5,10 +5,7 @@ import { register, reset, resolve, tryResolve } from "../extensions/contracts.ts
 import { createAuthProvider } from "../../extensions/ext-auth-jwt/src/index.ts";
 import type { AuthProvider } from "../extensions/auth/index.ts";
 
-describe("Proxy AuthProvider contract registration", {
-  sanitizeOps: false,
-  sanitizeResources: false,
-}, () => {
+describe("Proxy AuthProvider contract registration", () => {
   it("ext-auth-jwt registers a valid AuthProvider", () => {
     reset();
     const provider = createAuthProvider({});

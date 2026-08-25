@@ -8,11 +8,18 @@
 import { computeHash } from "#veryfront/utils";
 import { VERSION } from "#veryfront/utils/version.ts";
 import {
+  primordialArrayJoin as arrayJoin,
+  primordialArrayPush as arrayPush,
+} from "#veryfront/platform/compat/primordials/array.ts";
+import {
   CSSTYPE_VERSION,
   DEFAULT_REACT_VERSION,
   TAILWIND_VERSION,
 } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import { buildDependencyPinningCacheVariant } from "./keys/dependency-pinning.ts";
+
+const JSONStringify = JSON.stringify;
+const ObjectCreate = Object.create;
 
 /**
  * Configuration that affects transform output.
@@ -48,21 +55,24 @@ export function computeConfigHash(config: TransformConfig): Promise<string> {
     config.dependencyPinningCacheKey,
     config.moduleServerOrigin,
   );
-  const normalized = {
-    transformVersion: VERSION,
-    reactVersion: config.reactVersion ?? DEFAULT_REACT_VERSION,
-    jsxImportSource: config.jsxImportSource ?? "react",
-    moduleServerUrl: config.moduleServerUrl ?? null,
-    vendorBundleHash: config.vendorBundleHash ?? null,
-    apiBaseUrl: config.apiBaseUrl ?? null,
-    studioEmbed: config.studioEmbed ?? false,
-    dev: config.dev ?? false,
-    ...(dependencyPinningCacheVariant ? { dependencyPinningCacheVariant } : {}),
-    csstype: CSSTYPE_VERSION,
-    tailwind: TAILWIND_VERSION,
-  };
+  // Null-prototype storage preserves the existing JSON cache-key format while
+  // preventing project code from injecting an inherited toJSON hook.
+  const normalized = ObjectCreate(null) as Record<string, string | boolean | null>;
+  normalized.transformVersion = VERSION;
+  normalized.reactVersion = config.reactVersion ?? DEFAULT_REACT_VERSION;
+  normalized.jsxImportSource = config.jsxImportSource ?? "react";
+  normalized.moduleServerUrl = config.moduleServerUrl ?? null;
+  normalized.vendorBundleHash = config.vendorBundleHash ?? null;
+  normalized.apiBaseUrl = config.apiBaseUrl ?? null;
+  normalized.studioEmbed = config.studioEmbed ?? false;
+  normalized.dev = config.dev ?? false;
+  if (dependencyPinningCacheVariant) {
+    normalized.dependencyPinningCacheVariant = dependencyPinningCacheVariant;
+  }
+  normalized.csstype = CSSTYPE_VERSION;
+  normalized.tailwind = TAILWIND_VERSION;
 
-  return computeHash(JSON.stringify(normalized));
+  return computeHash(JSONStringify(normalized));
 }
 
 /**
@@ -71,25 +81,27 @@ export function computeConfigHash(config: TransformConfig): Promise<string> {
  * Use this when you need a config hash but can't afford async overhead.
  */
 export function computeConfigHashSync(config: TransformConfig): string {
-  const parts = [
-    `v${VERSION}`,
-    config.reactVersion ?? DEFAULT_REACT_VERSION,
-    config.jsxImportSource ?? "react",
-    encodeConfigPart("modules", config.moduleServerUrl),
-    encodeConfigPart("vendor", config.vendorBundleHash),
-    encodeConfigPart("api", config.apiBaseUrl),
-    config.studioEmbed ? "studio" : "",
-    config.dev ? "dev" : "",
-  ].filter(Boolean);
+  const parts: string[] = [];
+  arrayPush(parts, `v${VERSION}`);
+  arrayPush(parts, config.reactVersion ?? DEFAULT_REACT_VERSION);
+  arrayPush(parts, config.jsxImportSource ?? "react");
+  const moduleServerUrlPart = encodeConfigPart("modules", config.moduleServerUrl);
+  if (moduleServerUrlPart) arrayPush(parts, moduleServerUrlPart);
+  const vendorBundleHashPart = encodeConfigPart("vendor", config.vendorBundleHash);
+  if (vendorBundleHashPart) arrayPush(parts, vendorBundleHashPart);
+  const apiBaseUrlPart = encodeConfigPart("api", config.apiBaseUrl);
+  if (apiBaseUrlPart) arrayPush(parts, apiBaseUrlPart);
+  if (config.studioEmbed) arrayPush(parts, "studio");
+  if (config.dev) arrayPush(parts, "dev");
   const dependencyPinningCacheVariant = buildDependencyPinningCacheVariant(
     config.dependencyPinningCacheKey,
     config.moduleServerOrigin,
   );
   if (dependencyPinningCacheVariant) {
-    parts.push(`pins:${dependencyPinningCacheVariant}`);
+    arrayPush(parts, `pins:${dependencyPinningCacheVariant}`);
   }
 
-  return parts.join(":");
+  return arrayJoin(parts, ":");
 }
 
 function encodeConfigPart(label: string, value: string | undefined): string {

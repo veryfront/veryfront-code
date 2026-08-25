@@ -45,6 +45,9 @@ export {
   isApiCacheAvailable,
   isDiskCacheConfigured,
   isDistributedBackend,
+  isLocalDevDiskCacheEnabled,
+  isPersistentLocalCacheEnabled,
+  localDevCodeCacheBackend,
 } from "./factory.ts";
 
 // Gateway re-exports

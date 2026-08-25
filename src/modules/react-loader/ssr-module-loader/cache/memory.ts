@@ -15,9 +15,10 @@
 
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { isKeyForProject, registerMapCache } from "#veryfront/cache/keys.ts";
+import { decodeCacheKeySegment } from "#veryfront/cache/keys/segment-codec.ts";
 import type { CacheStatsSource } from "#veryfront/cache/registry.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
-import { rendererLogger } from "#veryfront/utils";
+import { rendererLogger, throwIfAborted } from "#veryfront/utils";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import {
   getMaxConcurrentTransforms,
@@ -79,7 +80,10 @@ const projectTransformCounts = new Map<string, number>();
 
 type ProjectTransformWaiter = {
   resolve: (acquired: boolean) => void;
+  reject: (reason?: unknown) => void;
   timeoutId: ReturnType<typeof setTimeout>;
+  signal?: AbortSignal;
+  onAbort?: () => void;
 };
 
 const projectTransformWaiters = new Map<string, ProjectTransformWaiter[]>();
@@ -143,7 +147,24 @@ function settleProjectTransformWaiter(
 ): void {
   removeProjectTransformWaiter(projectId, waiter);
   clearTimeout(waiter.timeoutId);
+  if (waiter.signal && waiter.onAbort) {
+    waiter.signal.removeEventListener("abort", waiter.onAbort);
+  }
   waiter.resolve(acquired);
+}
+
+function abortProjectTransformWaiter(
+  projectId: string,
+  waiter: ProjectTransformWaiter,
+): void {
+  removeProjectTransformWaiter(projectId, waiter);
+  clearTimeout(waiter.timeoutId);
+  if (waiter.signal && waiter.onAbort) {
+    waiter.signal.removeEventListener("abort", waiter.onAbort);
+  }
+  waiter.reject(
+    waiter.signal?.reason ?? new DOMException("The operation was aborted", "AbortError"),
+  );
 }
 
 function wakeNextProjectTransformWaiter(projectId: string): void {
@@ -161,8 +182,7 @@ function wakeNextProjectTransformWaiter(projectId: string): void {
   if (!waiter) return;
 
   projectTransformCounts.set(projectId, current + 1);
-  clearTimeout(waiter.timeoutId);
-  waiter.resolve(true);
+  settleProjectTransformWaiter(projectId, waiter, true);
 }
 
 function rejectProjectTransformWaiters(projectId: string): void {
@@ -171,8 +191,7 @@ function rejectProjectTransformWaiters(projectId: string): void {
 
   projectTransformWaiters.delete(projectId);
   for (const waiter of queue) {
-    clearTimeout(waiter.timeoutId);
-    waiter.resolve(false);
+    settleProjectTransformWaiter(projectId, waiter, false);
   }
 }
 
@@ -184,31 +203,41 @@ function rejectAllProjectTransformWaiters(): void {
 /**
  * Try to acquire a project-level transform slot with retries.
  * Waits up to timeoutMs for a slot to become available.
- * Returns true if acquired, false if timed out.
+ * Returns true if acquired, false if timed out, and rejects with the abort
+ * reason when the caller's signal aborts while queued.
  */
 export async function tryAcquireTransformSlot(
   projectId: string,
   timeoutMs: number,
   bypass = false,
+  signal?: AbortSignal,
 ): Promise<boolean> {
+  throwIfAborted(signal);
   if (acquireTransformSlot(projectId, bypass)) return true;
   if (timeoutMs <= 0) return false;
 
-  return new Promise<boolean>((resolve) => {
+  return new Promise<boolean>((resolve, reject) => {
     const waiter: ProjectTransformWaiter = {
       resolve,
+      reject,
       timeoutId: setTimeout(() => {
         settleProjectTransformWaiter(projectId, waiter, false);
       }, timeoutMs),
+      signal,
     };
 
     const queue = projectTransformWaiters.get(projectId);
     if (queue) {
       queue.push(waiter);
-      return;
+    } else {
+      projectTransformWaiters.set(projectId, [waiter]);
     }
 
-    projectTransformWaiters.set(projectId, [waiter]);
+    if (signal) {
+      waiter.onAbort = () => abortProjectTransformWaiter(projectId, waiter);
+      signal.addEventListener("abort", waiter.onAbort, { once: true });
+      if (signal.aborted) waiter.onAbort();
+    }
   });
 }
 
@@ -291,6 +320,7 @@ registerMapCache("ssr-module-cache", createCacheRegistryWrapper(globalModuleCach
 registerMapCache(
   "ssr-cross-project-cache",
   createCacheRegistryWrapper(globalCrossProjectCache),
+  isCrossProjectCacheKeyForProject,
 );
 registerMapCache("ssr-tmp-dirs", createCacheRegistryWrapper(globalTmpDirs));
 registerMapCache("ssr-in-progress", globalInProgress);
@@ -320,6 +350,48 @@ export function clearSSRModuleCache(): void {
   });
 }
 
+/**
+ * Cross-project cache keys put the raw import specifier before a framed owner.
+ * Parse backward from the stable `:registry:` suffix so arbitrary delimiters
+ * in the specifier or opaque project id cannot change cache ownership.
+ */
+function parseCrossProjectCacheKeyOwner(
+  key: string,
+): { isCrossProjectKey: boolean; projectId?: string } {
+  const registryMarker = ":registry:";
+  const markerIndex = key.lastIndexOf(registryMarker);
+  if (markerIndex < 0) return { isCrossProjectKey: false };
+
+  const ownerMarker = ":owner:";
+  const ownerMarkerIndex = key.lastIndexOf(ownerMarker, markerIndex);
+  if (ownerMarkerIndex >= 0) {
+    const encodedOwner = key.slice(ownerMarkerIndex + ownerMarker.length, markerIndex);
+    if (!encodedOwner.includes(":")) {
+      return {
+        isCrossProjectKey: true,
+        projectId: decodeCacheKeySegment(encodedOwner) ?? undefined,
+      };
+    }
+  }
+
+  // Compatibility for cache entries built before owner segments were framed.
+  const baseKey = key.slice(0, markerIndex);
+  const reactVersionSeparator = baseKey.lastIndexOf(":");
+  if (reactVersionSeparator < 0) return { isCrossProjectKey: true };
+  const projectSeparator = baseKey.lastIndexOf(":", reactVersionSeparator - 1);
+  if (projectSeparator < 0) return { isCrossProjectKey: true };
+
+  return {
+    isCrossProjectKey: true,
+    projectId: baseKey.slice(projectSeparator + 1, reactVersionSeparator),
+  };
+}
+
+function isCrossProjectCacheKeyForProject(key: string, projectId: string): boolean {
+  const owner = parseCrossProjectCacheKeyOwner(key);
+  return owner.isCrossProjectKey ? owner.projectId === projectId : isKeyForProject(key, projectId);
+}
+
 export function clearSSRModuleCacheForProject(
   projectId: string,
   options: ClearSSRModuleCacheForProjectOptions = {},
@@ -335,7 +407,7 @@ export function clearSSRModuleCacheForProject(
   }
 
   for (const key of globalCrossProjectCache.keys()) {
-    if (!key.includes(projectId) && !isKeyForProject(key, projectId)) continue;
+    if (!isCrossProjectCacheKeyForProject(key, projectId)) continue;
     globalCrossProjectCache.delete(key);
   }
 

@@ -647,6 +647,20 @@ Deno.test("declarative config worker bounds active and queued evaluations", asyn
   assertEquals(terminationCount, 2);
 });
 
+/**
+ * A monotonic clock that never advances.
+ *
+ * The runner charges time spent inside `admissionController.acquire` against
+ * the caller deadline, so a short `timeoutMs` can be exhausted before the
+ * startup permit is taken. That path reports `worker-timeout` without ever
+ * counting the orphan, which is indistinguishable by reason from the timeout
+ * these tests do want. Freezing the clock keeps the deadline unspent until the
+ * evaluation itself owns it.
+ */
+function frozenClock(): () => number {
+  return () => 0;
+}
+
 Deno.test("declarative config worker bounds factories that never settle without retaining ordinary admission", async () => {
   const payload = await createPayload("export default { ready: true };");
   const admission = declarativeConfigWorkerRunnerInternals
@@ -667,6 +681,7 @@ Deno.test("declarative config worker bounds factories that never settle without 
       admission,
       5,
       startup,
+      frozenClock(),
     );
   const timeoutError = await assertRejects(
     () => first,
@@ -772,6 +787,7 @@ Deno.test("declarative config worker terminates a late factory result and recove
       admission,
       5,
       startup,
+      frozenClock(),
     );
   const timeoutError = await assertRejects(
     () => first,
@@ -1003,14 +1019,17 @@ Deno.test("declarative config worker releases admission after a stuck terminatio
   const payload = await createPayload("export default { ready: true };");
   const admission = declarativeConfigWorkerRunnerInternals
     .createAdmissionController(1, 0);
+  const abort = new AbortController();
   let terminationCount = 0;
 
   const first = declarativeConfigWorkerRunnerInternals
     .evaluateWithAdmissionController(
       payload,
-      { timeoutMs: 1 },
+      { signal: abort.signal, timeoutMs: 100 },
       async () => ({
-        postMessage() {},
+        postMessage() {
+          abort.abort();
+        },
         subscribe() {
           return () => {};
         },
@@ -1023,11 +1042,11 @@ Deno.test("declarative config worker releases admission after a stuck terminatio
       5,
     );
 
-  const timeoutError = await assertRejects(
+  const abortError = await assertRejects(
     () => first,
     DeclarativeConfigEvaluationError,
   ) as DeclarativeConfigEvaluationError;
-  assertEquals(timeoutError.reason, "worker-timeout");
+  assertEquals(abortError.reason, "worker-aborted");
   assertEquals(terminationCount, 1);
   await waitForAdmissionState(admission, { active: 0, queued: 0 });
 

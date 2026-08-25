@@ -6,12 +6,25 @@
  **************************/
 
 import { rendererLogger } from "#veryfront/utils";
-import { getArgs, getEnv, memoryUsage } from "#veryfront/platform/compat/process.ts";
+import {
+  getArgs,
+  getEnv,
+  getV8HeapSizeLimit,
+  memoryUsage,
+} from "#veryfront/platform/compat/process.ts";
 
 const logger = rendererLogger.component("memory-profiler");
 
-/** Fallback V8 heap limit when no --max-old-space-size flag is set (5 GB) */
-const DEFAULT_HEAP_LIMIT_MB = 5_120;
+/**
+ * V8's default old-space ceiling (2 GB on 64-bit) — the honest cap for any
+ * heap limit that cannot be verified against runtime heap statistics.
+ *
+ * The actual default heap_size_limit scales with available system memory
+ * (e.g. ~4 GB on large machines), so this floor is deliberately
+ * conservative: if it is ever wrong, pressure eviction fires earlier than
+ * strictly necessary, never later.
+ */
+const V8_DEFAULT_HEAP_LIMIT_MB = 2_048;
 
 /** Default interval for periodic memory snapshots (30 seconds) */
 export const DEFAULT_MEMORY_MONITORING_INTERVAL_MS = 30_000;
@@ -131,7 +144,10 @@ export function getHeapStats(): HeapStats {
 
   const usedHeapSizeMB = mem.heapUsed / (1024 * 1024);
   const totalHeapSizeMB = mem.heapTotal / (1024 * 1024);
-  const heapSizeLimitMB = getConfiguredHeapLimit();
+  const heapSizeLimitMB = resolveEffectiveHeapLimitMB({
+    runtimeHeapLimitMB: getRuntimeHeapLimitMB(),
+    configuredHeapLimitMB: getConfiguredHeapLimit(),
+  });
   const externalMemoryMB = mem.external / (1024 * 1024);
   const heapUsedPercent = (usedHeapSizeMB / heapSizeLimitMB) * 100;
 
@@ -145,7 +161,46 @@ export function getHeapStats(): HeapStats {
   };
 }
 
-function getConfiguredHeapLimit(): number {
+export interface EffectiveHeapLimitInput {
+  /** Real V8 `heap_size_limit` (MB) read from runtime heap statistics, when available. */
+  runtimeHeapLimitMB: number | undefined;
+  /** Limit (MB) parsed from CLI args / `DENO_V8_FLAGS` env strings — unverified. */
+  configuredHeapLimitMB: number | undefined;
+}
+
+/**
+ * Resolve the heap limit used for `heapUsedPercent` and memory-pressure
+ * thresholds.
+ *
+ * The runtime-reported limit always wins. Env/CLI strings like
+ * `DENO_V8_FLAGS` only describe a limit the runtime may silently ignore:
+ * `deno compile` binaries have shipped without applying `DENO_V8_FLAGS`,
+ * aborting at V8's ~2048MB default while the env string claimed 4096MB —
+ * which made pressure eviction mathematically unreachable
+ * (veryfront-issue-inbox#269). When the runtime limit cannot be read, an
+ * env-derived limit is therefore clamped to the V8 default so eviction
+ * still fires before the real ceiling.
+ */
+export function resolveEffectiveHeapLimitMB(input: EffectiveHeapLimitInput): number {
+  const { runtimeHeapLimitMB, configuredHeapLimitMB } = input;
+
+  if (runtimeHeapLimitMB !== undefined && runtimeHeapLimitMB > 0) {
+    return Math.round(runtimeHeapLimitMB * 100) / 100;
+  }
+
+  if (configuredHeapLimitMB !== undefined && configuredHeapLimitMB > 0) {
+    return Math.min(configuredHeapLimitMB, V8_DEFAULT_HEAP_LIMIT_MB);
+  }
+
+  return V8_DEFAULT_HEAP_LIMIT_MB;
+}
+
+function getRuntimeHeapLimitMB(): number | undefined {
+  const limitBytes = getV8HeapSizeLimit();
+  return limitBytes !== undefined ? limitBytes / (1024 * 1024) : undefined;
+}
+
+function getConfiguredHeapLimit(): number | undefined {
   const args = getArgs().join(" ");
 
   const v8FlagsMatch = args.match(/--max-old-space-size=(\d+)/);
@@ -158,7 +213,7 @@ function getConfiguredHeapLimit(): number {
   const v8MaxOldSpaceSize = parseInt(getEnv("V8_MAX_OLD_SPACE_SIZE") ?? "", 10);
   if (!Number.isNaN(v8MaxOldSpaceSize) && v8MaxOldSpaceSize > 0) return v8MaxOldSpaceSize;
 
-  return DEFAULT_HEAP_LIMIT_MB;
+  return undefined;
 }
 
 export function getCacheStats(): CacheStats[] {
@@ -398,7 +453,7 @@ export function setHeapWarningThreshold(threshold: number): void {
 
 /**
  * Memory pressure thresholds - should match pressure.ts defaults for consistency.
- * Uses same env vars: MEMORY_WARNING_THRESHOLD (default: 75), MEMORY_CRITICAL_THRESHOLD (default: 80)
+ * Uses same env vars: MEMORY_WARNING_THRESHOLD (default: 65), MEMORY_CRITICAL_THRESHOLD (default: 80)
  */
 function getMemoryThreshold(envVar: string, fallback: number): number {
   try {
@@ -415,8 +470,37 @@ function getMemoryThreshold(envVar: string, fallback: number): number {
   }
 }
 
-const PROFILER_WARNING_THRESHOLD = getMemoryThreshold("MEMORY_WARNING_THRESHOLD", 75);
-const PROFILER_CRITICAL_THRESHOLD = getMemoryThreshold("MEMORY_CRITICAL_THRESHOLD", 80);
+export const DEFAULT_PROFILER_WARNING_THRESHOLD = 65;
+export const DEFAULT_PROFILER_CRITICAL_THRESHOLD = 80;
+
+const PROFILER_WARNING_THRESHOLD = getMemoryThreshold(
+  "MEMORY_WARNING_THRESHOLD",
+  DEFAULT_PROFILER_WARNING_THRESHOLD,
+);
+const PROFILER_CRITICAL_THRESHOLD = getMemoryThreshold(
+  "MEMORY_CRITICAL_THRESHOLD",
+  DEFAULT_PROFILER_CRITICAL_THRESHOLD,
+);
+
+export interface MemoryPressureThresholds {
+  warning: number;
+  critical: number;
+}
+
+/** Pure threshold evaluation. Runtime env overrides are passed by `checkMemoryPressure`. */
+export function evaluateMemoryPressure(
+  heapUsedPercent: number,
+  thresholds: MemoryPressureThresholds = {
+    warning: DEFAULT_PROFILER_WARNING_THRESHOLD,
+    critical: DEFAULT_PROFILER_CRITICAL_THRESHOLD,
+  },
+): { critical: boolean; warning: boolean } {
+  const critical = heapUsedPercent >= thresholds.critical;
+  return {
+    critical,
+    warning: critical || heapUsedPercent >= thresholds.warning,
+  };
+}
 
 export function checkMemoryPressure(): {
   critical: boolean;
@@ -425,9 +509,10 @@ export function checkMemoryPressure(): {
 } {
   const heap = getHeapStats();
   const heapUsedPercent = heap.heapUsedPercent;
-
-  const critical = heapUsedPercent > PROFILER_CRITICAL_THRESHOLD;
-  const warning = heapUsedPercent > PROFILER_WARNING_THRESHOLD;
+  const { critical, warning } = evaluateMemoryPressure(heapUsedPercent, {
+    warning: PROFILER_WARNING_THRESHOLD,
+    critical: PROFILER_CRITICAL_THRESHOLD,
+  });
 
   if (critical) {
     logger.error("CRITICAL MEMORY PRESSURE", {

@@ -8,6 +8,10 @@ import {
   PRIORITY_HIGH,
 } from "#veryfront/utils/constants/index.ts";
 import { memoryUsage, uptime } from "#veryfront/platform/compat/process.ts";
+import {
+  createLocalControlAccessDeniedResponse,
+  isTrustedLocalControlRequest,
+} from "#veryfront/security/http/local-control-request.ts";
 
 export class MetricsHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -22,6 +26,11 @@ export class MetricsHandler extends BaseHandler {
 
     const { pathname } = new URL(req.url);
     if (pathname !== "/_metrics") return Promise.resolve(this.continue());
+    if (!isTrustedLocalControlRequest(req)) {
+      return Promise.resolve(
+        this.respond(createLocalControlAccessDeniedResponse(req, "Metrics request rejected")),
+      );
+    }
 
     const securityConfig = ctx.securityConfig ?? undefined;
     const corsConfig = ctx.securityConfig?.cors;

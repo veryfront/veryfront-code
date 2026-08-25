@@ -293,6 +293,25 @@ export function recordCorsRejection(): void {
 }
 
 /**
+ * Record that SSR answered 404 because a project's published source could not
+ * be read, as opposed to an ordinary route miss.
+ *
+ * This is the alertable replacement for the per-request error report that the
+ * same condition used to raise while it was misclassified as a render fault.
+ * A deleted project moves it a bounded number of times and then stops; an
+ * API-side regression that 404s every read moves it continuously, which is the
+ * shape worth alerting on.
+ *
+ * @example
+ * ```ts
+ * recordSSRSourceUnavailable()
+ * ```
+ */
+export function recordSSRSourceUnavailable(): void {
+  state.ssrSourceUnavailable = saturatingAdd(state.ssrSourceUnavailable);
+}
+
+/**
  * Record security headers application
  *
  * @example

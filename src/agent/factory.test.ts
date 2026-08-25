@@ -1,3 +1,5 @@
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
@@ -10,13 +12,18 @@ import { tool, toolRegistry } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { getEffectiveAgentSystem } from "./runtime/effective-agent-system.ts";
+import { getAvailableTools } from "./runtime/tool-helpers.ts";
 import { agentRegistry } from "./composition/index.ts";
 import { agent } from "./factory.ts";
+import { resolveSkillToolDisposition } from "./skill-tool-disposition.ts";
+import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
 import type { AgentConfig, AgentResponse } from "./types.ts";
-import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
+import { flattenSystemInstructions } from "./runtime/tool-inventory.ts";
+import { registerSkill } from "#veryfront/skill/registry.ts";
 import { reset as resetExtensionContracts, tryResolve } from "#veryfront/extensions/contracts.ts";
 import { createSkillTestAdapter } from "#veryfront/skill/testing.ts";
 import type { ModelRuntime } from "#veryfront/provider";
+import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 
 function createSkill(id: string, description: string) {
   return {
@@ -24,6 +31,11 @@ function createSkill(id: string, description: string) {
     metadata: { name: id, description },
     rootPath: `/test/skills/${id}`,
   };
+}
+
+async function resolveSystemText(system: AgentConfig["system"]): Promise<string> {
+  const resolved = typeof system === "function" ? await system() : system;
+  return typeof resolved === "string" ? resolved : flattenSystemInstructions(resolved);
 }
 
 function createLoadSkillModel(skillId: string): ModelRuntime {
@@ -67,17 +79,81 @@ function createLoadSkillModel(skillId: string): ModelRuntime {
 describe("agent factory", () => {
   beforeEach(() => {
     agentRegistry.clearAll();
-    skillRegistry.clearAll();
-    toolRegistry.clearAll();
+    skillRegistryInternal.clearAll();
+    toolRegistryInternal.clearAll();
   });
 
   it("bootstraps schema validation before registering universal skill tools", () => {
     resetExtensionContracts();
+    registerSkill("support-triage", createSkill("support-triage", "Triage support requests"));
 
     const assistant = agent({ id: "schema-bootstrap", system: "Stay helpful." });
 
     assertEquals(typeof tryResolve<{ object: unknown }>("SchemaValidator")?.object, "function");
     assertEquals(Object.keys(assistant.config.tools ?? {}).sort(), [
+      "execute_skill_script",
+      "load_skill",
+      "load_skill_reference",
+    ]);
+  });
+
+  it("does not attach skill tools to an agent that never mentioned skills", () => {
+    // Undeclared `skills` means "every visible skill". With no skills
+    // registered that is nothing, so the three skill tools were being sent on
+    // every request to answer "no such skill" and nothing else.
+    const assistant = agent({ id: "no-skills-anywhere", system: "Stay helpful." });
+
+    assertEquals(assistant.config.tools, undefined);
+  });
+
+  it("honours a skill tool configured as `true` rather than dropping it", () => {
+    // `load_skill: true` asks for the framework's own tool by name. That is as
+    // explicit a request for the skill infrastructure as passing a concrete
+    // tool, so it must not be read as "nothing declared skills".
+    const assistant = agent({
+      id: "boolean-skill-tool",
+      system: "Stay helpful.",
+      tools: { load_skill: true },
+    });
+
+    assertEquals(Object.keys(assistant.config.tools ?? {}).sort(), [
+      "execute_skill_script",
+      "load_skill",
+      "load_skill_reference",
+    ]);
+  });
+
+  it("applies the same rule to a `tools: true` agent, per step", async () => {
+    // A concrete tool map is resolved once at construction; `tools: true` draws
+    // from the registry on every step. Both must agree, or a bare agent keeps
+    // load_skill on one path and loses it on the other.
+    const assistant = agent({ id: "everything-agent", system: "Stay helpful.", tools: true });
+
+    const withoutSkills = await getAvailableTools(assistant.config.tools, {
+      includeSkillTools:
+        resolveSkillToolDisposition(assistant.config, "everything-agent") === "inject",
+    });
+    assertEquals(withoutSkills.filter((t) => isSkillInfrastructureToolId(t.name)), []);
+
+    // Asking per step also means this path sees skills registered after the
+    // agent was constructed.
+    registerSkill("late-arrival", createSkill("late-arrival", "Registered after the agent"));
+    const withSkills = await getAvailableTools(assistant.config.tools, {
+      includeSkillTools:
+        resolveSkillToolDisposition(assistant.config, "everything-agent") === "inject",
+    });
+    assertEquals(
+      withSkills.filter((t) => isSkillInfrastructureToolId(t.name)).map((t) => t.name).sort(),
+      ["execute_skill_script", "load_skill", "load_skill_reference"],
+    );
+  });
+
+  it("keeps skill tools for an agent that opted in before any skill registered", () => {
+    // `skills: true` is intent, not inference: the author may be registering
+    // skills later, and stripping the tools would silently break them.
+    const optedIn = agent({ id: "opted-in-early", system: "Stay helpful.", skills: true });
+
+    assertEquals(Object.keys(optedIn.config.tools ?? {}).sort(), [
       "execute_skill_script",
       "load_skill",
       "load_skill_reference",
@@ -109,12 +185,10 @@ describe("agent factory", () => {
     ]);
     assertEquals(toolRegistry.has("load_skill"), true);
     const effectiveSystem = getEffectiveAgentSystem(assistant);
-    const prompt = typeof effectiveSystem === "function"
-      ? await effectiveSystem()
-      : effectiveSystem ?? "";
+    const prompt = await resolveSystemText(effectiveSystem);
     assertStringIncludes(
       prompt,
-      "- support-triage: Triage incoming support requests",
+      '- {"skillId":"support-triage","description":"Triage incoming support requests"}',
     );
     assertEquals(prompt.includes("researcher--cite"), false);
 
@@ -125,10 +199,29 @@ describe("agent factory", () => {
     });
     assertEquals(explicitlyEmpty.config.tools, undefined);
     const explicitlyEmptySystem = getEffectiveAgentSystem(explicitlyEmpty);
-    const explicitlyEmptyPrompt = typeof explicitlyEmptySystem === "function"
-      ? await explicitlyEmptySystem()
-      : explicitlyEmptySystem ?? "";
+    const explicitlyEmptyPrompt = await resolveSystemText(explicitlyEmptySystem);
     assertEquals(explicitlyEmptyPrompt.includes("<available_skills>"), false);
+  });
+
+  it("preserves pre-rendered generated skill catalogs when no selector replaces them", async () => {
+    const hostedSystem = [{
+      role: "system" as const,
+      content:
+        'Base\n\n<available_skills>\n- {"skillId":"deploy","description":"Deploy the project"}\n</available_skills>',
+    }];
+    const assistant = agent(
+      {
+        id: "hosted-pre-rendered-skills",
+        system: hostedSystem,
+        __vfPreassembledSkillContext: true,
+      } as AgentConfig & { __vfPreassembledSkillContext: boolean },
+    );
+
+    const effectiveSystem = getEffectiveAgentSystem(assistant);
+    const prompt = await resolveSystemText(effectiveSystem);
+
+    assertStringIncludes(prompt, "Deploy the project");
+    assertStringIncludes(prompt, "<available_skills>");
   });
 
   it("uses the same selector snapshot for prompt disclosure and direct skill tools", async () => {
@@ -156,7 +249,7 @@ describe("agent factory", () => {
     assertEquals(Object.keys(none.config.tools ?? {}).sort(), ["ordinary_tool"]);
     const noneSystem = getEffectiveAgentSystem(none);
     assertEquals(
-      (typeof noneSystem === "function" ? await noneSystem() : noneSystem ?? "").includes(
+      (await resolveSystemText(noneSystem)).includes(
         "available_skills",
       ),
       false,
@@ -168,12 +261,10 @@ describe("agent factory", () => {
       skills: ["draft", "global-plan"],
     });
     const allowlistedSystem = getEffectiveAgentSystem(allowlisted);
-    const prompt = typeof allowlistedSystem === "function"
-      ? await allowlistedSystem()
-      : allowlistedSystem ?? "";
+    const prompt = await resolveSystemText(allowlistedSystem);
 
-    assertStringIncludes(prompt, "- writer--draft: Draft copy");
-    assertStringIncludes(prompt, "- global-plan: Plan the work");
+    assertStringIncludes(prompt, '- {"skillId":"writer--draft","description":"Draft copy"}');
+    assertStringIncludes(prompt, '- {"skillId":"global-plan","description":"Plan the work"}');
     assertEquals(prompt.includes("global-review"), false);
 
     if (!allowlisted.config.tools || allowlisted.config.tools === true) {
@@ -373,18 +464,65 @@ description: Excluded skill
     assertEquals(toolRegistry.has("agent_ingestion-agent"), false);
   });
 
+  it("materializes explicitly requested invoke_agent for direct runtimes", async () => {
+    const assistant = agent({
+      id: "generic-orchestrator",
+      system: "Invoke registered specialist agents.",
+      skills: [],
+      tools: { invoke_agent: true },
+    });
+
+    const definitions = await getAvailableTools(assistant.config.tools, {
+      callerAgentId: assistant.id,
+      includeIntegrationTools: false,
+    });
+
+    assertEquals(definitions.map((definition) => definition.name), ["invoke_agent"]);
+  });
+
+  it("suppresses generic invoke_agent when delegates are explicitly scoped", async () => {
+    for (
+      const [id, delegates, expectedTools] of [
+        ["empty-delegate-scope", [], []],
+        ["fixed-delegate-scope", ["ingestion-agent"], ["agent_ingestion-agent"]],
+      ] as const
+    ) {
+      const assistant = agent({
+        id,
+        system: "Delegate only within the explicit scope.",
+        skills: [],
+        delegates: [...delegates],
+        tools: { invoke_agent: true },
+      });
+
+      const definitions = await getAvailableTools(assistant.config.tools, {
+        callerAgentId: assistant.id,
+        includeIntegrationTools: false,
+      });
+
+      assertEquals(definitions.map((definition) => definition.name), [...expectedTools]);
+    }
+  });
+
   it("rejects delegates combined with the implicit all-tools selector", () => {
-    assertThrows(
-      () =>
-        agent({
-          id: "broad-orchestrator",
-          system: "Delegate specialist work.",
-          delegates: ["ingestion-agent"],
-          tools: true,
-        }),
-      Error,
-      "cannot combine delegates with tools: true",
-    );
+    for (
+      const [id, delegates] of [
+        ["empty-broad-orchestrator", []],
+        ["broad-orchestrator", ["ingestion-agent"]],
+      ] as const
+    ) {
+      assertThrows(
+        () =>
+          agent({
+            id,
+            system: "Delegate specialist work.",
+            delegates: [...delegates],
+            tools: true,
+          }),
+        Error,
+        "cannot combine delegates with tools: true",
+      );
+    }
   });
 
   it("uses the default system prompt before an available skill catalog", async () => {
@@ -399,9 +537,7 @@ description: Excluded skill
 
     const assistant = agent({ id: "default-system-with-skills" } as AgentConfig);
     const effectiveSystem = getEffectiveAgentSystem(assistant);
-    const prompt = typeof effectiveSystem === "function"
-      ? await effectiveSystem()
-      : effectiveSystem ?? "";
+    const prompt = await resolveSystemText(effectiveSystem);
 
     assertEquals(prompt.startsWith("You are a helpful assistant."), true);
     assertEquals(prompt.includes("undefined"), false);
@@ -425,15 +561,12 @@ description: Excluded skill
       skills: ["release-manager"],
     } as AgentConfig);
     const effectiveSystem = getEffectiveAgentSystem(assistant);
-    const prompt = typeof effectiveSystem === "function"
-      ? await effectiveSystem()
-      : effectiveSystem ?? "";
+    const prompt = await resolveSystemText(effectiveSystem);
 
     assertStringIncludes(prompt, "release-manager");
     assertEquals(prompt.includes("create_release"), false);
     assertEquals(prompt.includes("load_skill_reference"), false);
     assertEquals(prompt.includes("execute_skill_script"), false);
-    assertStringIncludes(prompt, "- load_skill: Call with");
   });
 
   it("rejects inline local tools in the reserved integration namespace", () => {
@@ -455,5 +588,87 @@ description: Excluded skill
       VeryfrontError,
       "reserved integration tool namespace",
     );
+  });
+  describe("agent respond request parsing", () => {
+    it("rejects a body larger than the configured limit before buffering it", async () => {
+      const assistant = agent({ id: "respond-parsing-too-large", system: "Stay helpful." });
+
+      const response = await assistant.respond(
+        new Request("http://localhost/agent", {
+          method: "POST",
+          body: "x".repeat(DEFAULT_MAX_BODY_SIZE_BYTES + 1),
+        }),
+      );
+
+      assertEquals(
+        response.status,
+        413,
+        "a body over DEFAULT_MAX_BODY_SIZE_BYTES is rejected before buffering",
+      );
+      assertEquals(
+        (await response.json()).error,
+        "Request body too large",
+        "the oversize rejection names the body size limit",
+      );
+    });
+
+    it("rejects a malformed JSON body", async () => {
+      const assistant = agent({ id: "respond-parsing-malformed", system: "Stay helpful." });
+
+      const response = await assistant.respond(
+        new Request("http://localhost/agent", { method: "POST", body: "{not json" }),
+      );
+
+      assertEquals(response.status, 400, "an unparseable body is a client error");
+      assertEquals(
+        (await response.json()).error,
+        "Malformed JSON request body",
+        "the malformed body rejection is distinguished from a schema rejection",
+      );
+    });
+
+    it("rejects well-formed JSON that fails the respond request schema", async () => {
+      const assistant = agent({ id: "respond-parsing-schema", system: "Stay helpful." });
+
+      const response = await assistant.respond(
+        new Request("http://localhost/agent", {
+          method: "POST",
+          body: JSON.stringify({ messages: 5 }),
+        }),
+      );
+
+      assertEquals(response.status, 400, "a schema violation is a client error");
+      assertEquals(
+        (await response.json()).error,
+        "Invalid agent request",
+        "the schema rejection is reported separately from malformed JSON",
+      );
+    });
+
+    it("rejects a model override outside the configured allowlist", async () => {
+      const assistant = agent({
+        id: "respond-parsing-allowlist",
+        system: "Stay helpful.",
+        allowedModels: ["hosted/approved-model"],
+      });
+
+      const response = await assistant.respond(
+        new Request("http://localhost/agent", {
+          method: "POST",
+          body: JSON.stringify({ messages: [], model: "hosted/expensive-model" }),
+        }),
+      );
+
+      assertEquals(
+        response.status,
+        403,
+        "a client-supplied model outside allowedModels must not reach the runtime",
+      );
+      assertStringIncludes(
+        (await response.json()).error,
+        'Model "hosted/expensive-model" is not allowed',
+        "the refusal names the rejected model",
+      );
+    });
   });
 });

@@ -9,6 +9,7 @@ describe("discovery/import-rewriter", () => {
   it("rewrites veryfront public imports for Deno temp module imports", () => {
     const transformed = rewriteForDeno(
       [
+        'import { createValidatedHandler } from "veryfront";',
         'import { defineSchema } from "veryfront/schemas";',
         'import { tool } from "veryfront/tool";',
         'import { projectKnowledge } from "veryfront/knowledge";',
@@ -19,6 +20,7 @@ describe("discovery/import-rewriter", () => {
       "/project/workflows",
     );
 
+    assertStringIncludes(transformed, import.meta.resolve("veryfront"));
     assertStringIncludes(transformed, import.meta.resolve("veryfront/schemas"));
     assertStringIncludes(transformed, import.meta.resolve("veryfront/tool"));
     assertStringIncludes(transformed, import.meta.resolve("veryfront/knowledge"));
@@ -31,6 +33,7 @@ describe("discovery/import-rewriter", () => {
   it("rewrites supported veryfront public imports to globals in compiled Deno binaries", () => {
     const transformed = rewriteForDeno(
       [
+        'import { createValidatedHandler } from "veryfront";',
         'import { defineSchema } from "veryfront/schemas";',
         'import { tool } from "veryfront/tool";',
         'import { projectKnowledge } from "veryfront/knowledge";',
@@ -42,6 +45,10 @@ describe("discovery/import-rewriter", () => {
       { compiled: true },
     );
 
+    assertStringIncludes(
+      transformed,
+      'const { createValidatedHandler } = globalThis.__VERYFRONT_MODULES__["veryfront"]',
+    );
     assertStringIncludes(
       transformed,
       'const { defineSchema } = globalThis.__VERYFRONT_MODULES__["veryfront/schemas"]',
@@ -171,6 +178,7 @@ describe("discovery/import-rewriter", () => {
         'import fs from "node:fs";',
         'import path from "node:path";',
         'import local from "./helpers.ts";',
+        'import bundled from "file:///abs/vendor/lib.js";',
         'import remote from "https://esm.sh/some-pkg";',
       ].join("\n"),
       "/project/tools",
@@ -179,7 +187,34 @@ describe("discovery/import-rewriter", () => {
     assertStringIncludes(transformed, 'from "node:fs"');
     assertStringIncludes(transformed, 'from "node:path"');
     assertStringIncludes(transformed, 'from "./helpers.ts"');
+    assertStringIncludes(transformed, 'from "file:///abs/vendor/lib.js"');
     assertStringIncludes(transformed, 'from "https://esm.sh/some-pkg"');
+  });
+
+  it("resolves parent-relative specifiers to absolute file:// URLs for Deno", () => {
+    const transformed = rewriteForDeno(
+      [
+        'import { helper } from "../lib/util.ts";',
+        'export { shared } from "../../shared/index.ts";',
+      ].join("\n"),
+      "/project/tools",
+    );
+
+    assertStringIncludes(
+      transformed,
+      'from "file:///project/lib/util.ts"',
+      "a ../ specifier must resolve against fileDir, not the temp module dir",
+    );
+    assertStringIncludes(
+      transformed,
+      'from "file:///shared/index.ts"',
+      "a ../../ specifier must resolve against fileDir, not the temp module dir",
+    );
+    assertEquals(
+      transformed.includes('from "../lib/util.ts"'),
+      false,
+      "no parent-relative specifier may survive the Deno rewrite",
+    );
   });
 
   it("resolves bare-package subpath imports via package.json#exports in the Node discovery path", async () => {
@@ -391,6 +426,62 @@ describe("discovery/import-rewriter", () => {
     }
   });
 
+  it("keeps resolved-specifier cache entries scoped to their project root", async () => {
+    const projectA = await Deno.makeTempDir({ prefix: "vf-rewriter-test-a-" });
+    const projectB = await Deno.makeTempDir({ prefix: "vf-rewriter-test-b-" });
+    const code = 'import { z } from "zod";';
+
+    const writeZod = async (projectDir: string, entry: string) => {
+      const pkgDir = `${projectDir}/node_modules/zod`;
+      await Deno.mkdir(pkgDir, { recursive: true });
+      await Deno.writeTextFile(
+        `${pkgDir}/package.json`,
+        JSON.stringify({ name: "zod", main: `./${entry}` }),
+      );
+      await Deno.writeTextFile(`${pkgDir}/${entry}`, "");
+    };
+
+    try {
+      await writeZod(projectA, "a.js");
+      await writeZod(projectB, "b.js");
+
+      const firstPass = await rewriteDiscoveryImports(
+        code,
+        projectA,
+        createFileSystem(),
+        `${projectA}/app`,
+      );
+      const secondPass = await rewriteDiscoveryImports(
+        code,
+        projectB,
+        createFileSystem(),
+        `${projectB}/app`,
+      );
+
+      assertStringIncludes(
+        firstPass,
+        `${projectA}/node_modules/zod/a.js`,
+        "the first project must resolve zod from its own node_modules",
+      );
+      assert(
+        !firstPass.includes(projectB),
+        "the first project must not resolve zod from another project's node_modules",
+      );
+      assertStringIncludes(
+        secondPass,
+        `${projectB}/node_modules/zod/b.js`,
+        "the second project must resolve zod from its own node_modules",
+      );
+      assert(
+        !secondPass.includes(projectA),
+        "a second project must not inherit the first project's cached zod resolution",
+      );
+    } finally {
+      await Deno.remove(projectA, { recursive: true });
+      await Deno.remove(projectB, { recursive: true });
+    }
+  });
+
   it("refuses to resolve a package whose exports map escapes the package directory", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
     const pkgDir = `${projectDir}/node_modules/evil`;
@@ -459,6 +550,86 @@ describe("discovery/import-rewriter", () => {
       assertEquals(transformed.includes(import.meta.resolve("veryfront/schemas")), false);
       assertEquals(transformed.includes(import.meta.resolve("veryfront/tool")), false);
       assertEquals(transformed.includes('from "veryfront/'), false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("binds discovery imports to the running framework install when the CLI runs from another install", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
+    const veryfrontDir = `${projectDir}/node_modules/veryfront`;
+    await Deno.mkdir(`${veryfrontDir}/local`, { recursive: true });
+    await Deno.writeTextFile(
+      `${veryfrontDir}/package.json`,
+      JSON.stringify({
+        name: "veryfront",
+        version: "0.0.0-project-local",
+        exports: {
+          "./schemas": "./local/schemas.js",
+          "./tool": "./local/tool.js",
+        },
+      }),
+    );
+    await Deno.writeTextFile(`${veryfrontDir}/local/schemas.js`, "");
+    await Deno.writeTextFile(`${veryfrontDir}/local/tool.js`, "");
+
+    const globalInstall = "file:///opt/npm/lib/node_modules/veryfront";
+
+    try {
+      const transformed = await rewriteDiscoveryImports(
+        [
+          'import { defineSchema } from "veryfront/schemas";',
+          'import { tool } from "veryfront/tool";',
+        ].join("\n"),
+        projectDir,
+        createFileSystem(),
+        `${projectDir}/tools`,
+        {
+          resolveSpecifier: (specifier) =>
+            `${globalInstall}/esm/src/${specifier.replace("veryfront/", "")}/index.js`,
+        },
+      );
+
+      // The project copy is a *second* framework instance: nothing bootstraps
+      // its extension contracts, so `defineSchema()` there throws
+      // `Missing extension for contract "SchemaValidator"` and the project's
+      // tools never register.
+      assertStringIncludes(transformed, `${globalInstall}/esm/src/schemas/index.js`);
+      assertStringIncludes(transformed, `${globalInstall}/esm/src/tool/index.js`);
+      assertEquals(transformed.includes("node_modules/veryfront/local/"), false);
+      assertEquals(transformed.includes('from "veryfront/'), false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("keeps project-local veryfront exports when the running install is the project's own", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
+    const veryfrontDir = `${projectDir}/node_modules/veryfront`;
+    await Deno.mkdir(`${veryfrontDir}/local`, { recursive: true });
+    await Deno.writeTextFile(
+      `${veryfrontDir}/package.json`,
+      JSON.stringify({
+        name: "veryfront",
+        version: "0.0.0-project-local",
+        exports: { "./schemas": "./local/schemas.js" },
+      }),
+    );
+    await Deno.writeTextFile(`${veryfrontDir}/local/schemas.js`, "");
+
+    try {
+      const transformed = await rewriteDiscoveryImports(
+        'import { defineSchema } from "veryfront/schemas";',
+        projectDir,
+        createFileSystem(),
+        `${projectDir}/tools`,
+        {
+          resolveSpecifier: () => `file://${veryfrontDir}/esm/src/schemas/index.js`,
+        },
+      );
+
+      assertStringIncludes(transformed, `${projectDir}/node_modules/veryfront/local/schemas.js`);
+      assertEquals(transformed.includes("esm/src/schemas/index.js"), false);
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }

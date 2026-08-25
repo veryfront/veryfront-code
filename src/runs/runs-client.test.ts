@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import {
   assertEquals,
@@ -6,34 +7,52 @@ import {
   assertRejects,
   assertStringIncludes,
 } from "#veryfront/testing/assert";
-import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { createRunsClient, VeryfrontRunsClient } from "./runs-client.ts";
+import { withEnv } from "#veryfront/testing/deno-compat.ts";
+import { runWithVeryfrontCloudContext } from "#veryfront/provider";
+import {
+  createRunsClient,
+  VeryfrontRunsClient,
+  type VeryfrontRunsClientConfig,
+} from "./runs-client.ts";
 
-const originalFetch = globalThis.fetch;
 let fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
 let fetchResponses: Array<Response | (() => Response)> = [];
 
 const projectId = "22222222-2222-4222-8222-222222222222";
 const scheduleId = "33333333-3333-4333-8333-333333333333";
 
+function createTestClient(
+  overrides: Partial<VeryfrontRunsClientConfig> = {},
+): VeryfrontRunsClient {
+  return new VeryfrontRunsClient({
+    apiUrl: "https://93.184.216.34",
+    authToken: "test-token",
+    projectReference: "dreamy-haven",
+    ...overrides,
+  });
+}
+
 function mockFetch(responses: Array<Response | (() => Response)>): void {
   fetchCalls = [];
   fetchResponses = [...responses];
-  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-    const url = typeof input === "string"
-      ? input
-      : input instanceof URL
-      ? input.toString()
-      : input.url;
-    fetchCalls.push({ url, init });
+  restoreMockFetch();
+  installMockFetch(
+    (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+        ? input.toString()
+        : input.url;
+      fetchCalls.push({ url, init });
 
-    const next = fetchResponses.shift();
-    if (!next) {
-      throw new Error(`No mock response for ${url}`);
-    }
+      const next = fetchResponses.shift();
+      if (!next) {
+        throw new Error(`No mock response for ${url}`);
+      }
 
-    return typeof next === "function" ? next() : next;
-  }) as typeof fetch;
+      return typeof next === "function" ? next() : next;
+    }) as typeof fetch,
+  );
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -102,22 +121,6 @@ function makeRun(overrides: Record<string, unknown> = {}) {
   };
 }
 
-const RUNS_ENV_KEYS = [
-  "VERYFRONT_API_URL",
-  "VERYFRONT_API_TOKEN",
-  "VERYFRONT_PROJECT_SLUG",
-] as const;
-
-function clearRunsEnv(): void {
-  for (const key of RUNS_ENV_KEYS) {
-    try {
-      deleteEnv(key);
-    } catch {
-      // env may already be unset
-    }
-  }
-}
-
 describe("VeryfrontRunsClient", () => {
   beforeEach(() => {
     fetchCalls = [];
@@ -125,23 +128,24 @@ describe("VeryfrontRunsClient", () => {
   });
 
   afterEach(() => {
-    globalThis.fetch = originalFetch;
-    clearRunsEnv();
+    restoreMockFetch();
   });
 
   it("exports a client factory", () => {
+    const client = createRunsClient({
+      apiUrl: "https://93.184.216.34",
+      authToken: "test-token",
+    });
+
     assertExists(createRunsClient);
     assertEquals(typeof createRunsClient, "function");
+    assertEquals(client instanceof VeryfrontRunsClient, true);
   });
 
   it("creates task runs through canonical /runs", async () => {
     mockFetch([jsonResponse({ accepted: true, run: makeRun() }, 202)]);
 
-    const client = new VeryfrontRunsClient({
-      apiUrl: "https://api.test.com",
-      authToken: "test-token",
-      projectReference: "dreamy-haven",
-    });
+    const client = createTestClient();
 
     const response = await client.createTaskRun({
       projectId,
@@ -175,6 +179,18 @@ describe("VeryfrontRunsClient", () => {
     });
   });
 
+  it("normalizes a trailing slash in the configured API URL", async () => {
+    mockFetch([jsonResponse(makeRun())]);
+    const client = createTestClient({ apiUrl: "https://93.184.216.34/" });
+
+    await client.get("run_11111111-1111-4111-8111-111111111111");
+
+    assertEquals(
+      call(0).url,
+      "https://93.184.216.34/runs/run_11111111-1111-4111-8111-111111111111",
+    );
+  });
+
   it("creates workflow runs through canonical /runs", async () => {
     mockFetch([
       jsonResponse({
@@ -183,11 +199,7 @@ describe("VeryfrontRunsClient", () => {
       }, 202),
     ]);
 
-    const client = new VeryfrontRunsClient({
-      apiUrl: "https://api.test.com",
-      authToken: "test-token",
-      projectReference: "dreamy-haven",
-    });
+    const client = createTestClient();
 
     await client.createWorkflowRun({
       projectId,
@@ -222,11 +234,7 @@ describe("VeryfrontRunsClient", () => {
       }, 202),
     ]);
 
-    const client = new VeryfrontRunsClient({
-      apiUrl: "https://api.test.com",
-      authToken: "test-token",
-      projectReference: "dreamy-haven",
-    });
+    const client = createTestClient();
 
     await client.createEvalRun({
       projectId,
@@ -306,11 +314,7 @@ describe("VeryfrontRunsClient", () => {
       }, 201),
     ]);
 
-    const client = new VeryfrontRunsClient({
-      apiUrl: "https://api.test.com",
-      authToken: "test-token",
-      projectReference: "dreamy-haven",
-    });
+    const client = createTestClient();
 
     const response = await client.createScheduleRunFromSource({
       sourceTriggerId: "process-job-submissions",
@@ -328,15 +332,16 @@ describe("VeryfrontRunsClient", () => {
       target: {
         kind: "agent",
         id: "job-submission-orchestrator",
+        conversationMode: "create_new",
       },
     });
     assertEquals(
       call(0).url,
-      "https://api.test.com/projects/dreamy-haven/schedules?status=active&source_trigger_id=process-job-submissions",
+      "https://93.184.216.34/projects/dreamy-haven/schedules?status=active&source_trigger_id=process-job-submissions",
     );
     assertEquals(
       call(1).url,
-      `https://api.test.com/projects/dreamy-haven/schedules/${scheduleId}/runs`,
+      `https://93.184.216.34/projects/dreamy-haven/schedules/${scheduleId}/runs`,
     );
     assertEquals(call(1).init?.method, "POST");
     assertEquals(headerValue(1, "Authorization"), "Bearer test-token");
@@ -355,10 +360,7 @@ describe("VeryfrontRunsClient", () => {
         schedule_id: scheduleId,
       }, 201),
     ]);
-    const client = new VeryfrontRunsClient({
-      apiUrl: "https://api.test.com",
-      authToken: "test-token",
-      projectReference: "dreamy-haven",
+    const client = createTestClient({
       retry: {
         maxRetries: 1,
         initialDelay: 1,
@@ -391,11 +393,7 @@ describe("VeryfrontRunsClient", () => {
         source_schedules: [],
       }),
     ]);
-    const client = new VeryfrontRunsClient({
-      apiUrl: "https://api.test.com",
-      authToken: "test-token",
-      projectReference: "dreamy-haven",
-    });
+    const client = createTestClient();
 
     await assertRejects(
       () =>
@@ -409,7 +407,7 @@ describe("VeryfrontRunsClient", () => {
     assertEquals(fetchCalls.length, 1);
     assertEquals(
       call(0).url,
-      "https://api.test.com/projects/dreamy-haven/schedules?status=active&source_trigger_id=missing-schedule",
+      "https://93.184.216.34/projects/dreamy-haven/schedules?status=active&source_trigger_id=missing-schedule",
     );
   });
 
@@ -450,11 +448,7 @@ describe("VeryfrontRunsClient", () => {
         schedule_id: matchingScheduleId,
       }, 201),
     ]);
-    const client = new VeryfrontRunsClient({
-      apiUrl: "https://api.test.com",
-      authToken: "test-token",
-      projectReference: "dreamy-haven",
-    });
+    const client = createTestClient();
 
     const response = await client.createScheduleRunFromSource({
       sourceTriggerId: "process-job-submissions",
@@ -463,7 +457,7 @@ describe("VeryfrontRunsClient", () => {
     assertEquals(response.scheduleRun.schedule_id, matchingScheduleId);
     assertEquals(
       call(1).url,
-      `https://api.test.com/projects/dreamy-haven/schedules/${matchingScheduleId}/runs`,
+      `https://93.184.216.34/projects/dreamy-haven/schedules/${matchingScheduleId}/runs`,
     );
   });
 
@@ -484,11 +478,7 @@ describe("VeryfrontRunsClient", () => {
         }],
       }),
     ]);
-    const client = new VeryfrontRunsClient({
-      apiUrl: "https://api.test.com",
-      authToken: "test-token",
-      projectReference: "dreamy-haven",
-    });
+    const client = createTestClient();
 
     await assertRejects(
       () =>
@@ -502,19 +492,67 @@ describe("VeryfrontRunsClient", () => {
     assertEquals(fetchCalls.length, 1);
   });
 
-  it("creates knowledge ingest task runs", async () => {
-    mockFetch([jsonResponse({ accepted: true, run: makeRun() }, 202)]);
-
+  it("does not trust a manually defined schedule returned by the source filter", async () => {
+    mockFetch([
+      jsonResponse({
+        schedules: [{
+          id: scheduleId,
+          name: "Process job submissions",
+          status: "active",
+          target: {
+            kind: "agent",
+            id: "job-submission-orchestrator",
+          },
+          definition_source: "manual",
+          source_trigger_id: "process-job-submissions",
+          timeout_seconds: 1800,
+        }],
+      }),
+    ]);
     const client = new VeryfrontRunsClient({
-      apiUrl: "https://api.test.com",
+      apiUrl: "https://93.184.216.34",
       authToken: "test-token",
       projectReference: "dreamy-haven",
     });
+
+    await assertRejects(
+      () =>
+        client.createScheduleRunFromSource({
+          sourceTriggerId: "process-job-submissions",
+        }),
+      Error,
+      'Active source schedule "process-job-submissions" not found in project "dreamy-haven".',
+    );
+
+    assertEquals(
+      fetchCalls.length,
+      1,
+      "a manually defined schedule must not be triggered as a source schedule",
+    );
+  });
+
+  it("creates every knowledge ingest task-run variant", async () => {
+    mockFetch([
+      jsonResponse({ accepted: true, run: makeRun() }, 202),
+      jsonResponse({ accepted: true, run: makeRun() }, 202),
+      jsonResponse({ accepted: true, run: makeRun() }, 202),
+    ]);
+
+    const client = createTestClient();
 
     await client.knowledge.ingestByUploadIds({
       projectId,
       uploadIds: ["33333333-3333-4333-8333-333333333333"],
       batchId: "66666666-6666-4666-8666-666666666666",
+    });
+    await client.knowledge.ingestByUploadPaths({
+      projectId,
+      uploadPaths: ["guides/getting-started.md"],
+      name: "Ingest selected guides",
+    });
+    await client.knowledge.ingestByUploadPrefix({
+      projectId,
+      uploadPrefix: "handbook/",
     });
 
     assertEquals(jsonBody(0), {
@@ -529,6 +567,86 @@ describe("VeryfrontRunsClient", () => {
         },
       },
     });
+    assertEquals(jsonBody(1), {
+      kind: "task",
+      owner: { kind: "project", id: projectId },
+      request: {
+        name: "Ingest selected guides",
+        target: "task:knowledge-ingest",
+        config: { paths: ["guides/getting-started.md"] },
+      },
+    });
+    assertEquals(jsonBody(2), {
+      kind: "task",
+      owner: { kind: "project", id: projectId },
+      request: {
+        name: "Ingest knowledge",
+        target: "task:knowledge-ingest",
+        config: { path_prefix: "handbook/" },
+      },
+    });
+  });
+
+  it("creates knowledge ingest task runs from upload paths", async () => {
+    mockFetch([jsonResponse({ accepted: true, run: makeRun() }, 202)]);
+
+    const client = new VeryfrontRunsClient({
+      apiUrl: "https://93.184.216.34",
+      authToken: "test-token",
+      projectReference: "dreamy-haven",
+    });
+
+    await client.knowledge.ingestByUploadPaths({
+      projectId,
+      uploadPaths: ["docs/a.md", "docs/b.md"],
+    });
+
+    assertEquals(
+      jsonBody(0),
+      {
+        kind: "task",
+        owner: { kind: "project", id: projectId },
+        request: {
+          name: "Ingest knowledge",
+          target: "task:knowledge-ingest",
+          config: {
+            paths: ["docs/a.md", "docs/b.md"],
+          },
+        },
+      },
+      "ingestByUploadPaths sends the paths config with the default run name",
+    );
+  });
+
+  it("creates knowledge ingest task runs from an upload prefix", async () => {
+    mockFetch([jsonResponse({ accepted: true, run: makeRun() }, 202)]);
+
+    const client = new VeryfrontRunsClient({
+      apiUrl: "https://93.184.216.34",
+      authToken: "test-token",
+      projectReference: "dreamy-haven",
+    });
+
+    await client.knowledge.ingestByUploadPrefix({
+      projectId,
+      uploadPrefix: "docs/",
+    });
+
+    assertEquals(
+      jsonBody(0),
+      {
+        kind: "task",
+        owner: { kind: "project", id: projectId },
+        request: {
+          name: "Ingest knowledge",
+          target: "task:knowledge-ingest",
+          config: {
+            path_prefix: "docs/",
+          },
+        },
+      },
+      "ingestByUploadPrefix sends the path_prefix config with the default run name",
+    );
   });
 
   it("lists project runs with project-reference routing", async () => {
@@ -539,11 +657,7 @@ describe("VeryfrontRunsClient", () => {
       }),
     ]);
 
-    const client = new VeryfrontRunsClient({
-      apiUrl: "https://api.test.com",
-      authToken: "test-token",
-      projectReference: "dreamy-haven",
-    });
+    const client = createTestClient();
 
     const response = await client.list({ limit: 50 });
 
@@ -552,78 +666,169 @@ describe("VeryfrontRunsClient", () => {
     assertStringIncludes(call(0).url, "limit=50");
   });
 
-  it("reads run detail, events, and cancellation through canonical run routes", async () => {
-    mockFetch([
-      jsonResponse(makeRun()),
-      jsonResponse({
-        data: [{
-          event_id: 1,
-          event_type: "RUN_STARTED",
-          payload: {},
-          created_at: "2026-03-20T12:00:01.000Z",
-        }],
-        page_info: { self: null, first: null, next: null, prev: null },
-      }),
-      jsonResponse({ cancelled: true, run: makeRun({ status: "cancelled" }) }),
-    ]);
-
-    const client = new VeryfrontRunsClient({
-      apiUrl: "https://api.test.com",
-      authToken: "test-token",
-      projectReference: "dreamy-haven",
-    });
+  it("reads run detail through the canonical route", async () => {
+    mockFetch([jsonResponse(makeRun())]);
+    const client = createTestClient();
 
     const run = await client.get("run_11111111-1111-4111-8111-111111111111");
-    const events = await client.events(run.run_id, { afterEventId: 1, limit: 10 });
-    const cancelled = await client.cancel(run.run_id);
 
     assertEquals(run.output, null);
     assertEquals(run.artifacts, []);
+    assertEquals(
+      call(0).url,
+      "https://93.184.216.34/runs/run_11111111-1111-4111-8111-111111111111",
+    );
+    assertEquals(call(0).init?.method, "GET");
+  });
+
+  it("lists run events through the canonical paginated route", async () => {
+    mockFetch([jsonResponse({
+      data: [{
+        event_id: 1,
+        event_type: "RUN_STARTED",
+        payload: {},
+        created_at: "2026-03-20T12:00:01.000Z",
+      }],
+      page_info: { self: null, first: null, next: null, prev: null },
+    })]);
+    const client = createTestClient();
+
+    const events = await client.events(
+      "run_11111111-1111-4111-8111-111111111111",
+      { afterEventId: 1, limit: 10 },
+    );
+
     assertEquals(events.data[0]?.event_type, "RUN_STARTED");
+    assertEquals(
+      call(0).url,
+      "https://93.184.216.34/runs/run_11111111-1111-4111-8111-111111111111/events?after_event_id=1&limit=10",
+    );
+    assertEquals(call(0).init?.method, "GET");
+  });
+
+  it("cancels a run through the canonical action route", async () => {
+    mockFetch([
+      jsonResponse({ cancelled: true, run: makeRun({ status: "cancelled" }) }),
+    ]);
+    const client = createTestClient();
+
+    const cancelled = await client.cancel("run_11111111-1111-4111-8111-111111111111");
+
     assertEquals(cancelled.cancelled, true);
-    assertStringIncludes(call(0).url, "/runs/run_11111111-1111-4111-8111-111111111111");
-    assertStringIncludes(call(1).url, "/events?after_event_id=1&limit=10");
-    assertStringIncludes(call(2).url, "/cancel");
-    assertEquals(call(2).init?.method, "POST");
+    assertEquals(
+      call(0).url,
+      "https://93.184.216.34/runs/run_11111111-1111-4111-8111-111111111111/cancel",
+    );
+    assertEquals(call(0).init?.method, "POST");
   });
 
   it("uses environment defaults when config is omitted", async () => {
-    setEnv("VERYFRONT_API_URL", "https://api.env.test");
-    setEnv("VERYFRONT_API_TOKEN", "env-token");
-    setEnv("VERYFRONT_PROJECT_SLUG", "env-project");
-
     mockFetch([jsonResponse(makeRun())]);
 
-    const client = new VeryfrontRunsClient();
-    await client.get("run_11111111-1111-4111-8111-111111111111");
+    await withEnv(
+      {
+        VERYFRONT_API_URL: "https://93.184.216.34",
+        VERYFRONT_API_TOKEN: "env-token",
+        VERYFRONT_PROJECT_SLUG: "env-project",
+      },
+      async () => {
+        const client = new VeryfrontRunsClient();
+        await client.get("run_11111111-1111-4111-8111-111111111111");
+      },
+    );
 
-    assertStringIncludes(call(0).url, "https://api.env.test/runs/");
+    assertStringIncludes(call(0).url, "https://93.184.216.34/runs/");
     assertEquals(headerValue(0, "Authorization"), "Bearer env-token");
+  });
+
+  it("never pairs a request token with a source-selected cloud endpoint", async () => {
+    mockFetch([jsonResponse(makeRun())]);
+
+    await withEnv(
+      {
+        VERYFRONT_API_URL: "https://93.184.216.34",
+        VERYFRONT_API_TOKEN: "host-token",
+      },
+      async () => {
+        await runWithVeryfrontCloudContext(
+          {
+            apiBaseUrl: "https://93.184.216.35",
+            projectSlug: "tenant-project",
+          },
+          async () => {
+            const unpaired = new VeryfrontRunsClient();
+            await assertRejects(
+              () => unpaired.get("run_11111111-1111-4111-8111-111111111111"),
+              Error,
+              "Runs auth not configured",
+            );
+
+            const requestScoped = new VeryfrontRunsClient();
+            requestScoped.setRequestToken("request-token");
+            await requestScoped.get("run_11111111-1111-4111-8111-111111111111");
+          },
+        );
+      },
+    );
+
+    assertEquals(fetchCalls.length, 1);
+    assertStringIncludes(call(0).url, "https://93.184.216.34/runs/");
+    assertEquals(headerValue(0, "Authorization"), "Bearer request-token");
+  });
+
+  it("routes runs requests through the guarded outbound transport", async () => {
+    mockFetch([jsonResponse(makeRun())]);
+
+    const client = new VeryfrontRunsClient({
+      apiUrl: "http://127.0.0.1:9",
+      authToken: "test-token",
+      projectReference: "dreamy-haven",
+      retry: { maxRetries: 0 },
+    });
+
+    await assertRejects(
+      () => client.get("run_11111111-1111-4111-8111-111111111111"),
+      Error,
+      "Outbound network egress blocked for internal host",
+    );
+
+    assertEquals(
+      fetchCalls.length,
+      0,
+      "the egress guard blocks before any fetch is dispatched",
+    );
   });
 
   it("fails fast when auth is missing", async () => {
     const client = new VeryfrontRunsClient({
-      apiUrl: "https://api.test.com",
+      apiUrl: "https://93.184.216.34",
       projectReference: "dreamy-haven",
     });
 
     await assertRejects(
       () => client.list(),
       Error,
-      "Runs auth not configured",
+      "apiUrl requires an explicit authToken",
     );
   });
 
   it("fails fast when project reference is missing for project listing", async () => {
-    const client = new VeryfrontRunsClient({
-      apiUrl: "https://api.test.com",
-      authToken: "test-token",
-    });
+    mockFetch([]);
+    await withEnv(
+      { VERYFRONT_PROJECT_SLUG: "" },
+      async () => {
+        const client = new VeryfrontRunsClient({
+          apiUrl: "https://93.184.216.34",
+          authToken: "test-token",
+        });
 
-    await assertRejects(
-      () => client.list(),
-      Error,
-      "Runs project reference not configured",
+        await assertRejects(
+          () => client.list(),
+          Error,
+          "Runs project reference not configured",
+        );
+      },
     );
+    assertEquals(fetchCalls.length, 0);
   });
 });

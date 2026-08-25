@@ -306,6 +306,9 @@ export const getIntegrationEndpointParamSchema = defineSchema((v) =>
     description: v.string(),
     required: v.boolean().optional(),
     default: v.unknown().optional(),
+    // Opts this execution default into the model-facing tool input schema.
+    // Use only when the value is safe and useful as model guidance.
+    exposeDefault: v.boolean().optional(),
     // For query params only: the HTTP query parameter name to send when it differs
     // from the agent-facing parameter key (e.g. input query -> query param $search).
     queryName: v.string().optional(),

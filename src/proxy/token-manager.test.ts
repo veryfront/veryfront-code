@@ -11,7 +11,13 @@ import {
   TokenManager,
   TokenResolutionCapacityError,
 } from "./token-manager.ts";
+import { OAuthTokenRequestError } from "./oauth-client.ts";
 import type { TokenCache, TokenCacheEntry } from "./cache/types.ts";
+
+/** Base64url-encodes a JWT segment without padding. */
+function encodeJwtSegment(value: string): string {
+  return btoa(value).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+}
 
 /** In-memory cache that counts operations */
 class SpyCache implements TokenCache {
@@ -501,18 +507,155 @@ describe("TokenManager", () => {
       { cache },
     );
 
-    await assertRejects(
+    const fresh = await assertRejects(
       () => manager.getToken("production", "missing-project"),
-      Error,
+      OAuthTokenRequestError,
       "404",
     );
-    await assertRejects(
+    assertInstanceOf(fresh, OAuthTokenRequestError);
+    assertEquals(fresh.status, 404, "the fresh failure must carry the upstream status");
+    const replayed = await assertRejects(
       () => manager.getToken("production", "missing-project"),
-      Error,
+      OAuthTokenRequestError,
       "404",
+    );
+    assertInstanceOf(replayed, OAuthTokenRequestError);
+    assertEquals(
+      replayed.status,
+      404,
+      "the replayed failure must stay typed so callers classify it by status, not by message",
+    );
+    assertEquals(
+      replayed.responseText,
+      "Project missing",
+      "the replayed failure must carry the cached upstream response text",
     );
 
     assertEquals(fetchCount, 1);
+
+    await manager.close();
+  });
+
+  it("does not negative-cache transient token service failures", async () => {
+    await mockServer?.shutdown();
+    mockServer = Deno.serve({ port: 0, onListen() {} }, () => {
+      fetchCount++;
+      return new Response("upstream down", { status: 500 });
+    });
+    serverPort = (mockServer.addr as Deno.NetAddr).port;
+
+    const manager = new TokenManager(
+      {
+        apiBaseUrl: `http://localhost:${serverPort}`,
+        apiClientId: "id",
+        apiClientSecret: "secret",
+        previewApiClientId: "pid",
+        previewApiClientSecret: "psecret",
+      },
+      { cache: new SpyCache() },
+    );
+
+    await assertRejects(
+      () => manager.getToken("production", "flaky-project"),
+      OAuthTokenRequestError,
+      "500",
+    );
+    await assertRejects(
+      () => manager.getToken("production", "flaky-project"),
+      OAuthTokenRequestError,
+      "500",
+    );
+
+    assertEquals(
+      fetchCount,
+      2,
+      "a transient 5xx must not be negative cached; the second call must re-hit the token endpoint",
+    );
+
+    await manager.close();
+  });
+
+  it("mints preview tokens with the preview API client credentials", async () => {
+    await mockServer?.shutdown();
+    const credentials: Array<{ client_id: unknown; client_secret: unknown }> = [];
+    mockServer = Deno.serve({ port: 0, onListen() {} }, async (req) => {
+      fetchCount++;
+      const body = await req.json() as Record<string, unknown>;
+      credentials.push({ client_id: body.client_id, client_secret: body.client_secret });
+      return Response.json({
+        access_token: `token-${fetchCount}`,
+        token_type: "Bearer",
+        expires_in: 3600,
+      });
+    });
+    serverPort = (mockServer.addr as Deno.NetAddr).port;
+
+    const manager = new TokenManager(
+      {
+        apiBaseUrl: `http://localhost:${serverPort}`,
+        apiClientId: "id",
+        apiClientSecret: "secret",
+        previewApiClientId: "pid",
+        previewApiClientSecret: "psecret",
+      },
+      { cache: new SpyCache() },
+    );
+
+    await manager.getToken("preview", "p");
+    await manager.getToken("production", "p");
+
+    assertEquals(
+      credentials,
+      [
+        { client_id: "pid", client_secret: "psecret" },
+        { client_id: "id", client_secret: "secret" },
+      ],
+      "preview scope must mint with the preview API client credentials and production scope with the production ones",
+    );
+
+    await manager.close();
+  });
+
+  it("derives cached expiry from the JWT exp claim when expires_in is absent", async () => {
+    await mockServer?.shutdown();
+    let exp = 0;
+    mockServer = Deno.serve({ port: 0, onListen() {} }, () => {
+      fetchCount++;
+      return Response.json({
+        access_token: `e30.${encodeJwtSegment(JSON.stringify({ exp }))}.sig`,
+        token_type: "Bearer",
+      });
+    });
+    serverPort = (mockServer.addr as Deno.NetAddr).port;
+
+    const manager = new TokenManager(
+      {
+        apiBaseUrl: `http://localhost:${serverPort}`,
+        apiClientId: "id",
+        apiClientSecret: "secret",
+        previewApiClientId: "pid",
+        previewApiClientSecret: "psecret",
+      },
+      { cache: new SpyCache() },
+    );
+
+    exp = Math.floor(Date.now() / 1_000) + 30;
+    await manager.getToken("production", "expiring-soon");
+    await manager.getToken("production", "expiring-soon");
+    assertEquals(
+      fetchCount,
+      2,
+      "a JWT expiring inside the refresh buffer must not be served from cache",
+    );
+
+    exp = Math.floor(Date.now() / 1_000) + 3_600;
+    await manager.getToken("production", "long-lived");
+    await manager.getToken("production", "long-lived");
+    assertEquals(
+      fetchCount,
+      3,
+      "a JWT exp beyond the refresh buffer must keep the cached token",
+    );
 
     await manager.close();
   });

@@ -1,9 +1,33 @@
 import { getDenoRuntime, isDeno as IS_DENO } from "../runtime.ts";
-import { runtimeProcess } from "./runtime-process.ts";
+import { hostProcessEnv, runtimeProcess } from "./runtime-process.ts";
+import {
+  installProjectScopedProcessEnv,
+  projectScopedEnvRecord,
+  readProjectScopedEnv,
+} from "./scoped-process-env.ts";
 import type { ProjectEnvSnapshot } from "./project-env-contract.ts";
 
 type EnvOverlayValue = string | null;
 type EnvOverlayStore = Map<string, EnvOverlayValue>;
+
+const apply = Reflect.apply;
+const denoRuntime = IS_DENO ? getDenoRuntime() : undefined;
+const denoEnv = denoRuntime?.env;
+const denoEnvGet = denoEnv?.get;
+const allowHostEnvTestOverlay = (() => {
+  if (denoEnv && denoEnvGet) {
+    try {
+      return apply(denoEnvGet, denoEnv, ["DENO_TESTING"]) === "1";
+    } catch {
+      return false;
+    }
+  }
+  return hostProcessEnv?.DENO_TESTING === "1";
+})();
+const MapConstructor = Map;
+const mapEntries = Map.prototype.entries;
+const mapGet = Map.prototype.get;
+const mapHas = Map.prototype.has;
 
 export type EnvOverlayStorage = {
   getStore: () => unknown;
@@ -14,34 +38,42 @@ export type EnvOverlayStorage = {
 function getEnvOverlayStore(): EnvOverlayStore | null {
   const storage = getEnvOverlayStorage();
   const store = storage?.getStore();
-  return store instanceof Map ? store as EnvOverlayStore : null;
+  return store instanceof MapConstructor ? store as EnvOverlayStore : null;
 }
 
 function getOverlayEnvValue(
   store: EnvOverlayStore | null,
   key: string,
 ): { hasValue: boolean; value: string | undefined } {
-  if (!store?.has(key)) {
+  if (!store || !apply(mapHas, store, [key])) {
     return { hasValue: false, value: undefined };
   }
 
-  const value = store.get(key);
+  const value = apply(mapGet, store, [key]);
   return { hasValue: true, value: value ?? undefined };
 }
 
 /** Read and write process environment variables. */
 export function env(): Record<string, string> {
+  const projectEnv = getTrustedProjectEnvSnapshot();
+  // Same rule as getEnv(): while a project scope is active its snapshot is the
+  // whole environment, so the bulk accessor cannot report a wider set of
+  // variables than the single-key one. Built from the scoped view rather than
+  // the raw snapshot, so a write the raw object has already accepted is not
+  // missing here.
+  if (projectEnv !== undefined) return projectScopedEnvRecord(projectEnv);
+
   const deno = IS_DENO ? getDenoRuntime() : undefined;
   const base = deno
     ? deno.env.toObject()
-    : runtimeProcess
-    ? { ...runtimeProcess.env } as Record<string, string>
+    : hostProcessEnv
+    ? { ...hostProcessEnv } as Record<string, string>
     : {};
 
   const overlay = getEnvOverlayStore();
   if (!overlay) return base;
 
-  for (const [key, value] of overlay.entries()) {
+  for (const [key, value] of apply(mapEntries, overlay, [])) {
     if (value === null) {
       delete base[key];
       continue;
@@ -53,29 +85,41 @@ export function env(): Record<string, string> {
 }
 
 /**
- * Read a host-level environment variable without consulting any project env overlay.
- * Use this for framework-owned runtime configuration that should not be shadowed by tenant env.
+ * Read outside the project snapshot. Test overlays require a captured host DENO_TESTING=1.
+ * Tenant project scopes and later global mutations cannot shadow this read.
  */
 export function getHostEnv(key: string): string | undefined {
-  const overlayResult = getOverlayEnvValue(getEnvOverlayStore(), key);
-  if (overlayResult.hasValue) {
-    return overlayResult.value;
-  }
-
-  const deno = IS_DENO ? getDenoRuntime() : undefined;
-  if (deno) {
+  if (denoRuntime && denoEnv && denoEnvGet) {
+    let value: string | undefined;
     try {
-      return deno.env.get(key);
+      // Probe the real host permission through the accessor captured before
+      // project code runs. A denied worker must not reach test overlays, and a
+      // project cannot replace Deno.env.get after module initialization.
+      value = apply(denoEnvGet, denoEnv, [key]);
     } catch {
-      // Under a tightened env permission allowlist (project isolation workers),
-      // reading a non-allowlisted variable throws NotCapable. Treat it as absent
-      // to match the prior `env: true` behavior where reads never threw, so
-      // optional-variable lookups degrade to undefined instead of crashing the
-      // request.
+      if (allowHostEnvTestOverlay) {
+        const overlayResult = getOverlayEnvValue(getEnvOverlayStore(), key);
+        if (overlayResult.hasValue) return overlayResult.value;
+      }
       return undefined;
     }
+
+    if (allowHostEnvTestOverlay) {
+      const overlayResult = getOverlayEnvValue(getEnvOverlayStore(), key);
+      if (overlayResult.hasValue) return overlayResult.value;
+    }
+    return value;
   }
-  if (runtimeProcess) return runtimeProcess.env[key];
+
+  if (allowHostEnvTestOverlay) {
+    const overlayResult = getOverlayEnvValue(getEnvOverlayStore(), key);
+    if (overlayResult.hasValue) return overlayResult.value;
+  }
+
+  // Read the captured host record rather than `runtimeProcess.env`, so the
+  // narrower view installed over `process.env` cannot redirect a host-scoped
+  // read back into a project scope.
+  if (hostProcessEnv) return hostProcessEnv[key];
   return undefined;
 }
 
@@ -87,6 +131,10 @@ let _trustedProjectEnvSnapshot: (() => ProjectEnvSnapshot | undefined) | null = 
  * Kept out of the public process barrel so project code cannot replace the
  * callback through a supported package export. Re-registering a different
  * function is rejected rather than silently widening an isolation boundary.
+ *
+ * Registering the bridge also installs the matching view over `process.env`, so
+ * the raw environment object and `getEnv()` are scoped by the same act and
+ * cannot drift apart.
  */
 export function registerTrustedProjectEnvSnapshot(
   getter: () => ProjectEnvSnapshot | undefined,
@@ -95,6 +143,7 @@ export function registerTrustedProjectEnvSnapshot(
     throw new Error("Project environment snapshot bridge is already registered");
   }
   _trustedProjectEnvSnapshot = getter;
+  installProjectScopedProcessEnv(getTrustedProjectEnvSnapshot);
 }
 
 /** Return the active server-owned project env snapshot, if registered. */
@@ -109,8 +158,9 @@ export function getEnv(key: string): string | undefined {
     // The registered snapshot is authoritative even when the requested key is
     // absent. Falling through here would expose host process configuration to
     // a remote project. Never discover this boundary through replaceable
-    // globalThis hooks.
-    return projectEnv[key];
+    // globalThis hooks. Reads go through the scoped view so this accessor and
+    // the raw object resolve a key by the same rule, writes included.
+    return readProjectScopedEnv(projectEnv, key);
   }
 
   return getHostEnv(key);

@@ -25,7 +25,8 @@ import {
   isIgnorableConversationRunAppendError,
   isPayloadTooLargeConversationRunAppendError,
   isPermanentAuthConversationRunAppendError,
-  parseAppendConversationRunEventsErrorBody,
+  isTerminalRunConversationRunAppendError,
+  parseAppendConversationRunEventsError,
 } from "./durable-append-errors.ts";
 
 export {
@@ -51,10 +52,11 @@ export {
   parseAppendConversationRunEventsErrorBody,
 } from "./durable-append-errors.ts";
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
+import { MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES } from "./run-event-limits.ts";
 import {
-  isModelCallContextRunEvent,
-  ModelCallContextPersistenceError,
-} from "./model-call-context-run-event.ts";
+  DurableRunEventPersistenceError,
+  isPrivateConversationRunEvent,
+} from "./private-run-event.ts";
 export type {
   ActiveConversationRunStatus,
   AppendConversationRunEventsResponse,
@@ -74,6 +76,7 @@ export type {
 } from "./durable-contracts.ts";
 
 const AGENT_RUN_API_TIMEOUT_MS = 15_000;
+type ConversationRunApiFetch = typeof globalThis.fetch;
 
 function createTimedAbortSignal(timeoutMs: number, abortSignal?: AbortSignal) {
   const controller = new AbortController();
@@ -108,6 +111,49 @@ function createTimedAbortSignal(timeoutMs: number, abortSignal?: AbortSignal) {
 
 const DEFAULT_MAX_CONVERSATION_RUN_BATCH_BYTES = 512 * 1024;
 
+function backfillPurePrivateEventResponseCursor(
+  responseBody: unknown,
+  latestExternalEventSequence: number,
+): unknown {
+  if (
+    !responseBody || typeof responseBody !== "object" || Array.isArray(responseBody)
+  ) {
+    return responseBody;
+  }
+
+  const body = responseBody as Record<string, unknown>;
+  const needsBodyCursor = body.latestExternalEventSequence === undefined &&
+    body.latest_external_event_sequence === undefined;
+  const run = body.run;
+  const runBody = run && typeof run === "object" && !Array.isArray(run)
+    ? run as Record<string, unknown>
+    : undefined;
+  const needsRunCursor = runBody !== undefined &&
+    runBody.latestExternalEventSequence === undefined &&
+    runBody.latest_external_event_sequence === undefined;
+
+  if (!needsBodyCursor && !needsRunCursor) {
+    return responseBody;
+  }
+
+  const result = { ...body };
+  if (needsBodyCursor) {
+    const cursorKey = body.latestEventId !== undefined
+      ? "latestExternalEventSequence"
+      : "latest_external_event_sequence";
+    result[cursorKey] = latestExternalEventSequence;
+  }
+  if (needsRunCursor && runBody) {
+    const runResult = { ...runBody };
+    const cursorKey = runBody.latestEventId !== undefined
+      ? "latestExternalEventSequence"
+      : "latest_external_event_sequence";
+    runResult[cursorKey] = latestExternalEventSequence;
+    result.run = runResult;
+  }
+  return result;
+}
+
 /** Error shape for conversation run terminal state. */
 export class ConversationRunTerminalStateError extends Error {
   readonly status: TerminalConversationRunStatus;
@@ -140,6 +186,20 @@ export function isAppendableConversationRunProjection(run: ConversationRunProjec
   );
 }
 
+/**
+ * The run reached a terminal status server-side. Both this and a `waiting_for_tool`
+ * projection are non-appendable, but only this one means the run can never be
+ * completed either, so the two must not share a stop reason
+ * (veryfront-issue-inbox#743).
+ */
+export function isTerminalConversationRunProjection(run: ConversationRunProjection): boolean {
+  return (
+    run.status === "completed" ||
+    run.status === "failed" ||
+    run.status === "cancelled"
+  );
+}
+
 /** Resync conversation run append cursor helper. */
 export async function resyncConversationRunAppendCursor(input: {
   authToken: string;
@@ -148,6 +208,8 @@ export async function resyncConversationRunAppendCursor(input: {
   runId: string;
   previousLatestExternalEventSequence: number;
   abortSignal?: AbortSignal;
+  /** Host-owned transport used by trusted capability-backed callers. */
+  fetch?: ConversationRunApiFetch;
 }): Promise<{
   result: ConversationRunAppendCursorResyncResult;
   run: ConversationRunProjection;
@@ -158,6 +220,7 @@ export async function resyncConversationRunAppendCursor(input: {
     conversationId: input.conversationId,
     runId: input.runId,
     abortSignal: input.abortSignal,
+    fetch: input.fetch,
   });
 
   if (!isAppendableConversationRunProjection(run)) {
@@ -193,11 +256,17 @@ export async function recoverConversationRunCursorMismatch(input: {
   maxCursorResyncsPerFlush: number;
   cursorMode?: "external_sequence" | "durable_event_id";
   abortSignal?: AbortSignal;
+  /** Host-owned transport used by trusted capability-backed callers. */
+  fetch?: ConversationRunApiFetch;
 }): Promise<{
   outcome: ConversationRunAppendRecoveryOutcome;
   latestEventId: number;
   latestExternalEventSequence: number;
-  disableReason?: "cursor_resyncs_exhausted" | "cursor_mismatch_ambiguous" | "non_appendable";
+  disableReason?:
+    | "cursor_resyncs_exhausted"
+    | "cursor_mismatch_ambiguous"
+    | "non_appendable"
+    | "run_terminal";
   run?: ConversationRunProjection;
 }> {
   if (!isCursorMismatchConversationRunAppendError(input.error)) {
@@ -237,6 +306,7 @@ export async function recoverConversationRunCursorMismatch(input: {
     runId: input.runId,
     previousLatestExternalEventSequence: input.latestExternalEventSequence,
     abortSignal: input.abortSignal,
+    fetch: input.fetch,
   });
 
   if (resynced.result === "advanced") {
@@ -253,7 +323,13 @@ export async function recoverConversationRunCursorMismatch(input: {
       outcome: "stopped",
       latestEventId: resynced.run.latestEventId,
       latestExternalEventSequence: resynced.run.latestExternalEventSequence,
-      disableReason: "non_appendable",
+      // A cursor mismatch can resolve to a run that is already finished. That is
+      // the same clean stop as the terminal-run append rejection and must not be
+      // lumped in with `waiting_for_tool`, which is non-appendable but still alive
+      // and still has to be completed (veryfront-issue-inbox#743).
+      disableReason: isTerminalConversationRunProjection(resynced.run)
+        ? "run_terminal"
+        : "non_appendable",
       run: resynced.run,
     };
   }
@@ -279,6 +355,8 @@ export async function recoverConversationRunAppendFailure(input: {
   maxCursorResyncsPerFlush: number;
   cursorMode?: "external_sequence" | "durable_event_id";
   abortSignal?: AbortSignal;
+  /** Host-owned transport used by trusted capability-backed callers. */
+  fetch?: ConversationRunApiFetch;
 }): Promise<{
   outcome: ConversationRunAppendFailureOutcome;
   latestEventId: number;
@@ -288,6 +366,7 @@ export async function recoverConversationRunAppendFailure(input: {
     | "cursor_mismatch_ambiguous"
     | "non_appendable"
     | "ignorable_append_rejection"
+    | "run_terminal"
     | "payload_too_large"
     | "auth_rejected";
   errorMessage?: string;
@@ -306,6 +385,7 @@ export async function recoverConversationRunAppendFailure(input: {
     maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush,
     cursorMode: input.cursorMode,
     abortSignal: input.abortSignal,
+    fetch: input.fetch,
   });
 
   if (cursorRecovery.outcome === "resumed") {
@@ -323,6 +403,22 @@ export async function recoverConversationRunAppendFailure(input: {
       latestEventId: cursorRecovery.latestEventId,
       latestExternalEventSequence: cursorRecovery.latestExternalEventSequence,
       disableReason: cursorRecovery.disableReason,
+      ...(cursorRecovery.run ? { run: cursorRecovery.run } : {}),
+    };
+  }
+
+  // veryfront-issue-inbox#743: a terminal-run rejection is the API telling the
+  // runtime the run is finished and its row may already be gone (a project delete
+  // cancels its in-flight runs first). Classify it distinctly from the other
+  // ignorable rejections so finalization can skip completing a run that can only
+  // 400 -- other missing-resource responses and runs waiting for a tool result
+  // keep the generic stop; every other rejection must still retry or surface.
+  if (isTerminalRunConversationRunAppendError(input.error)) {
+    return {
+      outcome: "stopped",
+      latestEventId: cursorRecovery.latestEventId,
+      latestExternalEventSequence: cursorRecovery.latestExternalEventSequence,
+      disableReason: "run_terminal",
       ...(cursorRecovery.run ? { run: cursorRecovery.run } : {}),
     };
   }
@@ -387,6 +483,8 @@ export async function recoverConversationRunAppendExecution(input: {
   maxCursorResyncsPerFlush: number;
   cursorMode?: "external_sequence" | "durable_event_id";
   abortSignal?: AbortSignal;
+  /** Host-owned transport used by trusted capability-backed callers. */
+  fetch?: ConversationRunApiFetch;
 }): Promise<
   | {
     outcome: "resumed";
@@ -404,6 +502,7 @@ export async function recoverConversationRunAppendExecution(input: {
       | "cursor_mismatch_ambiguous"
       | "non_appendable"
       | "ignorable_append_rejection"
+      | "run_terminal"
       | "payload_too_large"
       | "auth_rejected";
   }
@@ -429,6 +528,7 @@ export async function recoverConversationRunAppendExecution(input: {
     maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush,
     cursorMode: input.cursorMode,
     abortSignal: input.abortSignal,
+    fetch: input.fetch,
   });
 
   if (recovered.outcome === "resumed") {
@@ -517,6 +617,8 @@ export async function flushConversationRunEventBatches(input: {
   maxCursorResyncsPerFlush: number;
   abortSignal?: AbortSignal;
   onAppendRequest?: () => void;
+  /** Host-owned transport used by trusted capability-backed callers. */
+  fetch?: ConversationRunApiFetch;
 }): Promise<
   | {
     outcome: "flushed";
@@ -541,6 +643,7 @@ export async function flushConversationRunEventBatches(input: {
       | "cursor_mismatch_ambiguous"
       | "non_appendable"
       | "ignorable_append_rejection"
+      | "run_terminal"
       | "payload_too_large"
       | "auth_rejected";
   }
@@ -560,7 +663,7 @@ export async function flushConversationRunEventBatches(input: {
     if (!batch) {
       continue;
     }
-    const cursorMode = batch.some(isModelCallContextRunEvent)
+    const cursorMode = batch.some(isPrivateConversationRunEvent)
       ? "durable_event_id" as const
       : "external_sequence" as const;
     try {
@@ -574,6 +677,7 @@ export async function flushConversationRunEventBatches(input: {
         expectedPreviousExternalEventSequence: latestExternalEventSequence,
         events: batch,
         abortSignal: input.abortSignal,
+        fetch: input.fetch,
       });
       latestEventId = response.latestEventId;
       latestExternalEventSequence = response.latestExternalEventSequence;
@@ -594,6 +698,7 @@ export async function flushConversationRunEventBatches(input: {
         maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush,
         cursorMode,
         abortSignal: input.abortSignal,
+        fetch: input.fetch,
       });
 
       if (recovered.outcome === "stopped") {
@@ -643,6 +748,8 @@ export async function flushConversationRunEventQueue(input: {
   consecutiveFailures?: number;
   abortSignal?: AbortSignal;
   onAppendRequest?: () => void;
+  /** Host-owned transport used by trusted capability-backed callers. */
+  fetch?: ConversationRunApiFetch;
 }): Promise<
   | {
     outcome: "flushed";
@@ -658,6 +765,7 @@ export async function flushConversationRunEventQueue(input: {
       | "cursor_mismatch_ambiguous"
       | "non_appendable"
       | "ignorable_append_rejection"
+      | "run_terminal"
       | "payload_too_large"
       | "auth_rejected";
   }
@@ -697,6 +805,7 @@ export async function flushConversationRunEventQueue(input: {
       maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush,
       abortSignal: input.abortSignal,
       onAppendRequest: input.onAppendRequest,
+      fetch: input.fetch,
     });
 
     latestEventId = flushed.latestEventId;
@@ -752,6 +861,8 @@ export function createConversationRunEventQueueController(input: {
   maxEventsPerBatch: number;
   maxBatchPayloadBytes?: number;
   maxCursorResyncsPerFlush?: number;
+  /** Host-owned transport used by trusted capability-backed callers. */
+  fetch?: ConversationRunApiFetch;
 }): ConversationRunEventQueueController {
   let latestEventId = input.latestEventId;
   let latestExternalEventSequence = input.latestExternalEventSequence;
@@ -807,6 +918,7 @@ export function createConversationRunEventQueueController(input: {
         maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush ?? 3,
         consecutiveFailures,
         abortSignal,
+        fetch: input.fetch,
         onAppendRequest: () => {
           appendRequestCount += 1;
         },
@@ -950,6 +1062,7 @@ async function controlPlaneJson<T>(input: {
   responseSchema: Schema<T>;
   operation: string;
   abortSignal?: AbortSignal;
+  fetch?: ConversationRunApiFetch;
 }): Promise<T> {
   if (input.abortSignal?.aborted) {
     throw new DOMException("This operation was aborted", "AbortError");
@@ -960,7 +1073,7 @@ async function controlPlaneJson<T>(input: {
   // The timed abort must stay armed while the body is read: a server that
   // stalls mid-body would otherwise hang past the timeout.
   try {
-    const response = await fetch(input.url, {
+    const response = await (input.fetch ?? globalThis.fetch)(input.url, {
       method: input.method ?? "GET",
       headers: {
         Authorization: `Bearer ${input.authToken}`,
@@ -1000,6 +1113,8 @@ export async function getConversationRun(input: {
   conversationId: string;
   runId: string;
   abortSignal?: AbortSignal;
+  /** Host-owned transport used by trusted capability-backed callers. */
+  fetch?: ConversationRunApiFetch;
 }): Promise<ConversationRunProjection> {
   return controlPlaneJson({
     authToken: input.authToken,
@@ -1007,6 +1122,7 @@ export async function getConversationRun(input: {
     responseSchema: ConversationRunProjectionSchema,
     operation: "Read conversation durable run projection",
     abortSignal: input.abortSignal,
+    fetch: input.fetch,
   });
 }
 
@@ -1079,29 +1195,50 @@ export async function appendConversationRunEvents(input: {
   expectedPreviousExternalEventSequence?: number;
   events: unknown[];
   abortSignal?: AbortSignal;
+  /** Host-owned transport used by trusted capability-backed callers. */
+  fetch?: ConversationRunApiFetch;
 }): Promise<AppendConversationRunEventsResponse> {
   if (input.abortSignal?.aborted) {
     throw new DOMException("This operation was aborted", "AbortError");
   }
 
-  const timedAbort = createTimedAbortSignal(AGENT_RUN_API_TIMEOUT_MS, input.abortSignal);
   const normalizedEvents = normalizeConversationRunEvents(
     input.events as Parameters<typeof normalizeConversationRunEvents>[0],
   );
-  const requiresDurableCursor = normalizedEvents.some(isModelCallContextRunEvent);
-  const isPureModelCallContextBatch = normalizedEvents.length > 0 &&
-    normalizedEvents.every(isModelCallContextRunEvent);
+  const requiresDurableCursor = normalizedEvents.some(isPrivateConversationRunEvent);
+  const isPurePrivateEventBatch = normalizedEvents.length > 0 &&
+    normalizedEvents.every(isPrivateConversationRunEvent);
   if (requiresDurableCursor && input.expectedPreviousEventId === undefined) {
-    timedAbort.cleanup();
-    throw new ModelCallContextPersistenceError(
-      "Model-call context append requires expected_previous_event_id",
+    throw new DurableRunEventPersistenceError(
+      "Private run event append requires expected_previous_event_id",
     );
   }
+
+  const timedAbort = createTimedAbortSignal(AGENT_RUN_API_TIMEOUT_MS, input.abortSignal);
 
   // The timed abort must stay armed while the body is read: a server that
   // stalls mid-body would otherwise hang past the timeout.
   try {
-    const response = await fetch(
+    const requestBody = JSON.stringify({
+      ...(input.expectedPreviousEventId !== undefined
+        ? { expected_previous_event_id: input.expectedPreviousEventId }
+        : {}),
+      ...(!requiresDurableCursor && input.expectedPreviousExternalEventSequence !== undefined
+        ? {
+          expected_previous_external_event_sequence: input.expectedPreviousExternalEventSequence,
+        }
+        : {}),
+      events: normalizedEvents,
+    });
+    if (
+      new TextEncoder().encode(requestBody).byteLength >
+        MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES
+    ) {
+      throw new DurableRunEventPersistenceError(
+        "Run event append request exceeds the supported payload size",
+      );
+    }
+    const response = await (input.fetch ?? globalThis.fetch)(
       `${input.apiUrl}/conversations/${input.conversationId}/runs/${input.runId}/events`,
       {
         method: "POST",
@@ -1109,69 +1246,31 @@ export async function appendConversationRunEvents(input: {
           Authorization: `Bearer ${input.authToken}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          ...(input.expectedPreviousEventId !== undefined
-            ? { expected_previous_event_id: input.expectedPreviousEventId }
-            : {}),
-          ...(!requiresDurableCursor && input.expectedPreviousExternalEventSequence !== undefined
-            ? {
-              expected_previous_external_event_sequence:
-                input.expectedPreviousExternalEventSequence,
-            }
-            : {}),
-          // Chokepoint guard: every append path funnels through here, so enforce the
-          // per-event size limit here too. Upstream mirrors already normalize, but
-          // direct callers (hosted lifecycle, child-run progress) do not — this makes
-          // it impossible to POST an event the API would reject for size. Idempotent
-          // on already-normalized events.
-          events: normalizedEvents,
-        }),
+        body: requestBody,
         signal: timedAbort.signal,
       },
     );
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
+      const parsedError = parseAppendConversationRunEventsError(body);
       throw new AppendConversationRunEventsError({
         status: response.status,
-        detail: parseAppendConversationRunEventsErrorBody(body),
+        detail: parsedError.detail,
+        slug: parsedError.slug,
         statusText: response.statusText,
       });
     }
 
-    const responseBody = await response.json();
+    let responseBody = await response.json();
     // Pure private-event appends do not advance the external cursor and the API
     // intentionally omits it. Preserve the caller's known cursor so the shared
     // queue result remains total; mixed batches return the advanced API value.
-    if (
-      isPureModelCallContextBatch && input.expectedPreviousExternalEventSequence !== undefined &&
-      responseBody && typeof responseBody === "object" && !Array.isArray(responseBody)
-    ) {
-      const body = responseBody as Record<string, unknown>;
-      if (
-        body.latestExternalEventSequence === undefined &&
-        body.latest_external_event_sequence === undefined
-      ) {
-        if (body.latestEventId !== undefined) {
-          body.latestExternalEventSequence = input.expectedPreviousExternalEventSequence;
-        } else {
-          body.latest_external_event_sequence = input.expectedPreviousExternalEventSequence;
-        }
-      }
-      const run = body.run;
-      if (run && typeof run === "object" && !Array.isArray(run)) {
-        const runBody = run as Record<string, unknown>;
-        if (
-          runBody.latestExternalEventSequence === undefined &&
-          runBody.latest_external_event_sequence === undefined
-        ) {
-          if (runBody.latestEventId !== undefined) {
-            runBody.latestExternalEventSequence = input.expectedPreviousExternalEventSequence;
-          } else {
-            runBody.latest_external_event_sequence = input.expectedPreviousExternalEventSequence;
-          }
-        }
-      }
+    if (isPurePrivateEventBatch && input.expectedPreviousExternalEventSequence !== undefined) {
+      responseBody = backfillPurePrivateEventResponseCursor(
+        responseBody,
+        input.expectedPreviousExternalEventSequence,
+      );
     }
     return AppendConversationRunEventsResponseSchema.parse(responseBody);
   } catch (error) {

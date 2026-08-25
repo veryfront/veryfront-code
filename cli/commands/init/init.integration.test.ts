@@ -15,7 +15,7 @@ import { VERSION } from "#cli/utils";
 import { join } from "#veryfront/compat/path/index.ts";
 import { exists, makeTempDir, readTextFile, remove, stat } from "#veryfront/testing/deno-compat.ts";
 import { runCommand } from "#veryfront/compat/process.ts";
-import { STARTER_TEMPLATE_NAMES } from "../../templates/types.ts";
+import { STARTER_TEMPLATE_NAMES } from "../../../templates/types.ts";
 import type { InitOptions } from "./types.ts";
 
 const TEST_DIR = await makeTempDir({ prefix: "veryfront-init-test-" });
@@ -187,6 +187,7 @@ describe("init command integration", () => {
       assertEquals(result.stdout?.includes("Deploy:"), true);
       assertEquals(result.stdout?.includes("Project structure"), false);
       assertEquals(result.stdout?.includes("npm run deploy"), true);
+      assertEquals(result.stdout?.includes("npx veryfront@latest deploy"), false);
       assertEquals(result.stdout?.includes("npx veryfront deploy"), false);
       assertEquals(result.stdout?.includes("Project files created"), false);
       assertEquals(result.stdout?.includes("Dependencies installed"), false);
@@ -686,16 +687,14 @@ describe("init command integration", () => {
         "--skip-install",
         "--skip-env-prompt",
       ]);
-      // Non-zero exit; the project directory must not exist.
-      assertEquals(result.code !== 0, true);
+      // Usage exit code; the project directory must not exist.
+      assertEquals(result.code, 2);
       assertEquals(await exists(projectDir), false);
-      // The error message should surface the validator.
-      assertEquals(
-        ((result.stdout ?? "") + (result.stderr ?? "")).includes(
-          "Invalid runtime value",
-        ),
-        true,
-      );
+      // A classified usage error that surfaces the validator, not unknown-error.
+      const output = (result.stdout ?? "") + (result.stderr ?? "");
+      assertEquals(output.includes("[invalid-argument]"), true);
+      assertEquals(output.includes("Invalid runtime value"), true);
+      assertEquals(output.includes("unknown-error"), false);
     });
   });
 
@@ -711,17 +710,37 @@ describe("init command integration", () => {
   });
 
   describe("existing directory", () => {
-    it("should show error when directory already exists", async () => {
+    it("should show error when the directory holds files the template writes", async () => {
       const dirName = `exists-${randomSuffix()}`;
       const dirPath = join(TEST_DIR, dirName);
       await Deno.mkdir(dirPath);
+      await Deno.writeTextFile(join(dirPath, "README.md"), "mine\n");
 
       try {
         const result = await runInitCommand([dirName, "-t", "minimal", "--skip-install"]);
         const output = (result.stdout ?? "") + (result.stderr ?? "");
 
-        assertEquals(output.includes("already exists"), true);
+        assertEquals(result.code, 1);
+        assertEquals(output.includes("[already-exists]"), true);
+        assertEquals(output.includes("already contains README.md"), true);
+        assertEquals(output.includes("unknown-error"), false);
         assertEquals(output.includes("Stack trace"), false);
+        assertEquals(await Deno.readTextFile(join(dirPath, "README.md")), "mine\n");
+      } finally {
+        await remove(dirPath, { recursive: true }).catch(() => {});
+      }
+    });
+
+    it("should scaffold into an existing empty directory", async () => {
+      const dirName = `empty-${randomSuffix()}`;
+      const dirPath = join(TEST_DIR, dirName);
+      await Deno.mkdir(dirPath);
+
+      try {
+        const result = await runInitCommand([dirName, "-t", "minimal", "--skip-install"]);
+
+        assertEquals(result.code, 0);
+        assertEquals(await exists(join(dirPath, "app", "page.tsx")), true);
       } finally {
         await remove(dirPath, { recursive: true }).catch(() => {});
       }
@@ -745,6 +764,158 @@ describe("init command integration", () => {
         assertEquals(await exists(join(dirPath, "app")), true);
       } finally {
         await remove(dirPath, { recursive: true }).catch(() => {});
+      }
+    });
+  });
+
+  describe("--deploy authentication", () => {
+    it("does not treat a parent config credential as the new project's stored session", async () => {
+      const parentDir = await makeTempDir({ prefix: "veryfront-init-auth-parent-" });
+      const name = `deploy-auth-${randomSuffix()}`;
+      const projectDir = join(parentDir, name);
+      const server = Deno.serve(
+        { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+        () => {
+          requests++;
+          return Response.json({ id: "user-1", email: "dev@example.test" });
+        },
+      );
+      const baseUrl = `http://127.0.0.1:${(server.addr as Deno.NetAddr).port}`;
+      let requests = 0;
+
+      try {
+        await Deno.writeTextFile(
+          join(parentDir, "veryfront.json"),
+          `${
+            JSON.stringify(
+              {
+                apiToken: "parent-config-token",
+                apiUrl: baseUrl,
+                projectSlug: "parent-project",
+              },
+              null,
+              2,
+            )
+          }\n`,
+        );
+
+        const result = await runInitCommand(
+          [
+            name,
+            "--template",
+            "minimal",
+            "--skip-install",
+            "--skip-env-prompt",
+            "--deploy",
+            "--no-color",
+          ],
+          {
+            cwd: parentDir,
+            env: {
+              VERYFRONT_API_TOKEN: "",
+              XDG_CONFIG_HOME: join(parentDir, "config"),
+              VERYFRONT_NO_UPDATE_CHECK: "1",
+              CI: "1",
+              NO_COLOR: "1",
+            },
+          },
+        );
+        const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+
+        assertEquals(result.code, 0);
+        assertEquals(requests, 0);
+        assertEquals(output.includes("Authentication required for --deploy."), true);
+        assertEquals(output.includes("Could not read auth token."), false);
+        assertEquals(await exists(join(projectDir, "app", "page.tsx")), true);
+      } finally {
+        await server.shutdown();
+        await remove(parentDir, { recursive: true }).catch(() => {});
+      }
+    });
+
+    it("deploys with a credential from the created project's config", async () => {
+      const parentDir = await makeTempDir({ prefix: "veryfront-init-auth-project-" });
+      const name = `deploy-auth-${randomSuffix()}`;
+      const projectDir = join(parentDir, name);
+      const requests: Array<{ path: string; authorization: string | null }> = [];
+      const server = Deno.serve(
+        { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+        (request) => {
+          const url = new URL(request.url);
+          requests.push({
+            path: url.pathname,
+            authorization: request.headers.get("authorization"),
+          });
+          if (url.pathname === "/me") {
+            return Response.json({ id: "user-1", email: "dev@example.test" });
+          }
+          return Response.json({ error: "deployment unavailable" }, { status: 500 });
+        },
+      );
+      const baseUrl = `http://127.0.0.1:${(server.addr as Deno.NetAddr).port}`;
+
+      try {
+        await Deno.mkdir(projectDir);
+        await Deno.writeTextFile(
+          join(projectDir, "veryfront.json"),
+          `${
+            JSON.stringify(
+              {
+                apiToken: "project-config-token",
+                apiUrl: baseUrl,
+                projectSlug: "created-project",
+              },
+              null,
+              2,
+            )
+          }\n`,
+        );
+
+        const result = await runInitCommand(
+          [
+            name,
+            "--template",
+            "minimal",
+            "--skip-install",
+            "--skip-env-prompt",
+            "--force",
+            "--deploy",
+            "--no-color",
+          ],
+          {
+            cwd: parentDir,
+            env: {
+              VERYFRONT_API_TOKEN: "",
+              XDG_CONFIG_HOME: join(parentDir, "config"),
+              VERYFRONT_NO_UPDATE_CHECK: "1",
+              CI: "1",
+              NO_COLOR: "1",
+            },
+          },
+        );
+        const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+
+        assertEquals(result.code, 0);
+        assertEquals(output.includes("Deploying project..."), true);
+        assertEquals(output.includes("Could not read auth token."), false);
+        assertEquals(output.includes("Deploy failed:"), true);
+        assertEquals(output.includes("Your project was created locally."), true);
+        assertEquals(output.includes("to deploy later."), true);
+        assertEquals(requests[0], {
+          path: "/me",
+          authorization: "Bearer project-config-token",
+        });
+        assertEquals(
+          requests.some((request) =>
+            request.path !== "/me" &&
+            request.authorization === "Bearer project-config-token"
+          ),
+          true,
+        );
+        assertEquals(await exists(join(projectDir, "app", "page.tsx")), true);
+      } finally {
+        await server.shutdown();
+        await remove(parentDir, { recursive: true }).catch(() => {});
       }
     });
   });

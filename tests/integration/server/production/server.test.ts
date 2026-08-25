@@ -30,6 +30,7 @@ async function startServer(
   port: number,
   signal: AbortSignal,
   debug?: boolean,
+  defaultEnvironment?: "preview" | "production",
 ) {
   const server = await startProductionServer({
     projectDir: context.projectDir,
@@ -39,6 +40,7 @@ async function startServer(
     signal,
     defaultProjectSlug: context.projectId,
     defaultProjectId: context.projectId,
+    ...(defaultEnvironment ? { defaultEnvironment } : {}),
   });
   await server.ready;
   return server;
@@ -399,7 +401,7 @@ describe(
       });
     });
 
-    it("renders the nearest app not-found.tsx for missing App Router pages", async () => {
+    it("renders the nearest app not-found.tsx with request-scoped node positions", async () => {
       await withTestContext("production-server-app-not-found", async (context: TestContext) => {
         try {
           await remove(join(context.projectDir, "app"), { recursive: true });
@@ -415,20 +417,45 @@ describe(
         );
         await writeTextFile(
           join(segDir, "not-found.tsx"),
-          `export default function NotFound(){ return <p>Missing B</p>; }`,
+          `export default function NotFound(){ return <p id="deep-not-found">Missing B</p>; }`,
         );
 
         const port = await context.allocatePort();
         const controller = new AbortController();
-        const server = await startServer(context, port, controller.signal);
+        const server = await startServer(
+          context,
+          port,
+          controller.signal,
+          undefined,
+          "production",
+        );
 
-        const res = await fetch(`http://127.0.0.1:${port}/a/b/missing`);
-        assertEquals(res.status, 404);
-        assertMatch(res.headers.get("content-type") ?? "", /text\/html/i);
-        const html = await res.text();
-        assertStringIncludes(html, "Missing B");
-        assertStringIncludes(html, 'data-node-file="app/a/b/not-found.tsx"');
-        assertEquals(html.includes("Root Missing"), false);
+        // Both requests compile through one production server. The trusted
+        // Host-derived request environment is the only varying input, matching
+        // hosted routing and exercising cross-environment cache isolation.
+        for (
+          const scenario of [
+            { name: "preview", expectNodePositions: true },
+            { name: "production", expectNodePositions: false },
+          ] as const
+        ) {
+          const res = await fetch(
+            `http://${context.projectId}.${scenario.name}.localhost:${port}/a/b/missing`,
+          );
+          assertEquals(res.status, 404);
+          assertMatch(res.headers.get("content-type") ?? "", /text\/html/i);
+          const html = await res.text();
+          // The id attribute only survives a real SSR render:
+          // extractNotFoundText rebuilds the text as a bare <p>, so this
+          // pins the assertions below to the render path.
+          assertStringIncludes(html, 'id="deep-not-found"');
+          assertStringIncludes(html, "Missing B");
+          assertEquals(
+            html.includes('data-node-file="app/a/b/not-found.tsx"'),
+            scenario.expectNodePositions,
+          );
+          assertEquals(html.includes("Root Missing"), false);
+        }
 
         controller.abort();
         await server.stop();

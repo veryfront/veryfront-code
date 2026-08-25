@@ -62,6 +62,12 @@ export class MemoryCacheStore implements CacheStore {
     return Promise.resolve();
   }
 
+  deleteIfUnchanged(key: string, expected: CachePayload): Promise<boolean> {
+    if (this.cache.get(key) !== expected) return Promise.resolve(false);
+    this.cache.delete(key);
+    return Promise.resolve(true);
+  }
+
   deleteByPrefix(prefix: string): Promise<number> {
     let deleted = 0;
 

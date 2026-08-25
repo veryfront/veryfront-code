@@ -246,6 +246,39 @@ describe("shouldRetryUpstreamRequest", () => {
     );
   });
 
+  it("retries a bodyless run stream invocation on any retryable connection error", () => {
+    const request = new Request(RUN_STREAM_URL, {
+      method: "POST",
+      headers: { "content-length": "0" },
+    });
+
+    assertEquals(
+      shouldRetryUpstreamRequest(request, RUN_STREAM_PATH, new Error("connection reset")),
+      true,
+      "a bodyless run stream POST must fail over on a reset connection",
+    );
+    assertEquals(
+      shouldRetryUpstreamRequest(request, RUN_STREAM_PATH, new Error("connection closed")),
+      true,
+      "a bodyless run stream POST must fail over on a closed connection",
+    );
+    assertEquals(
+      shouldRetryUpstreamRequest(request, RUN_STREAM_PATH, new Error("connection refused")),
+      true,
+      "a bodyless run stream POST must fail over on a refused connection",
+    );
+    assertEquals(
+      shouldRetryUpstreamRequest(request, RUN_STREAM_PATH, new Error("Not found")),
+      false,
+      "a non-connection failure must not be replayed",
+    );
+    assertEquals(
+      getUpstreamRetryCount(request, RUN_STREAM_PATH, 3),
+      1,
+      "a bodyless run stream POST gets exactly one retry",
+    );
+  });
+
   it("retains broad connection retries for bodyless idempotent requests", () => {
     const request = new Request("http://proxy.test/");
     assertEquals(
@@ -269,6 +302,35 @@ describe("shouldRetryUpstreamRequest", () => {
 });
 
 describe("getReplayableRequestBodies", () => {
+  async function readBodyBytes(body: ReadableStream<Uint8Array> | null): Promise<number[]> {
+    const bytes = await new Response(body).arrayBuffer();
+    return [...new Uint8Array(bytes)];
+  }
+
+  it("replays a multi-chunk body sequentially across retries", async () => {
+    const encoder = new TextEncoder();
+    const chunks = ["alpha", ":", "beta"].map((chunk) => encoder.encode(chunk));
+    const expected = chunks.flatMap((chunk) => [...chunk]);
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(chunk);
+        controller.close();
+      },
+    });
+    const request = {
+      method: "POST",
+      headers: new Headers({ "content-length": "10" }),
+      body,
+    } as Request;
+
+    const bodies = getReplayableRequestBodies(request, 3);
+
+    assertEquals(bodies.length, 4);
+    for (const replay of bodies) {
+      assertEquals(await readBodyBytes(replay), expected);
+    }
+  });
+
   it("creates an independent signed payload stream for every attempt", async () => {
     const payload = JSON.stringify({ run: { runId: "run_1" } });
     const request = new Request(RUN_STREAM_URL, {

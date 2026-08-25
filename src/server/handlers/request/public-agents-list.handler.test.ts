@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { createEmptyDiscoveryResult } from "#veryfront/discovery";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { PublicAgentsListHandler } from "./public-agents-list.handler.ts";
@@ -10,6 +11,7 @@ describe("server/handlers/request/public-agents-list.handler", () => {
     const handler = new PublicAgentsListHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
       },
       getAgent: (id) =>
         createAgentWithConfig(id, {
@@ -42,7 +44,7 @@ describe("server/handlers/request/public-agents-list.handler", () => {
 
   it("skips ids that no longer resolve to an agent", async () => {
     const handler = new PublicAgentsListHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) =>
         id === "support-agent"
           ? createAgentWithConfig(id, { name: "Support Agent", description: null })
@@ -64,7 +66,7 @@ describe("server/handlers/request/public-agents-list.handler", () => {
 
   it("returns an empty list when the project exposes no agents", async () => {
     const handler = new PublicAgentsListHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: () => undefined,
       getAllAgentIds: () => [],
     });

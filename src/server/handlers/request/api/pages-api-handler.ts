@@ -15,6 +15,7 @@ import {
   tryGetCacheKeyContext,
 } from "#veryfront/cache/cache-key-builder.ts";
 import type { HandlerContext } from "../../types.ts";
+import { ensurePreviewSourceSnapshotFresh } from "../source-snapshot-freshness.ts";
 
 const logger = serverLogger.component("reset-api-handler");
 
@@ -93,6 +94,11 @@ interface HandlerLeaseState {
 }
 
 const handlerLeaseStates = new WeakMap<Promise<APIRouteHandler>, HandlerLeaseState>();
+// Hosted config snapshots are deeply frozen and cached by their source and
+// environment fingerprint. Keep that exact process-local identity in the
+// handler key so changed environment values cannot reuse a stale handler.
+const configSnapshotIds = new WeakMap<object, number>();
+let nextConfigSnapshotId = 1;
 
 function getCache(): HandlerCache<Promise<APIRouteHandler>> {
   return injectedCache ?? apiHandlerCache;
@@ -108,6 +114,15 @@ function getApiHandlerCacheContext(ctx: HandlerContext) {
   return tryGetCacheKeyContext() ?? extractCacheKeyContext(ctx);
 }
 
+function getConfigSnapshotId(config: NonNullable<HandlerContext["config"]>): number {
+  let id = configSnapshotIds.get(config);
+  if (id === undefined) {
+    id = nextConfigSnapshotId++;
+    configSnapshotIds.set(config, id);
+  }
+  return id;
+}
+
 function getCacheKey(ctx: HandlerContext): string {
   if (!ctx.projectSlug) return ctx.projectDir;
 
@@ -115,7 +130,12 @@ function getCacheKey(ctx: HandlerContext): string {
   // No safe scoped key (e.g. production without a releaseId): fall back to the
   // project-specific dir key rather than a shared bucket.
   if (!cacheContext) return ctx.projectDir;
-  return `${ctx.projectDir}:${ctx.projectSlug}:${cacheContext.mode}:${cacheContext.versionId}`;
+  const environmentIdentity = ctx.environmentId ?? ctx.environmentName;
+  const environmentKey = environmentIdentity
+    ? `:environment:${encodeURIComponent(environmentIdentity)}`
+    : "";
+  const configKey = ctx.config ? `:config:${getConfigSnapshotId(ctx.config)}` : "";
+  return `${ctx.projectDir}:${ctx.projectSlug}:${cacheContext.mode}:${cacheContext.versionId}${environmentKey}${configKey}`;
 }
 
 function shouldCacheApiHandler(ctx: HandlerContext): boolean {
@@ -123,30 +143,6 @@ function shouldCacheApiHandler(ctx: HandlerContext): boolean {
 
   // Cannot confirm a production context → do not cache.
   return getApiHandlerCacheContext(ctx)?.mode === "production";
-}
-
-function hasMutablePreviewSource(ctx: HandlerContext): boolean {
-  if (!ctx.projectSlug) return false;
-  const cacheContext = getApiHandlerCacheContext(ctx);
-  // Skip when production, or when the context is indeterminate.
-  return !!cacheContext && cacheContext.mode !== "production";
-}
-
-export async function ensurePreviewSourceSnapshotFresh(ctx: HandlerContext): Promise<void> {
-  if (!hasMutablePreviewSource(ctx)) return;
-  if (ctx.adapter.fs.ensureSourceSnapshotFresh) {
-    await ctx.adapter.fs.ensureSourceSnapshotFresh("preview-request-routing");
-    return;
-  }
-
-  // Backward compatibility for custom remote adapters that only implement the
-  // original unconditional refresh contract.
-  await refreshPreviewSourceSnapshot(ctx);
-}
-
-export async function refreshPreviewSourceSnapshot(ctx: HandlerContext): Promise<void> {
-  if (!hasMutablePreviewSource(ctx)) return;
-  await ctx.adapter.fs.refreshSourceSnapshot?.("preview-api-route-discovery");
 }
 
 interface ApiHandlerOptions {
@@ -161,7 +157,7 @@ async function createApiHandler(
     await ensurePreviewSourceSnapshotFresh(ctx);
   }
 
-  const handler = new APIRouteHandler(ctx.projectDir, ctx.adapter);
+  const handler = new APIRouteHandler(ctx.projectDir, ctx.adapter, ctx.config);
   await handler.initialize();
   return handler;
 }

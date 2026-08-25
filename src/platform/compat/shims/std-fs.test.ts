@@ -157,7 +157,16 @@ describe("platform/compat/shims/std-fs", () => {
         entries.push(entry);
       }
 
-      assertEquals(entries.every((e) => e.isFile), true);
+      assertEquals(
+        entries.every((e) => e.isFile),
+        true,
+        "includeDirs=false must not yield directories",
+      );
+      assertEquals(
+        entries.some((e) => e.name === "file.ts"),
+        true,
+        "includeDirs=false must still yield nested files",
+      );
       await Deno.remove(tmpDir, { recursive: true });
     });
 
@@ -171,7 +180,16 @@ describe("platform/compat/shims/std-fs", () => {
         entries.push(entry);
       }
 
-      assertEquals(entries.every((e) => e.isDirectory), true);
+      assertEquals(
+        entries.every((e) => e.isDirectory),
+        true,
+        "includeFiles=false must not yield files",
+      );
+      assertEquals(
+        entries.some((e) => e.name === "sub"),
+        true,
+        "includeFiles=false must still yield nested directories",
+      );
       await Deno.remove(tmpDir, { recursive: true });
     });
 

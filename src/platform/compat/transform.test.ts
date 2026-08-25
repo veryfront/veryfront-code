@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isUsingEsbuild, transformJsx } from "./transform.ts";
 
@@ -14,13 +14,24 @@ describe("platform/compat/transform", { sanitizeOps: false, sanitizeResources: f
   describe("transformJsx", () => {
     it("should transform TSX to JS", async () => {
       const result = await transformJsx(
-        `const App = () => <div>Hello</div>;`,
+        `const App = () => <div>Hello</div>;\nexport default App;`,
         { loader: "tsx" },
       );
 
       assertExists(result.code);
       assertEquals(typeof result.code, "string");
       assertEquals(result.code.includes("<div>"), false); // JSX should be compiled away
+      assertStringIncludes(
+        result.code,
+        'from "react/jsx-runtime"',
+        "tsx must compile through the automatic React runtime",
+      );
+      assertStringIncludes(
+        result.code,
+        'jsx("div"',
+        "the automatic runtime must emit a jsx() call, not React.createElement",
+      );
+      assertStringIncludes(result.code, "export {", "transform output must stay ESM");
     });
 
     it("should transform JSX to JS", async () => {

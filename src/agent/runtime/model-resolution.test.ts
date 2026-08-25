@@ -1,12 +1,20 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { VERYFRONT_CLOUD_CHAT_MODELS } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import {
   AUTO_AGENT_MODEL,
   DEFAULT_AGENT_MODEL,
   normalizeAgentModelConfig,
   resolveConfiguredAgentModel,
+  resolveModelProviderOptionKey,
   resolveRuntimeModel,
 } from "./model-resolution.ts";
 
@@ -37,6 +45,46 @@ describe("agent/runtime/model-resolution", () => {
     clearModelEnv();
   });
 
+  it("keeps the Cloud gateway for a defaulted model when a different provider key is present", () => {
+    // Regression: an account holder who happens to have an Anthropic key must
+    // keep routing the default model through the gateway. The
+    // default-model mismatch error is only for the no-cloud case.
+    setEnv("VERYFRONT_API_TOKEN", "vf-token");
+    setEnv("VERYFRONT_SERVICE_LAYER", "cloud");
+    setEnv("ANTHROPIC_API_KEY", "sk-ant-test");
+
+    assertEquals(resolveRuntimeModel(), `veryfront-cloud/${DEFAULT_AGENT_MODEL}`);
+  });
+
+  it("reports a default-model mismatch when only another provider has a key", () => {
+    setEnv("ANTHROPIC_API_KEY", "sk-ant-test");
+
+    const err = assertThrows(() => resolveRuntimeModel(), VeryfrontError);
+    assertInstanceOf(err, VeryfrontError, "the mismatch must be a VeryfrontError");
+    assertEquals(err.slug, "default-model-credential-mismatch", err.message);
+    assertEquals(err.status, 400, "the mismatch must stay a 400 client error");
+    assertStringIncludes(err.message, "needs a openai credential", err.message);
+    assertStringIncludes(err.message, "Found anthropic", err.message);
+  });
+
+  it("still routes the default model directly when its own provider has a key", () => {
+    setEnv("OPENAI_API_KEY", "sk-openai-test");
+
+    assertEquals(resolveRuntimeModel(), DEFAULT_AGENT_MODEL);
+  });
+
+  it("does not report a mismatch when no direct provider key exists at all", () => {
+    // No credentials anywhere is a different, already-clear failure; this path
+    // must stay untouched so the message does not change for those users.
+    assertEquals(resolveRuntimeModel(), DEFAULT_AGENT_MODEL);
+  });
+
+  it("does not report a mismatch for an explicitly configured model", () => {
+    setEnv("ANTHROPIC_API_KEY", "sk-ant-test");
+
+    assertEquals(resolveRuntimeModel("openai/gpt-5.5"), "openai/gpt-5.5");
+  });
+
   it("normalizes omitted models to the default and blank models to auto", () => {
     assertEquals(normalizeAgentModelConfig(), DEFAULT_AGENT_MODEL);
     assertEquals(normalizeAgentModelConfig("   "), AUTO_AGENT_MODEL);
@@ -64,6 +112,13 @@ describe("agent/runtime/model-resolution", () => {
     assertEquals(
       resolveConfiguredAgentModel("openai/gpt-4o"),
       "openai/gpt-4o",
+    );
+  });
+
+  it("preserves case-sensitive provider-options keys", () => {
+    assertEquals(
+      resolveModelProviderOptionKey("AWS-Anthropic/claude-sonnet"),
+      "AWS-Anthropic",
     );
   });
 
@@ -100,6 +155,33 @@ describe("agent/runtime/model-resolution", () => {
       resolveConfiguredAgentModel("mistral-large"),
       "mistral/mistral-large-2512",
     );
+  });
+
+  it("aliases every Veryfront Cloud catalog model id to its provider model", () => {
+    for (const model of VERYFRONT_CLOUD_CHAT_MODELS) {
+      assertEquals(resolveConfiguredAgentModel(model.id), model.modelId);
+    }
+  });
+
+  it("does not resolve Object.prototype members as model aliases", () => {
+    for (
+      const inherited of [
+        "constructor",
+        "toString",
+        "valueOf",
+        "hasOwnProperty",
+        "isPrototypeOf",
+        "propertyIsEnumerable",
+        "toLocaleString",
+        "__proto__",
+        "__defineGetter__",
+        "__defineSetter__",
+        "__lookupGetter__",
+        "__lookupSetter__",
+      ]
+    ) {
+      assertEquals(resolveConfiguredAgentModel(inherited), inherited);
+    }
   });
 
   it("uses the default model through Veryfront Cloud when cloud bootstrap is available", () => {

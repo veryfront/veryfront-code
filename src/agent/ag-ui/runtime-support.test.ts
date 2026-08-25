@@ -84,4 +84,65 @@ describe("agent/ag-ui-runtime-support", () => {
       },
     ]);
   });
+
+  it("wraps failed tool results so the runtime sees the error", () => {
+    const messages = normalizeAgUiRuntimeMessages([
+      {
+        id: "assistant-1",
+        role: "assistant",
+        content: "",
+        toolCalls: [{
+          id: "tool-1",
+          type: "function",
+          function: { name: "harvest__list_users", arguments: "{}" },
+        }],
+      },
+      {
+        id: "tool-1-result",
+        role: "tool",
+        toolCallId: "tool-1",
+        content: "partial",
+        error: "upstream 500",
+      },
+    ]);
+
+    assertEquals(
+      messages[1]?.parts[0],
+      {
+        type: "tool-result",
+        toolCallId: "tool-1",
+        toolName: "harvest__list_users",
+        result: { content: "partial", error: "upstream 500" },
+      },
+      "a tool message with an error must wrap content and error so the runtime sees the failure",
+    );
+  });
+
+  it("resets inferred tool names on a new user turn", () => {
+    const messages = normalizeAgUiRuntimeMessages([
+      {
+        id: "assistant-1",
+        role: "assistant",
+        content: "",
+        toolCalls: [{
+          id: "tool-1",
+          type: "function",
+          function: { name: "harvest__list_users", arguments: "{}" },
+        }],
+      },
+      { id: "user-1", role: "user", content: "next" },
+      {
+        id: "tool-1-result",
+        role: "tool",
+        toolCallId: "tool-1",
+        content: "stale",
+      },
+    ]);
+
+    assertEquals(
+      (messages[2]?.parts[0] as { toolName: string }).toolName,
+      "unknown",
+      "a user turn must clear inferred tool names so a stale id cannot borrow a name",
+    );
+  });
 });

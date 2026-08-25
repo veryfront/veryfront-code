@@ -4,6 +4,8 @@ export class LRUListManager<T> {
   private head: LRUNode<T> | null = null;
   private tail: LRUNode<T> | null = null;
 
+  constructor(private readonly now: () => number = Date.now) {}
+
   getHead(): LRUNode<T> | null {
     return this.head;
   }
@@ -13,9 +15,8 @@ export class LRUListManager<T> {
   }
 
   moveToFront(node: LRUNode<T>): void {
-    node.entry.lastAccessed = Date.now();
-
     if (node === this.head) {
+      node.entry.lastAccessed = this.now();
       return;
     }
 
@@ -34,7 +35,7 @@ export class LRUListManager<T> {
     }
 
     this.head = node;
-    node.entry.lastAccessed = Date.now();
+    node.entry.lastAccessed = this.now();
   }
 
   removeNode(node: LRUNode<T>): void {

@@ -71,6 +71,48 @@ describe("AttachmentsPanel", () => {
     const html = renderToString(<AttachmentsPanel uploads={uploads} />);
     assert(!html.includes('aria-label="Close attachments"'));
   });
+
+  it("renders the file input + empty-state upload action when onAttach is set", () => {
+    const html = renderToString(<AttachmentsPanel uploads={[]} onAttach={() => undefined} />);
+    assertStringIncludes(
+      html,
+      'aria-label="Upload file"',
+      "hidden file input renders when onAttach is set",
+    );
+    assertStringIncludes(html, ">Upload files<", "empty state offers the upload action");
+  });
+
+  it("omits the file input + upload action when onAttach is absent", () => {
+    const html = renderToString(<AttachmentsPanel uploads={[]} />);
+    assertEquals(
+      html.includes('aria-label="Upload file"'),
+      false,
+      "no file input without onAttach",
+    );
+    assertEquals(html.includes(">Upload files<"), false, "no upload action without onAttach");
+  });
+
+  it("renders the trailing upload action under a non-empty list when onAttach is set", () => {
+    const html = renderToString(
+      <AttachmentsPanel uploads={uploads} onAttach={() => undefined} />,
+    );
+    assertStringIncludes(html, "run-analysis.csv");
+    assertStringIncludes(
+      html,
+      ">Upload files<",
+      "the list offers the trailing upload action when onAttach is set",
+    );
+    assertStringIncludes(
+      html,
+      "flex justify-center pt-2",
+      "the trailing action uses the list (more) variant wrapper",
+    );
+    const withoutAttach = renderToString(<AttachmentsPanel uploads={uploads} />);
+    assert(
+      !withoutAttach.includes(">Upload files<"),
+      "no trailing upload action without onAttach",
+    );
+  });
 });
 
 // The composability contract: a consuming developer must be able to recompose
@@ -138,6 +180,64 @@ describe("AttachmentsPanel — composability contract", () => {
       </AttachmentsPanel>,
     );
     assert(!html.includes('aria-label="Remove run-analysis.csv"'));
+  });
+
+  it("exposes Item.Name and Item.Size leaves", () => {
+    assert(
+      typeof AttachmentsPanel.Item.Name === "function",
+      "AttachmentsPanel.Item.Name must be a component",
+    );
+    assert(
+      typeof AttachmentsPanel.Item.Size === "function",
+      "AttachmentsPanel.Item.Size must be a component",
+    );
+  });
+
+  it("recomposes the row from Item.Name + Item.Size leaves", () => {
+    const html = renderToString(
+      <AttachmentsPanel uploads={uploads}>
+        <AttachmentsPanel.List>
+          <AttachmentsPanel.Item file={uploads[0]!}>
+            <AttachmentsPanel.Item.Icon />
+            <AttachmentsPanel.Item.Name />
+            <AttachmentsPanel.Item.Size />
+          </AttachmentsPanel.Item>
+        </AttachmentsPanel.List>
+      </AttachmentsPanel>,
+    );
+    // The Name leaf renders the file name; the Size leaf renders the
+    // human-formatted byte label (24424 → "24 KB").
+    assertStringIncludes(html, "run-analysis.csv");
+    assertStringIncludes(html, "24 KB");
+  });
+
+  it("Item.Size renders nothing when the file has no size", () => {
+    const html = renderToString(
+      <AttachmentsPanel uploads={uploads}>
+        <AttachmentsPanel.List>
+          <AttachmentsPanel.Item file={{ id: "no-size", name: "sizeless.txt" }}>
+            <AttachmentsPanel.Item.Name />
+            <AttachmentsPanel.Item.Size className="vf-size-leaf" />
+          </AttachmentsPanel.Item>
+        </AttachmentsPanel.List>
+      </AttachmentsPanel>,
+    );
+    assertStringIncludes(html, "sizeless.txt");
+    assert(!html.includes("vf-size-leaf"), "Size leaf must render nothing without a size");
+  });
+
+  it("regression: a childless Item still renders its default content", () => {
+    const html = renderToString(
+      <AttachmentsPanel uploads={uploads} onRemoveUpload={() => undefined}>
+        <AttachmentsPanel.List>
+          <AttachmentsPanel.Item file={uploads[0]!} />
+        </AttachmentsPanel.List>
+      </AttachmentsPanel>,
+    );
+    // Default anatomy: media + label (name + formatted size) + overflow menu.
+    assertStringIncludes(html, "run-analysis.csv");
+    assertStringIncludes(html, "24 KB");
+    assertStringIncludes(html, 'aria-label="Actions for run-analysis.csv"');
   });
 
   it("Item leaves read the file from context; used outside an Item they throw", () => {

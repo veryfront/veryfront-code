@@ -1,7 +1,7 @@
 ---
 title: "Move Studio changes into Git"
 description: "Pull an immutable Veryfront Studio release into a Git feature branch and open a reviewed pull request."
-order: 45
+order: 47
 ---
 
 Use this guide to hand a Studio change to a professional developer for Git
@@ -15,7 +15,7 @@ place where developers review and resolve conflicts.
 - A clean local clone of the Git repository.
 - A dedicated Veryfront API key and project slug in your environment.
 - Permission to push a Git feature branch and open a pull request.
-- `.veryfront/` in `.gitignore` so the local Push receipt cannot enter the pull request.
+- `.veryfront/` in `.gitignore` so local Push receipts and sync baselines cannot enter the pull request.
 
 ## Synchronize main before Studio work
 
@@ -122,6 +122,15 @@ release. The ignored project link and any missing bootstrap files are local
 development metadata, not release content. Pull does not perform a three-way merge.
 It does not auto-merge a stale release with newer Git changes. Ignored,
 unsupported, and binary files remain outside the reconciliation.
+
+A successful pull from `main` or a mutable Studio branch records an ignored
+sync baseline in `.veryfront/sync-state.json`. Push compares the current remote
+content with that baseline and rejects files changed remotely since the pull.
+Commit or stash local changes, pull, and reconcile the resulting Git diff
+before pushing again. `veryfront push --force` bypasses these guards and must be
+used only when intentionally replacing the remote content. Pulls from releases
+and environments do not establish a branch baseline because those sources are
+not mutable push targets.
 
 ## Review and test
 

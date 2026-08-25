@@ -1,4 +1,3 @@
-import manifest from "../../templates/manifest.json" with { type: "json" };
 import { type AITool, type AIToolId, AIToolIdSchema, AIToolSchema } from "./types.ts";
 
 const AI_TOOLS_RAW = [
@@ -67,13 +66,9 @@ export function isValidToolId(id: string): id is AIToolId {
 
 export function getTemplateContent(toolId: string): Promise<string> {
   const { template } = getToolById(toolId);
-  const entry = (manifest as Record<string, unknown>).templates as Record<
-    string,
-    { files: Record<string, string> }
-  >;
-  const aiRule = entry[`ai-rules:${template}`];
-  if (!aiRule) throw new Error(`Template not found in manifest: ${template}`);
-  const content = aiRule.files[template];
-  if (!content) throw new Error(`Template file not found in manifest: ${template}`);
-  return Promise.resolve(content);
+  return import("../../../templates/loader.ts").then(async ({ loadAiRuleTemplate }) => {
+    const content = await loadAiRuleTemplate(template);
+    if (!content) throw new Error(`Template file not found in manifest: ${template}`);
+    return content;
+  });
 }

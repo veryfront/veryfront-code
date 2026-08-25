@@ -6,6 +6,8 @@ import { importModule } from "./transpiler.ts";
 interface ImportDiscoveryModuleOptions {
   adapter: RuntimeAdapter;
   projectDir?: string;
+  /** Explicit host-owned capability for a trusted local or dedicated runtime. */
+  allowHostProjectCodeExecution?: boolean;
 }
 
 function normalizeModulePath(filePath: string): string {
@@ -30,6 +32,7 @@ export async function importDiscoveryModule(
     platform: detectPlatform(),
     fsAdapter: options.adapter.fs,
     baseDir: options.projectDir || ".",
+    allowHostProjectCodeExecution: options.allowHostProjectCodeExecution,
   });
 
   return module as Record<string, unknown>;

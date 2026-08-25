@@ -2,17 +2,56 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  FALLBACK_COLUMNS,
+  FALLBACK_ROWS,
+  getTerminalHeight,
+  getTerminalWidth,
   lines,
   maxLineWidth,
   pad,
   repeat,
   stripAnsi,
   truncate,
+  usableSize,
   visibleLength,
   wrap,
 } from "./layout.ts";
 
 describe("cli/ui/layout", () => {
+  describe("terminal size", () => {
+    it("falls back when the terminal reports zero", () => {
+      // A pty with no window size reports 0 columns. Callers subtract from
+      // this and pass the result to String.repeat, which throws on a negative
+      // count, and that took the whole TUI down when the prompt rendered.
+      // Asserted on the pure helper so a host with a real terminal cannot
+      // make the old implementation pass.
+      assertEquals(usableSize(0, FALLBACK_COLUMNS), FALLBACK_COLUMNS);
+      assertEquals(usableSize(0, FALLBACK_ROWS), FALLBACK_ROWS);
+    });
+
+    it("falls back for negative and non-finite sizes", () => {
+      assertEquals(usableSize(-10, FALLBACK_COLUMNS), FALLBACK_COLUMNS);
+      assertEquals(usableSize(Number.NaN, FALLBACK_COLUMNS), FALLBACK_COLUMNS);
+      assertEquals(usableSize(Number.POSITIVE_INFINITY, FALLBACK_COLUMNS), FALLBACK_COLUMNS);
+    });
+
+    it("keeps a real terminal size", () => {
+      assertEquals(usableSize(120, FALLBACK_COLUMNS), 120);
+    });
+
+    it("reports usable dimensions through the public helpers", () => {
+      assertEquals(getTerminalWidth() > 0, true);
+      assertEquals(getTerminalHeight() > 0, true);
+    });
+
+    it("keeps the derived divider width non-negative", () => {
+      const dividerWidth = Math.max(0, Math.min(getTerminalWidth() - 4, 80));
+      assertEquals(dividerWidth >= 0, true);
+      // Would throw RangeError if the width went negative.
+      assertEquals(typeof "-".repeat(dividerWidth), "string");
+    });
+  });
+
   describe("visibleLength", () => {
     it("should return length of plain text", () => {
       assertEquals(visibleLength("hello"), 5);

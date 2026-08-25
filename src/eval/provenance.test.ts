@@ -76,6 +76,74 @@ describe("eval/provenance", () => {
     assertEquals(commands.length, 5);
   });
 
+  it("resolves without git metadata when git is unavailable", async () => {
+    const thrown = await resolveEvalRunProvenance({
+      projectDir: "/repo",
+      env: {},
+      commandRunner: () => {
+        throw new Error("git: command not found");
+      },
+      fileReader: async () => new Uint8Array(),
+      frameworkVersion: "0.1.950",
+    });
+
+    assertEquals(thrown.environment, "unknown", "a missing git binary must not fail the eval");
+    assertEquals(thrown.source, { kind: "unknown" }, "a missing git binary has no source");
+    assertEquals(thrown.git, undefined, "a non-repository must not gain an empty git object");
+
+    const nonRepository = await resolveEvalRunProvenance({
+      projectDir: "/repo",
+      env: {},
+      commandRunner: async () => ({ code: 1, stdout: "" }),
+      fileReader: async () => new Uint8Array(),
+      frameworkVersion: "0.1.950",
+    });
+
+    assertEquals(nonRepository.environment, "unknown", "a non-repository resolves as unknown");
+    assertEquals(nonRepository.source, { kind: "unknown" }, "a non-repository has no source");
+    assertEquals(
+      nonRepository.git,
+      undefined,
+      "a non-repository must not gain an empty git object",
+    );
+  });
+
+  it("includes tracked file diffs in local dirty hashes", async () => {
+    const createCommandRunner = (diff: string) => async (_command: string, args: string[]) => {
+      if (args.join(" ") === "rev-parse HEAD") return { code: 0, stdout: "abc123\n" };
+      if (args.join(" ") === "rev-parse --abbrev-ref HEAD") return { code: 0, stdout: "main\n" };
+      if (args.join(" ") === "status --porcelain=v1") {
+        return { code: 0, stdout: " M src/file.ts\n" };
+      }
+      if (args.join(" ") === "diff --binary HEAD --") return { code: 0, stdout: diff };
+      if (args.join(" ") === "ls-files --others --exclude-standard -z") {
+        return { code: 0, stdout: "" };
+      }
+      return { code: 1, stdout: "" };
+    };
+    const first = await resolveEvalRunProvenance({
+      projectDir: "/repo",
+      env: {},
+      commandRunner: createCommandRunner("@@ -1 +1 @@\n-alpha\n+beta\n"),
+      fileReader: async () => new Uint8Array(),
+      frameworkVersion: "0.1.950",
+    });
+    const second = await resolveEvalRunProvenance({
+      projectDir: "/repo",
+      env: {},
+      commandRunner: createCommandRunner("@@ -1 +1 @@\n-alpha\n+gamma\n"),
+      fileReader: async () => new Uint8Array(),
+      frameworkVersion: "0.1.950",
+    });
+
+    assertEquals(first.git?.dirty, true, "a modified tracked file marks the tree dirty");
+    assertNotEquals(
+      first.git?.dirtyHash,
+      second.git?.dirtyHash,
+      "tracked-file diff content changes the dirty hash",
+    );
+  });
+
   it("includes untracked file contents in local dirty hashes", async () => {
     const commandRunner = async (_command: string, args: string[]) => {
       if (args.join(" ") === "rev-parse HEAD") return { code: 0, stdout: "abc123\n" };

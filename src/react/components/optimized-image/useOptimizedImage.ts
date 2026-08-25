@@ -1,33 +1,43 @@
 import {
-  RESPONSIVE_IMAGE_WIDTH_LG,
-  RESPONSIVE_IMAGE_WIDTHS,
-} from "#veryfront/utils/constants/network.ts";
-import { generateSrcSet, getImageExtension, getOptimizedPath } from "./helpers.ts";
+  DEFAULT_OPTIMIZED_IMAGE_FORMATS,
+  generateSrcSet,
+  getImageExtension,
+  getOptimizedImageFormatFallback,
+  getOptimizedImageVariantWidths,
+} from "./helpers.ts";
+import type { OptimizedImageFormat } from "./OptimizedImage.tsx";
 
-const DEFAULT_SIZES = [...RESPONSIVE_IMAGE_WIDTHS];
-const DEFAULT_FORMATS: Array<"avif" | "webp" | "jpeg"> = ["avif", "webp", "jpeg"];
-
-type ImageFormat = "avif" | "webp" | "jpeg" | "png";
+export interface UseOptimizedImageOptions {
+  /** Must match `assetPipeline.images.formats` when custom build formats are configured. */
+  formats?: readonly OptimizedImageFormat[];
+  quality?: number;
+  /** Intrinsic source width. Missing or invalid values use the original asset. */
+  width?: number;
+  /** Must match `assetPipeline.images.sizes` when custom build widths are configured. */
+  targetWidths?: readonly number[];
+}
 
 export function useOptimizedImage(
   src: string,
-  options: { formats?: ImageFormat[]; quality?: number } = {},
+  options: UseOptimizedImageOptions = {},
 ): {
-  sources: Array<{ format: ImageFormat; srcSet: string; type: string }>;
+  sources: Array<{ format: OptimizedImageFormat; srcSet: string; type: string }>;
   fallback: string;
 } {
-  const { formats = DEFAULT_FORMATS, quality = 80 } = options;
+  const { formats = DEFAULT_OPTIMIZED_IMAGE_FORMATS, quality = 80, targetWidths, width } = options;
+  const variantWidths = getOptimizedImageVariantWidths(width, targetWidths, src);
 
-  const sources = formats.map((format) => ({
+  const sources = variantWidths.length === 0 ? [] : formats.map((format) => ({
     format,
-    srcSet: generateSrcSet(src, format, DEFAULT_SIZES, quality),
+    srcSet: generateSrcSet(src, format, variantWidths, quality),
     type: `image/${format}`,
   }));
 
-  const fallback = getOptimizedPath(
+  const fallback = getOptimizedImageFormatFallback(
     src,
     getImageExtension(src),
-    RESPONSIVE_IMAGE_WIDTH_LG,
+    formats,
+    variantWidths,
     quality,
   );
 

@@ -43,6 +43,8 @@ export {
 export {
   buildProviderError,
   createWarningCollector,
+  DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS,
+  DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS,
   isNumberArray,
   jsonValuesEqual,
   mergeUsage,
@@ -59,11 +61,14 @@ export {
   requestJson,
   requestStream,
   snapshotJsonValue,
+  snapshotProviderJsonValue,
   stringifyJsonValue,
   stringifyToolArguments,
+  stringifyToolResultValue,
   toOpenAICompatibleMessages,
   toOpenAICompatibleTools,
   unwrapToolInputSchema,
+  waitForProviderStreamRetry,
 } from "../runtime-loader.ts";
 
 export type {
@@ -83,3 +88,9 @@ export type {
   RuntimeReasoningOption,
   RuntimeResponseFormat,
 } from "../types.ts";
+
+// No-hook runtime inspection used by provider extensions at JSON boundaries.
+export {
+  canIdentifyProxyWithoutHooks,
+  isProxyWithoutHooks,
+} from "#veryfront/platform/compat/error-introspection.ts";

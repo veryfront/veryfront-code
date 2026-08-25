@@ -1,69 +1,18 @@
 import * as React from "react";
 import { flushSync } from "react-dom";
-import { createRoot, hydrateRoot } from "react-dom/client";
+import { createRoot, hydrateRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { type ComponentDomOptions, installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import { AppShell } from "./app-shell.tsx";
 
-function installDom(dom: JSDOM, options: { mobile?: boolean } = {}): () => void {
-  const window = dom.window;
-  const keys = [
-    "window",
-    "document",
-    "navigator",
-    "self",
-    "Node",
-    "Element",
-    "HTMLElement",
-    "localStorage",
-    "KeyboardEvent",
-    "MouseEvent",
-    "requestAnimationFrame",
-    "cancelAnimationFrame",
-    "matchMedia",
-  ] as const;
-  const previous = new Map<string, PropertyDescriptor | undefined>();
-  for (const key of keys) previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
-
-  const media = {
-    matches: options.mobile ?? false,
-    addEventListener() {},
-    removeEventListener() {},
-  } as unknown as MediaQueryList;
-  const replacements = {
-    window,
-    document: window.document,
-    navigator: window.navigator,
-    self: window,
-    Node: window.Node,
-    Element: window.Element,
-    HTMLElement: window.HTMLElement,
-    localStorage: window.localStorage,
-    KeyboardEvent: window.KeyboardEvent,
-    MouseEvent: window.MouseEvent,
-    requestAnimationFrame: (callback: FrameRequestCallback) =>
-      window.setTimeout(() => callback(Date.now()), 0),
-    cancelAnimationFrame: (id: number) => window.clearTimeout(id),
-    matchMedia: (() => media) as typeof globalThis.matchMedia,
-  };
-  for (const [key, value] of Object.entries(replacements)) {
-    Object.defineProperty(globalThis, key, {
-      configurable: true,
-      enumerable: true,
-      value,
-      writable: true,
-    });
-  }
-
-  return () => {
-    for (const key of keys) {
-      const descriptor = previous.get(key);
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-      else delete (globalThis as Record<string, unknown>)[key];
-    }
-    dom.window.close();
+function shellDomOptions(options: { mobile?: boolean } = {}): ComponentDomOptions {
+  return {
+    matchMedia: { matches: options.mobile ?? false },
+    windowGlobals: ["self", "localStorage", "KeyboardEvent"],
   };
 }
 
@@ -107,22 +56,21 @@ describe("AppShell", () => {
       { url: "https://example.com/" },
     );
     dom.window.localStorage.setItem("shell-left", "false");
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, shellDomOptions());
     const recoverableErrors: unknown[] = [];
+    let root: Root | undefined;
 
     try {
       const rootElement = document.getElementById("root");
       assert(rootElement);
-      const root = hydrateRoot(rootElement, <Shell />, {
+      root = hydrateRoot(rootElement, <Shell />, {
         onRecoverableError: (error) => recoverableErrors.push(error),
       });
 
       await waitFor(() => document.querySelector("[data-sidebar='left']") === null);
       assertEquals(recoverableErrors, []);
-
-      root.unmount();
-      await new Promise((resolve) => setTimeout(resolve, 0));
     } finally {
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });
@@ -132,7 +80,7 @@ describe("AppShell", () => {
       '<!doctype html><html><body><div id="root-a"></div><div id="root-b"></div></body></html>',
       { url: "https://example.com/" },
     );
-    const restore = installDom(dom, { mobile: true });
+    const restore = installComponentDom(dom, shellDomOptions({ mobile: true }));
     let rootA: ReturnType<typeof createRoot> | undefined;
     let rootB: ReturnType<typeof createRoot> | undefined;
 
@@ -162,7 +110,7 @@ describe("AppShell", () => {
       await waitFor(() => document.querySelectorAll('[role="dialog"]').length === 2);
       assertEquals(document.body.style.overflow, "hidden");
 
-      flushSync(() => rootA?.unmount());
+      await unmountReactRoot(rootA);
       rootA = undefined;
       assertEquals(document.querySelectorAll('[role="dialog"]').length, 1);
       assertEquals(
@@ -171,7 +119,7 @@ describe("AppShell", () => {
         "the remaining overlay still owns the document lock",
       );
 
-      flushSync(() => rootB?.unmount());
+      await unmountReactRoot(rootB);
       rootB = undefined;
       assertEquals(
         document.body.style.overflow,
@@ -179,8 +127,8 @@ describe("AppShell", () => {
         "the final release restores the exact pre-lock value",
       );
     } finally {
-      if (rootA) flushSync(() => rootA?.unmount());
-      if (rootB) flushSync(() => rootB?.unmount());
+      if (rootA) await unmountReactRoot(rootA);
+      if (rootB) await unmountReactRoot(rootB);
       restore();
     }
   });
@@ -196,7 +144,7 @@ describe("AppShell", () => {
       </body></html>`,
       { url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, shellDomOptions());
     const root = createRoot(document.getElementById("root")!);
 
     try {
@@ -235,7 +183,7 @@ describe("AppShell", () => {
       assertEquals(documentShortcut.defaultPrevented, true);
       assertEquals(document.querySelector('[data-sidebar="left"]'), null);
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -245,7 +193,7 @@ describe("AppShell", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
     );
-    const restore = installDom(dom, { mobile: true });
+    const restore = installComponentDom(dom, shellDomOptions({ mobile: true }));
     const root = createRoot(document.getElementById("root")!);
 
     try {
@@ -304,7 +252,106 @@ describe("AppShell", () => {
       assertEquals(shell.getAttribute("data-vf-ui"), "");
       assertEquals(shell.getAttribute("data-vf-chat"), "");
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
+      restore();
+    }
+  });
+
+  it("persists uncontrolled desktop visibility under the storage key", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installComponentDom(dom, shellDomOptions());
+    const root = createRoot(document.getElementById("root")!);
+
+    try {
+      flushSync(() => {
+        root.render(
+          <AppShell storageKey="persist-shell" keyboardShortcut={false}>
+            <AppShell.Trigger data-trigger="left" />
+            <AppShell.Sidebar data-sidebar="left">navigation</AppShell.Sidebar>
+          </AppShell>,
+        );
+      });
+      await waitFor(() => document.querySelector('[data-sidebar="left"]') !== null);
+      const trigger = document.querySelector<HTMLButtonElement>('[data-trigger="left"]');
+      assert(trigger);
+
+      flushSync(() => trigger.click());
+      assertEquals(
+        dom.window.localStorage.getItem("persist-shell-left"),
+        "false",
+        "toggling the sidebar persists the new visibility",
+      );
+
+      flushSync(() => trigger.click());
+      assertEquals(
+        dom.window.localStorage.getItem("persist-shell-left"),
+        "true",
+        "toggling back persists the restored visibility",
+      );
+    } finally {
+      await unmountReactRoot(root);
+      restore();
+    }
+  });
+
+  it("controlled sides report through onOpenChange without self-updating", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installComponentDom(dom, shellDomOptions());
+    const root = createRoot(document.getElementById("root")!);
+    const calls: Array<[string, boolean]> = [];
+
+    function Controlled({ left }: { left: boolean }): React.ReactElement {
+      return (
+        <AppShell
+          storageKey="controlled-shell"
+          open={{ left }}
+          onOpenChange={(side, next) => calls.push([side, next])}
+        >
+          <AppShell.Sidebar data-sidebar="left">navigation</AppShell.Sidebar>
+        </AppShell>
+      );
+    }
+
+    try {
+      flushSync(() => root.render(<Controlled left />));
+      await waitFor(() => document.querySelector('[data-sidebar="left"]') !== null);
+
+      flushSync(() =>
+        document.body.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            bubbles: true,
+            cancelable: true,
+            metaKey: true,
+            key: "b",
+          }),
+        )
+      );
+
+      assertEquals(calls, [["left", false]], "a controlled side reports the requested state");
+      assert(
+        document.querySelector('[data-sidebar="left"]'),
+        "a controlled side must not close itself",
+      );
+      assertEquals(
+        dom.window.localStorage.getItem("controlled-shell-left"),
+        null,
+        "a controlled side does not write the parent's state to storage",
+      );
+
+      flushSync(() => root.render(<Controlled left={false} />));
+      assertEquals(
+        document.querySelector('[data-sidebar="left"]'),
+        null,
+        "the parent-owned open prop drives visibility",
+      );
+    } finally {
+      await unmountReactRoot(root);
       restore();
     }
   });

@@ -1,6 +1,6 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { MetricsConfig } from "./types.ts";
-import { memoryUsage as platformMemoryUsage } from "#veryfront/platform/compat/process.ts";
+import { memoryUsage as platformMemoryUsage } from "#veryfront/platform/compat/process/lifecycle.ts";
 import { getHostTelemetryEnv } from "#veryfront/observability/tracing/telemetry-env.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import { MAX_OBSERVABILITY_CONFIG_TEXT_LENGTH, MAX_OBSERVABILITY_NAME_LENGTH } from "../limits.ts";

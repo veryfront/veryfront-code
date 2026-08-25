@@ -6,7 +6,8 @@ import {
   configureTokenStore,
   createDefaultTokenStore,
   createTokenStore,
-} from "./templates/integrations/_base/files/lib/token-store.ts";
+  getRefreshableAccessToken,
+} from "../templates/integrations/_base/files/lib/token-store.ts";
 
 describe("generated OAuth token store", () => {
   const originalNodeEnv = Deno.env.get("NODE_ENV");
@@ -75,40 +76,221 @@ describe("generated OAuth token store", () => {
     );
   });
 
-  it("fails closed lazily when production storage is not configured", () => {
-    Deno.env.set("NODE_ENV", "production");
+  it("fails closed unless memory storage is explicitly allowed", () => {
+    for (const mode of [undefined, "production", "staging", "preview"]) {
+      if (mode === undefined) Deno.env.delete("NODE_ENV");
+      else Deno.env.set("NODE_ENV", mode);
 
-    assertThrows(
-      () => createDefaultTokenStore(),
-      Error,
-      "OAuth token storage is not configured for production",
-    );
+      assertThrows(
+        () => createDefaultTokenStore(),
+        Error,
+        "NODE_ENV is explicitly development or test",
+      );
+    }
   });
 
-  it("rejects an explicitly configured memory store in production", () => {
-    Deno.env.set("NODE_ENV", "production");
+  it("rejects an explicitly configured memory store outside development and test", () => {
+    for (const mode of [undefined, "production", "staging", "preview"]) {
+      if (mode === undefined) Deno.env.delete("NODE_ENV");
+      else Deno.env.set("NODE_ENV", mode);
 
-    assertThrows(
-      () => configureTokenStore(new MemoryTokenStore("production-memory")),
-      Error,
-      "MemoryTokenStore is not allowed for production OAuth storage",
-    );
+      assertThrows(
+        () => configureTokenStore(new MemoryTokenStore(`memory-${mode ?? "unset"}`)),
+        Error,
+        "NODE_ENV is explicitly development or test",
+      );
+    }
   });
 
-  it("uses a refresh-capable memory store only in development", async () => {
-    Deno.env.set("NODE_ENV", "development");
+  it("uses a refresh-capable memory store only in development and test", async () => {
     const originalWarn = console.warn;
     console.warn = () => {};
 
     try {
-      const store = createDefaultTokenStore();
-      await store.setTokens("github", "alice", { accessToken: "development-token" });
-      const snapshot = await store.getTokenSnapshot("github", "alice");
-      assertEquals(snapshot?.tokens.accessToken, "development-token");
-      assertEquals(typeof snapshot?.revision, "string");
+      for (const mode of ["development", "test"]) {
+        Deno.env.set("NODE_ENV", mode);
+        const store = createDefaultTokenStore();
+        await store.setTokens("github", "alice", { accessToken: `${mode}-token` });
+        const snapshot = await store.getTokenSnapshot("github", "alice");
+        assertEquals(snapshot?.tokens.accessToken, `${mode}-token`);
+        assertEquals(typeof snapshot?.revision, "string");
+      }
     } finally {
       console.warn = originalWarn;
     }
+  });
+
+  it("uses Deno runtime mode when process exists without env", () => {
+    Deno.env.set("NODE_ENV", "development");
+    const processDescriptor = Object.getOwnPropertyDescriptor(globalThis, "process");
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    Object.defineProperty(globalThis, "process", {
+      configurable: true,
+      value: {},
+    });
+
+    try {
+      assertEquals(typeof createDefaultTokenStore(), "object");
+    } finally {
+      console.warn = originalWarn;
+      if (processDescriptor) Object.defineProperty(globalThis, "process", processDescriptor);
+      else Reflect.deleteProperty(globalThis, "process");
+    }
+  });
+
+  it("treats denied Deno environment access as an unset runtime mode", () => {
+    const processDescriptor = Object.getOwnPropertyDescriptor(globalThis, "process");
+    const denoDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Deno");
+    Object.defineProperty(globalThis, "process", {
+      configurable: true,
+      value: {},
+    });
+    Object.defineProperty(globalThis, "Deno", {
+      configurable: true,
+      value: {
+        env: {
+          get() {
+            throw new Error("PermissionDenied");
+          },
+        },
+      },
+    });
+
+    try {
+      assertThrows(
+        () => createDefaultTokenStore(),
+        Error,
+        "NODE_ENV is explicitly development or test",
+      );
+    } finally {
+      if (processDescriptor) Object.defineProperty(globalThis, "process", processDescriptor);
+      else Reflect.deleteProperty(globalThis, "process");
+      if (denoDescriptor) Object.defineProperty(globalThis, "Deno", denoDescriptor);
+      else Reflect.deleteProperty(globalThis, "Deno");
+    }
+  });
+
+  it("treats denied process environment access as an unset runtime mode", () => {
+    const processDescriptor = Object.getOwnPropertyDescriptor(globalThis, "process");
+    Object.defineProperty(globalThis, "process", {
+      configurable: true,
+      value: {
+        env: new Proxy({}, {
+          get() {
+            throw new Error("PermissionDenied");
+          },
+        }),
+      },
+    });
+
+    try {
+      assertThrows(
+        () => createDefaultTokenStore(),
+        Error,
+        "NODE_ENV is explicitly development or test",
+      );
+    } finally {
+      if (processDescriptor) Object.defineProperty(globalThis, "process", processDescriptor);
+      else Reflect.deleteProperty(globalThis, "process");
+    }
+  });
+
+  it("serializes concurrent refresh and persists it with compare-and-set", async () => {
+    const store = createTokenStore(new MemoryTokenStore("refresh-concurrency"));
+    await store.setTokens("github", "alice", {
+      accessToken: "expiring",
+      refreshToken: "refresh-1",
+      expiresAt: Date.now() + 1_000,
+    });
+    let refreshes = 0;
+    const refresh = async () => {
+      refreshes++;
+      await Promise.resolve();
+      return {
+        accessToken: "refreshed",
+        refreshToken: "refresh-2",
+        expiresAt: Date.now() + 10 * 60_000,
+      };
+    };
+
+    const tokens = await Promise.all([
+      getRefreshableAccessToken(store, "github", "alice", refresh),
+      getRefreshableAccessToken(store, "github", "alice", refresh),
+    ]);
+
+    assertEquals(tokens, ["refreshed", "refreshed"]);
+    assertEquals(refreshes, 1);
+    assertEquals((await store.getTokens("github", "alice"))?.accessToken, "refreshed");
+  });
+
+  it("preserves the existing refresh token when a provider omits one", async () => {
+    const store = createTokenStore(new MemoryTokenStore("refresh-token-preserve"));
+    await store.setTokens("github", "alice", {
+      accessToken: "expiring",
+      refreshToken: "refresh-1",
+      expiresAt: Date.now() + 1_000,
+    });
+
+    assertEquals(
+      await getRefreshableAccessToken(
+        store,
+        "github",
+        "alice",
+        async () => ({
+          accessToken: "refreshed",
+          expiresAt: Date.now() + 10 * 60_000,
+        }),
+      ),
+      "refreshed",
+    );
+    assertEquals((await store.getTokens("github", "alice"))?.refreshToken, "refresh-1");
+  });
+
+  it("does not overwrite a concurrent reconnect when refresh loses CAS", async () => {
+    const store = createTokenStore(new MemoryTokenStore("refresh-cas"));
+    await store.setTokens("github", "alice", {
+      accessToken: "expired",
+      refreshToken: "refresh-1",
+      expiresAt: Date.now() - 1,
+    });
+
+    const accessToken = await getRefreshableAccessToken(
+      store,
+      "github",
+      "alice",
+      async () => {
+        await store.setTokens("github", "alice", {
+          accessToken: "reauthorized",
+          refreshToken: "refresh-new",
+          expiresAt: Date.now() + 60_000,
+        });
+        return { accessToken: "stale-refresh" };
+      },
+    );
+
+    assertEquals(accessToken, "reauthorized");
+    assertEquals((await store.getTokens("github", "alice"))?.accessToken, "reauthorized");
+  });
+
+  it("retains the token row when the provider refresh fails", async () => {
+    const store = createTokenStore(new MemoryTokenStore("refresh-failure"));
+    await store.setTokens("github", "alice", {
+      accessToken: "expired",
+      refreshToken: "refresh-1",
+      expiresAt: Date.now() - 1,
+    });
+
+    assertEquals(
+      await getRefreshableAccessToken(
+        store,
+        "github",
+        "alice",
+        () => Promise.reject(new Error("provider unavailable")),
+      ),
+      null,
+    );
+    assertEquals((await store.getTokens("github", "alice"))?.refreshToken, "refresh-1");
   });
 
   it("propagates refresh-lock failures from the configured backend", async () => {

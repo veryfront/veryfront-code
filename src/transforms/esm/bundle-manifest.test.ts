@@ -4,6 +4,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
+import { BUNDLE_MANIFEST_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { makeTempDir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import {
   type BundleEntry,
@@ -15,7 +16,7 @@ import {
   validateBundleManifest,
 } from "./bundle-manifest.ts";
 
-describe("Bundle Manifest", { sanitizeResources: false, sanitizeOps: false }, () => {
+describe("Bundle Manifest", () => {
   describe("computeManifestId", () => {
     it("produces deterministic ID regardless of input order", async () => {
       const hashes = ["abc123", "def456", "789xyz"];
@@ -52,9 +53,13 @@ describe("Bundle Manifest", { sanitizeResources: false, sanitizeOps: false }, ()
       const manifest = await createBundleManifest(bundles);
 
       assertEquals(manifest.bundles.length, 2);
-      assert(manifest.manifestId.length > 0);
-      assert(manifest.createdAt > 0);
-      assert(manifest.ttlSeconds > 0);
+      assert(manifest.manifestId.length > 0, "manifest id must be present");
+      assert(manifest.createdAt > 0, "manifest must record a creation timestamp");
+      assertEquals(
+        manifest.ttlSeconds,
+        BUNDLE_MANIFEST_DISTRIBUTED_TTL_SEC,
+        "manifest must carry the distributed-cache TTL used by storeBundleManifest",
+      );
     });
 
     it("registers hash-to-manifest mappings for co-refresh", async () => {
@@ -77,6 +82,51 @@ describe("Bundle Manifest", { sanitizeResources: false, sanitizeOps: false }, ()
           ]),
         TypeError,
         "entry is invalid",
+      );
+    });
+
+    it("rejects an empty bundle list", async () => {
+      await assertRejects(
+        () => createBundleManifest([]),
+        TypeError,
+        "Bundle manifest must contain",
+        "an empty bundle list would collapse every manifest onto one shared identity",
+      );
+    });
+
+    it("rejects a url containing a control character", async () => {
+      await assertRejects(
+        () =>
+          createBundleManifest([
+            { hash: "abc123", url: "https://esm.sh/a\n@1", sizeBytes: 10 },
+          ]),
+        TypeError,
+        "entry is invalid",
+        "a control character must never round-trip into the serialized manifest",
+      );
+    });
+
+    it("rejects a url longer than the manifest url limit", async () => {
+      // The module caps manifest urls at 8 KiB; anything longer must be refused.
+      const overlongUrl = `https://esm.sh/${"a".repeat(8 * 1024)}`;
+
+      await assertRejects(
+        () => createBundleManifest([{ hash: "abc123", url: overlongUrl, sizeBytes: 10 }]),
+        TypeError,
+        "entry is invalid",
+        "an overlong url must be refused before the manifest is built",
+      );
+    });
+
+    it("rejects a negative bundle size", async () => {
+      await assertRejects(
+        () =>
+          createBundleManifest([
+            { hash: "abc123", url: "https://esm.sh/a@1", sizeBytes: -1 },
+          ]),
+        TypeError,
+        "entry is invalid",
+        "a negative byte count is not a valid bundle size",
       );
     });
 
@@ -117,6 +167,22 @@ describe("Bundle Manifest", { sanitizeResources: false, sanitizeOps: false }, ()
         null,
       );
     });
+
+    it("rejects a manifest whose bundle list no longer derives its id", async () => {
+      const manifest = await createBundleManifest([
+        { hash: "abc123", url: "https://esm.sh/a@1", sizeBytes: 10 },
+      ]);
+      const swapped = {
+        ...manifest,
+        bundles: [{ ...manifest.bundles[0], hash: "deadbeef" }],
+      };
+
+      assertEquals(
+        await parseBundleManifest(JSON.stringify(swapped)),
+        null,
+        "manifestId must authenticate the bundle hashes it names",
+      );
+    });
   });
 
   describe("validateBundleGroup", () => {
@@ -132,10 +198,13 @@ describe("Bundle Manifest", { sanitizeResources: false, sanitizeOps: false }, ()
         ];
 
         const manifest = await createBundleManifest(bundles);
-        const result = await validateBundleGroup(manifest.manifestId, tmpDir);
+        const result = await validateBundleManifest(manifest, tmpDir);
 
-        assertEquals(result.valid, false);
-        assertEquals(result.failedHashes.length, 0);
+        assertEquals(
+          result,
+          { valid: true, failedHashes: [] },
+          "a manifest whose bundles are all present on disk validates",
+        );
       } finally {
         await remove(tmpDir, { recursive: true });
       }

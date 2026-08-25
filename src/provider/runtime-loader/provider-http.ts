@@ -13,7 +13,41 @@ export type ProviderKind = "anthropic" | "openai" | "google" | "mistral" | "moon
 /** Bytes inspected for structured provider error classification. */
 const MAX_ERROR_BODY_BYTES = 8_000;
 const DEFAULT_PROVIDER_JSON_TIMEOUT_MS = 5 * 60_000;
-const DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS = 30_000;
+/** Default deadline for one stream attempt to return response headers. */
+export const DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS = 30_000;
+const MAX_PROVIDER_STREAM_RETRIES = 2;
+// Not JSDoc: this paragraph names hosted-infrastructure internals and must
+// stay out of the generated public API reference. The default below is
+// deliberately under the 45s `generic_idle` deadline the hosted child-fork
+// watchdog applies to the first stream part
+// (`DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS`): that watchdog arms its
+// timer around the first pull of `fullStream`, which is what drives the
+// provider call, so replays outliving this budget would be cut off mid-attempt
+// and reported as a fork stall instead of the provider timeout they are.
+/**
+ * Ceiling on the wall time replays may spend waiting for stream response
+ * headers.
+ *
+ * The budget bounds the total only when it is at least as large as the
+ * per-attempt deadline, which the defaults guarantee (40s against 30s). The
+ * first attempt always keeps its configured deadline, so a caller that raises
+ * `headersTimeoutMs` above the budget gets that longer first attempt and the
+ * effective ceiling becomes `max(headersTimeoutMs, totalHeadersBudgetMs)`.
+ * Shortening the first attempt instead would sacrifice a provider that was
+ * going to answer, for a replay that may never fire.
+ */
+export const DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS = 40_000;
+
+/**
+ * Elapsed-time source for the header budget. `Date.now` can step backwards
+ * under an NTP or VM clock correction, which would inflate the remaining
+ * budget and let replays run past the ceiling the budget exists to hold. Read
+ * the seam once so a correction mid-request cannot move it.
+ */
+function monotonicMilliseconds(): number {
+  return Math.floor(performance.now());
+}
+const DEFAULT_PROVIDER_STREAM_RETRY_DELAY_MS = 1_000;
 const DEFAULT_PROVIDER_JSON_MAX_BYTES = 32 * 1024 * 1024;
 const MAX_PROVIDER_JSON_MAX_BYTES = 256 * 1024 * 1024;
 const MAX_PROVIDER_JSON_BODY_READS = 65_536;
@@ -63,7 +97,11 @@ export class ProviderError extends Error {
     retryAfterMs?: number;
   }) {
     super(options.message);
-    this.name = new.target.name;
+    // `this.constructor`, not `new.target`: DNT rewrites every meta-property
+    // into its `import.meta` ponyfill when it emits the npm package, which
+    // turned this line into `ponyfill(import.meta).name` — always `undefined`.
+    // See scripts/build/dnt-meta-property-safety.ts.
+    this.name = this.constructor.name;
     this.provider = options.provider;
     this.status = options.status;
     this.retryable = options.retryable;
@@ -96,6 +134,40 @@ function preserveStructuredResponseBody<T extends ProviderError>(
     writable: false,
   });
   return error;
+}
+
+/**
+ * Google's canonical `google.rpc.Code` for a request the API rejected as
+ * malformed. It arrives in `error.status`, where Anthropic and the
+ * OpenAI-compatible providers put `invalid_request_error` in `error.type` --
+ * the same meaning under a different key, and the reason a Google 400 used to
+ * reach classification carrying neither its body nor its own wording.
+ *
+ * The classifier in `src/chat/provider-errors.ts` has to recognise the same
+ * envelope for a preserved body to be worth anything. Preserving without
+ * classifying, or classifying without preserving, leaves the provider exactly
+ * as opaque as before, so the end-to-end tests in
+ * `src/chat/provider-errors.test.ts` drive both halves through the real
+ * `buildProviderError` and fail if they drift apart.
+ */
+const GOOGLE_INVALID_ARGUMENT_STATUS = "INVALID_ARGUMENT";
+
+/**
+ * Whether a 400 envelope identifies itself as a rejected *request* -- the
+ * class whose body names a reason the caller can act on (a schema that must be
+ * closed, a prompt that is too long, an account that cannot be charged).
+ *
+ * Keyed on a recognised marker rather than the status alone: a 400 whose
+ * envelope we do not recognise is still dropped, so widening this stays a
+ * deliberate act per envelope shape rather than a blanket retention of every
+ * 400 body.
+ */
+function isInvalidRequestEnvelope(
+  errorType: string | undefined,
+  errorRecord: Record<string, unknown> | undefined,
+): boolean {
+  return errorType === "invalid_request_error" ||
+    errorRecord?.status === GOOGLE_INVALID_ARGUMENT_STATUS;
 }
 
 /** Parses retry after ms. */
@@ -235,6 +307,12 @@ export async function buildProviderError(
   //  - insufficient_quota → hard quota, non-retryable
   //  - rate_limit_exceeded / tokens_per_min_exceeded → retry with Retry-After
   // Mistral and Moonshotai use the same OpenAI-compatible error envelope.
+  //
+  // A body that never parsed — empty, truncated, HTML from a gateway — carries
+  // no `insufficient_quota` and so stays a rate limit. An unreadable body is
+  // not evidence of exhausted quota, and calling it one ends an agent run on a
+  // limit that would have cleared on its own. Retries are bounded by the
+  // caller, so a misread hard quota costs attempts, never a hot loop.
   if (
     (provider === "openai" || provider === "mistral" || provider === "moonshotai") && status === 429
   ) {
@@ -245,9 +323,6 @@ export async function buildProviderError(
         message,
         retryable: false,
       });
-    }
-    if (truncated || parsedBody === undefined) {
-      return new ProviderRequestError({ provider, status, message, retryable: false });
     }
     return new ProviderRateLimitError({
       provider,
@@ -267,10 +342,10 @@ export async function buildProviderError(
   // wording is not a stable contract, so the delay is the signal we key on.
   // Without one the error stays a hard quota error and callers don't hot-loop
   // on retries that can't possibly succeed until midnight UTC.
+  //
+  // A body that never parsed names no status at all, so it falls through to
+  // the retryable branch for the same reason the OpenAI-compatible split does.
   if (provider === "google" && status === 429) {
-    if (truncated || parsedBody === undefined) {
-      return new ProviderRequestError({ provider, status, message, retryable: false });
-    }
     const retryDelayMs = retryAfterMs ?? parseGoogleRetryInfoMs(errorRecord);
     if (errorCode === "RESOURCE_EXHAUSTED" && retryDelayMs === undefined) {
       return new ProviderQuotaError({
@@ -310,7 +385,7 @@ export async function buildProviderError(
   });
 
   const isStructuredInvalidRequest = status === 400 &&
-    errorType === "invalid_request_error" &&
+    isInvalidRequestEnvelope(errorType, errorRecord) &&
     parsedBody !== undefined &&
     !truncated;
   const problemSlug = typeof parsedBody?.slug === "string" ? parsedBody.slug : undefined;
@@ -435,6 +510,33 @@ async function waitForAbortable<T>(
   });
 }
 
+/**
+ * Wait out a retry delay, rejecting the moment the caller cancels. Shared with
+ * providers that must replay a request the SSE body failed, so every retry
+ * path honors cancellation the same way.
+ */
+export async function waitForProviderStreamRetry(
+  delayMs: number,
+  abortSignal: AbortSignal,
+): Promise<void> {
+  abortSignal.throwIfAborted();
+  if (delayMs === 0) return;
+
+  await new Promise<void>((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      abortSignal.removeEventListener("abort", onAbort);
+      resolve();
+    }, delayMs);
+    const onAbort = () => {
+      clearTimeout(timeoutId);
+      abortSignal.removeEventListener("abort", onAbort);
+      reject(abortSignal.reason);
+    };
+    abortSignal.addEventListener("abort", onAbort, { once: true });
+    if (abortSignal.aborted) onAbort();
+  });
+}
+
 function cancelLateResponse(response: Response): void {
   try {
     const cancellation = response.body?.cancel();
@@ -547,13 +649,25 @@ function streamWithCleanup(
   });
 }
 
+/**
+ * Build the error for an elapsed request deadline.
+ *
+ * Names the deadline that fired, the time it took to fire, and the model when
+ * the caller supplied one. Without those every timeout serializes to the same
+ * sentence, and a responder cannot separate one slow model from a stalled
+ * gateway.
+ */
 function providerTimeoutError(
-  options: { providerKind: ProviderKind; providerLabel: string },
+  options: { providerKind: ProviderKind; providerLabel: string; modelId?: string },
+  deadline: { waitingFor: string; timeoutMs: number; elapsedMs: number },
 ): ProviderRequestError {
+  const model = options.modelId === undefined ? "" : `, model ${options.modelId}`;
   return new ProviderRequestError({
     provider: options.providerKind,
     status: 0,
-    message: `${options.providerLabel} request failed: request timed out`,
+    message: `${options.providerLabel} request failed: request timed out after ` +
+      `${deadline.elapsedMs}ms waiting for ${deadline.waitingFor} ` +
+      `(${deadline.timeoutMs}ms deadline${model})`,
     retryable: true,
   });
 }
@@ -665,6 +779,8 @@ export async function requestJson(options: {
   init: RequestInit;
   providerLabel: string;
   providerKind: ProviderKind;
+  /** Model this request is for. Reported when a deadline elapses. */
+  modelId?: string;
   timeoutMs?: number;
   maxResponseBytes?: number;
 }): Promise<unknown> {
@@ -678,11 +794,9 @@ export async function requestJson(options: {
       `maxResponseBytes must be a positive safe integer no greater than ${MAX_PROVIDER_JSON_MAX_BYTES}`,
     );
   }
-  const deadline = createRequestDeadline(
-    options.init,
-    options.timeoutMs ?? DEFAULT_PROVIDER_JSON_TIMEOUT_MS,
-    "timeoutMs",
-  );
+  const timeoutMs = options.timeoutMs ?? DEFAULT_PROVIDER_JSON_TIMEOUT_MS;
+  const startedAt = Date.now();
+  const deadline = createRequestDeadline(options.init, timeoutMs, "timeoutMs");
 
   try {
     const response = await waitForAbortable(
@@ -714,7 +828,11 @@ export async function requestJson(options: {
     }
   } catch (error) {
     if (deadline.timedOut) {
-      throw providerTimeoutError(options);
+      throw providerTimeoutError(options, {
+        waitingFor: "the JSON response",
+        timeoutMs,
+        elapsedMs: Date.now() - startedAt,
+      });
     }
     throw error;
   } finally {
@@ -723,9 +841,17 @@ export async function requestJson(options: {
 }
 
 /**
- * Request a streaming response.
+ * Request a streaming response. When the request body is replayable,
+ * typed retryable failures are retried up to two times before provider output
+ * is exposed. Each attempt gets a fresh stream header deadline, and replays are
+ * capped so the whole header wait stays inside one shared budget.
+ * ReadableStream request bodies are not retried because fetch can
+ * consume them on the first attempt.
  *
- * Response headers and error bodies have a 30-second default deadline. After
+ * Response headers and error bodies have a 30-second default per-attempt
+ * deadline, and replays are additionally capped so the whole header wait stays
+ * inside a 40-second default budget. The first attempt always runs on the full
+ * per-attempt deadline; only replays are shortened to fit the budget. After
  * headers arrive, caller cancellation remains connected to the returned body;
  * consumer cancellation aborts the request and cancels the upstream body.
  */
@@ -735,55 +861,126 @@ export async function requestStream(options: {
   init: RequestInit;
   providerLabel: string;
   providerKind: ProviderKind;
+  /** Model this request is for. Reported when a deadline elapses. */
+  modelId?: string;
   headersTimeoutMs?: number;
+  /**
+   * Ceiling on the wall time replays may spend waiting for headers. Defaults to
+   * 40 seconds. Set it at or above `headersTimeoutMs` for it to bound the total,
+   * because the first attempt always keeps its own deadline.
+   */
+  totalHeadersBudgetMs?: number;
 }): Promise<ReadableStream<Uint8Array>> {
-  const deadline = createRequestDeadline(
-    options.init,
-    options.headersTimeoutMs ?? DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS,
-    "headersTimeoutMs",
+  const headersTimeoutMs = options.headersTimeoutMs ??
+    DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS;
+  const totalHeadersBudgetMs = normalizeTimerDurationMs(
+    options.totalHeadersBudgetMs ?? DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS,
+    "totalHeadersBudgetMs",
   );
-  let streamOwnsDeadline = false;
+  const requestBodyIsReplayable = !(options.init.body instanceof ReadableStream);
+  const requestStartedAt = monotonicMilliseconds();
+  let retryCount = 0;
+  // The first attempt is never shortened to reserve room for a replay that may
+  // not happen: a provider that would have answered at 29s still wins.
+  let attemptTimeoutMs = headersTimeoutMs;
 
-  try {
-    const response = await waitForAbortable(
-      () => options.fetchImpl(options.url, deadline.init),
-      deadline.deadlineSignal,
-      cancelLateResponse,
-    );
-    if (!response.ok) {
-      const err = await buildProviderError(
-        options.providerKind,
-        response,
+  while (true) {
+    const startedAt = monotonicMilliseconds();
+    const deadline = createRequestDeadline(options.init, attemptTimeoutMs, "headersTimeoutMs");
+    let streamOwnsDeadline = false;
+
+    try {
+      const response = await waitForAbortable(
+        () => options.fetchImpl(options.url, deadline.init),
         deadline.deadlineSignal,
+        cancelLateResponse,
       );
-      err.message = `${options.providerLabel} request failed: ${err.message}`;
-      throw err;
-    }
+      if (!response.ok) {
+        const err = await buildProviderError(
+          options.providerKind,
+          response,
+          deadline.deadlineSignal,
+        );
+        err.message = `${options.providerLabel} request failed: ${err.message}`;
+        throw err;
+      }
 
-    if (!response.body) {
-      throw new ProviderRequestError({
-        provider: options.providerKind,
-        status: response.status,
-        message: `${options.providerLabel} request failed: stream body missing`,
-        retryable: false,
-      });
-    }
+      if (!response.body) {
+        throw new ProviderRequestError({
+          provider: options.providerKind,
+          status: response.status,
+          message: `${options.providerLabel} request failed: stream body missing`,
+          retryable: false,
+        });
+      }
 
-    deadline.cancelTimeout();
-    streamOwnsDeadline = true;
-    return streamWithCleanup(
-      response.body,
-      deadline.deadlineSignal,
-      deadline.abort,
-      deadline.dispose,
-    );
-  } catch (error) {
-    if (deadline.timedOut) {
-      throw providerTimeoutError(options);
+      deadline.cancelTimeout();
+      streamOwnsDeadline = true;
+      return streamWithCleanup(
+        response.body,
+        deadline.deadlineSignal,
+        deadline.abort,
+        deadline.dispose,
+      );
+    } catch (error) {
+      // Past this point `streamWithCleanup` has claimed `response.body` with
+      // `getReader()`. Retrying would replay a request whose body another
+      // reader already holds, so surface the failure whatever its shape.
+      if (streamOwnsDeadline) throw error;
+      const failure = deadline.timedOut
+        ? providerTimeoutError(options, {
+          waitingFor: "the stream response headers",
+          // A replay runs on whatever the budget has left, so its deadline is
+          // an internal clamp no configuration contains. Always report the
+          // configured deadline (the first attempt runs on it unchanged), and
+          // once a replay has happened report the whole wait. Reporting the
+          // clamp instead reintroduces the undiagnosable error that
+          // veryfront-issue-inbox#710 was filed to remove.
+          timeoutMs: headersTimeoutMs,
+          elapsedMs: retryCount === 0
+            ? monotonicMilliseconds() - startedAt
+            : monotonicMilliseconds() - requestStartedAt,
+        })
+        : error;
+      const remainingBudgetMs = totalHeadersBudgetMs -
+        (monotonicMilliseconds() - requestStartedAt);
+      if (
+        !(failure instanceof ProviderError) ||
+        !failure.retryable ||
+        !requestBodyIsReplayable ||
+        retryCount >= MAX_PROVIDER_STREAM_RETRIES ||
+        remainingBudgetMs <= 0
+      ) {
+        throw failure;
+      }
+
+      const retryDelayMs = failure.retryAfterMs ??
+        (deadline.timedOut ? 0 : DEFAULT_PROVIDER_STREAM_RETRY_DELAY_MS * 2 ** retryCount);
+      // A provider-specified wait that cannot fit the current attempt's
+      // remaining deadline cannot be honored. Report the provider failure we
+      // actually received instead of rewriting it as a false timeout.
+      if (retryDelayMs > 0) {
+        if (retryDelayMs >= attemptTimeoutMs - (monotonicMilliseconds() - startedAt)) {
+          throw failure;
+        }
+        try {
+          await waitForProviderStreamRetry(retryDelayMs, deadline.deadlineSignal);
+        } catch (waitError) {
+          if (deadline.timedOut) throw failure;
+          throw waitError;
+        }
+      }
+      retryCount++;
+      // Only replays are clamped. A budget already spent stops the loop rather
+      // than issuing an attempt with no time to succeed in.
+      attemptTimeoutMs = Math.min(
+        headersTimeoutMs,
+        totalHeadersBudgetMs - (monotonicMilliseconds() - requestStartedAt),
+      );
+      if (attemptTimeoutMs <= 0) throw failure;
+    } finally {
+      deadline.cancelTimeout();
+      if (!streamOwnsDeadline) deadline.dispose();
     }
-    throw error;
-  } finally {
-    deadline.cancelTimeout();
-    if (!streamOwnsDeadline) deadline.dispose();
   }
 }

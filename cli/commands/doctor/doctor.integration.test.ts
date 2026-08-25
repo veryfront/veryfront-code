@@ -8,7 +8,8 @@ import {
 } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { describe, it } from "#veryfront/testing/bdd";
-import { remove, writeTextFile } from "#veryfront/compat/fs.ts";
+import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
+import { withTempDir } from "#veryfront/testing";
 import { doctorCommand, reportDoctorResults, resolveDoctorPort, streamCheck } from "./index.ts";
 import { withTestContext } from "../../../tests/_helpers/context.ts";
 import { clearConfigCache } from "#veryfront/config";
@@ -140,6 +141,59 @@ describe("CLI doctor command", () => {
       assertEquals(await resolveDoctorPort(context.projectDir), 4321);
       assertEquals(await resolveDoctorPort(context.projectDir, 5432), 5432);
     });
+  });
+
+  it("reports no warnings for a freshly scaffolded app-router project", async () => {
+    await withTempDir(async (projectDir) => {
+      clearConfigCache();
+      await mkdir(join(projectDir, "app", "api", "ag-ui"), { recursive: true });
+      await mkdir(join(projectDir, "agents"), { recursive: true });
+      await mkdir(join(projectDir, "tools"), { recursive: true });
+      await writeTextFile(
+        join(projectDir, "app", "page.tsx"),
+        "export default function Page() {\n  return <div />;\n}\n",
+      );
+      await writeTextFile(join(projectDir, "agents", "assistant.ts"), "export default {};\n");
+      await writeTextFile(join(projectDir, "tools", "calculator.ts"), "export default {};\n");
+
+      const output: unknown[][] = [];
+      const originalLog = console.log;
+      console.log = (...args: unknown[]) => output.push(args);
+      setJsonMode(true);
+
+      try {
+        await doctorCommand(projectDir);
+      } finally {
+        setJsonMode(false);
+        console.log = originalLog;
+      }
+
+      const envelope = JSON.parse(String(output[0]?.[0])) as {
+        data: {
+          checks: { name: string; status: string; message: string }[];
+          summary: { warnings: number };
+        };
+      };
+      const checks = envelope.data.checks;
+      const warnings = checks.filter((check) => check.status !== "pass");
+
+      assertEquals(
+        warnings,
+        [],
+        `a healthy scaffold must produce no warnings, got ${JSON.stringify(warnings)}`,
+      );
+      assertEquals(envelope.data.summary.warnings, 0);
+      assertEquals(
+        checks.some((check) => check.name.includes("RSC manifest")),
+        false,
+        "RSC endpoint probes must be skipped while the experimental flag is off",
+      );
+      assertEquals(
+        checks.some((check) => check.message.includes("Disabled")),
+        false,
+        "a project with agents/ and tools/ must not be reported as AI-disabled",
+      );
+    }, { prefix: "doctor-scaffold-" });
   });
 
   it("runs without throwing", async () => {

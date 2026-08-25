@@ -44,10 +44,26 @@ describe("styles-builder/prepared-project-css-cache", () => {
         ...baseProfile,
         cssPipelineIdentity: "pipeline-B",
       }),
+      createPreparedProjectCSSContext("project", "version-A", "sheet-A", styleProfile, {
+        ...baseProfile,
+        minify: false,
+      }),
+      createPreparedProjectCSSContext("project", "version-A", "sheet-A", styleProfile, {
+        ...baseProfile,
+        buildMode: "development" as const,
+      }),
+      createPreparedProjectCSSContext("project", "version-A", "sheet-A", styleProfile, {
+        ...baseProfile,
+        environment: "production",
+      }),
     ];
 
     for (const variant of variants) {
-      assertEquals(variant.cacheKey === base.cacheKey, false);
+      assertEquals(
+        variant.cacheKey === base.cacheKey,
+        false,
+        "every output-affecting identity field must partition the prepared CSS cache key",
+      );
     }
     const safelyFramed = createPreparedProjectCSSContext(
       "project:*:scope",
@@ -135,7 +151,32 @@ describe("styles-builder/prepared-project-css-cache", () => {
     const css = ".alpha{display:block}";
 
     invalidatePreparedProjectCSS(projectSlug);
-    await storePreparedProjectCSS(context, { css, hash: hashCSS(css) });
-    assertEquals(await tryGetPreparedProjectCSS(context), undefined);
+    try {
+      await storePreparedProjectCSS(context, { css, hash: hashCSS(css) });
+      assertEquals(await tryGetPreparedProjectCSS(context), undefined);
+
+      const fresh = createPreparedProjectCSSContext(
+        projectSlug,
+        "version",
+        "sheet",
+        hashString("style-profile"),
+        {
+          cssPipelineIdentity: "pipeline",
+          candidatesHash: hashCandidates(["alpha"]),
+        },
+      );
+      assertEquals(
+        fresh.cacheKey,
+        context.cacheKey,
+        "a post-invalidation context with identical inputs reuses the same cache key",
+      );
+      assertEquals(
+        await tryGetPreparedProjectCSS(fresh),
+        undefined,
+        "a pre-invalidation write must not repopulate the cache for a current-epoch reader",
+      );
+    } finally {
+      invalidatePreparedProjectCSS(projectSlug);
+    }
   });
 });

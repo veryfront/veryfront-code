@@ -24,6 +24,7 @@ import {
   defaultTextMapSetter,
   getTracer,
   getTracerProviderRevision,
+  type Link,
   propagation as shimPropagation,
   type Span,
   SpanKind,
@@ -31,12 +32,15 @@ import {
   trace as shimTrace,
   type Tracer,
 } from "./api-shim.ts";
+import { formatTraceparent, parseTraceparent } from "./traceparent.ts";
 import { getHostTelemetryEnv } from "./telemetry-env.ts";
 import {
   sanitizeErrorForTelemetry,
   sanitizeTelemetryAttributes,
   sanitizeTelemetryAttributeValue,
   sanitizeTelemetryText,
+  type TelemetryErrorDetail,
+  telemetryErrorType,
 } from "../telemetry-error.ts";
 import { runAsyncWithContextFallback, runSyncWithContextFallback } from "./context-callback.ts";
 
@@ -236,6 +240,8 @@ function startSpanWithFallback(
       {
         kind: options?.kind ?? SpanKind.INTERNAL,
         attributes: sanitizeTelemetryAttributes(attributes),
+        ...(options?.links?.length ? { links: options.links } : {}),
+        ...(options?.root ? { root: true } : {}),
       },
       parentContext,
     );
@@ -256,25 +262,113 @@ function startSpanWithFallback(
   return { span, context: spanContext };
 }
 
-function setSpanErrorStatus(span: Span, error: unknown): void {
-  const telemetryError = sanitizeErrorForTelemetry(error);
+function setSpanErrorStatus(span: Span, error: unknown, detail: TelemetryErrorDetail): void {
+  // Sanitization runs on caller-supplied values on every error path, so it is guarded
+  // like the span calls are: a throw here would turn a handled failure into a thrown one,
+  // and telemetry must never change the outcome it reports on. Defence in depth -- probing
+  // throwing proxy traps, accessors and toString found no input that actually throws.
+  let telemetryError: Error | undefined;
+  runTelemetryOperation(
+    () => {
+      telemetryError = sanitizeErrorForTelemetry(error, detail);
+    },
+    "Failed to sanitize error for telemetry",
+  );
+  if (!telemetryError) return;
+  const sanitized = telemetryError;
   runTelemetryOperation(
     () =>
       span.setStatus({
         code: SpanStatusCode.ERROR,
-        message: telemetryError.message,
+        message: sanitized.message,
       }),
     "Failed to set span error status",
   );
   runTelemetryOperation(
-    () => span.recordException(telemetryError),
+    () => span.recordException(sanitized),
     "Failed to record span exception",
   );
 }
 
 export type WithSpanOptions = {
   kind?: SpanKind;
+  /**
+   * Maps a thrown error to what the span should report. Supply this to say
+   * something more useful than the default classification, for example naming
+   * the node that failed. Return the error itself to opt a span back into the
+   * raw message text and the stack trace that goes with it; anything else you
+   * return is reported without a stack, since its frames would describe your
+   * mapper rather than the failure.
+   */
+  errorStatus?: (error: unknown) => unknown;
+  /**
+   * Causal relationships to spans that are not this span's parent. Use for work
+   * whose cause is real but whose lifetime is independent of it.
+   */
+  links?: Link[];
+  /**
+   * Start a new trace instead of continuing the caller's. Durable work wants
+   * this: a child inherits the caller's sampling decision, so a sampled-out
+   * caller would otherwise drop the whole thing, and work that outlives the
+   * caller leaves an open span inside a finished trace. Pair it with a link
+   * back to the caller so the causal edge survives.
+   */
+  root?: boolean;
 };
+
+/**
+ * Resolve what a failed span reports.
+ *
+ * Fails closed: with no `errorStatus` mapper the span carries a bounded
+ * classification, never the thrown error's own message. Telemetry leaves the
+ * process to a vendor, and a message (plus the stack trace recorded alongside
+ * it) carries whatever the thrower interpolated in. Callers that want detail on
+ * the span say so explicitly; everyone else gets the safe default, including
+ * call sites that do not exist yet.
+ */
+function spanErrorStatus(error: unknown, options: WithSpanOptions | undefined): unknown {
+  const bounded = boundedSpanError(error);
+  if (!options?.errorStatus) return bounded;
+  let statusError: unknown = bounded;
+  runTelemetryOperation(
+    () => {
+      // A mapper that throws, or returns nothing, has not opted this span into
+      // anything, so it falls back to the bounded classification rather than to
+      // the raw error.
+      statusError = options.errorStatus?.(error) ?? bounded;
+    },
+    "Failed to derive span error status",
+  );
+  return statusError;
+}
+
+/** A detached error carrying only the classification, so nothing user-supplied escapes. */
+function boundedSpanError(error: unknown): unknown {
+  let bounded: unknown = sanitizeErrorForTelemetry("Error", "withoutStack", "Error");
+  runTelemetryOperation(
+    () => {
+      const classification = telemetryErrorType(error);
+      bounded = sanitizeErrorForTelemetry(classification, "withoutStack", classification);
+    },
+    "Failed to classify span error status",
+  );
+  return bounded;
+}
+
+/**
+ * Report a failed span.
+ *
+ * A span exports a stack trace only for the error that actually unwound through
+ * it, and only when the caller's `errorStatus` mapper handed that same error
+ * back. Everything else on this path is a classification built here or in the
+ * mapper: `recordException` derives `exception.stacktrace` from whatever it is
+ * given, so those frames, and the absolute path of every file in them, would go
+ * on the wire with every failed span.
+ */
+function reportSpanFailure(span: Span, error: unknown, options: WithSpanOptions | undefined): void {
+  const statusError = spanErrorStatus(error, options);
+  setSpanErrorStatus(span, statusError, statusError === error ? "withStack" : "withoutStack");
+}
 
 /** Applies span. */
 export async function withSpan<T>(
@@ -293,7 +387,7 @@ export async function withSpan<T>(
     );
     return result;
   } catch (error) {
-    setSpanErrorStatus(span, error);
+    reportSpanFailure(span, error, options);
     throw error;
   } finally {
     runTelemetryOperation(() => span.end(), "Failed to end span");
@@ -321,7 +415,7 @@ export function withSpanSync<T>(
     );
     return result;
   } catch (error) {
-    setSpanErrorStatus(span, error);
+    reportSpanFailure(span, error, options);
     throw error;
   } finally {
     runTelemetryOperation(() => span.end(), "Failed to end span");
@@ -408,7 +502,9 @@ export function endServerSpan(span: unknown, statusCode: number, error?: Error):
   );
 
   if (error) {
-    setSpanErrorStatus(otelSpan, error);
+    // The handler hands over the error it caught, so these frames describe the
+    // request that failed rather than this file.
+    setSpanErrorStatus(otelSpan, error, "withStack");
     runTelemetryOperation(() => otelSpan.end(), "Failed to end server span");
     return;
   }
@@ -479,12 +575,26 @@ export function setActiveSpanAttributes(
   }
 }
 
-/** Marks the active span as failed. */
+/** Records an event on the currently active span, if there is one. */
+export function addActiveSpanEvent(
+  name: string,
+  attributes?: Record<string, AttributeValue>,
+): void {
+  addSpanEvent(shimTrace.getActiveSpan?.(), name, attributes);
+}
+
+/**
+ * Marks the active span as failed.
+ *
+ * The error names the failure, it does not carry it: this is called from the
+ * code that noticed the problem, so a stack captured here describes the
+ * reporting site. It is reported without one.
+ */
 export function setActiveSpanErrorStatus(error: unknown): void {
   const span = shimTrace.getActiveSpan?.();
   if (!span) return;
 
-  setSpanErrorStatus(span, error);
+  setSpanErrorStatus(span, error, "withoutStack");
 }
 
 /** Context for with. */
@@ -497,6 +607,47 @@ export async function withContext<T>(spanContext: unknown, fn: () => Promise<T>)
 }
 
 /** Context for get trace. */
+/**
+ * The active span's identity as a `traceparent`, for storing somewhere durable.
+ *
+ * Undefined when nothing is tracing, so a caller persists a linkable identity
+ * or none at all -- never a placeholder that resolves to no span.
+ */
+export function getActiveTraceparent(): string | undefined {
+  try {
+    const span = shimTrace.getActiveSpan?.();
+    if (!span) return undefined;
+    return formatTraceparent(span.spanContext());
+  } catch (error) {
+    reportTelemetryFailure("Failed to read active traceparent", error);
+    return undefined;
+  }
+}
+
+/**
+ * Build a span link from a `traceparent` read back out of durable storage.
+ *
+ * Returns undefined for anything unparseable, so a corrupted or absent record
+ * costs the link and nothing else.
+ */
+export function traceparentLink(
+  traceparent: string | undefined,
+  attributes?: Record<string, AttributeValue>,
+): Link | undefined {
+  const spanContext = parseTraceparent(traceparent);
+  if (!spanContext) return undefined;
+  return attributes
+    ? { context: spanContext, attributes: sanitizeTelemetryAttributes(attributes) }
+    : { context: spanContext };
+}
+
+/** A link to the span that is active right now, for a span about to be rooted away from it. */
+export function activeSpanLink(
+  attributes?: Record<string, AttributeValue>,
+): Link | undefined {
+  return traceparentLink(getActiveTraceparent(), attributes);
+}
+
 export function getTraceContext(): { traceId?: string; spanId?: string } {
   const span = shimTrace.getActiveSpan?.();
   if (!span) return {};

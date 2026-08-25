@@ -6,10 +6,17 @@ import type {
   WorkflowContext,
   WorkflowRun,
 } from "../types.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { generateId, parseDuration } from "../types.ts";
-import { updateRunIfStatus, type WorkflowBackend } from "../backends/types.ts";
+import {
+  type PersistedPendingApproval,
+  updateRunIfStatus,
+  type WorkflowBackend,
+} from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
+import { ApprovalDecisionSchema } from "../schemas/workflow.schema.ts";
 import { reconcileWorkflowRunControl } from "./workflow-run-control.ts";
+import { projectPendingApproval, projectRunPendingApprovals } from "./pending-approval-metadata.ts";
 import {
   INVALID_ARGUMENT,
   ORCHESTRATION_ERROR,
@@ -23,18 +30,41 @@ const logger = baseLogger.component("approval-manager");
 const DEFAULT_EXPIRATION_CHECK_INTERVAL_MS = 60_000;
 const MAX_DECISION_RECONCILIATION_ATTEMPTS = 8;
 
+/** Receives detached approval and run snapshots. Mutating them does not change persisted state. */
 export type ApprovalNotifier = (
   approval: PendingApproval,
   run: WorkflowRun,
 ) => Promise<void>;
+
+export interface ApprovalResponseSchemaResolverInput {
+  run: WorkflowRun;
+  approval: PendingApproval;
+}
+
+export type ApprovalResponseSchemaResolver = (
+  input: ApprovalResponseSchemaResolverInput,
+) => Schema<unknown> | undefined | Promise<Schema<unknown> | undefined>;
+
+export interface InternalApprovalResponseSchemaResolverInput {
+  run: WorkflowRun;
+  approval: PersistedPendingApproval;
+}
+
+export type InternalApprovalResponseSchemaResolver = (
+  input: InternalApprovalResponseSchemaResolverInput,
+) => Schema<unknown> | undefined | Promise<Schema<unknown> | undefined>;
 
 export interface ApprovalManagerConfig {
   /** Backend for persistence */
   backend: WorkflowBackend;
   /** Workflow executor for resuming after approval */
   executor?: WorkflowExecutor;
-  /** Notification callback */
+  /** Notification callback. Owner-bound approvals are persisted before this callback runs. */
   notifier?: ApprovalNotifier;
+  /** Resolve a wait node response schema for persisted approvals. */
+  responseSchemaResolver?: ApprovalResponseSchemaResolver;
+  /** Resolve a response schema from backend-only approval metadata. */
+  internalResponseSchemaResolver?: InternalApprovalResponseSchemaResolver;
   /** Check expired approvals interval (ms) */
   expirationCheckInterval?: number;
   /** Enable debug logging */
@@ -67,6 +97,7 @@ export class ApprovalManager {
   private config: ApprovalManagerConfig;
   private expirationTimer?: ReturnType<typeof setInterval>;
   private destroyed = false;
+  private responseSchemas = new Map<string, Schema<unknown>>();
 
   constructor(config: ApprovalManagerConfig) {
     this.config = {
@@ -87,16 +118,18 @@ export class ApprovalManager {
     nodeId: string,
     waitConfig: WaitNodeConfig,
     context: WorkflowContext,
+    options: { responseSchemaId?: string } = {},
   ): Promise<ApprovalRequest> {
+    const runId = run.id;
+    const workerId = run.workerId;
+    const timeoutMs = waitConfig.timeout ? parseDuration(waitConfig.timeout) : undefined;
     const payload = typeof waitConfig.payload === "function"
       ? await waitConfig.payload(context)
       : waitConfig.payload;
 
-    const expiresAt = waitConfig.timeout
-      ? new Date(Date.now() + parseDuration(waitConfig.timeout))
-      : undefined;
+    const expiresAt = timeoutMs ? new Date(Date.now() + timeoutMs) : undefined;
 
-    const approval: PendingApproval = {
+    const approval: PersistedPendingApproval = {
       id: generateId("apr"),
       nodeId,
       message: waitConfig.message || "Approval required",
@@ -105,29 +138,50 @@ export class ApprovalManager {
       requestedAt: new Date(),
       expiresAt,
       status: "pending",
+      ...(options.responseSchemaId === undefined
+        ? {}
+        : { responseSchemaId: options.responseSchemaId }),
     };
 
     logger.debug("Creating approval", {
       approvalId: approval.id,
-      runId: run.id,
+      runId,
     });
+
+    const responseSchemaKey = waitConfig.responseSchema
+      ? this.responseSchemaKey(runId, approval.id)
+      : undefined;
+    if (responseSchemaKey && waitConfig.responseSchema) {
+      this.responseSchemas.set(responseSchemaKey, waitConfig.responseSchema);
+    }
 
     // Worker-owned approvals are reserved atomically before notification. This
     // prevents a delayed onWaiting callback from notifying or appending after a
     // replacement worker has claimed the run.
-    const ownerBound = run.workerId !== undefined;
+    const ownerBound = workerId !== undefined;
     if (ownerBound) {
       const saveOwned = this.config.backend.savePendingApprovalIfStatusAndWorker;
-      const saved = saveOwned
-        ? await saveOwned.call(
-          this.config.backend,
-          run.id,
-          ["waiting"],
-          run.workerId!,
-          approval,
-        )
-        : false;
+      let saved: boolean;
+      try {
+        saved = saveOwned
+          ? await saveOwned.call(
+            this.config.backend,
+            runId,
+            ["waiting"],
+            workerId,
+            approval,
+          )
+          : false;
+      } catch (error) {
+        if (responseSchemaKey) {
+          this.responseSchemas.delete(responseSchemaKey);
+        }
+        throw error;
+      }
       if (!saved) {
+        if (responseSchemaKey) {
+          this.responseSchemas.delete(responseSchemaKey);
+        }
         throw ORCHESTRATION_ERROR.create({
           detail: "Workflow execution ownership changed before approval persistence",
         });
@@ -135,33 +189,51 @@ export class ApprovalManager {
     }
 
     try {
-      await this.config.notifier?.(approval, run);
+      await this.config.notifier?.(
+        structuredClone(projectPendingApproval(approval)),
+        structuredClone(projectRunPendingApprovals(run)),
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       approval.notificationError = message;
       logger.error(
         "Failed to notify approvers; approval created but approvers were NOT informed",
-        { approvalId: approval.id, runId: run.id, error: message },
+        { approvalId: approval.id, runId, error: message },
       );
     }
 
     if (ownerBound) {
       if (approval.notificationError) {
-        await this.config.backend.updatePendingApproval?.(
-          run.id,
-          approval.id,
-          { notificationError: approval.notificationError },
-        );
+        try {
+          await this.config.backend.updatePendingApproval?.(
+            runId,
+            approval.id,
+            { notificationError: approval.notificationError },
+          );
+        } catch (error) {
+          logger.error(
+            "Failed to persist approval notification state",
+            { approvalId: approval.id, runId },
+            error,
+          );
+        }
       }
     } else {
       // Preserve direct/ownerless behavior: resolve notification first so its
       // delivery error is included in the initial append.
-      await this.config.backend.savePendingApproval(run.id, approval);
+      try {
+        await this.config.backend.savePendingApproval(runId, approval);
+      } catch (error) {
+        if (responseSchemaKey) {
+          this.responseSchemas.delete(responseSchemaKey);
+        }
+        throw error;
+      }
     }
 
     return {
       approvalId: approval.id,
-      runId: run.id,
+      runId,
       nodeId,
       message: approval.message,
       payload: approval.payload,
@@ -175,6 +247,14 @@ export class ApprovalManager {
     runId: string,
     approvalId: string,
   ): Promise<PendingApproval | null> {
+    const approval = await this.getPersistedApproval(runId, approvalId);
+    return approval ? projectPendingApproval(approval) : null;
+  }
+
+  private async getPersistedApproval(
+    runId: string,
+    approvalId: string,
+  ): Promise<PersistedPendingApproval | null> {
     if (this.config.backend.getPendingApproval) {
       return this.config.backend.getPendingApproval(runId, approvalId);
     }
@@ -184,8 +264,52 @@ export class ApprovalManager {
   }
 
   /** Get all pending approvals for a run */
-  getPendingApprovals(runId: string): Promise<PendingApproval[]> {
-    return this.config.backend.getPendingApprovals(runId);
+  async getPendingApprovals(runId: string): Promise<PendingApproval[]> {
+    const approvals = await this.config.backend.getPendingApprovals(runId);
+    return approvals.map(projectPendingApproval);
+  }
+
+  private responseSchemaKey(runId: string, approvalId: string): string {
+    return `${runId}::${approvalId}`;
+  }
+
+  private async resolveResponseSchema(
+    runId: string,
+    approval: PersistedPendingApproval,
+  ): Promise<Schema<unknown> | undefined> {
+    const localSchema = this.responseSchemas.get(this.responseSchemaKey(runId, approval.id));
+    if (localSchema) return localSchema;
+
+    const run = await this.config.backend.getRun(runId);
+    if (!run) return undefined;
+
+    if (this.config.responseSchemaResolver) {
+      const publicSchema = await this.config.responseSchemaResolver({
+        run: projectRunPendingApprovals(run),
+        approval: projectPendingApproval(approval),
+      });
+      if (publicSchema) return publicSchema;
+    }
+
+    return await this.config.internalResponseSchemaResolver?.({ run, approval });
+  }
+
+  private async validateDecisionData(
+    runId: string,
+    approval: PersistedPendingApproval,
+    decision: ApprovalDecision,
+  ): Promise<void> {
+    const schema = await this.resolveResponseSchema(runId, approval);
+    if (!schema) return;
+
+    try {
+      schema.parse(decision.data);
+    } catch (error) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Approval "${approval.id}" data does not match the wait node's responseSchema: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
   }
 
   /** Process an approval decision */
@@ -194,6 +318,7 @@ export class ApprovalManager {
     approvalId: string,
     decision: ApprovalDecision,
   ): Promise<void> {
+    decision = ApprovalDecisionSchema.parse(decision);
     logger.debug("Processing decision", {
       approvalId,
       approved: decision.approved,
@@ -204,7 +329,7 @@ export class ApprovalManager {
     // only an early-out for the common already-decided case. It is NOT the
     // authoritative gate, because a concurrent decision could slip in between
     // this read and the write below.
-    const approval = await this.getApproval(runId, approvalId);
+    const approval = await this.getPersistedApproval(runId, approvalId);
     if (!approval) {
       throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
     }
@@ -222,6 +347,8 @@ export class ApprovalManager {
       throw PERMISSION_DENIED.create({ detail: "Not authorized to approve this request" });
     }
 
+    await this.validateDecisionData(runId, approval, decision);
+
     // Authoritative gate: the backend applies the decision only while the
     // approval is still pending and reports whether it won the race. If another
     // decision resolved this approval first, `applied` is false and we must not
@@ -230,6 +357,7 @@ export class ApprovalManager {
     if (applied === false) {
       throw INVALID_ARGUMENT.create({ detail: `Approval already processed: ${approvalId}` });
     }
+    this.responseSchemas.delete(this.responseSchemaKey(runId, approvalId));
 
     // The approval decision is already durable. Reconcile it onto whichever
     // worker owns the run now, retrying if ownership changes between the read,
@@ -266,22 +394,36 @@ export class ApprovalManager {
     approver: string,
     approved: boolean,
     comment?: string,
+    data?: unknown,
   ): Promise<void> {
     return this.processDecision(runId, approvalId, {
       approved,
       approver,
       comment,
+      ...(data === undefined ? {} : { data }),
     });
   }
 
   /** Approve an approval request */
-  approve(runId: string, approvalId: string, approver: string, comment?: string): Promise<void> {
-    return this.submitDecision(runId, approvalId, approver, true, comment);
+  approve(
+    runId: string,
+    approvalId: string,
+    approver: string,
+    comment?: string,
+    data?: unknown,
+  ): Promise<void> {
+    return this.submitDecision(runId, approvalId, approver, true, comment, data);
   }
 
   /** Reject an approval request */
-  reject(runId: string, approvalId: string, approver: string, comment?: string): Promise<void> {
-    return this.submitDecision(runId, approvalId, approver, false, comment);
+  reject(
+    runId: string,
+    approvalId: string,
+    approver: string,
+    comment?: string,
+    data?: unknown,
+  ): Promise<void> {
+    return this.submitDecision(runId, approvalId, approver, false, comment, data);
   }
 
   /** List all pending approvals across workflows */
@@ -299,7 +441,12 @@ export class ApprovalManager {
       return Promise.resolve([]);
     }
 
-    return list({ ...filter, status: "pending" });
+    return list({ ...filter, status: "pending" }).then((entries) =>
+      entries.map(({ runId, approval }) => ({
+        runId,
+        approval: projectPendingApproval(approval),
+      }))
+    );
   }
 
   /** Check and expire stale approvals */
@@ -337,6 +484,7 @@ export class ApprovalManager {
       if (expired === false) {
         continue;
       }
+      this.responseSchemas.delete(this.responseSchemaKey(runId, approval.id));
 
       await updateRunIfStatus(this.config.backend, runId, ["pending", "running", "waiting"], {
         status: "failed",

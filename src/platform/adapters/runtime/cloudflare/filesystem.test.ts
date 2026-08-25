@@ -34,6 +34,10 @@ function createKVNamespace(initialEntries: Record<string, string>): KVNamespace 
     get(key, type = "text") {
       const value = entries.get(key);
       if (value === undefined) return Promise.resolve(null);
+      if (type === "stream") {
+        const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
+        return Promise.resolve(new Blob([bytes.slice()]).stream());
+      }
       if (type === "arrayBuffer") {
         const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
         return Promise.resolve(bytes.slice().buffer);
@@ -282,6 +286,52 @@ describe("CloudflareFileSystemAdapter realPath", () => {
     assertEquals((await fs.stat("assets/pixel.bin")).size, bytes.byteLength);
     assertEquals(fs.maxWholeFileReadBytes, 25 * 1024 * 1024);
     assertEquals("readFileBytesBounded" in fs, false);
+  });
+
+  it("reads an admitted file through the KV streaming boundary", async () => {
+    const requestedTypes: string[] = [];
+    const kv = createKVNamespace({ "components/Card.tsx": "card" });
+    const originalGet = kv.get.bind(kv);
+    kv.get = (key, type = "text") => {
+      requestedTypes.push(type);
+      return originalGet(key, type);
+    };
+    const fs = new CloudflareFileSystemAdapter(kv);
+
+    assertEquals(
+      new TextDecoder().decode(
+        await fs.readFileBytesWithinLimit("components/Card.tsx", 4),
+      ),
+      "card",
+    );
+    assertEquals(requestedTypes, ["stream"]);
+  });
+
+  it("rejects a streaming KV value at the first byte beyond the exact limit", async () => {
+    let cancelled = false;
+    const kv = createKVNamespace({});
+    kv.get = (_key, type = "text") => {
+      assertEquals(type, "stream");
+      return Promise.resolve(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new Uint8Array([1, 2]));
+            controller.enqueue(new Uint8Array([3]));
+          },
+          cancel() {
+            cancelled = true;
+          },
+        }),
+      );
+    };
+    const fs = new CloudflareFileSystemAdapter(kv);
+
+    await assertRejects(
+      () => fs.readFileBytesWithinLimit("components/Card.tsx", 2),
+      RangeError,
+      "exceeds 2 bytes",
+    );
+    assertEquals(cancelled, true);
   });
 
   it("does not silently succeed on mutating operations without a KV binding", async () => {

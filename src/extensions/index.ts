@@ -51,6 +51,7 @@ export {
   mergeExtensions,
   parsePackageMetadata,
 } from "./discovery.ts";
+export { parseExtensionManifest } from "./manifest-reader.ts";
 
 // Loader
 export { ExtensionLoader } from "./loader.ts";
@@ -77,6 +78,14 @@ export {
 
 // Recommendations
 export { getRecommendation } from "./recommendations.ts";
+
+// Package install hints
+export type { InstallTarget } from "./install-command.ts";
+export {
+  detectProjectInstallTarget,
+  formatInstallCommand,
+  runtimeInstallTarget,
+} from "./install-command.ts";
 
 // Provider-neutral Redis runtime
 export {

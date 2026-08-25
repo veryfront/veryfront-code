@@ -439,6 +439,30 @@ describe("security/path-validation/index", () => {
         validatePathSync("../outside.ts", options).code,
         PathValidationError.OUTSIDE_BASE,
       );
+      assertEquals(
+        validatePathSync("/etc/passwd", options).code,
+        PathValidationError.ABSOLUTE_PATH_DENIED,
+        "legacy policy fields must not weaken absolute-path containment",
+      );
+    });
+
+    it("forwards an explicit allowAbsolute without widening base containment", () => {
+      const options = {
+        baseDir: "/project",
+        allowAbsolute: true,
+        adapter: createMockAdapter(),
+      };
+
+      assertEquals(
+        validatePathSync("/project/src/file.ts", options).valid,
+        true,
+        "an explicit allowAbsolute admits an in-base absolute path",
+      );
+      assertEquals(
+        validatePathSync("/etc/passwd", options).code,
+        PathValidationError.OUTSIDE_BASE,
+        "allowAbsolute still enforces base containment",
+      );
     });
 
     it("rejects hostile compatibility policy objects without invoking accessors", () => {

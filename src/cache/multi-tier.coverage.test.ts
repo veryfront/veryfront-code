@@ -7,7 +7,7 @@
  */
 
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type CacheTier, MultiTierCache } from "./multi-tier.ts";
 
@@ -276,5 +276,48 @@ describe("MultiTierCache - set() TTL propagation", () => {
     await cache.set("key", "value");
 
     assertEquals(l1.setTtls.get("key"), 77);
+  });
+});
+
+describe("MultiTierCache - set() failure semantics", () => {
+  it("propagates an L3 set failure to the caller", async () => {
+    const l1 = createCapturingTier("l1");
+    const l3 = createCapturingTier("l3");
+    l3.set = () => Promise.reject(new Error("l3 down"));
+
+    const cache = new MultiTierCache({
+      name: "test",
+      l1,
+      l3,
+      defaultTtlSeconds: 300,
+    });
+
+    await assertRejects(
+      () => cache.set("key", "value"),
+      Error,
+      "l3 down",
+      "an L3 set failure must reach the caller so lost distributed writes are observable",
+    );
+  });
+
+  it("swallows a per-pod L1 set failure and still writes L3", async () => {
+    const l1 = createCapturingTier("l1");
+    const l3 = createCapturingTier("l3");
+    l1.set = () => Promise.reject(new Error("l1 down"));
+
+    const cache = new MultiTierCache({
+      name: "test",
+      l1,
+      l3,
+      defaultTtlSeconds: 300,
+    });
+
+    await cache.set("key", "value");
+
+    assertEquals(
+      l3.store.get("key"),
+      "value",
+      "a per-pod L1 set failure must not fail the write or skip L3",
+    );
   });
 });

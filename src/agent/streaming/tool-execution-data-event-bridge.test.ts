@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ToolExecutionDataEvent } from "../../tool/types.ts";
 import { createToolExecutionDataEventBridgeStream } from "./tool-execution-data-event-bridge.ts";
@@ -94,6 +94,32 @@ describe("createToolExecutionDataEventBridgeStream", () => {
     await reader.cancel();
   });
 
+  it("surfaces base stream failures as stream errors", async () => {
+    let publishDataEvent = (_event: ToolExecutionDataEvent) => {};
+
+    const stream = createToolExecutionDataEventBridgeStream({
+      baseStream: new ReadableStream<Uint8Array>({
+        pull(controller) {
+          controller.error(new Error("upstream boom"));
+        },
+      }),
+      installPublisher(nextPublishDataEvent) {
+        publishDataEvent = nextPublishDataEvent;
+      },
+    });
+
+    await assertRejects(
+      () => stream.getReader().read(),
+      Error,
+      "upstream boom",
+      "base stream failures must propagate as a stream error, not a clean close",
+    );
+
+    // The pump reinstalls a no-op publisher on teardown, so a late publish must
+    // not enqueue onto the errored controller.
+    publishDataEvent({ type: "late", data: {} });
+  });
+
   it("cancel resolves cleanly when the base reader cancel rejects (#2334)", async () => {
     // Mirrors the production crash: the upstream agent runtime's stream cancel
     // aborts an in-flight signal, and the rejection propagates back through the
@@ -121,22 +147,28 @@ describe("createToolExecutionDataEventBridgeStream", () => {
 
   it("cancel still forwards the reason to the base reader on the happy path", async () => {
     let cancelledWith: unknown = "unset";
+    let publishDataEvent = (_event: ToolExecutionDataEvent) => {};
     const stream = createToolExecutionDataEventBridgeStream({
       baseStream: new ReadableStream<Uint8Array>({
         start(controller) {
           controller.enqueue(new TextEncoder().encode('data: {"type":"message-start"}\n\n'));
         },
-        cancel(reason) {
+        async cancel(reason) {
           cancelledWith = reason;
+          await Promise.resolve();
         },
       }),
-      installPublisher() {},
+      installPublisher(nextPublishDataEvent) {
+        publishDataEvent = nextPublishDataEvent;
+      },
     });
 
     const reader = stream.getReader();
     await reader.read();
     const reason = new DOMException("client disconnected", "AbortError");
-    await reader.cancel(reason);
+    const cancellation = reader.cancel(reason);
+    publishDataEvent({ type: "late-child-event", data: { status: "still-stopping" } });
+    await cancellation;
 
     assertEquals(cancelledWith, reason);
   });

@@ -6,8 +6,10 @@
  * @module cli/shared/args
  */
 
+import { INVALID_ARGUMENT } from "veryfront/errors";
 import type { Schema } from "veryfront/extensions/schema";
 import { COMMANDS } from "../help/command-definitions.ts";
+import { suggestCommand } from "./suggest.ts";
 import type { ParsedArgs } from "./types.ts";
 
 /** Compat type for safeParse result (SafeParseReturnType removed in zod v4). */
@@ -33,6 +35,60 @@ export interface ArgSpec {
 export type ArgMap<T> = {
   [K in keyof T]?: ArgSpec;
 };
+
+export interface ArgParserOptions {
+  /** Reject option keys that the command parser does not consume. */
+  rejectUnknown?: boolean;
+}
+
+const ROUTER_ARG_KEYS = new Set([
+  "color",
+  "h",
+  "help",
+  "j",
+  "json",
+  "no-animation",
+  "no-color",
+  "no-input",
+  "o",
+  "output",
+  "q",
+  "quiet",
+  "v",
+  "verbose",
+  "version",
+  "y",
+  "yes",
+]);
+
+function optionName(key: string): string {
+  return `${key.length === 1 ? "-" : "--"}${key}`;
+}
+
+function validateKnownOptions<T>(
+  args: ParsedArgs,
+  argMap: ArgMap<T>,
+): SafeParseResult<undefined> {
+  const commandKeys = (Object.values(argMap) as (ArgSpec | undefined)[])
+    .flatMap((spec) => spec?.keys ?? []);
+  const allowedKeys = new Set([...commandKeys, ...ROUTER_ARG_KEYS]);
+  const unknownKey = Object.keys(args).find((key) =>
+    key !== "_" && key !== "__explicit" && !allowedKeys.has(key)
+  );
+  if (!unknownKey) return { success: true, data: undefined };
+
+  const suggestion = suggestCommand(
+    unknownKey,
+    commandKeys.filter((key) => key.length > 1),
+    Math.min(4, Math.max(2, Math.ceil(unknownKey.length * 0.35))),
+  )[0];
+  const hint = suggestion ? ` Did you mean ${optionName(suggestion)}?` : "";
+  const error = Object.assign(
+    new Error(`Unknown option ${optionName(unknownKey)}.${hint}`),
+    { issues: [] },
+  );
+  return { success: false, error };
+}
 
 function coerceValue(
   value: unknown,
@@ -119,8 +175,14 @@ export function extractArgs<T>(
 export function createArgParser<T>(
   schema: Schema<T>,
   argMap: ArgMap<T>,
+  options: ArgParserOptions = {},
 ): (args: ParsedArgs) => SafeParseResult<T> {
   return function parseArgs(args: ParsedArgs): SafeParseResult<T> {
+    if (options.rejectUnknown) {
+      const knownOptions = validateKnownOptions(args, argMap);
+      if (!knownOptions.success) return knownOptions;
+    }
+
     const result = schema.safeParse(extractArgs(args, argMap));
     if (result.success) {
       return { success: true, data: result.data };
@@ -142,9 +204,10 @@ export function parseArgsOrThrow<T>(
 ): T {
   const result = parser(args);
   if (!result.success) {
-    throw new Error(
-      `Invalid ${commandName} arguments: ${result.error.message}`,
-    );
+    throw INVALID_ARGUMENT.create({
+      detail: `Invalid ${commandName} arguments: ${result.error.message}`,
+      context: { command: commandName, issues: result.error.issues },
+    });
   }
   return result.data;
 }
@@ -171,8 +234,9 @@ export const CommonArgs = {
 // Low-level parser that converts process argv into a ParsedArgs object.
 // Used once in cli/main.ts before routing to individual command handlers.
 
-const ARRAY_FLAGS = new Set(["with", "candidate-model"]);
-const GLOBAL_BOOLEAN_FLAGS = new Set([
+const ARRAY_FLAGS = new Set(["candidate-model"]);
+/** Boolean options accepted by every command, regardless of the command word. */
+export const GLOBAL_BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   "help",
   "version",
   "json",
@@ -204,7 +268,14 @@ function getDocumentedFlagKind(
   return undefined;
 }
 
-const BOOLEAN_FLAGS = new Set([
+/**
+ * Boolean options used when the command word cannot resolve an option's arity —
+ * an unknown command, or a flag that appears before the command word. Every
+ * documented long-name boolean in `COMMANDS` must be listed here, otherwise it
+ * is parsed as value-taking and swallows the positional that follows it.
+ * `cli/shared/args.test.ts` asserts that invariant.
+ */
+export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   "all",
   "auto",
   "binary",
@@ -240,14 +311,19 @@ const BOOLEAN_FLAGS = new Set([
   "open",
   "parallel",
   "prefetch",
+  "prune",
   "quiet",
   "recursive",
+  "remote",
+  "require-export",
+  "site",
   "skip-env-prompt",
   "skip-install",
   "split",
   "ssg",
   "strict",
   "studio",
+  "token",
   "update",
   "verbose",
   "verify",
@@ -381,7 +457,6 @@ export function parseCliArgs(args: string[]): ParsedArgs {
       s: "strict",
       j: "json",
       y: "yes",
-      w: "with",
       m: "mode",
     },
   }) as ParsedArgs;

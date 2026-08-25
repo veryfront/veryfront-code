@@ -11,6 +11,12 @@ import {
   resolveDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import type { LoadComponentOptions } from "#veryfront/modules/react-loader/types.ts";
+import type {
+  RenderEnvironment,
+  RenderModes,
+} from "#veryfront/rendering/context/render-context.ts";
+import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
 
 interface DeferredComponentSource {
   source: string;
@@ -32,7 +38,7 @@ type ComponentSourceLoader = (
   filePath: string,
   projectDir: string,
   adapter: RuntimeAdapter,
-  options?: LoadComponentOptions,
+  options: LoadComponentOptions,
 ) => Promise<React.ComponentType<Record<string, unknown>>>;
 
 function createErrorFallbackComponent(
@@ -107,6 +113,7 @@ export class ComponentRegistry {
   private contentSourceId?: string;
   private componentSourceGeneration = 0;
   private componentSourceLoader: ComponentSourceLoader;
+  private renderModes: RenderModes;
 
   constructor(
     virtualModules?: VirtualModuleSystem,
@@ -117,6 +124,7 @@ export class ComponentRegistry {
     projectId?: string,
     contentSourceId?: string,
     componentSourceLoader: ComponentSourceLoader = loadComponentFromSource,
+    renderModes: RenderModes = { compileMode: "production", environment: "production" },
   ) {
     this.virtualModules = virtualModules ?? new VirtualModuleSystem();
     this.serverPort = serverPort;
@@ -126,6 +134,7 @@ export class ComponentRegistry {
     this.projectId = projectId;
     this.contentSourceId = contentSourceId;
     this.componentSourceLoader = componentSourceLoader;
+    this.renderModes = renderModes;
   }
 
   async loadFromDirectory(dir: string, deferLoading = false): Promise<void> {
@@ -208,15 +217,24 @@ export class ComponentRegistry {
     dependencyPinningDependencies?: Readonly<Record<string, string>>,
     dependencyPinningSource?: DependencyPinningSourceInput,
     moduleServerOrigin?: string,
+    serverExternalPackages?: readonly string[],
+    environment: RenderEnvironment = this.renderModes.environment,
   ): Promise<string> {
     const dependencySnapshot = await resolveDependencyPinningSnapshot(
       (dependencyPinningSource ?? this.projectDir) || undefined,
       dependencyPinningCacheKey,
       dependencyPinningDependencies,
     );
-    const snapshotKey = dependencySnapshot.cacheKey.startsWith("on:") && moduleServerOrigin
+    let snapshotKey = dependencySnapshot.cacheKey.startsWith("on:") && moduleServerOrigin
       ? `${dependencySnapshot.cacheKey}:origin:${encodeURIComponent(moduleServerOrigin)}`
       : dependencySnapshot.cacheKey;
+    if (environment === "preview") snapshotKey += ":environment-preview";
+    const serverExternalPackagesIdentity = buildServerExternalPackagesIdentity(
+      serverExternalPackages,
+    );
+    if (serverExternalPackagesIdentity) {
+      snapshotKey += `:server-externals:${hashString(serverExternalPackagesIdentity)}`;
+    }
     const sourceGeneration = this.componentSourceGeneration;
     if (
       this.dependencySnapshotGenerations.get(snapshotKey) === sourceGeneration
@@ -240,6 +258,8 @@ export class ComponentRegistry {
       sourceGeneration,
       dependencyPinningSource,
       moduleServerOrigin,
+      serverExternalPackages,
+      environment,
     ).finally(() => {
       if (this.dependencySnapshotLoads.get(loadKey) === load) {
         this.dependencySnapshotLoads.delete(loadKey);
@@ -257,6 +277,8 @@ export class ComponentRegistry {
     sourceGeneration: number,
     dependencyPinningSource?: DependencyPinningSourceInput,
     moduleServerOrigin?: string,
+    serverExternalPackages?: readonly string[],
+    environment: RenderEnvironment = this.renderModes.environment,
   ): Promise<void> {
     const adapter = this.adapter;
     if (!adapter) {
@@ -282,6 +304,8 @@ export class ComponentRegistry {
             dependencySnapshot,
             dependencyPinningSource,
             moduleServerOrigin,
+            serverExternalPackages,
+            environment,
           ),
         );
 
@@ -390,10 +414,13 @@ export class ComponentRegistry {
     dependencySnapshot?: DependencyPinningSnapshot,
     dependencyPinningSource?: DependencyPinningSourceInput,
     moduleServerOrigin?: string,
+    serverExternalPackages?: readonly string[],
+    environment: RenderEnvironment = this.renderModes.environment,
   ): LoadComponentOptions {
     return {
       projectId: this.projectId ?? projectRoot,
-      dev: true,
+      dev: this.renderModes.compileMode === "development",
+      mode: environment,
       moduleServerUrl: this.moduleServerUrl,
       vendorBundleHash: this.vendorBundleHash,
       contentSourceId: this.contentSourceId,
@@ -401,6 +428,7 @@ export class ComponentRegistry {
       dependencyPinningCacheKey: dependencySnapshot?.cacheKey,
       dependencyPinningDependencies: dependencySnapshot?.dependencies,
       dependencyPinningSource,
+      serverExternalPackages,
     };
   }
 

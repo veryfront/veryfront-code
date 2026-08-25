@@ -23,6 +23,7 @@ export type WorkflowRunUpdate = Partial<
     | "heartbeatAt"
     | "completedAt"
     | "workerId"
+    | "_traceContext"
   >
 >;
 
@@ -37,6 +38,7 @@ const WORKFLOW_RUN_UPDATE_FIELDS = new Set<keyof WorkflowRunUpdate>([
   "heartbeatAt",
   "completedAt",
   "workerId",
+  "_traceContext",
 ]);
 
 /** Reject untyped callers that attempt to rewrite immutable run state. */
@@ -57,6 +59,12 @@ export function assertWorkflowRunUpdate(patch: WorkflowRunUpdate): void {
 export interface BackendConfig {
   url?: string;
   prefix?: string;
+  /**
+   * @deprecated No-op retained for source compatibility.
+   *
+   * Backends ignore this field. Use backend-specific TTL options, such as
+   * `RedisBackendConfig.runTtl`, when retention behavior is required.
+   */
   defaultTtl?: number;
   debug?: boolean;
 }
@@ -68,9 +76,40 @@ export interface Lock {
   expiresAt: Date;
 }
 
+/** Minimal persisted run state used to derive public workflow events. */
+export interface WorkflowRunObservedState {
+  revision: number;
+  status: WorkflowStatus;
+  nodes: Record<
+    string,
+    { status: WorkflowRun["nodeStates"][string]["status"]; attempt: number; error?: string }
+  >;
+  runError?: string;
+  /**
+   * Pending approvals reduced to identifiers and the request message. Present
+   * when the producing mutation touched approvals; absent means unchanged
+   * since the previous observed state, never that approvals were revoked.
+   * Approval payloads never appear here.
+   */
+  approvals?: Array<{ id: string; nodeId: string; message?: string }>;
+}
+
+/** Atomic initial snapshot and ordered changes for one workflow run. */
+export interface WorkflowRunObservation {
+  initial: WorkflowRun;
+  changes: AsyncIterable<WorkflowRunObservedState>;
+  close(): Promise<void>;
+}
+
+/** Approval record persisted by workflow backends, including internal restart metadata. */
+export interface PersistedPendingApproval extends PendingApproval {
+  responseSchemaId?: string;
+}
+
 /** Public API contract for workflow backend. */
 export interface WorkflowBackend {
   createRun(run: WorkflowRun): Promise<void>;
+  /** Read a run with its current pending approvals hydrated. */
   getRun(runId: string): Promise<WorkflowRun | null>;
   updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void>;
   /** Apply a run patch only when its current status matches one of the expected statuses. */
@@ -100,29 +139,32 @@ export interface WorkflowBackend {
     checkpoint: Checkpoint,
   ): Promise<boolean>;
   getLatestCheckpoint(runId: string): Promise<Checkpoint | null>;
+  /** Return checkpoint history in append order, oldest first. */
   getCheckpoints?(runId: string): Promise<Checkpoint[]>;
+  /** Delete the oldest append-ordered occurrence of a checkpoint ID. */
   deleteCheckpoint?(runId: string, checkpointId: string): Promise<void>;
+  /** Delete one oldest append-ordered occurrence for each supplied checkpoint ID. */
   deleteCheckpoints?(runId: string, checkpointIds: string[]): Promise<void>;
 
-  savePendingApproval(runId: string, approval: PendingApproval): Promise<void>;
+  savePendingApproval(runId: string, approval: PersistedPendingApproval): Promise<void>;
   /** Append an approval only while the run status and worker owner match. */
   savePendingApprovalIfStatusAndWorker?(
     runId: string,
     expectedStatuses: WorkflowStatus[],
     expectedWorkerId: string,
-    approval: PendingApproval,
+    approval: PersistedPendingApproval,
   ): Promise<boolean>;
   /** Patch metadata on an existing pending approval. */
   updatePendingApproval?(
     runId: string,
     approvalId: string,
-    patch: Partial<PendingApproval>,
+    patch: Partial<PersistedPendingApproval>,
   ): Promise<void>;
-  getPendingApprovals(runId: string): Promise<PendingApproval[]>;
+  getPendingApprovals(runId: string): Promise<PersistedPendingApproval[]>;
   getPendingApproval?(
     runId: string,
     approvalId: string,
-  ): Promise<PendingApproval | null>;
+  ): Promise<PersistedPendingApproval | null>;
   /**
    * Apply an approval decision atomically, but only while the approval is still
    * pending. Atomic backends resolve `true` when the decision was written and
@@ -138,7 +180,7 @@ export interface WorkflowBackend {
     workflowId?: string;
     approver?: string;
     status?: "pending" | "expired";
-  }): Promise<Array<{ runId: string; approval: PendingApproval }>>;
+  }): Promise<Array<{ runId: string; approval: PersistedPendingApproval }>>;
 
   enqueue?(job: WorkflowQueueItem): Promise<void>;
   dequeue?(): Promise<WorkflowQueueItem | null>;
@@ -168,6 +210,12 @@ export interface WorkflowBackend {
     payload: unknown;
     timestamp: Date;
   }>;
+
+  /** Open an atomic observation of a run when this backend supports it. */
+  openRunObservation?(
+    runId: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<WorkflowRunObservation | null>;
 
   initialize?(): Promise<void>;
   healthCheck?(): Promise<boolean>;
@@ -214,9 +262,9 @@ type WithLockSupport =
   & WorkflowBackend
   & Required<Pick<WorkflowBackend, "acquireLock" | "releaseLock">>;
 
-type WithEventSupport =
+type WithRunObservationSupport =
   & WorkflowBackend
-  & Required<Pick<WorkflowBackend, "publishEvent" | "subscribeEvents">>;
+  & Required<Pick<WorkflowBackend, "openRunObservation">>;
 
 export function hasQueueSupport(backend: WorkflowBackend): backend is WithQueueSupport {
   return (
@@ -233,11 +281,11 @@ export function hasLockSupport(backend: WorkflowBackend): backend is WithLockSup
   );
 }
 
-export function hasEventSupport(backend: WorkflowBackend): backend is WithEventSupport {
-  return (
-    typeof backend.publishEvent === "function" &&
-    typeof backend.subscribeEvents === "function"
-  );
+/** Check whether atomic run observation is available. */
+export function hasRunObservationSupport(
+  backend: WorkflowBackend,
+): backend is WithRunObservationSupport {
+  return typeof backend.openRunObservation === "function";
 }
 
 type WithWorkerSupport =

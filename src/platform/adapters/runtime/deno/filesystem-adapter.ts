@@ -16,7 +16,10 @@ import {
   readFileWithinLimit,
   withFileHandle,
 } from "../../bounded-file-read.ts";
-import { markNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
+import {
+  isDirectConstruction,
+  markNativeFileSystemAdapter,
+} from "../../native-file-system-provenance.ts";
 import {
   NodeCompatibleFileSystemAdapter,
   type NodeFileSystemCapabilityOptions,
@@ -39,7 +42,7 @@ interface DenoFileSystemCapabilityOptions extends NodeFileSystemCapabilityOption
   readonly denoCreateRuntime?: DenoCreateRuntime | null;
 }
 
-function hasOwn(value: object, property: PropertyKey): boolean {
+function hasOwn(value: DenoFileSystemCapabilityOptions, property: PropertyKey): boolean {
   return Object.prototype.hasOwnProperty.call(value, property);
 }
 
@@ -156,7 +159,7 @@ export class DenoFileSystemAdapter implements FileSystemAdapter {
         enumerable: true,
       });
     }
-    if (new.target === DenoFileSystemAdapter) {
+    if (isDirectConstruction(this, DenoFileSystemAdapter)) {
       markNativeFileSystemAdapter(this);
     }
   }

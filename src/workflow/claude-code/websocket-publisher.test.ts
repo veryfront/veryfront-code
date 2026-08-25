@@ -245,6 +245,30 @@ describe("AgentController", () => {
     registry.releaseRun(registration.run);
   });
 
+  it("fails an unanswered approval closed when its timeout elapses", async () => {
+    const publisher = new FakePublisher("run-1");
+    const { controller, registration, registry } = registerController(publisher, {
+      approvalTimeout: 1,
+    });
+    const approval = controller.requestApproval("tool-timeout", "Write", {}, "needs permission");
+
+    assertEquals(await approval, false, "an unanswered approval must fail closed");
+
+    const request = publisher.events.find((event) => event.type === "approval_request");
+    assertExists(request);
+    assertEquals(
+      publisher.emit(command({
+        type: "approve",
+        toolCallId: "tool-timeout",
+        requestId: request.requestId,
+        commandId: "late-approval",
+      })),
+      [{ status: "rejected", reason: "approval correlation does not match a pending request" }],
+      "a timed-out approval must no longer be approvable",
+    );
+    registry.releaseRun(registration.run);
+  });
+
   it("binds every approval decision to immutable run and unique request identities", async () => {
     const publisher = new FakePublisher("run-1");
     const { controller, registration, registry } = registerController(publisher, {
@@ -766,35 +790,28 @@ describe("createWebSocketHandler", () => {
   it("rejects invalid run identities before WebSocket upgrade", () => {
     let runId = "";
     let upgrades = 0;
-    const originalUpgrade = Object.getOwnPropertyDescriptor(Deno, "upgradeWebSocket");
-    Object.defineProperty(Deno, "upgradeWebSocket", {
-      configurable: true,
-      value: () => {
+    const registry = new AgentControllerRegistry();
+    const handler = createWebSocketHandler({
+      getRunId: () => runId,
+      registry,
+      onConnection: () => {},
+      upgradeWebSocket: () => {
         upgrades += 1;
         return {
           socket: new FakeWebSocket() as unknown as WebSocket,
           response: new Response(),
         };
       },
-      writable: true,
     });
 
     try {
-      const registry = new AgentControllerRegistry();
-      const handler = createWebSocketHandler({
-        getRunId: () => runId,
-        registry,
-        onConnection: () => {},
-      });
-
       for (const invalid of ["", " run-1", "run\u0000", "x".repeat(257)]) {
         runId = invalid;
         assertEquals(handler(new Request("https://example.test/ws")).status, 400);
       }
       assertEquals(upgrades, 0);
-      registry.close();
     } finally {
-      if (originalUpgrade) Object.defineProperty(Deno, "upgradeWebSocket", originalUpgrade);
+      registry.close();
     }
   });
 
@@ -807,35 +824,28 @@ describe("createWebSocketHandler", () => {
     }
 
     const socket = new SetupFailingWebSocket();
-    const originalUpgrade = Object.getOwnPropertyDescriptor(Deno, "upgradeWebSocket");
-    Object.defineProperty(Deno, "upgradeWebSocket", {
-      configurable: true,
-      value: () => ({
+    let connections = 0;
+    const registry = new AgentControllerRegistry();
+    const handler = createWebSocketHandler({
+      getRunId: () => "run-1",
+      registry,
+      onConnection: () => {
+        connections += 1;
+      },
+      upgradeWebSocket: () => ({
         socket: socket as unknown as WebSocket,
         response: new Response(),
       }),
-      writable: true,
     });
 
     try {
-      let connections = 0;
-      const registry = new AgentControllerRegistry();
-      const handler = createWebSocketHandler({
-        getRunId: () => "run-1",
-        registry,
-        onConnection: () => {
-          connections += 1;
-        },
-      });
-
       assertEquals(handler(new Request("https://example.test/ws")).status, 200);
       socket.emit("open");
       assertEquals(socket.readyState, WebSocket.CLOSED);
       assertEquals(connections, 0);
       assertEquals(registry.get("run-1"), undefined);
-      registry.close();
     } finally {
-      if (originalUpgrade) Object.defineProperty(Deno, "upgradeWebSocket", originalUpgrade);
+      registry.close();
     }
   });
 
@@ -845,21 +855,17 @@ describe("createWebSocketHandler", () => {
     const sockets = [firstSocket, replacementSocket];
     const connected: AgentControllerRegistration[] = [];
     const closed: symbol[] = [];
-    const originalUpgrade = Object.getOwnPropertyDescriptor(Deno, "upgradeWebSocket");
-    Object.defineProperty(Deno, "upgradeWebSocket", {
-      configurable: true,
-      value: () => ({
-        socket: sockets.shift() as unknown as WebSocket,
-        response: new Response(),
-      }),
-      writable: true,
+    const upgradeWebSocket = () => ({
+      socket: sockets.shift() as unknown as WebSocket,
+      response: new Response(),
     });
 
+    const registry = new AgentControllerRegistry({ approvalTimeout: 1_000 });
     try {
-      const registry = new AgentControllerRegistry({ approvalTimeout: 1_000 });
       const handler = createWebSocketHandler({
         getRunId: () => "run-1",
         registry,
+        upgradeWebSocket,
         onConnection: (registration) => {
           connected.push(registration);
         },
@@ -920,7 +926,7 @@ describe("createWebSocketHandler", () => {
       assertEquals(registry.get("run-1"), replacement.run);
       assertEquals(registry.releaseRun(replacement.run), true);
     } finally {
-      if (originalUpgrade) Object.defineProperty(Deno, "upgradeWebSocket", originalUpgrade);
+      registry.close();
     }
   });
 
@@ -930,21 +936,17 @@ describe("createWebSocketHandler", () => {
     const sockets = [firstSocket, replacementSocket];
     const connected: AgentControllerRegistration[] = [];
     const closed: symbol[] = [];
-    const originalUpgrade = Object.getOwnPropertyDescriptor(Deno, "upgradeWebSocket");
-    Object.defineProperty(Deno, "upgradeWebSocket", {
-      configurable: true,
-      value: () => ({
-        socket: sockets.shift() as unknown as WebSocket,
-        response: new Response(),
-      }),
-      writable: true,
+    const upgradeWebSocket = () => ({
+      socket: sockets.shift() as unknown as WebSocket,
+      response: new Response(),
     });
 
+    const registry = new AgentControllerRegistry();
     try {
-      const registry = new AgentControllerRegistry();
       const handler = createWebSocketHandler({
         getRunId: () => "run-1",
         registry,
+        upgradeWebSocket,
         onConnection: (registration) => {
           connected.push(registration);
         },
@@ -970,9 +972,8 @@ describe("createWebSocketHandler", () => {
       replacementSocket.close();
       await settleCommands();
       assertEquals(closed, [connected[1]?.generation]);
-      registry.close();
     } finally {
-      if (originalUpgrade) Object.defineProperty(Deno, "upgradeWebSocket", originalUpgrade);
+      registry.close();
     }
   });
 });

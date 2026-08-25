@@ -26,17 +26,23 @@ bootstrap step, inference setup, and when to use https://veryfront.com/docs.
 For older projects, add the same guide with:
 
 ```bash
-veryfront install agents
+veryfront install --target agents
 ```
 
 Tool-specific files are still available:
 
 ```bash
-veryfront install claude-code
-veryfront install cursor
-veryfront install copilot
-veryfront install windsurf
+veryfront install --target claude-code
+veryfront install --target cursor
+veryfront install --target copilot
+veryfront install --target windsurf
 ```
+
+Running `veryfront install` without `--target` opens an interactive picker
+instead, preselecting the tools it detects in the project. Without a TTY (in CI,
+behind a pipe, or from a coding agent) there is no prompt: the detected tools
+are installed immediately, and a project with nothing to detect gets `SKILL.md`.
+Always pass `--target` in non-interactive environments.
 
 Use `AGENTS.md` as the shared source of truth when multiple coding agents work
 in the same project.
@@ -99,14 +105,14 @@ The CLI MCP server supports two transports. Most agents work with HTTP.
 | HTTP      | Your agent supports remote MCP URLs (Claude Code, Cursor, Codex). | Auto-starts with `veryfront dev`.   |
 | stdio     | Your agent only supports stdio MCP servers.                       | Run `veryfront mcp` from the agent. |
 
-When you run `veryfront dev`, the HTTP MCP server listens on `--port + 2`
-(default `3002`). The endpoint is always `/mcp`.
+When you run `veryfront dev`, the HTTP MCP server listens two ports above the
+port the dev server bound (default `3002`). The endpoint is always `/mcp`.
 
 ```
 http://localhost:3002/mcp        # dev
 ```
 
-The dev server also accepts the `veryfront.me` hostname, which resolves to `127.0.0.1` and is what the CLI prints by default.
+`localhost` is what the CLI prints by default; `127.0.0.1` reaches the same server.
 
 ## Connect Claude Code
 
@@ -116,7 +122,7 @@ Add an `mcpServers` entry in `~/.claude.json`:
 {
   "mcpServers": {
     "veryfront": {
-      "url": "http://veryfront.me:3002/mcp"
+      "url": "http://localhost:3002/mcp"
     }
   }
 }
@@ -190,7 +196,7 @@ curl -s -X POST http://localhost:3002/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | head -c 500
 ```
 
-A working server returns a JSON-RPC response whose `result.tools` array lists `vf_get_errors`, `vf_scaffold`, and the other tools above. If you get a connection-refused error, the dev server is not running or is on a non-default port; check the dashboard for the printed MCP URL.
+A working server returns a JSON-RPC response whose `result.tools` array lists `vf_get_errors`, `vf_scaffold`, and the other tools above. If you get a connection-refused error, the dev server is not running or is on a non-default port. The MCP port is always two above the port the dev server bound, so a dev server that bound 4000 serves MCP at `http://localhost:4002/mcp`. Take that port from the URL the dev server printed, not from the `--port` you passed: when the requested port is in use the dev server moves to the next free one and MCP moves with it.
 
 From inside a connected coding agent, ask it to "list routes" or "show recent dev errors". It calls the matching `vf_*` tool and streams the result back as text.
 
@@ -203,8 +209,8 @@ is active.
 
 ### Port already in use
 
-The dev MCP port follows the dev server port (`--port + 2`). If you start the dev server with `--port 4000`, the MCP server moves to `4002`. Update the URL in your agent config to match.
+The dev MCP port is always two above the port the dev server bound, so a dev server that bound `4000` serves MCP at `http://localhost:4002/mcp`. When the port you requested is already in use, the dev server falls forward to the next free one and MCP moves with it. Take the port from the URL the dev server printed rather than the `--port` you passed, then update the URL in your agent config to match.
 
 ### CORS error from a browser-based agent
 
-The HTTP MCP only accepts requests from `localhost`, `127.0.0.1`, and `veryfront.me`. Browser agents that run from any other origin are rejected by design.
+The HTTP MCP only accepts requests from `localhost`, `127.0.0.1`, and `[::1]`. Browser agents that run from any other origin are rejected by design.

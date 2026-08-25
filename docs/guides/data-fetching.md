@@ -4,7 +4,9 @@ description: "Server data, static generation, and client-side fetching."
 order: 13
 ---
 
-Veryfront pages can load data three ways: `getServerData` on every request, `getStaticData` at build time, or `fetch` from a client component. Each one has its place.
+Veryfront pages can load data three ways: `getServerData` on every request,
+`getStaticData` during static generation and cacheable production requests, or
+`fetch` from a client component. Each one has its place.
 
 Examples below use the default app router. Set `router: "pages"` in `veryfront.config.ts` to switch to the pages router.
 
@@ -17,7 +19,8 @@ Examples below use the default app router. Set `router: "pages"` in `veryfront.c
 
 ## Server data
 
-`getServerData` runs on every request. Use it when data depends on the request (auth, query params, cookies):
+`getServerData` runs on every request. Use it when data depends on the request,
+such as authentication, query parameters, or cookie reads:
 
 ```tsx
 // app/dashboard/page.tsx
@@ -42,23 +45,101 @@ entirely, including their top-level side effects. Put client initialization in a
 separate client-referenced module or a bare side-effect import that is not only
 used by a server data hook.
 
-The `props` you return are passed to the page component. To read them from a
-layout or a nested component without prop-drilling, use `usePageContext().data`
-(see [Pages and routing](./pages-and-routing.md)). It holds the same `props`
-object on the server render, in the hydration markup, and after client-side
-navigation.
+Declare server data hooks in the page module. Do not re-export a hook from
+another file:
+
+```tsx
+// Do not use this form.
+export { getServerData } from "../server/loaders.ts";
+```
+
+A re-export has no local body for Veryfront to empty, so the browser build
+fails instead of shipping the loader and its transitive server graph. Import the
+server helper and call it from a local hook:
+
+```tsx
+import type { DataContext } from "veryfront";
+import { loadDashboard } from "../server/loaders.ts";
+
+export async function getServerData(ctx: DataContext) {
+  return { props: await loadDashboard(ctx) };
+}
+```
+
+The `props` you return are passed to the page component. To read the same props
+data from a layout or nested component without prop-drilling, use
+`usePageContext().data` (see
+[Pages and routing](./pages-and-routing.md)). Veryfront serializes that data
+into hydration markup and restores it after client-side navigation; do not rely
+on JavaScript object identity surviving serialization.
 
 The `DataContext` provides:
 
-| Property  | Type                     | Description                                 |
-| --------- | ------------------------ | ------------------------------------------- |
-| `request` | `Request`                | The incoming HTTP request                   |
-| `params`  | `Record<string, string>` | Route parameters (e.g. `{ slug: "hello" }`) |
-| `query`   | `URLSearchParams`        | Query string parameters                     |
+| Property  | Type                                 | Description                                 |
+| --------- | ------------------------------------ | ------------------------------------------- |
+| `request` | `Request`                            | The incoming HTTP request                   |
+| `params`  | `Record<string, string \| string[]>` | Route parameters (e.g. `{ slug: "hello" }`) |
+| `query`   | `URLSearchParams`                    | Query string parameters                     |
+| `url`     | `URL`                                | Parsed request URL                          |
+
+## Set response headers and cookies
+
+Return `headers` or `cookies` from `getServerData` to add metadata to the full
+document response:
+
+```tsx
+// app/account/page.tsx
+import type { DataResult } from "veryfront";
+
+interface AccountProps {
+  displayName: string;
+}
+
+export function getServerData(): DataResult<AccountProps> {
+  const sessionId = crypto.randomUUID();
+
+  return {
+    props: { displayName: "Ada" },
+    headers: { "x-account-state": "fresh" },
+    cookies: [{
+      name: "session",
+      value: sessionId,
+      path: "/",
+      httpOnly: true,
+      secure: true,
+      sameSite: "lax",
+    }],
+  };
+}
+
+export default function Account({ displayName }: AccountProps) {
+  return <h1>Welcome, {displayName}</h1>;
+}
+```
+
+Each cookie supports `name`, `value`, `domain`, `path`, `expires`, `maxAge`,
+`httpOnly`, `secure`, and `sameSite`. Use an RFC 7231 date string for
+`expires`. Veryfront URI-encodes cookie values and emits every cookie as a
+distinct `Set-Cookie` field.
+
+Veryfront owns CORS, cache, content, redirect, security, transport, and
+`x-veryfront-*` headers. Returning one of those headers throws an error. Use
+`cookies` instead of a `Set-Cookie` entry in `headers`.
+
+Layouts merge from outermost to innermost, then the page. The closest loader
+wins when custom header names conflict. Cookies append in that same order.
+Any response with a cookie uses `no-cache`, omits its ETag, and is not stored
+in the render cache.
+
+Response metadata applies to full document responses. `getStaticData` rejects
+it because static caches must not replay response cookies. Use an API route or
+middleware when a client-side navigation request must write response metadata.
 
 ## Static data
 
-`getStaticData` runs at build time. Use it for content that doesn't change per request:
+`getStaticData` supplies cacheable data for static builds and production
+requests. Use it for content that does not depend on request headers, cookies,
+or request bodies:
 
 ```tsx
 // app/blog/[slug]/page.tsx
@@ -85,9 +166,35 @@ export default function BlogPost({ post }: { post: { title: string } }) {
 
 For dynamic routes, pair `getStaticData` with `getStaticPaths` to tell the framework which pages to generate.
 
+`getStaticData` receives `params` and `url`. It does not receive `request`,
+request headers, cookies, a body, or a separate `query` property. Read query
+parameters from `url.searchParams`; the complete URL, including the query
+string, participates in static cache identity.
+
+## Revalidate static data
+
+Set `revalidate` to a finite, non-negative number of seconds to refresh static
+data after it becomes stale:
+
+```tsx
+export async function getStaticData() {
+  const response = await fetch("https://api.example.com/posts");
+  const posts = await response.json();
+
+  return {
+    props: { posts },
+    revalidate: 60,
+  };
+}
+```
+
+Veryfront serves the cached result while one background refresh runs. A failed
+refresh keeps the live cached result. Omit `revalidate` or set it to `false` to
+disable background refreshes.
+
 ## Redirects and 404s
 
-Return `redirect()` or `notFound()` from any data function:
+Return `redirect()` or `notFound()` from `getServerData` or `getStaticData`:
 
 ```tsx
 import { type DataContext, notFound, redirect } from "veryfront";
@@ -104,6 +211,28 @@ export async function getServerData({ params }: DataContext) {
 
 ```ts
 redirect("/new-url", true); // 301 permanent redirect
+```
+
+When redirecting from `getServerData`, pass response metadata as the third
+argument to set a cookie or header on the redirect response:
+
+```ts
+import { redirect } from "veryfront";
+
+export function getServerData() {
+  const sessionId = crypto.randomUUID();
+
+  return redirect("/account", false, {
+    cookies: [{
+      name: "session",
+      value: sessionId,
+      path: "/",
+      httpOnly: true,
+      secure: true,
+      sameSite: "lax",
+    }],
+  });
+}
 ```
 
 Throwing works the same way. `throw notFound()` and `throw redirect(...)` behave exactly like returning them, which is useful inside a helper that has no clean way to return to the data function:
@@ -126,6 +255,29 @@ export function getServerData({ params }: DataContext) {
 ```
 
 Only the objects `notFound()` and `redirect()` produce are read as control flow. Every other thrown value is an error, including an object that happens to carry a `notFound` property, such as a parsed error body from an upstream API.
+
+To restrict redirects to the current request origin and selected external
+origins, configure an allowlist:
+
+```ts
+import { defineConfig } from "veryfront/config";
+
+export default defineConfig({
+  security: {
+    redirects: {
+      allowedOrigins: ["https://accounts.example.com"],
+    },
+  },
+});
+```
+
+The allowlist uses exact canonical origins, including the scheme and port when
+present. Do not include a path, query, fragment, credentials, or trailing slash.
+Root-relative, path-relative, query-only, fragment-only, and same-origin
+destinations remain allowed. Use an empty list to permit only same-origin
+redirects. Omit `security.redirects` to preserve unrestricted redirect
+behavior. The policy applies equally to returned and thrown `redirect()`
+results during full-page and client-side navigation.
 
 ## Client-side fetching
 
@@ -153,6 +305,9 @@ export default function Search() {
 
 - For `getServerData`, hit the page with `curl http://localhost:3000/<path>`
   and confirm the response contains the value you returned in `props`.
+- To verify response metadata, run
+  `curl -sD - -o /dev/null http://localhost:3000/<path>` and inspect the
+  custom header and separate `Set-Cookie` fields.
 - For `getStaticData`, run `veryfront build` and inspect the generated HTML
   for the page. The HTML should contain the static value rather than a
   client-side fetch loop.

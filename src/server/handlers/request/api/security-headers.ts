@@ -5,7 +5,7 @@ import {
   generateNonce,
   getSecurityHeader as coreGetSecurityHeader,
 } from "#veryfront/security/http/response/security-handler.ts";
-import { applyCsrfCookie } from "#veryfront/security/csrf/helpers.ts";
+import { applyCsrfCookie, csrfCookieSetting } from "#veryfront/security/csrf/helpers.ts";
 
 function isDev(ctx: HandlerContext): boolean {
   return !!ctx.isLocalProject;
@@ -15,7 +15,6 @@ export function buildCSP(ctx: HandlerContext): string {
   return coreBuildCSP(
     isDev(ctx),
     generateNonce(),
-    ctx.cspUserHeader ?? null,
     ctx.securityConfig,
     ctx.adapter,
   );
@@ -43,12 +42,11 @@ export function applySecurityHeadersWithNonce(
     headers,
     isDev(ctx),
     nonce,
-    ctx.cspUserHeader ?? null,
     ctx.securityConfig,
     ctx.adapter,
     ctx.parsedDomain?.allowIframeEmbed ?? false,
   );
   if (req) {
-    applyCsrfCookie(req, headers, ctx.securityConfig?.csrf);
+    applyCsrfCookie(req, headers, csrfCookieSetting(ctx.securityConfig?.csrf, isDev(ctx)));
   }
 }

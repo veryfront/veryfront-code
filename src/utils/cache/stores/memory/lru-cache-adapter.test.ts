@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { delay } from "#std/async.ts";
 import { LRUCacheAdapter } from "./lru-cache-adapter.ts";
 
@@ -33,6 +34,13 @@ describe("LRUCacheAdapter", () => {
       expect(cache.has("nonexistent")).toBe(false);
     });
 
+    it("should distinguish a stored undefined value from a missing key", () => {
+      cache.set("present", undefined);
+
+      expect(cache.has("present")).toBe(true);
+      expect(cache.has("missing")).toBe(false);
+    });
+
     it("should clear all entries", () => {
       cache.set("key1", "value1");
       cache.set("key2", "value2");
@@ -50,6 +58,20 @@ describe("LRUCacheAdapter", () => {
       const keys = Array.from(cache.keys());
       expect(keys).toContain("key1");
       expect(keys).toContain("key2");
+    });
+
+    it("does not expose expired entries through key iteration", () => {
+      let now = Date.now();
+      const cacheWithClock = new LRUCacheAdapter({
+        maxEntries: 5,
+        maxSizeBytes: 1024,
+        now: () => now,
+      });
+      cacheWithClock.set("expired", "value", 10);
+      cacheWithClock.set("fresh", "value", 100);
+      now += 10;
+
+      expect([...cacheWithClock.keys()]).toEqual(["fresh"]);
     });
   });
 
@@ -83,6 +105,24 @@ describe("LRUCacheAdapter", () => {
       expect(smallCache.get("c")).toBe("3");
       expect(smallCache.get("d")).toBe("4");
     });
+
+    it("uses the injected clock for access timestamps", () => {
+      let now = 100;
+      const cacheWithClock = new LRUCacheAdapter({ now: () => now });
+      const inspectHead = () =>
+        (cacheWithClock as unknown as {
+          listManager: {
+            getHead(): { entry: { lastAccessed: number } } | null;
+          };
+        }).listManager.getHead();
+
+      cacheWithClock.set("key", "value");
+      expect(inspectHead()?.entry.lastAccessed).toBe(100);
+
+      now = 250;
+      cacheWithClock.get("key");
+      expect(inspectHead()?.entry.lastAccessed).toBe(250);
+    });
   });
 
   describe("TTL expiration", () => {
@@ -96,10 +136,43 @@ describe("LRUCacheAdapter", () => {
     });
 
     it("should use default TTL when not specified", () => {
-      const cacheWithTtl = new LRUCacheAdapter({ maxEntries: 10, ttlMs: 100 });
+      let now = 1_000;
+      const cacheWithTtl = new LRUCacheAdapter({ maxEntries: 10, ttlMs: 100, now: () => now });
 
       cacheWithTtl.set("key", "value");
-      expect(cacheWithTtl.get("key")).toBe("value");
+      assertEquals(
+        cacheWithTtl.get("key"),
+        "value",
+        "entry must be readable before the default TTL elapses",
+      );
+
+      // The constructor ttlMs must reach entries stored without an explicit ttl,
+      // otherwise they never expire.
+      now = 1_100;
+      assertEquals(
+        cacheWithTtl.get("key"),
+        undefined,
+        "constructor ttlMs must expire entries stored without an explicit ttl",
+      );
+      assertEquals(
+        cacheWithTtl.has("key"),
+        false,
+        "has() must agree with get() once the default TTL elapsed",
+      );
+    });
+
+    it("should reclaim entries expired by the default TTL", () => {
+      let now = 1_000;
+      const cacheWithTtl = new LRUCacheAdapter({ maxEntries: 10, ttlMs: 100, now: () => now });
+
+      cacheWithTtl.set("key", "value");
+      now = 1_100;
+
+      assertEquals(
+        cacheWithTtl.cleanupExpired(),
+        1,
+        "cleanupExpired must reclaim the entry expired by the default TTL",
+      );
     });
 
     it("should cleanup expired entries", async () => {
@@ -111,6 +184,18 @@ describe("LRUCacheAdapter", () => {
 
       expect(cache.cleanupExpired()).toBe(2);
       expect(cache.get("keep")).toBe("value3");
+    });
+
+    it("expires entries exactly at their expiry timestamp", () => {
+      let now = Date.now();
+      const cacheWithClock = new LRUCacheAdapter({
+        maxEntries: 5,
+        maxSizeBytes: 1024,
+        now: () => now,
+      });
+      cacheWithClock.set("boundary", "value", 10);
+      now += 10;
+      expect(cacheWithClock.has("boundary")).toBe(false);
     });
   });
 
@@ -138,6 +223,16 @@ describe("LRUCacheAdapter", () => {
 
     it("should return 0 when invalidating non-existent tag", () => {
       expect(cache.invalidateTag("nonexistent")).toBe(0);
+    });
+
+    it("snapshots tags so caller mutation cannot leak index entries", () => {
+      const tags = ["tag-a"];
+      cache.set("key", "value", undefined, tags);
+      tags[0] = "mutated";
+
+      cache.delete("key");
+
+      expect(cache.getStats().tags).toBe(0);
     });
   });
 
@@ -174,6 +269,53 @@ describe("LRUCacheAdapter", () => {
       expect(stats.maxEntries).toBe(5);
       expect(stats.maxSizeBytes).toBe(1024);
       expect(stats.tags).toBe(2);
+    });
+
+    it("excludes expired entries without requiring a cleanup sweep", () => {
+      let now = 100;
+      const cacheWithClock = new LRUCacheAdapter({
+        maxEntries: 5,
+        maxSizeBytes: 1024,
+        now: () => now,
+      });
+      cacheWithClock.set("expired", "value", 10, ["expired-tag"]);
+      cacheWithClock.set("fresh", "value", 100, ["fresh-tag"]);
+      const retainedSize = cacheWithClock.getStats().sizeBytes;
+      now = 110;
+
+      expect([...cacheWithClock.keys()]).toEqual(["fresh"]);
+      const stats = cacheWithClock.getStats();
+      expect(stats.entries).toBe(1);
+      expect(stats.sizeBytes).toBeLessThan(retainedSize);
+      expect(stats.sizeBytes).toBeGreaterThan(0);
+      expect(stats.maxEntries).toBe(5);
+      expect(stats.maxSizeBytes).toBe(1024);
+      expect(stats.tags).toBe(1);
+      expect(retainedSize).toBeGreaterThan(0);
+    });
+
+    it("does not mutate the cache or fire onEvict from a stats read", () => {
+      let now = 100;
+      const evicted: string[] = [];
+      const cacheWithClock = new LRUCacheAdapter({
+        maxEntries: 5,
+        maxSizeBytes: 1024,
+        now: () => now,
+        onEvict: (key) => {
+          evicted.push(key);
+        },
+      });
+      cacheWithClock.set("expired", "value", 10);
+      cacheWithClock.set("fresh", "value", 100);
+      now = 110;
+
+      expect(cacheWithClock.getStats().entries).toBe(1);
+
+      // The stats read is pure: no observer fired, and the expired entry is
+      // still present internally for the mutating cleanup path to reclaim.
+      expect(evicted).toEqual([]);
+      expect(cacheWithClock.cleanupExpired()).toBe(1);
+      expect(evicted).toEqual(["expired"]);
     });
   });
 
@@ -227,6 +369,25 @@ describe("LRUCacheAdapter", () => {
 
       expect(evicted).toContain("a");
       expect(evicted).toContain("b");
+    });
+
+    it("should clear every entry when an onEvict callback throws", () => {
+      const evicted: string[] = [];
+      const callbackCache = new LRUCacheAdapter({
+        maxEntries: 10,
+        onEvict: (key) => {
+          evicted.push(key);
+          if (key === "a") throw new Error("onEvict error");
+        },
+      });
+
+      callbackCache.set("a", "1");
+      callbackCache.set("b", "2");
+      callbackCache.clear();
+
+      expect(evicted).toEqual(["a", "b"]);
+      expect(callbackCache.getStats().entries).toBe(0);
+      expect(callbackCache.getStats().sizeBytes).toBe(0);
     });
   });
 

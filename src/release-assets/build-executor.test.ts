@@ -25,7 +25,6 @@ import {
   type ReleaseAssetBuildClient,
   type ReleaseAssetBuildInput,
   type ReleaseAssetBuildResult,
-  releaseAssetDependencyUrlForSpecifier,
   type ReleaseAssetHttpDependencyVendor,
   type ReleaseAssetVendorResult,
   routeForPage,
@@ -462,43 +461,11 @@ describe("release asset build executor", () => {
     assertEquals([...Deno.readDirSync(tempDir)], []);
   });
 
-  it("keeps distinct HTTP query variants as distinct dependency identities", () => {
-    const baseUrl = "https://cdn.example/pkg.js";
-    const dependencyUrls = new Map([[baseUrl, "/_vf/assets/es2020.js"]]);
-
-    assertEquals(
-      releaseAssetDependencyUrlForSpecifier(
-        dependencyUrls,
-        `${baseUrl}?target=es2022`,
-      ),
-      null,
-    );
-  });
-
-  it("keeps distinct HTTP fragment variants as distinct dependency identities", () => {
-    const baseUrl = "https://cdn.example/pkg.js";
-    const dependencyUrls = new Map([
-      [
-        `${baseUrl}#a`,
-        "/_vf/assets/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.js#a",
-      ],
-      [
-        `${baseUrl}#b`,
-        "/_vf/assets/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.js#b",
-      ],
-    ]);
-
-    assertEquals(
-      releaseAssetDependencyUrlForSpecifier(dependencyUrls, `${baseUrl}#a`),
-      dependencyUrls.get(`${baseUrl}#a`),
-    );
-    assertEquals(
-      releaseAssetDependencyUrlForSpecifier(dependencyUrls, `${baseUrl}#b`),
-      dependencyUrls.get(`${baseUrl}#b`),
-    );
-  });
-
-  it("fails closed when one module transform fails", async () => {
+  it("never admits a module whose transform failed", async () => {
+    // Previously this failed the whole build. It no longer does -- a broken page
+    // costs only its own route -- but the safety half still holds: the module
+    // that failed must never reach the manifest, so the browser-module endpoint
+    // keeps refusing it.
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
       { path: "pages/index.tsx", content: "export default () => null;" },
@@ -514,7 +481,14 @@ describe("release asset build executor", () => {
 
     const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
 
-    assertCoverageFailure(result, rec, "module-transform-failed:pages/broken.tsx");
+    assertEquals(result.success, true);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.modules["pages/broken.tsx"], undefined);
+    assertEquals(manifest.routes["/broken"], undefined);
+    // The healthy page is unaffected.
+    assertExists(manifest.modules["pages/index.tsx"]);
+    assertEquals(manifest.routes["/"]?.modules, ["pages/index.tsx"]);
   });
 
   it("fails closed when HTTP dependency vendoring fails", async () => {
@@ -626,6 +600,108 @@ describe("release asset build executor", () => {
     );
 
     assertCoverageFailure(result, rec, "module-rewrite-failed:pages/index.tsx");
+  });
+
+  it("publishes healthy routes when one page has an unresolvable import", async () => {
+    // A production outage: one leftover scratch page imported a URL that had
+    // since become a sign-in redirect. Its coverage gap failed the entire
+    // manifest, so the renderer had no manifest to admit against and 503'd
+    // every browser module on every route -- the whole site went dead over one
+    // page nothing linked to. The broken page must cost only itself.
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const client = makeClient([
+      { path: "pages/index.tsx", content: "export default () => null;" },
+      { path: "pages/scratch.tsx", content: 'import "./missing.ts"; export default null;' },
+    ], rec);
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true);
+    assertEquals(result.state, "ready");
+
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    // The healthy page ships and stays admissible.
+    assertEquals(manifest.routes["/"]?.modules, ["pages/index.tsx"]);
+    assertExists(manifest.modules["pages/index.tsx"]);
+    // The broken page ships nowhere: no route, and no manifest entry, so the
+    // browser-module endpoint still refuses it rather than serving a hole.
+    assertEquals(manifest.routes["/scratch"], undefined);
+    assertEquals(manifest.modules["pages/scratch.tsx"], undefined);
+  });
+
+  it("drops a route whose layout is missing from the manifest instead of publishing a hole", async () => {
+    // An App Router layout is an extra closure entrypoint the page never
+    // imports, so a page can be admitted while its closure still has a hole.
+    // Shipping that route would hand the browser an import map pointing at a
+    // module the admission boundary refuses.
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const client = makeClient([
+      { path: "app/page.tsx", content: "export default () => null;" },
+      {
+        path: "app/layout.tsx",
+        content: "export default function Layout({ children }) { return children; }",
+      },
+      { path: "pages/ok.tsx", content: "export default () => null;" },
+    ], rec);
+    const transform = (source: string, sourceFile: string) => {
+      if (sourceFile.endsWith("app/layout.tsx")) {
+        return Promise.reject(new Error("Invalid left-hand side in prefix operation. (1:2)"));
+      }
+      return Promise.resolve(source);
+    };
+
+    const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    assertEquals(result.success, true, "one unbuildable layout must not fail the release");
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(
+      manifest.routes["/"],
+      undefined,
+      "a route whose closure member has no manifest entry must be omitted, not published without it",
+    );
+    // The page itself was admitted, so the route really was a candidate and
+    // the drop came from the closure gap rather than from the page failing.
+    assertExists(manifest.modules["app/page.tsx"]);
+    assertEquals(manifest.modules["app/layout.tsx"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"], "healthy routes still publish");
+  });
+
+  it("still fails closed when every page fails to transform", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const client = makeClient([
+      { path: "pages/index.tsx", content: "export default () => null;" },
+      { path: "pages/other.tsx", content: "export default () => null;" },
+    ], rec);
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, () => Promise.reject(new Error("compile error"))),
+      await tmp(),
+    );
+
+    assertCoverageFailure(result, rec, "module-transform-failed:pages/");
+  });
+
+  it("still fails closed when every page is unbuildable", async () => {
+    // Degrading per route must not become "publish an empty manifest". With no
+    // serveable route left there is nothing to ship, so the build fails and the
+    // previous release keeps serving.
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const client = makeClient([
+      { path: "pages/index.tsx", content: 'import "./missing.ts"; export default null;' },
+      { path: "pages/other.tsx", content: 'import "./gone.ts"; export default null;' },
+    ], rec);
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertCoverageFailure(result, rec, "module-rewrite-failed:pages/");
   });
 
   it("never publishes project modules with unresolved relative imports", async () => {
@@ -1574,6 +1650,140 @@ describe("release asset build executor", () => {
     );
   });
 
+  it("publishes package-root published runtime helper imports as release assets", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "pages/index.tsx",
+        content: 'import { useWorkflow } from "veryfront/workflow"; export default useWorkflow;',
+      },
+    ];
+    const client = makeClient(files, rec);
+    const frameworkUrl = "/_vf_modules/_veryfront/workflow/react/index.js";
+    const consumerUrl = "/_vf_modules/_veryfront/published-helper-consumer.js";
+
+    // Emulate a published package layout: a framework module in the temp
+    // lookup dir importing the DNT runtime helper at the package root.
+    const tempDir = await tmp();
+    await Deno.mkdir(join(tempDir, "src"), { recursive: true });
+    await Deno.writeTextFile(
+      join(tempDir, "src", "published-helper-consumer.ts"),
+      'import "../deno.js";\nexport const consumer = true;\n',
+    );
+    await Deno.writeTextFile(join(tempDir, "deno.js"), "export {};\n");
+
+    const transform = (_source: string, sourceFile: string) => {
+      if (sourceFile.endsWith("pages/index.tsx")) {
+        return Promise.resolve(
+          `import { useWorkflow } from "${frameworkUrl}"; export default useWorkflow;`,
+        );
+      }
+      if (sourceFile.endsWith("src/workflow/react/index.ts")) {
+        return Promise.resolve(
+          `import { consumer } from "${consumerUrl}"; export const useWorkflow = () => consumer;`,
+        );
+      }
+      if (sourceFile.endsWith("published-helper-consumer.ts")) {
+        return Promise.resolve('import "../deno.js"; export const consumer = true;');
+      }
+      return Promise.resolve("export const value = true;");
+    };
+
+    const result = await runReleaseAssetBuild(baseInput(client, transform), tempDir);
+
+    assertEquals(result.success, true);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    const workflowHash = manifest.dependencies["veryfront/workflow"]?.contentHash;
+    assertExists(workflowHash);
+
+    const workflowUpload = rec.uploads.find((u) => u.hash === workflowHash);
+    assertExists(workflowUpload);
+    const consumerMatch = workflowUpload.text.match(/"\/_vf\/assets\/([a-f0-9]{64})\.js"/);
+    assertExists(consumerMatch?.[1]);
+
+    const consumerUpload = rec.uploads.find((u) => u.hash === consumerMatch[1]);
+    assertExists(consumerUpload);
+    assert(!consumerUpload.text.includes("../deno.js"));
+    const helperMatch = consumerUpload.text.match(/"\/_vf\/assets\/([a-f0-9]{64})\.js"/);
+    assertExists(helperMatch?.[1]);
+    assertExists(rec.uploads.find((u) => u.hash === helperMatch[1]));
+  });
+
+  it("keeps same-named published runtime helpers from different roots distinct", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "pages/index.tsx",
+        content: 'import { useWorkflow } from "veryfront/workflow"; export default useWorkflow;',
+      },
+    ];
+    const client = makeClient(files, rec);
+    const frameworkUrl = "/_vf_modules/_veryfront/workflow/react/index.js";
+    const consumerAUrl = "/_vf_modules/_veryfront/published-helper-consumer.js";
+    const consumerBUrl = "/_vf_modules/_veryfront/nested/src/consumer.js";
+
+    // Two package roots (tempDir and tempDir/src/nested), each with its own
+    // deno.js helper carrying different contents.
+    const tempDir = await tmp();
+    await Deno.mkdir(join(tempDir, "src", "nested", "src"), { recursive: true });
+    await Deno.writeTextFile(
+      join(tempDir, "src", "published-helper-consumer.ts"),
+      'import "../deno.js";\nexport const consumerA = true;\n',
+    );
+    await Deno.writeTextFile(join(tempDir, "deno.js"), 'export const helperA = "a";\n');
+    await Deno.writeTextFile(
+      join(tempDir, "src", "nested", "src", "consumer.ts"),
+      'import "../deno.js";\nexport const consumerB = true;\n',
+    );
+    await Deno.writeTextFile(
+      join(tempDir, "src", "nested", "deno.js"),
+      'export const helperB = "b";\n',
+    );
+
+    const transform = (source: string, sourceFile: string) => {
+      if (sourceFile.endsWith("pages/index.tsx")) {
+        return Promise.resolve(
+          `import { useWorkflow } from "${frameworkUrl}"; export default useWorkflow;`,
+        );
+      }
+      if (sourceFile.endsWith("src/workflow/react/index.ts")) {
+        return Promise.resolve(
+          `import { consumerA } from "${consumerAUrl}"; import { consumerB } from "${consumerBUrl}"; export const useWorkflow = () => consumerA && consumerB;`,
+        );
+      }
+      if (
+        sourceFile.endsWith("published-helper-consumer.ts") ||
+        sourceFile.endsWith("nested/src/consumer.ts") ||
+        sourceFile.endsWith("deno.js")
+      ) {
+        return Promise.resolve(source);
+      }
+      return Promise.resolve("export const value = true;");
+    };
+
+    const result = await runReleaseAssetBuild(baseInput(client, transform), tempDir);
+
+    assertEquals(result.success, true);
+    const consumerAUpload = rec.uploads.find((u) => u.text.includes("consumerA = true"));
+    const consumerBUpload = rec.uploads.find((u) => u.text.includes("consumerB = true"));
+    assertExists(consumerAUpload);
+    assertExists(consumerBUpload);
+
+    const helperAHash = consumerAUpload.text.match(/"\/_vf\/assets\/([a-f0-9]{64})\.js"/)?.[1];
+    const helperBHash = consumerBUpload.text.match(/"\/_vf\/assets\/([a-f0-9]{64})\.js"/)?.[1];
+    assertExists(helperAHash);
+    assertExists(helperBHash);
+    assert(helperAHash !== helperBHash);
+
+    const helperAUpload = rec.uploads.find((u) => u.hash === helperAHash);
+    const helperBUpload = rec.uploads.find((u) => u.hash === helperBHash);
+    assertExists(helperAUpload);
+    assertExists(helperBUpload);
+    assert(helperAUpload.text.includes("helperA"));
+    assert(helperBUpload.text.includes("helperB"));
+  });
+
   it("fails closed on cyclic project imports", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
@@ -2211,6 +2421,57 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     );
   });
 
+  it("merges module CSS from sources containing real JSX", async () => {
+    // Regression: the CSS import scan fed project source to es-module-lexer,
+    // which parses neither JSX nor TypeScript. Every .tsx file with a tag threw,
+    // each throw recorded a coverage gap, and gaps are fatal, so no project with
+    // a JSX component could publish a release.
+    //
+    // The suite missed it because every fixture put plain JavaScript inside
+    // .tsx files. These bodies are the shapes that actually broke in production:
+    // a closing component tag, a self-closing tag, and a nested element.
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "globals.css", content: ":root { --brand: blue; }" },
+      { path: "app/styles.css", content: ".calc { background: #191919; }" },
+      {
+        path: "app/layout.tsx",
+        content: 'import "./styles.css";\n' +
+          "export default ({ children }) => (\n" +
+          "  <html><head><title>Assistant</title></head><body>{children}</body></html>\n" +
+          ");",
+      },
+      {
+        path: "app/markdown-renderer.tsx",
+        content: 'import ReactMarkdown from "react-markdown";\n' +
+          "export const R = ({ source }) => <ReactMarkdown>{source}</ReactMarkdown>;",
+      },
+      {
+        path: "pages/index.tsx",
+        content: 'import { Chat } from "veryfront/chat";\n' +
+          "export default () => <Provider><Chat /></Provider>;",
+      },
+    ];
+    let seenStylesheet: string | undefined;
+    const client = makeClient(files, rec, {
+      compileProjectCss: (_candidates, stylesheet) => {
+        seenStylesheet = stylesheet;
+        return Promise.resolve(compiledCss(".calc{background:#191919}"));
+      },
+    });
+    const transform = () => Promise.resolve("export default null;");
+
+    // The build completing at all is the assertion that matters: a parse gap
+    // here aborts it with "Release asset coverage is incomplete".
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    assertExists(seenStylesheet);
+    assert(
+      seenStylesheet!.includes(".calc"),
+      "CSS imported from a JSX-bearing layout must still be merged",
+    );
+  });
+
   it("does not duplicate the resolved stylesheet when a module imports it directly", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
@@ -2311,7 +2572,7 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     assertEquals(first.css, second.css);
   });
 
-  it("fails closed when an imported stylesheet is missing or unsupported", async () => {
+  it("still publishes when an imported stylesheet cannot be resolved", async () => {
     for (
       const specifier of ["./missing.css", "theme-package/theme.css", "https://cdn.test/x.css"]
     ) {
@@ -2336,14 +2597,20 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
         await tmp(),
       );
 
-      assertCoverageFailure(
-        result,
-        rec,
-        specifier.startsWith("./")
-          ? "stylesheet-import-missing:pages/missing.css"
-          : "stylesheet-import-unsupported:pages/index.tsx",
-      );
-      assertEquals(compileCalls, 0, specifier);
+      // Assert success explicitly. runReleaseAssetBuild returns a failed result
+      // rather than throwing, so awaiting it proves nothing on its own -- an
+      // earlier revision of this test said otherwise and was wrong.
+      assertEquals(result.success, true, specifier);
+
+      // Used to fail the release. It no longer does, and that is the point: a
+      // text match is not knowledge that the build needs the file. The same
+      // check could not tell a real import from one inside a comment, a string
+      // or an MDX fence, so ordinary source could block a project's releases.
+      // Unresolvable means the CSS is not merged, not that the release is
+      // refused. Genuine missing-CSS detection belongs on the resolved module
+      // graph, over transformed code, where the lexer can be trusted.
+      assertExists(rec.manifest, specifier);
+      assertEquals(compileCalls > 0, true, specifier);
     }
   });
 

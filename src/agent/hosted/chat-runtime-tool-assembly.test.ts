@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import type {
   RemoteMCPToolSourceConfig,
   RemoteToolSource,
@@ -8,6 +14,7 @@ import type {
 } from "#veryfront/tool";
 import { defineSchema } from "../../schemas/define.ts";
 import {
+  augmentVeryfrontApiMcpServerPolicy,
   filterHostedChatRuntimeLocalTools,
   type HostedChatRuntimeToolAssemblyContext,
   prepareHostedChatRuntimeToolAssembly,
@@ -47,6 +54,44 @@ function remoteSourceFromConfig(config: RemoteMCPToolSourceConfig): RemoteToolSo
       Promise.resolve({ ok: true }),
   };
 }
+
+describe("structured system messages", () => {
+  it("preserves cache metadata while adding tool inventory", async () => {
+    const staticMessage = {
+      role: "system" as const,
+      content: "Shared prompt",
+      providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+    };
+    const dynamicMessage = {
+      role: "system" as const,
+      content: '<project_context>\nproject_reference: "project-1"\n</project_context>',
+    };
+
+    const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      taskContext: {
+        authToken: "token",
+        projectId: "project-1",
+        model: "anthropic/claude-sonnet-4-6",
+      },
+      instructions: [staticMessage, dynamicMessage],
+      localTools: {},
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+      allowedToolNames: [],
+      createRemoteToolSource: remoteSourceFromConfig,
+      preloadLatestConversationUserText: false,
+    });
+
+    assertExists(toolAssembly.systemMessages);
+    assertEquals(toolAssembly.systemMessages[0], staticMessage);
+    assertEquals(toolAssembly.systemMessages[1], dynamicMessage);
+    assertStringIncludes(
+      toolAssembly.systemMessages.at(-1)?.content ?? "",
+      "Current run tool inventory:",
+    );
+  });
+});
 
 Deno.test("filterHostedChatRuntimeLocalTools filters and sorts local tools", () => {
   const result = filterHostedChatRuntimeLocalTools({
@@ -146,8 +191,41 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps empty allowed tools as exp
     preloadLatestConversationUserText: false,
   });
 
+  assertEquals(toolAssembly.toolLoadingMode, "eager");
   assertEquals(toolAssembly.localToolNames, []);
   assertEquals(taskContext.availableToolNames, []);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly defers an omitted allowed tools catalog", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {
+      form_input: localTool("Form input"),
+      load_skill: localTool("Load skill"),
+      sleep: localTool("Sleep"),
+    },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.toolLoadingMode, "deferred");
+  assertEquals(toolAssembly.availableToolNames, [
+    "create_file",
+    "form_input",
+    "load_skill",
+    "sleep",
+  ]);
+  assertEquals(taskContext.availableToolNames, ["load_skill", "tool_search"]);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly defers an unrestricted tools true catalog", async () => {
@@ -401,6 +479,76 @@ Deno.test("prepareHostedChatRuntimeToolAssembly removes source-denied integratio
   assertStringIncludes(toolAssembly.systemInstructions, "confluence__search_content");
   assertEquals(toolAssembly.systemInstructions.includes("confluence__create_page"), false);
   assertEquals(toolAssembly.systemInstructions.includes("gmail__list_emails"), false);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly widens the veryfront-api allowlist with server-resolved integration tools", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    mcpServers: [{ kind: "veryfront-api", toolPolicy: { allow: ["get_integration"] } }],
+    serverResolvedIntegrationToolNames: ["outlook__list_emails"],
+    allowedToolNames: ["get_integration", "outlook__list_emails", "outlook__send_email"],
+    createRemoteToolSource: (config) => ({
+      id: config.id ?? "api-mcp",
+      listTools: () =>
+        Promise.resolve([
+          remoteTool("outlook__list_emails", "List Outlook emails"),
+          remoteTool("outlook__send_email", "Send an Outlook email"),
+          remoteTool("get_integration", "Get an integration"),
+        ]),
+      executeTool: () => Promise.resolve({ ok: true }),
+    }),
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(
+    toolAssembly.remoteToolNames,
+    ["get_integration", "outlook__list_emails"],
+    "the integration grant must widen the veryfront-api allowlist for exactly the resolved names",
+  );
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly keeps the veryfront-api allowlist unchanged without an integration grant", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    mcpServers: [{ kind: "veryfront-api", toolPolicy: { allow: ["get_integration"] } }],
+    allowedToolNames: ["get_integration", "outlook__list_emails"],
+    createRemoteToolSource: (config) => ({
+      id: config.id ?? "api-mcp",
+      listTools: () =>
+        Promise.resolve([
+          remoteTool("outlook__list_emails", "List Outlook emails"),
+          remoteTool("get_integration", "Get an integration"),
+        ]),
+      executeTool: () => Promise.resolve({ ok: true }),
+    }),
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(
+    toolAssembly.remoteToolNames,
+    ["get_integration"],
+    "without a grant the static allowlist must keep denying integration tools",
+  );
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly honors explicit API-only MCP without granting Studio tools", async () => {
@@ -844,4 +992,84 @@ Deno.test("prepareHostedChatRuntimeToolAssembly preloads default research artifa
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+describe("augmentVeryfrontApiMcpServerPolicy", () => {
+  it("augmentVeryfrontApiMcpServerPolicy widens only the veryfront-api allowlist", () => {
+    const servers = [
+      {
+        kind: "veryfront-api" as const,
+        toolPolicy: { allow: ["get_integration", "outlook__upload_attachment"] },
+      },
+      {
+        kind: "veryfront-studio" as const,
+        toolPolicy: { allow: ["studio_read"] },
+      },
+    ];
+
+    const augmented = augmentVeryfrontApiMcpServerPolicy(servers, [
+      "outlook__list_emails",
+    ]);
+
+    assertEquals(augmented?.[0]?.toolPolicy?.allow, [
+      "get_integration",
+      "outlook__upload_attachment",
+      "outlook__list_emails",
+    ]);
+    // The Studio server is untouched.
+    assertEquals(augmented?.[1]?.toolPolicy?.allow, ["studio_read"]);
+    // The hard-coded attachment helper keeps working.
+    assertEquals(
+      augmented?.[0]?.toolPolicy?.allow?.includes("outlook__upload_attachment"),
+      true,
+    );
+  });
+
+  it("augmentVeryfrontApiMcpServerPolicy never overrides an explicit deny", () => {
+    const servers = [
+      {
+        kind: "veryfront-api" as const,
+        toolPolicy: {
+          allow: ["get_integration"],
+          deny: ["outlook__send_email"],
+        },
+      },
+    ];
+
+    const augmented = augmentVeryfrontApiMcpServerPolicy(servers, [
+      "outlook__list_emails",
+      "outlook__send_email",
+    ]);
+
+    assertEquals(augmented?.[0]?.toolPolicy?.allow, [
+      "get_integration",
+      "outlook__list_emails",
+    ]);
+  });
+
+  it("augmentVeryfrontApiMcpServerPolicy leaves unrestricted veryfront-api servers untouched", () => {
+    const servers = [
+      { kind: "veryfront-api" as const, toolPolicy: { deny: ["outlook__send_email"] } },
+      { kind: "veryfront-api" as const },
+    ];
+
+    const augmented = augmentVeryfrontApiMcpServerPolicy(servers, ["outlook__list_emails"]);
+
+    assertStrictEquals(augmented?.[0], servers[0], "a deny-only server has no allowlist to widen");
+    assertStrictEquals(
+      augmented?.[1],
+      servers[1],
+      "a server without toolPolicy already permits everything",
+    );
+    assertEquals(augmented?.[0]?.toolPolicy?.allow, undefined, "no allowlist must be synthesized");
+  });
+
+  it("augmentVeryfrontApiMcpServerPolicy leaves servers alone without a grant", () => {
+    const servers = [
+      { kind: "veryfront-api" as const, toolPolicy: { allow: ["get_integration"] } },
+    ];
+
+    assertEquals(augmentVeryfrontApiMcpServerPolicy(servers, []), servers);
+    assertEquals(augmentVeryfrontApiMcpServerPolicy(servers, undefined), servers);
+  });
 });

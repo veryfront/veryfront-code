@@ -26,7 +26,14 @@ export interface TransformResolvedModuleSourceInput {
   projectId: string;
   normalizedPath: string;
   projectSlug: string;
+  /**
+   * Compile the module in development mode. Production renders must leave this
+   * false: development output is unminified, not tree-shaken and carries an
+   * inline sourcemap that discloses the project source.
+   */
+  dev: boolean;
   reactVersion?: string;
+  serverExternalPackages?: readonly string[];
   moduleServerOrigin?: string;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
@@ -63,9 +70,10 @@ export async function transformResolvedModuleSource(
       input.adapter,
       {
         projectId: input.projectId,
-        dev: true,
+        dev: input.dev,
         ssr: true,
         reactVersion: input.reactVersion,
+        serverExternalPackages: input.serverExternalPackages,
         moduleServerOrigin: input.moduleServerOrigin,
         dependencyPinningCacheKey: input.dependencyPinningCacheKey,
         ...(input.dependencyPinningDependencies === undefined
@@ -106,6 +114,7 @@ export async function transformResolvedModuleSource(
     cacheDir: getHttpBundleCacheDir(),
     importMap,
     reactVersion: input.reactVersion,
+    serverExternalPackages: input.serverExternalPackages,
   });
 
   return cacheResult.code;

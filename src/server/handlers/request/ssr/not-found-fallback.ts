@@ -8,6 +8,7 @@ import {
   resolveProjectReactVersion,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
+import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
 
 type AppReservedModule = typeof import("../../../../rendering/app-reserved.ts");
 type ReservedComponentLoader = AppReservedModule["tryLoadReservedInDirs"];
@@ -63,10 +64,21 @@ export async function tryNotFoundFallback(
       dependencyPinningDependencies: dependencySnapshot.dependencies,
       dependencyPinningSource,
     });
+    // Server-trusted request environment. `resolvedEnvironment` and
+    // `requestContext.mode` are both settled before the handler runs and are
+    // never taken from a client-supplied header or query parameter, so reading
+    // them here cannot let a caller force preview instrumentation onto a
+    // production render (VULN-SRV-1 / VULN-SRV-2).
+    //
+    // One value drives both the content source and the instrumentation, so a
+    // cache entry can never disagree with how it was built. The "preview" tail
+    // is the platform-wide convention for an unresolved environment, the same
+    // one that already picks the cache strategy and the no-cache headers.
+    const environment = ctx.resolvedEnvironment ?? ctx.requestContext?.mode ?? "preview";
     const contentSourceId = ctx.enriched?.contentSourceId ??
       computeContentSourceId(
         !!ctx.isLocalProject,
-        ctx.resolvedEnvironment ?? ctx.requestContext?.mode ?? "preview",
+        environment,
         ctx.requestContext?.branch ?? null,
         ctx.releaseId,
       );
@@ -75,7 +87,10 @@ export async function tryNotFoundFallback(
       dirs,
       "notFound",
       ctx.projectDir,
-      "production",
+      {
+        compileMode: ctx.isLocalProject ? "development" : "production",
+        environment,
+      },
       ctx.adapter,
       ctx.projectId,
       contentSourceId,
@@ -97,7 +112,16 @@ export async function tryNotFoundFallback(
     let inner: string;
 
     try {
-      inner = await renderToStringAdapter(element, { reactVersion });
+      const rendered = await runWithHeadCollector(
+        (renderContext) =>
+          renderToStringAdapter(element, {
+            nonce: builder.nonce,
+            renderContext,
+            reactVersion,
+          }),
+        { nonce: builder.nonce },
+      );
+      inner = rendered.result;
     } catch (_) {
       /* expected: SSR render may fail, fall back to text extraction */
       inner = (await extractNotFoundText(dirs, ctx)) ?? "<p>Not Found</p>";

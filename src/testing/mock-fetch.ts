@@ -1,4 +1,62 @@
+import {
+  __installOutboundFetchTransportForTests,
+  __runWithOutboundFetchTransportForTests,
+} from "#veryfront/security/http/outbound-fetch.ts";
+
 type FetchMock = typeof globalThis.fetch | undefined;
+
+/**
+ * Address a stubbed request is pinned to instead of asking a real resolver.
+ *
+ * The egress guard resolves the destination host before it reaches the stub,
+ * so without this a fully stubbed test still performs live DNS and dies
+ * upstream of its own transport. The literal is public, which keeps the
+ * guard's internal-destination checks running exactly as they do in
+ * production; the stub transport ignores addresses, so nothing connects to it.
+ */
+const STUB_PINNED_ADDRESS = "93.184.216.34";
+
+function stubTransport(mockFetch: typeof globalThis.fetch) {
+  return {
+    fetch: mockFetch,
+    pinnedFetch: (url: URL, _addresses: readonly string[], init: RequestInit) =>
+      mockFetch(url, init),
+    resolveHost: () => Promise.resolve([STUB_PINNED_ADDRESS]),
+  };
+}
+
+/** Standard request-init fields that tests may need to observe from a fetch mock. */
+export interface ObservedFetchRequestInit {
+  body?: BodyInit | null;
+  headers?: HeadersInit;
+  method?: string;
+  redirect?: RequestRedirect;
+  signal?: AbortSignal | null;
+}
+
+/**
+ * Read standard request-init fields without assuming that the ambient fetch
+ * implementation uses the DOM `RequestInit` type exclusively.
+ */
+export function observeFetchRequestInit(
+  init: Parameters<typeof globalThis.fetch>[1],
+): ObservedFetchRequestInit {
+  if (init === undefined) return {};
+
+  const headers = "headers" in init ? init.headers : undefined;
+  const method = "method" in init ? init.method : undefined;
+  const redirect = "redirect" in init ? init.redirect : undefined;
+  const signal = "signal" in init ? init.signal : undefined;
+  const body = "body" in init ? init.body : undefined;
+
+  return {
+    body: body as BodyInit | null | undefined,
+    headers: headers as HeadersInit | undefined,
+    method: typeof method === "string" ? method : undefined,
+    redirect: redirect as RequestRedirect | undefined,
+    signal: signal as AbortSignal | null | undefined,
+  };
+}
 
 const FETCH_MOCK_QUEUE_KEY = "__vfTestFetchMockQueue";
 
@@ -33,7 +91,10 @@ export async function withMockFetch<T>(
   });
 
   try {
-    return await fn();
+    if (typeof mockFetch !== "function") {
+      return await fn();
+    }
+    return await __runWithOutboundFetchTransportForTests(stubTransport(mockFetch), fn);
   } finally {
     Object.defineProperty(globalThis, "fetch", {
       value: originalFetch,
@@ -44,4 +105,51 @@ export async function withMockFetch<T>(
       release();
     }
   }
+}
+
+/**
+ * Install `mockFetch` as both the ambient `globalThis.fetch` and the host
+ * outbound transport, until `restoreMockFetch` puts them back.
+ *
+ * Assigning `globalThis.fetch` alone controls only code that calls `fetch`
+ * directly. Anything routed through `guardedOutboundFetch` reads the host
+ * transport instead and would reach the real network, so both move together
+ * here or neither does. The transport carries a host resolver too, because the
+ * egress guard resolves the destination before any transport sees the request.
+ *
+ * Prefer `withMockFetch` where the stub has a single callback to scope. This
+ * pair exists for suites that install per test and tear down in `afterEach`,
+ * where there is no callback to wrap.
+ */
+export function installMockFetch(mockFetch: typeof globalThis.fetch): void {
+  const restoreTransport = __installOutboundFetchTransportForTests(stubTransport(mockFetch));
+  // Only the first install records the pristine state, so a test that swaps its
+  // stub mid-way still restores to the real transport rather than to its own
+  // earlier stub.
+  installedMockFetch ??= { fetch: globalThis.fetch, restoreTransport };
+  defineGlobalFetch(mockFetch);
+}
+
+/**
+ * Restore the ambient fetch and outbound transport that were in place before
+ * the first `installMockFetch`. Safe to call when nothing is installed.
+ */
+export function restoreMockFetch(): void {
+  const installed = installedMockFetch;
+  if (!installed) return;
+  installedMockFetch = undefined;
+  installed.restoreTransport();
+  defineGlobalFetch(installed.fetch);
+}
+
+let installedMockFetch:
+  | { fetch: typeof globalThis.fetch; restoreTransport: () => void }
+  | undefined;
+
+function defineGlobalFetch(value: typeof globalThis.fetch): void {
+  Object.defineProperty(globalThis, "fetch", {
+    value,
+    configurable: true,
+    writable: true,
+  });
 }

@@ -73,7 +73,6 @@ function createContext(
     projectDir: PROJECT_DIR,
     adapter,
     securityConfig: {},
-    cspUserHeader: null,
     config: { client: { moduleResolution: "self-hosted" } },
     parsedDomain: { allowIframeEmbed: false } as HandlerContext["parsedDomain"],
     ...overrides,
@@ -298,6 +297,24 @@ describe("LibModulesHandler", () => {
 
       assertEquals(response.status, 200);
       assertEquals(await response.text(), MODULE_SOURCE);
+    });
+
+    it("falls through when the project has not opted into self-hosted module resolution", async () => {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "");
+      for (
+        const config of [
+          {},
+          { client: { moduleResolution: "cdn" } },
+        ] as Partial<HandlerContext>["config"][]
+      ) {
+        const result = await createHandler().handle(
+          new Request("http://localhost/_veryfront/lib/chat.js"),
+          createContext(createAdapter(), { isLocalProject: true, config }),
+        );
+
+        assertEquals(result.continue, true, "cdn mode must not claim the lib route");
+        assertEquals(result.response, undefined, "cdn mode must not serve a lib module");
+      }
     });
 
     it("serves exactly matching source-scoped snapshots", async () => {

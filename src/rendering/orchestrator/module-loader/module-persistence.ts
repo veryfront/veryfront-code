@@ -5,15 +5,21 @@
  */
 
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { CACHE_ERROR } from "#veryfront/errors";
 import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { isCacheWriteRaceError } from "#veryfront/utils/cache-file-ops.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import {
   getModulePathCache,
   saveModulePathCache,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
-import { buildMdxEsmPathCacheKey } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import {
+  buildMdxEsmPathCacheKey,
+  UNRESOLVED_IMPORTS_SIDECAR_SUFFIX,
+} from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import { isMemberNameBefore } from "#veryfront/transforms/mdx/esm-module-loader/utils/source-spans.ts";
 import { buildModuleTransformCacheVariant } from "./module-cache-lookup.ts";
 
 const logger = rendererLogger.component("module-loader");
@@ -23,6 +29,12 @@ const MAX_CREATED_DIRS = 5_000;
 
 /** Cache for created directories to avoid repeated mkdir calls (LRU-style). */
 const createdDirs = new Set<string>();
+
+type ModulePathCacheSave = (cacheDir: string) => Promise<void>;
+
+const pendingModulePathCacheSaves = new Set<Promise<void>>();
+const cycleArtifactPublications = new Map<string, Promise<void>>();
+let modulePathCacheSave: ModulePathCacheSave = saveModulePathCache;
 
 /** Prune oldest entries when cache exceeds limit. */
 function pruneCreatedDirs(): void {
@@ -36,6 +48,35 @@ function pruneCreatedDirs(): void {
     createdDirs.delete(dir);
     deleted++;
   }
+}
+
+function publishModulePathCacheSave(cacheDir: string): void {
+  const save = Promise.resolve()
+    .then(() => modulePathCacheSave(cacheDir))
+    .catch((err) => {
+      logger.debug("Failed to save module cache", { error: String(err) });
+    })
+    .finally(() => {
+      pendingModulePathCacheSaves.delete(save);
+    });
+  pendingModulePathCacheSaves.add(save);
+}
+
+export async function drainModulePathCacheSaves(): Promise<void> {
+  // Quiesce module persistence callers before using this as a shutdown barrier.
+  while (pendingModulePathCacheSaves.size > 0) {
+    await Promise.all([...pendingModulePathCacheSaves]);
+  }
+}
+
+export function setModulePathCacheSaveForTesting(
+  save: ModulePathCacheSave,
+): () => void {
+  const previous = modulePathCacheSave;
+  modulePathCacheSave = save;
+  return () => {
+    modulePathCacheSave = previous;
+  };
 }
 
 async function ensureDir(
@@ -60,6 +101,69 @@ async function ensureDir(
   pruneCreatedDirs();
 }
 
+async function readExistingCycleArtifact(
+  adapter: RuntimeAdapter,
+  artifactPath: string,
+): Promise<string | undefined> {
+  try {
+    return await adapter.fs.readFile(artifactPath);
+  } catch (error) {
+    if (isNotFoundError(error)) return undefined;
+    throw error;
+  }
+}
+
+async function publishCycleArtifact(
+  adapter: RuntimeAdapter,
+  artifactPath: string,
+  code: string,
+): Promise<void> {
+  const stagedPath = `${artifactPath}.pending-${crypto.randomUUID()}`;
+  try {
+    await adapter.fs.writeFile(stagedPath, code);
+    const previous = cycleArtifactPublications.get(artifactPath) ?? Promise.resolve();
+    const publication = previous.catch(() => undefined).then(async () => {
+      const existing = await readExistingCycleArtifact(adapter, artifactPath);
+      if (existing !== undefined) {
+        if (existing !== code) {
+          throw CACHE_ERROR.create({
+            detail: "Cycle artifact path contains conflicting content",
+          });
+        }
+        return;
+      }
+      if (!adapter.fs.rename) {
+        throw CACHE_ERROR.create({
+          detail: "Cycle artifact filesystem cannot publish an atomic replacement",
+        });
+      }
+      try {
+        await adapter.fs.rename(stagedPath, artifactPath);
+      } catch (error) {
+        // A different process can win after the read above. Reuse only the
+        // complete artifact with the exact immutable bytes this path denotes.
+        const raced = await readExistingCycleArtifact(adapter, artifactPath);
+        if (raced === code) return;
+        throw error;
+      }
+    }).finally(() => {
+      if (cycleArtifactPublications.get(artifactPath) === publication) {
+        cycleArtifactPublications.delete(artifactPath);
+      }
+    });
+    cycleArtifactPublications.set(artifactPath, publication);
+    await publication;
+  } finally {
+    try {
+      await adapter.fs.remove(stagedPath);
+    } catch (error) {
+      if (!isNotFoundError(error)) {
+        logger.debug("Failed to remove a staged cycle artifact", { error });
+      }
+    }
+  }
+}
+
 export interface PersistTransformedModuleInput {
   filePath: string;
   projectDir: string;
@@ -72,92 +176,476 @@ export interface PersistTransformedModuleInput {
   reactVersion?: string;
   dependencyPinningCacheKey?: string;
   moduleServerOrigin?: string;
-  /**
-   * True when a dynamic import elsewhere closes a cycle back onto this module.
-   * Such an edge is left as authored (`import("../app/page.js")`), so it needs a
-   * stable, non-hashed alias next to the content-hashed artifact to resolve to.
-   */
-  isCycleTarget?: boolean;
+  serverExternalPackages?: readonly string[];
+  /** Compile mode of `transformedCode`, kept in the artifact cache identity. */
+  dev?: boolean;
+  /** Tenant-authored imports left unresolved in this module subtree. */
+  unresolvedSpecifiers?: readonly string[];
+  /** Exact graph-content-addressed path for a cycle-dependent artifact. */
+  cycleArtifactPath?: string;
+  /** Delay cache visibility until the caller commits its full module graph. */
+  deferCachePublication?: (publication: () => Promise<void>) => void;
 }
 
+type ModuleOutputInput = Pick<
+  PersistTransformedModuleInput,
+  | "filePath"
+  | "projectDir"
+  | "tmpDir"
+  | "dependencyPinningCacheKey"
+  | "moduleServerOrigin"
+  | "serverExternalPackages"
+>;
+
 /**
- * Whether transformed output exposes a default export, so a cycle alias knows
- * to re-export it. Covers esbuild's `export default …`, `… as default`, and
- * `export { default } from …` forms.
+ * Artifact filenames carry a hash of the transformed code, so the two compile
+ * modes cannot collide on disk and the directory layout leaves the compile mode
+ * out. The cache keys that point at these artifacts do carry it.
  */
-function hasDefaultExport(code: string): boolean {
-  return /\bexport\s+default\b/.test(code) ||
-    /\bas\s+default\b/.test(code) ||
-    /\bexport\s*\{[^}]*\bdefault\b[^}]*\}/.test(code);
+function getOutputRelativePath(input: ModuleOutputInput): string {
+  const relativePath = input.filePath.startsWith(input.projectDir)
+    ? input.filePath.slice(input.projectDir.length).replace(/^\/+/, "")
+    : input.filePath.replace(/^\/+/, "");
+  const cacheVariant = buildModuleTransformCacheVariant(
+    input.dependencyPinningCacheKey,
+    input.moduleServerOrigin,
+    input.serverExternalPackages,
+  );
+  return cacheVariant
+    ? join("_pins", encodeURIComponent(cacheVariant), relativePath)
+    : relativePath;
 }
 
-/**
- * Write a stable, non-hashed alias next to a cycle target's hashed artifact.
- *
- * A dynamic import that closes an import cycle is left as the author wrote it
- * (see the module loader), so esbuild normalises it to a relative `.js` path
- * (`../app/page.js`) that does not match the content-hashed artifact
- * (`../app/page.<hash>.js`). The alias sits at that relative path and re-exports
- * the real artifact, so the edge resolves if the branch runs. Best-effort: a
- * failed alias just leaves the pre-existing (unresolved) cycle edge in place.
- */
-async function writeCycleTargetAlias(
-  input: PersistTransformedModuleInput,
-  outputRelativePath: string,
-  hashedFileName: string,
-): Promise<void> {
-  const aliasRelativePath = outputRelativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
-  // Same extension in and out means nothing was renamed (already `.js`): the
-  // authored edge already points at the real artifact, so no alias is needed.
-  if (aliasRelativePath === outputRelativePath) return;
-
-  const aliasPath = join(input.tmpDir, aliasRelativePath);
-  const lines = [`export * from "./${hashedFileName}";`];
-  if (hasDefaultExport(input.transformedCode)) {
-    lines.push(`export { default } from "./${hashedFileName}";`);
-  }
-
+/** Read unresolved-import evidence stored beside a transformed artifact. */
+export async function readPersistedUnresolvedSpecifiers(
+  modulePath: string,
+  localAdapter: RuntimeAdapter,
+): Promise<readonly string[]> {
   try {
-    await input.localAdapter.fs.writeFile(aliasPath, lines.join("\n"));
-    logger.debug("Wrote cycle-target alias", {
-      alias: aliasRelativePath,
-      target: hashedFileName,
-    });
+    const content = await localAdapter.fs.readFile(
+      `${modulePath}${UNRESOLVED_IMPORTS_SIDECAR_SUFFIX}`,
+    );
+    const decoded = typeof content === "string" ? content : new TextDecoder().decode(content);
+    const parsed: unknown = JSON.parse(decoded);
+    if (!Array.isArray(parsed) || !parsed.every((value) => typeof value === "string")) {
+      return [];
+    }
+    return parsed;
   } catch (error) {
-    logger.warn("Failed to write cycle-target alias", {
-      filePath: input.filePath.slice(-40),
+    if (isNotFoundError(error)) return [];
+    logger.debug("Unresolved-import cache evidence unavailable", {
+      modulePath: modulePath.slice(-60),
       error: error instanceof Error ? error.message : String(error),
     });
+    return [];
   }
+}
+
+/**
+ * Whether transformed output exposes a default export, so a cycle-manifest
+ * entry can re-export it. Covers esbuild's `export default …`, `… as default`,
+ * and `export { default } from …` forms.
+ */
+export function transformedModuleHasDefaultExport(code: string): boolean {
+  let previousTokenIndex = -1;
+  const controlConditionCloseParens = new Set<number>();
+  const statementBlockCloseBraces = new Set<number>();
+  const openParens: boolean[] = [];
+  const openBraces: boolean[] = [];
+  let openBracketCount = 0;
+  let pendingDeclaration:
+    | {
+      kind: "class" | "function";
+      braceDepth: number;
+      parenDepth: number;
+      bracketDepth: number;
+      parameterListClosed: boolean;
+    }
+    | undefined;
+
+  for (let index = 0; index < code.length;) {
+    index = skipTrivia(code, index);
+    if (index >= code.length) break;
+
+    if (startsIdentifier(code, index, "export")) {
+      const exportIndex = index;
+      index = skipTrivia(code, index + "export".length);
+      if (startsIdentifier(code, index, "default")) return true;
+      if (code[index] === "{" && exportListExposesDefault(code, index)) return true;
+      if (code[index] === "*") {
+        index = skipTrivia(code, index + 1);
+        if (startsIdentifier(code, index, "as")) {
+          index = skipTrivia(code, index + "as".length);
+          if (startsIdentifier(code, index, "default")) return true;
+        }
+      }
+      index = exportIndex + "export".length;
+      continue;
+    }
+
+    const next = skipTextToken(code, index, {
+      previousTokenIndex,
+      controlConditionCloseParens,
+      statementBlockCloseBraces,
+    });
+    if (next !== index) {
+      previousTokenIndex = next - 1;
+      index = next;
+      continue;
+    }
+
+    if (isIdentifierStart(code[index])) {
+      const identifierStart = index;
+      index++;
+      while (index < code.length && isIdentifierPart(code[index])) index++;
+      const identifier = code.slice(identifierStart, index);
+      if (
+        (identifier === "function" || identifier === "class") &&
+        startsDeclaration(code, previousTokenIndex, controlConditionCloseParens)
+      ) {
+        pendingDeclaration = {
+          kind: identifier,
+          braceDepth: openBraces.length,
+          parenDepth: openParens.length,
+          bracketDepth: openBracketCount,
+          parameterListClosed: false,
+        };
+      }
+      previousTokenIndex = index - 1;
+      continue;
+    }
+
+    if (code[index] === "(") {
+      const keyword = identifierBefore(code, previousTokenIndex);
+      openParens.push(
+        keyword === "if" || keyword === "while" || keyword === "for" ||
+          keyword === "with" || keyword === "switch" || keyword === "catch",
+      );
+    } else if (code[index] === ")") {
+      if (openParens.pop() === true) controlConditionCloseParens.add(index);
+      if (
+        pendingDeclaration?.kind === "function" &&
+        openParens.length === pendingDeclaration.parenDepth
+      ) {
+        pendingDeclaration.parameterListClosed = true;
+      }
+    } else if (code[index] === "[") {
+      openBracketCount++;
+    } else if (code[index] === "]") {
+      openBracketCount = Math.max(0, openBracketCount - 1);
+    } else if (code[index] === "{") {
+      const opensDeclarationBody = pendingDeclaration !== undefined &&
+        openBraces.length === pendingDeclaration.braceDepth &&
+        openParens.length === pendingDeclaration.parenDepth &&
+        openBracketCount === pendingDeclaration.bracketDepth &&
+        (pendingDeclaration.kind === "class" || pendingDeclaration.parameterListClosed);
+      openBraces.push(
+        opensDeclarationBody ||
+          code[previousTokenIndex] === ")" &&
+            controlConditionCloseParens.has(previousTokenIndex),
+      );
+      if (opensDeclarationBody) pendingDeclaration = undefined;
+    } else if (code[index] === "}" && openBraces.pop() === true) {
+      statementBlockCloseBraces.add(index);
+    }
+
+    previousTokenIndex = index;
+    index++;
+  }
+
+  return false;
+}
+
+function startsDeclaration(
+  code: string,
+  previousTokenIndex: number,
+  controlConditionCloseParens: ReadonlySet<number>,
+): boolean {
+  if (previousTokenIndex < 0) return true;
+  if (";{}:".includes(code[previousTokenIndex] ?? "")) return true;
+  if (controlConditionCloseParens.has(previousTokenIndex)) return true;
+  return ["async", "default", "export"].includes(
+    identifierBefore(code, previousTokenIndex) ?? "",
+  );
+}
+
+function exportListExposesDefault(code: string, openBraceIndex: number): boolean {
+  const closeBraceIndex = findExportListCloseBrace(code, openBraceIndex);
+  if (closeBraceIndex === -1) return false;
+
+  const specifiers = splitExportSpecifiers(code.slice(openBraceIndex + 1, closeBraceIndex));
+  return specifiers.some((specifier) => exportedName(specifier) === "default");
+}
+
+function findExportListCloseBrace(code: string, openBraceIndex: number): number {
+  for (let index = openBraceIndex + 1; index < code.length;) {
+    const next = skipTextToken(code, index);
+    if (next !== index) {
+      index = next;
+      continue;
+    }
+    if (code[index] === "}") return index;
+    index++;
+  }
+  return -1;
+}
+
+function splitExportSpecifiers(list: string): string[] {
+  const specifiers: string[] = [];
+  let start = 0;
+
+  for (let index = 0; index < list.length;) {
+    const next = skipTextToken(list, index);
+    if (next !== index) {
+      index = next;
+      continue;
+    }
+    if (list[index] === ",") {
+      specifiers.push(list.slice(start, index));
+      start = index + 1;
+    }
+    index++;
+  }
+
+  specifiers.push(list.slice(start));
+  return specifiers;
+}
+
+function exportedName(specifier: string): string | undefined {
+  const tokens = identifierTokens(specifier);
+  if (tokens.length === 0) return undefined;
+
+  for (let index = tokens.length - 2; index >= 0; index--) {
+    if (tokens[index] === "as") return tokens[index + 1];
+  }
+
+  return tokens.length === 1 ? tokens[0] : undefined;
+}
+
+function identifierTokens(source: string): string[] {
+  const tokens: string[] = [];
+
+  for (let index = 0; index < source.length;) {
+    const next = skipTextToken(source, index);
+    if (next !== index) {
+      index = next;
+      continue;
+    }
+    if (isIdentifierStart(source[index])) {
+      const start = index;
+      index++;
+      while (index < source.length && isIdentifierPart(source[index])) index++;
+      tokens.push(source.slice(start, index));
+      continue;
+    }
+    index++;
+  }
+
+  return tokens;
+}
+
+function skipTrivia(source: string, index: number): number {
+  while (index < source.length) {
+    const char = source[index];
+    if (char === " " || char === "\t" || char === "\n" || char === "\r" || char === "\f") {
+      index++;
+      continue;
+    }
+
+    const next = skipComment(source, index);
+    if (next !== index) {
+      index = next;
+      continue;
+    }
+
+    break;
+  }
+  return index;
+}
+
+interface RegexScanContext {
+  previousTokenIndex: number;
+  controlConditionCloseParens: ReadonlySet<number>;
+  statementBlockCloseBraces: ReadonlySet<number>;
+}
+
+function skipTextToken(
+  source: string,
+  index: number,
+  context?: RegexScanContext,
+): number {
+  const commentEnd = skipComment(source, index);
+  if (commentEnd !== index) return commentEnd;
+
+  const regexEnd = skipRegexToken(source, index, context);
+  if (regexEnd !== index) return regexEnd;
+
+  const char = source[index];
+  if (char !== '"' && char !== "'" && char !== "`") return index;
+
+  for (index++; index < source.length; index++) {
+    if (source[index] === "\\") {
+      index++;
+      continue;
+    }
+    if (source[index] === char) return index + 1;
+  }
+
+  return source.length;
+}
+
+function skipRegexToken(
+  source: string,
+  index: number,
+  context?: RegexScanContext,
+): number {
+  if (source[index] !== "/" || source[index + 1] === "/" || source[index + 1] === "*") {
+    return index;
+  }
+
+  const previous = context?.previousTokenIndex ?? previousSignificantIndex(source, index);
+  if (previous >= 0) {
+    const char = source[previous]!;
+    if (char === ")" && context?.controlConditionCloseParens.has(previous)) {
+      // A statement can start with a regex immediately after a control
+      // condition, for example `if (ready) /pattern/.test(value)`.
+    } else if (char === "}" && context?.statementBlockCloseBraces.has(previous)) {
+      // The same is true after the braced form, for example
+      // `if (ready) {} /pattern/.test(value)` or
+      // `function ready() {} /pattern/.test(value)`.
+    } else if (!"([{=,:;!~?&|+-*%^<>".includes(char)) {
+      const keyword = identifierBefore(source, previous);
+      if (keyword !== null && isMemberNameBefore(source, previous)) return index;
+      if (
+        ![
+          "case",
+          "delete",
+          "do",
+          "else",
+          "extends",
+          "in",
+          "instanceof",
+          "new",
+          "await",
+          "return",
+          "throw",
+          "typeof",
+          "void",
+          "yield",
+        ].includes(keyword ?? "")
+      ) return index;
+    }
+  }
+
+  let cursor = index + 1;
+  let inCharacterClass = false;
+  while (cursor < source.length) {
+    const char = source[cursor]!;
+    if (char === "\\") {
+      cursor += 2;
+      continue;
+    }
+    if (char === "[" && !inCharacterClass) {
+      inCharacterClass = true;
+      cursor++;
+      continue;
+    }
+    if (char === "]" && inCharacterClass) {
+      inCharacterClass = false;
+      cursor++;
+      continue;
+    }
+    if (char === "/" && !inCharacterClass) {
+      cursor++;
+      while (isIdentifierPart(source[cursor])) cursor++;
+      return cursor;
+    }
+    if (char === "\n" || char === "\r") return index;
+    cursor++;
+  }
+
+  return index;
+}
+
+function previousSignificantIndex(source: string, index: number): number {
+  let cursor = index - 1;
+  while (cursor >= 0 && /\s/.test(source[cursor] ?? "")) cursor--;
+  return cursor;
+}
+
+function identifierBefore(source: string, endIndex: number): string | null {
+  const end = endIndex + 1;
+  let start = end;
+  while (start > 0 && isIdentifierPart(source[start - 1])) start--;
+  return start === end ? null : source.slice(start, end);
+}
+
+function skipComment(source: string, index: number): number {
+  if (source[index] !== "/" || index + 1 >= source.length) return index;
+  if (source[index + 1] === "/") {
+    const newlineIndex = source.indexOf("\n", index + 2);
+    return newlineIndex === -1 ? source.length : newlineIndex + 1;
+  }
+  if (source[index + 1] === "*") {
+    const closeIndex = source.indexOf("*/", index + 2);
+    return closeIndex === -1 ? source.length : closeIndex + 2;
+  }
+  return index;
+}
+
+function startsIdentifier(source: string, index: number, identifier: string): boolean {
+  if (source.slice(index, index + identifier.length) !== identifier) return false;
+  const before = index > 0 ? source[index - 1] : "";
+  const after = source[index + identifier.length] ?? "";
+  return !isIdentifierPart(before) && !isIdentifierPart(after);
+}
+
+function isIdentifierStart(char: string | undefined): boolean {
+  if (char === undefined) return false;
+  return char === "$" || char === "_" ||
+    (char >= "A" && char <= "Z") ||
+    (char >= "a" && char <= "z");
+}
+
+function isIdentifierPart(char: string | undefined): boolean {
+  return isIdentifierStart(char) || (char !== undefined && char >= "0" && char <= "9");
 }
 
 /** Write a transformed module artifact and register cache pointers. */
 export async function persistTransformedModule(
   input: PersistTransformedModuleInput,
 ): Promise<string> {
-  const transformedHash = hashCodeHex(input.transformedCode).slice(0, 8);
+  const unresolvedSpecifiers = [...new Set(input.unresolvedSpecifiers ?? [])].sort();
+  const serializedUnresolvedSpecifiers = JSON.stringify(unresolvedSpecifiers);
+  // Evidence changes the artifact identity only when evidence exists. This
+  // keeps the common no-evidence path stable and prevents concurrent writers
+  // with different classification data from sharing one mutable sidecar.
+  const transformedIdentity = unresolvedSpecifiers.length === 0
+    ? input.transformedCode
+    : `${input.transformedCode}\0${serializedUnresolvedSpecifiers}`;
+  const transformedHash = hashCodeHex(transformedIdentity).slice(0, 8);
 
   const relativePath = input.filePath.startsWith(input.projectDir)
     ? input.filePath.slice(input.projectDir.length).replace(/^\/+/, "")
     : input.filePath.replace(/^\/+/, "");
-
-  const cacheVariant = buildModuleTransformCacheVariant(
-    input.dependencyPinningCacheKey,
-    input.moduleServerOrigin,
-  );
-  const outputRelativePath = cacheVariant
-    ? join("_pins", encodeURIComponent(cacheVariant), relativePath)
-    : relativePath;
+  const outputRelativePath = getOutputRelativePath(input);
   const jsPath = outputRelativePath.replace(/\.(tsx?|jsx|mdx)$/, `.${transformedHash}.js`);
-  const tempFilePath = join(input.tmpDir, jsPath);
+  const tempFilePath = input.cycleArtifactPath
+    ? input.cycleArtifactPath
+    : join(input.tmpDir, jsPath);
 
   const tempDir = tempFilePath.substring(0, tempFilePath.lastIndexOf("/"));
   await ensureDir(input.localAdapter, tempDir).catch(() => {
     // Fall through to the write, which retries the mkdir on failure.
   });
 
+  const writeArtifact = () =>
+    input.cycleArtifactPath
+      ? publishCycleArtifact(input.localAdapter, tempFilePath, input.transformedCode)
+      : input.localAdapter.fs.writeFile(tempFilePath, input.transformedCode);
+
   try {
-    await input.localAdapter.fs.writeFile(tempFilePath, input.transformedCode);
+    await writeArtifact();
   } catch (error) {
     // The cache directory can vanish between mkdir and write — a manual
     // `rm -rf .cache`, a cache sweep, or a mkdir that never actually landed.
@@ -173,7 +661,7 @@ export async function persistTransformedModule(
 
     try {
       await ensureDir(input.localAdapter, tempDir, true);
-      await input.localAdapter.fs.writeFile(tempFilePath, input.transformedCode);
+      await writeArtifact();
       logger.debug("Recreated module cache directory after failed write", { tempDir });
     } catch (retryError) {
       logger.error("Failed to write module:", {
@@ -185,35 +673,56 @@ export async function persistTransformedModule(
     }
   }
 
-  if (input.contentSourceId) {
-    const normalizedPath = `_vf_modules/${relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js")}`;
-    const mdxCacheKey = buildMdxEsmPathCacheKey(
-      normalizedPath,
-      input.reactVersion,
-      buildModuleTransformCacheVariant(
-        input.dependencyPinningCacheKey,
-        input.moduleServerOrigin,
-      ),
-    );
-    const cache = await getModulePathCache(input.tmpDir);
-    cache.set(mdxCacheKey, tempFilePath);
-
-    saveModulePathCache(input.tmpDir).catch((err) => {
-      logger.debug("Failed to save module cache", { error: String(err) });
-    });
-
-    logger.debug("Registered module in MDX-ESM cache", {
-      file: input.filePath.slice(-40),
-      mdxCacheKey,
-      tempFilePath: tempFilePath.slice(-60),
-    });
+  // Publish the path cache only after its tenant-attribution evidence is
+  // durable. A new worker can otherwise reuse the transformed artifact from
+  // _index.json without knowing which authored imports remained unresolved.
+  let shouldPublishReusableCache = true;
+  if (unresolvedSpecifiers.length > 0) {
+    try {
+      await input.localAdapter.fs.writeFile(
+        `${tempFilePath}${UNRESOLVED_IMPORTS_SIDECAR_SUFFIX}`,
+        serializedUnresolvedSpecifiers,
+      );
+    } catch (error) {
+      shouldPublishReusableCache = false;
+      logger.warn("Failed to persist unresolved-import evidence", {
+        filePath: input.filePath.slice(-40),
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
-  input.moduleCache.set(input.cacheKey, tempFilePath);
+  if (shouldPublishReusableCache) {
+    const publish = async () => {
+      if (input.contentSourceId) {
+        const normalizedPath = `_vf_modules/${relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js")}`;
+        const mdxCacheKey = buildMdxEsmPathCacheKey(
+          normalizedPath,
+          input.reactVersion,
+          buildModuleTransformCacheVariant(
+            input.dependencyPinningCacheKey,
+            input.moduleServerOrigin,
+            input.serverExternalPackages,
+            input.dev,
+          ),
+        );
+        const cache = await getModulePathCache(input.tmpDir);
+        cache.set(mdxCacheKey, tempFilePath);
 
-  if (input.isCycleTarget) {
-    const hashedFileName = jsPath.slice(jsPath.lastIndexOf("/") + 1);
-    await writeCycleTargetAlias(input, outputRelativePath, hashedFileName);
+        publishModulePathCacheSave(input.tmpDir);
+
+        logger.debug("Registered module in MDX-ESM cache", {
+          file: input.filePath.slice(-40),
+          mdxCacheKey,
+          tempFilePath: tempFilePath.slice(-60),
+        });
+      }
+
+      input.moduleCache.set(input.cacheKey, tempFilePath);
+    };
+
+    if (input.deferCachePublication) input.deferCachePublication(publish);
+    else await publish();
   }
 
   return tempFilePath;

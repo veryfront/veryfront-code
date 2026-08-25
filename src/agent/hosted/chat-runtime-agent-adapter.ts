@@ -28,8 +28,14 @@ export type HostedChatRuntimeAgentAdapterInput = {
   runId?: string;
   agentId?: string;
   conversationId?: string;
+  projectId?: string;
+  projectSlug?: string;
   authToken?: string;
   maxOutputTokens?: number;
+  resolveProjectContext?: () => {
+    projectId?: string;
+    projectSlug?: string;
+  };
   runStream?: HostedChatRuntimeAgentAdapterRunner;
   warnOrphanedToolInput?: (
     message: string,
@@ -54,6 +60,10 @@ export function createHostedChatRuntimeAgentAdapter(
         runWithEffectiveSourceIntegrationPolicy(
           input.sourceIntegrationPolicy,
           async () => {
+            const projectContext = input.resolveProjectContext?.() ?? {
+              projectId: input.projectId,
+              projectSlug: input.projectSlug,
+            };
             const response = await input.runtimeAgent.stream({
               messages: streamInput.messages,
               ...(input.maxOutputTokens !== undefined
@@ -63,7 +73,9 @@ export function createHostedChatRuntimeAgentAdapter(
                 ...(input.runId ? { runId: input.runId } : {}),
                 ...(input.agentId ? { agentId: input.agentId } : {}),
                 ...(input.conversationId ? { conversationId: input.conversationId } : {}),
-                ...(input.authToken ? { authToken: input.authToken } : {}),
+                ...(input.authToken !== undefined ? { authToken: input.authToken } : {}),
+                ...(projectContext?.projectId ? { projectId: projectContext.projectId } : {}),
+                ...(projectContext?.projectSlug ? { projectSlug: projectContext.projectSlug } : {}),
                 abortSignal: streamInput.abortSignal,
                 publishDataEvent: (event: ToolExecutionDataEvent) => publishDataEvent(event),
               },

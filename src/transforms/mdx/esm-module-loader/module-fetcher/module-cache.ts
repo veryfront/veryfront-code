@@ -61,6 +61,8 @@ export async function cacheModule(
   reactVersion = REACT_DEFAULT_VERSION,
   dependencyPinningCacheKey = "off",
   moduleServerOrigin?: string,
+  serverExternalPackages?: readonly string[],
+  dev = false,
 ): Promise<string | null> {
   moduleCode = ensureFilenameDefaultExport(normalizedPath, moduleCode);
 
@@ -78,7 +80,12 @@ export async function cacheModule(
   const pathCacheKey = buildMdxEsmPathCacheKey(
     normalizedPath,
     reactVersion,
-    getMdxModuleCacheVariant(dependencyPinningCacheKey, moduleServerOrigin),
+    getMdxModuleCacheVariant(
+      dependencyPinningCacheKey,
+      moduleServerOrigin,
+      serverExternalPackages,
+      dev,
+    ),
   );
 
   const localFs = getLocalFs();

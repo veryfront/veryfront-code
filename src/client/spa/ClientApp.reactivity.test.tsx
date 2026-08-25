@@ -29,7 +29,13 @@ async function writeModule(tempDir: string, relativePath: string, source: string
   const compiledPath = relativePath.replace(/\.(?:tsx|ts|jsx|mdx|md)$/, ".js");
   const filePath = `${tempDir}/${compiledPath}`;
   await mkdir(filePath.slice(0, filePath.lastIndexOf("/")), { recursive: true });
-  await writeTextFile(filePath, source);
+  const fixtureSource = source
+    .replaceAll('"react"', JSON.stringify(import.meta.resolve("react")))
+    .replaceAll(
+      '"veryfront/router"',
+      JSON.stringify(import.meta.resolve("veryfront/router")),
+    );
+  await writeTextFile(filePath, fixtureSource);
 }
 
 function installDom(url: string): () => void {
@@ -291,6 +297,8 @@ describe("client/spa/ClientApp (reactive)", () => {
 
   it("does not let the initial component load overwrite a completed navigation", async () => {
     await withTempDir(async (tempDir) => {
+      // The initial page resolves only after the navigation below has already
+      // failed, so its late result must be discarded rather than committed.
       await writeModule(
         tempDir,
         "pages/initial.tsx",
@@ -298,16 +306,12 @@ describe("client/spa/ClientApp (reactive)", () => {
          await new Promise((resolve) => setTimeout(resolve, 40));
          export default function Page() { return React.createElement("span", null, "initial"); }`,
       );
-      await writeModule(
-        tempDir,
-        "pages/fast.tsx",
-        `import React from "react";
-         export default function Page() { return React.createElement("span", null, "fast"); }`,
-      );
 
       const restore = installDom("https://example.com/initial");
       testGlobal.MODULE_SERVER_URL = `file://${tempDir}`;
       clearComponentCache();
+      const originalError = console.error;
+      console.error = () => {};
       try {
         const initialData: PageDataResponse = {
           slug: "/initial",
@@ -320,12 +324,6 @@ describe("client/spa/ClientApp (reactive)", () => {
           params: {},
           layoutProps: {},
         };
-        const fastData: PageDataResponse = {
-          ...initialData,
-          slug: "/fast",
-          pagePath: "pages/fast.tsx",
-          frontmatter: { title: "Fast" },
-        };
 
         const rootElement = document.getElementById("root")!;
         const root = createRoot(rootElement);
@@ -334,14 +332,37 @@ describe("client/spa/ClientApp (reactive)", () => {
         const navigate = testGlobal.__VERYFRONT_SPA_NAVIGATE__;
         assertEquals(typeof navigate, "function");
 
-        await navigate!(fastData);
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        // `pages/missing.tsx` was never written, so this navigation completes in
+        // its error state and never re-runs the initial-load effect.
+        await navigate!({
+          ...initialData,
+          slug: "/missing",
+          pagePath: "pages/missing.tsx",
+          frontmatter: { title: "Missing" },
+        });
+        await waitForText(rootElement, "Something went wrong");
 
-        assertStringIncludes(rootElement.textContent ?? "", "fast");
-        assertEquals(document.title, "Fast");
+        // Join the slow initial import deterministically instead of waiting out
+        // its timer, then let its discarded continuation run.
+        await loadComponent("pages/initial.tsx");
+        // The import is already joined, so this only yields a fixed number of
+        // event-loop turns for the discarded continuation and React's flush.
+        for (let turn = 0; turn < 6; turn++) await tick();
+
+        assertStringIncludes(
+          rootElement.textContent ?? "",
+          "Failed to load page component: pages/missing.tsx",
+          "a stale initial page load must not overwrite a completed navigation's error state",
+        );
+        assertEquals(
+          (rootElement.textContent ?? "").includes("initial"),
+          false,
+          "the superseded initial component must never render",
+        );
 
         root.unmount();
       } finally {
+        console.error = originalError;
         clearComponentCache();
         delete testGlobal.MODULE_SERVER_URL;
         restore();
@@ -928,6 +949,42 @@ describe("client/spa/ClientApp (reactive)", () => {
       root.unmount();
 
       assertStrictEquals(testGlobal.__VERYFRONT_SPA_NAVIGATE__, previousHandler);
+    } finally {
+      delete testGlobal.__VERYFRONT_SPA_NAVIGATE__;
+      restore();
+    }
+  });
+
+  it("removes the global navigation handler when the last app unmounts", () => {
+    const restore = installDom("https://example.com/");
+    try {
+      assertEquals(
+        typeof testGlobal.__VERYFRONT_SPA_NAVIGATE__,
+        "undefined",
+        "precondition: no pre-existing handler",
+      );
+      const rootElement = document.getElementById("root")!;
+      const root = createRoot(rootElement);
+      const initialData: PageDataResponse = {
+        slug: "/",
+        pagePath: "",
+        pageType: "tsx",
+        layouts: [],
+        providers: [],
+        frontmatter: {},
+        props: {},
+        params: {},
+        layoutProps: {},
+      };
+
+      flushSync(() => root.render(<ClientApp initialData={initialData} />));
+      root.unmount();
+
+      assertEquals(
+        Object.hasOwn(testGlobal, "__VERYFRONT_SPA_NAVIGATE__"),
+        false,
+        "last unmount must delete the global handler, not leave a stale one",
+      );
     } finally {
       delete testGlobal.__VERYFRONT_SPA_NAVIGATE__;
       restore();

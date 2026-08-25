@@ -26,7 +26,7 @@ describe("Google OAuth provider configs", () => {
 
   it("keeps Google Docs runtime scopes aligned with the generated connector", async () => {
     const connector = JSON.parse(
-      await Deno.readTextFile("cli/templates/integrations/docs-google/connector.json"),
+      await Deno.readTextFile("templates/integrations/docs-google/connector.json"),
     ) as { auth: { scopes: string[] } };
     assertEquals(docsGoogleConfig.defaultScopes, connector.auth.scopes);
   });
@@ -37,10 +37,57 @@ describe("Google OAuth provider configs", () => {
     ) {
       const connector = JSON.parse(
         await Deno.readTextFile(
-          `cli/templates/integrations/${config.serviceId}/connector.json`,
+          `templates/integrations/${config.serviceId}/connector.json`,
         ),
-      ) as { auth: { scopes: string[] } };
+      ) as { auth: { authorizationUrl: string; scopes: string[]; tokenUrl: string } };
       assertEquals(config.defaultScopes, connector.auth.scopes);
+      assertEquals(
+        config.authorizationUrl,
+        connector.auth.authorizationUrl,
+        `${config.serviceId} must authorize at the endpoint its connector advertises`,
+      );
+      assertEquals(
+        config.tokenUrl,
+        connector.auth.tokenUrl,
+        `${config.serviceId} must exchange codes at the endpoint its connector advertises`,
+      );
+    }
+  });
+
+  it("pins the shared Google authorization contract for every service", () => {
+    for (
+      const config of [gmailConfig, calendarConfig, sheetsConfig, driveConfig, docsGoogleConfig]
+    ) {
+      assertEquals(
+        config.additionalAuthParams,
+        { access_type: "offline", prompt: "consent" },
+        `${config.serviceId} must request offline access with a forced consent screen`,
+      );
+      assertEquals(
+        config.pkceMode,
+        "supported",
+        `${config.serviceId} must keep PKCE enabled`,
+      );
+      assertEquals(
+        config.authorizationUrl,
+        "https://accounts.google.com/o/oauth2/v2/auth",
+        `${config.serviceId} must use the Google authorization endpoint`,
+      );
+      assertEquals(
+        config.tokenUrl,
+        "https://oauth2.googleapis.com/token",
+        `${config.serviceId} must use the Google token endpoint`,
+      );
+      assertEquals(
+        config.clientIdEnvVar,
+        "GOOGLE_CLIENT_ID",
+        `${config.serviceId} must read the shared Google client id`,
+      );
+      assertEquals(
+        config.clientSecretEnvVar,
+        "GOOGLE_CLIENT_SECRET",
+        `${config.serviceId} must read the shared Google client secret`,
+      );
     }
   });
 });

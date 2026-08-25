@@ -1,6 +1,7 @@
 import type { RateLimitEntry } from "./types.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 
+/** Maximum UTF-16 code units accepted by a rate-limit key. */
 export const MAX_RATE_LIMIT_KEY_LENGTH = 1_024;
 
 export function requireRateLimitKey(

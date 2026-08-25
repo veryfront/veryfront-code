@@ -5,9 +5,10 @@
  * with the appropriate context.
  */
 
-import { logger as baseLogger } from "#veryfront/utils";
-import { env as getProcessEnv } from "#veryfront/compat/process.ts";
+import { getErrorMessage } from "#veryfront/errors";
+import { type HostRuntime, liveHostRuntime } from "#veryfront/platform/compat/process.ts";
 import { buildTaskContextEnv } from "#veryfront/runs/runtime-env.ts";
+import { logger as baseLogger } from "#veryfront/utils";
 import type { TaskContext } from "./types.ts";
 import type { TaskDefinition } from "./types.ts";
 
@@ -92,8 +93,14 @@ function assertInjectedTaskEnvIsValid(allEnv: Record<string, string>): void {
 
 /**
  * Run a task with the given options
+ *
+ * @param options Task definition and execution context.
+ * @param host Host environment boundary. Omit it to use the current process.
  */
-export async function runTask(options: RunTaskOptions): Promise<TaskRunResult> {
+export async function runTask(
+  options: RunTaskOptions,
+  host: HostRuntime = liveHostRuntime(),
+): Promise<TaskRunResult> {
   const {
     task,
     config = {},
@@ -112,7 +119,7 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRunResult> {
       logger.info(`Running task "${task.id}" (${task.name})`);
     }
 
-    const allEnv = getProcessEnv();
+    const allEnv = host.env.toObject();
     assertInjectedTaskEnvIsValid(allEnv);
     const env = buildTaskContextEnv(allEnv, envAllowlist);
     const ctx: TaskContext = {
@@ -133,7 +140,7 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRunResult> {
     return { success: true, result, durationMs };
   } catch (error) {
     const durationMs = elapsedMilliseconds(start);
-    const errorMsg = error instanceof Error ? error.message : String(error);
+    const errorMsg = getErrorMessage(error);
 
     logger.error(`Task "${task.id}" failed: ${errorMsg}`);
 

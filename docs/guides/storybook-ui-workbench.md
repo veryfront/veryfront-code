@@ -4,10 +4,6 @@ description: "Run and verify the dev-only Storybook workbench for shipped Veryfr
 order: 42
 ---
 
-# Storybook UI workbench
-
-Veryfront Code keeps shipped UI source in `src/react`.
-
 Keep shipped UI source under `src/react`.
 
 Storybook lives in the dev-only `storybook/` package. Use it to review the components that Veryfront ships without adding Storybook to the framework runtime.

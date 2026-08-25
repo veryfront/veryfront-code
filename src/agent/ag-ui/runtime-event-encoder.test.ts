@@ -5,7 +5,7 @@ import { createAgUiRuntimeEventEncoder } from "./runtime-event-encoder.ts";
 
 describe("agent/ag-ui-runtime-event-encoder", () => {
   it("enriches tool results with the last captured tool input", () => {
-    const encoder = createAgUiRuntimeEventEncoder();
+    const encoder = createAgUiRuntimeEventEncoder({ timing: { nowMs: null, epochMs: null } });
 
     assertEquals(
       encoder.encode({
@@ -63,8 +63,9 @@ describe("agent/ag-ui-runtime-event-encoder", () => {
     );
   });
 
-  it("seeds metadata into the shared browser encoder state", () => {
+  it("seeds metadata into the shared encoder state", () => {
     const encoder = createAgUiRuntimeEventEncoder({
+      timing: { nowMs: null, epochMs: null },
       initialMetadata: {
         provider: "openai",
         model: "openai/gpt-5.4",

@@ -1,17 +1,28 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { isBun } from "#veryfront/platform/compat/runtime.ts";
+import { withEnv } from "#veryfront/testing";
 import {
   checkMemoryPressure,
+  DEFAULT_MEMORY_MONITORING_INTERVAL_MS,
+  DEFAULT_PROFILER_CRITICAL_THRESHOLD,
+  DEFAULT_PROFILER_WARNING_THRESHOLD,
+  evaluateMemoryPressure,
   forceGC,
   getCacheStats,
   getHeapStats,
   getInitialRapidHeapGrowthState,
+  getMemoryMonitoringConfig,
   getMemoryMonitoringLogContext,
+  getMemoryMonitoringState,
   getMemorySnapshot,
   getRapidHeapGrowthEvaluation,
+  type MemoryMonitoringEnv,
   registerCache,
+  resolveEffectiveHeapLimitMB,
   setHeapWarningThreshold,
+  startConfiguredMemoryMonitoring,
   startMemoryMonitoring,
   stopMemoryMonitoring,
   unregisterCache,
@@ -92,6 +103,84 @@ describe("memory/profiler", () => {
       const { heapUsedPercent } = getHeapStats();
       assert(heapUsedPercent >= 0);
       assert(heapUsedPercent <= 100);
+    });
+  });
+
+  describe("heap limit honesty", () => {
+    it("reports the runtime heap limit, not the DENO_V8_FLAGS env string", async () => {
+      if (isBun) return;
+      const { getHeapStatistics } = await import("node:v8");
+      const runtimeLimitMB = getHeapStatistics().heap_size_limit / (1024 * 1024);
+
+      await withEnv({ DENO_V8_FLAGS: "--max-old-space-size=999999" }, async () => {
+        const stats = getHeapStats();
+        assert(
+          Math.abs(stats.heapSizeLimitMB - runtimeLimitMB) < 1,
+          `heapSizeLimitMB (${stats.heapSizeLimitMB}) must reflect the real V8 heap_size_limit ` +
+            `(${runtimeLimitMB.toFixed(2)}MB), not the unverified env string`,
+        );
+      });
+    });
+
+    it("clamps an unverified DENO_V8_FLAGS limit to the V8 default ceiling", () => {
+      const effective = resolveEffectiveHeapLimitMB({
+        runtimeHeapLimitMB: undefined,
+        configuredHeapLimitMB: 4096,
+      });
+
+      assertEquals(
+        effective,
+        2048,
+        "an unverified 4096MB env limit must resolve to the 2048MB V8 default",
+      );
+    });
+
+    it("uses the conservative fallback instead of Bun's moving node:v8 shim value", async () => {
+      if (!isBun) return;
+
+      await withEnv({ DENO_V8_FLAGS: "--max-old-space-size=999999" }, async () => {
+        assertEquals(
+          getHeapStats().heapSizeLimitMB,
+          2048,
+          "Bun must not use its process-derived node:v8 compatibility value as a heap ceiling",
+        );
+      });
+    });
+
+    it("reports over-threshold pressure at ~1.6GB used when a 4096MB flag is unverified", () => {
+      const effective = resolveEffectiveHeapLimitMB({
+        runtimeHeapLimitMB: undefined,
+        configuredHeapLimitMB: 4096,
+      });
+      const heapUsedPercent = (1638.4 / effective) * 100;
+
+      assertEquals(
+        evaluateMemoryPressure(heapUsedPercent, { warning: 65, critical: 75 }),
+        { critical: true, warning: true },
+        "1638.4MB used against the effective limit must exceed a 75% eviction threshold",
+      );
+    });
+
+    it("uses the runtime-verified limit as-is when heap statistics expose it", () => {
+      assertEquals(
+        resolveEffectiveHeapLimitMB({
+          runtimeHeapLimitMB: 4096,
+          configuredHeapLimitMB: 4096,
+        }),
+        4096,
+        "a limit confirmed by runtime heap statistics is trusted as-is",
+      );
+    });
+
+    it("falls back to the V8 default when nothing is configured or verifiable", () => {
+      assertEquals(
+        resolveEffectiveHeapLimitMB({
+          runtimeHeapLimitMB: undefined,
+          configuredHeapLimitMB: undefined,
+        }),
+        2048,
+        "with no runtime or configured limit the V8 default old-space ceiling applies",
+      );
     });
   });
 
@@ -231,6 +320,36 @@ describe("memory/profiler", () => {
       const heap = getHeapStats();
       assert(Math.abs(pressure.heapUsedPercent - heap.heapUsedPercent) < 5);
     });
+
+    it("uses the default 65 percent warning threshold inclusively", () => {
+      assertEquals(DEFAULT_PROFILER_WARNING_THRESHOLD, 65);
+      assertEquals(evaluateMemoryPressure(64.99), {
+        critical: false,
+        warning: false,
+      });
+      assertEquals(evaluateMemoryPressure(65), {
+        critical: false,
+        warning: true,
+      });
+    });
+
+    it("uses the critical threshold inclusively and reports a warning", () => {
+      assertEquals(DEFAULT_PROFILER_CRITICAL_THRESHOLD, 80);
+      assertEquals(evaluateMemoryPressure(80), {
+        critical: true,
+        warning: true,
+      });
+    });
+
+    it("reports a warning for critical pressure when warning is configured higher", () => {
+      assertEquals(
+        evaluateMemoryPressure(80, { warning: 90, critical: 80 }),
+        {
+          critical: true,
+          warning: true,
+        },
+      );
+    });
   });
 
   describe("setHeapWarningThreshold", () => {
@@ -239,30 +358,119 @@ describe("memory/profiler", () => {
       setHeapWarningThreshold(0.9);
       setHeapWarningThreshold(0.1);
     });
-
-    it("should clamp threshold to minimum 0.1", () => {
-      setHeapWarningThreshold(0.01);
-    });
-
-    it("should clamp threshold to maximum 0.99", () => {
-      setHeapWarningThreshold(1.5);
-    });
   });
 
   describe("startMemoryMonitoring / stopMemoryMonitoring", () => {
     it("should start and stop without errors", () => {
+      assertEquals(
+        getMemoryMonitoringState(),
+        { active: false, intervalMs: undefined },
+        "monitoring starts inactive",
+      );
+
       startMemoryMonitoring(60000);
+      assertEquals(
+        getMemoryMonitoringState(),
+        { active: true, intervalMs: 60000 },
+        "start records the active interval",
+      );
+
       stopMemoryMonitoring();
+      assertEquals(
+        getMemoryMonitoringState(),
+        { active: false, intervalMs: undefined },
+        "stop clears the recorded interval",
+      );
     });
 
     it("should handle multiple starts (replaces interval)", () => {
       startMemoryMonitoring(60000);
-      startMemoryMonitoring(60000);
+      startMemoryMonitoring(30000);
+      assertEquals(
+        getMemoryMonitoringState(),
+        { active: true, intervalMs: 30000 },
+        "restarting replaces the recorded interval",
+      );
+
       stopMemoryMonitoring();
+      assertEquals(
+        getMemoryMonitoringState(),
+        { active: false, intervalMs: undefined },
+        "stop clears the recorded interval",
+      );
     });
 
     it("should handle stop when not started", () => {
       stopMemoryMonitoring();
+      assertEquals(
+        getMemoryMonitoringState(),
+        { active: false, intervalMs: undefined },
+        "stopping an unstarted monitor leaves it inactive",
+      );
+    });
+  });
+
+  describe("getMemoryMonitoringConfig", () => {
+    const envOf = (values: Record<string, string>): MemoryMonitoringEnv => ({
+      get: (key: string) => values[key],
+    });
+
+    it('enables monitoring only for the exact string "true"', () => {
+      assertEquals(
+        getMemoryMonitoringConfig(envOf({})).enabled,
+        false,
+        "monitoring stays off when ENABLE_MEMORY_MONITORING is unset",
+      );
+      assertEquals(
+        getMemoryMonitoringConfig(envOf({ ENABLE_MEMORY_MONITORING: "true" })).enabled,
+        true,
+        "ENABLE_MEMORY_MONITORING=true enables monitoring",
+      );
+
+      for (const value of ["TRUE", "1", "yes", "false", ""]) {
+        assertEquals(
+          getMemoryMonitoringConfig(envOf({ ENABLE_MEMORY_MONITORING: value })).enabled,
+          false,
+          `only the exact string "true" may enable monitoring (got "${value}")`,
+        );
+      }
+    });
+
+    it("falls back to the default interval for unusable values", () => {
+      assertEquals(
+        getMemoryMonitoringConfig(envOf({})).intervalMs,
+        DEFAULT_MEMORY_MONITORING_INTERVAL_MS,
+        "an unset interval uses the default",
+      );
+
+      for (const raw of ["abc", "0", "-5"]) {
+        assertEquals(
+          getMemoryMonitoringConfig(
+            envOf({ ENABLE_MEMORY_MONITORING: "true", MEMORY_MONITORING_INTERVAL_MS: raw }),
+          ).intervalMs,
+          DEFAULT_MEMORY_MONITORING_INTERVAL_MS,
+          `a non-positive or unparseable interval must not become a spinning timer (got "${raw}")`,
+        );
+      }
+
+      assertEquals(
+        getMemoryMonitoringConfig(
+          envOf({ ENABLE_MEMORY_MONITORING: "true", MEMORY_MONITORING_INTERVAL_MS: "5000" }),
+        ).intervalMs,
+        5000,
+        "a positive interval is used as configured",
+      );
+    });
+
+    it("starts no interval when the env does not enable monitoring", () => {
+      const config = startConfiguredMemoryMonitoring(envOf({}));
+
+      assertEquals(config.enabled, false, "an unset env must not enable monitoring");
+      assertEquals(
+        getMemoryMonitoringState(),
+        { active: false, intervalMs: undefined },
+        "the disabled path must not install a monitoring interval",
+      );
     });
   });
 });

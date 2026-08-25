@@ -189,6 +189,49 @@ describe("rendering/rsc/client-boot", () => {
       assertEquals(root, body);
     });
 
+    it("skips classed hidden placeholders and falls back to the parent container", () => {
+      const placeholders: Array<[string, MockElement]> = [
+        [
+          "a head placeholder",
+          createElement("DIV", {
+            class: "vf-head",
+            "data-veryfront-head": "1",
+            style: "display:none",
+          }),
+        ],
+        ["a hidden attribute", createElement("DIV", { class: "vf-head", hidden: "" })],
+        [
+          "a trailing display:none declaration",
+          createElement("DIV", { class: "vf-head", style: "color:red;display:none" }),
+        ],
+        ["a non-hydratable tag", createElement("TEMPLATE", { class: "vf-head" })],
+      ];
+      const main = toCandidate(createElement("MAIN"));
+      const body = toCandidate(createElement("BODY"));
+
+      for (const [label, placeholder] of placeholders) {
+        assertEquals(
+          selectHydrationRoot([toCandidate(placeholder), main], body),
+          body,
+          `${label} must never become the hydration root`,
+        );
+      }
+    });
+
+    it("keeps a classed visible div eligible as the hydration root", () => {
+      const wrapper = toCandidate(createElement("DIV", {
+        class: "page-shell",
+        style: "display:block",
+      }));
+      const body = toCandidate(createElement("BODY"));
+
+      assertEquals(
+        selectHydrationRoot([wrapper, body], body),
+        wrapper,
+        "a classed visible div must stay eligible as the hydration root",
+      );
+    });
+
     it("uses the parent container when only non-render nodes and page roots are present", () => {
       const script = toCandidate(createElement("SCRIPT"));
       const section = toCandidate(createElement("SECTION"));
@@ -220,6 +263,9 @@ describe("rendering/rsc/client-boot", () => {
       const dom = new JSDOM(`
         <body>
           <div data-vf-react-head-owner="1" id="orphan"></div>
+          <section id="wrapper">
+            <div data-vf-react-head-owner="1" id="nested-orphan"></div>
+          </section>
           <main id="root">
             <div data-vf-react-head-owner="1" id="owned"></div>
           </main>
@@ -234,6 +280,11 @@ describe("rendering/rsc/client-boot", () => {
         );
 
         assertEquals(dom.window.document.getElementById("orphan"), null);
+        assertEquals(
+          dom.window.document.getElementById("nested-orphan"),
+          null,
+          "owner markers nested inside a non-root sibling must be retired",
+        );
         assertEquals(
           dom.window.document.getElementById("owned")?.isConnected,
           true,

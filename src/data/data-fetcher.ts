@@ -1,7 +1,7 @@
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { CacheManager } from "./data-fetching-cache.ts";
-import { ServerDataFetcher, type ServerDataFetchOptions } from "./server-data-fetcher.ts";
+import type { ServerDataFetcher, ServerDataFetchOptions } from "./server-data-fetcher.ts";
 import { StaticDataFetcher } from "./static-data-fetcher.ts";
 import { StaticPathsFetcher } from "./static-paths-fetcher.ts";
 import type { DataContext, DataResult, PageWithData, StaticPathsResult } from "./types.ts";
@@ -15,17 +15,27 @@ export interface FetchDataOptions {
   modulePath?: string;
   /** Project directory for worker scoping */
   projectDir?: string;
+  /** Host-owned locality decision for development-only behavior. */
+  isLocalProject?: boolean;
+  /** Narrow host-owned capability for project-code execution. */
+  allowHostProjectCodeExecution?: boolean;
+  /** Stable host-owned tenant/project scope for reusable workers. */
+  workerScope?: string;
+  /** Immutable release or source-snapshot identity for reusable workers. */
+  sourceGeneration?: string;
 }
 
 export class DataFetcher {
   private cacheManager: CacheManager;
-  private serverFetcher: ServerDataFetcher;
+  // Constructed lazily: the server fetcher pulls the sandbox worker pool,
+  // which must stay out of browser bundles.
+  private serverFetcher: ServerDataFetcher | undefined;
   private staticFetcher: StaticDataFetcher;
   private pathsFetcher: StaticPathsFetcher;
 
   constructor(_adapter?: unknown) {
     this.cacheManager = new CacheManager();
-    this.serverFetcher = new ServerDataFetcher();
+
     this.staticFetcher = new StaticDataFetcher(this.cacheManager);
     this.pathsFetcher = new StaticPathsFetcher();
   }
@@ -33,7 +43,11 @@ export class DataFetcher {
   fetchData(
     pageModule: PageWithData,
     context: DataContext,
-    mode: "development" | "production" = "development",
+    // Defaults to production. In development every page is routed through
+    // `getServerData` (sandbox worker execution) even when it exports
+    // `getStaticData`, so an omitted mode must not opt a hosted render into
+    // that path. The one non-test caller passes `this.config.mode`.
+    mode: "development" | "production" = "production",
     options?: FetchDataOptions,
   ): Promise<DataResult> {
     const preferServerData = mode === "development" || !pageModule.getStaticData;
@@ -47,13 +61,26 @@ export class DataFetcher {
       : "none";
 
     const isolationOptions: ServerDataFetchOptions | undefined = options
-      ? { modulePath: options.modulePath, projectDir: options.projectDir }
+      ? {
+        modulePath: options.modulePath,
+        projectDir: options.projectDir,
+        isLocalProject: options.isLocalProject,
+        allowHostProjectCodeExecution: options.allowHostProjectCodeExecution,
+        workerScope: options.workerScope,
+        sourceGeneration: options.sourceGeneration,
+      }
       : undefined;
 
     return withSpan(
       SpanNames.DATA_FETCH,
-      () => {
-        if (useServer) return this.serverFetcher.fetch(pageModule, context, isolationOptions);
+      async () => {
+        if (useServer) {
+          if (this.serverFetcher === undefined) {
+            const { ServerDataFetcher } = await import("./server-data-fetcher.ts");
+            this.serverFetcher = new ServerDataFetcher();
+          }
+          return this.serverFetcher.fetch(pageModule, context, isolationOptions);
+        }
         if (useStatic) return this.staticFetcher.fetch(pageModule, context, options);
         return Promise.resolve({ props: {} });
       },

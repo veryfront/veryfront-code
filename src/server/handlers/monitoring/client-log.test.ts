@@ -3,13 +3,26 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { __resetLoggerConfigForTests } from "#veryfront/utils/logger/logger.ts";
 import { ClientLogHandler, sanitizeClientLogPreview } from "./client-log.handler.ts";
+import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
 function createHandler(): ClientLogHandler {
   return new ClientLogHandler();
 }
 
+function createLoopbackRequest(input: string | URL, init?: RequestInit): Request {
+  const headers = new Headers(init?.headers);
+  headers.set("host", new URL(input).host);
+  const request = new Request(input, { ...init, headers });
+  recordRequestPeerFromTransport(request, {
+    runtime: "deno",
+    transport: "tcp",
+    hostname: "127.0.0.1",
+  });
+  return request;
+}
+
 function createPostRequest(body: unknown): Request {
-  return new Request("http://localhost/_veryfront/log", {
+  return createLoopbackRequest("http://localhost/_veryfront/log", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -73,7 +86,7 @@ describe("server/handlers/monitoring/client-log", () => {
 
     it("should return continue for non-matching pathname", async () => {
       const handler = createHandler();
-      const req = new Request("http://localhost/other-path", { method: "POST" });
+      const req = createLoopbackRequest("http://localhost/other-path", { method: "POST" });
       const result = await handler.handle(req, localCtx);
       assertEquals(result.continue, true);
       assertEquals(result.response, undefined);
@@ -81,7 +94,7 @@ describe("server/handlers/monitoring/client-log", () => {
 
     it("should return continue for GET requests to the log endpoint", async () => {
       const handler = createHandler();
-      const req = new Request("http://localhost/_veryfront/log", { method: "GET" });
+      const req = createLoopbackRequest("http://localhost/_veryfront/log", { method: "GET" });
       const result = await handler.handle(req, localCtx);
       assertEquals(result.continue, true);
       assertEquals(result.response, undefined);
@@ -107,7 +120,7 @@ describe("server/handlers/monitoring/client-log", () => {
 
     it("should return ok:true even for invalid JSON body", async () => {
       const handler = createHandler();
-      const req = new Request("http://localhost/_veryfront/log", {
+      const req = createLoopbackRequest("http://localhost/_veryfront/log", {
         method: "POST",
         body: "not valid json {{{",
       });
@@ -135,7 +148,7 @@ describe("server/handlers/monitoring/client-log", () => {
 
       try {
         const handler = createHandler();
-        const req = new Request("http://localhost/_veryfront/log", {
+        const req = createLoopbackRequest("http://localhost/_veryfront/log", {
           method: "POST",
           body: '{"message":"line\n\u001b[31m"}',
         });
@@ -186,7 +199,7 @@ describe("server/handlers/monitoring/client-log", () => {
       const handler = createHandler();
       // 64 KB limit — send a body that exceeds it
       const oversizedBody = "x".repeat(65 * 1024);
-      const req = new Request("http://localhost/_veryfront/log", {
+      const req = createLoopbackRequest("http://localhost/_veryfront/log", {
         method: "POST",
         body: oversizedBody,
       });

@@ -1,11 +1,13 @@
 import { serverLogger as logger } from "#veryfront/utils";
-import { dirname, isAbsolute, join, normalize, relative } from "#veryfront/compat/path/index.ts";
+import { dirname, isAbsolute, join, normalize } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { buildModuleResolveCacheKey } from "#veryfront/cache/keys.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
 import { CACHE_MAX_ENTRIES_LARGE } from "#veryfront/utils/constants/limits.ts";
+import { isPathContainedBy } from "#veryfront/platform/adapters/path-containment.ts";
+import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 
 export interface ResolvedModule {
   path: string;
@@ -47,6 +49,50 @@ export class ModuleResolver {
     return resolved;
   }
 
+  private isContainedPath(candidatePath: string): boolean {
+    const projectDir = normalize(this.options.projectDir);
+    const normalizedCandidate = normalize(candidatePath);
+    return isPathContainedBy(normalizedCandidate, projectDir);
+  }
+
+  private async resolveContainedFile(
+    candidatePath: string,
+    specifier: string,
+  ): Promise<string | null> {
+    const projectDir = normalize(this.options.projectDir);
+    const normalizedCandidate = normalize(candidatePath);
+
+    if (!this.isContainedPath(normalizedCandidate)) return null;
+
+    if (!await this.adapter.fs.exists(normalizedCandidate)) return null;
+
+    const realPath = this.adapter.fs.realPath;
+    if (!realPath) return normalizedCandidate;
+
+    const [projectResult, candidateResult] = await Promise.allSettled([
+      realPath.call(this.adapter.fs, projectDir),
+      realPath.call(this.adapter.fs, normalizedCandidate),
+    ]);
+    // A canonical not-found from one path must not mask an operational
+    // failure from the other, regardless of which settles first.
+    for (const result of [projectResult, candidateResult]) {
+      if (result.status === "rejected" && !isCanonicalNotFoundError(result.reason)) {
+        throw result.reason;
+      }
+    }
+    if (projectResult.status !== "fulfilled" || candidateResult.status !== "fulfilled") {
+      return null;
+    }
+    const canonicalProjectDir = normalize(projectResult.value);
+    const canonicalCandidate = normalize(candidateResult.value);
+    if (!isPathContainedBy(canonicalCandidate, canonicalProjectDir)) {
+      logger.warn(`Canonical path escape blocked: ${specifier}`);
+      return null;
+    }
+
+    return canonicalCandidate;
+  }
+
   resolve(specifier: string, referrer?: string): Promise<ResolvedModule | null> {
     return withSpan(
       "modules.resolver.resolve",
@@ -82,11 +128,16 @@ export class ModuleResolver {
 
           const basePath = refPath ? dirname(refPath) : this.options.projectDir;
           const fullPath = normalize(join(basePath, specifier));
+          if (!this.isContainedPath(fullPath)) {
+            logger.warn(`Path traversal attempt blocked: ${specifier}`);
+            return null;
+          }
 
           for (const ext of MODULE_EXTENSIONS) {
             const pathWithExt = fullPath + ext;
-            if (await this.adapter.fs.exists(pathWithExt)) {
-              return this.cacheAndReturn(cacheKey, { path: pathWithExt, type: "file" });
+            const resolvedPath = await this.resolveContainedFile(pathWithExt, specifier);
+            if (resolvedPath) {
+              return this.cacheAndReturn(cacheKey, { path: resolvedPath, type: "file" });
             }
           }
 
@@ -95,15 +146,13 @@ export class ModuleResolver {
 
         if (specifier.startsWith("/")) {
           const fullPath = join(this.options.projectDir, specifier);
-          const relativePath = relative(this.options.projectDir, fullPath);
-
-          if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
+          if (!this.isContainedPath(fullPath)) {
             logger.warn(`Path traversal attempt blocked: ${specifier}`);
             return null;
           }
-
-          if (await this.adapter.fs.exists(fullPath)) {
-            return this.cacheAndReturn(cacheKey, { path: fullPath, type: "file" });
+          const resolvedPath = await this.resolveContainedFile(fullPath, specifier);
+          if (resolvedPath) {
+            return this.cacheAndReturn(cacheKey, { path: resolvedPath, type: "file" });
           }
 
           return null;

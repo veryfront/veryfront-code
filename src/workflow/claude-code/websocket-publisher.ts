@@ -29,6 +29,10 @@ import {
   snapshotClaudeCodeWireRecord,
 } from "./wire-protocol.ts";
 import { INVALID_ARGUMENT, ORCHESTRATION_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
+import {
+  upgradeWebSocket,
+  type WebSocketUpgradeResult,
+} from "#veryfront/platform/compat/http/index.ts";
 import { parsePositiveDurationWithLabel } from "../types.ts";
 
 const logger = baseLogger.component("websocket-publisher");
@@ -663,6 +667,9 @@ export interface WebSocketHandlerConfig {
   /** Called only when the exact current connection generation closes. */
   onClose?: (registration: AgentControllerRegistration) => void | Promise<void>;
 
+  /** WebSocket upgrade implementation. Defaults to the portable runtime adapter. */
+  upgradeWebSocket?: (request: Request) => WebSocketUpgradeResult;
+
   /** Enable debug logging */
   debug?: boolean;
 }
@@ -681,7 +688,7 @@ export function createWebSocketHandler(
       return new Response("Invalid runId", { status: 400 });
     }
 
-    const { socket, response } = Deno.upgradeWebSocket(req);
+    const { socket, response } = (config.upgradeWebSocket ?? upgradeWebSocket)(req);
 
     socket.addEventListener("open", () => {
       let publisher: WebSocketPublisher;

@@ -3,7 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * Tests for command definitions
  */
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { COMMANDS } from "./command-definitions.ts";
 
@@ -26,6 +26,7 @@ describe("command-definitions", () => {
       assertExists(COMMANDS.uploads);
       assertExists(COMMANDS.files);
       assertExists(COMMANDS.knowledge);
+      assertExists(COMMANDS.env);
     });
 
     it("each command has required properties", () => {
@@ -109,6 +110,17 @@ describe("command-definitions", () => {
       assertExists(googleOpt);
       assertExists(githubOpt);
       assertExists(microsoftOpt);
+    });
+
+    it("documents bare login existing-session behavior", () => {
+      const notes = login.notes ?? [];
+      const text = notes.join(" ");
+
+      assertStringIncludes(text, "valid session returns immediately");
+      assertStringIncludes(text, "explicit method");
+      assertStringIncludes(text, "veryfront.json");
+      assertStringIncludes(text, "apiToken");
+      assertStringIncludes(text, "remove or replace");
     });
   });
 

@@ -50,7 +50,7 @@ describe("errors/catalog/config-errors", () => {
     it("should have docs URLs pointing to veryfront.com", () => {
       for (const solution of Object.values(CONFIG_ERROR_CATALOG)) {
         assertEquals(
-          solution.docs?.startsWith("https://veryfront.com/docs/errors/") ?? false,
+          solution.docs?.startsWith("https://veryfront.com/docs/code/guides/errors#") ?? false,
           true,
           `docs URL should start with veryfront.com for ${solution.slug}`,
         );

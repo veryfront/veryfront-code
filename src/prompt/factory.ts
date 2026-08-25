@@ -21,7 +21,7 @@ interface PromptCancellation {
   cleanup(): void;
 }
 
-/** Create a typed prompt definition. */
+/** Create a typed prompt definition whose explicit id contains non-whitespace text. */
 export function prompt(config: PromptConfig): Prompt {
   const normalized = normalizePromptConfig(config);
   const { content, description, generate, mcp, suggestion } = normalized;
@@ -42,7 +42,9 @@ export function prompt(config: PromptConfig): Prompt {
 
       if (content !== undefined) {
         assertPromptRenderActive(context);
-        return interpolateVariables(content, resolvedVariables);
+        const rendered = interpolateVariables(content, resolvedVariables);
+        assertPromptRenderActive(context);
+        return rendered;
       }
 
       if (generate) {
@@ -55,6 +57,7 @@ export function prompt(config: PromptConfig): Prompt {
           const generated = cancellation
             ? await Promise.race([generatedPromise, cancellation.cancellation])
             : await generatedPromise;
+          assertPromptRenderActive(cancellation?.context);
           if (typeof generated !== "string") {
             throw toError(
               createError({
@@ -95,7 +98,7 @@ function validatePromptDeadline(deadline: number | undefined): void {
 
 function assertPromptRenderActive(context: Readonly<PromptRenderContext> | undefined): void {
   validatePromptDeadline(context?.deadline);
-  if (context?.deadline !== undefined && DateNow() >= context.deadline) {
+  if (context?.deadline !== undefined && promptDeadlineRuntime().now() >= context.deadline) {
     throw createPromptDeadlineError();
   }
   if (context?.abortSignal?.aborted) {
@@ -109,6 +112,7 @@ function createPromptCancellation(
   if (requested === undefined) return undefined;
 
   assertPromptRenderActive(requested);
+  const runtime = promptDeadlineRuntime();
   const deadline = requested.deadline;
   const outerSignal = requested.abortSignal;
   const controller = deadline === undefined ? undefined : new AbortController();
@@ -121,7 +125,7 @@ function createPromptCancellation(
       context: ObjectFreeze({ deadline }),
       cancellation: new Promise<never>(() => {}),
       cleanup: () => {
-        if (deadlineTimer !== undefined) ClearTimeout(deadlineTimer);
+        if (deadlineTimer !== undefined) runtime.clearTimer(deadlineTimer);
         outerSignal?.removeEventListener("abort", abortFromOuter);
       },
     };
@@ -149,14 +153,14 @@ function createPromptCancellation(
       if (outerSignal.aborted) abortFromOuter();
     }
     const scheduleDeadline = () => {
-      const remaining = deadline! - DateNow();
+      const remaining = deadline! - runtime.now();
       if (remaining <= 0) {
         controller.abort(createPromptDeadlineError());
         return;
       }
       // JavaScript runtimes clamp larger delays, often to one millisecond.
       // Re-arm long deadlines instead of turning them into immediate timeouts.
-      deadlineTimer = SetTimeout(
+      deadlineTimer = runtime.setTimer(
         scheduleDeadline,
         Math.min(remaining, MAX_TIMER_DELAY_MS),
       );
@@ -174,7 +178,7 @@ function createPromptCancellation(
     cleanup: () => {
       abortSignal.removeEventListener("abort", rejectOnAbort);
       outerSignal?.removeEventListener("abort", abortFromOuter);
-      if (deadlineTimer !== undefined) ClearTimeout(deadlineTimer);
+      if (deadlineTimer !== undefined) runtime.clearTimer(deadlineTimer);
       rejectCancellation = undefined;
     },
   };
@@ -213,4 +217,38 @@ function interpolateVariables(
       return value != null ? sanitizeVariableValue(StringConstructor(value)) : match;
     },
   ]) as string;
+}
+
+/** Clock and timer dependencies used to enforce prompt render deadlines. */
+export interface PromptDeadlineRuntime {
+  now(): number;
+  setTimer(
+    callback: () => void,
+    delayMs: number,
+  ): ReturnType<typeof setTimeout>;
+  clearTimer(handle: ReturnType<typeof setTimeout>): void;
+}
+
+const defaultPromptDeadlineRuntime: PromptDeadlineRuntime = {
+  now: () => DateNow(),
+  setTimer: (callback, delayMs) => SetTimeout(callback, delayMs),
+  clearTimer: (handle) => ClearTimeout(handle),
+};
+
+let promptDeadlineRuntimeOverride: PromptDeadlineRuntime | undefined;
+
+function promptDeadlineRuntime(): PromptDeadlineRuntime {
+  return promptDeadlineRuntimeOverride ?? defaultPromptDeadlineRuntime;
+}
+
+/** Inject a controlled clock and timers so tests can cross a deadline without real waiting. */
+export function setPromptDeadlineRuntimeForTests(
+  runtime: PromptDeadlineRuntime,
+): void {
+  promptDeadlineRuntimeOverride = runtime;
+}
+
+/** Restore the real clock and timers captured at module load. */
+export function resetPromptDeadlineRuntimeForTests(): void {
+  promptDeadlineRuntimeOverride = undefined;
 }

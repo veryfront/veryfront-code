@@ -8,7 +8,16 @@ import { getHeapStats } from "#veryfront/utils/memory/index.ts";
 import { serverLogger, timeAsync } from "#veryfront/utils";
 import { computeSSRETag } from "../../handlers/request/ssr/etag-handler.ts";
 import type { SSRFailureOutcome } from "#veryfront/rendering/ssr-outcome.ts";
-import { findSSRControlOutcome, resolveSSRFailure } from "#veryfront/rendering/ssr-outcome.ts";
+import {
+  findSSRControlOutcome,
+  isMissingProjectSourceError,
+  resolveSSRFailure,
+} from "#veryfront/rendering/ssr-outcome.ts";
+import { REDIRECT_DESTINATION_NOT_ALLOWED } from "#veryfront/errors/index.ts";
+import {
+  isRedirectDestinationAllowed,
+  type RedirectPolicy,
+} from "#veryfront/utils/redirect-policy.ts";
 import { getColorSchemeFromRequest } from "#veryfront/security/http/client-hints.ts";
 import {
   endRenderSession,
@@ -17,6 +26,9 @@ import {
   startRenderSession,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
 import { getErrorCollector, profilePhase } from "#veryfront/observability";
+// Not on the `#veryfront/observability` barrel: that surface is frozen by an
+// export-snapshot test, and the sibling in-process recorders sit here too.
+import { recordSSRSourceUnavailable } from "#veryfront/observability/simple-metrics/index.ts";
 import { captureApplicationError } from "#veryfront/observability/application-errors.ts";
 import { ErrorOverlay, parseErrorLocation } from "../../dev-server/error-overlay/index.ts";
 import { ErrorPages } from "../../utils/error-html.ts";
@@ -29,6 +41,13 @@ import {
 } from "#veryfront/utils/constants/index.ts";
 import type { CacheRepository } from "#veryfront/repositories/types.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
+import { isHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
+import type { DataResponseMetadata, ResponseCookie } from "#veryfront/data/types.ts";
+import {
+  getAttachedDataResponseMetadata,
+  mergeDataResponseMetadata,
+  unwrapDataResponseMetadataError,
+} from "#veryfront/data/response-metadata.ts";
 
 const logger = serverLogger.component("ssr-service");
 
@@ -61,6 +80,11 @@ const defaultRendererProvider: RendererProvider = {
 export interface SSRRenderResult {
   status: number;
   html?: string;
+  /**
+   * Marks a complete HTML document produced solely by framework-owned error
+   * templates. Application render output must leave this unset.
+   */
+  htmlProvenance?: "framework";
   stream?: ReadableStream<Uint8Array>;
   isStreaming: boolean;
   etag?: string;
@@ -76,6 +100,10 @@ export interface SSRRenderResult {
   slug: string;
   /** Dependency snapshot identity rendered into this document. */
   dependencyPinningCacheKey?: string;
+  /** Validated application headers appended after framework-owned headers. */
+  headers?: Record<string, string>;
+  /** Distinct cookies emitted as separate Set-Cookie response fields. */
+  cookies?: ResponseCookie[];
 }
 
 export interface SSRRenderOptions {
@@ -111,13 +139,23 @@ export interface MemoryStatus {
 function buildRedirectResult(
   redirect: Extract<SSRFailureOutcome, { kind: "redirect" }>,
   slug: string,
+  requestUrl: string | null,
+  policy: RedirectPolicy | null | undefined,
 ): SSRRenderResult {
+  if (!isRedirectDestinationAllowed(redirect.location, requestUrl, policy)) {
+    throw REDIRECT_DESTINATION_NOT_ALLOWED.create({
+      detail: "The redirect destination is not allowed by the project redirect policy",
+    });
+  }
+
   return {
     status: redirect.permanent ? 301 : HTTP_REDIRECT_FOUND,
     isStreaming: false,
     cacheStrategy: "no-cache",
     failure: redirect,
     slug,
+    ...(redirect.headers ? { headers: redirect.headers } : {}),
+    ...(redirect.cookies ? { cookies: redirect.cookies } : {}),
   };
 }
 
@@ -125,14 +163,20 @@ function buildRedirectResult(
  * Build the 404 result shared by the thrown-control-result and file-not-found
  * paths. `slug` is escaped by `ErrorPages.notFound`.
  */
-function buildNotFoundResult(slug: string): SSRRenderResult {
+function buildNotFoundResult(
+  notFound: Extract<SSRFailureOutcome, { kind: "not-found" }>,
+  slug: string,
+): SSRRenderResult {
   return {
     status: HTTP_NOT_FOUND,
     html: ErrorPages.notFound(slug || "/"),
+    htmlProvenance: "framework",
     isStreaming: false,
     cacheStrategy: "no-cache",
-    failure: { kind: "not-found" },
+    failure: notFound,
     slug,
+    ...(notFound.headers ? { headers: notFound.headers } : {}),
+    ...(notFound.cookies ? { cookies: notFound.cookies } : {}),
   };
 }
 
@@ -179,12 +223,31 @@ export class SSRService implements SSRServiceLike {
   }
 
   async getRenderer(ctx: HandlerContext): Promise<RendererAdapter> {
+    if (!isHostProjectCodeExecutionAllowed(ctx)) {
+      throw new Error(
+        "Project renderers without host execution capability require generation-owned isolated renderer admission",
+      );
+    }
     return this.rendererProvider.getRenderer(ctx);
   }
 
   async renderPage(ctx: HandlerContext, options: SSRRenderOptions): Promise<SSRRenderResult> {
     const { request, url, slug, nonce, studioEmbed, projectId, pageId, noHmr, useNoCache } =
       options;
+
+    // Project source without an explicit host capability is not trusted to
+    // execute in the server process. Dedicated single-project runtimes may
+    // grant the capability; all other projects require isolated admission.
+    if (!isHostProjectCodeExecutionAllowed(ctx)) {
+      return {
+        status: HTTP_UNAVAILABLE,
+        html: ErrorPages.serverError("Isolated rendering is temporarily unavailable."),
+        htmlProvenance: "framework",
+        isStreaming: false,
+        cacheStrategy: "no-cache",
+        slug,
+      };
+    }
 
     const renderSessionId = `${ctx.projectSlug || "default"}-${slug || "index"}-${Date.now()}`;
     const preRenderHeap = getHeapStats();
@@ -277,8 +340,15 @@ export class SSRService implements SSRServiceLike {
       }
 
       const isStreaming = !!result.stream && !result.html;
-      const cacheStrategy = useNoCache ? "no-cache" : "short";
-      const etag = isStreaming ? undefined : computeSSRETag(result.ssrHash, result.html);
+      const responseMetadata: DataResponseMetadata = {
+        ...(result.headers ? { headers: result.headers } : {}),
+        ...(result.cookies ? { cookies: result.cookies } : {}),
+      };
+      const setsCookies = (responseMetadata.cookies?.length ?? 0) > 0;
+      const cacheStrategy = useNoCache || setsCookies ? "no-cache" : "short";
+      const etag = isStreaming || setsCookies
+        ? undefined
+        : computeSSRETag(result.ssrHash, result.html);
 
       if (isStreaming) {
         const allReady = getAllReady(result.stream);
@@ -287,7 +357,14 @@ export class SSRService implements SSRServiceLike {
             await allReady;
           } catch (error) {
             if (findSSRControlOutcome(error)) {
-              return this.handleRenderError(error, ctx, slug, request, nonce);
+              return this.handleRenderError(
+                error,
+                ctx,
+                slug,
+                request,
+                nonce,
+                responseMetadata,
+              );
             }
           }
         }
@@ -302,6 +379,7 @@ export class SSRService implements SSRServiceLike {
         cacheStrategy,
         slug,
         dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+        ...responseMetadata,
       };
     } catch (error) {
       if (hasRenderSession(renderSessionId)) {
@@ -317,8 +395,20 @@ export class SSRService implements SSRServiceLike {
     slug: string,
     request: Request,
     nonce?: string,
+    inheritedResponseMetadata: DataResponseMetadata = {},
   ): SSRRenderResult {
-    const outcome = resolveSSRFailure(error, { isLocalProject: Boolean(ctx.isLocalProject) });
+    const attachedResponseMetadata = error instanceof Error
+      ? getAttachedDataResponseMetadata(error)
+      : {};
+    const responseMetadata = mergeDataResponseMetadata([
+      inheritedResponseMetadata,
+      attachedResponseMetadata,
+    ]);
+    const classifiedError = error instanceof Error ? unwrapDataResponseMetadataError(error) : error;
+    const outcome = resolveSSRFailure(classifiedError, {
+      isLocalProject: Boolean(ctx.isLocalProject),
+    });
+    const requestLocalMetadata = classifiedError === error ? {} : attachedResponseMetadata;
 
     switch (outcome.kind) {
       case "app-router-error-boundary":
@@ -333,18 +423,61 @@ export class SSRService implements SSRServiceLike {
           cacheStrategy: "no-cache",
           failure: outcome,
           slug,
+          ...responseMetadata,
         };
       case "redirect":
-        logger.debug("SSR redirect", {
-          slug,
-          destination: outcome.location,
-          permanent: outcome.permanent,
-          projectSlug: ctx.projectSlug,
-        });
-        return buildRedirectResult(outcome, slug);
+        try {
+          const result = buildRedirectResult(
+            {
+              ...outcome,
+              ...mergeDataResponseMetadata([
+                inheritedResponseMetadata,
+                requestLocalMetadata,
+                outcome,
+              ]),
+            },
+            slug,
+            ctx.requestOrigin === undefined ? request.url : ctx.requestOrigin,
+            ctx.securityConfig?.redirects,
+          );
+          logger.debug("SSR redirect", {
+            slug,
+            permanent: outcome.permanent,
+            projectSlug: ctx.projectSlug,
+          });
+          return result;
+        } catch (error) {
+          return this.handleRenderError(
+            error,
+            ctx,
+            slug,
+            request,
+            nonce,
+          );
+        }
       case "not-found":
-        logger.debug("SSR notFound", { slug });
-        return buildNotFoundResult(slug);
+        if (isMissingProjectSourceError(error)) {
+          // This 404 used to be a 500, and the error report it raised was the
+          // only thing that made an unreadable release visible. Reclassifying it
+          // must not make it silent, so count it and say so once per request at
+          // a level Loki can alert on -- a routine deletion moves this a bounded
+          // number of times, an API-side regression moves it continuously.
+          recordSSRSourceUnavailable();
+          logger.warn("Project source unavailable; served 404", {
+            slug,
+            projectSlug: ctx.projectSlug,
+          });
+        } else {
+          logger.debug("SSR notFound", { slug });
+        }
+        return buildNotFoundResult({
+          ...outcome,
+          ...mergeDataResponseMetadata([
+            inheritedResponseMetadata,
+            requestLocalMetadata,
+            outcome,
+          ]),
+        }, slug);
       case "undeployed":
         logger.debug("Project not deployed", {
           projectSlug: ctx.projectSlug,
@@ -353,19 +486,23 @@ export class SSRService implements SSRServiceLike {
         return {
           status: HTTP_NOT_FOUND,
           html: ErrorPages.undeployed(),
+          htmlProvenance: "framework",
           isStreaming: false,
           cacheStrategy: "no-cache",
           failure: outcome,
           slug,
+          ...responseMetadata,
         };
       case "overloaded":
         return {
           status: outcome.status,
           html: ErrorPages.memoryPressure(),
+          htmlProvenance: "framework",
           isStreaming: false,
           cacheStrategy: "no-cache",
           failure: outcome,
           slug,
+          ...responseMetadata,
         };
       case "runtime":
         captureApplicationError(outcome.error, {
@@ -406,6 +543,7 @@ export class SSRService implements SSRServiceLike {
             cacheStrategy: "no-cache",
             failure: outcome,
             slug,
+            ...responseMetadata,
           };
         }
       case "server-error":
@@ -424,10 +562,12 @@ export class SSRService implements SSRServiceLike {
         return {
           status: HTTP_INTERNAL_SERVER_ERROR,
           html: ErrorPages.serverError(),
+          htmlProvenance: "framework",
           isStreaming: false,
           cacheStrategy: "no-cache",
           failure: outcome,
           slug,
+          ...responseMetadata,
         };
     }
   }
@@ -436,6 +576,7 @@ export class SSRService implements SSRServiceLike {
     return {
       status: HTTP_UNAVAILABLE,
       html: ErrorPages.memoryPressure(),
+      htmlProvenance: "framework",
       isStreaming: false,
       cacheStrategy: "no-cache",
       slug,

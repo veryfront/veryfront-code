@@ -1,9 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import {
+  ControlPlaneBranchBindingError,
   isAuthenticInternalControlPlaneCandidate,
   isVerifiedInternalControlPlaneRequest,
+  resolveVerifiedControlPlaneBranchBinding,
 } from "./control-plane-signature.ts";
 
 const PUBLIC_KEY_ENV = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
@@ -17,6 +19,11 @@ function base64url(data: string): string {
 
 function base64urlBytes(bytes: Uint8Array): string {
   return base64url(String.fromCharCode(...bytes));
+}
+
+async function sha256Base64url(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(value));
+  return base64urlBytes(new Uint8Array(digest));
 }
 
 function encodePem(label: string, der: ArrayBuffer): string {
@@ -38,6 +45,7 @@ async function mintJws(
     alg: string;
     requestMethod: string;
     requestPath: string;
+    body: string;
     signingKeyPair: CryptoKeyPair;
     advertisedKeyPair: CryptoKeyPair;
   }> = {},
@@ -62,7 +70,7 @@ async function mintJws(
   const claims = kind === "dispatch" ? { ...base, platform: "slack", body_sha256: "n/a" } : {
     ...base,
     surface: "channels",
-    request_hash: "n/a",
+    request_hash: await sha256Base64url(overrides.body ?? ""),
     request_method: overrides.requestMethod ?? "POST",
     request_path: overrides.requestPath ??
       "/api/control-plane/runs/r_1/stream",
@@ -83,11 +91,34 @@ function requestWith(
   headers: Record<string, string>,
   url = CONTROL_PLANE_PATH,
   method = "POST",
+  body?: string,
 ): {
   req: Request;
   url: URL;
 } {
-  return { req: new Request(url, { method, headers }), url: new URL(url) };
+  return { req: new Request(url, { method, headers, body }), url: new URL(url) };
+}
+
+function createNestedTargetBody(
+  project: Record<string, unknown>,
+  agentSource: Record<string, unknown>,
+): string {
+  return JSON.stringify({ run: { project }, agentSource });
+}
+
+async function resolveNestedTarget(body: string) {
+  const { jws, publicKeyPem } = await mintJws("control-plane", { body });
+  Deno.env.set(PUBLIC_KEY_ENV, publicKeyPem);
+  const { req, url } = requestWith(
+    { "x-token": "t", "x-veryfront-control-plane-jws": jws },
+    CONTROL_PLANE_PATH,
+    "POST",
+    body,
+  );
+  return await resolveVerifiedControlPlaneBranchBinding(req, url, {
+    audience: "protected",
+    expectedProjectId: "proj-1",
+  });
 }
 
 function verifyRequest(
@@ -112,6 +143,65 @@ describe("proxy/control-plane-signature", () => {
   afterEach(() => {
     if (previousKey === undefined) Deno.env.delete(PUBLIC_KEY_ENV);
     else Deno.env.set(PUBLIC_KEY_ENV, previousKey);
+  });
+
+  it("defaults an omitted nested runtime target kind to the main branch", async () => {
+    assertEquals(
+      await resolveNestedTarget(
+        createNestedTargetBody({}, { type: "branch", branch: "trunk" }),
+      ),
+      { defaultBranchName: "trunk" },
+    );
+  });
+
+  it("validates nested environment target identity", async () => {
+    assertEquals(
+      await resolveNestedTarget(
+        createNestedTargetBody(
+          {
+            runtimeTargetKind: "environment",
+            runtimeTargetEnvironmentId: "10000000-1000-4000-8000-100000000006",
+          },
+          { type: "environment", environmentName: "preview", releaseId: "release-1" },
+        ),
+      ),
+      {},
+    );
+  });
+
+  it("rejects mismatched nested runtime targets", async () => {
+    const cases = [
+      createNestedTargetBody(
+        {
+          runtimeTargetKind: "preview_branch",
+          runtimeTargetBranchId: "10000000-1000-4000-8000-100000000006",
+          runtimeTargetEnvironmentId: "10000000-1000-4000-8000-100000000007",
+        },
+        { type: "branch", branch: "feature" },
+      ),
+      createNestedTargetBody(
+        { runtimeTargetKind: "environment" },
+        { type: "environment", environmentName: "preview", releaseId: "release-1" },
+      ),
+      createNestedTargetBody(
+        { runtimeTargetEnvironmentId: "10000000-1000-4000-8000-100000000006" },
+        { type: "branch", branch: "trunk" },
+      ),
+      createNestedTargetBody(
+        {
+          runtimeTargetKind: "preview_branch",
+          runtimeTargetBranchId: "10000000-1000-4000-8000-100000000006",
+        },
+        { type: "release", releaseId: "release-1" },
+      ),
+    ];
+
+    for (const body of cases) {
+      await assertRejects(
+        () => resolveNestedTarget(body),
+        ControlPlaneBranchBindingError,
+      );
+    }
   });
 
   it("returns false for non-control-plane paths", async () => {

@@ -7,7 +7,11 @@
 import { type AgentConfig, type RuntimeReasoningOption } from "../types.ts";
 import { type ModelRuntime, resolveModel } from "#veryfront/provider";
 import { resolveProviderOptionsWithDefaults } from "./default-provider-options.ts";
-import { resolveConfiguredAgentModel, resolveRuntimeModel } from "./model-resolution.ts";
+import {
+  resolveConfiguredAgentModel,
+  resolveModelProviderOptionKey,
+  resolveRuntimeModel,
+} from "./model-resolution.ts";
 import {
   resolveVeryfrontCloudModelThinking,
   resolveVeryfrontCloudReasoningOption,
@@ -19,6 +23,7 @@ export type ResolvedModelTransport = {
   requestedModel: string;
   resolvedModelString: string;
   languageModel: ModelRuntime;
+  providerOptionKey?: string;
   headers?: HeadersInit;
   providerOptions?: Record<string, unknown>;
   reasoning?: RuntimeReasoningOption;
@@ -70,11 +75,14 @@ export async function resolveAgentModelTransport(
     resolvedModelString,
     transport?.providerOptions,
   );
+  const languageModel = transport?.model ?? resolveModel(resolvedModelString);
+  const providerOptionKey = resolveModelProviderOptionKey(resolvedModelString, languageModel);
 
   return {
     requestedModel,
     resolvedModelString,
-    languageModel: transport?.model ?? resolveModel(resolvedModelString),
+    languageModel,
+    ...(providerOptionKey ? { providerOptionKey } : {}),
     headers: transport?.headers,
     providerOptions,
     reasoning: resolveReasoningWithDefaults(

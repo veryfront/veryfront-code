@@ -1,4 +1,4 @@
-/** Explicit `ws` implementation of Veryfront's Node WebSocket contract. */
+/** Default `ws` implementation of Veryfront's Node WebSocket contract. */
 
 import type { ExtensionFactory } from "veryfront/extensions";
 import {
@@ -13,7 +13,7 @@ export const WsNodeWebSocketServerProvider = createNodeWebSocketServerProvider(
   (options) => captureNodeWebSocketServer(new WebSocketServer(options)),
 );
 
-/** Create the explicitly selected Node.js `ws` transport extension. */
+/** Create the standard Node.js `ws` transport extension. */
 export const extNodeWebSocketWs: ExtensionFactory = () => {
   let active = false;
   return {

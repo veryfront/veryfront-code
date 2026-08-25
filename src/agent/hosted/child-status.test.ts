@@ -110,6 +110,76 @@ describe("agent/hosted-child-status", () => {
     assertEquals(calls, 0);
   });
 
+  it("reports the observed terminal status once after polling through active states", async () => {
+    let pollAttempts = 0;
+    let exhaustedCalls = 0;
+    const terminalErrors: HostedChildTerminalStateError[] = [];
+    const projection = (status: string) =>
+      new Response(
+        JSON.stringify({
+          runId: "run_123",
+          conversationId: "11111111-1111-4111-a111-111111111111",
+          messageId: "22222222-2222-4222-a222-222222222222",
+          latestEventId: 1,
+          latestExternalEventSequence: 0,
+          status,
+          projectId: null,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+
+    await withMockFetch(
+      () => {
+        pollAttempts++;
+        if (pollAttempts === 1) {
+          return Promise.resolve(projection("running"));
+        }
+        if (pollAttempts === 2) {
+          return Promise.reject(new Error("blip"));
+        }
+        return Promise.resolve(projection("cancelled"));
+      },
+      () =>
+        monitorHostedChildRunStatus({
+          authToken: "token",
+          apiUrl: "https://api.example.com",
+          identifiers: {
+            childConversationId: "11111111-1111-4111-a111-111111111111",
+            childRunId: "run_123",
+            childMessageId: "22222222-2222-4222-a222-222222222222",
+            latestEventId: 1,
+            latestExternalEventSequence: 0,
+          },
+          pollIntervalMs: 0,
+          onTerminal: (error) => {
+            terminalErrors.push(error);
+          },
+          onMonitoringExhausted: () => {
+            exhaustedCalls++;
+          },
+        }),
+    );
+
+    assertEquals(terminalErrors.length, 1, "terminal state must be reported exactly once");
+    assertInstanceOf(terminalErrors[0], HostedChildTerminalStateError);
+    assertEquals(
+      terminalErrors[0].status,
+      "cancelled",
+      "the observed terminal status must be forwarded",
+    );
+    assertEquals(
+      terminalErrors[0].identifiers.childRunId,
+      "run_123",
+      "identifiers must be forwarded",
+    );
+    assertEquals(
+      exhaustedCalls,
+      0,
+      "a transient failure between successful polls must not exhaust the monitor",
+    );
+    assertEquals(pollAttempts, 3, "polling must stop after the terminal projection");
+  });
+
   it("reports polling exhaustion separately from an observed terminal state", async () => {
     let pollAttempts = 0;
     let terminalCalls = 0;

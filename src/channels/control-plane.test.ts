@@ -1,9 +1,11 @@
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
+import { createEmptyDiscoveryResult } from "#veryfront/discovery";
 import "#veryfront/schemas/_test-setup.ts";
 import type { Agent, SuggestionsConfig } from "#veryfront/agent";
 import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
+import { registerSkill } from "#veryfront/skill/registry.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import {
@@ -13,6 +15,7 @@ import {
   resolveAgentSkills,
   RuntimeAgentListResponseSchema,
   verifyControlPlaneJws,
+  verifyControlPlaneJwsRequestSignature,
   verifyControlPlaneJwsSignature,
 } from "./control-plane.ts";
 
@@ -90,7 +93,6 @@ function createHandlerContext(): HandlerContext {
       fs: {},
     },
     securityConfig: null,
-    cspUserHeader: null,
     projectSlug: "demo-project",
     projectId: "proj-1",
     isLocalProject: false,
@@ -185,6 +187,34 @@ describe("channels/control-plane", () => {
       assertEquals(claims.surface, "studio");
       assertEquals(claims.project_id, "proj-1");
       assertEquals(claims.request_hash, await sha256Base64url(body));
+    });
+
+    it("rejects a control-plane signature minted for another surface", async () => {
+      const body = JSON.stringify({
+        requestId: "agents-1",
+        projectId: "proj-1",
+        surface: "channels",
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        surface: "channels",
+      });
+
+      await assertRejects(
+        () =>
+          verifyControlPlaneJws(jws, body, {
+            audience: "demo-project",
+            expectedProjectId: "proj-1",
+            expectedSubject: "agents-1",
+            expectedSurface: "studio",
+            publicKeyPem,
+            maxAgeSeconds: 60,
+            requestMethod: "POST",
+            requestPath: CONTROL_PLANE_AGENTS_LIST_PATH,
+          }),
+        Error,
+        "surface mismatch",
+        "an envelope minted for another surface must not satisfy a studio-scoped verification",
+      );
     });
 
     it("rejects a control-plane signature when the body hash does not match", async () => {
@@ -282,6 +312,42 @@ describe("channels/control-plane", () => {
           requestMethod: "POST",
           requestPath: "/api/control-plane/./agents/list",
         })
+      );
+
+      const nonCanonicalMethod = await createControlPlaneSignature(body, {
+        requestMethod: "post",
+      });
+      await assertRejects(
+        () =>
+          verifyControlPlaneJws(nonCanonicalMethod.jws, body, {
+            audience: "demo-project",
+            expectedProjectId: "proj-1",
+            publicKeyPem: nonCanonicalMethod.publicKeyPem,
+            maxAgeSeconds: 60,
+            requestMethod: "post",
+            requestPath: CONTROL_PLANE_AGENTS_LIST_PATH,
+          }),
+        Error,
+        "canonical HTTP method",
+        "a lowercase signed method must be rejected as non-canonical, not merely mismatched",
+      );
+
+      const nonCanonicalPath = await createControlPlaneSignature(body, {
+        requestPath: "/api/control-plane/./agents/list",
+      });
+      await assertRejects(
+        () =>
+          verifyControlPlaneJws(nonCanonicalPath.jws, body, {
+            audience: "demo-project",
+            expectedProjectId: "proj-1",
+            publicKeyPem: nonCanonicalPath.publicKeyPem,
+            maxAgeSeconds: 60,
+            requestMethod: "POST",
+            requestPath: "/api/control-plane/./agents/list",
+          }),
+        Error,
+        "canonical URL pathname",
+        "a dot-segment signed path must be rejected as non-canonical",
       );
 
       let bindingGetterCalls = 0;
@@ -403,6 +469,28 @@ describe("channels/control-plane", () => {
         false,
       );
     });
+
+    it("binds the proxy-safe verifier to the exact request body", async () => {
+      const body = JSON.stringify({ runtimeTargetKind: "main_branch" });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body);
+      const options = {
+        audience: "demo-project",
+        expectedProjectId: "proj-1",
+        publicKeyPem,
+        maxAgeSeconds: 60,
+        requestMethod: "POST",
+        requestPath: CONTROL_PLANE_AGENTS_LIST_PATH,
+      };
+
+      assertEquals(
+        await verifyControlPlaneJwsRequestSignature(jws, body, options),
+        true,
+      );
+      assertEquals(
+        await verifyControlPlaneJwsRequestSignature(jws, `${body} `, options),
+        false,
+      );
+    });
   });
 
   describe("listRuntimeAgents", () => {
@@ -412,6 +500,7 @@ describe("channels/control-plane", () => {
       const response = await listRuntimeAgents(createHandlerContext(), {
         ensureProjectDiscovery: async () => {
           discoveryCalls += 1;
+          return createEmptyDiscoveryResult();
         },
         getAgent: (id) => {
           if (id === "assistant-b") {
@@ -467,7 +556,7 @@ describe("channels/control-plane", () => {
 
     it("filters missing agents and falls back to the runtime id when config metadata is absent", async () => {
       const response = await listRuntimeAgents(createHandlerContext(), {
-        ensureProjectDiscovery: async () => {},
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) =>
           id === "assistant-z"
             ? {
@@ -498,7 +587,7 @@ describe("channels/control-plane", () => {
 
     it("uses the registry id for discovered agents whose factory id was auto-generated", async () => {
       const response = await listRuntimeAgents(createHandlerContext(), {
-        ensureProjectDiscovery: async () => {},
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) =>
           id === "researcher"
             ? {
@@ -538,7 +627,7 @@ describe("channels/control-plane", () => {
       });
 
       const response = await listRuntimeAgents(createHandlerContext(), {
-        ensureProjectDiscovery: async () => {},
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) => id === "support" ? markdownAgent : undefined,
         getAllAgentIds: () => ["support"],
       });
@@ -559,7 +648,7 @@ describe("channels/control-plane", () => {
     });
 
     it("includes resolved skill metadata for agents with an omitted selector", async () => {
-      skillRegistry.clearAll();
+      skillRegistryInternal.clearAll();
       registerSkill("writer-helper", {
         id: "writer-helper",
         metadata: {
@@ -571,7 +660,7 @@ describe("channels/control-plane", () => {
 
       try {
         const response = await listRuntimeAgents(createHandlerContext(), {
-          ensureProjectDiscovery: async () => {},
+          ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
           getAgent: (id) => id === "assistant" ? createAgent({ id }) : undefined,
           getAllAgentIds: () => ["assistant"],
         });
@@ -594,13 +683,13 @@ describe("channels/control-plane", () => {
           }),
         );
       } finally {
-        skillRegistry.clearAll();
+        skillRegistryInternal.clearAll();
       }
     });
 
     it("includes typed suggestions when an agent defines them", async () => {
       const response = await listRuntimeAgents(createHandlerContext(), {
-        ensureProjectDiscovery: async () => {},
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) =>
           id === "assistant"
             ? createAgent({
@@ -663,7 +752,7 @@ describe("channels/control-plane", () => {
 
     it("normalizes flat Studio suggestions for runtime clients", async () => {
       const response = await listRuntimeAgents(createHandlerContext(), {
-        ensureProjectDiscovery: async () => {},
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) =>
           id === "assistant"
             ? createAgent({
@@ -709,7 +798,7 @@ describe("channels/control-plane", () => {
     it("serializes a source avatarUrl as control-plane avatar_url", async () => {
       const avatarUrl = "https://cdn.example.com/agents/support.svg";
       const response = await listRuntimeAgents(createHandlerContext(), {
-        ensureProjectDiscovery: async () => {},
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) =>
           id === "assistant"
             ? createAgent({
@@ -739,7 +828,7 @@ describe("channels/control-plane", () => {
 
     it("omits invalid suggestions instead of failing the whole agent list", async () => {
       const response = await listRuntimeAgents(createHandlerContext(), {
-        ensureProjectDiscovery: async () => {},
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) =>
           id === "assistant"
             ? {
@@ -772,7 +861,7 @@ describe("channels/control-plane", () => {
 
     it("omits legacy suggestion payloads with unsupported fields", async () => {
       const response = await listRuntimeAgents(createHandlerContext(), {
-        ensureProjectDiscovery: async () => {},
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) =>
           id === "assistant"
             ? {
@@ -819,8 +908,8 @@ describe("channels/control-plane", () => {
   });
 });
 
-Deno.test("resolveAgentSkills includes the agent's own skills and excludes others'", () => {
-  skillRegistry.clearAll();
+it("resolveAgentSkills includes the agent's own skills and excludes others'", () => {
+  skillRegistryInternal.clearAll();
   try {
     registerSkill("global-howto", {
       id: "global-howto",
@@ -847,8 +936,11 @@ Deno.test("resolveAgentSkills includes the agent's own skills and excludes other
     assertEquals(resolveAgentSkills(defaultWriter).map((skill) => skill.id), ["global-howto"]);
 
     const emptyWriter = { id: "writer", config: { skills: [] } } as unknown as Agent;
-    assertEquals(resolveAgentSkills(emptyWriter), []);
+    assertEquals(resolveAgentSkills(emptyWriter), [], "skills: [] advertises no skills");
+
+    const disabledWriter = { id: "writer", config: { skills: false } } as unknown as Agent;
+    assertEquals(resolveAgentSkills(disabledWriter), [], "skills: false advertises no skills");
   } finally {
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
   }
 });

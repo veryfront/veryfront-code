@@ -36,7 +36,26 @@ class FakeDistributedCache implements CacheBackend {
   }
 }
 
-describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, () => {
+describe("SSRCacheManager", () => {
+  it("separates hosted preview and production transform cache identities", () => {
+    const baseOptions = {
+      projectDir: "/project",
+      projectId: "project-a",
+      contentSourceId: "shared-content-source",
+      adapter: denoAdapter,
+      dev: false,
+      reactVersion: "19.1.1",
+    };
+    const preview = new SSRCacheManager({ ...baseOptions, mode: "preview" });
+    const production = new SSRCacheManager({ ...baseOptions, mode: "production" });
+
+    assertNotEquals(preview.getConfigHash(), production.getConfigHash());
+    assertNotEquals(
+      preview.getCacheKey("/project/pages/index.tsx"),
+      production.getCacheKey("/project/pages/index.tsx"),
+    );
+  });
+
   it("separates SSR module cache identity by API base URL", async () => {
     const projectDir = await makeTempDir({ prefix: "vf-ssr-cache-manager-" });
     const baseOptions = {
@@ -62,6 +81,43 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
       assertNotEquals(
         registryA.getCacheKey("/project/pages/index.tsx"),
         registryB.getCacheKey("/project/pages/index.tsx"),
+      );
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("separates SSR module cache identity by server external packages", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-cache-manager-" });
+    const baseOptions = {
+      projectDir,
+      projectId: "project-a",
+      contentSourceId: "preview-main",
+      adapter: denoAdapter,
+      dev: true,
+    };
+
+    try {
+      const noExternals = new SSRCacheManager(baseOptions);
+      const externalReact = new SSRCacheManager({
+        ...baseOptions,
+        serverExternalPackages: ["react"],
+      });
+      const externalReactDom = new SSRCacheManager({
+        ...baseOptions,
+        serverExternalPackages: ["react", "react-dom"],
+      });
+      const reorderedExternals = new SSRCacheManager({
+        ...baseOptions,
+        serverExternalPackages: ["react-dom", "react"],
+      });
+
+      assertNotEquals(noExternals.getConfigHash(), externalReact.getConfigHash());
+      assertNotEquals(externalReact.getConfigHash(), externalReactDom.getConfigHash());
+      assertEquals(externalReactDom.getConfigHash(), reorderedExternals.getConfigHash());
+      assertNotEquals(
+        externalReact.getCacheKey("/project/pages/index.tsx"),
+        externalReactDom.getCacheKey("/project/pages/index.tsx"),
       );
     } finally {
       await remove(projectDir, { recursive: true });
@@ -124,6 +180,88 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
       __injectCachesForTests(null);
       await remove(vfmodDir, { recursive: true }).catch(() => {});
       await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects redis cache entries holding esm.sh/_vf_modules URLs", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-cache-manager-" });
+    const cacheManager = new SSRCacheManager({
+      projectDir,
+      projectId: `project-${crypto.randomUUID()}`,
+      contentSourceId: `preview-${crypto.randomUUID()}`,
+      adapter: denoAdapter,
+      dev: true,
+    });
+    const poisonedCode = [
+      `import x from "https://esm.sh/_vf_modules/react@18.3.1/index.js";`,
+      `export default x;`,
+    ].join("\n");
+
+    try {
+      assertEquals(
+        await cacheManager.validateCachedCode(
+          poisonedCode,
+          join(projectDir, "pages", "index.tsx"),
+          "redis-cache",
+          {
+            checkLocalPaths: false,
+            checkInvalidEsmShPath: true,
+          },
+        ),
+        false,
+        "redis entries holding esm.sh/_vf_modules URLs must be re-transformed",
+      );
+
+      assertEquals(
+        await cacheManager.validateCachedCode(
+          poisonedCode,
+          join(projectDir, "pages", "index.tsx"),
+          "redis-cache",
+          {
+            checkLocalPaths: false,
+            checkInvalidEsmShPath: false,
+          },
+        ),
+        true,
+        "the esm.sh/_vf_modules check must be gated by checkInvalidEsmShPath",
+      );
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("classifies content sources as production or preview", () => {
+    const cases: Array<{ contentSourceId?: string; dev: boolean; expected: boolean }> = [
+      { contentSourceId: "preview-main", dev: false, expected: false },
+      { contentSourceId: "preview", dev: false, expected: false },
+      { contentSourceId: "preview-draft", dev: false, expected: false },
+      { contentSourceId: "preview-main", dev: true, expected: false },
+      { contentSourceId: "release-1", dev: true, expected: true },
+      { contentSourceId: "production", dev: true, expected: true },
+      { contentSourceId: "production-eu", dev: true, expected: true },
+      { contentSourceId: "prod-eu", dev: true, expected: true },
+      { contentSourceId: "local-main", dev: true, expected: false },
+      { contentSourceId: "local-main", dev: false, expected: true },
+      { contentSourceId: undefined, dev: true, expected: false },
+      { contentSourceId: undefined, dev: false, expected: true },
+    ];
+
+    for (const { contentSourceId, dev, expected } of cases) {
+      const cacheManager = new SSRCacheManager({
+        projectDir: "/project",
+        projectId: "project-a",
+        contentSourceId,
+        adapter: denoAdapter,
+        dev,
+      });
+
+      assertEquals(
+        cacheManager.isProductionContentSource(),
+        expected,
+        `contentSourceId ${contentSourceId ?? "(none)"} with dev=${dev} must classify as ${
+          expected ? "production" : "non-production"
+        }`,
+      );
     }
   });
 

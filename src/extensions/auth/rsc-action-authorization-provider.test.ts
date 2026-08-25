@@ -156,6 +156,33 @@ describe("extensions/auth/rsc-action-authorization-provider", () => {
     assertEquals(descriptorTraps, 0);
   });
 
+  it("rejects a Proxy authorize function", () => {
+    const { proxy } = Proxy.revocable(() => true, {});
+    assertThrows(
+      () => snapshotRscActionAuthorizationProvider({ authorize: proxy }),
+      TypeError,
+      "non-Proxy function",
+      "a revocable proxy authorizer must be rejected at capture",
+    );
+
+    let applyCalls = 0;
+    assertThrows(
+      () =>
+        snapshotRscActionAuthorizationProvider({
+          authorize: new Proxy(() => true, {
+            apply() {
+              applyCalls++;
+              return true;
+            },
+          }),
+        }),
+      TypeError,
+      "non-Proxy function",
+      "an apply-trap proxy authorizer must be rejected at capture",
+    );
+    assertEquals(applyCalls, 0, "capture must not invoke an extension-owned apply trap");
+  });
+
   it("rejects extra registration fields instead of retaining mutable policy", () => {
     assertThrows(
       () =>

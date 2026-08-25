@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  containsPathControlCharacters,
   extractParamName,
   extractParamsFromPattern,
   extractRelativePath,
@@ -11,13 +12,37 @@ import {
   isDynamicRoute,
   isDynamicSegment,
   matchesPattern,
+  parseRouteParameterSegment,
   removeFileExtension,
 } from "./route-path-utils.ts";
 
 describe("route-path-utils", () => {
+  describe("containsPathControlCharacters", () => {
+    it("rejects C0, DEL, and C1 control characters", () => {
+      assertEquals(containsPathControlCharacters("a\u0000b"), true, "NUL must be rejected");
+      assertEquals(containsPathControlCharacters("a\u001fb"), true, "C0 controls must be rejected");
+      assertEquals(containsPathControlCharacters("a\u007fb"), true, "DEL must be rejected");
+      assertEquals(containsPathControlCharacters("a\u0080b"), true, "C1 start must be rejected");
+      assertEquals(containsPathControlCharacters("a\u009fb"), true, "C1 end must be rejected");
+    });
+
+    it("accepts printable paths", () => {
+      assertEquals(
+        containsPathControlCharacters("a-b_c.tsx"),
+        false,
+        "printable ASCII paths must pass",
+      );
+      assertEquals(
+        containsPathControlCharacters("café.tsx"),
+        false,
+        "printable non-ASCII paths must pass",
+      );
+    });
+  });
+
   describe("isDynamicSegment", () => {
     it("should detect standard dynamic segments", () => {
-      const segments = ["[id]", "[slug]", "[userId]"] as const;
+      const segments = ["[id]", "[slug]", "[userId]", "[version.number]", "[post-id]"] as const;
 
       for (const segment of segments) {
         assertEquals(isDynamicSegment(segment), true);
@@ -33,7 +58,7 @@ describe("route-path-utils", () => {
     });
 
     it("should detect optional catch-all segments", () => {
-      const segments = ["[[...slug]]", "[[...params]]"] as const;
+      const segments = ["[[...slug]]", "[[...params]]", "[[...slug]].tsx"] as const;
 
       for (const segment of segments) {
         assertEquals(isDynamicSegment(segment), true);
@@ -65,9 +90,75 @@ describe("route-path-utils", () => {
     });
   });
 
+  describe("parseRouteParameterSegment", () => {
+    it("parses supported dynamic segment forms and file suffixes", () => {
+      assertEquals(parseRouteParameterSegment("[id]"), {
+        name: "id",
+        kind: "dynamic",
+        suffix: "",
+      });
+      assertEquals(parseRouteParameterSegment("[version.number]"), {
+        name: "version.number",
+        kind: "dynamic",
+        suffix: "",
+      });
+      assertEquals(parseRouteParameterSegment("[...path].MDX"), {
+        name: "path",
+        kind: "catch-all",
+        suffix: ".MDX",
+      });
+      assertEquals(parseRouteParameterSegment("[[...slug]].tsx"), {
+        name: "slug",
+        kind: "optional-catch-all",
+        suffix: ".tsx",
+      });
+    });
+
+    it("rejects incomplete or unsafe parameter syntax", () => {
+      const invalid = [
+        "[]",
+        "[...].tsx",
+        "[[...slug].tsx",
+        "[a/b].tsx",
+        "[a\\b].tsx",
+        "[my param].tsx",
+        "[slug!].tsx",
+        "[.slug].tsx",
+        "[slug.].tsx",
+        "[slug..part].tsx",
+        "[id]tsx",
+        "[slug].draft",
+        "[slug].draft.mdx",
+        "[id]\n.tsx",
+      ] as const;
+
+      for (const segment of invalid) {
+        assertEquals(parseRouteParameterSegment(segment), null);
+      }
+    });
+
+    it("parses hyphenated parameter names", () => {
+      assertEquals(parseRouteParameterSegment("[post-id]"), {
+        name: "post-id",
+        kind: "dynamic",
+        suffix: "",
+      });
+      assertEquals(parseRouteParameterSegment("[post-id].tsx"), {
+        name: "post-id",
+        kind: "dynamic",
+        suffix: ".tsx",
+      });
+    });
+  });
+
   describe("isDynamicRoute", () => {
     it("should detect routes with dynamic segments", () => {
-      const routes = ["/users/[id]", "[...slug]", "/blog/[year]/[month]"] as const;
+      const routes = [
+        "/users/[id]",
+        "[...slug]",
+        "/blog/[year]/[month]",
+        "/api/[version.number]",
+      ] as const;
 
       for (const route of routes) {
         assertEquals(isDynamicRoute(route), true);
@@ -137,6 +228,7 @@ describe("route-path-utils", () => {
     it("should extract name from standard segments", () => {
       assertEquals(extractParamName("[id]"), "id");
       assertEquals(extractParamName("[slug]"), "slug");
+      assertEquals(extractParamName("[version.number]"), "version.number");
     });
 
     it("should extract name from catch-all segments", () => {
@@ -147,6 +239,7 @@ describe("route-path-utils", () => {
     it("should extract name from optional catch-all segments", () => {
       assertEquals(extractParamName("[[...slug]]"), "slug");
       assertEquals(extractParamName("[[...params]]"), "params");
+      assertEquals(extractParamName("[[...params]].tsx"), "params");
     });
   });
 
@@ -212,6 +305,54 @@ describe("route-path-utils", () => {
       assertEquals(result.params["slug"], ["getting-started", "intro"]);
     });
 
+    it("extracts optional catch-all params with zero remaining segments", () => {
+      const result = extractRouteParams(
+        "/app/docs/[[...slug]]/page.tsx",
+        "docs",
+      );
+
+      assertEquals(result.matched, true);
+      assertEquals(result.params["slug"], []);
+    });
+
+    it("does not match an optional catch-all whose static prefix differs", () => {
+      const result = extractRouteParams("/app/docs/[[...slug]]/page.tsx", "blog");
+
+      assertEquals(
+        result.matched,
+        false,
+        "optional catch-all must not match a different static prefix",
+      );
+      assertEquals(
+        Object.keys(result.params).length,
+        0,
+        "no slug param is produced for a non-matching prefix",
+      );
+    });
+
+    it("matches an optional catch-all behind a dynamic segment", () => {
+      const result = extractRouteParams("/app/docs/[lang]/[[...slug]]/page.tsx", "docs/en");
+
+      assertEquals(result.matched, true, "a dynamic segment satisfies the static prefix check");
+      assertEquals(result.params["lang"], "en", "the dynamic segment is still extracted");
+      assertEquals(result.params["slug"], [], "the optional catch-all resolves to zero segments");
+    });
+
+    it("preserves __proto__ route params without changing the params prototype", () => {
+      const dynamic = extractRouteParams("/app/users/[__proto__]/page.tsx", "users/123");
+      assertEquals(dynamic.matched, true);
+      assertEquals(dynamic.params["__proto__"], "123");
+      assertEquals(Object.getPrototypeOf(dynamic.params), null);
+
+      const catchAll = extractRouteParams(
+        "/app/docs/[...__proto__]/page.tsx",
+        "docs/a/b",
+      );
+      assertEquals(catchAll.matched, true);
+      assertEquals(catchAll.params["__proto__"], ["a", "b"]);
+      assertEquals(Object.getPrototypeOf(catchAll.params), null);
+    });
+
     it("extracts params from configured router roots", () => {
       const result = extractRouteParams(
         "/project/src/legacy-pages/users/[id].tsx",
@@ -251,6 +392,16 @@ describe("route-path-utils", () => {
   describe("extractParamsFromPattern", () => {
     it("should extract single param", () => {
       assertEquals(extractParamsFromPattern("[id]", "123"), { id: "123" });
+    });
+
+    it("preserves __proto__ pattern params without changing the params prototype", () => {
+      const dynamic = extractParamsFromPattern("[__proto__]", "123");
+      assertEquals(dynamic?.["__proto__"], "123");
+      assertEquals(Object.getPrototypeOf(dynamic), null);
+
+      const catchAll = extractParamsFromPattern("[...__proto__]", "a/b");
+      assertEquals(catchAll?.["__proto__"], ["a", "b"]);
+      assertEquals(Object.getPrototypeOf(catchAll), null);
     });
 
     it("should extract multiple params", () => {

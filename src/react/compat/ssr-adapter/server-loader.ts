@@ -47,6 +47,17 @@ export function __injectReactDOMServerForTests(
   reactDOMServerCache.set(resolveReactVersion(version), server);
 }
 
+export function __injectProjectReactForTests(
+  react: typeof import("react") | null,
+  version?: string,
+): void {
+  if (!react) {
+    projectReactCache.clear();
+    return;
+  }
+  projectReactCache.set(resolveReactVersion(version), react);
+}
+
 async function loadFromCachedHttpModule<T>(
   url: string,
   label: string,

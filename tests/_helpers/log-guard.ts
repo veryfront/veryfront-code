@@ -13,8 +13,6 @@ const original = {
 const allowedWarnings: string[] = [
   // Renderer attempts to discover reserved files; NotFound is expected
   "[prod] test page existence failed",
-  // Manifest/graph is optional in Phase A
-  "[prod] buildVersionedManifest failed",
   // Optional OTEL/metrics are best-effort
   "[prod] OpenTelemetry span enrich failed",
   "[prod] metrics.incRequest failed",

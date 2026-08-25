@@ -1,3 +1,4 @@
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
@@ -5,15 +6,16 @@ import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import type { Agent } from "#veryfront/agent";
 import type { Message } from "#veryfront/agent/types.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
-import type { DiscoveryResult } from "#veryfront/discovery";
+import { createEmptyDiscoveryResult } from "#veryfront/discovery";
 import type { HandlerContext } from "#veryfront/types";
 import { createAgentServiceEvalAdapter } from "#veryfront/eval/agent-service.ts";
 import { runEval as runEvalDefinition } from "#veryfront/eval/runner.ts";
 import { datasets, evalAgent, type EvalReport, metrics } from "veryfront/eval";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { toolRegistry } from "#veryfront/tool";
 import {
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
@@ -31,6 +33,7 @@ function createStreamingAgent(
   id: string,
   text: string,
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number },
+  onContext?: (context: Record<string, unknown> | undefined) => void,
 ): Agent {
   let capturedMessages: Message[] = [];
 
@@ -45,6 +48,7 @@ function createStreamingAgent(
       throw new Error("not used");
     },
     stream: async (input) => {
+      onContext?.(input.context);
       capturedMessages = input.messages ?? [];
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {
@@ -180,22 +184,6 @@ function createDeps(
     sleep: async () => {},
     now: () => 0,
     ...overrides,
-  };
-}
-
-function createEmptyDiscoveryResult(): DiscoveryResult {
-  return {
-    tools: new Map(),
-    agents: new Map(),
-    skills: new Map(),
-    resources: new Map(),
-    prompts: new Map(),
-    workflows: new Map(),
-    tasks: new Map(),
-    schedules: new Map(),
-    webhooks: new Map(),
-    evals: new Map(),
-    errors: [],
   };
 }
 
@@ -967,13 +955,14 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   });
 
   it("runs localized eval AG-UI requests through discovered source agents", async () => {
+    let capturedContext: Record<string, unknown> | undefined;
     agentRegistry.register(
       "researcher",
       createStreamingAgent("researcher", "Paris", {
         promptTokens: 12,
         completionTokens: 8,
         totalTokens: 20,
-      }),
+      }, (context) => capturedContext = context),
     );
     const handler = new ProjectRunExecuteHandler(createDeps({
       findEvalById: async (target) =>
@@ -1035,6 +1024,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         totalTokens: 20,
       });
       assertStringIncludes(JSON.stringify(payload.result.records[0]?.output), "Paris");
+      assertEquals(capturedContext?.runIdBindsToolAuthorization, false);
     } finally {
       agentRegistry.delete("researcher");
     }
@@ -1265,7 +1255,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   it("executes discovered project tool steps from control-plane workflow runs", async () => {
     await stopEsbuild();
     agentRegistry.clearAll();
-    toolRegistry.clearAll();
+    toolRegistryInternal.clearAll();
 
     try {
       const adapter = createMockAdapter();
@@ -1335,23 +1325,28 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           mode: "preview" as const,
         },
         resolvedEnvironment: "preview",
+        allowHostProjectCodeExecution: true,
       } as HandlerContext;
 
-      const result = await runWithRequestContext(
-        {
-          projectSlug: "demo-project",
-          projectId: "proj-1",
-          token: "runtime-token",
-          productionMode: false,
-          branch: "main",
-        },
-        () => handler.handle(request, ctx),
+      const result = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy(undefined),
+        () =>
+          runWithRequestContext(
+            {
+              projectSlug: "demo-project",
+              projectId: "proj-1",
+              token: "runtime-token",
+              productionMode: false,
+              branch: "main",
+            },
+            () => handler.handle(request, ctx),
+          ),
       );
 
       assertExists(result.response);
       assertEquals(result.response.status, 200);
       const response = await result.response.json();
-      assertEquals(response.success, true);
+      assertEquals(response.success, true, response.error ?? undefined);
       assertEquals(response.result, {
         lookup: {
           message: "hello from control plane",
@@ -1365,7 +1360,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertEquals(response.artifacts, undefined);
     } finally {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
       await stopEsbuild();
     }
   });
@@ -1456,6 +1451,60 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       logs: null,
     });
     assertEquals(destroyed, true);
+  });
+
+  it("times out a workflow run that never reaches a terminal status", async () => {
+    // Mirrors DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS in the handler (15 minutes).
+    const workflowStatusTimeoutMs = 15 * 60 * 1_000;
+    let sleepCalls = 0;
+    let getRunCalls = 0;
+    let clock = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      // Each poll sleep advances the fake clock past the status deadline, and
+      // a loop that keeps polling anyway is cut short instead of hanging.
+      sleep: async () => {
+        sleepCalls++;
+        clock += workflowStatusTimeoutMs + 1;
+        if (sleepCalls > 3) throw new Error("poll loop kept running past the deadline");
+      },
+      now: () => clock,
+      createWorkflowClient: () => ({
+        register: () => {},
+        start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
+          runId: options?.runId ?? "workflow-run",
+        }),
+        getRun: async () => {
+          getRunCalls++;
+          return { status: "running" };
+        },
+        destroy: async () => {},
+      }),
+    }));
+    const body = {
+      runId: "run_workflow_stuck_1",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      input: { release: "v1" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_stuck_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const payload = await result.response.json();
+    assertEquals(
+      payload.success,
+      false,
+      "a workflow that never reaches a terminal status must time out",
+    );
+    assertStringIncludes(payload.error, "timed out");
+    assertEquals(sleepCalls > 0, true, "the poll loop must sleep between getRun calls");
+    assertEquals(getRunCalls > 1, true, "the poll loop must re-check the run after sleeping");
   });
 
   it("does not report waiting workflow runs as successful without durable workflow state", async () => {

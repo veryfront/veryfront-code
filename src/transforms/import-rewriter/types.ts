@@ -38,6 +38,8 @@ export interface RewriteContext {
   apiBaseUrl?: string;
   /** React version to use for esm.sh URLs */
   reactVersion: string;
+  /** Bare npm package roots that the runtime resolves without bundling. */
+  serverExternalPackages?: readonly string[];
   /** Stable dependency-pinning key paired with the immutable dependency map. */
   dependencyPinningCacheKey?: string;
   /** Immutable dependency map captured with dependencyPinningCacheKey. */

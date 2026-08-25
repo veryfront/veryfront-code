@@ -1,4 +1,4 @@
-import type { RenderContext } from "../context/render-context.ts";
+import { type RenderContext, renderModesOf } from "#veryfront/rendering/context/render-context.ts";
 import type { CompileMDXFunction } from "../orchestrator/compiler-service.ts";
 import { PageResolver } from "../page-resolution/index.ts";
 import { LayoutCollector } from "../layouts/layout-collector.ts";
@@ -24,6 +24,7 @@ export function createLayoutCollector(
   return new LayoutCollector({
     projectDir: ctx.projectDir,
     projectId: ctx.projectId,
+    contentSourceId: ctx.contentSourceId,
     adapter: ctx.adapter,
     config: ctx.config,
     compileMDX,
@@ -56,6 +57,8 @@ export function createComponentRegistry(
     undefined, // vendorBundleHash
     ctx.projectId, // Project ID for cache isolation
     ctx.contentSourceId,
+    undefined, // componentSourceLoader
+    renderModesOf(ctx),
   );
 }
 
@@ -75,11 +78,13 @@ export function createPageRenderer(
   return new PageRenderer({
     projectDir: ctx.projectDir,
     mode: ctx.mode,
+    environment: ctx.environment,
     config: ctx.config,
     adapter: ctx.adapter,
     componentRegistry,
     compileMDX,
     moduleServerUrl: ctx.moduleServerUrl,
+    isLocalProject: ctx.isLocalProject === true,
   });
 }
 

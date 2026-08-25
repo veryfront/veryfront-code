@@ -11,7 +11,6 @@ import {
 import { ReloadNotifier } from "../../reload-notifier.ts";
 import { invalidateProjectCaches } from "../../context/cache-invalidation.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { isLocalDevHost } from "../../utils/domain-parser.ts";
 import {
   addClient,
   clearAll,
@@ -23,9 +22,6 @@ import {
 import { handleHmrClientMessage } from "./hmr-client-message.ts";
 import { getPingIntervalMs, startPingInterval, stopPingInterval } from "./hmr-ping-keepalive.ts";
 import { broadcastUpdate, getMetrics } from "./hmr-message-router.ts";
-import { getEffectiveRequestHost } from "../../utils/request-host.ts";
-import { isProxyTrusted } from "../../utils/proxy-trust.ts";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 const logger = serverLogger.component("hmr-handler");
 const HMR_WEBSOCKET_UPGRADE_OPTIONS = { idleTimeout: 0 } as const;
@@ -94,32 +90,15 @@ export class HMRHandler extends BaseHandler {
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     if (!this.shouldHandle(req, ctx)) return this.continue();
 
-    const url = new URL(req.url);
-    const queryEnv = url.searchParams.get("x-environment");
-    const isPreviewMode = ctx.requestContext?.mode === "preview" || queryEnv === "preview";
+    const isPreviewMode = ctx.requestContext?.mode === "preview";
     const isLocal = !!ctx.isLocalProject;
-    // SECURITY: x-forwarded-host is client-controlled unless we trust the upstream proxy.
-    // Honouring it unconditionally lets any remote client present `x-forwarded-host: localhost`
-    // and unlock the localhost short-circuit that opens HMR (VULN-SRV-4). Only consult
-    // forwarded headers when the request is proxy-trusted; otherwise use Host / url.host.
-    // Proxy trust requires a verifiable dispatch JWS (or operator opt-in). Mere header
-    // presence is not enough, since `x-veryfront-dispatch-jws` is not stripped on ingress.
-    const publicKeyPem = ctx.adapter?.env?.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") ??
-      getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
-    const host = (await isProxyTrusted(req, { publicKeyPem }))
-      ? getEffectiveRequestHost(req, url, true)
-      : (req.headers.get("host") ?? url.host);
-    const isLocalhost = isLocalDevHost(host);
 
-    if (!isPreviewMode && !isLocal && !isLocalhost) {
-      logger.warn("Skipping /_ws - not preview, local dev, or localhost", {
+    if (!isPreviewMode && !isLocal) {
+      logger.warn("Skipping /_ws - not a resolved preview or local project", {
         mode: ctx.requestContext?.mode,
-        queryEnv,
         isLocalProject: ctx.isLocalProject,
-        host,
         isPreviewMode,
         isLocal,
-        isLocalhost,
       });
       return this.continue();
     }
@@ -269,6 +248,10 @@ export class HMRHandler extends BaseHandler {
         {
           productionMode: false,
           branch: ctx.requestContext?.branch ?? "main",
+          // The named environment, not the mode in `resolvedEnvironment`. Must
+          // match what renders resolve, or HMR warms a different adapter and
+          // its WebSocketManager never receives pokes.
+          environmentName: ctx.environmentName ?? null,
         },
       );
     } catch (error) {

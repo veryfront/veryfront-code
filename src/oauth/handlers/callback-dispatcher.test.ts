@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { assertEquals, assertThrows } from "#std/assert";
 import { createTestEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import {
@@ -29,10 +30,10 @@ const ALPHA_CONFIG: OAuthServiceConfig = {
   displayName: "Alpha",
   clientIdEnvVar: "ALPHA_CLIENT_ID",
   clientSecretEnvVar: "ALPHA_CLIENT_SECRET",
-  authorizationUrl: "https://alpha.provider.test/auth",
-  tokenUrl: "https://alpha.provider.test/token",
+  authorizationUrl: "https://93.184.216.34/alpha/auth",
+  tokenUrl: "https://93.184.216.34/alpha/token",
   defaultScopes: ["alpha:read"],
-  apiBaseUrl: "https://alpha.provider.test/api",
+  apiBaseUrl: "https://93.184.216.34/alpha/api",
 };
 
 const BETA_CONFIG: OAuthServiceConfig = {
@@ -41,10 +42,10 @@ const BETA_CONFIG: OAuthServiceConfig = {
   displayName: "Beta",
   clientIdEnvVar: "BETA_CLIENT_ID",
   clientSecretEnvVar: "BETA_CLIENT_SECRET",
-  authorizationUrl: "https://beta.provider.test/auth",
-  tokenUrl: "https://beta.provider.test/token",
+  authorizationUrl: "https://93.184.216.34/beta/auth",
+  tokenUrl: "https://93.184.216.34/beta/token",
   defaultScopes: ["beta:read"],
-  apiBaseUrl: "https://beta.provider.test/api",
+  apiBaseUrl: "https://93.184.216.34/beta/api",
   pkceMode: "unsupported",
 };
 
@@ -91,12 +92,13 @@ Deno.test("callback dispatcher exchanges and stores tokens for the state-selecte
   await store.setState("beta-state", stateFor(BETA_CONFIG.serviceId));
   const exchanges: string[] = [];
   const successes: string[] = [];
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = ((input: string | URL | Request) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    exchanges.push(url);
-    return Promise.resolve(Response.json({ access_token: "beta-access-token" }));
-  }) as typeof fetch;
+  installMockFetch(
+    ((input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      exchanges.push(url);
+      return Promise.resolve(Response.json({ access_token: "beta-access-token" }));
+    }) as typeof fetch,
+  );
 
   try {
     const handler = createOAuthCallbackDispatcher([ALPHA_CONFIG, BETA_CONFIG], {
@@ -128,7 +130,7 @@ Deno.test("callback dispatcher exchanges and stores tokens for the state-selecte
     );
     assertEquals(await store.getTokens(ALPHA_CONFIG.serviceId, "alice"), null);
   } finally {
-    globalThis.fetch = originalFetch;
+    restoreMockFetch();
   }
 });
 
@@ -137,11 +139,12 @@ Deno.test("callback dispatcher rejects and consumes state for a service outside 
   const unknownServiceId = "unlisted-provider";
   await store.setState("unknown-state", stateFor(unknownServiceId));
   let fetchCalls = 0;
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = (() => {
-    fetchCalls++;
-    return Promise.resolve(Response.json({ access_token: "should-not-exist" }));
-  }) as typeof fetch;
+  installMockFetch(
+    (() => {
+      fetchCalls++;
+      return Promise.resolve(Response.json({ access_token: "should-not-exist" }));
+    }) as typeof fetch,
+  );
 
   try {
     const handler = createOAuthCallbackDispatcher([ALPHA_CONFIG, BETA_CONFIG], {
@@ -160,7 +163,7 @@ Deno.test("callback dispatcher rejects and consumes state for a service outside 
     assertEquals(fetchCalls, 0);
     assertEquals(await store.consumeState("unknown-state"), null);
   } finally {
-    globalThis.fetch = originalFetch;
+    restoreMockFetch();
   }
 });
 
@@ -173,11 +176,12 @@ Deno.test("callback dispatcher enforces the exact shared redirect binding", asyn
     }),
   );
   let fetchCalls = 0;
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = (() => {
-    fetchCalls++;
-    return Promise.resolve(Response.json({ access_token: "should-not-exist" }));
-  }) as typeof fetch;
+  installMockFetch(
+    (() => {
+      fetchCalls++;
+      return Promise.resolve(Response.json({ access_token: "should-not-exist" }));
+    }) as typeof fetch,
+  );
 
   try {
     const handler = createOAuthCallbackDispatcher([ALPHA_CONFIG, BETA_CONFIG], {
@@ -197,7 +201,7 @@ Deno.test("callback dispatcher enforces the exact shared redirect binding", asyn
     assertEquals(fetchCalls, 0);
     assertEquals(await store.consumeState("wrong-redirect"), null);
   } finally {
-    globalThis.fetch = originalFetch;
+    restoreMockFetch();
   }
 });
 
@@ -208,11 +212,12 @@ Deno.test("callback dispatcher applies the selected service PKCE requirement", a
     stateFor(ALPHA_CONFIG.serviceId, { codeVerifier: undefined }),
   );
   let fetchCalls = 0;
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = (() => {
-    fetchCalls++;
-    return Promise.resolve(Response.json({ access_token: "should-not-exist" }));
-  }) as typeof fetch;
+  installMockFetch(
+    (() => {
+      fetchCalls++;
+      return Promise.resolve(Response.json({ access_token: "should-not-exist" }));
+    }) as typeof fetch,
+  );
 
   try {
     const handler = createOAuthCallbackDispatcher([ALPHA_CONFIG, BETA_CONFIG], {
@@ -231,7 +236,7 @@ Deno.test("callback dispatcher applies the selected service PKCE requirement", a
     );
     assertEquals(fetchCalls, 0);
   } finally {
-    globalThis.fetch = originalFetch;
+    restoreMockFetch();
   }
 });
 
@@ -242,11 +247,12 @@ Deno.test("callback dispatcher rejects PKCE state for a service that does not su
     stateFor(BETA_CONFIG.serviceId, { codeVerifier: CODE_VERIFIER }),
   );
   let fetchCalls = 0;
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = (() => {
-    fetchCalls++;
-    return Promise.resolve(Response.json({ access_token: "should-not-exist" }));
-  }) as typeof fetch;
+  installMockFetch(
+    (() => {
+      fetchCalls++;
+      return Promise.resolve(Response.json({ access_token: "should-not-exist" }));
+    }) as typeof fetch,
+  );
 
   try {
     const handler = createOAuthCallbackDispatcher([ALPHA_CONFIG, BETA_CONFIG], {
@@ -265,7 +271,7 @@ Deno.test("callback dispatcher rejects PKCE state for a service that does not su
     );
     assertEquals(fetchCalls, 0);
   } finally {
-    globalThis.fetch = originalFetch;
+    restoreMockFetch();
   }
 });
 
@@ -315,11 +321,12 @@ Deno.test("callback dispatcher relies on one-shot state consumption under concur
   const store = new MemoryTokenStore();
   await store.setState("one-shot", stateFor(BETA_CONFIG.serviceId));
   let fetchCalls = 0;
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = (() => {
-    fetchCalls++;
-    return Promise.resolve(Response.json({ access_token: "beta-token" }));
-  }) as typeof fetch;
+  installMockFetch(
+    (() => {
+      fetchCalls++;
+      return Promise.resolve(Response.json({ access_token: "beta-token" }));
+    }) as typeof fetch,
+  );
 
   try {
     const handler = createOAuthCallbackDispatcher([BETA_CONFIG], {
@@ -345,7 +352,7 @@ Deno.test("callback dispatcher relies on one-shot state consumption under concur
     );
     assertEquals(fetchCalls, 1);
   } finally {
-    globalThis.fetch = originalFetch;
+    restoreMockFetch();
   }
 });
 

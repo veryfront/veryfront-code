@@ -1,10 +1,11 @@
 import type * as React from "react";
 import { flushSync } from "react-dom";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { type ComponentDomOptions, installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import {
   Command,
   CommandEmpty,
@@ -18,40 +19,9 @@ import {
   handleCommandInputKeyDown,
 } from "./command.tsx";
 
-function installDom(dom: JSDOM): () => void {
-  const window = dom.window;
-  const replacements = {
-    window,
-    document: window.document,
-    navigator: window.navigator,
-    self: window,
-    Node: window.Node,
-    Element: window.Element,
-    HTMLElement: window.HTMLElement,
-    MouseEvent: window.MouseEvent,
-  };
-  const previous = new Map<string, PropertyDescriptor | undefined>();
-
-  for (const key of Object.keys(replacements)) {
-    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
-  }
-  for (const [key, value] of Object.entries(replacements)) {
-    Object.defineProperty(globalThis, key, {
-      configurable: true,
-      enumerable: true,
-      value,
-      writable: true,
-    });
-  }
-
-  return () => {
-    for (const [key, descriptor] of previous) {
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-      else delete (globalThis as Record<string, unknown>)[key];
-    }
-    dom.window.close();
-  };
-}
+const DOM_OPTIONS: ComponentDomOptions = {
+  windowGlobals: ["self"],
+};
 
 async function waitFor(condition: () => boolean, timeoutMs = 3000): Promise<void> {
   const startedAt = Date.now();
@@ -92,13 +62,20 @@ function createChangeEvent(value: string): React.ChangeEvent<HTMLInputElement> {
   return event as unknown as React.ChangeEvent<HTMLInputElement>;
 }
 
+// Unmounting leaves a scheduler callback queued; drain it so the leak
+// sanitizer does not attribute that timer to the test.
+async function unmount(root: Root): Promise<void> {
+  flushSync(() => root.unmount());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("Command", () => {
   it("exposes a listbox contract and tracks pointer-active options", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const selected: string[] = [];
 
@@ -166,7 +143,7 @@ describe("Command", () => {
       flushSync(() => disabled.click());
       assertEquals(selected, ["beta"]);
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       restore();
     }
   });
@@ -176,7 +153,7 @@ describe("Command", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const calls: string[] = [];
 
@@ -219,7 +196,7 @@ describe("Command", () => {
       flushSync(() => cancelled.click());
       assertEquals(calls, ["click", "select", "cancel-click"]);
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       restore();
     }
   });
@@ -298,7 +275,7 @@ describe("Command", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const renderItems = (items: string[]) => (
       <Command>
@@ -328,7 +305,7 @@ describe("Command", () => {
         return document.getElementById(active ?? "")?.textContent === "Beta";
       });
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       restore();
     }
   });
@@ -386,12 +363,90 @@ describe("Command", () => {
     assertEquals(composing.defaultPrevented, false);
   });
 
+  it("filters rendered items as the query narrows", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installComponentDom(dom, DOM_OPTIONS);
+    const root = createRoot(document.getElementById("root")!);
+
+    try {
+      flushSync(() => {
+        root.render(
+          <Command>
+            <CommandInput />
+            <CommandList>
+              <CommandEmpty data-empty="">Nothing found</CommandEmpty>
+              <CommandItem value="Alpha">Alpha</CommandItem>
+              <CommandItem value="Beta">Beta</CommandItem>
+            </CommandList>
+          </Command>,
+        );
+      });
+
+      const input = document.querySelector<HTMLInputElement>("input");
+      assert(input);
+      await waitFor(() => input.getAttribute("aria-activedescendant") !== null);
+
+      const propsKey = Object.keys(input).find((name) => name.startsWith("__reactProps$"));
+      assert(propsKey, "the rendered input exposes its React props");
+      const inputProps = (input as unknown as Record<string, {
+        onChange?: (event: unknown) => void;
+      }>)[propsKey]!;
+      const type = (value: string) => {
+        flushSync(() =>
+          inputProps.onChange?.({
+            currentTarget: { value },
+            defaultPrevented: false,
+            preventDefault() {},
+          })
+        );
+      };
+
+      type("bet");
+      const [alpha, beta] = [...document.querySelectorAll<HTMLElement>("[data-command-item]")];
+      assert(alpha);
+      assert(beta);
+      assertEquals(
+        alpha.hasAttribute("hidden"),
+        true,
+        "non-matching items are hidden from the listbox",
+      );
+      assertEquals(beta.hasAttribute("hidden"), false, "the matching item stays visible");
+      assertEquals(
+        input.getAttribute("aria-activedescendant"),
+        beta.id,
+        "the active option follows the filtered set",
+      );
+      assertEquals(
+        document.querySelector("[data-empty]"),
+        null,
+        "a matching query keeps the empty state hidden",
+      );
+
+      type("zzz");
+      assertEquals(
+        [alpha, beta].map((item) => item.hasAttribute("hidden")),
+        [true, true],
+        "a no-match query hides every item",
+      );
+      assert(
+        document.querySelector("[data-empty]"),
+        "a no-match query announces the empty state",
+      );
+    } finally {
+      await unmount(root);
+      restore();
+    }
+  });
+
   it("suppresses the empty state while value-less items are registered", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
 
     try {
@@ -410,7 +465,7 @@ describe("Command", () => {
       await waitFor(() => document.querySelector("[data-empty]") === null);
       assert(document.querySelector("[data-always]"));
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       restore();
     }
   });
@@ -420,7 +475,7 @@ describe("Command", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
 
     try {
@@ -435,6 +490,11 @@ describe("Command", () => {
         );
       });
 
+      assertEquals(
+        document.querySelector("[data-empty]"),
+        null,
+        "the empty state is withheld until the item registry settles",
+      );
       await waitFor(() => document.querySelector("[data-empty]") !== null);
       const empty = document.querySelector<HTMLElement>("[data-empty]");
       assert(empty);
@@ -442,7 +502,7 @@ describe("Command", () => {
       assertEquals(empty.getAttribute("aria-disabled"), "true");
       assertEquals(empty.getAttribute("aria-live"), "polite");
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       restore();
     }
   });

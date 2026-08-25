@@ -62,6 +62,41 @@ describe("RelativeStrategy", () => {
       );
     });
 
+    it("should bind the SSR module URL to the dependency snapshot via a query token", () => {
+      const result = relativeStrategy.rewrite(
+        makeInfo("./child.ts"),
+        makeCtx({ target: "ssr", dependencyPinningCacheKey: "on:snapshot-a" }),
+      );
+
+      assertEquals(
+        result.specifier,
+        "http://localhost:3000/_vf_modules/pages/child.js?pins=on%3Asnapshot-a",
+        "SSR child modules carry the snapshot as a pins query token",
+      );
+    });
+
+    it("should keep the .mdx extension on relative imports", () => {
+      const moduleServerResult = relativeStrategy.rewrite(
+        makeInfo("./post.mdx"),
+        makeCtx({ target: "browser" }),
+      );
+      const inlineResult = relativeStrategy.rewrite(
+        makeInfo("./post.mdx"),
+        makeCtx({ target: "browser", moduleServerUrl: undefined }),
+      );
+
+      assertEquals(
+        moduleServerResult.specifier,
+        "http://localhost:3000/_vf_modules/pages/post.mdx",
+        "a relative MDX import keeps its .mdx extension in the module server URL",
+      );
+      assertEquals(
+        inlineResult.specifier,
+        "./post.mdx",
+        "a relative MDX import is left untouched when there is no module server",
+      );
+    });
+
     it("should normalize .tsx extension to .js for SSR when no moduleServerUrl", () => {
       const result = relativeStrategy.rewrite(
         makeInfo("./component.tsx"),

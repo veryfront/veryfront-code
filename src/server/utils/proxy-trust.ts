@@ -6,51 +6,29 @@
  * Any other treatment lets an attacker reaching the runtime directly spoof the
  * origin host or point project discovery at arbitrary filesystem paths.
  *
- * A request is considered proxy-trusted when either:
- *   1. The operator has opted in via `VERYFRONT_TRUST_FORWARDED_HEADERS=1`
- *      (strict "1" match — "true", "yes", whitespace-padded values do NOT count
- *      so misconfiguration fails closed); or
- *   2. The request carries a valid `x-veryfront-dispatch-jws` header that
- *      cryptographically verifies against the configured control-plane public
- *      key and whose `iat`/`exp` claims are within the allowed freshness
- *      window. Presence alone is NOT trusted because the proxy does not strip
- *      this header from untrusted inbound requests (it has to pass through to
- *      the channel-invoke handler unchanged), so a
- *      direct-access attacker could otherwise set any value and promote
- *      forwarded-header spoofing.
+ * Trust is an operator-owned deployment property, not a property of an
+ * arbitrary application request. In particular, a channel-dispatch JWS is
+ * intentionally not accepted here: that token is not bound to this request's
+ * method, path, body, or routing identity and can therefore be replayed as an
+ * unrelated proxy credential while it is fresh.
  *
  * @module server/utils/proxy-trust
  */
 
-import { verifyDispatchJwsSignature } from "#veryfront/channels/control-plane.ts";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
-
-const DISPATCH_JWS_HEADER = "x-veryfront-dispatch-jws";
-const MAX_DISPATCH_SIGNATURE_AGE_SECONDS = 60;
+import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
 
 export interface ProxyTrustOptions {
   /**
-   * PEM-encoded Ed25519 public key used to verify `x-veryfront-dispatch-jws`.
-   * When absent, the dispatch-JWS trust signal is disabled (fails closed) and
-   * only the operator opt-in env var can unlock proxy trust.
+   * Retained for call-site compatibility. Control-plane signing keys authorize
+   * only the exact operation verified by the control-plane handler and never
+   * promote a general HTTP request to proxy-trusted.
    */
   publicKeyPem?: string;
 }
 
 export async function isProxyTrusted(
-  req: Request,
-  options: ProxyTrustOptions = {},
+  _req: Request,
+  _options: ProxyTrustOptions = {},
 ): Promise<boolean> {
-  if (getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1") return true;
-
-  const jws = req.headers.get(DISPATCH_JWS_HEADER);
-  if (!jws) return false;
-
-  const { publicKeyPem } = options;
-  if (!publicKeyPem) return false;
-
-  return verifyDispatchJwsSignature(jws, {
-    publicKeyPem,
-    maxAgeSeconds: MAX_DISPATCH_SIGNATURE_AGE_SECONDS,
-  });
+  return isProxyTopologyTrusted();
 }

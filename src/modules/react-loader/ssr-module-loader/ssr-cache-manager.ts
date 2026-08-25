@@ -10,7 +10,9 @@
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { buildSSRModuleCacheKey } from "#veryfront/cache/keys.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
 import { computeConfigHashSync } from "#veryfront/cache/config-hash.ts";
+import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
@@ -49,13 +51,26 @@ export class SSRCacheManager {
   /** Lazily compute config hash once per manager instance. */
   getConfigHash(): string {
     if (!this.cachedConfigHash) {
-      this.cachedConfigHash = computeConfigHashSync({
+      const baseConfigHash = computeConfigHashSync({
         reactVersion: this.options.reactVersion,
         dev: this.options.dev,
         apiBaseUrl: this.options.apiBaseUrl,
         moduleServerOrigin: this.options.moduleServerOrigin,
         dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,
       });
+      const serverExternalPackagesIdentity = buildServerExternalPackagesIdentity(
+        this.options.serverExternalPackages,
+      );
+      const withExternals = serverExternalPackagesIdentity
+        ? `${baseConfigHash}:server-externals:${hashString(serverExternalPackagesIdentity)}`
+        : baseConfigHash;
+      // Preview instruments the transform output with node positions on top of
+      // an otherwise identical production compile. `dev` is already in
+      // baseConfigHash; the request environment is not, so without this the two
+      // would share a cache entry whenever they share a contentSourceId.
+      this.cachedConfigHash = this.options.mode === "preview"
+        ? `${withExternals}:preview`
+        : withExternals;
     }
     return this.cachedConfigHash;
   }

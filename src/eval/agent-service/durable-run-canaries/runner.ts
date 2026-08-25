@@ -747,7 +747,6 @@ export function createDurableRunCanaryRunner(
     const runIds: string[] = [];
     const executions: DurableRunCanaryExecution[] = [];
     let stopSidecar: (() => Promise<void>) | undefined;
-    let completedSuccessfully = false;
     let result: DurableRunCanaryResult;
 
     try {
@@ -800,7 +799,6 @@ export function createDurableRunCanaryRunner(
         ? prepared.artifactPaths(runId)
         : prepared.artifactPaths;
 
-      completedSuccessfully = true;
       result = {
         id: testCase.id,
         label: testCase.label,
@@ -848,7 +846,7 @@ export function createDurableRunCanaryRunner(
       }
     }
 
-    if (completedSuccessfully && !config.keepSuccessfulEvidence && prepared) {
+    if (prepared && (result.status === "fail" || !config.keepSuccessfulEvidence)) {
       try {
         await prepared.cleanup({ runId });
       } catch (error) {

@@ -156,6 +156,12 @@ export function handleMDXPage(
     dependencyPinningDependencies?: Readonly<Record<string, string>>;
     /** Exact package source namespace paired with the immutable snapshot. */
     dependencyPinningSource?: DependencyPinningSourceInput;
+    /** Bare npm package roots that the runtime resolves without bundling. */
+    serverExternalPackages?: readonly string[];
+    /** Server-trusted local-project identity for dev-only module-server fallback. */
+    isLocalProject?: boolean;
+    /** Request mode ("development" | "production") for the module compile mode */
+    mode?: string;
   },
 ): Promise<MDXPageResult> {
   return withSpan(
@@ -170,19 +176,23 @@ export function handleMDXPage(
       const loadPageElement = async (): Promise<MDXPageResult> => {
         let collectedMetadata: Record<string, unknown> = {};
 
-        const mod = (await mdxRenderer.loadModuleESM(
-          serverModuleCode,
+        const mod = (await mdxRenderer.loadModuleESM(serverModuleCode, {
           adapter,
-          options?.projectId,
+          projectId: options?.projectId,
           projectDir,
-          options?.projectSlug,
-          options?.contentSourceId,
-          options?.reactVersion,
-          options?.dependencyPinningCacheKey,
-          options?.dependencyPinningDependencies,
-          options?.dependencyPinningSource,
-          options?.url?.origin,
-        )) as MDXModule;
+          projectSlug: options?.projectSlug,
+          contentSourceId: options?.contentSourceId,
+          // A missing render mode compiles for production, matching the SSR
+          // module loader and #3844's production-leaning default.
+          mode: options?.mode === "development" ? "development" : "production",
+          reactVersion: options?.reactVersion,
+          serverExternalPackages: options?.serverExternalPackages,
+          dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
+          dependencyPinningDependencies: options?.dependencyPinningDependencies,
+          dependencyPinningSource: options?.dependencyPinningSource,
+          moduleServerOrigin: options?.url?.origin,
+          isLocalProject: options?.isLocalProject,
+        })) as MDXModule;
 
         const MDXComp = mod.MDXContent || mod.default;
         if (!MDXComp) {

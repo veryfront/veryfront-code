@@ -1,7 +1,9 @@
 import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import { createChatStreamWatchdog } from "#veryfront/chat/stream-watchdog.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
 import type { AgentTraceAttributes } from "./trace-attributes.ts";
 import type { HostedAgentRunTracer } from "./agent-run-lifecycle.ts";
 import {
@@ -62,6 +64,61 @@ describe("agent/veryfront-cloud-prepared-hosted-chat-execution-runtime", () => {
     assertStrictEquals(options.setActiveSpanAttributes, setActiveSpanAttributes);
     assertEquals(options.resolveProvider("veryfront-cloud/openai/gpt-5.2"), "openai");
     assertEquals(typeof options.createRootStreamWatchdog, "function");
+  });
+
+  it("default root stream watchdog exempts delegated child tools from the tool-running deadline", () => {
+    const previousIdleTimeout = getEnv(VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_ENV);
+    const previousToolTimeout = getEnv(VERYFRONT_CHAT_STREAM_TOOL_TIMEOUT_ENV);
+
+    try {
+      setEnv(VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_ENV, "50");
+      setEnv(VERYFRONT_CHAT_STREAM_TOOL_TIMEOUT_ENV, "50");
+      using time = new FakeTime();
+
+      const options = createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions({
+        apiUrl: "https://api.example.com",
+        tracer: createTracer(),
+      });
+      const createRootStreamWatchdog = options.createRootStreamWatchdog;
+      if (!createRootStreamWatchdog) {
+        throw new Error("Expected a default root stream watchdog factory");
+      }
+
+      for (const toolName of ["invoke_agent", `${AGENT_DELEGATE_TOOL_PREFIX}worker`]) {
+        const watchdog = createRootStreamWatchdog();
+        watchdog.observe({ type: "tool-input-available", toolCallId: "c1", toolName, input: {} });
+        time.tick(60);
+        assertEquals(
+          watchdog.signal.aborted,
+          false,
+          `delegated tool ${toolName} must not trip the tool-running deadline`,
+        );
+        watchdog.dispose();
+      }
+
+      const watchdog = createRootStreamWatchdog();
+      watchdog.observe({
+        type: "tool-input-available",
+        toolCallId: "c2",
+        toolName: "sleep",
+        input: {},
+      });
+      time.tick(60);
+      assertEquals(
+        watchdog.signal.aborted,
+        true,
+        "ordinary tools must abort after the env tool timeout",
+      );
+      assertEquals(
+        watchdog.lastTimeoutState?.timeoutMs,
+        50,
+        "deadline must come from VERYFRONT_CHAT_STREAM_TOOL_TIMEOUT_MS",
+      );
+      watchdog.dispose();
+    } finally {
+      restoreEnv(VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_ENV, previousIdleTimeout);
+      restoreEnv(VERYFRONT_CHAT_STREAM_TOOL_TIMEOUT_ENV, previousToolTimeout);
+    }
   });
 
   it("preserves host-provided watchdog factories", () => {

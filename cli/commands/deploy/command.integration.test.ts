@@ -13,6 +13,7 @@ import type { DeploymentRoutingConvergence } from "../../shared/deployment/contr
 import { FakeTime } from "#std/testing/time";
 import { stripAnsi } from "../../ui/ansi.ts";
 import { setVerboseMode } from "../../utils/index.ts";
+import { RELEASE_ASSET_MANIFEST_SCHEMA_VERSION } from "veryfront/release-assets";
 
 /**
  * The real Deploy Execution module with test-bounded polling: these suites
@@ -26,6 +27,9 @@ function boundedDeployProject(): DeployProject {
 
 const PROJECT_ID = "550e8400-e29b-41d4-a716-446655440000";
 const ENVIRONMENT_ID = "660e8400-e29b-41d4-a716-446655440000";
+/** A project this directory never pushed, resolvable so only the receipt refuses. */
+const OTHER_PROJECT_SLUG = "other-project";
+const OTHER_PROJECT_ID = "770e8400-e29b-41d4-a716-446655440000";
 const RELEASE_ID = "770e8400-e29b-41d4-a716-446655440000";
 const DEPLOYMENT_ID = "880e8400-e29b-41d4-a716-446655440000";
 const PUSHED_SOURCE = "export const value = 1;\n";
@@ -69,6 +73,7 @@ async function withDeployEnv<T>(
   fn: (context: { commitSha: string; sourceDigest: string }) => Promise<T>,
 ): Promise<T> {
   const envKeys = [
+    "GITHUB_SHA",
     "VERYFRONT_API_TOKEN",
     "VERYFRONT_API_URL",
     "VERYFRONT_PROJECT_SLUG",
@@ -89,6 +94,7 @@ async function withDeployEnv<T>(
     Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
     Deno.env.set("VERYFRONT_API_URL", "https://control.example.test/api");
     Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+    Deno.env.set("GITHUB_SHA", commitSha);
     Deno.env.delete("VERYFRONT_PROJECT_ID");
     _resetEnvironmentConfig();
 
@@ -115,6 +121,7 @@ function createDeployFetchHandler(options: {
 }) {
   let environmentReads = 0;
   const releaseSource = options.releaseSource ?? PUSHED_SOURCE;
+  const uploadedFiles = new Map<string, string>();
 
   return async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const request = input instanceof Request ? input : new Request(input, init);
@@ -128,11 +135,37 @@ function createDeployFetchHandler(options: {
     if (request.method === "GET" && url.pathname === "/api/projects/my-project") {
       return Response.json({ id: PROJECT_ID, slug: "my-project" });
     }
+    // Resolves cleanly on purpose. Without it a test naming another project
+    // fails on this lookup, which looks like the refusal it was written to
+    // prove and is not.
+    if (request.method === "GET" && url.pathname === `/api/projects/${OTHER_PROJECT_SLUG}`) {
+      return Response.json({ id: OTHER_PROJECT_ID, slug: OTHER_PROJECT_SLUG });
+    }
+    if (
+      request.method === "GET" &&
+      url.pathname === `/api/projects/${OTHER_PROJECT_ID}/environments`
+    ) {
+      return Response.json({
+        data: [{
+          id: ENVIRONMENT_ID,
+          name: "production",
+          project_id: OTHER_PROJECT_ID,
+          protected: false,
+          domains: [],
+        }],
+      });
+    }
     if (request.method === "GET" && url.pathname === "/api/projects/my-project/files") {
-      return Response.json({ data: [], page_info: {} });
+      return Response.json({
+        data: [...uploadedFiles].map(([path, content]) => ({ path, content })),
+        page_info: {},
+      });
     }
     if (request.method === "GET" && url.pathname === `/api/projects/${PROJECT_ID}/files`) {
-      return Response.json({ data: [], page_info: {} });
+      return Response.json({
+        data: [...uploadedFiles].map(([path, content]) => ({ path, content })),
+        page_info: {},
+      });
     }
     if (request.method === "GET" && url.pathname === `/api/projects/${PROJECT_ID}`) {
       return Response.json({ id: PROJECT_ID, slug: "my-project" });
@@ -150,7 +183,10 @@ function createDeployFetchHandler(options: {
       (url.pathname.startsWith(`/api/projects/${PROJECT_ID}/files/`) ||
         url.pathname.startsWith("/api/projects/my-project/files/"))
     ) {
-      options.uploadedPaths?.push(decodeURIComponent(url.pathname.split("/files/")[1] ?? ""));
+      const path = decodeURIComponent(url.pathname.split("/files/")[1] ?? "");
+      const body = await request.clone().json() as { content: string };
+      uploadedFiles.set(path, body.content);
+      options.uploadedPaths?.push(path);
       return Response.json({});
     }
     if (request.method === "GET" && url.pathname.endsWith("/environments")) {
@@ -209,20 +245,20 @@ function createDeployFetchHandler(options: {
         state: "ready",
         manifest_version: 1,
         manifest: {
-          schemaVersion: 1,
+          schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
           projectId: PROJECT_ID,
           releaseId: RELEASE_ID,
           releaseVersion: 41,
           manifestVersion: 1,
           builderVersion: "test",
-          sourceContentHash: options.sourceDigest,
+          sourceContentHash: options.sourceDigest.slice("sha256:".length),
           createdAt: "2026-07-10T09:20:00.000Z",
           assetBasePath: "/_vf/assets",
           modules: {},
           css: [],
           routes: {},
+          dependencyMode: "source",
           dependencies: {},
-          fallback: { mode: "jit", gaps: [] },
         },
       });
     }
@@ -604,6 +640,129 @@ it("bootstraps exactly one quiet push when no verified push receipt exists", asy
   });
 });
 
+it("never uploads the working directory when deploy names a project", async () => {
+  const projectDir = await Deno.makeTempDir();
+  await withDeployEnv(projectDir, async ({ sourceDigest }) => {
+    const requests: string[] = [];
+    const uploadedPaths: string[] = [];
+
+    await withMockFetch(
+      createDeployFetchHandler({ requests, sourceDigest, uploadedPaths }),
+      () =>
+        assertRejects(
+          () =>
+            deployCommand({
+              projectSlug: "my-project",
+              projectDir,
+              branch: "main",
+              env: "production",
+              dryRun: false,
+              force: false,
+              quiet: true,
+              deployProject: boundedDeployProject(),
+            }),
+          Error,
+          'No verified push found for branch "main"',
+        ),
+    );
+
+    assertEquals(uploadedPaths, []);
+    assertEquals(requests.some((request) => request.startsWith("PUT ")), false);
+    assertEquals(requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`), false);
+  });
+});
+
+it("refuses to deploy a project this directory did not push", async () => {
+  // The incident this flag exists for: standing in one project's directory and
+  // naming another. The receipt here is valid -- for `my-project` -- so nothing
+  // but the slug mismatch can stop the deploy, and nothing may be uploaded on
+  // the way to stopping it.
+  const projectDir = await Deno.makeTempDir();
+  await withDeployEnv(projectDir, async ({ sourceDigest }) => {
+    await writePushReceipt(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "my-project",
+      branch: "main",
+      commitSha: `${"2".repeat(40)}`,
+      sourceDigest,
+      clean: true,
+      pushedAt: "2026-07-10T09:20:00.000Z",
+    });
+
+    const requests: string[] = [];
+    const uploadedPaths: string[] = [];
+
+    await withMockFetch(
+      createDeployFetchHandler({ requests, sourceDigest, uploadedPaths }),
+      () =>
+        assertRejects(
+          () =>
+            deployCommand({
+              projectSlug: OTHER_PROJECT_SLUG,
+              projectDir,
+              branch: "main",
+              env: "production",
+              dryRun: false,
+              force: false,
+              quiet: true,
+              deployProject: boundedDeployProject(),
+            }),
+          Error,
+          "The latest push targeted a different project.",
+        ),
+    );
+
+    assertEquals(uploadedPaths, [], "a named project must never receive this directory");
+    assertEquals(requests.some((request) => request.startsWith("PUT ")), false);
+    assertEquals(requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`), false);
+  });
+});
+
+it("refuses the same mismatch in a dry run as in an apply", async () => {
+  // A dry run is read in order to trust the apply that follows. Naming a
+  // project makes the source already-pushed, which used to skip the receipt
+  // check here -- so the dry run reported a deploy the identical apply refused.
+  const projectDir = await Deno.makeTempDir();
+  await withDeployEnv(projectDir, async ({ sourceDigest }) => {
+    await writePushReceipt(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "my-project",
+      branch: "main",
+      commitSha: `${"3".repeat(40)}`,
+      sourceDigest,
+      clean: true,
+      pushedAt: "2026-07-10T09:20:00.000Z",
+    });
+
+    const requests: string[] = [];
+    const uploadedPaths: string[] = [];
+
+    await withMockFetch(
+      createDeployFetchHandler({ requests, sourceDigest, uploadedPaths }),
+      () =>
+        assertRejects(
+          () =>
+            deployCommand({
+              projectSlug: OTHER_PROJECT_SLUG,
+              projectDir,
+              branch: "main",
+              env: "production",
+              dryRun: true,
+              force: false,
+              quiet: true,
+              deployProject: boundedDeployProject(),
+            }),
+          Error,
+          "The latest push targeted a different project.",
+        ),
+    );
+
+    assertEquals(uploadedPaths, [], "a dry run must not upload either");
+  });
+});
+
 it("fails on a stale verified push receipt instead of replacing it", async () => {
   const projectDir = await Deno.makeTempDir();
   await withDeployEnv(projectDir, async ({ sourceDigest }) => {
@@ -838,13 +997,13 @@ it("uses canonical production read-back in human and JSON modes", async () => {
           state: "ready",
           manifest_version: 1,
           manifest: {
-            schemaVersion: 1,
+            schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
             projectId: PROJECT_ID,
             releaseId: RELEASE_ID,
             releaseVersion: 41,
             manifestVersion: 1,
             builderVersion: "test",
-            sourceContentHash: sourceDigest,
+            sourceContentHash: sourceDigest.slice("sha256:".length),
             createdAt: "2026-07-10T09:20:00.000Z",
             assetBasePath: "/_vf/assets",
             modules: {
@@ -858,10 +1017,11 @@ it("uses canonical production read-back in human and JSON modes", async () => {
             routes: {
               "/dashboard": {
                 modules: ["pages/dashboard.tsx"],
+                css: [],
               },
             },
+            dependencyMode: "source",
             dependencies: {},
-            fallback: { mode: "jit", gaps: [] },
           },
         });
       }
@@ -948,6 +1108,9 @@ it("uses canonical production read-back in human and JSON modes", async () => {
         `POST /api/projects/${PROJECT_ID}/deployments`,
         `GET /api/projects/${PROJECT_ID}/deployments/${DEPLOYMENT_ID}`,
         `GET /api/projects/${PROJECT_ID}/environments`,
+        // The environment is protected and the credential is an API key, so
+        // deploy asks for a token bound to this environment before probing.
+        "POST /api/auth/environment-token",
         "GET /dashboard",
         "GET /dashboard",
       ]);
@@ -1064,7 +1227,10 @@ it("uses canonical production read-back in human and JSON modes", async () => {
       await time.tickAsync(0);
       for (
         let tick = 0;
-        releaseSourceReads < 20 && tick < 40;
+        // The deploy flow now does more pre-mutation verification before this
+        // poll starts. Keep the read budget fixed at 20, but allow enough fake
+        // clock ticks for the async chain to issue all reads under load.
+        releaseSourceReads < 20 && tick < 60;
         tick++
       ) {
         await time.tickAsync(500);
@@ -1208,13 +1374,13 @@ it("deploys production from a dirty worktree when the pushed digest matches the 
           state: "ready",
           manifest_version: 1,
           manifest: {
-            schemaVersion: 1,
+            schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
             projectId: PROJECT_ID,
             releaseId: RELEASE_ID,
             releaseVersion: 41,
             manifestVersion: 1,
             builderVersion: "test",
-            sourceContentHash: sourceDigest,
+            sourceContentHash: sourceDigest.slice("sha256:".length),
             createdAt: "2026-07-10T09:20:00.000Z",
             assetBasePath: "/_vf/assets",
             modules: {
@@ -1228,10 +1394,11 @@ it("deploys production from a dirty worktree when the pushed digest matches the 
             routes: {
               "/dashboard": {
                 modules: ["pages/dashboard.tsx"],
+                css: [],
               },
             },
+            dependencyMode: "source",
             dependencies: {},
-            fallback: { mode: "jit", gaps: [] },
           },
         });
       }
@@ -1569,20 +1736,20 @@ it("uses an alternative slug when inferred first deploy project creation conflic
           state: "ready",
           manifest_version: 1,
           manifest: {
-            schemaVersion: 1,
+            schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
             projectId: PROJECT_ID,
             releaseId: RELEASE_ID,
             releaseVersion: 41,
             manifestVersion: 1,
             builderVersion: "test",
-            sourceContentHash: sourceDigest,
+            sourceContentHash: sourceDigest.slice("sha256:".length),
             createdAt: "2026-07-10T09:20:00.000Z",
             assetBasePath: "/_vf/assets",
             modules: {},
             css: [],
             routes: {},
+            dependencyMode: "source",
             dependencies: {},
-            fallback: { mode: "jit", gaps: [] },
           },
         });
       }
@@ -1754,20 +1921,20 @@ it("collects configured app and pages routes when projectDir has a trailing slas
           state: "ready",
           manifest_version: 1,
           manifest: {
-            schemaVersion: 1,
+            schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
             projectId: PROJECT_ID,
             releaseId: RELEASE_ID,
             releaseVersion: 41,
             manifestVersion: 1,
             builderVersion: "test",
-            sourceContentHash: sourceDigest,
+            sourceContentHash: sourceDigest.slice("sha256:".length),
             createdAt: "2026-07-10T09:20:00.000Z",
             assetBasePath: "/_vf/assets",
             modules: {},
             css: [],
             routes: {},
+            dependencyMode: "source",
             dependencies: {},
-            fallback: { mode: "jit", gaps: [] },
           },
         }));
       }

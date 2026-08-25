@@ -1,6 +1,7 @@
 import { isRecord } from "#veryfront/chat/conversation.ts";
 import type { AgentResponse, Message as AgentMessage } from "../schemas/index.ts";
 import { AGENT_ERROR } from "#veryfront/errors";
+import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
 import {
   HOSTED_CHILD_STREAM_TIMEOUT_TOKEN,
   resolveHostedChildPromiseWithTimeout,
@@ -32,7 +33,7 @@ export type StreamedStepState = {
 };
 
 export function createAgentRuntimeForkAbortError(abortSignal?: AbortSignal): Error {
-  if (abortSignal?.reason instanceof Error) {
+  if (isErrorAcrossRealms(abortSignal?.reason)) {
     return abortSignal.reason;
   }
 

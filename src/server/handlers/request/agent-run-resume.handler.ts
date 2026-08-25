@@ -18,7 +18,11 @@ import {
 import { getResumeSignalSchema } from "#veryfront/internal-agents/schema.ts";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
-import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
+import {
+  HTTP_INTERNAL_SERVER_ERROR,
+  PRIORITY_MEDIUM_API,
+} from "#veryfront/utils/constants/index.ts";
+import { reportHandlerFailure } from "./report-handler-failure.ts";
 
 const RESUME_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/resume$/;
 
@@ -99,6 +103,14 @@ export class AgentRunResumeHandler extends BaseHandler {
 
         this.logWarn("Internal agent run resume failed", {
           error: error instanceof Error ? error.message : String(error),
+          runId,
+          projectId: ctx.projectId,
+          projectSlug: ctx.projectSlug,
+        });
+        reportHandlerFailure(error, {
+          boundary: "agent.run.resume",
+          method: req.method,
+          status: HTTP_INTERNAL_SERVER_ERROR,
           runId,
           projectId: ctx.projectId,
           projectSlug: ctx.projectSlug,

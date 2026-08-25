@@ -5,6 +5,7 @@ import {
   createTestCSSOptimizationEngine,
   createTestCSSSourceMap,
 } from "../../../../tests/_helpers/css-optimization-engine.ts";
+import type { CSSOptimizationRequest } from "#veryfront/extensions/css/index.ts";
 import { processWithCSSOptimization } from "./optimization-processor.ts";
 
 describe("legacy batch CSS optimization boundary", () => {
@@ -43,6 +44,23 @@ describe("legacy batch CSS optimization boundary", () => {
         sourceMap: true,
       }, engine),
       { css: ".btn{}", sourceMap },
+    );
+  });
+
+  it("defaults minify to true and sourceMap to false", () => {
+    let observed: CSSOptimizationRequest | undefined;
+    const engine = createTestCSSOptimizationEngine((request) => {
+      observed = request;
+      return { css: request.css };
+    });
+
+    processWithCSSOptimization(".btn {}", { sourcePath: "styles/main.css" }, engine);
+
+    assertEquals(observed?.minify, true, "minify defaults to true when the caller omits it");
+    assertEquals(
+      observed?.sourceMap,
+      false,
+      "sourceMap defaults to false when the caller omits it",
     );
   });
 

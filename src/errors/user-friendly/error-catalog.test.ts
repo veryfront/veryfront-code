@@ -105,7 +105,7 @@ describe("ERROR_SOLUTIONS", () => {
       assertExists(sol.docs);
       assertEquals(
         sol.docs,
-        "https://veryfront.com/docs/errors/client-boundary-violation",
+        "https://veryfront.com/docs/code/guides/errors#client-boundary-violation",
       );
     });
   });

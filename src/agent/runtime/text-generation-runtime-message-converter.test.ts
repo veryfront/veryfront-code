@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   convertToTextGenerationRuntimeMessage,
@@ -8,10 +8,12 @@ import {
 } from "./text-generation-runtime-message-converter.ts";
 import type {
   TextGenerationRuntimeAssistantMessage,
+  TextGenerationRuntimeMessage,
   TextGenerationRuntimeToolMessage,
   TextGenerationRuntimeUserMessage,
 } from "./text-generation-runtime-message-types.ts";
 import type { Message } from "../types.ts";
+import { attachProviderMetadata } from "./provider-metadata.ts";
 
 describe("text-generation-runtime-message-converter", () => {
   describe("convertToTextGenerationRuntimeMessage", () => {
@@ -84,6 +86,107 @@ describe("text-generation-runtime-message-converter", () => {
       assertStringIncludes(text, "sample-attachment.pdf");
       assertStringIncludes(text, "test-upload-id");
       assertStringIncludes(text, "application/pdf");
+    });
+
+    it("keeps inline data: attachment bytes in the native file part only", () => {
+      const msg = {
+        id: "u-inline",
+        role: "user",
+        parts: [
+          { type: "text", text: "look" },
+          {
+            type: "file",
+            url: "data:image/png;base64,ABCPAYLOAD==",
+            mediaType: "image/png",
+            filename: "inline.png",
+          },
+        ],
+      } as unknown as Message;
+
+      const result = convertToTextGenerationRuntimeMessage(msg);
+
+      const content = (result as TextGenerationRuntimeUserMessage).content;
+      if (!Array.isArray(content)) {
+        throw new Error("Expected user content to preserve native file parts");
+      }
+      assertEquals(content[1], {
+        type: "file",
+        mediaType: "image/png",
+        url: "data:image/png;base64,ABCPAYLOAD==",
+        filename: "inline.png",
+      }, "inline bytes must ride in the native file part");
+      const annotation = content.flatMap((part) => part.type === "text" ? [part.text] : []).join(
+        "\n",
+      );
+      assertStringIncludes(annotation, "inline.png");
+      assertStringIncludes(annotation, "image/png");
+      assertEquals(
+        annotation.includes("data:"),
+        false,
+        "the uploaded_files annotation must never inline a data: URL",
+      );
+    });
+
+    it("names the attachment when its URL is one no provider can fetch", () => {
+      // The chat upload handler mints this URL: with a storage backend that
+      // has no external URL of its own it falls back to the app's own origin
+      // (upload-handler.ts:426). A provider fetching `image_url.url` from its
+      // own network resolves `localhost` to itself and answers with an opaque
+      // 400, so the turn must fail here, naming the attachment instead.
+      const msg = {
+        id: "u-local-upload",
+        role: "user",
+        parts: [
+          { type: "text", text: "what is in this image?" },
+          {
+            type: "file",
+            url: "http://localhost:3000/api/chat/upload?id=blob_1",
+            mediaType: "image/png",
+            filename: "screenshot.png",
+            uploadId: "blob_1",
+          },
+        ],
+      } as unknown as Message;
+
+      const error = assertThrows(
+        () => convertToTextGenerationRuntimeMessage(msg),
+        Error,
+      ) as Error;
+      assertStringIncludes(error.message, "screenshot.png");
+      assertStringIncludes(error.message, "localhost");
+    });
+
+    it("keeps a loopback attachment for a runtime that fetches from this machine", () => {
+      // A `server-local` runtime resolves `localhost` to the server the upload
+      // handler is running on, so the URL it minted is reachable there. Only a
+      // remote provider fetches from a network where it is not.
+      const msg = {
+        id: "u-local-runtime",
+        role: "user",
+        parts: [
+          { type: "text", text: "what is in this image?" },
+          {
+            type: "file",
+            url: "http://localhost:3000/api/chat/upload?id=blob_1",
+            mediaType: "image/png",
+            filename: "screenshot.png",
+            uploadId: "blob_1",
+          },
+        ],
+      } as unknown as Message;
+
+      const result = convertToTextGenerationRuntimeMessage(msg, {
+        requireInternetReachableAttachments: false,
+      });
+
+      const content = (result as TextGenerationRuntimeUserMessage).content;
+      if (!Array.isArray(content)) {
+        throw new Error("Expected user content to preserve native file parts");
+      }
+      const fileUrls = content.flatMap((part) =>
+        part.type === "file" || part.type === "image" ? [part.url] : []
+      );
+      assertEquals(fileUrls, ["http://localhost:3000/api/chat/upload?id=blob_1"]);
     });
 
     it("separates user text from attachment context with a readable blank line", () => {
@@ -375,6 +478,33 @@ describe("text-generation-runtime-message-converter", () => {
         { role: "user", content: "list my repos" },
         { role: "user", content: "try again" },
       ]);
+    });
+
+    it("keeps an exact-replay assistant turn that has only canonical reasoning", () => {
+      const providerMetadata = {
+        google: {
+          rawAssistantParts: [{
+            text: "Private reasoning.",
+            thought: true,
+            thoughtSignature: "thought-signature",
+          }],
+        },
+      };
+      const message = attachProviderMetadata({
+        id: "a-reasoning",
+        role: "assistant",
+        parts: [{
+          type: "reasoning",
+          text: "Private reasoning.",
+          signature: "thought-signature",
+        }],
+      }, providerMetadata);
+
+      assertEquals(convertToTextGenerationRuntimeMessages([message]), [{
+        role: "assistant",
+        content: [{ type: "text", text: "" }],
+        providerMetadata,
+      }]);
     });
 
     it("omits provider-executed tool-only assistant messages from replay", () => {
@@ -881,5 +1011,94 @@ describe("text-generation-runtime-message-converter", () => {
       assertEquals(requestMessages.at(-1)?.role, "tool");
       assertEquals(requestMessages.length, historyMessages.length - 1);
     });
+
+    it("strips every trailing assistant message, including a split unanswered tool call", () => {
+      const messages: Message[] = [
+        { id: "u1", role: "user", parts: [{ type: "text", text: "hi" }] },
+        {
+          id: "a1",
+          role: "assistant",
+          parts: [
+            { type: "tool-search", toolCallId: "tc1", toolName: "search", args: { q: "x" } },
+            { type: "text", text: "trailing" },
+          ],
+        },
+      ];
+
+      const history = convertToTextGenerationRuntimeMessages(messages);
+      assertEquals(
+        history.map((m) => m.role),
+        ["user", "assistant", "assistant"],
+        "an unanswered tool call splits the assistant turn in two",
+      );
+
+      assertEquals(
+        convertToTextGenerationRuntimeRequestMessages(messages),
+        [{ role: "user", content: "hi" }],
+        "every trailing assistant message must be stripped so the request never ends on an unanswered tool call",
+      );
+    });
+  });
+
+  describe("attachment reachability across the conversion entry points", () => {
+    // The runtime calls the request entry point, which delegates to the batch
+    // one, which delegates to the single-message one. Each hand-off is a place
+    // the exemption can be dropped silently, so all three are pinned in both
+    // directions rather than only the innermost.
+    const loopbackAttachmentMessages = (): Message[] => [
+      {
+        id: "u-attachment",
+        role: "user",
+        parts: [
+          { type: "text", text: "what is in this image?" },
+          {
+            type: "file",
+            url: "http://localhost:3000/api/chat/upload?id=blob_1",
+            mediaType: "image/png",
+            filename: "screenshot.png",
+            uploadId: "blob_1",
+          },
+        ],
+      } as unknown as Message,
+    ];
+
+    const attachmentUrls = (message: TextGenerationRuntimeMessage): string[] => {
+      const content = (message as TextGenerationRuntimeUserMessage).content;
+      if (!Array.isArray(content)) return [];
+      return content.flatMap((part) =>
+        part.type === "file" || part.type === "image" ? [part.url] : []
+      );
+    };
+
+    for (
+      const entryPoint of [
+        {
+          name: "convertToTextGenerationRuntimeMessages",
+          convert: convertToTextGenerationRuntimeMessages,
+        },
+        {
+          name: "convertToTextGenerationRuntimeRequestMessages",
+          convert: convertToTextGenerationRuntimeRequestMessages,
+        },
+      ]
+    ) {
+      it(`${entryPoint.name} forwards the server-local exemption`, () => {
+        const messages = entryPoint.convert(loopbackAttachmentMessages(), {
+          requireInternetReachableAttachments: false,
+        });
+        assertEquals(messages.length, 1);
+        assertEquals(attachmentUrls(messages[0]!), [
+          "http://localhost:3000/api/chat/upload?id=blob_1",
+        ]);
+      });
+
+      it(`${entryPoint.name} still rejects the attachment by default`, () => {
+        const error = assertThrows(
+          () => entryPoint.convert(loopbackAttachmentMessages()),
+          Error,
+        ) as Error;
+        assertStringIncludes(error.message, "screenshot.png");
+      });
+    }
   });
 });

@@ -16,6 +16,7 @@ import {
   INPUT_VALIDATION_FAILED,
   RESOURCE_NOT_FOUND,
   SECURITY_VIOLATION,
+  SSR_OUTPUT_LIMIT_EXCEEDED,
   TOKEN_STORAGE_ERROR,
 } from "./error-registry.ts";
 import type { ErrorCategory } from "./types.ts";
@@ -28,9 +29,25 @@ describe("error-registry", () => {
       assertEquals(slugs.length, uniqueSlugs.size, "Duplicate slugs detected");
     });
 
-    it("should have 98 registered errors", () => {
+    it("should have 122 registered errors", () => {
       const slugs = getAllSlugs();
-      assertEquals(slugs.length, 98);
+      assertEquals(slugs.length, 122);
+    });
+
+    it("registers every local integration boundary error", () => {
+      const slugs = new Set(getAllSlugs());
+      for (
+        const slug of [
+          "local-integration-config-invalid",
+          "local-integration-credentials-missing",
+          "local-integration-credential-unavailable",
+          "local-integration-request-invalid",
+          "local-integration-request-failed",
+          "local-integration-response-invalid",
+        ] as const
+      ) {
+        assertEquals(slugs.has(slug), true, `Missing registered error slug "${slug}"`);
+      }
     });
   });
 
@@ -140,6 +157,10 @@ describe("error-registry", () => {
       assertEquals(getErrorBySlug("project-source-empty")?.status, 400);
     });
 
+    it("classifies invalid sync metadata as a runtime error", () => {
+      assertEquals(getErrorBySlug("sync-state-invalid")?.exitCode, undefined);
+    });
+
     it("should return correct error for all slugs", () => {
       const slugs = getAllSlugs();
       for (const slug of slugs) {
@@ -167,7 +188,7 @@ describe("error-registry", () => {
   describe("getErrorsByCategory", () => {
     it("should return CONFIG errors", () => {
       const errors = getErrorsByCategory("CONFIG");
-      assertEquals(errors.length, 11);
+      assertEquals(errors.length, 14);
       for (const error of errors) {
         assertEquals(error.category, "CONFIG");
       }
@@ -175,7 +196,7 @@ describe("error-registry", () => {
 
     it("should return BUILD errors", () => {
       const errors = getErrorsByCategory("BUILD");
-      assertEquals(errors.length, 8);
+      assertEquals(errors.length, 9);
       for (const error of errors) {
         assertEquals(error.category, "BUILD");
       }
@@ -251,7 +272,7 @@ describe("error-registry", () => {
       const rfc9457 = error.toRFC9457();
 
       // Required fields
-      assertEquals(rfc9457.type, "https://veryfront.com/docs/errors/config-not-found");
+      assertEquals(rfc9457.type, "https://veryfront.com/docs/code/guides/errors#config-not-found");
       assertEquals(rfc9457.title, "Configuration file not found");
       assertEquals(rfc9457.status, 404);
       assertEquals(rfc9457.category, "CONFIG");
@@ -291,7 +312,7 @@ describe("error-registry", () => {
 
         assertEquals(
           rfc9457.type,
-          `https://veryfront.com/docs/errors/${slug}`,
+          `https://veryfront.com/docs/code/guides/errors#${slug}`,
           `RFC 9457 type URI mismatch for ${slug}`,
         );
       }
@@ -301,7 +322,10 @@ describe("error-registry", () => {
   describe("getDocsUrl", () => {
     it("should return correct documentation URL", () => {
       const error = CONFIG_NOT_FOUND.create();
-      assertEquals(error.getDocsUrl(), "https://veryfront.com/docs/errors/config-not-found");
+      assertEquals(
+        error.getDocsUrl(),
+        "https://veryfront.com/docs/code/guides/errors#config-not-found",
+      );
     });
 
     it("should match RFC 9457 type field", () => {
@@ -313,17 +337,17 @@ describe("error-registry", () => {
 
   describe("error categories coverage", () => {
     const expectedCategoryCounts: Record<string, number> = {
-      CONFIG: 11,
-      BUILD: 8,
-      RUNTIME: 10,
+      CONFIG: 14,
+      BUILD: 9,
+      RUNTIME: 14,
       ROUTE: 6,
-      MODULE: 6,
-      SERVER: 15,
-      BOUNDARY: 6,
+      MODULE: 8,
+      SERVER: 19,
+      BOUNDARY: 8,
       DEV: 5,
-      DEPLOY: 12,
-      AGENT: 7,
-      GENERAL: 12,
+      DEPLOY: 16,
+      AGENT: 9,
+      GENERAL: 14,
     };
 
     for (
@@ -385,6 +409,18 @@ describe("error-registry", () => {
     });
   });
 
+  describe("SSR_OUTPUT_LIMIT_EXCEEDED", () => {
+    it("exposes a stable boundary error for bounded SSR rendering", () => {
+      const error = SSR_OUTPUT_LIMIT_EXCEEDED.create({
+        detail: "Rendered HTML exceeded the configured output ceiling",
+      });
+
+      assertEquals(error.slug, "ssr-output-limit-exceeded");
+      assertEquals(error.category, "BOUNDARY");
+      assertEquals(error.status, 500);
+    });
+  });
+
   describe("INPUT_VALIDATION_FAILED", () => {
     it("should default to status 400", () => {
       const error = INPUT_VALIDATION_FAILED.create({
@@ -440,5 +476,21 @@ describe("error-registry", () => {
       assertEquals(error.status, 500);
       assertEquals(error.cause, primary);
     });
+  });
+});
+
+describe("CLI usage errors", () => {
+  it("maps a bad argument to invalid-argument with the usage exit code", () => {
+    const error = getErrorBySlug("invalid-argument");
+    assertEquals(error.title, "Invalid argument");
+    assertEquals(error.exitCode, 2);
+  });
+
+  it("registers already-exists for targets that would be overwritten", () => {
+    const error = getErrorBySlug("already-exists");
+    assertEquals(error.category, "GENERAL");
+    assertEquals(error.status, 409);
+    assertEquals(error.exitCode, 1);
+    assertEquals(error.suggestion?.includes("different name"), true);
   });
 });

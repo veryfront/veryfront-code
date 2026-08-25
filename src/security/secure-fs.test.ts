@@ -7,11 +7,14 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createSecureFs, SecureFs, wrapAdapterWithSecurity } from "./secure-fs.ts";
+import type { SecurityEvent } from "./secure-fs.ts";
+import { wrapFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/adapter.ts";
 import type { RuntimeAdapter, ServeOptions, Server } from "#veryfront/platform/adapters/base.ts";
 import { captureBoundedTextReader } from "#veryfront/platform/adapters/bounded-text-reader.ts";
 import { FileSnapshotChangedError } from "#veryfront/platform/adapters/file-snapshot-error.ts";
+import { NodeCompatibleFileSystemAdapter } from "#veryfront/platform/adapters/runtime/shared/node-filesystem-adapter.ts";
 
 function createMockFileSystem(
   overrides: Partial<RuntimeAdapter["fs"]> = {},
@@ -716,6 +719,48 @@ describe("SecureFs", () => {
     }
   });
 
+  it("labels and sanitizes the security events it reports to an observer", async () => {
+    const baseDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(`${baseDir}/file.txt`, "ok");
+      const events: SecurityEvent[] = [];
+      const secureFs = createSecureFs({
+        baseDir,
+        adapter: new DenoAdapter(),
+        context: "internal",
+        onSecurityEvent: (event) => {
+          events.push(event);
+        },
+      });
+
+      assertEquals(await secureFs.readFile("file.txt"), "ok");
+      await assertRejects(() => secureFs.readFile("../../etc/passwd"), VeryfrontError);
+
+      assertEquals(
+        events.map((event) => event.type),
+        ["validation-passed", "validation-failed"],
+        "secure-fs must label the allowed read and the rejected traversal distinctly",
+      );
+      assertEquals(
+        events.map((event) => event.operation),
+        ["readFile", "readFile"],
+        "each event carries the originating operation",
+      );
+      assertEquals(
+        events[0]?.path,
+        "file.txt",
+        "an in-root path is reported relative to the trust root",
+      );
+      assertEquals(
+        events[1]?.path,
+        "passwd",
+        "a rejected traversal is reported sanitized, never as a host absolute path",
+      );
+    } finally {
+      await Deno.remove(baseDir, { recursive: true });
+    }
+  });
+
   it("creates temporary directories inside the configured trust root", async () => {
     const baseDir = await Deno.makeTempDir();
     try {
@@ -826,6 +871,30 @@ describe("SecureFs", () => {
     assertEquals([...result], [1, 2, 3]);
     assertEquals(received, ["/project/assets/app.bin", "/project", 3]);
     assertEquals({ originalCalls, replacementCalls }, { originalCalls: 1, replacementCalls: 0 });
+  });
+
+  it("reads a canonical snapshot beneath a symlinked configured root", async () => {
+    if (Deno.build.os === "windows") return;
+    const workspace = await Deno.makeTempDir({ prefix: "veryfront-secure-fs-snapshot-root-" });
+    const physicalRoot = `${workspace}/physical`;
+    const linkedRoot = `${workspace}/linked`;
+    try {
+      await Deno.mkdir(physicalRoot);
+      await Deno.writeFile(`${physicalRoot}/asset.bin`, new Uint8Array([1, 2, 3]));
+      await Deno.symlink(physicalRoot, linkedRoot);
+      const secureFs = createSecureFs({
+        baseDir: linkedRoot,
+        adapter: { fs: new NodeCompatibleFileSystemAdapter() } as unknown as RuntimeAdapter,
+        context: "build",
+      });
+
+      assertEquals(
+        [...await secureFs.readFileSnapshotWithinLimit!("asset.bin", 3)],
+        [1, 2, 3],
+      );
+    } finally {
+      await Deno.remove(workspace, { recursive: true });
+    }
   });
 
   it("rejects traversal before invoking raw snapshot authority", async () => {
@@ -1363,5 +1432,48 @@ describe("SecureFs", () => {
       TypeError,
       "construction-time root",
     );
+  });
+});
+
+describe("SecureFs with the platform filesystem wrapper", () => {
+  it("accepts a wrapper whose unsupported capabilities are published as undefined", () => {
+    // FSAdapterWrapper publishes every optional capability as a frozen own
+    // property, including ones the underlying adapter lacks, so project code
+    // cannot inject one after construction. SecureFs previously read that
+    // shape as a malformed capability and rejected it with "SecureFs
+    // filesystem snapshot capability is invalid", which failed every hosted
+    // render on a remote filesystem.
+    const bareAdapter = {
+      readFile: (_path: string) => Promise.resolve("x"),
+      readFileBytes: (_path: string) => Promise.resolve(new Uint8Array()),
+      writeFile: (_path: string, _content: string) => Promise.resolve(),
+      exists: (_path: string) => Promise.resolve(true),
+      stat: (_path: string) =>
+        Promise.resolve({
+          size: 0,
+          isFile: true,
+          isDirectory: false,
+          isSymlink: false,
+          mtime: null,
+        }),
+      readDir: async function* (_path: string) {},
+      mkdir: (_path: string) => Promise.resolve(),
+      remove: (_path: string) => Promise.resolve(),
+    } as unknown as Parameters<typeof wrapFSAdapter>[0];
+
+    const wrapped = wrapFSAdapter(bareAdapter);
+    // Precondition: the capability really is published as an explicit undefined.
+    const descriptor = Object.getOwnPropertyDescriptor(
+      wrapped,
+      "readFileSnapshotWithinLimit",
+    );
+    assertEquals(descriptor !== undefined, true);
+    assertEquals(descriptor?.value, undefined);
+
+    const secureFs = createSecureFs({
+      baseDir: "/project",
+      adapter: { fs: wrapped } as unknown as RuntimeAdapter,
+    });
+    assertEquals(secureFs instanceof SecureFs, true);
   });
 });

@@ -2,8 +2,12 @@ import "#veryfront/schemas/_test-setup.ts";
 import "./__tests__/css-processor-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { MAX_CSS_SELECTOR_TOKEN_CHARACTERS } from "#veryfront/utils/constants/css.ts";
 import {
+  MAX_CSS_FILES,
+  MAX_CSS_SELECTOR_TOKEN_CHARACTERS,
+} from "#veryfront/utils/constants/css.ts";
+import {
+  cacheCSSAsync,
   clearCSSCache,
   extractCandidates,
   extractCandidatesFromFiles,
@@ -98,16 +102,60 @@ describe("styles-builder/tailwind-compiler", () => {
       assertEquals(candidates.includes("bg-[var(--color)]"), true);
     });
 
-    it("rejects an overlong candidate as one token instead of extracting fragments", () => {
+    it("skips an overlong run whole instead of extracting fragments", () => {
       const admitted = "a".repeat(MAX_CSS_SELECTOR_TOKEN_CHARACTERS);
       const overlong = `${admitted}a`;
 
       assertEquals(extractCandidates(`class="${admitted}"`).includes(admitted), true);
-      assertThrows(
-        () => extractCandidates(`class="${overlong}"`),
-        TypeError,
-        `cannot exceed ${MAX_CSS_SELECTOR_TOKEN_CHARACTERS} characters`,
+
+      // The run is skipped entirely: no fragment of it becomes a candidate, and
+      // scanning continues past it. This used to throw, and the throw reached
+      // generateHTMLShellPartsImpl, so the request 500'd rather than degrading
+      // to an unstyled page.
+      const candidates = extractCandidates(`class="${overlong}" class="text-red-500"`);
+      assertEquals(candidates.some((candidate) => /^a+$/.test(candidate)), false);
+      assertEquals(candidates.includes("text-red-500"), true);
+    });
+
+    it("skips an over-cap run that ends without a continuation", () => {
+      // The pattern's head admits up to five characters on top of its MAX - 1
+      // body, so a match can reach MAX + 4 and stop at a clean boundary -- no
+      // continuation follows, and only the length check catches it. Gating the
+      // skip on continuation alone emitted the run as a candidate, which then
+      // threw in normalizeCSSCandidates instead of at the tokenizer.
+      for (const head of ["!", "@", "-", "!-@[&"]) {
+        const overCap = `${head}${"a".repeat(MAX_CSS_SELECTOR_TOKEN_CHARACTERS)}`;
+        const candidates = extractCandidates(`class="${overCap}" text-red-500`);
+
+        for (const candidate of candidates) {
+          assertEquals(candidate.length <= MAX_CSS_SELECTOR_TOKEN_CHARACTERS, true);
+        }
+        assertEquals(candidates.some((candidate) => /a{16}/.test(candidate)), false);
+        assertEquals(candidates.includes("text-red-500"), true);
+      }
+    });
+
+    it("admits a run sitting exactly on the cap", () => {
+      const atCap = "a".repeat(MAX_CSS_SELECTOR_TOKEN_CHARACTERS);
+      const candidates = extractCandidates(`class="${atCap}" text-red-500`);
+
+      assertEquals(candidates.includes(atCap), true);
+      assertEquals(candidates.includes("text-red-500"), true);
+    });
+
+    it("skips a multi-kilobyte run in one scan", () => {
+      // esbuild writes `//# sourceMappingURL=data:application/json;base64,...`
+      // into the build cache, and base64's alphabet lies entirely inside the
+      // candidate body class, so the payload reads as one unbroken token.
+      const payload = "AB/+=".repeat(20_000);
+      const candidates = extractCandidates(
+        `//# sourceMappingURL=data:application/json;base64,${payload}\nclass="text-red-500"`,
       );
+
+      for (const candidate of candidates) {
+        assertEquals(candidate.length <= MAX_CSS_SELECTOR_TOKEN_CHARACTERS, true);
+      }
+      assertEquals(candidates.includes("text-red-500"), true);
     });
   });
 
@@ -210,6 +258,15 @@ describe("styles-builder/tailwind-compiler", () => {
     it("should handle empty file list", () => {
       const candidates = extractCandidatesFromFiles([]);
       assertEquals(candidates.size, 0);
+    });
+
+    it("rejects more files than the cap", () => {
+      assertThrows(
+        () => extractCandidatesFromFiles(new Array(MAX_CSS_FILES + 1)),
+        TypeError,
+        String(MAX_CSS_FILES),
+        "the file-count cap must reject oversized input before any file is read",
+      );
     });
   });
 
@@ -333,11 +390,29 @@ describe("styles-builder/tailwind-compiler", () => {
     it("should return undefined for unknown hash", () => {
       clearCSSCache();
       assertEquals(getCSSByHash("nonexistent"), undefined);
+      assertEquals(
+        getCSSByHash("0".repeat(64)),
+        undefined,
+        "a valid digest with no entry must miss",
+      );
     });
 
-    it("should clear all caches", () => {
+    it("should clear all caches", async () => {
       clearCSSCache();
-      assertEquals(getCSSByHash("any-hash"), undefined);
+      const css = ".vf-clear-probe { color: red; }";
+      const hash = hashCSS(css);
+      await cacheCSSAsync(css, hash);
+      assertEquals(
+        getCSSByHash(hash),
+        css,
+        "a cached entry must be readable by its content hash",
+      );
+      clearCSSCache();
+      assertEquals(
+        getCSSByHash(hash),
+        undefined,
+        "clearCSSCache must drop cached entries",
+      );
     });
   });
 

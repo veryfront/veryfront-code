@@ -1,5 +1,5 @@
 import type { BaseNodeConfig, RetryConfig, WorkflowContext, WorkflowNode } from "../types.ts";
-import { validateNodeId } from "./validation.ts";
+import { isPositiveSafeInteger, validateNodeId } from "./validation.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 /** Default maximum number of loop iterations */
@@ -39,6 +39,7 @@ export interface LoopOptions extends Omit<BaseNodeConfig, "checkpoint"> {
 
 export interface LoopNodeConfig {
   type: "loop";
+  description?: string;
   while: LoopOptions["while"];
   steps: LoopOptions["steps"];
   maxIterations: number;
@@ -68,8 +69,13 @@ export function loop(id: string, options: LoopOptions): WorkflowNode {
 
   const maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
 
-  if (maxIterations < 1) {
-    throw INVALID_ARGUMENT.create({ detail: `Loop "${id}" maxIterations must be at least 1` });
+  if (!isPositiveSafeInteger(maxIterations)) {
+    if (typeof maxIterations === "number" && maxIterations < 1) {
+      throw INVALID_ARGUMENT.create({ detail: `Loop "${id}" maxIterations must be at least 1` });
+    }
+    throw INVALID_ARGUMENT.create({
+      detail: `Loop "${id}" maxIterations must be an integer between 1 and 100`,
+    });
   }
 
   if (maxIterations > MAX_ITERATIONS_LIMIT) {
@@ -84,6 +90,7 @@ export function loop(id: string, options: LoopOptions): WorkflowNode {
     id,
     config: {
       type: "loop",
+      description: options.description,
       while: options.while,
       steps: options.steps,
       maxIterations,
@@ -107,6 +114,11 @@ export function doWhile(
   },
 ): WorkflowNode {
   const { until, ...rest } = options;
+  if (typeof until !== "function") {
+    throw INVALID_ARGUMENT.create({
+      detail: `Loop "${id}" must have an 'until' condition function`,
+    });
+  }
 
   return loop(id, {
     ...rest,

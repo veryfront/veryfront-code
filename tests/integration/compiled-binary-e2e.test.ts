@@ -29,6 +29,7 @@ import {
 import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { load as loadEnv } from "#veryfront/platform/compat/std/dotenv.ts";
+import { PROVIDER_ENV_KEYS } from "../../scripts/test/suites.ts";
 import {
   assertCounterHydration,
   assertHtmlDoesNotInclude,
@@ -52,6 +53,7 @@ try {
 } catch {
   // .env file doesn't exist - that's fine
 }
+for (const key of PROVIDER_ENV_KEYS) Deno.env.delete(key);
 
 const COMPILED_BINARY_E2E_OPTIONS = {
   sanitizeOps: false,
@@ -80,6 +82,19 @@ const BROWSER_ESM_CSP = {
   "base-uri": ["'self'"],
   "form-action": ["'self'"],
 } as const;
+
+function assertInlineScriptHasNonce(html: string, marker: string, message: string): void {
+  const markerIndex = html.indexOf(marker);
+  assert(markerIndex >= 0, `${message}: marker was not rendered`);
+  const openingTagStart = html.lastIndexOf("<script", markerIndex);
+  const openingTagEnd = html.indexOf(">", openingTagStart);
+  assert(openingTagStart >= 0 && openingTagEnd > openingTagStart, `${message}: tag is malformed`);
+  assertStringIncludes(
+    html.slice(openingTagStart, openingTagEnd + 1),
+    'nonce="',
+    `${message}: response nonce is missing`,
+  );
+}
 
 async function configureBrowserEsmProject(
   projectDir: string,
@@ -117,16 +132,21 @@ describe("Compiled Binary E2E", COMPILED_BINARY_E2E_OPTIONS, () => {
     }
   });
 
-  it("should render page with veryfront/head import correctly", async () => {
+  it("should render Head and UI nonce consumers through compiled framework sources", async () => {
     const projectDir = await createTestProject(
       "head-test",
       `
 import { Head } from "veryfront/head";
+import { ColorModeScript } from "veryfront/ui";
 
 export default function Home() {
   return (
     <>
-      <Head><title>Head Component Test</title></Head>
+      <Head>
+        <title>Head Component Test</title>
+        <script id="head-nonce-probe">{"globalThis.__vfHeadNonceProbe=true"}</script>
+      </Head>
+      <ColorModeScript storageKey="vf-binary-color-mode" />
       <div id="content">Head import works</div>
     </>
   );
@@ -143,6 +163,16 @@ export default function Home() {
         "Should not have module errors",
       );
       assertStringIncludes(html, "Head import works", "Should render content");
+      assertInlineScriptHasNonce(
+        html,
+        'id="head-nonce-probe"',
+        "Managed Head inline script",
+      );
+      assertInlineScriptHasNonce(
+        html,
+        'localStorage.getItem("vf-binary-color-mode")',
+        "ColorModeScript",
+      );
 
       const errorLogs = server.logs.filter((l) =>
         l.includes("esm.sh/_vf_modules") || l.includes("dual React") ||
@@ -635,7 +665,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       const response = await fetch(`http://127.0.0.1:${server.port}/`);
       const html = await response.text();
 
-      assertEquals(response.status, 200, "Should return 200");
+      assertEquals(
+        response.status,
+        200,
+        `Should return 200\n${server.logs.join("").slice(-16000)}`,
+      );
       const normalizedHtml = stripReactSSRMarkers(html);
       // The layout rendered the page's getServerData value at SSR — proving
       // server data reaches a layout via usePageContext().data without drilling.
@@ -667,16 +701,129 @@ export function GET() {
 
     await withServer(projectDir, async (server) => {
       const response = await fetch(`http://127.0.0.1:${server.port}/api/hello`);
-      const json = await response.json();
+      const body = await response.text();
 
-      assertEquals(response.status, 200, "Should return 200");
+      assertEquals(
+        response.status,
+        200,
+        `Should return 200\nResponse body: ${body}\n${server.logs.join("").slice(-16000)}`,
+      );
       assertEquals(
         response.headers.get("content-type")?.includes("application/json"),
         true,
         "Should be JSON",
       );
+      const json = JSON.parse(body);
       assertEquals(json.message, "Hello from API", "Should return correct message");
       assert(json.timestamp > 0, "Should have timestamp");
+    });
+  });
+
+  it("should expose root package exports to compiled-binary API routes", async () => {
+    const projectDir = await createTestProject(
+      "api-root-exports-test",
+      `
+export default function Home() {
+  return <div>Home Page</div>;
+}
+`,
+      {
+        "pages/api/validated.ts": `
+import { createValidatedHandler } from "veryfront";
+
+export function GET() {
+  return Response.json({ exportType: typeof createValidatedHandler });
+}
+`,
+      },
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/api/validated`);
+      const body = await response.text();
+
+      assertEquals(
+        response.status,
+        200,
+        `Should return 200\nResponse body: ${body}\n${server.logs.join("").slice(-16000)}`,
+      );
+      assertEquals(JSON.parse(body), { exportType: "function" });
+    });
+  });
+
+  // Production ran exactly this flag combination and every project API route
+  // returned a masked 500.
+  it("serves API routes when a compiled binary cannot honour WORKER_ISOLATION_API but host execution is granted", async () => {
+    const projectDir = await createTestProject(
+      "isolation-downgrade-test",
+      `
+export default function Home() {
+  return <div>Home Page</div>;
+}
+`,
+      {
+        "pages/api/hello.ts": `
+export function GET() {
+  return Response.json({ message: "Hello from API" });
+}
+`,
+      },
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/api/hello`);
+      const body = await response.text();
+
+      assertEquals(
+        response.status,
+        200,
+        `Should return 200\nResponse body: ${body}\n${server.logs.join("").slice(-16000)}`,
+      );
+      assertEquals(JSON.parse(body).message, "Hello from API");
+      assertStringIncludes(
+        server.logs.join(""),
+        "WORKER_ISOLATION_API downgraded",
+        "the downgrade must be logged",
+      );
+    }, "production", {
+      WORKER_ISOLATION_ENABLED: "1",
+      WORKER_ISOLATION_API: "1",
+      VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION: "1",
+    });
+  });
+
+  it("returns a typed 503 for API routes when WORKER_ISOLATION_API is unserviceable and ungranted", async () => {
+    const projectDir = await createTestProject(
+      "isolation-unserviceable-test",
+      `
+export default function Home() {
+  return <div>Home Page</div>;
+}
+`,
+      {
+        "pages/api/hello.ts": `
+export function GET() {
+  return Response.json({ message: "Hello from API" });
+}
+`,
+      },
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/api/hello`);
+      const body = await response.text();
+
+      assertEquals(
+        response.status,
+        503,
+        `Should fail closed as 503, not a masked 500\nResponse body: ${body}\n${
+          server.logs.join("").slice(-16000)
+        }`,
+      );
+      assertStringIncludes(body, "WORKER_ISOLATION_API", "the response must name the flag");
+    }, "production", {
+      WORKER_ISOLATION_ENABLED: "1",
+      WORKER_ISOLATION_API: "1",
     });
   });
 
@@ -711,7 +858,11 @@ export function GET() {
 
     await withServer(projectDir, async (server) => {
       const response = await fetch(`http://127.0.0.1:${server.port}/api/events`);
-      assertEquals(response.status, 200, "Should start the SSE response");
+      assertEquals(
+        response.status,
+        200,
+        `Should start the SSE response\n${server.logs.join("").slice(-16000)}`,
+      );
 
       const reader = response.body?.getReader();
       assert(reader, "Should expose the SSE response body");
@@ -787,7 +938,11 @@ export function GET() {
 
     await withServer(projectDir, async (server) => {
       const response = await fetch(`http://127.0.0.1:${server.port}/api/users/list`);
-      assertEquals(response.status, 200, "Should return 200");
+      assertEquals(
+        response.status,
+        200,
+        `Should return 200\n${server.logs.join("").slice(-16000)}`,
+      );
 
       const json = await response.json();
       assertEquals(json.count, 2, "Should return user count");
@@ -1975,32 +2130,39 @@ export default function HomePage() {
           `style-src should not mix unsafe-inline with a nonce, got: ${csp}`,
         );
 
-        await assertCounterHydration(page, {
-          assertBeforeClick: async () => {
-            const initialBackground = await page.$eval(
-              "#counter",
-              (element) => globalThis.getComputedStyle(element).backgroundColor,
-            );
-            const initialPadding = await page.$eval(
-              "#counter",
-              (element) => globalThis.getComputedStyle(element).paddingTop,
-            );
-            assertEquals(initialBackground, "rgb(37, 99, 235)");
-            assertEquals(initialPadding, "12px");
-          },
-          assertAfterClick: async () => {
-            const clickedBackground = await page.$eval(
-              "#counter",
-              (element) => globalThis.getComputedStyle(element).backgroundColor,
-            );
-            const clickedPadding = await page.$eval(
-              "#counter",
-              (element) => globalThis.getComputedStyle(element).paddingTop,
-            );
-            assertEquals(clickedBackground, "rgb(22, 101, 52)");
-            assertEquals(clickedPadding, "13px");
-          },
-        });
+        try {
+          await assertCounterHydration(page, {
+            assertBeforeClick: async () => {
+              const initialBackground = await page.$eval(
+                "#counter",
+                (element) => globalThis.getComputedStyle(element).backgroundColor,
+              );
+              const initialPadding = await page.$eval(
+                "#counter",
+                (element) => globalThis.getComputedStyle(element).paddingTop,
+              );
+              assertEquals(initialBackground, "rgb(37, 99, 235)");
+              assertEquals(initialPadding, "12px");
+            },
+            assertAfterClick: async () => {
+              const clickedBackground = await page.$eval(
+                "#counter",
+                (element) => globalThis.getComputedStyle(element).backgroundColor,
+              );
+              const clickedPadding = await page.$eval(
+                "#counter",
+                (element) => globalThis.getComputedStyle(element).paddingTop,
+              );
+              assertEquals(clickedBackground, "rgb(22, 101, 52)");
+              assertEquals(clickedPadding, "13px");
+            },
+          });
+        } catch (error) {
+          throw new Error(
+            `${String(error)}\nBrowser diagnostics:\n${JSON.stringify(diagnostics, null, 2)}`,
+            { cause: error },
+          );
+        }
 
         assertNoBrowserHydrationErrors(diagnostics);
         assertNoServerLogErrors(
@@ -2047,7 +2209,14 @@ export default function HomePage() {
 
     await withServer(projectDir, async (server) => {
       await withBrowserPageAgainstServer(server, async ({ page, response, diagnostics }) => {
-        await page.waitForSelector('#styled-box[data-hydrated="yes"]');
+        try {
+          await page.waitForSelector('#styled-box[data-hydrated="yes"]');
+        } catch (error) {
+          throw new Error(
+            `${String(error)}\nBrowser diagnostics:\n${JSON.stringify(diagnostics, null, 2)}`,
+            { cause: error },
+          );
+        }
 
         const csp = response?.headers()["content-security-policy"] ?? "";
         const styleSources = getDirectiveSources(csp, "style-src");
@@ -2247,7 +2416,11 @@ export function GET() {
 
     await withServer(projectDir, async (server) => {
       const response = await fetch(`http://127.0.0.1:${server.port}/api/status`);
-      assertEquals(response.status, 201, "Should return custom status 201");
+      assertEquals(
+        response.status,
+        201,
+        `Should return custom status 201\n${server.logs.join("").slice(-16000)}`,
+      );
 
       const json = await response.json();
       assertEquals(json.status, "ok", "Should return ok status");
@@ -3142,7 +3315,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       {
         PROXY_MODE: "1",
         PRODUCTION_MODE: "1",
+        VERYFRONT_TRUST_FORWARDED_HEADERS: "1",
         VERYFRONT_API_BASE_URL: UNREACHABLE_LOCAL_PROXY_API_BASE_URL,
+        VERYFRONT_API_INTERNAL_USER: "test-internal-user",
+        VERYFRONT_API_INTERNAL_PASS: "test-internal-pass",
         VERYFRONT_API_TOKEN: "",
       },
     );
@@ -3212,7 +3388,10 @@ export default function Home() {
       {
         PROXY_MODE: "1",
         PRODUCTION_MODE: "1",
+        VERYFRONT_TRUST_FORWARDED_HEADERS: "1",
         VERYFRONT_API_BASE_URL: UNREACHABLE_LOCAL_PROXY_API_BASE_URL,
+        VERYFRONT_API_INTERNAL_USER: "test-internal-user",
+        VERYFRONT_API_INTERNAL_PASS: "test-internal-pass",
         VERYFRONT_API_TOKEN: "",
       },
     );

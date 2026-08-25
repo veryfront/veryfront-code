@@ -60,10 +60,12 @@ interface WebSocketDeps {
   getContentSource: () => ContentSource;
   getProjectDir: () => string | undefined;
   clearMemoryCaches: () => void;
+  getSourceSnapshotVersion?: () => number;
   replaceSourceSnapshot: (
     cacheKey: string,
     files: ProjectFile[],
-  ) => Promise<void>;
+    expectedSnapshotVersion?: number,
+  ) => Promise<number | undefined>;
   pregenerateStyles?: (
     files: ProjectFile[],
   ) => Promise<PreviewStyleArtifactInfo | undefined>;
@@ -219,7 +221,10 @@ export class WebSocketManager {
 
       this.ws.onmessage = (event) => {
         this.wsLastPong = Date.now();
-        logger.debug("WebSocket message received:", { data: event.data });
+        logger.debug("WebSocket message received", {
+          payloadType: typeof event.data,
+          payloadLength: typeof event.data === "string" ? event.data.length : undefined,
+        });
         this.handlePokeMessage(event);
       };
 
@@ -372,14 +377,10 @@ export class WebSocketManager {
 
       logger.debug("POKE RECEIVED - checking environment scope", {
         type: message.type,
-        pokeBranchId: normalizedBranchId,
-        pokeBranchName: normalizedBranchName,
+        hasBranchId: normalizedBranchId !== null,
+        hasBranchName: normalizedBranchName !== null,
         isProductionPoke,
         isProductionMode,
-        currentBranch,
-        entityId: payload.entityId,
-        entityType: payload.entityType,
-        action: payload.action,
         connectionId: this.wsConnectionId,
         totalPokesReceived: this.pokeMetrics.received,
         timeSinceLastPokeMs: timeSinceLastPoke,
@@ -392,8 +393,8 @@ export class WebSocketManager {
         logger.debug(
           "[WebSocketManager] POKE ACCEPTED - branch-scoped poke in production mode",
           {
-            pokeBranchId: normalizedBranchId,
-            pokeBranchName: normalizedBranchName,
+            hasBranchId: normalizedBranchId !== null,
+            hasBranchName: normalizedBranchName !== null,
             sourceType: contentContext?.sourceType,
           },
         );
@@ -403,10 +404,7 @@ export class WebSocketManager {
         if (normalizedBranchName && normalizedBranchName !== currentBranch) {
           logger.debug(
             "[WebSocketManager] POKE SKIPPED - different branch name in preview mode",
-            {
-              pokeBranchName: normalizedBranchName,
-              currentBranch,
-            },
+            { hasCurrentBranch: currentBranch !== null },
           );
           return;
         }
@@ -415,14 +413,14 @@ export class WebSocketManager {
           if (currentBranch === null) {
             logger.debug(
               "[WebSocketManager] POKE SKIPPED - branchId-only poke for main preview",
-              { pokeBranchId: normalizedBranchId },
+              { hasBranchId: true },
             );
             return;
           }
 
           logger.debug(
             "[WebSocketManager] POKE ACCEPTED - branchId-only fallback in preview mode",
-            { pokeBranchId: normalizedBranchId, currentBranch },
+            { hasBranchId: true, hasCurrentBranch: true },
           );
         }
 
@@ -436,7 +434,7 @@ export class WebSocketManager {
           // using a different default branch (e.g., "master", "develop").
           logger.debug(
             "[WebSocketManager] POKE SKIPPED - unscoped poke for named branch preview",
-            { currentBranch, defaultBranchName: this.deps.defaultBranchName ?? "main" },
+            { hasCurrentBranch: true },
           );
           return;
         }
@@ -469,13 +467,9 @@ export class WebSocketManager {
 
       logger.info("POKE ACCEPTED - triggering cache invalidation", {
         changedPathsCount: changedPaths?.length || 0,
-        changedPaths: changedPaths || [],
         projectSlug: this.deps.projectSlug,
-        branch: contentContext?.branch,
         isDeploymentPoke,
         isPublishPoke,
-        pokeReleaseId: normalizedPokeReleaseId,
-        pokeEnvironmentName: normalizedPokeEnvironment,
       });
 
       this.beginPreviewInvalidation(contentContext);
@@ -552,10 +546,8 @@ export class WebSocketManager {
 
     logger.info("PUBLISH POKE - clearing persistent cache", {
       projectSlug: this.deps.projectSlug,
-      releaseId,
-      environmentName,
-      deletionPrefixes: Array.from(deletionPrefixes),
-      pendingPrefixes: Array.from(pendingPrefixes),
+      deletionPrefixCount: deletionPrefixes.size,
+      pendingPrefixCount: pendingPrefixes.size,
       pendingInvalidations: getPendingInvalidationsCount(),
     });
 
@@ -570,15 +562,11 @@ export class WebSocketManager {
 
         logger.info("PUBLISH POKE - persistent cache cleared", {
           projectSlug: this.deps.projectSlug,
-          releaseId,
-          environmentName,
           totalDeleted,
         });
       } catch (error) {
         logger.error("PUBLISH POKE - failed to clear persistent cache (stale data may be served)", {
           projectSlug: this.deps.projectSlug,
-          releaseId,
-          environmentName,
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,
         });
@@ -591,7 +579,7 @@ export class WebSocketManager {
             "PUBLISH POKE - keeping pending invalidations active due to deletion failure",
             {
               projectSlug: this.deps.projectSlug,
-              pendingPrefixes: Array.from(pendingPrefixes),
+              pendingPrefixCount: pendingPrefixes.size,
             },
           );
         }
@@ -641,14 +629,15 @@ export class WebSocketManager {
     this.pendingChangedPaths.clear();
 
     const contentContext = this.deps.getContentContext();
+    const sourceSnapshotVersion = this.deps.getSourceSnapshotVersion?.();
     const previewInvalidationPrefixes = this.getPreviewInvalidationPrefixes(contentContext);
     const previewInvalidationVersion = this.previewInvalidationVersion;
     let preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
+    let reloadSuperseded = false;
     let succeeded = false;
 
     try {
       logger.debug("Performing selective invalidation", {
-        changedPaths,
         count: changedPaths.length,
       });
 
@@ -682,8 +671,8 @@ export class WebSocketManager {
       await Promise.all(deletionPromises);
 
       logger.debug("Cache entries deleted for changed paths", {
-        changedPaths,
-        parentDirs: Array.from(parentDirs),
+        changedPathsCount: changedPaths.length,
+        parentDirsCount: parentDirs.size,
         prefixes: ["file:", "stat:", "dir:"],
       });
 
@@ -692,7 +681,7 @@ export class WebSocketManager {
         this.deps.invalidationCallbacks.invalidateModulePaths?.(changedPaths),
       ];
       logger.debug("Clearing SSR module cache for HMR", {
-        changedPaths,
+        changedPathsCount: changedPaths.length,
         projectId,
         usePerProject: !!this.deps.invalidationCallbacks.clearSSRModuleCacheForProject,
       });
@@ -741,14 +730,30 @@ export class WebSocketManager {
         try {
           const files = await this.deps.client.listAllFiles();
           const cacheKey = buildFileListCacheKey(contentContext);
-          await this.deps.replaceSourceSnapshot(cacheKey, files);
-          preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
-
-          logger.debug("Fresh files cached (memory + Redis)", {
+          const appliedSnapshotVersion = await this.deps.replaceSourceSnapshot(
             cacheKey,
-            fileCount: files.length,
-            styleAssetPath: preparedStyleArtifact?.assetPath,
-          });
+            files,
+            sourceSnapshotVersion,
+          );
+          if (appliedSnapshotVersion === undefined) {
+            reloadSuperseded = true;
+          } else {
+            preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
+            const currentSnapshotVersion = this.deps.getSourceSnapshotVersion?.();
+            if (
+              currentSnapshotVersion !== undefined &&
+              currentSnapshotVersion !== appliedSnapshotVersion
+            ) {
+              preparedStyleArtifact = undefined;
+              reloadSuperseded = true;
+            }
+
+            logger.debug("Fresh files cached (memory + Redis)", {
+              cacheKey,
+              fileCount: files.length,
+              styleAssetPath: preparedStyleArtifact?.assetPath,
+            });
+          }
         } catch (error) {
           logger.warn("Failed to fetch files during selective invalidation", {
             error,
@@ -758,29 +763,37 @@ export class WebSocketManager {
 
       this.pokeMetrics.invalidationsTriggered++;
 
-      logger.info(
-        "[WebSocketManager] TRIGGERING HMR RELOAD via invalidationCallbacks.triggerReload",
-        {
-          changedPaths,
+      if (reloadSuperseded) {
+        logger.debug("Skipping reload for superseded selective invalidation", {
+          changedPathsCount: changedPaths.length,
           projectSlug: this.deps.projectSlug,
-          projectId: this.deps.client.getProjectId(),
-          hasTriggerReloadCallback: !!this.deps.invalidationCallbacks.triggerReload,
-        },
-      );
+        });
+      } else {
+        logger.info(
+          "[WebSocketManager] TRIGGERING HMR RELOAD via invalidationCallbacks.triggerReload",
+          {
+            changedPathsCount: changedPaths.length,
+            projectSlug: this.deps.projectSlug,
+            projectId: this.deps.client.getProjectId(),
+            hasTriggerReloadCallback: !!this.deps.invalidationCallbacks.triggerReload,
+          },
+        );
 
-      const projectContext = buildReloadProjectContext(
-        contentContext,
-        this.deps.projectSlug,
-        this.deps.client.getProjectId(),
-        preparedStyleArtifact,
-      );
+        const projectContext = buildReloadProjectContext(
+          contentContext,
+          this.deps.projectSlug,
+          this.deps.client.getProjectId(),
+          preparedStyleArtifact,
+        );
 
-      this.deps.invalidationCallbacks.triggerReload?.(changedPaths, projectContext);
+        this.deps.invalidationCallbacks.triggerReload?.(changedPaths, projectContext);
+      }
 
-      logger.info("Selective invalidation complete - HMR triggered", {
-        changedPaths,
+      logger.info("Selective invalidation complete", {
+        changedPathsCount: changedPaths.length,
         durationMs: Date.now() - startTime,
         totalInvalidations: this.pokeMetrics.invalidationsTriggered,
+        reloadTriggered: !reloadSuperseded,
       });
 
       this.sendPokeAck("selective", changedPaths);
@@ -791,7 +804,9 @@ export class WebSocketManager {
           previewInvalidationPrefixes,
           previewInvalidationVersion,
         );
-        this.deps.invalidationCallbacks.evictCurrentAdapter?.();
+        if (!reloadSuperseded) {
+          this.deps.invalidationCallbacks.evictCurrentAdapter?.();
+        }
       }
     }
   }
@@ -802,6 +817,7 @@ export class WebSocketManager {
     const previewInvalidationPrefixes = this.getPreviewInvalidationPrefixes(contentContext);
     const previewInvalidationVersion = this.previewInvalidationVersion;
     let preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
+    let reloadSuperseded = false;
     let succeeded = false;
 
     try {
@@ -838,6 +854,7 @@ export class WebSocketManager {
       // These caches are also cleared immediately on POKE receipt (before debounce).
       // These calls are redundant safety nets for the full invalidation flow.
       this.deps.clearMemoryCaches();
+      const sourceSnapshotVersion = this.deps.getSourceSnapshotVersion?.();
       this.deps.invalidationCallbacks.clearDomainCache?.();
 
       const projectId = this.deps.client.getProjectId();
@@ -907,14 +924,30 @@ export class WebSocketManager {
         try {
           const files = await this.deps.client.listAllFiles();
           const cacheKey = buildFileListCacheKey(contentContext);
-          await this.deps.replaceSourceSnapshot(cacheKey, files);
-          preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
-
-          logger.debug("FRESH FILES FETCHED", {
+          const appliedSnapshotVersion = await this.deps.replaceSourceSnapshot(
             cacheKey,
-            fileCount: files.length,
-            styleAssetPath: preparedStyleArtifact?.assetPath,
-          });
+            files,
+            sourceSnapshotVersion,
+          );
+          if (appliedSnapshotVersion === undefined) {
+            reloadSuperseded = true;
+          } else {
+            preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
+            const currentSnapshotVersion = this.deps.getSourceSnapshotVersion?.();
+            if (
+              currentSnapshotVersion !== undefined &&
+              currentSnapshotVersion !== appliedSnapshotVersion
+            ) {
+              preparedStyleArtifact = undefined;
+              reloadSuperseded = true;
+            }
+
+            logger.debug("FRESH FILES FETCHED", {
+              cacheKey,
+              fileCount: files.length,
+              styleAssetPath: preparedStyleArtifact?.assetPath,
+            });
+          }
         } catch (error) {
           logger.warn("Failed to fetch files during invalidation", { error });
         }
@@ -922,20 +955,26 @@ export class WebSocketManager {
 
       this.pokeMetrics.invalidationsTriggered++;
 
-      logger.info("TRIGGERING FULL BROWSER RELOAD via ReloadNotifier", {
-        projectSlug: this.deps.projectSlug,
-        projectId: this.deps.client.getProjectId(),
-        hasTriggerReloadCallback: !!this.deps.invalidationCallbacks.triggerReload,
-      });
+      if (reloadSuperseded) {
+        logger.debug("Skipping reload for superseded full invalidation", {
+          projectSlug: this.deps.projectSlug,
+        });
+      } else {
+        logger.info("TRIGGERING FULL BROWSER RELOAD via ReloadNotifier", {
+          projectSlug: this.deps.projectSlug,
+          projectId: this.deps.client.getProjectId(),
+          hasTriggerReloadCallback: !!this.deps.invalidationCallbacks.triggerReload,
+        });
 
-      const projectContext = buildReloadProjectContext(
-        contentContext,
-        this.deps.projectSlug,
-        this.deps.client.getProjectId(),
-        preparedStyleArtifact,
-      );
+        const projectContext = buildReloadProjectContext(
+          contentContext,
+          this.deps.projectSlug,
+          this.deps.client.getProjectId(),
+          preparedStyleArtifact,
+        );
 
-      this.deps.invalidationCallbacks.triggerReload?.(undefined, projectContext);
+        this.deps.invalidationCallbacks.triggerReload?.(undefined, projectContext);
+      }
 
       logger.debug("CACHE INVALIDATION COMPLETE", {
         fileCacheCleared: totalFileCount,
@@ -954,7 +993,9 @@ export class WebSocketManager {
           previewInvalidationPrefixes,
           previewInvalidationVersion,
         );
-        this.deps.invalidationCallbacks.evictCurrentAdapter?.();
+        if (!reloadSuperseded) {
+          this.deps.invalidationCallbacks.evictCurrentAdapter?.();
+        }
       }
     }
   }

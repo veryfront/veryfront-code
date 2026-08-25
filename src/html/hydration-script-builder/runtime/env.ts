@@ -59,6 +59,7 @@ export interface ReactRoot {
 }
 
 export interface RuntimeElement {
+  tagName?: string;
   style: Record<string, string>;
   id: string;
   textContent: string | null;
@@ -77,6 +78,7 @@ export interface RuntimeElement {
   scrollIntoView(options?: { behavior?: string }): void;
   /** React attaches the root here so re-renders reuse it instead of remounting. */
   __reactRoot?: ReactRoot;
+  firstElementChild?: RuntimeElement | null;
 }
 
 export interface RuntimeDocument {
@@ -113,6 +115,7 @@ export interface RuntimeLocation {
   href: string;
   reload(): void;
   assign?(url: string): void;
+  replace?(url: string): void;
 }
 
 export interface RuntimeHistory {

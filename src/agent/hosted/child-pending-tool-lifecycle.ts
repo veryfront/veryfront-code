@@ -42,6 +42,7 @@ export interface HostedChildPendingToolLifecycleLogger {
 export interface HostedChildPendingToolLifecycleLogContext {
   conversationId?: string;
   parentRunId?: string;
+  childRunId?: string;
   description: string;
 }
 
@@ -55,11 +56,18 @@ export function createHostedChildPendingToolLifecycleLogger(
   context: HostedChildPendingToolLifecycleLogContext,
   writer: HostedChildPendingToolLifecycleLogWriter,
 ): HostedChildPendingToolLifecycleLogger {
+  const runId = context.parentRunId ?? context.childRunId;
+  const runContext = {
+    ...(runId ? { runId } : {}),
+    ...(context.parentRunId ? { parentRunId: context.parentRunId } : {}),
+    ...(context.childRunId ? { childRunId: context.childRunId } : {}),
+  };
+
   return {
     warnIncompleteToolLifecycles: (log) => {
       writer.warn("Closing incomplete child fork tool lifecycles", {
         conversationId: context.conversationId,
-        runId: context.parentRunId,
+        ...runContext,
         description: context.description,
         reason: log.reason,
         toolCallIds: log.toolCallIds,
@@ -69,7 +77,7 @@ export function createHostedChildPendingToolLifecycleLogger(
     warnUnknownToolIdentity: (log) => {
       writer.warn("Closing child fork tool lifecycle without recoverable tool identity", {
         conversationId: context.conversationId,
-        runId: context.parentRunId,
+        ...runContext,
         description: context.description,
         toolCallId: log.toolCallId,
         phase: log.phase,

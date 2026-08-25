@@ -11,49 +11,23 @@
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
-import { type ReactElement, useState } from "react";
+import {
+  type AnchorHTMLAttributes,
+  type ButtonHTMLAttributes,
+  createElement,
+  forwardRef,
+  type ReactElement,
+  useState,
+} from "react";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
+import { type ComponentDomOptions, installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import { ChatActions, useChatActions } from "./chat-actions.tsx";
 
-function installDom(dom: JSDOM): () => void {
-  const window = dom.window;
-  const replacements: Record<string, unknown> = {
-    window,
-    document: window.document,
-    navigator: window.navigator,
-    self: window,
-    Node: window.Node,
-    Element: window.Element,
-    HTMLElement: window.HTMLElement,
-    HTMLButtonElement: window.HTMLButtonElement,
-    KeyboardEvent: window.KeyboardEvent,
-    MouseEvent: window.MouseEvent,
-    requestAnimationFrame: window.requestAnimationFrame.bind(window),
-    cancelAnimationFrame: window.cancelAnimationFrame.bind(window),
-  };
-  const previous = new Map<string, PropertyDescriptor | undefined>();
-
-  for (const [key, value] of Object.entries(replacements)) {
-    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
-    Object.defineProperty(globalThis, key, {
-      configurable: true,
-      enumerable: true,
-      value,
-      writable: true,
-    });
-  }
-
-  return () => {
-    for (const key of Object.keys(replacements)) {
-      const descriptor = previous.get(key);
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-      else delete (globalThis as Record<string, unknown>)[key];
-    }
-    dom.window.close();
-  };
-}
+const DOM_OPTIONS: ComponentDomOptions = {
+  windowGlobals: ["self", "HTMLButtonElement", "KeyboardEvent"],
+};
 
 async function waitFor(
   condition: () => boolean,
@@ -98,11 +72,80 @@ describe("ChatActions — render-or-compose", () => {
     assertStringIncludes(html, "Add attachments and settings");
   });
 
+  it("preset renders the attach row and data-driven actions and wires their handlers", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { pretendToBeVisual: true, url: "https://example.com/" },
+    );
+    const restore = installComponentDom(dom, DOM_OPTIONS);
+    const rootElement = document.getElementById("root");
+    assert(rootElement);
+    const root = createRoot(rootElement);
+    let attachCalls = 0;
+    let addUrlCalls = 0;
+
+    try {
+      flushSync(() =>
+        root.render(
+          <div data-vf-chat="">
+            <ChatActions
+              defaultOpen
+              onAttachFiles={() => attachCalls += 1}
+              actions={[{ label: "Add from URL", onSelect: () => addUrlCalls += 1 }]}
+            />
+          </div>,
+        )
+      );
+      await waitFor(
+        () => document.querySelectorAll('[role="menu"]').length === 1,
+        "actions menu did not portal",
+      );
+      const labels = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+        .map((el) => el.textContent);
+      assertEquals(
+        labels.slice(0, 2),
+        ["Attach Files or Photos", "Add from URL"],
+        "preset renders attach row before data-driven actions",
+      );
+
+      const select = (label: string) => {
+        const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+          .find((el) => el.textContent === label);
+        assert(item, `menu item ${label} is missing`);
+        flushSync(() => {
+          item.dispatchEvent(
+            new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true }),
+          );
+          item.click();
+        });
+      };
+      select("Attach Files or Photos");
+      assertEquals(attachCalls, 1, "attach row invokes onAttachFiles");
+      await waitFor(
+        () => document.querySelectorAll('[role="menu"]').length === 0,
+        "selecting a row did not close the menu",
+      );
+      flushSync(() => {
+        document.querySelector<HTMLElement>('[aria-label="Add attachments and settings"]')!
+          .click();
+      });
+      await waitFor(
+        () => document.querySelectorAll('[role="menu"]').length === 1,
+        "actions menu did not reopen",
+      );
+      select("Add from URL");
+      assertEquals(addUrlCalls, 1, "action row invokes its onSelect");
+    } finally {
+      await unmount(root);
+      restore();
+    }
+  });
+
   it("recompose: a custom Trigger renders in place of the default", () => {
     const html = renderToString(
       <ChatActions.Root>
-        <ChatActions.Trigger>
-          <button type="button">custom-trigger</button>
+        <ChatActions.Trigger className="vf-custom-trigger">
+          <button type="button" className="consumer-trigger">custom-trigger</button>
         </ChatActions.Trigger>
         <ChatActions.Content>
           <ChatActions.Item onSelect={() => {}}>Row</ChatActions.Item>
@@ -111,10 +154,107 @@ describe("ChatActions — render-or-compose", () => {
     );
     // The composed trigger renders; the default `+` button does not.
     assertStringIncludes(html, "custom-trigger");
+    assertStringIncludes(html, "vf-custom-trigger");
+    assertStringIncludes(html, "consumer-trigger");
     assert(
       !html.includes("Add attachments and settings"),
       "custom Trigger must replace the default `+` button",
     );
+  });
+
+  it("defaults only native button triggers and leaves opaque semantics to the child", () => {
+    const OpaqueAnchor = forwardRef<
+      HTMLAnchorElement,
+      AnchorHTMLAttributes<HTMLAnchorElement>
+    >((props, ref) => <a {...props} ref={ref} />);
+    const OpaqueButton = forwardRef<
+      HTMLButtonElement,
+      ButtonHTMLAttributes<HTMLButtonElement>
+    >((props, ref) => <button {...props} ref={ref} />);
+
+    const intrinsicButton = renderToString(
+      <ChatActions.Root>
+        <ChatActions.Trigger>
+          {createElement("button", null, "intrinsic")}
+        </ChatActions.Trigger>
+        <ChatActions.Content />
+      </ChatActions.Root>,
+    );
+    const opaqueButton = renderToString(
+      <ChatActions.Root>
+        <ChatActions.Trigger>
+          <OpaqueButton>opaque</OpaqueButton>
+        </ChatActions.Trigger>
+        <ChatActions.Content />
+      </ChatActions.Root>,
+    );
+    const ownedOpaqueButton = renderToString(
+      <ChatActions.Root>
+        <ChatActions.Trigger>
+          <OpaqueButton type="button">owned opaque</OpaqueButton>
+        </ChatActions.Trigger>
+        <ChatActions.Content />
+      </ChatActions.Root>,
+    );
+    const anchor = renderToString(
+      <ChatActions.Root>
+        <ChatActions.Trigger>
+          <a href="#actions">anchor</a>
+        </ChatActions.Trigger>
+        <ChatActions.Content />
+      </ChatActions.Root>,
+    );
+    const opaqueAnchor = renderToString(
+      <ChatActions.Root>
+        <ChatActions.Trigger>
+          <OpaqueAnchor href="#actions">opaque anchor</OpaqueAnchor>
+        </ChatActions.Trigger>
+        <ChatActions.Content />
+      </ChatActions.Root>,
+    );
+
+    assertStringIncludes(intrinsicButton, 'type="button"');
+    assert(!/<button\b[^>]*\btype=/.test(opaqueButton));
+    assertStringIncludes(ownedOpaqueButton, 'type="button"');
+    assert(!/<a\b[^>]*\btype=/.test(anchor), "anchor triggers must not receive button type");
+    assert(
+      !/<a\b[^>]*\btype=/.test(opaqueAnchor),
+      "opaque anchor triggers must not receive button type",
+    );
+  });
+
+  it("keeps a custom button trigger from submitting its containing form", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { pretendToBeVisual: true, url: "https://example.com/" },
+    );
+    const restore = installComponentDom(dom, DOM_OPTIONS);
+    const root = createRoot(document.getElementById("root")!);
+    let submissions = 0;
+
+    try {
+      flushSync(() => {
+        root.render(
+          <form onSubmit={() => submissions += 1}>
+            <ChatActions.Root>
+              <ChatActions.Trigger>
+                {createElement("button", null, "Open actions")}
+              </ChatActions.Trigger>
+              <ChatActions.Content />
+            </ChatActions.Root>
+          </form>,
+        );
+      });
+      const trigger = document.querySelector<HTMLButtonElement>("button");
+      assert(trigger);
+      trigger.click();
+
+      assertEquals(trigger.type, "button");
+      assertEquals(submissions, 0);
+    } finally {
+      await unmount(root);
+      restore();
+    }
   });
 
   it("Trigger className merges onto the default `+` button", () => {
@@ -158,7 +298,7 @@ describe("ChatActions — render-or-compose", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { pretendToBeVisual: true, url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const rootElement = document.getElementById("root");
     assert(rootElement);
     const root = createRoot(rootElement);

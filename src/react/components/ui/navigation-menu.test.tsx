@@ -1,0 +1,372 @@
+/**
+ * NavigationMenu behaviour. Pins the observable contract: the root is a `<nav>`
+ * landmark, its item triggers start collapsed (`aria-expanded="false"`), and
+ * clicking a trigger opens its item's panel (`aria-expanded="true"`, the
+ * panel + its links now present) - only one panel open at a time. The panel is
+ * a plain disclosure region, NOT `role="menu"`, so tests match it by data-slot.
+ *
+ * NOTE: synthetic keyboard/focus events do NOT reach React handlers in this
+ * deno+jsdom harness, so panels are opened via a real click `MouseEvent`
+ * (`bubbles: true`) - the same path a user's pointer takes.
+ *
+ * @module react/components/ui/navigation-menu.test
+ */
+import * as React from "react";
+import { flushSync } from "react-dom";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
+import { createRoot } from "react-dom/client";
+import { JSDOM } from "npm:jsdom@28.0.0";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { installComponentDom } from "#veryfront/testing/dom-globals.ts";
+import {
+  NavigationMenu,
+  NavigationMenuContent,
+  NavigationMenuItem,
+  NavigationMenuLink,
+  NavigationMenuList,
+  NavigationMenuTrigger,
+} from "./navigation-menu.tsx";
+
+// ---------------------------------------------------------------------------
+// jsdom harness - installs a fresh DOM per render and stubs the browser APIs
+// jsdom lacks (ResizeObserver, rAF, matchMedia) so effect-driven components mount.
+// ---------------------------------------------------------------------------
+function installDom(dom: JSDOM): () => void {
+  return installComponentDom(dom, {
+    matchMedia: true,
+    windowGlobals: ["KeyboardEvent", "FocusEvent"],
+  });
+}
+
+/** Render `element` into a fresh DOM; returns the host node, a click helper and a teardown. */
+function render(element: React.ReactElement): {
+  host: HTMLElement;
+  click: (el: Element) => void;
+  keyDown: (el: Element, key: string) => void;
+  pointerEnter: (el: Element) => Promise<void>;
+  pointerLeave: (el: Element) => Promise<void>;
+  unmount: () => void;
+} {
+  const dom = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`);
+  const restore = installDom(dom);
+  const host = dom.window.document.getElementById("root")!;
+  const root = createRoot(host);
+  flushSync(() => root.render(element));
+  const win = dom.window;
+  return {
+    host: host as unknown as HTMLElement,
+    click: (el: Element) =>
+      flushSync(() => el.dispatchEvent(new win.MouseEvent("click", { bubbles: true }))),
+    keyDown: (el: Element, key: string) =>
+      flushSync(() =>
+        el.dispatchEvent(new win.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key }))
+      ),
+    pointerEnter: async (el: Element) => {
+      el.dispatchEvent(new win.MouseEvent("pointerover", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    },
+    pointerLeave: async (el: Element) => {
+      el.dispatchEvent(new win.MouseEvent("pointerout", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    },
+    unmount: () => {
+      try {
+        root.unmount();
+      } finally {
+        restore();
+      }
+    },
+  };
+}
+
+function Fixture(): React.ReactElement {
+  return (
+    <NavigationMenu label="Main">
+      <NavigationMenuList>
+        <NavigationMenuItem value="products">
+          <NavigationMenuTrigger>Products</NavigationMenuTrigger>
+          <NavigationMenuContent>
+            <NavigationMenuLink href="/analytics" className="vf-test-analytics">
+              Analytics
+            </NavigationMenuLink>
+            <NavigationMenuLink href="/automation">Automation</NavigationMenuLink>
+          </NavigationMenuContent>
+        </NavigationMenuItem>
+        <NavigationMenuItem value="resources">
+          <NavigationMenuTrigger>Resources</NavigationMenuTrigger>
+          <NavigationMenuContent>
+            <NavigationMenuLink href="/guides" className="vf-test-guides">
+              Guides
+            </NavigationMenuLink>
+          </NavigationMenuContent>
+        </NavigationMenuItem>
+        <NavigationMenuItem value="docs">
+          <NavigationMenuLink href="/docs">Docs</NavigationMenuLink>
+        </NavigationMenuItem>
+      </NavigationMenuList>
+    </NavigationMenu>
+  );
+}
+
+function triggers(host: HTMLElement): HTMLElement[] {
+  return Array.from(host.querySelectorAll<HTMLElement>("nav ul li button"));
+}
+
+/** Comfortably longer than the component's 100ms close delay. */
+const CLOSE_SETTLE_MS = 300;
+
+describe("NavigationMenu behaviour", () => {
+  it("renders a nav landmark with its list, items and collapsed triggers", () => {
+    const { host, unmount } = render(<Fixture />);
+    try {
+      const nav = host.querySelector('nav[aria-label="Main"]') as HTMLElement;
+      assert(nav, "root renders a nav landmark");
+      assertEquals(host.querySelectorAll("nav ul").length, 1, "renders one list");
+      assertEquals(host.querySelectorAll("nav ul > li").length, 3, "renders all three items");
+
+      const [products, resources] = triggers(host);
+      assertEquals(products!.textContent?.includes("Products"), true, "first trigger labelled");
+      assertEquals(resources!.textContent?.includes("Resources"), true, "second trigger labelled");
+      // Triggers start collapsed; no panel is open.
+      for (const trigger of triggers(host)) {
+        assertEquals(trigger.getAttribute("aria-expanded"), "false", "triggers start collapsed");
+      }
+      assertEquals(
+        host.querySelector('[data-slot="navigation-menu-content"]'),
+        null,
+        "no panel open initially",
+      );
+    } finally {
+      unmount();
+    }
+  });
+
+  it("clicking a trigger opens its panel - aria-expanded flips true and its links render", () => {
+    const { host, click, unmount } = render(<Fixture />);
+    try {
+      const products = triggers(host)[0]!;
+      assertEquals(products.getAttribute("aria-expanded"), "false");
+      click(products);
+
+      assertEquals(products.getAttribute("aria-expanded"), "true", "trigger now expanded");
+      const panel = host.querySelector('[data-slot="navigation-menu-content"]') as HTMLElement;
+      assert(panel, "clicking the trigger opens its panel");
+      assertEquals(
+        products.getAttribute("aria-controls"),
+        panel.getAttribute("id"),
+        "trigger points at the opened panel",
+      );
+      assert(panel.querySelector(".vf-test-analytics"), "the Products panel's link rendered");
+      // Only the Products panel opened, not Resources.
+      assertEquals(host.querySelector(".vf-test-guides"), null, "the Resources panel stays closed");
+      assertEquals(
+        host.querySelectorAll('[data-slot="navigation-menu-content"]').length,
+        1,
+        "exactly one panel open",
+      );
+
+      // The other half of the toggle: clicking the OPEN trigger collapses it.
+      click(products);
+      assertEquals(
+        products.getAttribute("aria-expanded"),
+        "false",
+        "a second click on the open trigger collapses its panel",
+      );
+      assertEquals(
+        host.querySelector('[data-slot="navigation-menu-content"]'),
+        null,
+        "the collapsed panel unmounts",
+      );
+      assertEquals(
+        products.getAttribute("aria-controls"),
+        null,
+        "a re-collapsed trigger drops its panel reference",
+      );
+    } finally {
+      unmount();
+    }
+  });
+
+  it("keeps two items with the SAME value independent", () => {
+    const Duplicated = (): React.ReactElement => (
+      <NavigationMenu label="Main">
+        <NavigationMenuList>
+          <NavigationMenuItem value="same">
+            <NavigationMenuTrigger>First</NavigationMenuTrigger>
+            <NavigationMenuContent>
+              <NavigationMenuLink href="/one" className="vf-test-one">One</NavigationMenuLink>
+            </NavigationMenuContent>
+          </NavigationMenuItem>
+          <NavigationMenuItem value="same">
+            <NavigationMenuTrigger>Second</NavigationMenuTrigger>
+            <NavigationMenuContent>
+              <NavigationMenuLink href="/two" className="vf-test-two">Two</NavigationMenuLink>
+            </NavigationMenuContent>
+          </NavigationMenuItem>
+        </NavigationMenuList>
+      </NavigationMenu>
+    );
+    const { host, click, unmount } = render(<Duplicated />);
+    try {
+      click(triggers(host)[0]!);
+      assertEquals(
+        host.querySelectorAll('[data-slot="navigation-menu-content"]').length,
+        1,
+        "a duplicated value must not open both panels at once",
+      );
+      assert(host.querySelector(".vf-test-one"), "the clicked item's own panel opened");
+      assertEquals(host.querySelector(".vf-test-two"), null, "the other panel stayed closed");
+      const firstPanelId = triggers(host)[0]!.getAttribute("aria-controls");
+      assert(firstPanelId, "the first open trigger references its panel");
+
+      click(triggers(host)[1]!);
+      const secondPanelId = triggers(host)[1]!.getAttribute("aria-controls");
+      assert(secondPanelId, "the second open trigger references its panel");
+      assert(firstPanelId !== secondPanelId, "duplicate values still receive distinct panel ids");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("drops aria-controls while the panel is unmounted", () => {
+    const { host, click, unmount } = render(<Fixture />);
+    try {
+      const products = triggers(host)[0]!;
+      assertEquals(
+        products.getAttribute("aria-controls"),
+        null,
+        "a closed trigger must not reference a panel that does not exist",
+      );
+      click(products);
+      assert(products.getAttribute("aria-controls"), "an open trigger references its panel");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("does not declare application menu roles it has no keyboard model for", () => {
+    const { host, click, unmount } = render(<Fixture />);
+    try {
+      click(triggers(host)[0]!);
+      assertEquals(host.querySelector('[role="menu"]'), null, "no role=menu");
+      assertEquals(host.querySelector('[role="menuitem"]'), null, "no role=menuitem");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("keeps a hover-open panel active while the pointer crosses from trigger to content", async () => {
+    const { host, pointerEnter, pointerLeave, unmount } = render(<Fixture />);
+    try {
+      const products = triggers(host)[0]!;
+      await pointerEnter(products);
+      const panel = host.querySelector<HTMLElement>('[data-slot="navigation-menu-content"]');
+      assert(panel, "pointer enter opens the panel");
+
+      await pointerLeave(products);
+      assert(
+        host.querySelector('[data-slot="navigation-menu-content"]'),
+        "leaving the trigger does not close the panel immediately",
+      );
+      await pointerEnter(panel);
+      // Proving a negative, so this has to be a real wait: comfortably longer
+      // than the component's close delay, and asserting the panel survived it.
+      await new Promise((resolve) => setTimeout(resolve, CLOSE_SETTLE_MS));
+      assert(
+        host.querySelector('[data-slot="navigation-menu-content"]'),
+        "entering the panel cancels the pending close",
+      );
+
+      await pointerLeave(panel);
+      // Poll rather than sleeping past the close delay. A fixed sleep races the
+      // component's timer under a loaded parallel suite: too short and the
+      // assertion fails, and either way the test can finish with that timer
+      // still pending, which trips the leak sanitizer. Waiting for the observable
+      // outcome guarantees the timer has fired before teardown.
+      await waitFor(
+        () => host.querySelector('[data-slot="navigation-menu-content"]') == null,
+        { interval: 10, message: "panel did not close after the pointer left the region" },
+      );
+    } finally {
+      unmount();
+    }
+  });
+
+  it("keeps a disabled trigger collapsed on pointer entry", async () => {
+    const { host, pointerEnter, unmount } = render(
+      <NavigationMenu>
+        <NavigationMenuList>
+          <NavigationMenuItem value="products">
+            <NavigationMenuTrigger disabled>Products</NavigationMenuTrigger>
+            <NavigationMenuContent>
+              <NavigationMenuLink href="/products">Products</NavigationMenuLink>
+            </NavigationMenuContent>
+          </NavigationMenuItem>
+        </NavigationMenuList>
+      </NavigationMenu>,
+    );
+    try {
+      const trigger = triggers(host)[0]!;
+      await pointerEnter(trigger);
+
+      assertEquals(trigger.getAttribute("aria-expanded"), "false");
+      assertEquals(
+        host.querySelector('[data-slot="navigation-menu-content"]'),
+        null,
+        "a disabled trigger does not open its panel",
+      );
+    } finally {
+      unmount();
+    }
+  });
+
+  it("dismisses an open panel when focus leaves the navigation region", async () => {
+    const { host, click, unmount } = render(
+      <>
+        <Fixture />
+        <button type="button" className="vf-test-outside">Outside</button>
+      </>,
+    );
+    try {
+      const products = triggers(host)[0]!;
+      click(products);
+      const link = host.querySelector<HTMLAnchorElement>(".vf-test-analytics")!;
+      link.focus();
+      assert(document.activeElement === link, "panel link starts focused");
+
+      host.querySelector<HTMLButtonElement>(".vf-test-outside")!.focus();
+      await Promise.resolve();
+
+      assert(
+        host.querySelector('[data-slot="navigation-menu-content"]') === null,
+        "moving focus outside the navigation menu closes the panel",
+      );
+      assertEquals(products.getAttribute("aria-expanded"), "false");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("Escape from a focused panel link closes the panel and restores focus to the trigger", async () => {
+    const { host, click, keyDown, unmount } = render(<Fixture />);
+    try {
+      const products = triggers(host)[0]!;
+      click(products);
+      const link = host.querySelector<HTMLAnchorElement>(".vf-test-analytics")!;
+      link.focus();
+      assert(document.activeElement === link, "panel link starts focused");
+
+      keyDown(link, "Escape");
+      await Promise.resolve();
+
+      assert(
+        host.querySelector('[data-slot="navigation-menu-content"]') === null,
+        "Escape closes the keyboard-open panel",
+      );
+      assert(document.activeElement === products, "Escape restores focus to the trigger");
+    } finally {
+      unmount();
+    }
+  });
+});

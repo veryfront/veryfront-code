@@ -1,4 +1,4 @@
-import { dirname, join, normalize, relative, toFileUrl } from "#std/path";
+import { dirname, isAbsolute, join, normalize, relative, toFileUrl } from "#std/path";
 import { parseNpmImport } from "./npm-dependency-sources.ts";
 import { MINIMUM_NODE_VERSION, NPM_NODE_ENGINE } from "./runtime-support.ts";
 
@@ -80,6 +80,19 @@ const TEST_ONLY_IMPORTS = new Set([
 
 const NODE_ENGINE_PATTERN = /^>=(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
 
+/**
+ * Native npm dependencies must be pinned to a release that ships prebuilt
+ * binaries for every supported Node release. Extension imports become exact
+ * pins in the published package, so an older pin never resolves forward: it
+ * falls back to `node-gyp rebuild`, which cannot compile against the V8
+ * headers of newer Node majors and leaves the extension uninstallable.
+ */
+const PREBUILT_NATIVE_DEPENDENCY_FLOORS: Record<string, string> = {
+  // 13.0.0 is the first release whose npm tarball carries Node-API prebuilds
+  // for every platform, so installs never invoke node-gyp.
+  "better-sqlite3": "13.0.0",
+};
+
 function compareVersions(left: string, right: string): number {
   const leftParts = left.split(".").map(Number);
   const rightParts = right.split(".").map(Number);
@@ -123,6 +136,16 @@ export function extensionNameFromPackageName(packageName: string): string {
   return packageName.replace(/^@veryfront\//, "");
 }
 
+function assertPrebuiltNativeDependency(name: string, version: string): void {
+  const floor = PREBUILT_NATIVE_DEPENDENCY_FLOORS[name];
+  if (!floor || compareVersions(version, floor) >= 0) return;
+
+  throw new Error(
+    `${name}@${version} predates ${floor}, the first release that ships prebuilt binaries. ` +
+      `Older pins fall back to node-gyp and cannot install on every supported Node release.`,
+  );
+}
+
 export function manifestDependencies(
   manifest: ExtensionManifest,
 ): Record<string, string> {
@@ -134,6 +157,7 @@ export function manifestDependencies(
     const parsed = parseNpmImport(target);
     if (!parsed) continue;
 
+    assertPrebuiltNativeDependency(parsed.name, parsed.version);
     dependencies[parsed.name] = parsed.version;
   }
 
@@ -142,6 +166,40 @@ export function manifestDependencies(
       left.localeCompare(right)
     ),
   );
+}
+
+function localFirstPartyExtensionDependencies(
+  manifest: ExtensionManifest,
+  manifestDir: string,
+  version: string,
+): Record<string, string> {
+  const dependencies: Record<string, string> = {};
+  for (const [specifier, target] of Object.entries(manifest.imports ?? {})) {
+    if (!specifier.startsWith("@veryfront/ext-") || !target.startsWith(".")) continue;
+    if (specifier === manifest.name) {
+      throw new Error(`${manifest.name} cannot depend on itself`);
+    }
+
+    const dependencyDirectory = join(
+      "extensions",
+      extensionPackageDirectoryName(specifier),
+    );
+    const resolvedTarget = normalize(join(manifestDir, target));
+    const relativeTarget = relative(dependencyDirectory, resolvedTarget);
+    if (
+      relativeTarget === "" ||
+      relativeTarget === ".." ||
+      relativeTarget.startsWith("../") ||
+      relativeTarget.startsWith("..\\") ||
+      isAbsolute(relativeTarget)
+    ) {
+      throw new Error(
+        `${manifest.name} import "${specifier}" must target its matching first-party extension directory`,
+      );
+    }
+    dependencies[specifier] = version;
+  }
+  return dependencies;
 }
 
 export function normalizeExtensionEntryPoints(input: {
@@ -238,7 +296,16 @@ function createBaseExtensionPackageSpec(input: {
   }
 
   const packageDirectoryName = extensionPackageDirectoryName(packageName);
-  const dependencies = manifestDependencies(input.manifest);
+  const dependencies = Object.fromEntries(
+    Object.entries({
+      ...manifestDependencies(input.manifest),
+      ...localFirstPartyExtensionDependencies(
+        input.manifest,
+        manifestDir,
+        input.version,
+      ),
+    }).toSorted(([left], [right]) => left.localeCompare(right)),
+  );
   const veryfrontPeerRange = `^${input.version}`;
   const entryPoints = normalizeExtensionEntryPoints({
     manifestPath: input.manifestPath,
@@ -672,6 +739,14 @@ function createVeryfrontDntMappings(input: {
   for (
     const [specifier, target] of Object.entries(input.manifest.imports ?? {})
   ) {
+    if (specifier.startsWith("@veryfront/ext-") && target.startsWith(".")) {
+      const resolvedTarget = resolveManifestTarget(input.manifestDir, target);
+      mappings[toFileUrl(join(input.rootDir, resolvedTarget)).href] = {
+        name: specifier,
+        version: input.version,
+      };
+      continue;
+    }
     if (!specifier.startsWith("veryfront/")) continue;
 
     const exportSubpath = `./${specifier.slice("veryfront/".length)}`;

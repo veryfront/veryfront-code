@@ -39,6 +39,118 @@ async function collectReleaseFiles(files: AsyncIterable<DeployReleaseFile>) {
 }
 
 describe("createHttpDeployControlPlane", () => {
+  it("preserves the environment access token expiry returned by the API", async () => {
+    const calls: Array<{ path: string; body: unknown }> = [];
+    const controlPlane = createHttpDeployControlPlane(
+      config,
+      mockClientReturning({
+        post: (path, body) => {
+          calls.push({ path, body });
+          return Promise.resolve({
+            access_token: "eyJhbGciOiJSUzI1NiJ9.eyJ1c2VySWQiOiJ1XzEifQ.sig",
+            token_type: "Bearer",
+            expires_in: 300,
+          });
+        },
+      }),
+    );
+
+    assertEquals(
+      await controlPlane.createEnvironmentAccessToken({
+        projectId: "11111111-1111-4111-8111-111111111111",
+        environmentName: "production",
+      }),
+      {
+        accessToken: "eyJhbGciOiJSUzI1NiJ9.eyJ1c2VySWQiOiJ1XzEifQ.sig",
+        expiresIn: 300,
+      },
+    );
+    assertEquals(calls, [{
+      path: "/auth/environment-token",
+      body: {
+        project_reference: "11111111-1111-4111-8111-111111111111",
+        environment_name: "production",
+      },
+    }]);
+  });
+
+  it("rejects an environment access token without a positive integer expiry", async () => {
+    for (const expiresIn of [undefined, 0, 1.5]) {
+      const controlPlane = createHttpDeployControlPlane(
+        config,
+        mockClientReturning({
+          post: () =>
+            Promise.resolve({
+              access_token: "eyJhbGciOiJSUzI1NiJ9.eyJ1c2VySWQiOiJ1XzEifQ.sig",
+              expires_in: expiresIn,
+            }),
+        }),
+      );
+
+      await assertRejects(
+        () =>
+          controlPlane.createEnvironmentAccessToken({
+            projectId: "11111111-1111-4111-8111-111111111111",
+            environmentName: "production",
+          }),
+        Error,
+        "positive integer expiry",
+      );
+    }
+  });
+
+  it("treats only not-found release asset manifests as polling absence", async () => {
+    const notFound = { status: 404 };
+    const forbidden = { status: 403 };
+    let error: unknown = notFound;
+    const controlPlane = createHttpDeployControlPlane(
+      config,
+      mockClientReturning({
+        get: () => Promise.reject(error),
+      }),
+    );
+
+    assertEquals(
+      await controlPlane.getReleaseAssetManifest("my-project", "release-1"),
+      null,
+    );
+
+    error = forbidden;
+    await assertRejects(
+      () => controlPlane.getReleaseAssetManifest("my-project", "release-1"),
+    );
+  });
+
+  it("does not treat a successful null manifest response as polling absence", async () => {
+    const controlPlane = createHttpDeployControlPlane(
+      config,
+      mockClientReturning({
+        get: () => Promise.resolve(null),
+      }),
+    );
+
+    await assertRejects(
+      () => controlPlane.getReleaseAssetManifest("my-project", "release-1"),
+      Error,
+      "empty manifest response",
+    );
+  });
+
+  it("does not treat an empty successful manifest response as polling absence", async () => {
+    const controlPlane = createHttpDeployControlPlane(
+      config,
+      mockClientReturning({
+        get: () => Promise.resolve(undefined),
+      }),
+    );
+
+    await assertRejects(
+      () => controlPlane.getReleaseAssetManifest("my-project", "release-1"),
+      Error,
+      "empty manifest response",
+    );
+  });
+
   it("normalizes legacy deployment references before returning them", async () => {
     const controlPlane = createHttpDeployControlPlane(
       config,

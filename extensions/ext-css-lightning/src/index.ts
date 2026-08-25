@@ -205,8 +205,8 @@ function snapshotBrowserQueries(value: unknown): readonly string[] | undefined {
   let descriptors: PropertyDescriptorMap;
   try {
     descriptors = getOwnPropertyDescriptors(
-      value as unknown[],
-    ) as unknown as PropertyDescriptorMap;
+      value as Record<PropertyKey, unknown>,
+    );
   } catch (cause) {
     throw new TypeError(
       "ext-css-lightning browserQueries could not be inspected",

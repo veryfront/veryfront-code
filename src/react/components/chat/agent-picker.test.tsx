@@ -2,6 +2,7 @@ import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import type { AgentOption } from "./agent-picker.tsx";
@@ -66,11 +67,11 @@ describe("AgentPicker — preset (back-compat)", () => {
     assertStringIncludes(html, "Inbox Helper");
   });
 
-  it("keeps the legacy avatarSrc option rendering during migration", () => {
+  it("renders avatarUrl for the selected agent", () => {
     const legacyAgents: AgentOption[] = [{
       id: "legacy",
       name: "Legacy Agent",
-      avatarSrc: "https://example.com/legacy-agent.png",
+      avatarUrl: "https://example.com/legacy-agent.png",
     }];
     const html = renderToString(<AgentPicker agents={legacyAgents} value="legacy" />);
     assertStringIncludes(html, "https://example.com/legacy-agent.png");
@@ -111,7 +112,7 @@ describe("AgentPicker — preset (back-compat)", () => {
       assertEquals(loading.getAttribute("aria-selected"), "false");
       assertEquals(loading.querySelectorAll('[aria-hidden="true"]').length, 3);
 
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await settle();
     } finally {
       dom.restore();
@@ -228,7 +229,48 @@ describe("AgentPicker — composability contract", () => {
       assertEquals(created, 1);
       assertEquals(managed, 0);
 
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
+      await settle();
+    } finally {
+      dom.restore();
+    }
+  });
+
+  it("selecting an Item reports its id and closes the popover", async () => {
+    const dom = installDom();
+    const selected: string[] = [];
+    const opens: boolean[] = [];
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "root element exists");
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(
+          <AgentPicker
+            agents={agents}
+            value="inbox"
+            onValueChange={(id) => selected.push(id)}
+            onOpenChange={(open) => opens.push(open)}
+          />,
+        );
+      });
+
+      const trigger = rootElement.querySelector("button");
+      assert(trigger, "trigger renders");
+      flushSync(() => trigger.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+      await settle();
+      assertEquals(opens.at(-1), true, "clicking the trigger opens the popover");
+
+      const lawyer = Array.from(document.querySelectorAll<HTMLElement>("[data-command-item]"))
+        .find((item) => item.textContent?.includes("Lawyer Agent"));
+      assert(lawyer, "the Lawyer Agent item renders in the open list");
+      flushSync(() => lawyer.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+      await settle();
+
+      assertEquals(selected, ["lawyer"], "selecting an item reports its id");
+      assertEquals(opens.at(-1), false, "selection closes the popover");
+
+      await unmountReactRoot(root);
       await settle();
     } finally {
       dom.restore();

@@ -1,7 +1,9 @@
+import { withCwd } from "#veryfront/testing/cwd.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#std/path.ts";
+import { SKILL_NAME_REGEX } from "veryfront/skill";
 import { validateSkillDirectory } from "./validate.ts";
 
 async function withTempSkill(
@@ -21,16 +23,6 @@ async function withTempSkill(
     await fn(dir);
   } finally {
     await Deno.remove(rootDir, { recursive: true });
-  }
-}
-
-async function withTempCwd(dir: string, fn: () => Promise<void>): Promise<void> {
-  const previous = Deno.cwd();
-  try {
-    Deno.chdir(dir);
-    await fn();
-  } finally {
-    Deno.chdir(previous);
   }
 }
 
@@ -65,7 +57,7 @@ description: Review code changes.
 Review the submitted changes.
 `,
     }, async (dir) => {
-      await withTempCwd(dir, async () => {
+      await withCwd(dir, async () => {
         const issues = await validateSkillDirectory(".");
         assertEquals(issues, []);
       });
@@ -79,7 +71,7 @@ Review the submitted changes.
     });
   });
 
-  it("reports invalid canonical directory names", async () => {
+  it("reports invalid canonical directory names without echoing rejected input", async () => {
     await withTempSkill({
       "SKILL.md": `---
 description: Invalid directory name.
@@ -91,7 +83,11 @@ description: Invalid directory name.
       const issues = await validateSkillDirectory(dir);
       assertEquals(issues.length, 1);
       assertEquals(issues[0]?.severity, "error");
-      assertEquals(issues[0]?.message.includes('Invalid skill name "Bad Name"'), true);
+      assertEquals(
+        issues[0]?.message,
+        "Invalid skill name: must be 1-64 lowercase alphanumeric characters or single hyphens, without leading or trailing hyphens",
+      );
+      assertEquals(issues[0]?.message.includes("Bad Name"), false);
     }, "Bad Name");
   });
 
@@ -112,22 +108,42 @@ Process inbound email.
     }, "process-email");
   });
 
-  it("reports SKILL.md frontmatter name mismatch with directory", async () => {
+  it("treats a loose non-canonical name as display metadata", async () => {
     await withTempSkill({
       "SKILL.md": `---
+name: invalid--name
+description: Legacy display metadata.
+---
+
+# Legacy Display
+`,
+    }, async (dir) => {
+      assertEquals(await validateSkillDirectory(dir), []);
+    }, "process-email");
+  });
+
+  it("reports SKILL.md frontmatter name mismatch with directory", async () => {
+    const originalTest = SKILL_NAME_REGEX.test;
+    SKILL_NAME_REGEX.test = () => false;
+    try {
+      await withTempSkill({
+        "SKILL.md": `---
 name: email
 description: Mismatched name.
 ---
 
 # Email
 `,
-    }, async (dir) => {
-      const issues = await validateSkillDirectory(dir);
-      assertEquals(issues, [{
-        severity: "error",
-        message: 'Skill name "email" does not match directory name "process-email"',
-      }]);
-    }, "process-email");
+      }, async (dir) => {
+        const issues = await validateSkillDirectory(dir);
+        assertEquals(issues, [{
+          severity: "error",
+          message: 'Skill name "email" does not match directory name "process-email"',
+        }]);
+      }, "process-email");
+    } finally {
+      SKILL_NAME_REGEX.test = originalTest;
+    }
   });
 
   it("warns when SKILL.md has no instruction body", async () => {
@@ -141,5 +157,43 @@ description: Empty instruction body.
       const issues = await validateSkillDirectory(dir);
       assertEquals(issues, [{ severity: "warning", message: "SKILL.md body is empty" }]);
     }, "empty-body");
+  });
+
+  it("uses the same strict metadata contract as runtime discovery", async () => {
+    const cases = [
+      {
+        frontmatter: "description: Missing authored name.",
+        expected: 'missing required field "name"',
+      },
+      {
+        frontmatter: [
+          "name: strict-skill",
+          "description: Strict metadata.",
+          "allowed-tools: Read",
+          "allowed_tools: Write",
+        ].join("\n"),
+        expected: "must not declare both",
+      },
+      {
+        frontmatter: [
+          "name: strict-skill",
+          "description: Strict metadata.",
+          "metadata:",
+          "  version: 2",
+        ].join("\n"),
+        expected: "metadata values must be strings",
+      },
+    ];
+
+    for (const testCase of cases) {
+      await withTempSkill({
+        "SKILL.md": `---\n${testCase.frontmatter}\n---\n\n# Strict skill\n`,
+      }, async (dir) => {
+        const issues = await validateSkillDirectory(dir);
+        assertEquals(issues.length, 1);
+        assertEquals(issues[0]?.severity, "error");
+        assertEquals(issues[0]?.message.includes(testCase.expected), true);
+      }, "strict-skill");
+    }
   });
 });

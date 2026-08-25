@@ -25,7 +25,16 @@ function resolveCloudEmbeddingFallback(): string | undefined {
   return undefined;
 }
 
-export function resolveConfiguredEmbeddingModel(model?: string): string {
+/** Options for {@link resolveConfiguredEmbeddingModel}. */
+export interface ResolveConfiguredEmbeddingModelOptions {
+  /** Overrides the compiled-binary detection; defaults to {@link isDenoCompiled}. */
+  compiled?: boolean;
+}
+
+export function resolveConfiguredEmbeddingModel(
+  model?: string,
+  options: ResolveConfiguredEmbeddingModelOptions = {},
+): string {
   const normalized = normalizeEmbeddingModelConfig(model);
   if (normalized !== AUTO_EMBEDDING_MODEL) {
     return normalized;
@@ -37,7 +46,7 @@ export function resolveConfiguredEmbeddingModel(model?: string): string {
 
   // Local ONNX Runtime is unavailable in compiled binaries — fall back to
   // a cloud embedding provider when API keys are present.
-  if (isDenoCompiled) {
+  if (options.compiled ?? isDenoCompiled) {
     const cloud = resolveCloudEmbeddingFallback();
     if (cloud) return cloud;
   }

@@ -8,6 +8,7 @@ import type {
   ChatFilePart,
   ChatMessage,
   ChatMessagePart,
+  ChatReasoningPart,
   ChatToolPart,
 } from "#veryfront/agent/react";
 import type { Source } from "../components/sources.tsx";
@@ -79,10 +80,23 @@ export function isSkillToolPart(tool: ChatToolPart | ChatDynamicToolPart): boole
 }
 
 /** Check if a part is a reasoning part */
-export function isReasoningPart(
-  part: ChatMessagePart,
-): part is { type: "reasoning"; text: string; state?: "streaming" | "done" } {
+export function isReasoningPart(part: ChatMessagePart): part is ChatReasoningPart {
   return part.type === "reasoning";
+}
+
+/**
+ * Whether a reasoning part has anything to show.
+ *
+ * AG-UI allows a reasoning message to open and close with no content events,
+ * and leaves it to the consumer to decide whether to display the result. A
+ * model that did no thinking on a step still produces the pair, so rendering it
+ * would put an empty "Thought process" disclosure in the transcript. A part that
+ * is still streaming has yet to say, and a redacted or signed part carries
+ * meaning without visible text.
+ */
+function hasReasoningToShow(part: ChatReasoningPart): boolean {
+  if (part.state === "streaming") return true;
+  return part.text !== "" || part.signature !== undefined || part.redactedData !== undefined;
 }
 
 /**
@@ -117,6 +131,12 @@ export function groupPartsInOrder(parts: ChatMessagePart[]): PartGroup[] {
 
     // Skip tool-result parts without flushing text buffer
     if (part.type === "tool-result") {
+      continue;
+    }
+
+    // Same: skipping without flushing keeps text either side of an empty
+    // reasoning part in one block instead of splitting it in two.
+    if (isReasoningPart(part) && !hasReasoningToShow(part)) {
       continue;
     }
 

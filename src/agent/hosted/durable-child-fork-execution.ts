@@ -2,6 +2,7 @@ import type {
   ChildRunExecutionResult,
   ChildRunExecutionSnapshot,
 } from "../child-run/execution-snapshot.ts";
+import { defineSchema } from "#veryfront/schemas";
 import { resolveKnownProviderTerminalError } from "../streaming/stream-outcome.ts";
 import {
   buildChildRunResultSummary,
@@ -34,8 +35,25 @@ import {
 import { isChildRunAbortError, throwIfChildRunAborted } from "../child-run/execution-support.ts";
 import {
   type HostedProjectReferenceResolver,
+  requireConfirmedHostedProjectReference,
   resolveHostedProjectReference,
 } from "./project-reference-resolver.ts";
+import {
+  getActiveHostedRunEventWriterCapability,
+  HostedChildRunEventWriterTokenExchangeError,
+  type HostedRunEventWriterCapability,
+  runWithHostedRunEventWriterCapability,
+} from "./child-run-event-writer-token.ts";
+
+const CHILD_RUN_FINALIZATION_ERROR = "Unable to finalize durable child run after setup failure";
+
+/** Sanitized failure raised when setup-failure finalization itself cannot be persisted. */
+export class HostedChildRunFinalizationError extends Error {
+  constructor() {
+    super(CHILD_RUN_FINALIZATION_ERROR);
+    this.name = "HostedChildRunFinalizationError";
+  }
+}
 
 /** Options accepted by hosted durable child execution. */
 export type HostedDurableChildExecutionOptions = {
@@ -62,6 +80,53 @@ export type HostedDurableChildInvokeResult = {
   terminalErrorCode: string | null;
   terminalErrorMessage: string | null;
 };
+
+/**
+ * Published contract for the `invoke_agent` tool result this module writes.
+ *
+ * Split by status rather than flattened: a `completed` envelope must carry the
+ * child identifiers, because a consumer reading it back has no other way to
+ * locate the child run. A terminal envelope may omit them, since a setup failure
+ * can happen before the child exists. Flattening the two would let a completed
+ * result lose an identifier while conformance tests stayed green.
+ *
+ * Deliberately permissive about extra run telemetry it does not name: this pins
+ * the fields consumers depend on, and closing the shape would make any additive
+ * change here a cross-repo deploy-order problem.
+ * See veryfront/veryfront-issue-inbox#423.
+ */
+export const getHostedDurableChildInvokeResultSchema = defineSchema((v) => {
+  const base = v.object({
+    ok: v.boolean(),
+    text: v.string().optional(),
+    error: v.string().optional(),
+    summary: v.object({ text: v.string() }).passthrough().optional(),
+    steps: v.number().optional(),
+    toolCalls: v.array(v.unknown()).optional(),
+    toolResults: v.array(v.unknown()).optional(),
+    usage: v.record(v.string(), v.unknown()).optional(),
+    durationMs: v.number().optional(),
+    sourceTargetKind: v.string().nullable().optional(),
+    runtimeTargetKind: v.string().nullable().optional(),
+    terminalErrorCode: v.string().nullable(),
+    terminalErrorMessage: v.string().nullable(),
+  });
+
+  return v.discriminatedUnion("status", [
+    base.extend({
+      status: v.literal("completed"),
+      childConversationId: v.string(),
+      childRunId: v.string(),
+      childMessageId: v.string(),
+    }).passthrough(),
+    base.extend({
+      status: v.literal("failed"),
+      childConversationId: v.string().nullable().optional(),
+      childRunId: v.string().nullable().optional(),
+      childMessageId: v.string().nullable().optional(),
+    }).passthrough(),
+  ]);
+});
 
 /** Input payload for build hosted durable child invoke failure result. */
 export type BuildHostedDurableChildInvokeFailureResultInput = {
@@ -419,13 +484,19 @@ export type HostedDurableChildRuntimeDependencies = {
   shouldSkipTerminalPersistence?: typeof shouldSkipHostedChildTerminalPersistence;
 };
 
-/** Input payload for execute hosted durable child fork. */
+/**
+ * Input for bootstrapping and executing a hosted durable child fork.
+ * `runEventWriterCapability` carries exact-parent authority; this helper mints
+ * the exact-child capability only after the child run is persisted.
+ */
 export type ExecuteHostedDurableChildForkInput<
   TResult,
   TLocalResult extends ChildRunExecutionResult,
 > = {
   authToken: string;
   apiUrl: string;
+  /** Opaque exact-parent authority used only to mint this invocation's child writer. */
+  runEventWriterCapability?: HostedRunEventWriterCapability;
   forkInput: HostedChildForkToolInput;
   executionOptions: {
     toolCallId: string;
@@ -446,7 +517,7 @@ export type ExecuteHostedDurableChildForkInput<
   defaultModel: string;
   resolveModelId: (model: string) => string;
   resolveProvider: (modelId: string) => string;
-  onRequestedProjectId?: (projectId: string) => Promise<void> | void;
+  onRequestedProjectId?: (projectId: string, projectSlug?: string) => Promise<void> | void;
   publishParentRunEvents?: (events: InvokeAgentChildRunProgressEvent[]) => Promise<void> | void;
   contextUnavailableMessage: string;
   setupFailedCode: string;
@@ -515,13 +586,20 @@ async function prepareHostedDurableChildBootstrapContext<
   const requestedProjectReference = getRequestedProjectReference(input.forkInput);
   if (requestedProjectReference) {
     const resolver = input.resolveProjectReference ?? resolveHostedProjectReference;
-    const resolvedProject = await resolver({
+    const resolution = await resolver({
       projectReference: requestedProjectReference,
       authToken: input.authToken,
       apiUrl: input.apiUrl,
       abortSignal: input.executionOptions.abortSignal,
     });
-    await input.onRequestedProjectId?.(resolvedProject.projectId);
+    const resolvedProject = requireConfirmedHostedProjectReference(
+      resolution,
+      requestedProjectReference,
+    );
+    await input.onRequestedProjectId?.(
+      resolvedProject.projectId,
+      resolvedProject.projectSlug,
+    );
   }
 
   const targets = resolveConversationRunTargets({
@@ -613,34 +691,12 @@ async function executeHostedDurableChildLifecycle<
   input: ExecuteHostedDurableChildForkInput<TResult, TLocalResult> & {
     bootstrapContext: HostedDurableChildBootstrapContext;
     identifiers: HostedChildRunIdentifiers;
+    childRunEventWriterCapability: HostedRunEventWriterCapability;
   },
 ): Promise<TResult> {
   const { bootstrapContext, identifiers } = input;
   const { targets } = bootstrapContext;
-  const createLifecycleAdapter = input.runtime?.createLifecycleAdapter ??
-    createConversationChildLifecycleAdapter;
-  const lifecycleAdapter = createLifecycleAdapter({
-    authToken: input.authToken,
-    apiUrl: input.apiUrl,
-    parentConversationId: bootstrapContext.parentConversationId,
-    parentRunId: bootstrapContext.parentRunId,
-    projectId: input.getProjectId(),
-    publishParentRunEvents: input.publishParentRunEvents,
-    progress: {
-      toolCallId: input.executionOptions.toolCallId,
-      childAgentId: input.childAgentId,
-      childConversationId: identifiers.childConversationId,
-      childRunId: identifiers.childRunId,
-      childMessageId: identifiers.childMessageId,
-      description: input.forkInput.description,
-      sourceTargetKind: targets.sourceTargetKind,
-      runtimeTargetKind: targets.runtimeTargetKind,
-      targetEnvironmentId: targets.targetEnvironmentId,
-      targetBranchId: targets.targetBranchId,
-    },
-    model: bootstrapContext.resolvedModel,
-    provider: bootstrapContext.provider,
-  });
+  const lifecycleAdapter = createDurableChildLifecycleAdapter(input);
 
   const runLifecycle = input.runtime?.runLifecycle ?? runHostedChildExecutionLifecycle;
   const skipTerminalPersistence = input.runtime?.shouldSkipTerminalPersistence ??
@@ -650,9 +706,10 @@ async function executeHostedDurableChildLifecycle<
     executionFailedCode: input.executionFailedCode,
     abortSignal: input.executionOptions.abortSignal,
     execute: () =>
-      input.executeLocal({
-        durableChildRun: identifiers,
-      }),
+      runWithHostedRunEventWriterCapability(
+        input.childRunEventWriterCapability,
+        () => input.executeLocal({ durableChildRun: identifiers }),
+      ),
     getExecutionSnapshot: input.getExecutionSnapshot,
     onLifecycleError: input.onLifecycleError,
     skipTerminalPersistence,
@@ -689,12 +746,84 @@ async function executeHostedDurableChildLifecycle<
   });
 }
 
+function createDurableChildLifecycleAdapter<
+  TResult,
+  TLocalResult extends ChildRunExecutionResult,
+>(
+  input: ExecuteHostedDurableChildForkInput<TResult, TLocalResult> & {
+    bootstrapContext: HostedDurableChildBootstrapContext;
+    identifiers: HostedChildRunIdentifiers;
+  },
+) {
+  const { bootstrapContext, identifiers } = input;
+  const { targets } = bootstrapContext;
+  const createLifecycleAdapter = input.runtime?.createLifecycleAdapter ??
+    createConversationChildLifecycleAdapter;
+
+  return createLifecycleAdapter({
+    authToken: input.authToken,
+    apiUrl: input.apiUrl,
+    parentConversationId: bootstrapContext.parentConversationId,
+    parentRunId: bootstrapContext.parentRunId,
+    projectId: input.getProjectId(),
+    publishParentRunEvents: input.publishParentRunEvents,
+    progress: {
+      toolCallId: input.executionOptions.toolCallId,
+      childAgentId: input.childAgentId,
+      childConversationId: identifiers.childConversationId,
+      childRunId: identifiers.childRunId,
+      childMessageId: identifiers.childMessageId,
+      description: input.forkInput.description,
+      sourceTargetKind: targets.sourceTargetKind,
+      runtimeTargetKind: targets.runtimeTargetKind,
+      targetEnvironmentId: targets.targetEnvironmentId,
+      targetBranchId: targets.targetBranchId,
+    },
+    model: bootstrapContext.resolvedModel,
+    provider: bootstrapContext.provider,
+  });
+}
+
+/** Report an observability callback failure without changing durable setup control flow. */
+async function notifyBootstrapError(
+  callbacks: {
+    onBootstrapError?: HostedDurableChildBootstrapCallbacks["onBootstrapError"];
+    onCallbackError?: (error: unknown) => Promise<void> | void;
+  },
+  payload: { error: unknown; parentConversationId: string; toolCallId: string },
+): Promise<void> {
+  try {
+    await callbacks.onBootstrapError?.(payload);
+  } catch (callbackError) {
+    try {
+      await callbacks.onCallbackError?.(callbackError);
+    } catch {
+      // Observability must not alter durable setup or terminal persistence.
+    }
+  }
+}
+
 /** Execute hosted durable child fork. */
 export async function executeHostedDurableChildFork<
   TResult,
   TLocalResult extends ChildRunExecutionResult,
 >(
   input: ExecuteHostedDurableChildForkInput<TResult, TLocalResult>,
+): Promise<TResult> {
+  const runEventWriterCapability = input.runEventWriterCapability ??
+    getActiveHostedRunEventWriterCapability();
+  return await runWithHostedRunEventWriterCapability(
+    undefined,
+    () => executeHostedDurableChildForkWithCapability(input, runEventWriterCapability),
+  );
+}
+
+async function executeHostedDurableChildForkWithCapability<
+  TResult,
+  TLocalResult extends ChildRunExecutionResult,
+>(
+  input: ExecuteHostedDurableChildForkInput<TResult, TLocalResult>,
+  runEventWriterCapability: HostedRunEventWriterCapability | undefined,
 ): Promise<TResult> {
   throwIfChildRunAborted(input.executionOptions.abortSignal);
 
@@ -717,11 +846,17 @@ export async function executeHostedDurableChildFork<
       bootstrapContext,
     });
   } catch (error) {
-    await input.bootstrap?.onBootstrapError?.({
-      error,
-      parentConversationId: bootstrapContext.parentConversationId,
-      toolCallId: input.executionOptions.toolCallId,
-    });
+    await notifyBootstrapError(
+      {
+        onBootstrapError: input.bootstrap?.onBootstrapError,
+        onCallbackError: input.onLifecycleError,
+      },
+      {
+        error,
+        parentConversationId: bootstrapContext.parentConversationId,
+        toolCallId: input.executionOptions.toolCallId,
+      },
+    );
 
     return input.buildSetupFailureResult({
       targets,
@@ -733,9 +868,94 @@ export async function executeHostedDurableChildFork<
     });
   }
 
+  let childRunEventWriterCapability: HostedRunEventWriterCapability;
+  try {
+    if (!runEventWriterCapability) {
+      throw new HostedChildRunEventWriterTokenExchangeError();
+    }
+    childRunEventWriterCapability = await runEventWriterCapability
+      .mintChildRunEventWriterCapability(
+        identifiers.childRunId,
+        input.executionOptions.abortSignal,
+      );
+  } catch (error) {
+    const setupError = new HostedChildRunEventWriterTokenExchangeError(
+      error instanceof HostedChildRunEventWriterTokenExchangeError
+        ? error.classification
+        : input.executionOptions.abortSignal?.aborted
+        ? "aborted"
+        : "failed",
+    );
+    await notifyBootstrapError(
+      {
+        onBootstrapError: input.bootstrap?.onBootstrapError,
+        onCallbackError: input.onLifecycleError,
+      },
+      {
+        error: setupError,
+        parentConversationId: bootstrapContext.parentConversationId,
+        toolCallId: input.executionOptions.toolCallId,
+      },
+    );
+
+    const cancelled = setupError.classification === "aborted";
+    const terminalState = cancelled
+      ? {
+        status: "cancelled" as const,
+        terminalErrorCode: "CANCELLED",
+        terminalErrorMessage: "Child run cancelled",
+      }
+      : {
+        status: "failed" as const,
+        terminalErrorCode: input.setupFailedCode,
+        terminalErrorMessage: setupError.message,
+      };
+    try {
+      const lifecycleAdapter = createDurableChildLifecycleAdapter({
+        ...input,
+        bootstrapContext,
+        identifiers,
+      });
+      if (cancelled) {
+        if (!lifecycleAdapter.cancelled) {
+          throw new HostedChildRunFinalizationError();
+        }
+        await lifecycleAdapter.cancelled(terminalState);
+      } else {
+        if (!lifecycleAdapter.failed) {
+          throw new HostedChildRunFinalizationError();
+        }
+        await lifecycleAdapter.failed(terminalState);
+      }
+    } catch {
+      const finalizationError = new HostedChildRunFinalizationError();
+      try {
+        await input.onLifecycleError?.(finalizationError);
+      } catch {
+        // Terminal persistence failure remains authoritative and sanitized.
+      }
+      throw finalizationError;
+    }
+
+    if (cancelled) {
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }
+
+    const failure = {
+      targets,
+      childConversationId: identifiers.childConversationId,
+      childRunId: identifiers.childRunId,
+      childMessageId: identifiers.childMessageId,
+      terminalErrorCode: terminalState.terminalErrorCode,
+      terminalErrorMessage: terminalState.terminalErrorMessage,
+    };
+    return input.buildSetupFailureResult(failure);
+  }
+
   return executeHostedDurableChildLifecycle({
     ...input,
     bootstrapContext,
     identifiers,
+    childRunEventWriterCapability,
   });
 }

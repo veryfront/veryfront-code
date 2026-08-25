@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { computeHash } from "#veryfront/utils";
 import { computeDepsHash } from "./hash-calculator.ts";
 import type { LayoutItem, MdxBundle } from "#veryfront/types";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -72,8 +73,32 @@ describe("rendering/layouts/utils/hash-calculator", () => {
         { componentPath: "/layout.tsx" } as unknown as LayoutItem,
       ];
       const result = await computeDepsHash(undefined, nestedLayouts, adapter);
-      assertEquals(typeof result, "string");
-      assertEquals(result.length > 0, true);
+      assertEquals(
+        result,
+        await computeHash("export default () => {}"),
+        "nested tsx layouts must hash their file contents, not their path",
+      );
+    });
+
+    it("should change the hash when a nested layout file is edited", async () => {
+      const nestedLayouts: LayoutItem[] = [
+        { componentPath: "/layout.tsx" } as unknown as LayoutItem,
+      ];
+      const resultA = await computeDepsHash(
+        undefined,
+        nestedLayouts,
+        createMockAdapter({ "/layout.tsx": "export default () => {}" }),
+      );
+      const resultB = await computeDepsHash(
+        undefined,
+        nestedLayouts,
+        createMockAdapter({ "/layout.tsx": "export default () => null" }),
+      );
+      assertNotEquals(
+        resultA,
+        resultB,
+        "editing a nested layout file must change the dependency hash",
+      );
     });
 
     it("should include nested layout bundle code in hash", async () => {
@@ -82,8 +107,30 @@ describe("rendering/layouts/utils/hash-calculator", () => {
         { bundle: createMdxBundle("layout code") } as unknown as LayoutItem,
       ];
       const result = await computeDepsHash(undefined, nestedLayouts, adapter);
-      assertEquals(typeof result, "string");
-      assertEquals(result.length > 0, true);
+      assertEquals(
+        result,
+        await computeHash("layout code"),
+        "nested MDX layouts must hash bundle.compiledCode",
+      );
+    });
+
+    it("should change the hash when nested layout bundle code differs", async () => {
+      const adapter = createMockAdapter();
+      const resultA = await computeDepsHash(
+        undefined,
+        [{ bundle: createMdxBundle("layout code") } as unknown as LayoutItem],
+        adapter,
+      );
+      const resultB = await computeDepsHash(
+        undefined,
+        [{ bundle: createMdxBundle("other layout code") } as unknown as LayoutItem],
+        adapter,
+      );
+      assertNotEquals(
+        resultA,
+        resultB,
+        "a changed nested bundle must change the dependency hash",
+      );
     });
 
     it("should skip null items in nested layouts", async () => {
@@ -99,7 +146,21 @@ describe("rendering/layouts/utils/hash-calculator", () => {
         { componentPath: "/nonexistent.tsx" } as unknown as LayoutItem,
       ];
       const result = await computeDepsHash(undefined, nestedLayouts, adapter);
-      assertEquals(typeof result, "string");
+      assertEquals(result, "", "an unreadable component path must contribute no hash part");
+    });
+
+    it("should keep other dependency hashes when one component path is unreadable", async () => {
+      const adapter = createMockAdapter({});
+      const bundle = createMdxBundle("main layout");
+      const nestedLayouts: LayoutItem[] = [
+        { componentPath: "/missing.tsx" } as unknown as LayoutItem,
+      ];
+      const result = await computeDepsHash(bundle, nestedLayouts, adapter);
+      assertEquals(
+        result,
+        await computeHash("main layout"),
+        "one unreadable nested layout must not discard the other dependency hashes",
+      );
     });
 
     it("should combine layout bundle hash with nested layout hashes", async () => {
@@ -121,8 +182,16 @@ describe("rendering/layouts/utils/hash-calculator", () => {
         } as unknown as LayoutItem,
       ];
       const result = await computeDepsHash(undefined, nestedLayouts, adapter);
-      assertEquals(typeof result, "string");
-      assertEquals(result.length > 0, true);
+      assertEquals(
+        result,
+        await computeHash("component source"),
+        "componentPath source must win over the nested bundle code",
+      );
+      assertNotEquals(
+        result,
+        await computeHash("should be ignored"),
+        "nested bundle code must not be hashed when componentPath is present",
+      );
     });
 
     it("should skip nested layouts without componentPath or bundle", async () => {

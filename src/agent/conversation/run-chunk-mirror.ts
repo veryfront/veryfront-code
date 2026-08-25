@@ -1,4 +1,8 @@
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/protocol.ts";
+import {
+  type AgentRunEventTimingOptions,
+  createAgentRunEventTimingAnchor,
+} from "../../runtime/model-call-context.ts";
 import { type ConversationRunEvent, ConversationRunEventEncoder } from "./run-events.ts";
 import {
   type ConversationRunMirror,
@@ -24,6 +28,7 @@ const DEFAULT_HOSTED_CHUNK_MIRROR_HIGH_BACKLOG_EVENT_COUNT = 500;
 
 /** Public API contract for conversation run chunk mirror. */
 export interface ConversationRunChunkMirror {
+  readonly timing?: AgentRunEventTimingOptions;
   handleChunk(chunk: ChatUiMessageChunk<ChatMessageMetadata>): Promise<void>;
   appendEvents(events: ConversationRunEvent[]): Promise<void>;
   flush(options?: {
@@ -95,6 +100,8 @@ export interface ConversationRunChunkMirrorApiOptions
   latestExternalEventSequence?: number;
   maxEventsPerBatch?: number;
   maxCursorResyncsPerFlush?: number;
+  /** Explicit host-owned transport for trusted runtime composition and tests. */
+  fetch?: typeof globalThis.fetch;
 }
 
 /** Options accepted by conversation run chunk mirror. */
@@ -128,6 +135,8 @@ export interface HostedConversationRunChunkMirrorOptions {
   batchSize?: number;
   highBacklogEventCount?: number;
   instrumentation?: HostedConversationRunChunkMirrorInstrumentation;
+  /** Explicit host-owned transport for trusted runtime composition and tests. */
+  fetch?: typeof globalThis.fetch;
 }
 
 function resolveQueueController(
@@ -148,6 +157,7 @@ function resolveQueueController(
     maxEventsPerBatch,
     maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush ??
       DEFAULT_MAX_CURSOR_RESYNCS_PER_FLUSH,
+    fetch: input.fetch,
   });
 }
 
@@ -155,7 +165,16 @@ function resolveQueueController(
 export function createConversationRunChunkMirror(
   input: ConversationRunChunkMirrorOptions,
 ): ConversationRunChunkMirror {
-  const encoder = input.encoder ?? new ConversationRunEventEncoder();
+  // The mirror owns one encoder for the whole run, so a clock installed here
+  // makes every durable event carry a run-relative `elapsedMs`. Runs are
+  // headless -- a scheduled run has no client attached -- so this is the only
+  // point that observes emission time. Callers injecting their own encoder
+  // choose their own clock, or none.
+  const getEncoderTimingAnchor = input.encoder?.getTimingAnchor;
+  const timing = typeof getEncoderTimingAnchor === "function"
+    ? getEncoderTimingAnchor.call(input.encoder) ?? createAgentRunEventTimingAnchor()
+    : createAgentRunEventTimingAnchor();
+  const encoder = input.encoder ?? new ConversationRunEventEncoder(timing);
   const immediateFlushEventCount = input.immediateFlushEventCount ??
     DEFAULT_IMMEDIATE_FLUSH_EVENT_COUNT;
   const mirror = createConversationRunMirror({
@@ -172,6 +191,7 @@ export function createConversationRunChunkMirror(
   });
 
   return {
+    timing,
     async handleChunk(chunk) {
       if (mirror.getSnapshot().disabled) {
         return;
@@ -193,10 +213,12 @@ export function createConversationRunChunkMirror(
         return;
       }
 
-      const normalizedEvents = await (input.prepareExternalEvents?.({
-        events,
-        defaultPrepare: () => prepareConversationRunExternalEvents(events),
-      }) ?? prepareConversationRunExternalEvents(events));
+      const stampedEvents = encoder.stamp(events);
+      const preparedEvents = await (input.prepareExternalEvents?.({
+        events: stampedEvents,
+        defaultPrepare: () => prepareConversationRunExternalEvents(stampedEvents),
+      }) ?? prepareConversationRunExternalEvents(stampedEvents));
+      const normalizedEvents = prepareConversationRunExternalEvents(encoder.stamp(preparedEvents));
       await input.onExternalEventsPrepared?.({ events: normalizedEvents });
       if (normalizedEvents.length === 0) {
         return;
@@ -246,23 +268,34 @@ async function runHostedChunkMirrorTrace<T>(
   return await operation();
 }
 
+// Retries are self-healing and back off to only a few seconds, so logging
+// every attempt at error level turns one degraded append window into a Sentry
+// error every few seconds per active run (VERYFRONT-AGENT-3). Escalate only
+// once the failure streak suggests the outage is persistent; terminal
+// stop/disable paths report at error level separately.
+const HOSTED_CHUNK_MIRROR_RETRY_ERROR_THRESHOLD = 5;
+
 function recordHostedChunkMirrorRetryScheduled(input: {
   instrumentation: HostedConversationRunChunkMirrorInstrumentation | undefined;
   conversationId: string;
   runId: string;
   flushAttempt: ConversationRunMirrorRetryScheduledState;
 }): void {
-  input.instrumentation?.error?.(
-    "Durable run mirror flush failed; queued for retry",
-    createHostedChunkMirrorRetryMetadata({
-      conversationId: input.conversationId,
-      runId: input.runId,
-      errorMessage: input.flushAttempt.errorMessage ?? "Conversation run append failed",
-      retryDelayMs: input.flushAttempt.retryDelayMs,
-      pendingEventCount: input.flushAttempt.pendingEventCount,
-      consecutiveFailures: input.flushAttempt.consecutiveFailures,
-    }),
-  );
+  const metadata = createHostedChunkMirrorRetryMetadata({
+    conversationId: input.conversationId,
+    runId: input.runId,
+    errorMessage: input.flushAttempt.errorMessage ?? "Conversation run append failed",
+    retryDelayMs: input.flushAttempt.retryDelayMs,
+    pendingEventCount: input.flushAttempt.pendingEventCount,
+    consecutiveFailures: input.flushAttempt.consecutiveFailures,
+  });
+  const message = "Durable run mirror flush failed; queued for retry";
+  if (input.flushAttempt.consecutiveFailures >= HOSTED_CHUNK_MIRROR_RETRY_ERROR_THRESHOLD) {
+    input.instrumentation?.error?.(message, metadata);
+    return;
+  }
+
+  input.instrumentation?.warn?.(message, metadata);
 }
 
 function recordHostedChunkMirrorHighBacklog(input: {
@@ -324,6 +357,20 @@ function recordHostedChunkMirrorStopped(input: {
     return;
   }
 
+  // veryfront-issue-inbox#743: the run finished server-side before the mirror
+  // drained. Nothing is lost that the runtime can still write, so this is a clean
+  // stop, not a failure.
+  if (input.flushAttempt.disableReason === "run_terminal") {
+    input.instrumentation?.warn?.(
+      "Stopping durable run mirroring because the run is already terminal",
+      {
+        conversationId: input.conversationId,
+        runId: input.runId,
+      },
+    );
+    return;
+  }
+
   if (input.flushAttempt.disableReason === "ignorable_append_rejection") {
     input.instrumentation?.warn?.(
       "Disabling durable run mirroring after external append rejection",
@@ -367,6 +414,7 @@ export function createHostedConversationRunChunkMirror(
     maxCursorResyncsPerFlush: DEFAULT_MAX_CURSOR_RESYNCS_PER_FLUSH,
     immediateFlushEventCount: batchSize,
     highBacklogEventCount,
+    fetch: input.fetch,
     prepareChunkEvents: ({ chunk, defaultPrepare }) =>
       runHostedChunkMirrorTrace(input.instrumentation, "durable.mirrorChunk", async () => {
         const events = defaultPrepare();

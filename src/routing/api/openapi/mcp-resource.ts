@@ -4,7 +4,7 @@ import type { OpenAPISpec } from "./types.ts";
 
 export function createOpenAPIResource(
   getSpec: () => Promise<OpenAPISpec>,
-): ReturnType<typeof resource> {
+) {
   return resource({
     pattern: "openapi://spec",
     description:

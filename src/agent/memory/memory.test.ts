@@ -183,6 +183,26 @@ describe("SummaryMemory", () => {
     assertEquals(messages.some((message) => message.id === "8"), true);
   });
 
+  it("drops the rolling summary when the retained tail alone consumes maxTokens", async () => {
+    const memory = new SummaryMemory({ type: "summary", maxMessages: 2, maxTokens: 20 });
+    for (let i = 1; i <= 4; i++) {
+      await memory.add(userMessage(String(i), `topic ${i} ${"y".repeat(120)}`));
+    }
+
+    const messages = await memory.getMessages();
+
+    assertEquals(
+      messages.some((message) => message.id === "summary"),
+      false,
+      "the rolling summary is discarded when the retained tail alone exhausts maxTokens",
+    );
+    assertEquals(
+      messages.map((message) => message.id),
+      ["4"],
+      "only the newest message is retained",
+    );
+  });
+
   it("reports stats including summary tokens and clears fully", async () => {
     const memory = new SummaryMemory({ type: "summary", maxMessages: 2 });
     for (let i = 1; i <= 6; i++) await memory.add(userMessage(String(i), `topic ${i}`));

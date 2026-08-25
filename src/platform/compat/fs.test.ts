@@ -248,6 +248,23 @@ describe("Filesystem Compat", () => {
       assertEquals(await exists(dirPath), false);
     });
 
+    it("removes an empty directory without the recursive option", async () => {
+      const dirPath = join(testDir, "to-remove-empty-dir");
+      await mkdir(dirPath);
+
+      await remove(dirPath);
+      assertEquals(await exists(dirPath), false);
+    });
+
+    it("refuses a non-empty directory without the recursive option", async () => {
+      const dirPath = join(testDir, "to-remove-populated-dir");
+      await mkdir(dirPath);
+      await writeTextFile(join(dirPath, "file.txt"), "test");
+
+      await assertRejects(() => remove(dirPath), Error);
+      assertEquals(await exists(dirPath), true);
+    });
+
     it("surfaces a missing path even when recursive", async () => {
       await assertRejects(
         () => remove(join(testDir, "missing-recursive-remove"), { recursive: true }),
@@ -284,12 +301,25 @@ describe("Filesystem Compat", () => {
   });
 
   describe("chmod", () => {
-    it("should set file permissions without throwing", async () => {
+    it("should apply each requested mode", async () => {
       const filePath = join(testDir, "chmod-test.txt");
       await writeTextFile(filePath, "test");
 
-      // Should not throw (may be no-op on Windows)
+      // Should not throw (chmod is a documented no-op on Windows, where mode is null)
       await chmod(filePath, 0o600);
+      if (Deno.build.os !== "windows") {
+        assertEquals(
+          (await Deno.stat(filePath)).mode! & 0o777,
+          0o600,
+          "chmod must apply the requested mode",
+        );
+        await chmod(filePath, 0o644);
+        assertEquals(
+          (await Deno.stat(filePath)).mode! & 0o777,
+          0o644,
+          "chmod must apply each requested mode, not a fixed one",
+        );
+      }
     });
 
     it("surfaces filesystem failures", async () => {
@@ -554,11 +584,17 @@ describe("Filesystem Compat", () => {
     it("should return true for Deno.errors.AlreadyExists", async () => {
       const dirPath = join(testDir, "already-exists-test");
       await mkdir(dirPath);
-      try {
-        await mkdir(dirPath);
-      } catch (e) {
-        assertEquals(isAlreadyExistsError(e), true);
-      }
+      const error = await assertRejects(
+        () => mkdir(dirPath),
+        Error,
+        undefined,
+        "re-creating an existing directory without recursive must reject",
+      );
+      assertEquals(
+        isAlreadyExistsError(error),
+        true,
+        "a re-create rejection must classify as already-exists",
+      );
     });
 
     it("should return true for Node EEXIST errors", () => {

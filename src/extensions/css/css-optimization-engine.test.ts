@@ -84,6 +84,30 @@ describe("CSSOptimizationEngine contract", () => {
       TypeError,
       "properties could not be read",
     );
+
+    let optimizeReads = 0;
+    const accessorOptimize = { cacheIdentity: "accessor-optimize@1" };
+    Object.defineProperty(accessorOptimize, "optimize", {
+      get() {
+        optimizeReads++;
+        return engine().optimize;
+      },
+    });
+
+    assertThrows(
+      () => assertCSSOptimizationEngine(accessorOptimize),
+      TypeError,
+      "optimize must be a data property",
+      "an accessor-backed optimize must be rejected before core can invoke it",
+    );
+    assertEquals(optimizeReads, 0, "optimize getter must not run");
+
+    assertThrows(
+      () => assertCSSOptimizationEngine({ ...engine(), optimize: 42 }),
+      TypeError,
+      "must implement optimize()",
+      "a non-function optimize must be rejected at the contract boundary",
+    );
   });
 
   it("rejects accessor descriptors even when Object.prototype is polluted", () => {
@@ -100,6 +124,14 @@ describe("CSSOptimizationEngine contract", () => {
       },
     });
     Object.defineProperty(accessor, "optimize", { value: engine().optimize });
+    let optimizeReads = 0;
+    const accessorOptimize = { cacheIdentity: "accessor-optimize@1" };
+    Object.defineProperty(accessorOptimize, "optimize", {
+      get() {
+        optimizeReads++;
+        return engine().optimize;
+      },
+    });
     try {
       Object.defineProperty(Object.prototype, "value", {
         configurable: true,
@@ -116,6 +148,23 @@ describe("CSSOptimizationEngine contract", () => {
       );
       assertEquals(inheritedValueReads, 0);
       assertEquals(identityReads, 0);
+
+      assertThrows(
+        () => assertCSSOptimizationEngine(accessorOptimize),
+        TypeError,
+        "optimize must be a data property",
+        "a forged inherited value must not turn an accessor-backed optimize into a data property",
+      );
+      assertEquals(
+        inheritedValueReads,
+        0,
+        "the forged inherited value must never be read while rejecting an accessor optimize",
+      );
+      assertEquals(
+        optimizeReads,
+        0,
+        "the accessor-backed optimize getter must never be invoked during validation",
+      );
     } finally {
       if (previous === undefined) {
         Reflect.deleteProperty(Object.prototype, "value");

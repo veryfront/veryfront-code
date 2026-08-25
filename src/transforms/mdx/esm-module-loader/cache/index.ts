@@ -6,20 +6,35 @@
  * @module build/transforms/mdx/esm-module-loader/cache
  */
 
-import { fromFileUrl, join } from "#veryfront/compat/path";
+import { fromFileUrl, join, relative } from "#veryfront/compat/path";
 import { rendererLogger as logger } from "#veryfront/utils";
 import {
+  ensureCacheDirIgnored,
   getCacheBaseDir,
   getHttpBundleCacheDir,
   getMdxEsmCacheDir,
 } from "#veryfront/utils/cache-dir.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { getDenoRuntime } from "#veryfront/platform/compat/runtime.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
-import { buildMdxEsmPathCacheKey, MDX_ESM_ALL_FILE_URL_PATTERN_SOURCE } from "../cache-format.ts";
+import {
+  buildMdxEsmPathCacheKey,
+  CYCLE_MANIFEST_SIDECAR_SUFFIX,
+  getCycleManifestCacheDir,
+  getCycleManifestCacheRootDir,
+  MDX_ESM_ALL_FILE_URL_PATTERN_SOURCE,
+  UNRESOLVED_IMPORTS_SIDECAR_SUFFIX,
+} from "../cache-format.ts";
+import {
+  advanceAllCycleManifestGenerations,
+  advanceCycleManifestGeneration,
+  getCycleManifestGeneration,
+  parseCycleManifestGeneration,
+} from "../cycle-manifest-lifecycle.ts";
 import { ensureMdxModuleDependencies } from "../module-fetcher/dependency-recovery.ts";
 import { findStaticImportFromSpans } from "../utils/source-spans.ts";
 import {
@@ -37,6 +52,13 @@ export type CacheLookupResult =
 
 const MAX_VERIFIED_MODULE_DEPS = 2_000;
 const MAX_MODULE_PATH_CACHE_ENTRIES = 500;
+const MAX_CYCLE_MANIFEST_SOURCE_ENTRIES = 5_000;
+const CYCLE_MANIFEST_SOURCES_INDEX_KEY = "__veryfront_cycle_manifest_sources_v1__";
+
+interface CycleManifestSourceIndex {
+  readonly sources: Set<string>;
+  saturated: boolean;
+}
 
 export const verifiedModuleDeps = new LRUCache<string, true>({
   maxEntries: MAX_VERIFIED_MODULE_DEPS,
@@ -167,6 +189,64 @@ function hasUnresolvedVfModules(code: string): boolean {
 
 const modulePathCaches = new Map<string, Map<string, string>>();
 const modulePathCacheLoaded = new Set<string>();
+const cycleManifestSources = new Map<string, CycleManifestSourceIndex>();
+
+function normalizeModuleSourcePath(path: string, projectDir?: string): string {
+  const relativePath = projectDir ? relative(projectDir, path) : path;
+  return relativePath
+    .replaceAll("\\", "/")
+    .replace(/^\/+/, "")
+    .replace(/\.(tsx?|jsx?|mdx)$/, "");
+}
+
+function loadCycleManifestSources(cacheDir: string, serialized: unknown): void {
+  if (serialized === "*") {
+    cycleManifestSources.set(cacheDir, { sources: new Set(), saturated: true });
+    return;
+  }
+  if (typeof serialized !== "string") return;
+
+  try {
+    const parsed = JSON.parse(serialized);
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length > MAX_CYCLE_MANIFEST_SOURCE_ENTRIES ||
+      parsed.some((path) => typeof path !== "string")
+    ) {
+      cycleManifestSources.set(cacheDir, { sources: new Set(), saturated: true });
+      return;
+    }
+    cycleManifestSources.set(cacheDir, {
+      sources: new Set(parsed),
+      saturated: false,
+    });
+  } catch (_) {
+    cycleManifestSources.set(cacheDir, { sources: new Set(), saturated: true });
+  }
+}
+
+/** Record cycle members without exposing them as reusable graph roots. */
+export async function registerCycleManifestSources(
+  cacheDir: string,
+  projectDir: string,
+  sourcePaths: Iterable<string>,
+): Promise<void> {
+  await getModulePathCache(cacheDir);
+  const index = cycleManifestSources.get(cacheDir) ?? {
+    sources: new Set<string>(),
+    saturated: false,
+  };
+  cycleManifestSources.set(cacheDir, index);
+  if (index.saturated) return;
+
+  for (const sourcePath of sourcePaths) {
+    index.sources.add(normalizeModuleSourcePath(sourcePath, projectDir));
+    if (index.sources.size <= MAX_CYCLE_MANIFEST_SOURCE_ENTRIES) continue;
+    index.sources.clear();
+    index.saturated = true;
+    return;
+  }
+}
 
 export function getMdxEsmSsrCacheDir(projectId: string, contentSourceId: string): string {
   return join(
@@ -225,6 +305,10 @@ export async function getModulePathCache(cacheDir: string): Promise<Map<string, 
     const content = await getLocalFs().readTextFile(indexPath);
     const index = JSON.parse(content) as Record<string, string>;
     for (const [path, cachePath] of Object.entries(index)) {
+      if (path === CYCLE_MANIFEST_SOURCES_INDEX_KEY) {
+        loadCycleManifestSources(cacheDir, cachePath);
+        continue;
+      }
       cache.set(path, cachePath);
     }
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Loaded module index: ${cache.size} entries`);
@@ -245,6 +329,12 @@ export async function saveModulePathCache(cacheDir: string): Promise<void> {
   for (const [path, cachePath] of cache.entries()) {
     index[path] = cachePath;
   }
+  const sourceIndex = cycleManifestSources.get(cacheDir);
+  if (sourceIndex) {
+    index[CYCLE_MANIFEST_SOURCES_INDEX_KEY] = sourceIndex.saturated
+      ? "*"
+      : JSON.stringify([...sourceIndex.sources].sort());
+  }
 
   try {
     await getLocalFs().writeTextFile(indexPath, JSON.stringify(index));
@@ -256,6 +346,7 @@ export async function saveModulePathCache(cacheDir: string): Promise<void> {
 export function clearModulePathCache(): void {
   modulePathCaches.clear();
   modulePathCacheLoaded.clear();
+  cycleManifestSources.clear();
   verifiedModuleDeps.clear();
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared module path cache`);
 }
@@ -292,26 +383,83 @@ function queueIndexPersist(cacheDirs: string[]): void {
   });
 }
 
+async function deleteStaleCycleManifestGenerations(
+  localFs: ReturnType<typeof getLocalFs>,
+  manifestDir: string,
+  currentGeneration: number,
+): Promise<void> {
+  try {
+    for await (const entry of localFs.readDir(manifestDir)) {
+      if (!entry.isDirectory) continue;
+      const generation = parseCycleManifestGeneration(entry.name);
+      const liveGeneration = Math.max(
+        currentGeneration,
+        getCycleManifestGeneration(manifestDir),
+      );
+      if (generation === liveGeneration) continue;
+      await localFs.remove(join(manifestDir, entry.name), { recursive: true });
+    }
+    try {
+      await localFs.remove(manifestDir);
+    } catch (_) {
+      /* expected: a current generation keeps the namespace non-empty */
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+}
+
+function moduleSourcePathsMatch(left: string, right: string): boolean {
+  return left === right || left.endsWith(`/${right}`) || right.endsWith(`/${left}`);
+}
+
+function cycleManifestSourceMatches(
+  index: CycleManifestSourceIndex | undefined,
+  changedPath: string,
+): boolean {
+  if (index?.saturated === true) return true;
+  if (!index) return false;
+  for (const sourcePath of index.sources) {
+    if (moduleSourcePathsMatch(sourcePath, changedPath)) return true;
+  }
+  return false;
+}
+
 export function invalidateModulePaths(changedPaths: string[]): void {
   if (modulePathCaches.size === 0) return;
 
   let invalidatedCount = 0;
   const staleMjsFiles: string[] = [];
+  const staleCycleManifestGenerations = new Map<string, number>();
   const affectedCacheDirs = new Set<string>();
 
+  const invalidateCycleManifest = (cacheDir: string): boolean => {
+    const manifestDir = getCycleManifestCacheDir(cacheDir);
+    if (staleCycleManifestGenerations.has(manifestDir)) return false;
+    staleCycleManifestGenerations.set(
+      manifestDir,
+      advanceCycleManifestGeneration(manifestDir),
+    );
+    affectedCacheDirs.add(cacheDir);
+    cycleManifestSources.delete(cacheDir);
+    return true;
+  };
+
   for (const changedPath of changedPaths) {
-    const normalizedChanged = changedPath.replace(/^\/+/, "").replace(/\.(tsx?|jsx?|mdx)$/, "");
+    const normalizedChanged = normalizeModuleSourcePath(changedPath);
 
     for (const [cacheDir, cache] of modulePathCaches.entries()) {
+      const sourceIndex = cycleManifestSources.get(cacheDir);
+      if (cycleManifestSourceMatches(sourceIndex, normalizedChanged)) {
+        if (invalidateCycleManifest(cacheDir)) invalidatedCount++;
+      }
+
       for (const [cachedKey, cachedFilePath] of cache.entries()) {
         const normalizedCached = extractNormalizedCachedModulePath(cachedKey);
 
-        if (
-          normalizedCached === normalizedChanged ||
-          normalizedCached.endsWith(`/${normalizedChanged}`) ||
-          normalizedChanged.endsWith(`/${normalizedCached}`)
-        ) {
+        if (moduleSourcePathsMatch(normalizedCached, normalizedChanged)) {
           staleMjsFiles.push(cachedFilePath);
+          invalidateCycleManifest(cacheDir);
           affectedCacheDirs.add(cacheDir);
           cache.delete(cachedKey);
           // Clear the verified-deps fast-path so lookupMdxEsmCache won't
@@ -329,6 +477,17 @@ export function invalidateModulePaths(changedPaths: string[]): void {
   );
 
   if (invalidatedCount === 0) return;
+
+  for (const [cacheDir, cache] of modulePathCaches.entries()) {
+    const manifestDir = getCycleManifestCacheDir(cacheDir);
+    if (!staleCycleManifestGenerations.has(manifestDir)) continue;
+    const normalizedPrefix = `${manifestDir.replaceAll("\\", "/").replace(/\/$/, "")}/`;
+    for (const [cachedKey, cachedFilePath] of cache.entries()) {
+      if (!cachedFilePath.replaceAll("\\", "/").startsWith(normalizedPrefix)) continue;
+      cache.delete(cachedKey);
+      verifiedModuleDeps.delete(`${cachedFilePath}:${cachedKey}`);
+    }
+  }
 
   // Persist invalidation to disk: update _index.json and delete stale .mjs files.
   // Fire-and-forget so callers aren't blocked, but disk state is eventually consistent.
@@ -351,13 +510,44 @@ export function invalidateModulePaths(changedPaths: string[]): void {
       }
     }
 
-    // Delete stale .mjs files from disk
+    // Delete stale modules and their tenant-attribution evidence from disk.
     for (const mjsPath of staleMjsFiles) {
       try {
         await localFs.remove(mjsPath);
         logger.debug(`${LOG_PREFIX_MDX_LOADER} Deleted stale cached module`, { mjsPath });
       } catch (_) {
         /* expected: file may already be gone */
+      }
+      try {
+        await localFs.remove(`${mjsPath}${UNRESOLVED_IMPORTS_SIDECAR_SUFFIX}`);
+      } catch (_) {
+        /* expected: most modules have no unresolved-import evidence */
+      }
+      try {
+        await localFs.remove(`${mjsPath}${CYCLE_MANIFEST_SIDECAR_SUFFIX}`);
+      } catch (_) {
+        /* expected: only cycle graph roots have manifest evidence */
+      }
+    }
+
+    for (const [manifestDir, currentGeneration] of staleCycleManifestGenerations) {
+      try {
+        await deleteStaleCycleManifestGenerations(
+          localFs,
+          manifestDir,
+          currentGeneration,
+        );
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} Deleted stale cycle manifest generations`, {
+          manifestDir,
+          currentGeneration,
+        });
+      } catch (error) {
+        if (!isNotFoundError(error)) {
+          logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to delete stale cycle manifests`, {
+            manifestDir,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
     }
   };
@@ -393,7 +583,9 @@ export function invalidateModulePaths(changedPaths: string[]): void {
 function getMdxEsmCacheDirForCachedPath(cachedPath: string): string | null {
   const baseCacheDir = getMdxEsmCacheDir();
   const prefix = baseCacheDir.endsWith("/") ? baseCacheDir : `${baseCacheDir}/`;
-  if (!cachedPath.startsWith(prefix)) return null;
+  if (!cachedPath.startsWith(prefix)) {
+    return getMdxEsmCacheDirFromPathSegments(cachedPath);
+  }
 
   const parts = cachedPath.slice(prefix.length).split("/");
   const [maybeVersionKey, maybeProjectKey, maybeSourceKey] = parts;
@@ -407,10 +599,51 @@ function getMdxEsmCacheDirForCachedPath(cachedPath: string): string | null {
     : join(baseCacheDir, projectKey, sourceKey);
 }
 
+function getMdxEsmCacheDirFromPathSegments(cachedPath: string): string | null {
+  const marker = "/veryfront-mdx-esm/";
+  const markerIndex = cachedPath.indexOf(marker);
+  if (markerIndex < 0) return null;
+
+  const cacheRoot = cachedPath.slice(0, markerIndex + marker.length - 1);
+  const parts = cachedPath.slice(markerIndex + marker.length).split("/");
+  const [maybeVersionKey, maybeProjectKey, maybeSourceKey] = parts;
+  const hasVersionSegment = isCacheVersionSegment(maybeVersionKey);
+  const projectKey = hasVersionSegment ? maybeProjectKey : maybeVersionKey;
+  const sourceKey = hasVersionSegment ? maybeSourceKey : maybeProjectKey;
+  if (!projectKey || !sourceKey) return null;
+
+  return hasVersionSegment
+    ? join(cacheRoot, maybeVersionKey!, projectKey, sourceKey)
+    : join(cacheRoot, projectKey, sourceKey);
+}
+
 function isSameOrDescendantPath(path: string, parentPath: string): boolean {
   const normalizedParent = parentPath.replace(/\/+$/, "");
   const normalizedPath = path.replace(/\/+$/, "");
   return normalizedPath === normalizedParent || normalizedPath.startsWith(`${normalizedParent}/`);
+}
+
+function isDarwinHost(): boolean {
+  const deno = getDenoRuntime();
+  if (deno) return deno.build.os === "darwin";
+  return (globalThis as { process?: { platform?: string } }).process?.platform === "darwin";
+}
+
+function normalizeDarwinPrivateVarAlias(path: string): string {
+  if (!isDarwinHost()) return path;
+  return path.startsWith("/private/var/") ? path.slice("/private".length) : path;
+}
+
+function getDarwinPrivateVarAlias(path: string): string | null {
+  if (!isDarwinHost()) return null;
+  if (path.startsWith("/private/var/")) return path.slice("/private".length);
+  if (path.startsWith("/var/")) return `/private${path}`;
+  return null;
+}
+
+function isSameCachedPath(a: string, b: string): boolean {
+  return a === b ||
+    normalizeDarwinPrivateVarAlias(a) === normalizeDarwinPrivateVarAlias(b);
 }
 
 function invalidateMdxEsmModuleFromCache(
@@ -429,13 +662,16 @@ function invalidateMdxEsmModuleFromCache(
     return false;
   }
 
-  if (expectedCachedPath && cachedPath !== expectedCachedPath) {
+  if (expectedCachedPath && !isSameCachedPath(cachedPath, expectedCachedPath)) {
     verifiedModuleDeps.delete(`${expectedCachedPath}:${cacheKey}`);
     return false;
   }
 
   cache.delete(cacheKey);
   verifiedModuleDeps.delete(`${cachedPath}:${cacheKey}`);
+  if (expectedCachedPath && expectedCachedPath !== cachedPath) {
+    verifiedModuleDeps.delete(`${expectedCachedPath}:${cacheKey}`);
+  }
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Self-heal invalidated missing module`, {
     filePath,
     cachedPath,
@@ -479,7 +715,11 @@ export async function invalidateMdxEsmModuleForCachedPath(
   const candidateDirs = [
     ...(derivedCacheDir ? [derivedCacheDir] : []),
     ...configuredDirs,
-  ].filter((cacheDir, index, dirs) => dirs.indexOf(cacheDir) === index);
+  ].flatMap((cacheDir) => {
+    const alias = getDarwinPrivateVarAlias(cacheDir);
+    return alias ? [cacheDir, alias] : [cacheDir];
+  }).filter((cacheDir, index, dirs) => dirs.indexOf(cacheDir) === index)
+    .sort((a, b) => Number(modulePathCaches.has(b)) - Number(modulePathCaches.has(a)));
   if (candidateDirs.length === 0) return false;
 
   for (const cacheDir of candidateDirs) {
@@ -505,19 +745,47 @@ function extractNormalizedCachedModulePath(cachedKey: string): string {
 }
 
 export async function clearESMDiskCache(): Promise<void> {
+  const currentCycleGeneration = advanceAllCycleManifestGenerations();
   const cacheDir = getMdxEsmCacheDir();
+  const cycleManifestCacheDir = getCycleManifestCacheRootDir();
   const fs = getLocalFs();
+  cycleManifestSources.clear();
 
   try {
     // Remove entire cache directory and recreate it
     // This handles nested project directories such as customer/local-main/
     await fs.remove(cacheDir, { recursive: true });
-    await fs.mkdir(cacheDir, { recursive: true });
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared ESM disk cache`);
   } catch (error) {
     if (!isNotFoundError(error)) {
       logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to clear ESM disk cache`, error);
     }
+  }
+
+  try {
+    for await (const entry of fs.readDir(cycleManifestCacheDir)) {
+      if (!entry.isDirectory) continue;
+      await deleteStaleCycleManifestGenerations(
+        fs,
+        join(cycleManifestCacheDir, entry.name),
+        currentCycleGeneration,
+      );
+    }
+    try {
+      await fs.remove(cycleManifestCacheDir);
+    } catch (_) {
+      /* expected: a post-clear generation keeps the cache root non-empty */
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) {
+      logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to clear cycle manifest cache`, error);
+    }
+  }
+
+  try {
+    await fs.mkdir(cacheDir, { recursive: true });
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared ESM disk cache`);
+  } catch (error) {
+    logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to recreate ESM disk cache`, error);
   }
 }
 
@@ -548,9 +816,17 @@ export async function clearMdxEsmCacheNamespace(
     }
   }
 
+  const manifestGenerations = new Map(
+    [...affectedCacheDirs].map((cacheDir) => {
+      const manifestDir = getCycleManifestCacheDir(cacheDir);
+      return [manifestDir, advanceCycleManifestGeneration(manifestDir)] as const;
+    }),
+  );
+
   for (const cacheDir of affectedCacheDirs) {
     modulePathCaches.delete(cacheDir);
     modulePathCacheLoaded.delete(cacheDir);
+    cycleManifestSources.delete(cacheDir);
   }
 
   for (const key of Array.from(verifiedModuleDeps.keys())) {
@@ -590,6 +866,23 @@ export async function clearMdxEsmCacheNamespace(
       });
     }
   }
+
+  for (const [manifestDir, currentGeneration] of manifestGenerations) {
+    try {
+      await deleteStaleCycleManifestGenerations(
+        getLocalFs(),
+        manifestDir,
+        currentGeneration,
+      );
+    } catch (error) {
+      if (!isNotFoundError(error)) {
+        logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to remove cycle manifest namespace`, {
+          manifestDir,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
 }
 
 export async function clearHttpBundleCache(): Promise<void> {
@@ -615,6 +908,9 @@ export async function clearHttpBundleCache(): Promise<void> {
 export async function clearAllLocalCaches(): Promise<void> {
   clearModulePathCache();
   await Promise.all([clearESMDiskCache(), clearHttpBundleCache()]);
+  // The cache root lives inside the user's project outside production, so keep
+  // the generated bundles out of their version control before writing more.
+  await ensureCacheDirIgnored();
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared all local caches`);
 }
 

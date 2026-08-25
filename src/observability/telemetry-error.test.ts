@@ -3,6 +3,7 @@ import { API_CLIENT_ERROR } from "#veryfront/errors";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  LOG_PREVIEW_MAX_LENGTH_CHARS,
   MAX_STRING_DISPLAY_LENGTH,
   MAX_TRACE_ATTRIBUTE_VALUE_SIZE,
 } from "#veryfront/utils/constants/index.ts";
@@ -15,7 +16,9 @@ import {
   sanitizeErrorForTelemetry,
   sanitizeStructuredTelemetryData,
   sanitizeTelemetryAttributes,
+  sanitizeTelemetryAttributeValue,
   type TelemetryAttributeValue,
+  telemetryErrorType,
 } from "./telemetry-error.ts";
 import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 
@@ -120,6 +123,112 @@ describe("observability/telemetry-error", () => {
     assertEquals(sanitized.name, "Error");
     assertEquals(sanitized.message, "Unknown error");
     assertEquals(accessorCalls, 0);
+  });
+
+  it("classifies only own data error codes without invoking accessors", () => {
+    const coded = new Error("temporary network failure");
+    Object.defineProperty(coded, "code", {
+      configurable: true,
+      value: "ECONNRESET",
+      writable: true,
+    });
+
+    assertEquals(telemetryErrorType(coded), "ECONNRESET");
+
+    let accessorCalls = 0;
+    const accessorBacked = new Error("private failure");
+    Object.defineProperty(accessorBacked, "code", {
+      configurable: true,
+      get(): never {
+        accessorCalls += 1;
+        throw new Error("private code accessor must not run");
+      },
+    });
+
+    assertEquals(telemetryErrorType(accessorBacked), "Error");
+    assertEquals(accessorCalls, 0);
+  });
+
+  it("classifies non-Error throws as Unknown", () => {
+    assertEquals(
+      telemetryErrorType("boom"),
+      "Unknown",
+      "a bare string throw must not be labelled an Error",
+    );
+    assertEquals(telemetryErrorType(null), "Unknown", "a null throw must be classified Unknown");
+    assertEquals(
+      telemetryErrorType({ code: "ECONNRESET" }),
+      "Unknown",
+      "a plain object must not be classified by its code field",
+    );
+  });
+
+  it("classifies error codes through a captured RegExp matcher", () => {
+    const previousExec = Object.getOwnPropertyDescriptor(RegExp.prototype, "exec");
+    const coded = new Error("temporary network failure");
+    Object.defineProperty(coded, "code", {
+      configurable: true,
+      value: "ECONNRESET",
+      writable: true,
+    });
+
+    try {
+      Object.defineProperty(RegExp.prototype, "exec", {
+        configurable: true,
+        value: () => ["", "secret-error-type@example.com"],
+        writable: true,
+      });
+
+      assertEquals(telemetryErrorType(coded), "ECONNRESET");
+    } finally {
+      if (previousExec) {
+        Object.defineProperty(RegExp.prototype, "exec", previousExec);
+      }
+    }
+  });
+
+  it("classifies error names through a captured Set matcher", () => {
+    const previousHas = Object.getOwnPropertyDescriptor(Set.prototype, "has");
+    const named = new Error("application failure");
+    Object.defineProperty(named, "name", {
+      configurable: true,
+      value: "secret-error-name@example.com",
+      writable: true,
+    });
+
+    try {
+      Object.defineProperty(Set.prototype, "has", {
+        configurable: true,
+        value: () => true,
+        writable: true,
+      });
+
+      assertEquals(telemetryErrorType(named), "Error");
+    } finally {
+      if (previousHas) {
+        Object.defineProperty(Set.prototype, "has", previousHas);
+      }
+    }
+  });
+
+  it("classifies VeryfrontError status through a safe snapshot", () => {
+    assertEquals(
+      telemetryErrorType(API_CLIENT_ERROR.create({ detail: "request failed" })),
+      "VeryfrontError:500",
+    );
+
+    let statusReads = 0;
+    const accessorBacked = API_CLIENT_ERROR.create({ detail: "private detail" });
+    Object.defineProperty(accessorBacked, "status", {
+      configurable: true,
+      get(): never {
+        statusReads += 1;
+        throw new Error("private status accessor must not run");
+      },
+    });
+
+    assertEquals(telemetryErrorType(accessorBacked), "Error");
+    assertEquals(statusReads, 0);
   });
 
   it("ignores inherited descriptor values without invoking accessors", () => {
@@ -317,6 +426,63 @@ describe("observability/telemetry-error", () => {
     assertEquals(sanitized.message, "stack round trip");
     assertEquals(typeof sanitized.stack, "string");
     assertEquals(sanitized.stack?.includes("telemetryStackProbeFrame"), true);
+  });
+
+  it("suppresses the stack when the error only classifies the failure", () => {
+    function telemetryStackProbeFrame(): never {
+      throw new Error("stack suppression");
+    }
+
+    let thrown: unknown;
+    try {
+      telemetryStackProbeFrame();
+    } catch (error) {
+      thrown = error;
+    }
+
+    assertEquals(
+      sanitizeErrorForTelemetry(thrown, "withoutStack").stack,
+      undefined,
+      "withoutStack must not export reporting-site frames",
+    );
+    assertEquals(
+      typeof sanitizeErrorForTelemetry(thrown).stack,
+      "string",
+      "withStack must keep the failure frames",
+    );
+    assertEquals(
+      sanitizeErrorForTelemetry(thrown).stack?.includes("telemetryStackProbeFrame"),
+      true,
+      "withStack must keep the probe frame",
+    );
+  });
+
+  it("names non-Error telemetry snapshots from the supplied classification", () => {
+    assertEquals(
+      sanitizeErrorForTelemetry("boom", "withoutStack", "ECONNRESET").name,
+      "ECONNRESET",
+      "safeName becomes the snapshot name for non-Error values",
+    );
+    assertEquals(
+      sanitizeErrorForTelemetry("boom", "withoutStack").name,
+      "Unknown",
+      "an omitted safeName still falls back to Unknown",
+    );
+    assertEquals(
+      sanitizeErrorForTelemetry(
+        "boom",
+        "withoutStack",
+        "x".repeat(LOG_PREVIEW_MAX_LENGTH_CHARS + 50),
+      )
+        .name.length,
+      LOG_PREVIEW_MAX_LENGTH_CHARS,
+      "safeName is truncated to the preview cap",
+    );
+    assertEquals(
+      sanitizeErrorForTelemetry(new Error("real"), "withoutStack", "ECONNRESET").name,
+      "Error",
+      "a real error keeps its own name over safeName",
+    );
   });
 
   it("bounds a real thrown error's stack", () => {
@@ -652,6 +818,32 @@ describe("observability/telemetry-error", () => {
     assertEquals(snapshot.array, "[REDACTED]");
   });
 
+  it("redacts credentials inside under-cap array attribute values", () => {
+    const result = sanitizeTelemetryAttributeValue("urls", [
+      "https://user:password@example.test/path?token=secret",
+      "plain",
+    ]);
+
+    assertEquals(Array.isArray(result), true, "under-cap arrays stay arrays");
+    const values = result as readonly string[];
+    assertEquals(
+      values[0]?.includes("password"),
+      false,
+      "URL credentials in array elements are redacted",
+    );
+    assertEquals(
+      values[0]?.includes("secret"),
+      false,
+      "query-string secrets in array elements are redacted",
+    );
+    assertEquals(values[1], "plain", "safe elements pass through");
+    assertEquals(
+      sanitizeTelemetryAttributeValue("sizes", [1, Number.NaN]),
+      "[REDACTED]",
+      "non-finite numbers force the whole array to be redacted",
+    );
+  });
+
   it("bounds structured telemetry returned by custom serializers", () => {
     let calls = 0;
     const wide = {
@@ -681,17 +873,8 @@ describe("observability/telemetry-error", () => {
     });
 
     const snapshot = sanitizeErrorForTelemetry(source);
-    const stackDescriptor = Object.getOwnPropertyDescriptor(new Error(), "stack");
-    const canInspectStackWithoutFormatting = Boolean(
-      stackDescriptor &&
-        Object.prototype.hasOwnProperty.call(stackDescriptor, "get") &&
-        typeof stackDescriptor.get === "function",
-    );
 
     assertEquals(snapshot.message.length, MAX_STRING_DISPLAY_LENGTH);
-    assertEquals(
-      snapshot.stack?.length,
-      canInspectStackWithoutFormatting ? MAX_STRING_DISPLAY_LENGTH : undefined,
-    );
+    assertEquals(snapshot.stack?.length, MAX_STRING_DISPLAY_LENGTH);
   });
 });

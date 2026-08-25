@@ -1,4 +1,4 @@
-import { parse } from "@std/yaml/parse";
+import { parse } from "#std/yaml/parse";
 
 interface FrontMatterResult<T = Record<string, unknown>> {
   attrs: T;

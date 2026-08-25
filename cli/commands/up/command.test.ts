@@ -14,7 +14,9 @@ import { capitalizeSeparatedWords } from "veryfront/utils/case-utils";
 import { resetInteractiveMode, setNonInteractive } from "../../shared/interactive.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
 import { stripAnsi } from "../../ui/ansi.ts";
+import { setLoggerPreset } from "veryfront/utils/logger";
 import type {
+  DeployEvent,
   DeployPlan,
   DeployProject,
   DeployProjectOutcome,
@@ -65,6 +67,26 @@ async function captureExit(run: () => Promise<void>): Promise<number> {
   }
 }
 
+async function rejectExit(run: () => Promise<void>): Promise<void> {
+  const originalExit = Deno.exit;
+  // deno-lint-ignore no-explicit-any
+  (Deno as any).exit = (code = 0) => {
+    throw new ExitSentinel(code);
+  };
+
+  try {
+    await run();
+  } catch (error) {
+    if (error instanceof ExitSentinel) {
+      throw new Error(`Command exited unexpectedly with code ${error.code}`);
+    }
+    throw error;
+  } finally {
+    // deno-lint-ignore no-explicit-any
+    (Deno as any).exit = originalExit;
+  }
+}
+
 async function captureLog<T>(run: () => Promise<T>): Promise<{ result: T; output: string[] }> {
   const output: string[] = [];
   const originalLog = console.log;
@@ -78,17 +100,48 @@ async function captureLog<T>(run: () => Promise<T>): Promise<{ result: T; output
   }
 }
 
+/**
+ * Everything a human sees, in order, across both console streams.
+ *
+ * Spinner frames land on stderr and results on stdout, so a test that reads
+ * only `console.log` cannot tell whether the run narrated something it never
+ * did. The logger runs under the same "cli" preset `cli/main.ts` installs, so
+ * a captured line is byte-for-byte the line a user reads.
+ */
+async function captureConsole<T>(
+  run: () => Promise<T>,
+): Promise<{ result: T; lines: string[] }> {
+  const lines: string[] = [];
+  const originalLog = console.log;
+  const originalError = console.error;
+  const record = (...args: unknown[]) => {
+    lines.push(stripAnsi(args.map(String).join(" ")));
+  };
+  console.log = record;
+  console.error = record;
+  setLoggerPreset("cli");
+  try {
+    return { result: await run(), lines };
+  } finally {
+    setLoggerPreset("server");
+    console.log = originalLog;
+    console.error = originalError;
+  }
+}
+
 /** Deploy Execution recorded, never executed: what did `up` ask deploy to do? */
 function recordingDeployProject(
   outcome: DeployProjectOutcome,
+  events: DeployEvent[] = [],
 ): { deployProject: DeployProject; requests: DeployProjectRequest[] } {
   const requests: DeployProjectRequest[] = [];
   return {
     requests,
     deployProject: {
-      execute(request) {
+      async execute(request, observer) {
         requests.push(request);
-        return Promise.resolve(outcome);
+        for (const event of events) await observer?.onEvent(event);
+        return outcome;
       },
     },
   };
@@ -106,6 +159,7 @@ const VERIFIED_RESULT: DeployResult = {
   environmentId: "environment-1",
   deploymentId: "deployment-1",
   url: "https://verified.example.test/dashboard",
+  urlVerification: "served",
   protected: false,
   routingConvergence: null,
   commitSha: "a".repeat(40),
@@ -227,6 +281,57 @@ describe("Up Command", () => {
   });
 
   describe("upCommand", () => {
+    it("authenticates from the explicit project directory", async () => {
+      const projectDir = await Deno.makeTempDir();
+      const authHome = await Deno.makeTempDir();
+      const { deployProject, requests } = recordingDeployProject(VERIFIED_OUTCOME);
+      let requestedUrl = "";
+      let requestedAuth = "";
+
+      try {
+        setNonInteractive(true);
+        await Deno.writeTextFile(join(projectDir, "package.json"), "{}\n");
+        await Deno.writeTextFile(
+          join(projectDir, "veryfront.json"),
+          `${
+            JSON.stringify(
+              {
+                projectSlug: "target-project",
+                apiToken: "target-config-token",
+                apiUrl: "https://target-control.example.test/api",
+              },
+              null,
+              2,
+            )
+          }\n`,
+        );
+        const env = createTestEnvironmentConfig({
+          apiToken: undefined,
+          homeDir: authHome,
+          xdgConfigHome: authHome,
+        });
+
+        await withMockFetch(
+          ((input: string | URL | Request, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(input, init);
+            requestedUrl = request.url;
+            requestedAuth = request.headers.get("Authorization") ?? "";
+            return Promise.resolve(identityResponse());
+          }) as typeof fetch,
+          () => rejectExit(() => upCommand({ projectDir }, env, { deployProject })),
+        );
+
+        assertEquals(requestedUrl, "https://target-control.example.test/api/me");
+        assertEquals(requestedAuth, "Bearer target-config-token");
+        assertEquals(requests.length, 1);
+        assertEquals(requests[0]?.projectDir, projectDir);
+      } finally {
+        resetInteractiveMode();
+        await Deno.remove(projectDir, { recursive: true });
+        await Deno.remove(authHome, { recursive: true });
+      }
+    });
+
     it("exits nonzero after an unauthenticated JSON result", async () => {
       const tempDir = await Deno.makeTempDir();
 
@@ -396,6 +501,85 @@ describe("Up Command", () => {
         });
       } finally {
         setJsonMode(false);
+        resetInteractiveMode();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("tells a human what the dry run would do, and never renders an empty status line", async () => {
+      const projectDir = await createLinkedProjectDir();
+      const { deployProject } = recordingDeployProject(dryRunOutcome(), [
+        { kind: "step", step: "resolve-config", phase: "started" },
+        // A dry run reaches the environment lookup, whose non-verbose progress
+        // text is "Building release..." — a build no dry run performs.
+        { kind: "step", step: "resolve-target", phase: "started" },
+      ]);
+
+      try {
+        setNonInteractive(true);
+        const { lines } = await captureConsole(() =>
+          withMockFetch(
+            authCheckOnlyFetch(),
+            () =>
+              upCommand({ projectDir, dryRun: true }, authenticatedEnv(projectDir), {
+                deployProject,
+              }),
+          )
+        );
+
+        // A status glyph with no message is a rendered line that says nothing.
+        assertEquals(lines.some((line) => line.trim() === "●"), false);
+        assertEquals(lines.some((line) => line.includes("Building release")), false);
+        // The name comes from the plan ("verified-slug"), not from the local
+        // link ("linked-up"): a project renamed after linking still resolves by
+        // id, and the apply would target the plan's slug.
+        assertEquals(
+          lines.includes(
+            '  › Would push source to "main", create release, and deploy to "preview" for project verified-slug',
+          ),
+          true,
+        );
+        assertEquals(lines.includes("  ✓ Dry run complete"), true);
+      } finally {
+        resetInteractiveMode();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("names the project a human dry run would create", async () => {
+      const projectDir = await Deno.makeTempDir();
+      const expectedSlug = normalizeProjectSlug(projectDir.split(/[/\\]/).pop() ?? "");
+      const { deployProject } = recordingDeployProject(
+        dryRunOutcome({
+          projectId: null,
+          // No project exists yet, so the plan carries the slug it would create.
+          projectSlug: expectedSlug,
+          environmentId: null,
+          plannedActions: ["create-project", "push-source", "create-release", "deploy"],
+        }),
+      );
+
+      try {
+        await Deno.writeTextFile(join(projectDir, "package.json"), "{}");
+        setNonInteractive(true);
+        const { lines } = await captureConsole(() =>
+          withMockFetch(
+            authCheckOnlyFetch(),
+            () =>
+              upCommand({ projectDir, dryRun: true }, authenticatedEnv(projectDir), {
+                deployProject,
+              }),
+          )
+        );
+
+        assertEquals(lines.some((line) => line.trim() === "●"), false);
+        assertEquals(
+          lines.includes(
+            `  › Would create the project, push source to "main", create release, and deploy to "preview" for project ${expectedSlug}`,
+          ),
+          true,
+        );
+      } finally {
         resetInteractiveMode();
         await Deno.remove(projectDir, { recursive: true });
       }

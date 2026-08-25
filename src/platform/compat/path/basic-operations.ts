@@ -10,13 +10,20 @@ import {
 } from "./portable.ts";
 import { getNativePathImplementation } from "./runtime.ts";
 
+const ArrayPrototypeEvery = Array.prototype.every;
+const ArrayPrototypeSome = Array.prototype.some;
+const ReflectApply = Reflect.apply;
+
 function usesWindowsFlavor(paths: readonly string[]): boolean {
-  return runtimeUsesWindowsPaths() || paths.some(hasWindowsLikePath);
+  return runtimeUsesWindowsPaths() ||
+    ReflectApply(ArrayPrototypeSome, paths, [hasWindowsLikePath]) as boolean;
 }
 
 /** Join and normalize path segments using their detected path flavor. */
 export function join(...paths: string[]): string {
-  if (paths.every((path) => path.length === 0)) return "/";
+  if (
+    ReflectApply(ArrayPrototypeEvery, paths, [(path: string) => path.length === 0]) as boolean
+  ) return "/";
   const windows = usesWindowsFlavor(paths);
   const pathApi = getNativePathImplementation(windows);
   const joined = pathApi

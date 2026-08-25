@@ -27,7 +27,6 @@ function UncontrolledChat(
     onUpdate,
     agent: userAgent,
     suggestions: suggestionsProp,
-    onSuggestionClick,
     onSuggestionSelect,
     emptyState,
     // Attachments: default-wired through `useUpload` unless the caller
@@ -62,7 +61,7 @@ function UncontrolledChat(
   // box — no `isLoading` wiring from the consumer.
   const agentInitializing = Boolean(resolvedAgentId) && !agent && !agentError;
 
-  // Agent-driven empty state: avatar + name + description, shown once the
+  // Agent-driven empty state: avatar + name, shown once the
   // agent resolves (the skeleton covers the load, so the generic
   // "What can I help with?" placeholder never flashes). A consumer-supplied
   // `emptyState` still wins.
@@ -78,7 +77,6 @@ function UncontrolledChat(
         />
       ),
       title: agent.name,
-      description: agent.description ?? undefined,
     };
   }, [emptyState, agent]);
 
@@ -104,14 +102,14 @@ function UncontrolledChat(
     : undefined;
 
   const handleSuggestionSelect = onSuggestionSelect ??
-    (onSuggestionClick ? undefined : (suggestion: PromptSuggestion) => {
+    ((suggestion: PromptSuggestion) => {
       void chat.sendMessage({ text: suggestion.prompt });
     });
 
   // Batteries-included attachments: unless the caller controls them, files
   // uploaded via the `+` menu / drag land here, ride along on submit as
   // `file` parts, and clear once sent.
-  const upload = useUpload({ api: uploadApi });
+  const upload = useUpload({ url: uploadApi });
   const attachControlled = userOnAttach !== undefined ||
     userOnDrop !== undefined ||
     userAttachments !== undefined ||
@@ -143,7 +141,6 @@ function UncontrolledChat(
       agent={resolvedAgent}
       initializing={agentInitializing}
       suggestions={derivedSuggestions}
-      onSuggestionClick={onSuggestionClick}
       onSuggestionSelect={handleSuggestionSelect}
       onAttach={manageAttachments ? upload.upload : userOnAttach}
       onDrop={manageAttachments ? upload.upload : userOnDrop}

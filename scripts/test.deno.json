@@ -4,7 +4,7 @@
   "imports": {
     "#babel/parser": "npm:@babel/parser@7.29.2",
     "#veryfront/": "../src/",
-    "#dnt": "jsr:@deno/dnt@0.42.3",
+    "#dnt": "jsr:@deno/dnt@0.43.2",
     "#std/assert": "jsr:@std/assert@1.0.19",
     "#std/assert.ts": "jsr:@std/assert@1.0.19",
     "#std/flags": "jsr:@std/cli@1.0.28/parse-args",
@@ -13,7 +13,9 @@
     "#std/fs/ensure-dir": "jsr:@std/fs@1.0.23/ensure-dir",
     "#std/path": "jsr:@std/path@1.1.4",
     "#std/path.ts": "jsr:@std/path@1.1.4",
+    "#std/yaml/parse": "jsr:@std/yaml@1.1.0/parse",
     "#std/testing/bdd": "jsr:@std/testing@1.0.17/bdd",
-    "#std/testing/bdd.ts": "jsr:@std/testing@1.0.17/bdd"
+    "#std/testing/bdd.ts": "jsr:@std/testing@1.0.17/bdd",
+    "es-module-lexer": "npm:es-module-lexer@2.3.1"
   }
 }

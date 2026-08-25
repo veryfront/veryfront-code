@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { createEmptyDiscoveryResult } from "#veryfront/discovery";
 import type { Agent, AgentMessage as Message, AgentResponse } from "#veryfront/agent";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -9,6 +10,14 @@ import { ChannelInvokeHandler } from "./channel-invoke.handler.ts";
 import { __resetServerShuttingDownForTests, markServerShuttingDown } from "../../shutdown-state.ts";
 
 const encoder = new TextEncoder();
+
+type AgentGenerateFixture = (input: Parameters<Agent["generate"]>[0]) => Promise<AgentResponse>;
+
+function createGenerateStub(generate: AgentGenerateFixture): Agent["generate"] {
+  return (async (input: Parameters<Agent["generate"]>[0]) => {
+    return await generate(input);
+  }) as Agent["generate"];
+}
 
 function encodePem(label: string, der: ArrayBuffer): string {
   const base64 = btoa(String.fromCharCode(...new Uint8Array(der)));
@@ -101,11 +110,11 @@ function createAgentResponse(text = "Hello from handler"): AgentResponse {
   };
 }
 
-function createAgent(generate: Agent["generate"]): Agent {
+function createAgent(generate: AgentGenerateFixture): Agent {
   return {
     id: "agent-1",
     config: {} as Agent["config"],
-    generate,
+    generate: createGenerateStub(generate),
     stream: async () => ({ toDataStreamResponse: () => new Response() } as never),
     respond: async () => new Response(),
     getMemory: () => ({} as never),
@@ -125,7 +134,6 @@ function createCtx(publicKeyPem?: string): HandlerContext {
       fs: {},
     },
     securityConfig: null,
-    cspUserHeader: null,
     projectSlug: "demo-project",
     projectId: "proj-1",
     isLocalProject: false,
@@ -138,6 +146,7 @@ describe("server/handlers/request/channel-invoke.handler", () => {
     const handler = new ChannelInvokeHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
       },
       getAgent: () => createAgent(async () => createAgentResponse()),
       getAllAgentIds: () => ["agent-1"],
@@ -173,7 +182,7 @@ describe("server/handlers/request/channel-invoke.handler", () => {
 
   it("returns 401 when the dispatch signature header is missing", async () => {
     const handler = new ChannelInvokeHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: () => undefined,
       getAllAgentIds: () => [],
     });
@@ -194,7 +203,7 @@ describe("server/handlers/request/channel-invoke.handler", () => {
 
   it("returns 400 when the signed body does not match the invoke schema", async () => {
     const handler = new ChannelInvokeHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: () => undefined,
       getAllAgentIds: () => [],
     });
@@ -236,6 +245,7 @@ describe("server/handlers/request/channel-invoke.handler", () => {
     const handler = new ChannelInvokeHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
       },
       getAgent: () => createAgent(async () => createAgentResponse()),
       getAllAgentIds: () => ["agent-1"],

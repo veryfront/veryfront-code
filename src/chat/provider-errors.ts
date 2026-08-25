@@ -26,6 +26,14 @@ const MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR = {
     "The selected model does not support assistant-message prefill. Start a new user message or choose a compatible model.",
 } as const;
 
+const OUTPUT_SCHEMA_NOT_CLOSED_ERROR = {
+  code: "OUTPUT_SCHEMA_NOT_CLOSED",
+  message:
+    "The provider rejected the output schema because an object in it allows additional properties. " +
+    "Set additionalProperties: false on that object -- add .strict() if the outputSchema was " +
+    "built with defineSchema(), or set the property directly on a raw JSON Schema.",
+} as const;
+
 const AI_PROVIDER_SPEND_LIMIT_ERROR = {
   code: "AI_PROVIDER_SPEND_LIMIT_EXCEEDED",
   message:
@@ -121,6 +129,30 @@ function parseEmbeddedErrorJson(value: string): unknown | null {
   return null;
 }
 
+function formatCreditProblemMessage(
+  body: Record<string, unknown>,
+  error: string | null,
+  suggestion: string | null,
+): string {
+  const balance = body.balance;
+  const required = body.required;
+  const fallback = suggestion ?? error ?? "Insufficient AI credits";
+  if (
+    typeof balance !== "number" || !Number.isFinite(balance) || balance < 0 ||
+    typeof required !== "number" || !Number.isFinite(required) || required < 0
+  ) {
+    return fallback;
+  }
+
+  const summary = error ?? "Insufficient AI credits";
+  const availability = error?.toLowerCase().includes("agent run credit limit")
+    ? "remaining"
+    : "available";
+  return `${summary}: ${required} credits required, ${balance} ${availability}.${
+    suggestion ? ` ${suggestion}` : ""
+  }`;
+}
+
 /** Parses known problem body. */
 export function parseKnownProblemBody(body: unknown): ParsedProviderError | null {
   if (!isErrorRecord(body)) {
@@ -139,7 +171,7 @@ export function parseKnownProblemBody(body: unknown): ParsedProviderError | null
   if (slug === "insufficient-credits" || error === "AI credit limit exceeded") {
     return {
       code: "INSUFFICIENT_CREDITS",
-      message: suggestion ?? error ?? "Insufficient AI credits",
+      message: formatCreditProblemMessage(body, error, suggestion),
       status: 402,
     };
   }
@@ -177,6 +209,40 @@ export function isCreditLimitMessage(normalizedMessage: string): boolean {
   );
 }
 
+/**
+ * Wordings that identify a rejection as being about the *structured output*
+ * schema rather than a tool or function schema. Providers reject open objects
+ * in both, with near-identical sentences:
+ *
+ *   output_config.format.schema: For 'object' type, 'additionalProperties'
+ *     must be explicitly set to false                              (Anthropic)
+ *   Invalid schema for response_format 'X': ... 'additionalProperties' is
+ *     required to be supplied and to be false                         (OpenAI)
+ *   Invalid schema for function 'X': ... 'additionalProperties' is
+ *     required to be supplied and to be false            (OpenAI, tool schema)
+ *
+ * Only the first two are about `outputSchema`. Without this discriminator the
+ * third is mislabeled and the caller is sent to fix the wrong schema.
+ */
+const STRUCTURED_OUTPUT_MARKERS = ["output_config", "response_format", "output schema"];
+
+/**
+ * Detects a provider rejecting the structured-output schema because an object
+ * in it does not set `additionalProperties: false`.
+ *
+ * The caller's own `outputSchema` is what has to change, so this is worth
+ * naming rather than collapsing into a generic service error. Matched on the
+ * pieces the wording is built from -- the property name, the closure
+ * requirement, and a structured-output marker -- rather than a fixed sentence,
+ * which providers reword.
+ */
+function isOpenObjectSchemaRejection(message: string): boolean {
+  const normalizedMessage = message.toLowerCase();
+  if (!normalizedMessage.includes("additionalproperties")) return false;
+  if (!normalizedMessage.includes("false") && !normalizedMessage.includes("required")) return false;
+  return STRUCTURED_OUTPUT_MARKERS.some((marker) => normalizedMessage.includes(marker));
+}
+
 function isAssistantPrefillUnsupportedMessage(message: string): boolean {
   const normalizedMessage = message.toLowerCase();
   const mentionsAssistantPrefill = normalizedMessage.includes("assistant message prefill") ||
@@ -208,6 +274,51 @@ function isProviderBillingMessage(normalizedMessage: string): boolean {
     normalizedMessage.includes("provider credits");
 
   return mentionsProviderApi && mentionsProviderCredits && mentionsProviderBilling;
+}
+
+/**
+ * Google's canonical `google.rpc.Code` for a request the API rejected as
+ * malformed. Its envelope is `{error:{code,status,message}}` and carries no
+ * `type` at all, so without this the whole curated mapping below -- billing,
+ * assistant prefill, output schema, context length -- is unreachable for
+ * Google, and every one of its 400s reports as a generic service error
+ * whatever actually went wrong.
+ *
+ * Mirrored by the preservation criteria in
+ * `src/provider/runtime-loader/provider-http.ts`, which decides whether the
+ * body reaches this function at all.
+ */
+const GOOGLE_INVALID_ARGUMENT_STATUS = "INVALID_ARGUMENT";
+
+/** Whether an error record says the request itself was rejected as invalid. */
+function isInvalidRequestEnvelope(body: Record<string, unknown>): boolean {
+  return body.type === "invalid_request_error" ||
+    body.status === GOOGLE_INVALID_ARGUMENT_STATUS;
+}
+
+/**
+ * Maps the wording of a rejected request onto a curated error.
+ *
+ * Shared by every envelope that carries that meaning, whichever key it uses to
+ * say so, so a provider is reachable by all of these mappings or none of them
+ * -- never the per-mapping patchwork that made the same rejection legible from
+ * Anthropic and opaque from Google.
+ */
+function classifyInvalidRequestMessage(message: string): ParsedProviderError | null {
+  const normalizedMessage = message.toLowerCase();
+  if (isProviderBillingMessage(normalizedMessage)) {
+    return AI_PROVIDER_BILLING_ERROR;
+  }
+  if (isAssistantPrefillUnsupportedMessage(message)) {
+    return MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR;
+  }
+  if (isOpenObjectSchemaRejection(message)) {
+    return OUTPUT_SCHEMA_NOT_CLOSED_ERROR;
+  }
+  if (normalizedMessage.includes("too long")) {
+    return { code: "CONTEXT_LENGTH_EXCEEDED", message: "Conversation is too long" };
+  }
+  return null;
 }
 
 function parseKnownProviderBody(
@@ -268,16 +379,10 @@ function parseKnownProviderBody(
     };
   }
 
-  if (body.type === "invalid_request_error" && typeof body.message === "string") {
-    const normalizedMessage = body.message.toLowerCase();
-    if (isProviderBillingMessage(normalizedMessage)) {
-      return AI_PROVIDER_BILLING_ERROR;
-    }
-    if (isAssistantPrefillUnsupportedMessage(body.message)) {
-      return MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR;
-    }
-    if (normalizedMessage.includes("too long")) {
-      return { code: "CONTEXT_LENGTH_EXCEEDED", message: "Conversation is too long" };
+  if (typeof body.message === "string" && isInvalidRequestEnvelope(body)) {
+    const classified = classifyInvalidRequestMessage(body.message);
+    if (classified) {
+      return classified;
     }
   }
 
@@ -381,6 +486,13 @@ function parseProviderErrorInner(
     const normalizedMessage = message.toLowerCase();
     if (isAssistantPrefillUnsupportedMessage(message)) {
       return MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR;
+    }
+    // Also matched here, not only on the structured-body path: the same
+    // rejection reaches this function as a bare `Error` whenever the body was
+    // never preserved -- an unparsed shape, a truncated read, or a provider
+    // whose envelope carries no `invalid_request_error` type at all.
+    if (isOpenObjectSchemaRejection(message)) {
+      return OUTPUT_SCHEMA_NOT_CLOSED_ERROR;
     }
     if (isProviderBillingMessage(normalizedMessage)) {
       return AI_PROVIDER_BILLING_ERROR;

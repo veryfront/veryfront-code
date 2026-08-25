@@ -40,7 +40,49 @@ describe("config-generator", () => {
           start: "veryfront serve",
           eval: "veryfront eval",
           deploy: "veryfront deploy",
+          typecheck: "tsc --noEmit",
         });
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("installs the TypeScript toolchain the scaffolded tsconfig needs", async () => {
+      const tmpDir = await Deno.makeTempDir();
+      try {
+        await createPackageJson(tmpDir, "test-project");
+        const pkg = JSON.parse(await Deno.readTextFile(join(tmpDir, "package.json")));
+
+        // The scaffold ships a tsconfig.json and a `typecheck` script, so the
+        // compiler that reads them has to be a declared dependency of the app.
+        assertEquals(typeof pkg.devDependencies?.typescript, "string");
+
+        // React types are the part that breaks silently: npm and bun hoist
+        // veryfront's transitive @types/react to the project root, pnpm does
+        // not, so the identical scaffold typechecks under npm and fails under
+        // pnpm with TS7016 on `react/jsx-runtime`. Owning them at the scaffold
+        // level makes the three installers agree.
+        assertEquals(typeof pkg.devDependencies?.["@types/react"], "string");
+        assertEquals(typeof pkg.devDependencies?.["@types/react-dom"], "string");
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("pins React types to the React major it installs", async () => {
+      const tmpDir = await Deno.makeTempDir();
+      try {
+        await createPackageJson(tmpDir, "test-project");
+        const pkg = JSON.parse(await Deno.readTextFile(join(tmpDir, "package.json")));
+
+        const reactMajor = pkg.dependencies.react.replace(/^\^/, "").split(".")[0];
+        for (const types of ["@types/react", "@types/react-dom"]) {
+          assertEquals(
+            pkg.devDependencies[types].replace(/^\^/, "").split(".")[0],
+            reactMajor,
+            `${types} must track the React major the scaffold installs`,
+          );
+        }
       } finally {
         await Deno.remove(tmpDir, { recursive: true });
       }

@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import { runHostedResponseStreamWithHeartbeat } from "./response-stream.ts";
 
 describe("agent/hosted-response-stream", () => {
@@ -32,18 +33,18 @@ describe("agent/hosted-response-stream", () => {
   });
 
   it("emits heartbeat chunks and stop callbacks while the hosted lifecycle waits", async () => {
+    using time = new FakeTime();
     const writes: string[] = [];
     const beatCounts: number[] = [];
     const stopCounts: number[] = [];
+    const firstBeat = Promise.withResolvers<void>();
 
-    await runHostedResponseStreamWithHeartbeat({
+    const run = runHostedResponseStreamWithHeartbeat({
       execution: {
         stream: {
           async *[Symbol.asyncIterator]() {},
         },
-        waitForFinish: async () => {
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        },
+        waitForFinish: () => firstBeat.promise,
       },
       writer: {
         write: (chunk) => {
@@ -55,6 +56,7 @@ describe("agent/hosted-response-stream", () => {
         buildChunk: () => "heartbeat",
         onBeat: (state) => {
           beatCounts.push(state.heartbeatCount);
+          firstBeat.resolve();
         },
         onStop: (state) => {
           stopCounts.push(state.heartbeatCount);
@@ -62,10 +64,51 @@ describe("agent/hosted-response-stream", () => {
       },
     });
 
-    assertEquals(writes.includes("heartbeat"), true);
-    assertEquals(beatCounts.length > 0, true);
-    assertEquals(stopCounts.length, 1);
-    assertEquals(stopCounts[0] >= 1, true);
+    time.tick(1);
+    await run;
+
+    assertEquals(writes, ["heartbeat"], "exactly one heartbeat chunk before finish");
+    assertEquals(beatCounts, [1], "onBeat fires once with count 1");
+    assertEquals(stopCounts, [1], "onStop reports the final heartbeat count");
+  });
+
+  it("stops the heartbeat interval when the writer rejects a heartbeat chunk", async () => {
+    using time = new FakeTime();
+    const writes: string[] = [];
+    const firstBeat = Promise.withResolvers<void>();
+    let beats = 0;
+
+    const run = runHostedResponseStreamWithHeartbeat({
+      execution: {
+        stream: {
+          async *[Symbol.asyncIterator]() {},
+        },
+        waitForFinish: () => firstBeat.promise,
+      },
+      writer: {
+        write: (chunk) => {
+          if (chunk === "heartbeat") {
+            throw new Error("closed");
+          }
+          writes.push(chunk);
+        },
+      },
+      heartbeat: {
+        intervalMs: 1,
+        buildChunk: () => "heartbeat",
+        onBeat: () => {
+          beats++;
+        },
+      },
+    });
+
+    time.tick(1);
+    time.tick(5);
+    firstBeat.resolve();
+    await run;
+
+    assertEquals(beats, 1, "heartbeat interval must be cleared after the writer throws");
+    assertEquals(writes, [], "no stream chunks are written when the stream is empty");
   });
 
   it("rethrows writer errors from streamed chunks", async () => {

@@ -99,6 +99,40 @@ describe("enriched-context", () => {
       assertEquals(ctx.config, stubConfig);
       assertEquals(ctx.parsedDomain, stubParsedDomain);
       assertEquals(typeof ctx.createdAt, "number");
+      assertEquals(
+        ctx.allowHostProjectCodeExecution,
+        false,
+        "hosted projects must not carry the host-realm execution grant by default",
+      );
+    });
+
+    it("grants host-realm execution to local projects", () => {
+      const ctx = buildEnrichedContext(makeOptions({ isLocalProject: true }));
+      assertEquals(
+        ctx.allowHostProjectCodeExecution,
+        true,
+        "local projects execute in the host realm",
+      );
+    });
+
+    it("grants host-realm execution to an explicitly granted hosted project", () => {
+      const ctx = buildEnrichedContext(makeOptions({ allowHostProjectCodeExecution: true }));
+      assertEquals(
+        ctx.allowHostProjectCodeExecution,
+        true,
+        "an explicit host grant is honored for a hosted project",
+      );
+    });
+
+    it("only honors a strict boolean true as the host grant", () => {
+      const ctx = buildEnrichedContext(
+        makeOptions({ allowHostProjectCodeExecution: "yes" as unknown as boolean }),
+      );
+      assertEquals(
+        ctx.allowHostProjectCodeExecution,
+        false,
+        "a truthy non-boolean must not be read as the host grant",
+      );
     });
 
     it("should set mode to 'development' for local projects", () => {
@@ -118,6 +152,20 @@ describe("enriched-context", () => {
       // cachePrefix = buildRenderCachePrefix("proj_1", "production", "rel_99")
       assertEquals(ctx.cachePrefix.includes("rel_99"), true);
       assertEquals(ctx.cachePrefix.startsWith("proj_1:production:rel_99:"), true);
+    });
+
+    it("separates the local development cache prefix from the hosted preview one", () => {
+      const shared = { environment: "preview" as const, branch: "main", releaseId: undefined };
+      const localDev = buildEnrichedContext(
+        makeOptions({ ...shared, isLocalProject: true, contentSourceId: "local-main" }),
+      );
+      const hostedPreview = buildEnrichedContext(
+        makeOptions({ ...shared, isLocalProject: false, contentSourceId: "preview-main" }),
+      );
+
+      assertEquals(localDev.mode, "development");
+      assertEquals(hostedPreview.mode, "production");
+      assertEquals(localDev.cachePrefix === hostedPreview.cachePrefix, false);
     });
 
     it("should throw when releaseId is undefined in production", () => {

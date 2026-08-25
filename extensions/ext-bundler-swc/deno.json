@@ -1,0 +1,25 @@
+{
+  "name": "@veryfront/ext-bundler-swc",
+  "version": "0.1.0",
+  "exports": "./src/index.ts",
+  "veryfront": {
+    "extension": true,
+    "activation": "explicit",
+    "contracts": {
+      "provides": ["Bundler"]
+    },
+    "capabilities": [
+      { "type": "fs:read" }
+    ]
+  },
+  "imports": {
+    "@swc/wasm": "npm:@swc/wasm@1.16.1",
+    "@veryfront/ext-bundler-esbuild": "../ext-bundler-esbuild/src/index.ts",
+    "reflect-metadata": "npm:reflect-metadata@0.2.2",
+    "veryfront/extensions": "../../src/extensions/index.ts",
+    "veryfront/extensions/bundler": "../../src/extensions/bundler/index.ts"
+  },
+  "tasks": {
+    "test": "deno test --no-check --allow-all src/"
+  }
+}

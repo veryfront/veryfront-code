@@ -1,12 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   collectHead,
+  getHeadCollectorContext,
+  getHeadCollectorNonce,
   hasCollectedHead,
   HEAD_COLLECTOR_SYMBOL,
   runWithHeadCollector,
 } from "./head-collector.ts";
+import {
+  descriptorFromHeadProps,
+  serializeManagedHeadPayload,
+} from "#veryfront/html/managed-head-protocol.ts";
 
 describe("head-collector", () => {
   describe("collectHead", () => {
@@ -245,6 +251,110 @@ describe("head-collector", () => {
       assertEquals(a.result, "result-a");
       assertEquals(b.result, "result-b");
     });
+
+    it("binds and isolates the response nonce without leaking it", async () => {
+      assertEquals(getHeadCollectorNonce(), undefined);
+
+      const firstStarted = Promise.withResolvers<void>();
+      const secondRead = Promise.withResolvers<void>();
+      const [first, second] = await Promise.all([
+        runWithHeadCollector(
+          async () => {
+            firstStarted.resolve();
+            await secondRead.promise;
+            return getHeadCollectorNonce();
+          },
+          { nonce: "nonce-a" },
+        ),
+        runWithHeadCollector(
+          async () => {
+            await firstStarted.promise;
+            const nonce = getHeadCollectorNonce();
+            secondRead.resolve();
+            return nonce;
+          },
+          { nonce: "nonce-b" },
+        ),
+      ]);
+
+      assertEquals(first.result, "nonce-a");
+      assertEquals(second.result, "nonce-b");
+      assertEquals(getHeadCollectorNonce(), undefined);
+    });
+
+    it("does not re-count an identical payload against the request budgets", async () => {
+      const payload = serializeManagedHeadPayload([
+        descriptorFromHeadProps("title", { children: "same" })!,
+      ]);
+      const { result } = await runWithHeadCollector((renderContext) => {
+        const tokens = new Set<string>();
+        for (let index = 0; index < 200; index++) {
+          tokens.add(renderContext.registerHeadPayload(payload));
+        }
+        return tokens;
+      });
+      assertEquals(
+        result.size,
+        1,
+        "re-registering an identical payload must return the same token " +
+          "instead of minting a new one",
+      );
+    });
+
+    it("mints distinct tokens for distinct payloads", async () => {
+      const { result } = await runWithHeadCollector((renderContext) => {
+        const tokenA = renderContext.registerHeadPayload(
+          serializeManagedHeadPayload([descriptorFromHeadProps("title", { children: "a" })!]),
+        );
+        const tokenB = renderContext.registerHeadPayload(
+          serializeManagedHeadPayload([descriptorFromHeadProps("title", { children: "b" })!]),
+        );
+        return { tokenA, tokenB };
+      });
+      assertNotEquals(
+        result.tokenA,
+        result.tokenB,
+        "distinct payloads must not share a commit token",
+      );
+    });
+
+    it("counts repeated singleton titles before aggregation", async () => {
+      await assertRejects(
+        () =>
+          runWithHeadCollector((renderContext) => {
+            for (let index = 0; index <= 128; index++) {
+              renderContext.registerHeadPayload(
+                serializeManagedHeadPayload([
+                  descriptorFromHeadProps("title", { children: `title-${index}` })!,
+                ]),
+              );
+            }
+          }),
+        TypeError,
+        "128-entry request limit",
+      );
+    });
+
+    it("counts repeated script identities before aggregation", async () => {
+      const content = "x".repeat(750_000);
+      await assertRejects(
+        () =>
+          runWithHeadCollector((renderContext) => {
+            for (let index = 0; index < 3; index++) {
+              renderContext.registerHeadPayload(
+                serializeManagedHeadPayload([
+                  descriptorFromHeadProps("script", {
+                    id: "repeated-script",
+                    children: `${content}${index}`,
+                  })!,
+                ]),
+              );
+            }
+          }),
+        TypeError,
+        "2097152-byte request limit",
+      );
+    });
   });
 
   describe("hasCollectedHead", () => {
@@ -295,8 +405,23 @@ describe("head-collector", () => {
   });
 
   describe("collectHead outside context", () => {
-    it("silently ignores calls outside context", () => {
-      collectHead({ title: "Orphan" });
+    it("silently ignores calls outside context", async () => {
+      const { head } = await runWithHeadCollector(() => collectHead({ title: "Prior" }));
+
+      collectHead({ title: "Orphan", metas: [{ name: "x", content: "y" }] });
+
+      assertEquals(
+        getHeadCollectorContext(),
+        null,
+        "no collector context exists outside runWithHeadCollector",
+      );
+      assertEquals(hasCollectedHead(), false, "orphan collectHead must not create a context");
+      assertEquals(
+        head.title,
+        "Prior",
+        "orphan collectHead must not write into a completed request's head",
+      );
+      assertEquals(head.metas, [], "orphan metas must not leak into a prior request");
     });
   });
 

@@ -7,7 +7,7 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { afterEach, beforeAll, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 import {
   CACHE_DIR_TOKEN,
@@ -311,27 +311,52 @@ describe("Cache Portability", () => {
     });
 
     it("pass-through get/set do not tokenize", async () => {
-      const metadata = JSON.stringify({ version: 1, hash: "abc123" });
+      // The payload carries the literal token so a detokenizing read path would
+      // rewrite stored metadata that legitimately contains it.
+      const metadata = JSON.stringify({
+        version: 1,
+        note: `built from "file://${CACHE_DIR_TOKEN}/veryfront-http-bundle/http-123.mjs"`,
+      });
 
       await gateway.set("metadata-key", metadata);
 
       // Stored value should be unchanged
       const stored = mockBackend.getRawStoredValue("metadata-key");
-      assertEquals(stored, metadata);
+      assertEquals(stored, metadata, "raw set must store the value verbatim");
+      assertEquals(
+        await gateway.get("metadata-key"),
+        metadata,
+        "raw get must return the stored value verbatim without detokenizing",
+      );
     });
 
     describe("Invariant Validation", () => {
-      it("rejects code with un-tokenizable paths on setCode", async () => {
-        // Create a backend that simulates tokenization failure
-        // This shouldn't happen with proper tokenization, but tests the safety net
+      it("tokenizes an /app cache path on setCode", async () => {
         const code = `import x from "file:///app/.cache/veryfront-http-bundle/http-123.mjs"`;
 
-        // The tokenization should handle this, so no error expected
-        // This test verifies the happy path
         await gateway.setCode("key", code);
 
         const stored = mockBackend.getRawStoredValue("key");
         assert(stored?.includes(CACHE_DIR_TOKEN), "Stored code should contain token");
+      });
+
+      it("rejects code with un-tokenizable paths on setCode", async () => {
+        // A `/.cache/` path outside the veryfront cache directories survives
+        // tokenization, so the gateway must refuse it rather than write a
+        // machine-specific path into the distributed cache.
+        const code = `import x from "file:///nix/store/abc123/.cache/other-tool/mod.mjs"`;
+
+        await assertRejects(
+          () => gateway.setCode("untokenizable", code),
+          Error,
+          "hardcoded cache paths",
+          "un-portable code must be refused by the portability invariant",
+        );
+        assertEquals(
+          mockBackend.getRawStoredValue("untokenizable"),
+          undefined,
+          "un-portable code must never reach the distributed backend",
+        );
       });
     });
 

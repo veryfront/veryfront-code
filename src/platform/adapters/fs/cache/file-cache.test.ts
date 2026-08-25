@@ -6,6 +6,8 @@ import {
   initializeFileCacheBackend,
   isFileCacheDistributedEnabled,
 } from "./file-cache.ts";
+import { CacheBackends } from "#veryfront/cache/backend.ts";
+import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts";
 
 describe("FileCache", () => {
   let cache: FileCache;
@@ -327,6 +329,288 @@ describe("Distributed cache functions", () => {
     it("should export initializeFileCacheBackend function", () => {
       assertExists(initializeFileCacheBackend);
       assertEquals(typeof initializeFileCacheBackend, "function");
+    });
+
+    it("skips non-serializable synchronous writes to a distributed backend", async () => {
+      // A query-qualified import gives this regression its own module-scoped
+      // backend state, so the fake distributed backend cannot leak into other
+      // file-cache tests in the same Deno process.
+      const distributedModule = await import(
+        "./file-cache.ts?distributed-serialization-regression"
+      );
+      const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
+      assertExists(descriptor);
+      let backendWrites = 0;
+      Object.defineProperty(CacheBackends, "file", {
+        ...descriptor,
+        value: () =>
+          Promise.resolve({
+            type: "redis",
+            size: 0,
+            get: () => Promise.resolve(null),
+            set: () => {
+              backendWrites += 1;
+              return Promise.resolve();
+            },
+            del: () => Promise.resolve(false),
+            clear: () => Promise.resolve(),
+          } as never),
+      });
+
+      try {
+        assertEquals(await distributedModule.initializeFileCacheBackend(), true);
+      } finally {
+        Object.defineProperty(CacheBackends, "file", descriptor);
+      }
+
+      const distributedCache = new distributedModule.FileCache();
+      const circular: Record<string, unknown> = {};
+      circular.self = circular;
+      distributedCache.set("cyclic", circular);
+      assertEquals(backendWrites, 0);
+
+      // Positive control: a serializable entry must reach the fake backend,
+      // proving the harness is live and the zero-write assertion above is not
+      // vacuously passing because the backend was never wired up.
+      distributedCache.set("serializable", { ok: true });
+      assertEquals(backendWrites, 1);
+    });
+
+    it("deleteAsync() invalidates the request-scoped value in distributed mode", async () => {
+      const distributedModule = await import(
+        "./file-cache.ts?distributed-request-cache-invalidation-regression"
+      );
+      const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
+      assertExists(descriptor);
+      const values = new Map<string, string>();
+      Object.defineProperty(CacheBackends, "file", {
+        ...descriptor,
+        value: () =>
+          Promise.resolve({
+            type: "redis",
+            size: 0,
+            get: (key: string) => Promise.resolve(values.get(key) ?? null),
+            set: (key: string, value: string) => {
+              values.set(key, value);
+              return Promise.resolve();
+            },
+            del: (key: string) => {
+              values.delete(key);
+              return Promise.resolve();
+            },
+            clear: () => Promise.resolve(),
+          } as never),
+      });
+
+      try {
+        assertEquals(await distributedModule.initializeFileCacheBackend(), true);
+      } finally {
+        Object.defineProperty(CacheBackends, "file", descriptor);
+      }
+
+      const distributedCache = new distributedModule.FileCache();
+      await runWithCacheBatching(async () => {
+        await distributedCache.setAsync("listing", "stale");
+        assertEquals(await distributedCache.getAsync("listing"), "stale");
+
+        await distributedCache.deleteAsync("listing");
+
+        assertEquals(
+          await distributedCache.getAsync("listing"),
+          undefined,
+          "the current request must not retain the deleted distributed value",
+        );
+      });
+    });
+
+    it("deleteAsync() prevents a pending distributed read from restoring stale data", async () => {
+      const distributedModule = await import(
+        "./file-cache.ts?distributed-pending-read-invalidation-regression"
+      );
+      const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
+      assertExists(descriptor);
+      const values = new Map<string, string>();
+      let delayReads = false;
+      let markReadStarted: (() => void) | undefined;
+      const readStarted = new Promise<void>((resolve) => {
+        markReadStarted = resolve;
+      });
+      let releaseRead: (() => void) | undefined;
+      const readReleased = new Promise<void>((resolve) => {
+        releaseRead = resolve;
+      });
+      Object.defineProperty(CacheBackends, "file", {
+        ...descriptor,
+        value: () =>
+          Promise.resolve({
+            type: "redis",
+            size: 0,
+            get: async (key: string) => {
+              const captured = values.get(key) ?? null;
+              if (delayReads) {
+                markReadStarted?.();
+                await readReleased;
+              }
+              return captured;
+            },
+            set: (key: string, value: string) => {
+              values.set(key, value);
+              return Promise.resolve();
+            },
+            del: (key: string) => {
+              values.delete(key);
+              return Promise.resolve();
+            },
+            clear: () => Promise.resolve(),
+          } as never),
+      });
+
+      try {
+        assertEquals(await distributedModule.initializeFileCacheBackend(), true);
+      } finally {
+        Object.defineProperty(CacheBackends, "file", descriptor);
+      }
+
+      const distributedCache = new distributedModule.FileCache();
+      await distributedCache.setAsync("listing", "stale");
+      delayReads = true;
+
+      await runWithCacheBatching(async () => {
+        const pendingRead = distributedCache.getAsync("listing");
+        await readStarted;
+
+        await distributedCache.deleteAsync("listing");
+        releaseRead?.();
+
+        assertEquals(
+          await pendingRead,
+          undefined,
+          "a read invalidated while pending must not return its captured value",
+        );
+        assertEquals(
+          await distributedCache.getAsync("listing"),
+          undefined,
+          "the pending read must not restore its stale value for later reads",
+        );
+      });
+    });
+
+    it("forwards prefix invalidation to the distributed backend", async () => {
+      const distributedModule = await import(
+        "./file-cache.ts?distributed-prefix-invalidation-regression"
+      );
+      const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
+      assertExists(descriptor);
+      const patterns: string[] = [];
+      const pendingDeletions: Array<() => void> = [];
+      // While gated, the backend deletion only settles when the test releases it,
+      // so an *Async method that stopped awaiting it would resolve early.
+      let gateDeletions = false;
+      const flushMicrotasks = async (): Promise<void> => {
+        for (let tick = 0; tick < 20; tick++) await Promise.resolve();
+      };
+      Object.defineProperty(CacheBackends, "file", {
+        ...descriptor,
+        value: () =>
+          Promise.resolve({
+            type: "redis",
+            size: 0,
+            get: () => Promise.resolve(null),
+            set: () => Promise.resolve(),
+            del: () => Promise.resolve(false),
+            clear: () => Promise.resolve(),
+            delByPattern: (pattern: string) => {
+              patterns.push(pattern);
+              if (!gateDeletions) return Promise.resolve(0);
+              return new Promise<number>((resolve) => {
+                pendingDeletions.push(() => resolve(0));
+              });
+            },
+          } as never),
+      });
+
+      try {
+        assertEquals(await distributedModule.initializeFileCacheBackend(), true);
+      } finally {
+        Object.defineProperty(CacheBackends, "file", descriptor);
+      }
+
+      const distributedCache = new distributedModule.FileCache();
+
+      distributedCache.deleteByPrefix("file:release:p:r1:");
+      // deleteByPrefix dispatches the backend deletion fire-and-forget.
+      await Promise.resolve();
+      assertEquals(
+        patterns,
+        ["file:release:p:r1:*"],
+        "deleteByPrefix must forward a wildcard pattern to the distributed backend",
+      );
+
+      gateDeletions = true;
+      let prefixAsyncSettled = false;
+      const prefixAsync = distributedCache
+        .deleteByPrefixAsync("file:release:p:r2:")
+        .then((count) => {
+          prefixAsyncSettled = true;
+          return count;
+        });
+      await flushMicrotasks();
+      assertEquals(
+        patterns,
+        ["file:release:p:r1:*", "file:release:p:r2:*"],
+        "deleteByPrefixAsync must forward the same wildcard pattern to the backend",
+      );
+      assertEquals(
+        prefixAsyncSettled,
+        false,
+        "deleteByPrefixAsync must stay pending until the backend deletion settles",
+      );
+      pendingDeletions.shift()?.();
+      assertEquals(
+        await prefixAsync,
+        0,
+        "deleteByPrefixAsync must resolve once the backend deletion settles",
+      );
+
+      gateDeletions = false;
+      distributedCache.deleteByPrefixAndSuffix("file:release:p:r3:", "s");
+      await Promise.resolve();
+      assertEquals(
+        patterns[2],
+        "file:release:p:r3:*:s",
+        "deleteByPrefixAndSuffix must forward a suffix-qualified pattern",
+      );
+
+      gateDeletions = true;
+      let suffixAsyncSettled = false;
+      const suffixAsync = distributedCache
+        .deleteByPrefixAndSuffixAsync("file:release:p:r4:", "s")
+        .then((count) => {
+          suffixAsyncSettled = true;
+          return count;
+        });
+      await flushMicrotasks();
+      assertEquals(
+        patterns[3],
+        "file:release:p:r4:*:s",
+        "deleteByPrefixAndSuffixAsync must forward a suffix-qualified pattern",
+      );
+      assertEquals(
+        suffixAsyncSettled,
+        false,
+        "deleteByPrefixAndSuffixAsync must stay pending until the backend deletion settles",
+      );
+      pendingDeletions.shift()?.();
+      assertEquals(
+        await suffixAsync,
+        0,
+        "deleteByPrefixAndSuffixAsync must resolve once the backend deletion settles",
+      );
+      assertEquals(
+        pendingDeletions.length,
+        0,
+        "every gated backend deletion must have been released",
+      );
     });
 
     it("should return boolean", async () => {

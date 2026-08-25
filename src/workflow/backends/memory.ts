@@ -9,7 +9,6 @@ import { logger as baseLogger } from "#veryfront/utils";
 import type {
   ApprovalDecision,
   Checkpoint,
-  PendingApproval,
   RunFilter,
   WorkflowQueueItem,
   WorkflowRun,
@@ -17,14 +16,23 @@ import type {
 import {
   assertWorkflowRunUpdate,
   type BackendConfig,
+  type PersistedPendingApproval,
   type WorkflowBackend,
+  type WorkflowRunObservation,
+  type WorkflowRunObservedState,
   type WorkflowRunUpdate,
 } from "./types.ts";
 import { requeueRun } from "./shared/requeue-run.ts";
+import {
+  appendRetainedCheckpoint,
+  deleteOldestCheckpointOccurrences,
+} from "./checkpoint-retention.ts";
+import { appendRetainedPendingApproval } from "./approval-retention.ts";
 import { ORCHESTRATION_ERROR, RESOURCE_NOT_FOUND } from "#veryfront/errors";
 import { requireWorkflowSourceIntegrationPolicy } from "../source-integration-policy.ts";
 
 const logger = baseLogger.component("memory-backend");
+const objectDefineProperty = Object.defineProperty;
 
 /**
  * Memory backend configuration
@@ -36,15 +44,80 @@ interface MemoryBackendConfig extends BackendConfig {
 
 /** Default max queue size */
 const DEFAULT_MAX_QUEUE_SIZE = 10_000;
+const RUN_OBSERVATION_QUEUE_SIZE = 64;
+
+class ObservationFeed implements AsyncIterable<WorkflowRunObservedState> {
+  readonly #values: WorkflowRunObservedState[] = [];
+  readonly #waiters: Array<{
+    resolve: (result: IteratorResult<WorkflowRunObservedState>) => void;
+    reject: (error: unknown) => void;
+  }> = [];
+  #closed = false;
+  #error: unknown;
+
+  push(value: WorkflowRunObservedState): boolean {
+    if (this.#closed || this.#error !== undefined) return false;
+    const waiter = this.#waiters.shift();
+    if (waiter) {
+      waiter.resolve({ value, done: false });
+      return true;
+    }
+    if (this.#values.length >= RUN_OBSERVATION_QUEUE_SIZE) {
+      this.fail(new Error("Workflow run slow observer exceeded its bounded queue"));
+      return false;
+    }
+    this.#values.push(value);
+    return true;
+  }
+
+  finish(): void {
+    if (this.#closed || this.#error !== undefined) return;
+    this.#closed = true;
+    for (const waiter of this.#waiters.splice(0)) {
+      waiter.resolve({ value: undefined, done: true });
+    }
+  }
+
+  close(): void {
+    this.#values.length = 0;
+    this.finish();
+  }
+
+  fail(error: unknown): void {
+    if (this.#closed || this.#error !== undefined) return;
+    this.#error = error;
+    this.#values.length = 0;
+    for (const waiter of this.#waiters.splice(0)) waiter.reject(error);
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<WorkflowRunObservedState> {
+    return {
+      next: () => {
+        if (this.#error !== undefined) return Promise.reject(this.#error);
+        const value = this.#values.shift();
+        if (value) return Promise.resolve({ value, done: false });
+        if (this.#closed) return Promise.resolve({ value: undefined, done: true });
+        return new Promise((resolve, reject) => this.#waiters.push({ resolve, reject }));
+      },
+    };
+  }
+}
+
+interface MemoryRunObserver {
+  feed: ObservationFeed;
+  detach(drain?: boolean): void;
+}
 
 /** Implement memory backend. */
 export class MemoryBackend implements WorkflowBackend {
   private runs = new Map<string, WorkflowRun>();
   private checkpoints = new Map<string, Checkpoint[]>();
-  private approvals = new Map<string, PendingApproval[]>();
+  private approvals = new Map<string, PersistedPendingApproval[]>();
   private queue: WorkflowQueueItem[] = [];
   private locks = new Map<string, { lockId: string; expiresAt: number }>();
   private stalledClaims = new Map<string, { workerId: string; expiresAt: number }>();
+  private runRevisions = new Map<string, number>();
+  private runObservers = new Map<string, Set<MemoryRunObserver>>();
   private config: MemoryBackendConfig;
 
   constructor(config: MemoryBackendConfig = {}) {
@@ -69,12 +142,18 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.reject(error);
     }
     this.runs.set(run.id, structuredClone({ ...run, sourceIntegrationPolicy }));
+    this.runRevisions.set(run.id, 0);
     return Promise.resolve();
   }
 
-  getRun(runId: string): Promise<WorkflowRun | null> {
+  async getRun(runId: string): Promise<WorkflowRun | null> {
     const run = this.runs.get(runId);
-    return Promise.resolve(run ? structuredClone(run) : null);
+    if (!run) return null;
+
+    return {
+      ...structuredClone(run),
+      pendingApprovals: await this.getPendingApprovals(runId),
+    };
   }
 
   updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void> {
@@ -101,6 +180,7 @@ export class MemoryBackend implements WorkflowBackend {
     };
 
     this.runs.set(runId, updated);
+    this.publishRunObservation(runId, updated);
 
     // Terminal states should drop any stalled claim lease.
     if (patch.status && patch.status !== "running") {
@@ -144,11 +224,118 @@ export class MemoryBackend implements WorkflowBackend {
   }
 
   deleteRun(runId: string): Promise<void> {
+    this.closeRunObservers(runId);
     this.runs.delete(runId);
     this.checkpoints.delete(runId);
     this.approvals.delete(runId);
     this.stalledClaims.delete(runId);
+    this.runRevisions.delete(runId);
     return Promise.resolve();
+  }
+
+  openRunObservation(
+    runId: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<WorkflowRunObservation | null> {
+    const run = this.runs.get(runId);
+    if (!run) return Promise.resolve(null);
+
+    const feed = new ObservationFeed();
+    let detached = false;
+    const observer: MemoryRunObserver = {
+      feed,
+      detach: (drain = false) => {
+        if (detached) return;
+        detached = true;
+        options.signal?.removeEventListener("abort", abortListener);
+        const observers = this.runObservers.get(runId);
+        observers?.delete(observer);
+        if (observers?.size === 0) this.runObservers.delete(runId);
+        if (drain) feed.finish();
+        else feed.close();
+      },
+    };
+    const abortListener = () => observer.detach();
+    let observers = this.runObservers.get(runId);
+    if (!observers) {
+      observers = new Set();
+      this.runObservers.set(runId, observers);
+    }
+    observers.add(observer);
+    options.signal?.addEventListener("abort", abortListener, { once: true });
+    if (options.signal?.aborted) observer.detach();
+
+    return Promise.resolve({
+      initial: {
+        ...structuredClone(run),
+        pendingApprovals: (this.approvals.get(runId) ?? []).map((approval) =>
+          structuredClone(approval)
+        ),
+      },
+      changes: feed,
+      close: () => {
+        observer.detach();
+        return Promise.resolve();
+      },
+    });
+  }
+
+  private publishRunObservation(
+    runId: string,
+    run: WorkflowRun,
+    options: { includeApprovals?: boolean } = {},
+  ): void {
+    const revision = (this.runRevisions.get(runId) ?? 0) + 1;
+    this.runRevisions.set(runId, revision);
+    const observers = this.runObservers.get(runId);
+    if (!observers?.size) return;
+    const nodes: WorkflowRunObservedState["nodes"] = {};
+    for (const [nodeId, node] of Object.entries(run.nodeStates ?? {})) {
+      if (!node) continue;
+      objectDefineProperty(nodes, nodeId, {
+        value: {
+          status: node.status,
+          attempt: node.attempt,
+          ...(node.error !== undefined ? { error: node.error } : {}),
+        },
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    }
+    // Approvals are carried only by approval-append revisions, matching the
+    // observed-state contract: an absent field means unchanged. The projection
+    // stays down to identifiers and the request message; payloads never leave
+    // the approvals store through this path.
+    const approvals = options.includeApprovals
+      ? (this.approvals.get(runId) ?? [])
+        .filter((approval) => approval.status === "pending")
+        .map((approval) => ({
+          id: approval.id,
+          nodeId: approval.nodeId,
+          ...(approval.message !== undefined ? { message: approval.message } : {}),
+        }))
+      : undefined;
+    const state: WorkflowRunObservedState = {
+      revision,
+      status: run.status,
+      nodes,
+      ...(run.error?.message !== undefined ? { runError: run.error.message } : {}),
+      ...(approvals !== undefined ? { approvals } : {}),
+    };
+    const terminal = run.status === "completed" || run.status === "failed" ||
+      run.status === "cancelled";
+    for (const observer of [...observers]) {
+      if (!observer.feed.push(structuredClone(state))) {
+        observer.detach();
+      } else if (terminal) {
+        observer.detach(true);
+      }
+    }
+  }
+
+  private closeRunObservers(runId: string): void {
+    for (const observer of [...(this.runObservers.get(runId) ?? [])]) observer.detach();
   }
 
   listRuns(filter: RunFilter): Promise<WorkflowRun[]> {
@@ -207,7 +394,7 @@ export class MemoryBackend implements WorkflowBackend {
   saveCheckpoint(runId: string, checkpoint: Checkpoint): Promise<void> {
     logger.debug("Saving checkpoint", { checkpointId: checkpoint.id, runId });
     const checkpoints = this.checkpoints.get(runId) ?? [];
-    checkpoints.push(structuredClone(checkpoint));
+    appendRetainedCheckpoint(checkpoints, checkpoint);
     this.checkpoints.set(runId, checkpoints);
     return Promise.resolve();
   }
@@ -227,7 +414,7 @@ export class MemoryBackend implements WorkflowBackend {
     }
 
     const checkpoints = this.checkpoints.get(storageRunId) ?? [];
-    checkpoints.push(structuredClone(checkpoint));
+    appendRetainedCheckpoint(checkpoints, checkpoint);
     this.checkpoints.set(storageRunId, checkpoints);
     return Promise.resolve(true);
   }
@@ -261,8 +448,7 @@ export class MemoryBackend implements WorkflowBackend {
     const checkpoints = this.checkpoints.get(runId);
     if (!checkpoints) return Promise.resolve();
 
-    const idsToDelete = new Set(checkpointIds);
-    this.checkpoints.set(runId, checkpoints.filter((c) => !idsToDelete.has(c.id)));
+    this.checkpoints.set(runId, deleteOldestCheckpointOccurrences(checkpoints, checkpointIds));
 
     logger.debug("Deleted checkpoints", { count: checkpointIds.length });
     return Promise.resolve();
@@ -272,11 +458,20 @@ export class MemoryBackend implements WorkflowBackend {
   // Approvals
   // =========================================================================
 
-  savePendingApproval(runId: string, approval: PendingApproval): Promise<void> {
+  savePendingApproval(runId: string, approval: PersistedPendingApproval): Promise<void> {
     logger.debug("Saving approval", { approvalId: approval.id, runId });
     const approvals = this.approvals.get(runId) ?? [];
-    approvals.push(structuredClone(approval));
+    try {
+      appendRetainedPendingApproval(approvals, approval);
+    } catch (error) {
+      return Promise.reject(error);
+    }
     this.approvals.set(runId, approvals);
+    // An approval append is a persisted transition of its own. Without it a
+    // subscriber only sees the run reach `waiting` and has to fetch approvals
+    // separately, racing this very write.
+    const run = this.runs.get(runId);
+    if (run) this.publishRunObservation(runId, run, { includeApprovals: true });
     return Promise.resolve();
   }
 
@@ -284,7 +479,7 @@ export class MemoryBackend implements WorkflowBackend {
     runId: string,
     expectedStatuses: WorkflowRun["status"][],
     expectedWorkerId: string,
-    approval: PendingApproval,
+    approval: PersistedPendingApproval,
   ): Promise<boolean> {
     const run = this.runs.get(runId);
     if (
@@ -294,15 +489,20 @@ export class MemoryBackend implements WorkflowBackend {
     }
 
     const approvals = this.approvals.get(runId) ?? [];
-    approvals.push(structuredClone(approval));
+    try {
+      appendRetainedPendingApproval(approvals, approval);
+    } catch (error) {
+      return Promise.reject(error);
+    }
     this.approvals.set(runId, approvals);
+    this.publishRunObservation(runId, run, { includeApprovals: true });
     return Promise.resolve(true);
   }
 
   updatePendingApproval(
     runId: string,
     approvalId: string,
-    patch: Partial<PendingApproval>,
+    patch: Partial<PersistedPendingApproval>,
   ): Promise<void> {
     const approvals = this.approvals.get(runId);
     const index = approvals?.findIndex((approval) => approval.id === approvalId) ?? -1;
@@ -320,14 +520,17 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve();
   }
 
-  getPendingApprovals(runId: string): Promise<PendingApproval[]> {
+  getPendingApprovals(runId: string): Promise<PersistedPendingApproval[]> {
     const approvals = this.approvals.get(runId) ?? [];
     return Promise.resolve(
       approvals.filter((a) => a.status === "pending").map((a) => structuredClone(a)),
     );
   }
 
-  getPendingApproval(runId: string, approvalId: string): Promise<PendingApproval | null> {
+  getPendingApproval(
+    runId: string,
+    approvalId: string,
+  ): Promise<PersistedPendingApproval | null> {
     const approvals = this.approvals.get(runId) ?? [];
     const approval = approvals.find((a) => a.id === approvalId);
     return Promise.resolve(approval ? structuredClone(approval) : null);
@@ -367,8 +570,8 @@ export class MemoryBackend implements WorkflowBackend {
     workflowId?: string;
     approver?: string;
     status?: "pending" | "expired";
-  }): Promise<Array<{ runId: string; approval: PendingApproval }>> {
-    const result: Array<{ runId: string; approval: PendingApproval }> = [];
+  }): Promise<Array<{ runId: string; approval: PersistedPendingApproval }>> {
+    const result: Array<{ runId: string; approval: PersistedPendingApproval }> = [];
 
     for (const [runId, approvals] of this.approvals) {
       const run = this.runs.get(runId);
@@ -533,6 +736,7 @@ export class MemoryBackend implements WorkflowBackend {
     run.startedAt = run.startedAt ?? new Date(now);
     run.heartbeatAt = new Date(now);
     this.runs.set(runId, run);
+    this.publishRunObservation(runId, run);
 
     return Promise.resolve(true);
   }
@@ -584,12 +788,14 @@ export class MemoryBackend implements WorkflowBackend {
   }
 
   clear(): Promise<void> {
+    for (const runId of [...this.runObservers.keys()]) this.closeRunObservers(runId);
     this.runs.clear();
     this.checkpoints.clear();
     this.approvals.clear();
     this.queue = [];
     this.locks.clear();
     this.stalledClaims.clear();
+    this.runRevisions.clear();
     return Promise.resolve();
   }
 }

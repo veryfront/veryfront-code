@@ -9,6 +9,12 @@ import {
 } from "./default-project-steering-refresh.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
+import type { AgentSystem } from "../types.ts";
+import { flattenSystemInstructions } from "../runtime/tool-inventory.ts";
+
+function systemText(system: AgentSystem): string {
+  return typeof system === "string" ? system : flattenSystemInstructions(system);
+}
 
 function createAgent(): RuntimeAgentMarkdownDefinition {
   return {
@@ -51,7 +57,7 @@ function createRefreshInput(
       sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
       runtimeTools: {},
       remoteToolSources: [],
-      localToolNames: ["load_skill", "sleep"],
+      localToolNames: ["form_input", "load_skill", "sleep"],
       remoteToolNames: [],
       providerToolNames: [],
       availableToolNames: [],
@@ -132,6 +138,11 @@ describe("agent/default-hosted-project-steering-refresh", () => {
       buildInstructions: (input) => [
         {
           role: "system",
+          content: "Shared prompt",
+          providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+        },
+        {
+          role: "system",
           content: `${input.instructions}:${
             input.skills.map((skill) => skill.id).join(",")
           }:${input.environmentContext}`,
@@ -142,7 +153,15 @@ describe("agent/default-hosted-project-steering-refresh", () => {
     input.liveProjectSteering.agent.skills = ["build"];
     input.taskContext.availableSkillIds = ["build", "hidden"];
 
-    const system = await refresh(input);
+    const refreshedSystem = await refresh(input);
+    assertEquals(Array.isArray(refreshedSystem), true);
+    if (!Array.isArray(refreshedSystem)) {
+      throw new Error("Expected structured refreshed system instructions");
+    }
+    assertEquals(refreshedSystem[0]?.providerOptions, {
+      anthropic: { cacheControl: { type: "ephemeral" } },
+    });
+    const system = systemText(refreshedSystem);
 
     assertEquals(lookups, [
       { projectId: "project-1", authToken: "auth-token", branchId: "branch-1" },
@@ -196,7 +215,7 @@ describe("agent/default-hosted-project-steering-refresh", () => {
       },
     });
 
-    const system = await refresh(input);
+    const system = systemText(await refresh(input));
 
     assertEquals(input.taskContext.availableToolNames, ["tool_search"]);
     assertEquals(system.includes("confluence__search_content"), false);
@@ -204,6 +223,65 @@ describe("agent/default-hosted-project-steering-refresh", () => {
     assertEquals(input.toolAssembly.compatibleRemoteToolNames, [
       "confluence__search_content",
     ]);
+  });
+
+  it("applies the source integration policy to the eager model-visible inventory", async () => {
+    const remoteToolSource: RemoteToolSource = {
+      id: "api",
+      listTools: () =>
+        Promise.resolve([
+          {
+            name: "confluence__search_content",
+            description: "Search Confluence",
+            parameters: { type: "object", properties: {} },
+          },
+          {
+            name: "gmail__list_emails",
+            description: "List Gmail emails",
+            parameters: { type: "object", properties: {} },
+          },
+        ]),
+      executeTool: () => Promise.resolve({ ok: true }),
+    };
+    const refresh = createDefaultHostedProjectSteeringRefresh({
+      fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),
+      fetchSkills: () => Promise.resolve([]),
+      buildInstructions: (input) => input.instructions,
+    });
+    const input = createRefreshInput({
+      toolAssembly: {
+        sourceIntegrationPolicy: normalizeSourceIntegrationPolicy({
+          allow: { confluence: {} },
+        }),
+        runtimeTools: {},
+        remoteToolSources: [remoteToolSource],
+        localToolNames: ["sleep"],
+        remoteToolNames: ["confluence__search_content"],
+        providerToolNames: [],
+        availableToolNames: ["confluence__search_content", "sleep"],
+        toolLoadingMode: "eager",
+        compatibleRemoteToolNames: ["confluence__search_content"],
+        systemInstructions: "",
+      },
+    });
+
+    const system = systemText(await refresh(input));
+
+    assertEquals(
+      input.taskContext.availableToolNames,
+      ["confluence__search_content", "sleep"],
+      "eager inventory must contain only source-allowed remote tools plus local tools",
+    );
+    assertEquals(
+      system.includes("gmail__list_emails"),
+      false,
+      "source-denied tools must not be advertised",
+    );
+    assertEquals(
+      system.includes("confluence__search_content"),
+      true,
+      "source-allowed tools must be advertised in eager mode",
+    );
   });
 
   it("keeps an explicitly empty advertised skill catalog during refresh", async () => {
@@ -217,7 +295,7 @@ describe("agent/default-hosted-project-steering-refresh", () => {
     const input = createRefreshInput();
     input.liveProjectSteering.agent.skills = [];
     input.taskContext.availableSkillIds = ["other-agent--private"];
-    const system = await refresh(input);
+    const system = systemText(await refresh(input));
 
     assertEquals(system.includes("Fresh instructions:other-agent--private"), false);
     assertEquals(system.includes("Fresh instructions:"), true);
@@ -235,7 +313,7 @@ describe("agent/default-hosted-project-steering-refresh", () => {
     dynamicInput.taskContext.skillSelectorPolicy = { kind: "all-visible", source: "omitted" };
     dynamicInput.taskContext.availableSkillIds = ["build"];
 
-    const dynamicSystem = await refresh(dynamicInput);
+    const dynamicSystem = systemText(await refresh(dynamicInput));
 
     assertStringIncludes(dynamicSystem, "Fresh instructions:build,new-skill");
     assertEquals(dynamicInput.taskContext.availableSkillIds, ["build", "new-skill"]);
@@ -245,7 +323,7 @@ describe("agent/default-hosted-project-steering-refresh", () => {
     explicitInput.taskContext.skillSelectorPolicy = { kind: "allowlist", entries: ["build"] };
     explicitInput.taskContext.availableSkillIds = ["build"];
 
-    const explicitSystem = await refresh(explicitInput);
+    const explicitSystem = systemText(await refresh(explicitInput));
 
     assertStringIncludes(explicitSystem, "Fresh instructions:build");
     assertEquals(explicitSystem.includes("new-skill"), false);
@@ -306,7 +384,7 @@ describe("agent/default-hosted-project-steering-refresh", () => {
       },
     });
 
-    const system = await refresh(input);
+    const system = systemText(await refresh(input));
 
     assertEquals(input.taskContext.availableToolNames, ["tool_search"]);
     assertEquals(system.includes("web_fetch"), false);
@@ -327,16 +405,18 @@ describe("agent/default-hosted-project-steering-refresh", () => {
       },
     });
 
-    const system = await refresh(
-      createRefreshInput({
-        taskContext: {
-          authToken: "auth-token",
-          projectId: "project-1",
-          branchId: "branch-1",
-          model: "openai/gpt-test",
-          availableSkillIds: ["initial"],
-        },
-      }),
+    const system = systemText(
+      await refresh(
+        createRefreshInput({
+          taskContext: {
+            authToken: "auth-token",
+            projectId: "project-1",
+            branchId: "branch-1",
+            model: "openai/gpt-test",
+            availableSkillIds: ["initial"],
+          },
+        }),
+      ),
     );
 
     assertEquals(system.includes("Initial instructions:initial"), true);

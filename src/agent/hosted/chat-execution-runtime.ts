@@ -55,14 +55,16 @@ import {
 import { unrefTimer } from "../../platform/compat/process.ts";
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
-import { finalizeHostedChatRun } from "./hosted-chat-finalization.ts";
-import type { ModelCallRecorder } from "../../runtime/model-call-context.ts";
-import { runWithModelCallRecorder } from "../../runtime/model-call-recorder-context.ts";
+import { finalizeHostedChatRun, isDurableRunKnownTerminal } from "./hosted-chat-finalization.ts";
 import {
-  createModelCallContextRunEventRecorder,
-  ModelCallContextPersistenceError,
-  scopeAsyncIterableWithModelCallRecorder,
-} from "./model-call-context-run-event-recorder.ts";
+  runWithMandatoryRunEventSink,
+  scopeAsyncIterableWithMandatoryRunEventSink,
+} from "../../runtime/run-event-sink-context.ts";
+import type { AgentRunEventSink } from "../../runtime/model-call-context.ts";
+import {
+  createDurableRunEventSink,
+  DurableRunEventPersistenceError,
+} from "./durable-run-event-sink.ts";
 export type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 
 const INCOMPLETE_TOOL_CALLS_PART_ERROR_TEXT = "Assistant ended before tool execution completed";
@@ -103,7 +105,7 @@ export interface HostedChatExecutionRuntimeBootstrap {
   capturedMessageId: string | null;
   capturedConversationId?: string;
   mirroredToolChunkState: MirroredToolChunkState;
-  modelCallRecorder?: ModelCallRecorder;
+  runEventSink?: AgentRunEventSink;
 }
 
 /** Input payload for create hosted chat execution runtime bootstrap. */
@@ -118,7 +120,7 @@ export interface CreateHostedChatExecutionRuntimeBootstrapInput {
   createRootStreamWatchdog?: () => HostedChatExecutionRootStreamWatchdog;
   streamBootstrapKeepaliveIntervalMs?: number;
   streamBootstrapTimeoutMs?: number;
-  modelCallContextMirror?: ConversationRunChunkMirror;
+  durableRunEventMirror?: ConversationRunChunkMirror;
 }
 
 /** Input payload for create hosted chat execution runtime. */
@@ -312,8 +314,8 @@ export async function createHostedChatExecutionRuntimeBootstrap(
   if (input.conversationId && !streamingMessageId) {
     throw INVALID_ARGUMENT.create({ detail: "DURABLE_CHAT_ROOT_REQUIRES_CONVERSATION" });
   }
-  if (input.lifecycleAdapter.durableRootRun && !input.modelCallContextMirror) {
-    throw new ModelCallContextPersistenceError(
+  if (input.lifecycleAdapter.durableRootRun && !input.durableRunEventMirror) {
+    throw new DurableRunEventPersistenceError(
       "Durable hosted root run requires an authorized private event mirror",
     );
   }
@@ -331,9 +333,9 @@ export async function createHostedChatExecutionRuntimeBootstrap(
     rootStreamWatchdog.signal,
     bootstrapKeepalive.signal,
   ]);
-  const modelCallRecorder = input.modelCallContextMirror
-    ? createModelCallContextRunEventRecorder({
-      mirror: input.modelCallContextMirror,
+  const runEventSink = input.durableRunEventMirror
+    ? createDurableRunEventSink({
+      mirror: input.durableRunEventMirror,
       abortSignal: streamAbortSignal,
     })
     : undefined;
@@ -347,10 +349,7 @@ export async function createHostedChatExecutionRuntimeBootstrap(
       });
     streamResult = await traceHostedChatRuntimeStream(
       input.traceStream,
-      () =>
-        modelCallRecorder
-          ? runWithModelCallRecorder(modelCallRecorder, startStream)
-          : startStream(),
+      () => runEventSink ? runWithMandatoryRunEventSink(runEventSink, startStream) : startStream(),
     );
   } catch (error) {
     rootStreamWatchdog.dispose();
@@ -368,7 +367,7 @@ export async function createHostedChatExecutionRuntimeBootstrap(
     capturedMessageId: streamingMessageId,
     ...(input.conversationId ? { capturedConversationId: input.conversationId } : {}),
     mirroredToolChunkState: createMirroredToolChunkState(),
-    ...(modelCallRecorder ? { modelCallRecorder } : {}),
+    ...(runEventSink ? { runEventSink } : {}),
   };
 }
 
@@ -395,7 +394,7 @@ async function createBootstrappedHostedChatRuntime(
       finalMessages: input.finalMessages,
       conversationId: input.conversationId,
       ...(input.rootRunContext.privateDurableRunMirror
-        ? { modelCallContextMirror: input.rootRunContext.privateDurableRunMirror }
+        ? { durableRunEventMirror: input.rootRunContext.privateDurableRunMirror }
         : {}),
       abortSignal: input.abortSignal,
       traceStream: input.traceStream,
@@ -406,7 +405,11 @@ async function createBootstrappedHostedChatRuntime(
       streamBootstrapTimeoutMs: input.streamBootstrapTimeoutMs,
     });
   } catch (error) {
-    await dispatchConversationHostedStreamErrorState(lifecycleAdapter, error).catch(
+    await dispatchConversationHostedStreamErrorState(lifecycleAdapter, error, {
+      // A bootstrap failure can itself be the durable mirror going terminal, and
+      // completing an already-terminal run only 400s (veryfront-issue-inbox#743).
+      skipDurableRunFinalization: isDurableRunKnownTerminal(lifecycleAdapter),
+    }).catch(
       (terminalError) => {
         input.logger?.error("Durable chat bootstrap failure finalization failed", {
           error: terminalError instanceof Error ? terminalError.message : String(terminalError),
@@ -489,7 +492,11 @@ export function createHostedChatStreamFinalizationHooks(input: {
       await input.lifecycleAdapter.durableRunMirror?.flush();
     },
     dispatchTerminalState: async (terminalState) => {
-      await dispatchConversationHostedTerminalState(input.lifecycleAdapter, terminalState);
+      await dispatchConversationHostedTerminalState(input.lifecycleAdapter, terminalState, {
+        // Read at dispatch time, not when the hooks are built: flushMirror above is
+        // what can mark the run terminal (veryfront-issue-inbox#743).
+        skipDurableRunFinalization: isDurableRunKnownTerminal(input.lifecycleAdapter),
+      });
     },
     resolveTerminalState: ({ isAborted, hasIncompleteToolParts }: {
       isAborted: boolean;
@@ -594,7 +601,11 @@ async function finalizeExecutionFailure(input: {
   logMessage: string;
   logger?: HostedChatExecutionRuntimeLogger;
 }): Promise<void> {
-  await dispatchConversationHostedStreamErrorState(input.lifecycleAdapter, input.error).catch(
+  await dispatchConversationHostedStreamErrorState(input.lifecycleAdapter, input.error, {
+    // The run is already terminal server-side; completing it here can only 400 and
+    // would turn a clean stop back into a Sentry error (veryfront-issue-inbox#743).
+    skipDurableRunFinalization: isDurableRunKnownTerminal(input.lifecycleAdapter),
+  }).catch(
     (finalizeError) => {
       input.logger?.error(input.logMessage, {
         conversationId: input.conversationId,
@@ -801,6 +812,7 @@ export function createHostedChatExecutionRuntime(
           })
         )
       );
+      return finishPromise;
     },
     messageMetadata: createStreamMessageMetadataBuilder({
       agentId: input.agentId,
@@ -817,12 +829,12 @@ export function createHostedChatExecutionRuntime(
     streamOptions.generateMessageId = () => responseMessageId;
   }
   const createAgentUiStream = () => input.bootstrap.streamResult.toUIMessageStream(streamOptions);
-  const unscopedAgentUIStream = input.bootstrap.modelCallRecorder
-    ? runWithModelCallRecorder(input.bootstrap.modelCallRecorder, createAgentUiStream)
+  const unscopedAgentUIStream = input.bootstrap.runEventSink
+    ? runWithMandatoryRunEventSink(input.bootstrap.runEventSink, createAgentUiStream)
     : createAgentUiStream();
-  const agentUIStream = input.bootstrap.modelCallRecorder
-    ? scopeAsyncIterableWithModelCallRecorder(
-      input.bootstrap.modelCallRecorder,
+  const agentUIStream = input.bootstrap.runEventSink
+    ? scopeAsyncIterableWithMandatoryRunEventSink(
+      input.bootstrap.runEventSink,
       unscopedAgentUIStream,
     )
     : unscopedAgentUIStream;

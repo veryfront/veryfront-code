@@ -4,15 +4,20 @@
  * @module transforms/mdx/esm-module-loader/module-fetcher/nested-imports
  */
 
+import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import type { NestedImportResult } from "../types.ts";
-import { createStubModule } from "../utils/stub-module.ts";
+import { createStubModule, type DeferredImportErrorDescriptor } from "../utils/stub-module.ts";
 import {
+  findDynamicImportSpans,
   findStaticImportFromSpans,
+  findStaticSideEffectImportSpans,
   replaceSourceSpans,
   type SourceSpanReplacement,
+  type StaticImportSpan,
 } from "../utils/source-spans.ts";
 import { buildMissingModuleError } from "../missing-module.ts";
+import { isMdxMissingModuleError } from "../missing-module.ts";
 import type { Logger } from "#veryfront/utils";
 import { parallelMap } from "#veryfront/utils/parallel.ts";
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
@@ -21,9 +26,104 @@ import {
   MAX_MDX_MODULE_IMPORTS_PER_FILE,
   MAX_MDX_MODULE_TRANSFORM_CONCURRENCY,
 } from "./limits.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import { isTenantSourceBuildError } from "#veryfront/errors/tenant-classification.ts";
 
 function matchUnresolvedVfModuleSpecifier(specifier: string): string | null {
-  return specifier.match(/^((?:file:\/\/)?\/?\/?_vf_modules\/[^?]+)(?:\?.*)?$/)?.[1] ?? null;
+  return specifier.match(/^((?:file:\/\/)?\/?\/?_vf_modules\/.+)$/)?.[1] ?? null;
+}
+
+type NestedImportSpan = {
+  original: string;
+  path: string;
+  start: number;
+  end: number;
+  suffix?: string;
+  isDynamic?: boolean;
+  isSideEffect?: boolean;
+};
+
+const MALFORMED_IMPORT_SPECIFIER = "<malformed import specifier>";
+
+function isMalformedSpecifierSyntaxError(error: unknown): boolean {
+  return error instanceof SyntaxError && error.message.includes("module specifier");
+}
+
+/** Return the sanitized runtime failure for a dependency error that can stay lazy. */
+export function dynamicDependencyFailure(
+  modulePath: string,
+  error: unknown,
+): DeferredImportErrorDescriptor | null {
+  if (!(error instanceof Error)) return null;
+
+  if (isMdxMissingModuleError(error)) {
+    return {
+      name: "MissingModuleError",
+      message:
+        `[Veryfront] Missing module: ${modulePath}. This module or file does not exist in your project.`,
+    };
+  }
+
+  if (error.name === "CircularModuleDependencyError") {
+    return {
+      name: "CircularModuleDependencyError",
+      message: `[Veryfront] Dynamic import failed for ${modulePath}: circular module dependency.`,
+    };
+  }
+
+  if (
+    error.name === "ModuleSourceLimitError" ||
+    error.name === "HttpModuleBodyTooLargeError"
+  ) {
+    return {
+      name: "ModuleSourceLimitError",
+      message:
+        `[Veryfront] Dynamic import failed for ${modulePath}: module source exceeds the allowed size.`,
+    };
+  }
+
+  if (error instanceof VeryfrontError && error.slug === "mdx-compile-error") {
+    return {
+      name: "MdxCompileError",
+      message: `[Veryfront] Dynamic import failed for ${modulePath}: MDX compilation failed.`,
+    };
+  }
+
+  if (
+    error instanceof VeryfrontError && error.slug === "compilation-error" &&
+    isTenantSourceBuildError(error)
+  ) {
+    return {
+      name: "CompilationError",
+      message:
+        `[Veryfront] Dynamic import failed for ${modulePath}: TypeScript compilation failed.`,
+    };
+  }
+
+  return null;
+}
+
+function scanImportSpans(
+  scan: () => StaticImportSpan[],
+): { spans: StaticImportSpan[]; malformed: boolean } {
+  try {
+    return { spans: scan(), malformed: false };
+  } catch (error) {
+    if (!isMalformedSpecifierSyntaxError(error)) throw error;
+    return { spans: [], malformed: true };
+  }
+}
+
+/**
+ * Serialize a resolved module URL as a JavaScript string literal.
+ *
+ * A preserved suffix is author-controlled text (`?label="x"`, a backslash in a
+ * cache path). Wrapping it in quotes by hand emits a module that fails to
+ * parse, taking every other import in the file down with it, so every emitted
+ * specifier must go through this.
+ */
+export function toImportStringLiteral(url: string): string {
+  return JSON.stringify(url);
 }
 
 /**
@@ -33,40 +133,136 @@ function matchUnresolvedVfModuleSpecifier(specifier: string): string | null {
 export function findNestedImports(
   moduleCode: string,
 ): {
-  vfModules: Array<{ original: string; path: string; start: number; end: number }>;
-  relative: Array<{ original: string; path: string; start: number; end: number }>;
+  vfModules: NestedImportSpan[];
+  relative: NestedImportSpan[];
 } {
-  const vfModules: Array<{ original: string; path: string; start: number; end: number }> = [];
-  const relative: Array<{ original: string; path: string; start: number; end: number }> = [];
-
-  for (
-    const { original, path: rawPath, start, end } of findStaticImportFromSpans(
+  const vfModules: NestedImportSpan[] = [];
+  const relative: NestedImportSpan[] = [];
+  const staticVfModuleSpans = scanImportSpans(() =>
+    findStaticImportFromSpans(
       moduleCode,
       matchUnresolvedVfModuleSpecifier,
       MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
     )
+  ).spans;
+  const dynamicVfModuleSpans = scanImportSpans(() =>
+    findDynamicImportSpans(
+      moduleCode,
+      matchUnresolvedVfModuleSpecifier,
+      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
+    )
+  ).spans;
+  const sideEffectVfModuleSpans = scanImportSpans(() =>
+    findStaticSideEffectImportSpans(
+      moduleCode,
+      matchUnresolvedVfModuleSpecifier,
+      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
+    )
+  ).spans;
+  const staticRelativeSpans = scanImportSpans(() =>
+    findStaticImportFromSpans(
+      moduleCode,
+      (specifier) => specifier.match(/^(\.\.?\/.+)$/)?.[1],
+      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
+    )
+  ).spans;
+  const dynamicRelativeSpans = scanImportSpans(() =>
+    findDynamicImportSpans(
+      moduleCode,
+      (specifier) => specifier.match(/^(\.\.?\/.+)$/)?.[1],
+      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
+    )
+  ).spans;
+  const sideEffectRelativeSpans = scanImportSpans(() =>
+    findStaticSideEffectImportSpans(
+      moduleCode,
+      (specifier) => specifier.match(/^(\.\.?\/.+)$/)?.[1],
+      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
+    )
+  ).spans;
+
+  for (
+    const { original, path: rawPath, start, end } of staticVfModuleSpans
   ) {
+    const { path, suffix } = splitSpecifierSuffix(rawPath.replace(/^(?:file:\/\/)?\/+/, ""));
     // Strip file:// prefix and leading slashes to get clean _vf_modules/... path
     vfModules.push({
       original,
-      path: rawPath.replace(/^(?:file:\/\/)?\/+/, ""),
+      path,
+      suffix,
       start,
       end,
     });
   }
 
   for (
-    const { original, path, start, end } of findStaticImportFromSpans(
-      moduleCode,
-      (specifier) => specifier.match(/^(\.\.?\/[^?]+)(?:\?.*)?$/)?.[1],
-      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
-    )
+    const { original, path: rawPath, start, end } of dynamicVfModuleSpans
   ) {
+    const { path, suffix } = splitSpecifierSuffix(rawPath.replace(/^(?:file:\/\/)?\/+/, ""));
+    // Strip file:// prefix and leading slashes to get clean _vf_modules/... path
+    vfModules.push({
+      original,
+      path,
+      suffix,
+      start,
+      end,
+      isDynamic: true,
+    });
+  }
+
+  for (
+    const { original, path: rawPath, start, end } of sideEffectVfModuleSpans
+  ) {
+    const { path, suffix } = splitSpecifierSuffix(rawPath.replace(/^(?:file:\/\/)?\/+/, ""));
+    // Strip file:// prefix and leading slashes to get clean _vf_modules/... path
+    vfModules.push({
+      original,
+      path,
+      suffix,
+      start,
+      end,
+      isSideEffect: true,
+    });
+  }
+
+  for (
+    const { original, path: rawPath, start, end } of staticRelativeSpans
+  ) {
+    const { path, suffix } = splitSpecifierSuffix(rawPath);
     relative.push({
       original,
       path,
+      suffix,
       start,
       end,
+    });
+  }
+
+  for (
+    const { original, path: rawPath, start, end } of dynamicRelativeSpans
+  ) {
+    const { path, suffix } = splitSpecifierSuffix(rawPath);
+    relative.push({
+      original,
+      path,
+      suffix,
+      start,
+      end,
+      isDynamic: true,
+    });
+  }
+
+  for (
+    const { original, path: rawPath, start, end } of sideEffectRelativeSpans
+  ) {
+    const { path, suffix } = splitSpecifierSuffix(rawPath);
+    relative.push({
+      original,
+      path,
+      suffix,
+      start,
+      end,
+      isSideEffect: true,
     });
   }
 
@@ -77,14 +273,40 @@ export function findNestedImports(
  * Check for unresolved /_vf_modules/ imports.
  */
 export function hasUnresolvedImports(moduleCode: string): { count: number; paths: string[] } {
-  const matches = findStaticImportFromSpans(
-    moduleCode,
-    matchUnresolvedVfModuleSpecifier,
-    MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
+  const staticMatches = scanImportSpans(() =>
+    findStaticImportFromSpans(
+      moduleCode,
+      matchUnresolvedVfModuleSpecifier,
+      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
+    )
   );
+  const sideEffectMatches = scanImportSpans(() =>
+    findStaticSideEffectImportSpans(
+      moduleCode,
+      matchUnresolvedVfModuleSpecifier,
+      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
+    )
+  );
+  const dynamicMatches = scanImportSpans(() =>
+    findDynamicImportSpans(
+      moduleCode,
+      matchUnresolvedVfModuleSpecifier,
+      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
+    )
+  );
+  const matches = [
+    ...staticMatches.spans,
+    ...sideEffectMatches.spans,
+    ...dynamicMatches.spans,
+  ];
+  const malformedCount = [staticMatches, sideEffectMatches, dynamicMatches]
+    .filter((result) => result.malformed).length;
   return {
-    count: matches.length,
-    paths: matches.map((match) => match.path).slice(0, 5),
+    count: matches.length + malformedCount,
+    paths: [
+      ...matches.map((match) => match.path),
+      ...Array.from({ length: malformedCount }, () => MALFORMED_IMPORT_SPECIFIER),
+    ].slice(0, 5),
   };
 }
 
@@ -101,18 +323,55 @@ export async function processNestedImports(
 ): Promise<string> {
   const replacements: SourceSpanReplacement[] = [];
 
-  for (const { original, start, end, nestedFilePath, nestedPath, relativePath } of results) {
+  for (
+    const {
+      original,
+      start,
+      end,
+      suffix,
+      isDynamic,
+      isSideEffect,
+      nestedFilePath,
+      deferredError,
+      nestedPath,
+      relativePath,
+    } of results
+  ) {
     if (nestedFilePath) {
+      const importTarget = toImportStringLiteral(`file://${nestedFilePath}${suffix ?? ""}`);
       replacements.push({
         start,
         end,
         expected: original,
-        replacement: `from "file://${nestedFilePath}"`,
+        replacement: isDynamic
+          ? importTarget
+          : isSideEffect
+          ? `import ${importTarget}`
+          : `from ${importTarget}`,
       });
       continue;
     }
 
     const modulePath = nestedPath || relativePath || "";
+    if (isDynamic) {
+      const deferredPath = await createStubModule(
+        modulePath,
+        moduleCode,
+        original,
+        esmCacheDir,
+        { failOnImport: strictMissingModules, deferredError },
+      );
+      if (deferredPath) {
+        replacements.push({
+          start,
+          end,
+          expected: original,
+          replacement: toImportStringLiteral(`file://${deferredPath}${suffix ?? ""}`),
+        });
+        continue;
+      }
+    }
+
     if (strictMissingModules) {
       throw buildMissingModuleError({
         modulePath,
@@ -125,11 +384,16 @@ export async function processNestedImports(
 
     const stubPath = await createStubModule(modulePath, moduleCode, original, esmCacheDir);
     if (stubPath) {
+      const importTarget = toImportStringLiteral(`file://${stubPath}${suffix ?? ""}`);
       replacements.push({
         start,
         end,
         expected: original,
-        replacement: `from "file://${stubPath}"`,
+        replacement: isDynamic
+          ? importTarget
+          : isSideEffect
+          ? `import ${importTarget}`
+          : `from ${importTarget}`,
       });
     }
   }
@@ -227,16 +491,41 @@ export async function resolveNestedModuleImports(
 
   const nestedResults: NestedImportResult[] = await parallelMap(
     allImports,
-    async ({ original, path, start, end, key }) => ({
-      original,
-      start,
-      end,
-      nestedFilePath: await input.fetchAndCacheModule(
-        path,
-        input.parentBasePath ?? input.normalizedPath,
-      ),
-      [key]: path,
-    }),
+    async ({ original, path, suffix, start, end, isDynamic, isSideEffect, key }) => {
+      let nestedFilePath: string | null;
+      try {
+        nestedFilePath = await input.fetchAndCacheModule(
+          path,
+          input.parentBasePath ?? input.normalizedPath,
+        );
+      } catch (error) {
+        const deferredError = isDynamic ? dynamicDependencyFailure(path, error) : null;
+        if (!deferredError) throw error;
+        nestedFilePath = null;
+        return {
+          original,
+          start,
+          end,
+          suffix,
+          isDynamic,
+          isSideEffect,
+          nestedFilePath,
+          deferredError,
+          [key]: path,
+        };
+      }
+
+      return {
+        original,
+        start,
+        end,
+        suffix,
+        isDynamic,
+        isSideEffect,
+        nestedFilePath,
+        [key]: path,
+      };
+    },
     {
       semaphore: new Semaphore(MAX_MDX_MODULE_TRANSFORM_CONCURRENCY),
     },

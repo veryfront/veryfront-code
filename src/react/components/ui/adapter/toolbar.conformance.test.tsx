@@ -12,6 +12,7 @@ import { flushSync } from "react-dom";
 import { createRoot, hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { Toolbar, ToolbarButton, ToolbarLink, ToolbarSeparator } from "../toolbar.tsx";
@@ -43,7 +44,9 @@ function installDom(dom: JSDOM): () => void {
   };
 }
 
-function render(element: React.ReactElement): { host: HTMLElement; unmount: () => void } {
+function render(
+  element: React.ReactElement,
+): { host: HTMLElement; unmount: () => Promise<void> } {
   const dom = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`);
   const restore = installDom(dom);
   const host = dom.window.document.getElementById("root")!;
@@ -51,9 +54,9 @@ function render(element: React.ReactElement): { host: HTMLElement; unmount: () =
   flushSync(() => root.render(element));
   return {
     host: host as unknown as HTMLElement,
-    unmount: () => {
+    unmount: async () => {
       try {
-        root.unmount();
+        await unmountReactRoot(root);
       } finally {
         restore();
       }
@@ -126,7 +129,7 @@ function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.R
       assert(document.querySelector<HTMLElement>("[data-toolbar-item]")!.tabIndex === -1);
     });
 
-    it("renders role=toolbar with one roving tab stop; items click", () => {
+    it("renders role=toolbar with one roving tab stop; items click", async () => {
       let clicked = false;
       const { host, unmount } = render(
         <Wrap>
@@ -148,11 +151,11 @@ function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.R
         click(items[0]!);
         assert(clicked, "item click fires");
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
-    it("moves focus with arrows and preserves the focused stop across rerenders", () => {
+    it("moves focus with arrows and preserves the focused stop across rerenders", async () => {
       function Probe(): React.ReactElement {
         const [renders, setRenders] = React.useState(0);
         return (
@@ -177,11 +180,69 @@ function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.R
         assert(bar.dataset.renders === "1", "parent rerender occurred");
         assert(second!.tabIndex === 0 && first!.tabIndex === -1, "focused stop survives rerender");
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
-    it("skips disabled items and honors a consumer-cancelled navigation event", () => {
+    it("wraps at both ends and honours Home/End", async () => {
+      const { host, unmount } = render(
+        <Wrap>
+          <Toolbar>
+            <ToolbarButton>A</ToolbarButton>
+            <ToolbarButton>B</ToolbarButton>
+            <ToolbarButton>C</ToolbarButton>
+          </Toolbar>
+        </Wrap>,
+      );
+      try {
+        const bar = host.querySelector<HTMLElement>('[role="toolbar"]')!;
+        const [first, , last] = Array.from(
+          host.querySelectorAll<HTMLElement>("[data-toolbar-item]"),
+        );
+        last!.focus();
+        keydown(bar, "ArrowRight");
+        assert(
+          document.activeElement === first,
+          "ArrowRight wraps from the last item to the first",
+        );
+        keydown(bar, "End");
+        assert(document.activeElement === last, "End jumps to the last item");
+        keydown(bar, "Home");
+        assert(document.activeElement === first, "Home jumps to the first item");
+        keydown(bar, "ArrowLeft");
+        assert(document.activeElement === last, "ArrowLeft wraps backwards to the last item");
+      } finally {
+        await unmount();
+      }
+    });
+
+    it("navigates a vertical toolbar with Up/Down and ignores the cross-axis arrows", async () => {
+      const { host, unmount } = render(
+        <Wrap>
+          <Toolbar orientation="vertical">
+            <ToolbarButton>A</ToolbarButton>
+            <ToolbarButton>B</ToolbarButton>
+          </Toolbar>
+        </Wrap>,
+      );
+      try {
+        const bar = host.querySelector<HTMLElement>('[role="toolbar"]')!;
+        const [first, second] = Array.from(
+          host.querySelectorAll<HTMLElement>("[data-toolbar-item]"),
+        );
+        first!.focus();
+        keydown(bar, "ArrowDown");
+        assert(document.activeElement === second, "ArrowDown moves to the next vertical item");
+        keydown(bar, "ArrowUp");
+        assert(document.activeElement === first, "ArrowUp moves back to the previous item");
+        keydown(bar, "ArrowRight");
+        assert(document.activeElement === first, "the cross-axis arrow leaves focus unchanged");
+      } finally {
+        await unmount();
+      }
+    });
+
+    it("skips disabled items and honors a consumer-cancelled navigation event", async () => {
       let cancel = true;
       const { host, unmount } = render(
         <Wrap>
@@ -205,11 +266,11 @@ function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.R
         assert(document.activeElement === last, "navigation skips disabled item");
         assert(disabled!.tabIndex === -1, "disabled item is never the resting stop");
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
-    it("blocks and skips a disabled toolbar link", () => {
+    it("blocks and skips a disabled toolbar link", async () => {
       const linkActivations: string[] = [];
       const { host, unmount } = render(
         <Wrap>
@@ -259,11 +320,11 @@ function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.R
         keydown(bar, "ArrowRight");
         assert(document.activeElement === last, "roving focus skips the disabled link");
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
-    it("moves focus when the active item becomes disabled", () => {
+    it("moves focus when the active item becomes disabled", async () => {
       let disableActive!: () => void;
       function Probe(): React.ReactElement {
         const [disabled, setDisabled] = React.useState(false);
@@ -290,11 +351,11 @@ function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.R
         assert(second!.tabIndex === 0, "next enabled item becomes the roving stop");
         assert(document.activeElement === second, "focus follows the enabled fallback");
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
-    it("updates the resting stop on focus and isolates nested, hidden, inert, and editable content", () => {
+    it("updates the resting stop on focus and isolates nested, hidden, inert, and editable content", async () => {
       const { host, unmount } = render(
         <Wrap>
           <Toolbar>
@@ -333,11 +394,11 @@ function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.R
         assert(document.activeElement === nestedItems[1], "nested toolbar owns its event");
         assert(direct[2]!.tabIndex !== 0 && direct[3]!.tabIndex !== 0, "hidden and inert excluded");
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
-    it("uses visual arrow direction in RTL and runs React 19 callback-ref cleanup", () => {
+    it("uses visual arrow direction in RTL and runs React 19 callback-ref cleanup", async () => {
       let firstCleanups = 0;
       let secondCleanups = 0;
       function Probe(): React.ReactElement {
@@ -358,14 +419,19 @@ function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.R
         );
       }
       const { host, unmount } = render(<Probe />);
-      const bar = host.querySelector<HTMLElement>('[role="toolbar"]')!;
-      const [first, second] = Array.from(host.querySelectorAll<HTMLElement>("[data-toolbar-item]"));
-      first!.focus();
-      keydown(bar, "ArrowLeft");
-      assert(second === document.activeElement, "ArrowLeft moves forward in RTL");
-      click(second!);
-      assert(firstCleanups === 1, "old callback ref cleanup runs when the ref changes");
-      unmount();
+      try {
+        const bar = host.querySelector<HTMLElement>('[role="toolbar"]')!;
+        const [first, second] = Array.from(
+          host.querySelectorAll<HTMLElement>("[data-toolbar-item]"),
+        );
+        first!.focus();
+        keydown(bar, "ArrowLeft");
+        assert(second === document.activeElement, "ArrowLeft moves forward in RTL");
+        click(second!);
+        assert(firstCleanups === 1, "old callback ref cleanup runs when the ref changes");
+      } finally {
+        await unmount();
+      }
       assert(secondCleanups === 1, "current callback ref cleanup runs on unmount");
     });
   });
@@ -385,6 +451,27 @@ describe("Builtin Toolbar SSR ownership", () => {
     const items = [...document.querySelectorAll<HTMLElement>("[data-toolbar-item]")];
     assert(root.tabIndex === 0, "toolbar root owns the pre-hydration tab stop");
     assert(items.length === 3 && items.every((item) => item.tabIndex === -1), "items opt out");
+  });
+
+  it("forwards focus from the toolbar root to the first item", async () => {
+    const { host, unmount } = render(
+      <Toolbar>
+        <ToolbarButton>A</ToolbarButton>
+        <ToolbarButton>B</ToolbarButton>
+      </Toolbar>,
+    );
+    try {
+      const bar = host.querySelector<HTMLElement>('[role="toolbar"]')!;
+      const items = Array.from(host.querySelectorAll<HTMLElement>("[data-toolbar-item]"));
+      flushSync(() => bar.focus());
+      assert(
+        document.activeElement === items[0],
+        "focusing the toolbar root forwards focus to the first item",
+      );
+      assert(bar.tabIndex === -1, "the root never keeps the tab stop once an item can hold it");
+    } finally {
+      await unmount();
+    }
   });
 
   it("hydrates to one item-owned tab stop without recoverable errors", async () => {
@@ -415,8 +502,7 @@ describe("Builtin Toolbar SSR ownership", () => {
       assert(items[0]?.tabIndex === 0, "first enabled item owns the hydrated tab stop");
       assert(items.slice(1).every((item) => item.tabIndex === -1), "other items remain untabbable");
     } finally {
-      flushSync(() => reactRoot.unmount());
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await unmountReactRoot(reactRoot);
       restore();
     }
   });

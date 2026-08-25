@@ -14,7 +14,11 @@ import {
 } from "#veryfront/internal-agents/request-body.ts";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
-import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
+import {
+  HTTP_INTERNAL_SERVER_ERROR,
+  PRIORITY_MEDIUM_API,
+} from "#veryfront/utils/constants/index.ts";
+import { reportHandlerFailure } from "./report-handler-failure.ts";
 
 const CANCEL_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)$/;
 
@@ -77,6 +81,14 @@ export class AgentRunCancelHandler extends BaseHandler {
 
         this.logWarn("Internal agent run cancel failed", {
           error: error instanceof Error ? error.message : String(error),
+          runId,
+          projectId: ctx.projectId,
+          projectSlug: ctx.projectSlug,
+        });
+        reportHandlerFailure(error, {
+          boundary: "agent.run.cancel",
+          method: req.method,
+          status: HTTP_INTERNAL_SERVER_ERROR,
           runId,
           projectId: ctx.projectId,
           projectSlug: ctx.projectSlug,

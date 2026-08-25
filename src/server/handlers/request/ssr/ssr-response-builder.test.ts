@@ -80,7 +80,6 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
     projectDir: "/tmp/test",
     adapter: createMockAdapter(),
     securityConfig: null,
-    cspUserHeader: null,
     ...overrides,
   };
 }
@@ -110,6 +109,28 @@ describe("server/handlers/request/ssr/ssr-response-builder", () => {
       assertEquals(body, "<p>Hello</p>");
     });
 
+    it("appends page headers and distinct Set-Cookie values after framework headers", async () => {
+      const req = new Request("http://localhost/");
+      const ctx = makeCtx();
+      const result = makeResult({
+        cacheStrategy: "no-cache",
+        headers: { "x-page-state": "fresh" },
+        cookies: [
+          { name: "session", value: "abc", path: "/", httpOnly: true },
+          { name: "theme", value: "dark", sameSite: "lax" },
+        ],
+      });
+      const response = await buildSSRResponse(req, ctx, result, new ResponseBuilder());
+      const setCookies = response.headers.getSetCookie();
+
+      assertEquals(response.headers.get("x-page-state"), "fresh");
+      assertEquals(setCookies, [
+        "session=abc; Path=/; HttpOnly",
+        "theme=dark; SameSite=Lax",
+      ]);
+      assertEquals(response.headers.get("cache-control"), "no-cache, no-store, must-revalidate");
+    });
+
     it("returns correct status code from result", async () => {
       const req = new Request("http://localhost/not-found");
       const ctx = makeCtx();
@@ -137,14 +158,28 @@ describe("server/handlers/request/ssr/ssr-response-builder", () => {
         headers: { "if-none-match": etag },
       });
       const ctx = makeCtx({ isLocalProject: false });
-      const result = makeResult({ etag });
+      const result = makeResult({
+        etag,
+        headers: { "x-page-state": "fresh" },
+        cookies: [{ name: "session", value: "abc", path: "/", httpOnly: true }],
+      });
       const builder = new ResponseBuilder({ nonce: "" });
 
       const response = await buildSSRResponse(req, ctx, result, builder);
       assertEquals(response.status, 304);
+      assertEquals(
+        response.headers.get("x-page-state"),
+        "fresh",
+        "304 responses must keep page-supplied headers",
+      );
+      assertEquals(
+        response.headers.getSetCookie(),
+        ["session=abc; Path=/; HttpOnly"],
+        "304 responses must keep page-supplied cookies",
+      );
     });
 
-    it("returns fresh nonce-bearing HTML instead of 304 for matching etag", async () => {
+    it("returns fresh HTML without granting its application tags the response nonce", async () => {
       const etag = '"abc123"';
       const req = new Request("http://localhost/", {
         headers: { "if-none-match": etag },
@@ -156,7 +191,7 @@ describe("server/handlers/request/ssr/ssr-response-builder", () => {
       const response = await buildSSRResponse(req, ctx, result, builder);
 
       assertEquals(response.status, 200);
-      assertEquals(await response.text(), '<script nonce="nonce-123">window.__vf=1</script>');
+      assertEquals(await response.text(), "<script>window.__vf=1</script>");
     });
 
     it("does NOT return 304 for matching etag in dev mode", async () => {
@@ -204,15 +239,27 @@ describe("server/handlers/request/ssr/ssr-response-builder", () => {
         isStreaming: true,
         stream,
         html: undefined,
+        headers: { "x-page-state": "fresh" },
+        cookies: [{ name: "session", value: "abc", path: "/", httpOnly: true }],
       });
       const builder = new ResponseBuilder();
 
       const response = await buildSSRResponse(req, ctx, result, builder);
 
       assertEquals(response.headers.get("cache-control"), "public, max-age=0");
+      assertEquals(
+        response.headers.get("x-page-state"),
+        "fresh",
+        "streamed pages must keep page-supplied headers",
+      );
+      assertEquals(
+        response.headers.getSetCookie(),
+        ["session=abc; Path=/; HttpOnly"],
+        "streamed pages must keep page-supplied cookies",
+      );
     });
 
-    it("preserves streaming while adding nonces to inline tags", async () => {
+    it("preserves streaming without granting application tags the response nonce", async () => {
       let releaseSecondChunk: (() => void) | undefined;
       const secondChunkReady = new Promise<void>((resolve) => {
         releaseSecondChunk = resolve;
@@ -248,7 +295,7 @@ describe("server/handlers/request/ssr/ssr-response-builder", () => {
       ]);
       if (timeoutId) clearTimeout(timeoutId);
 
-      assertEquals(new TextDecoder().decode(firstChunk.value), '<script nonce="nonce-123">');
+      assertEquals(new TextDecoder().decode(firstChunk.value), "<script>");
 
       releaseSecondChunk?.();
       const secondChunk = await reader.read();
@@ -343,7 +390,23 @@ describe("server/handlers/request/ssr/ssr-response-builder", () => {
       assertEquals(body.includes('<script nonce="nonce-123">'), true);
     });
 
-    it("adds the builder nonce to inline tags in streaming HTML responses", async () => {
+    it("adds the builder nonce only to explicitly framework-owned HTML", async () => {
+      const req = new Request("http://localhost/");
+      const ctx = makeCtx();
+      const result = makeResult({
+        html: "<style>.error{color:red}</style><script>window.__vf_error=1</script>",
+        htmlProvenance: "framework",
+      });
+      const builder = new ResponseBuilder({ nonce: "nonce-123" });
+
+      const response = await buildSSRResponse(req, ctx, result, builder);
+      const body = await response.text();
+
+      assertEquals(body.includes('<style nonce="nonce-123">'), true);
+      assertEquals(body.includes('<script nonce="nonce-123">'), true);
+    });
+
+    it("does not grant the builder nonce to application tags in streaming HTML", async () => {
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {
           controller.enqueue(
@@ -362,8 +425,10 @@ describe("server/handlers/request/ssr/ssr-response-builder", () => {
       const response = await buildSSRResponse(req, ctx, result, builder);
       const body = await response.text();
 
-      assertEquals(body.includes('<style nonce="nonce-123">.app{color:red}</style>'), true);
-      assertEquals(body.includes('<script nonce="nonce-123">window.__vf=1</script>'), true);
+      assertEquals(body.includes('<style nonce="nonce-123">'), false);
+      assertEquals(body.includes('<script nonce="nonce-123">'), false);
+      assertEquals(body.includes("<style>.app{color:red}</style>"), true);
+      assertEquals(body.includes("<script>window.__vf=1</script>"), true);
     });
   });
 });

@@ -32,22 +32,23 @@ These are the runtime capability profiles modeled by the framework.
 This matrix separates open-core framework support from capabilities that depend
 on a backing API or cloud bootstrap.
 
-| Capability                                                            | Current support shape                             | Notes                                                                                 |
-| --------------------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Routing, rendering, middleware, API routes                            | Open-core                                         | Core framework capability.                                                            |
-| App MCP server                                                        | Open-core on runtimes that can host it            | Not available on constrained runtimes like Cloudflare Workers.                        |
-| Internal AG-UI transport                                              | Open-core runtime surface                         | Separate from the app MCP contract.                                                   |
-| Direct provider integrations (`openai`, `anthropic`, `google`, local) | Open-core with provider credentials/runtime setup | Depends on the selected provider configuration.                                       |
-| Extension contracts (auth, bundler, CSS, parser, observability, etc.) | Open-core                                         | First-party `@veryfront/ext-*` packages provide implementations.                      |
-| Workflow engine (in-memory and Redis backends)                        | Open-core                                         | In-memory, Redis, and process run execution work without Kubernetes.                  |
-| Discovery (tools, agents, workflows, prompts, resources, skills)      | Open-core                                         | Convention-based file-system discovery at server startup.                             |
-| Veryfront Cloud model routing                                         | Requires Veryfront Cloud bootstrap                | Depends on project/auth context and cloud gateway configuration.                      |
-| Veryfront Cloud blob storage                                          | Requires Veryfront Cloud bootstrap                | Uses project-scoped cloud upload APIs.                                                |
-| Veryfront Cloud agent service                                         | Requires Veryfront Cloud bootstrap                | Hosted agent execution with project steering and runtime system messages.             |
-| Runs client                                                           | Requires backing API/service layer                | Exposed as SDK/API surface for task, workflow, and agent execution.                   |
-| Sandbox                                                               | Requires backing API/service layer                | Depends on authenticated sandbox session APIs.                                        |
-| Remote integration tools                                              | Requires backing API/service layer                | Tool definitions and execution are fetched per request from the configured API layer. |
-| Control-plane agent routing                                           | Requires Veryfront Cloud bootstrap                | EdDSA-signed request validation for hosted agent orchestration.                       |
+| Capability                                                            | Current support shape                             | Notes                                                                                                                              |
+| --------------------------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Routing, rendering, middleware, API routes                            | Open-core                                         | Core framework capability.                                                                                                         |
+| App MCP server                                                        | Open-core on runtimes that can host it            | Not available on constrained runtimes like Cloudflare Workers.                                                                     |
+| Internal AG-UI transport                                              | Open-core runtime surface                         | Separate from the app MCP contract.                                                                                                |
+| Direct provider integrations (`openai`, `anthropic`, `google`, local) | Open-core with provider credentials/runtime setup | Depends on the selected provider configuration.                                                                                    |
+| Extension contracts (auth, bundler, CSS, parser, observability, etc.) | Open-core                                         | First-party `@veryfront/ext-*` packages provide implementations.                                                                   |
+| Workflow engine (in-memory and Redis backends)                        | Open-core                                         | In-memory, Redis, and process run execution work without Kubernetes.                                                               |
+| Discovery (tools, agents, workflows, prompts, resources, skills)      | Open-core                                         | Convention-based file-system discovery at server startup.                                                                          |
+| Veryfront Cloud model routing                                         | Requires Veryfront Cloud bootstrap                | Depends on project/auth context and cloud gateway configuration.                                                                   |
+| Veryfront Cloud blob storage                                          | Requires Veryfront Cloud bootstrap                | Uses project-scoped cloud upload APIs.                                                                                             |
+| Veryfront Cloud agent service                                         | Requires Veryfront Cloud bootstrap                | Hosted agent execution with project steering and runtime system messages.                                                          |
+| Runs client                                                           | Requires backing API/service layer                | Exposed as SDK/API surface for task, workflow, and agent execution.                                                                |
+| Sandbox                                                               | Requires backing API/service layer                | Depends on authenticated sandbox session APIs.                                                                                     |
+| Remote integration tools                                              | Requires backing API/service layer                | Tool definitions and execution are fetched per request from the configured API layer.                                              |
+| Local catalog integration tools                                       | Open-core with provider credentials/runtime setup | Exact-grant local sources execute supported HTTPS REST endpoints directly. Salesforce also has a dedicated service-account source. |
+| Control-plane agent routing                                           | Requires Veryfront Cloud bootstrap                | EdDSA-signed request validation for hosted agent orchestration.                                                                    |
 
 ## Extension contract matrix
 
@@ -60,7 +61,7 @@ project.
 | ----------------------------- | --------------------------------------------------------- | ------------------------------------- | --------------------------------------- | ---------------------------- |
 | `SchemaValidator`             | `@veryfront/ext-schema-zod`                               | Built-in                              | Schema-backed runtime validation        | None (pure JS)               |
 | `Bundler`, `ModuleLexer`      | `@veryfront/ext-bundler-esbuild`                          | Built-in                              | Build, import analysis, module bundling | esbuild binary               |
-| `CSSProcessor`                | `@veryfront/ext-css-tailwind`                             | Built-in                              | Tailwind CSS processing                 | Network (esm.sh for plugins) |
+| `CSSProcessor`                | `@veryfront/ext-css-tailwind`                             | Built-in                              | Tailwind CSS processing                 | Filesystem read (pinned CSS) |
 | `ContentProcessor`            | `@veryfront/ext-content-mdx`                              | Built-in                              | MDX or Markdown content compilation     | None (unified ecosystem)     |
 | `CodeParser`                  | `@veryfront/ext-parser-babel`                             | Built-in                              | AST parsing or build-time code analysis | None (Babel)                 |
 | `DocumentExtractor`           | `@veryfront/ext-document-kreuzberg`                       | Built-in                              | Document text extraction                | FS (WASM/native extraction)  |
@@ -73,7 +74,7 @@ project.
 | `NodeTelemetryProvider`       | `@veryfront/ext-observability-opentelemetry`              | Built-in                              | Node OpenTelemetry SDK bootstrap        | Network (OTLP endpoint)      |
 | `EvalReportExporterRegistry`  | Core registry and future `@veryfront/ext-eval-*` packages | Built-in registry, optional exporters | Eval report export                      | Vendor-specific              |
 | `TokenCacheStore`             | `@veryfront/ext-cache-redis`                              | Optional                              | Redis-backed token cache                | Network (Redis)              |
-| `NodeWebSocketServerProvider` | `@veryfront/ext-node-websocket-ws`                        | Explicit                              | Node.js WebSocket upgrades              | Node.js and scoped env reads |
+| `NodeWebSocketServerProvider` | `@veryfront/ext-node-websocket-ws`                        | Built-in                              | Node.js WebSocket upgrades and HMR      | Node.js and scoped env reads |
 
 ## Dependency boundaries
 

@@ -1,14 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
+import "#veryfront/react/compat/ssr-adapter/test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { renderChildren, renderTree } from "./tree-processor.ts";
+import { treeToHTML } from "./html-generator.ts";
 import * as React from "react";
-import type { ClientComponentMeta } from "../types.ts";
+import type { ClientComponentMeta, RSCNode } from "../types.ts";
 
-describe("rendering/rsc/server-renderer/tree-processor", {
-  sanitizeResources: false,
-  sanitizeOps: false,
-}, () => {
+describe("rendering/rsc/server-renderer/tree-processor", () => {
   describe("renderTree", () => {
     it("should return empty html node for null component", async () => {
       const result = await renderTree(null, {}, new Map(), new Map());
@@ -142,7 +141,148 @@ describe("rendering/rsc/server-renderer/tree-processor", {
         new Map(),
       );
 
-      assertEquals(result.type === "fragment" || result.type === "html", true);
+      assertEquals(result.type, "fragment", "fragments must be walked, not string-rendered");
+
+      const children = (result as { children: RSCNode[] }).children;
+      assertEquals(children.length, 2, "both fragment children are processed");
+      assertEquals(
+        children.every((child) => child.type === "html"),
+        true,
+        "each fragment child renders to an html node",
+      );
+      assertEquals(
+        (children[0] as { html: string }).html.includes(">a<"),
+        true,
+        "the first fragment child keeps its own markup",
+      );
+      assertEquals(
+        (children[1] as { html: string }).html.includes(">b<"),
+        true,
+        "the second fragment child keeps its own markup",
+      );
+    });
+
+    it("detects client components nested inside a fragment", async () => {
+      function ClientComp() {
+        return React.createElement("div", null, "client");
+      }
+      (ClientComp as any).__rsc_client = true;
+
+      const clientManifest = new Map<string, ClientComponentMeta>();
+      clientManifest.set("ClientComp", {
+        id: "ClientComp",
+        path: "./components/ClientComp.tsx",
+        exports: ["default"],
+      });
+
+      const clientRefs = new Map<string, string>();
+      const element = React.createElement(
+        React.Fragment,
+        null,
+        React.createElement(ClientComp),
+      );
+
+      const result = await renderTree(element as any, {}, clientManifest, clientRefs);
+
+      assertEquals(result.type, "fragment", "the fragment wrapper is preserved");
+
+      const children = (result as { children: RSCNode[] }).children;
+      assertEquals(children.length, 1, "the fragment has one child");
+      assertEquals(
+        children[0]!.type,
+        "client",
+        "a client component inside a fragment is detected",
+      );
+      assertEquals(
+        (children[0] as { component: string }).component,
+        "ClientComp",
+        "the detected client component keeps its id",
+      );
+      assertEquals(
+        clientRefs.has("ClientComp"),
+        true,
+        "a client component inside a fragment is registered in clientRefs",
+      );
+    });
+
+    it("preserves htmlFor on custom elements with nested client boundaries", async () => {
+      function ClientComp() {
+        return React.createElement("input", { id: "field" });
+      }
+      (ClientComp as any).__rsc_client = true;
+
+      const clientManifest = new Map<string, ClientComponentMeta>();
+      clientManifest.set("ClientComp", {
+        id: "ClientComp",
+        path: "./components/ClientComp.tsx",
+        exports: ["default"],
+      });
+
+      const clientRefs = new Map<string, string>();
+      const element = React.createElement(
+        "design-label",
+        { htmlFor: "field" },
+        React.createElement(ClientComp),
+      );
+
+      const result = await renderTree(element as any, {}, clientManifest, clientRefs);
+      assertEquals(result.type, "html");
+
+      const html = (result as { html: string }).html;
+      assertEquals(
+        html.includes('<design-label htmlFor="field">'),
+        true,
+        "custom-element attributes keep React prop spelling on the processor path",
+      );
+      assertEquals(
+        html.includes('<design-label for="field">'),
+        false,
+        "custom elements do not receive the normalized for attribute",
+      );
+    });
+
+    it("maps htmlFor to for on customized built-ins with nested client boundaries", async () => {
+      function ClientComp() {
+        return React.createElement("input", { id: "field" });
+      }
+      (ClientComp as any).__rsc_client = true;
+
+      const clientManifest = new Map<string, ClientComponentMeta>();
+      clientManifest.set("ClientComp", {
+        id: "ClientComp",
+        path: "./components/ClientComp.tsx",
+        exports: ["default"],
+      });
+
+      const clientRefs = new Map<string, string>();
+      const element = React.createElement(
+        "label",
+        { is: "design-label", htmlFor: "field" },
+        React.createElement(ClientComp),
+      );
+
+      const result = await renderTree(element as any, {}, clientManifest, clientRefs);
+      assertEquals(result.type, "html");
+
+      const html = (result as { html: string }).html;
+      // React 19 keys custom-element serialization off the hyphenated tag name
+      // only, so <label is="design-label" htmlFor="field"> renders as
+      // `<label is="design-label" for="field">`.
+      assertEquals(
+        html.includes('is="design-label"'),
+        true,
+        "the is attribute survives the processor path",
+      );
+      assertEquals(
+        html.includes('for="field"'),
+        true,
+        "customized built-ins use React's normalized for attribute",
+      );
+      assertEquals(
+        html.includes("htmlFor"),
+        false,
+        "customized built-ins do not keep the React prop name",
+      );
     });
   });
 
@@ -232,6 +372,44 @@ describe("rendering/rsc/server-renderer/tree-processor", {
       const html = (result as { html: string }).html;
       assertEquals(html.includes("&lt;img"), true);
       assertEquals(html.includes("onerror=alert(1)>"), false);
+    });
+
+    it("should escape text children of a client component", async () => {
+      function ClientWidget() {
+        return React.createElement("div", null, "widget");
+      }
+      (ClientWidget as any).__rsc_client = true;
+
+      const clientManifest = new Map<string, ClientComponentMeta>();
+      clientManifest.set("ClientWidget", {
+        id: "ClientWidget",
+        path: "./components/ClientWidget.tsx",
+        exports: ["default"],
+      });
+
+      const clientRefs = new Map<string, string>();
+      const element = React.createElement(
+        ClientWidget,
+        null,
+        "<img src=x onerror=alert(1)>",
+      );
+
+      const node = await renderTree(element as any, {}, clientManifest, clientRefs);
+
+      assertEquals(node.type, "client", "the client boundary is preserved");
+      assertEquals(
+        (node as { children: RSCNode[] }).children[0],
+        { type: "html", text: "<img src=x onerror=alert(1)>" },
+        "boundary text children must stay unescaped data, not html",
+      );
+
+      const html = await treeToHTML(node, clientRefs, clientManifest);
+      assertEquals(html.includes("&lt;img"), true, "boundary text is escaped on output");
+      assertEquals(
+        html.includes("<img src=x"),
+        false,
+        "boundary text must never be emitted as raw markup",
+      );
     });
 
     it("should not double-escape a normal text-only element (regression)", async () => {

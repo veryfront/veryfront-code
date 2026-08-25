@@ -159,12 +159,23 @@ export class BunServerAdapter implements ServerAdapter {
 
     const headers = resolveBunWebSocketUpgradeHeaders(request, options);
     const socket = new BunWebSocket();
+    const selectedProtocol = headers.get("sec-websocket-protocol");
+    const nativeHeaders = new Headers(headers);
+    nativeHeaders.delete("sec-websocket-protocol");
+    const offeredProtocols = request.headers.get("sec-websocket-protocol");
 
     let upgraded: boolean;
     try {
+      // Bun selects the first protocol from the request itself. Supplying the
+      // application selection as a response header makes Bun emit the header
+      // twice and standards-compliant clients reject the handshake. Narrow
+      // the native request during the synchronous upgrade instead.
+      if (selectedProtocol !== null) {
+        request.headers.set("sec-websocket-protocol", selectedProtocol);
+      }
       upgraded = context.server.upgrade(request, {
         data: { socket },
-        headers,
+        headers: nativeHeaders,
       });
     } catch (error) {
       throw NETWORK_ERROR.create({
@@ -172,6 +183,11 @@ export class BunServerAdapter implements ServerAdapter {
         cause: error,
         context: { platform: "bun", operation: "upgradeWebSocket" },
       });
+    } finally {
+      if (selectedProtocol !== null) {
+        if (offeredProtocols === null) request.headers.delete("sec-websocket-protocol");
+        else request.headers.set("sec-websocket-protocol", offeredProtocols);
+      }
     }
     if (!upgraded) {
       throw NETWORK_ERROR.create({

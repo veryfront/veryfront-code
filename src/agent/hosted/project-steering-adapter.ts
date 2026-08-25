@@ -14,12 +14,16 @@ import {
 } from "../runtime/load-skill-tool.ts";
 import type { MutableAgentProjectContext } from "../project/context.ts";
 import {
-  createRuntimeProjectFilesClient,
+  createStrictRuntimeProjectFilesClient,
   type RuntimeProjectFilesClient,
   type RuntimeProjectFilesClientOptions,
   type RuntimeProjectFilesFetch,
   type RuntimeProjectFilesTrace,
 } from "../runtime/project-files-client.ts";
+import {
+  type SkillDocumentParserProvider,
+  snapshotSkillDocumentParserProvider,
+} from "#veryfront/extensions/parser/skill-document-parser.ts";
 import {
   getRuntimeProjectInstructions,
   getRuntimeProjectSkillCatalog,
@@ -60,6 +64,7 @@ export type HostedProjectSteeringAdapterOptions = {
   projectSkillLoader?: RuntimeProjectSkillLoader;
   builtinSkills?: readonly RuntimeSkillDefinition[];
   builtinStore?: RuntimeLoadSkillBuiltinStore;
+  skillDocumentParserProvider?: SkillDocumentParserProvider;
 };
 
 /** Context for hosted project skill IDs. */
@@ -117,18 +122,20 @@ function createProjectFilesClientOptions(
 function createDefaultProjectFilesClient(
   options: HostedProjectSteeringAdapterOptions,
 ): RuntimeProjectFilesClient {
-  return createRuntimeProjectFilesClient(createProjectFilesClientOptions(options));
+  return createStrictRuntimeProjectFilesClient(createProjectFilesClientOptions(options));
 }
 
 function createDefaultProjectSkillLoader(
   options: HostedProjectSteeringAdapterOptions,
   projectFilesClient: RuntimeProjectFilesClient,
+  skillDocumentParserProvider: Readonly<SkillDocumentParserProvider> | undefined,
 ): RuntimeProjectSkillLoader {
   return createRuntimeProjectSkillLoader({
     getProjectFile: projectFilesClient.getProjectFile,
     getProjectFiles: projectFilesClient.getProjectFiles,
     isAccessDeniedError: isHostedServiceAuthError,
     logger: options.logger,
+    skillDocumentParserProvider,
   });
 }
 
@@ -169,11 +176,19 @@ function resolveRefreshedSkillSnapshot(input: {
 export function createHostedProjectSteeringAdapter(
   options: HostedProjectSteeringAdapterOptions,
 ): HostedProjectSteeringAdapter {
-  const projectFilesClient = options.projectFilesClient ?? createDefaultProjectFilesClient(options);
+  const skillDocumentParserProvider = options.skillDocumentParserProvider === undefined
+    ? undefined
+    : snapshotSkillDocumentParserProvider(options.skillDocumentParserProvider);
+  const projectFilesClient = options.projectFilesClient ??
+    createDefaultProjectFilesClient(options);
   const projectSkillLoader = options.projectSkillLoader ??
-    createDefaultProjectSkillLoader(options, projectFilesClient);
+    createDefaultProjectSkillLoader(options, projectFilesClient, skillDocumentParserProvider);
   const builtinSkills = options.builtinSkills ??
-    loadRuntimeBuiltinSkillCatalog({ skillsDir: options.skillsDir, logger: options.logger });
+    loadRuntimeBuiltinSkillCatalog({
+      skillsDir: options.skillsDir,
+      logger: options.logger,
+      skillDocumentParserProvider,
+    });
   const builtinStore = options.builtinStore ?? createDefaultBuiltinStore();
 
   async function getProjectInstructions(
@@ -192,6 +207,7 @@ export function createHostedProjectSteeringAdapter(
       ...lookup,
       builtinSkills,
       logger: options.logger,
+      skillDocumentParserProvider,
       getProjectFile: projectFilesClient.getProjectFile,
       getProjectFiles: projectFilesClient.getProjectFiles,
     });
@@ -214,6 +230,7 @@ export function createHostedProjectSteeringAdapter(
         builtinSkillIds: builtinSkills.map((skill) => skill.id),
         builtinStore,
         logger: options.logger,
+        skillDocumentParserProvider,
       }),
     refreshProjectSkillIds: async (context) => {
       const skills = await getSkillsConfig({

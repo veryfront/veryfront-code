@@ -7,14 +7,15 @@ import type { Extension } from "./types.ts";
 import type { SchemaValidator } from "./schema/index.ts";
 import {
   createBuiltinExtensions,
+  createDeferredBuiltinExtension,
   createEvalCliBuiltinExtensions,
-  createOptionalBuiltinExtension,
+  DEFERRED_BUILTIN_EXTENSIONS,
   ensureBuiltinEvalReportExporterRegistry,
   ensureBuiltinSchemaValidator,
-  OPTIONAL_BUILTIN_EXTENSIONS,
 } from "./builtin-extensions.ts";
 import { mergeExtensions } from "./discovery.ts";
 import { getDeferredExtensionState } from "./deferred-extension.ts";
+import { FIRST_PARTY_EXTENSION_POLICIES } from "./first-party-defaults.ts";
 import { createZodAdapter } from "@veryfront/ext-schema-zod";
 import { ExtensionLoader } from "./loader.ts";
 
@@ -97,7 +98,7 @@ describe("ensureBuiltinEvalReportExporterRegistry", () => {
 });
 
 describe("createBuiltinExtensions", () => {
-  async function loadOptionalBuiltin(name: string): Promise<Extension> {
+  async function loadDeferredBuiltin(name: string): Promise<Extension> {
     const candidate = createBuiltinExtensions().find((entry) => entry.extension.name === name);
     assert(candidate);
     const deferred = getDeferredExtensionState(candidate);
@@ -108,7 +109,7 @@ describe("createBuiltinExtensions", () => {
   }
 
   it("uses the loaded AuthProvider extension contract as runtime metadata", async () => {
-    const authExtension = await loadOptionalBuiltin("ext-auth-jwt");
+    const authExtension = await loadDeferredBuiltin("ext-auth-jwt");
 
     assertEquals(
       Object.hasOwn(authExtension.provides ?? {}, "AuthProvider") ||
@@ -118,7 +119,7 @@ describe("createBuiltinExtensions", () => {
   });
 
   it("uses the loaded OpenTelemetry contracts as runtime metadata", async () => {
-    const otelExtension = await loadOptionalBuiltin(
+    const otelExtension = await loadDeferredBuiltin(
       "ext-observability-opentelemetry",
     );
 
@@ -132,7 +133,16 @@ describe("createBuiltinExtensions", () => {
     );
   });
 
-  it("keeps optional candidates deferred until the loader selects them", () => {
+  it("loads the generic HTTP eval exporter as a deferred builtin", async () => {
+    const httpExtension = await loadDeferredBuiltin("ext-eval-report-http");
+
+    assertEquals(
+      httpExtension.contracts?.requires?.includes(EvalReportExporterRegistryName),
+      true,
+    );
+  });
+
+  it("keeps candidates deferred until the loader selects them", () => {
     const authCandidate = createBuiltinExtensions().find((entry) =>
       entry.extension.name === "ext-auth-jwt"
     );
@@ -141,14 +151,94 @@ describe("createBuiltinExtensions", () => {
     assert(getDeferredExtensionState(authCandidate));
   });
 
-  it("never auto-loads the explicit Node WebSocket implementation", async () => {
-    const source = await Deno.readTextFile(new URL("./builtin-extensions.ts", import.meta.url));
+  it("ships baseline CSS and Node WebSocket providers as deferred builtins", () => {
+    for (const name of ["ext-css-tailwind", "ext-node-websocket-ws"]) {
+      const definition = DEFERRED_BUILTIN_EXTENSIONS.find((entry) => entry.name === name);
+      const candidate = createBuiltinExtensions().find((entry) => entry.extension.name === name);
 
-    assertEquals(source.includes("ext-node-websocket-ws"), false);
-    assertEquals(
-      OPTIONAL_BUILTIN_EXTENSIONS.some((definition) => definition.name === "ext-node-websocket-ws"),
-      false,
+      assert(definition, `${name} must be part of the default runtime composition`);
+      assert(candidate, `${name} must have a builtin candidate`);
+      assert(getDeferredExtensionState(candidate), `${name} must remain lazy until activation`);
+    }
+  });
+
+  it("keeps builtin package discovery metadata auto-activated", async () => {
+    for (const definition of DEFERRED_BUILTIN_EXTENSIONS) {
+      const manifest = JSON.parse(
+        await Deno.readTextFile(
+          new URL(
+            `../../extensions/${definition.sourceDirectory}/deno.json`,
+            import.meta.url,
+          ),
+        ),
+      ) as { veryfront?: { activation?: string } };
+
+      assertEquals(
+        manifest.veryfront?.activation ?? "auto",
+        "auto",
+        `${definition.name} cannot be both a builtin and explicit-only package`,
+      );
+    }
+  });
+
+  it("classifies every first-party extension exactly once", async () => {
+    const extensionDirectories: string[] = [];
+    for await (const entry of Deno.readDir(new URL("../../extensions", import.meta.url))) {
+      if (!entry.isDirectory || !entry.name.startsWith("ext-")) continue;
+      try {
+        await Deno.stat(
+          new URL(`../../extensions/${entry.name}/deno.json`, import.meta.url),
+        );
+        extensionDirectories.push(entry.name);
+      } catch (error) {
+        if (!(error instanceof Deno.errors.NotFound)) throw error;
+      }
+    }
+
+    const policyDirectories = FIRST_PARTY_EXTENSION_POLICIES.map((policy) =>
+      policy.sourceDirectory
     );
+    assertEquals(
+      [...new Set(policyDirectories)].sort(),
+      extensionDirectories.sort(),
+      "the activation policy must classify every first-party extension once",
+    );
+    assertEquals(
+      new Set(FIRST_PARTY_EXTENSION_POLICIES.map((policy) => policy.name)).size,
+      FIRST_PARTY_EXTENSION_POLICIES.length,
+      "first-party extension names must be unique",
+    );
+  });
+
+  it("keeps discovery activation aligned with first-party selection policy", async () => {
+    for (const policy of FIRST_PARTY_EXTENSION_POLICIES) {
+      const manifest = JSON.parse(
+        await Deno.readTextFile(
+          new URL(
+            `../../extensions/${policy.sourceDirectory}/deno.json`,
+            import.meta.url,
+          ),
+        ),
+      ) as { veryfront?: { activation?: string } };
+      const activation = manifest.veryfront?.activation ?? "auto";
+      const expected = policy.selection === "explicit" ||
+          policy.selection === "service-conditional"
+        ? "explicit"
+        : "auto";
+
+      assertEquals(
+        activation,
+        expected,
+        `${policy.name} manifest activation must match ${policy.selection}`,
+      );
+      if (policy.rootNpm) {
+        assertEquals(
+          policy.selection,
+          "builtin-deferred",
+          `${policy.name} cannot be a root npm dependency without builtin selection`,
+        );
+      }
+    }
   });
 
   it("does not statically import workspace implementation paths", async () => {
@@ -167,11 +257,12 @@ describe("createBuiltinExtensions", () => {
     );
   });
 
-  it("skips unavailable optional built-in implementations", async () => {
-    const candidate = createOptionalBuiltinExtension({
+  it("skips unavailable package-backed deferred implementations", async () => {
+    const candidate = createDeferredBuiltinExtension({
       name: "ext-missing",
       origin: "veryfront/ext-missing",
       sourceDirectory: "ext-missing",
+      availability: "package",
     });
 
     const logs: string[] = [];
@@ -188,11 +279,43 @@ describe("createBuiltinExtensions", () => {
     assertEquals(logs.some((message) => message.includes("ext-missing")), true);
   });
 
-  it("rejects an invalid optional built-in factory result", async () => {
-    const candidate = createOptionalBuiltinExtension({
+  it("rethrows a package-backed load failure that is not a missing implementation", async () => {
+    // The module resolves; only the identity check fails. A swallowed failure
+    // here would drop a real first-party builtin from the runtime while
+    // claiming its package is not installed.
+    const candidate = createDeferredBuiltinExtension({
+      name: "ext-name-drift",
+      origin: "veryfront/ext-yaml",
+      sourceDirectory: "ext-yaml",
+      availability: "package",
+    });
+
+    const logs: string[] = [];
+    await assertRejects(
+      () =>
+        getDeferredExtensionState(candidate)!.load({
+          debug: (message) => logs.push(message),
+          info: () => {},
+          warn: () => {},
+          error: () => {},
+        }),
+      Error,
+      'returned extension "ext-yaml"',
+      "a package-backed builtin must rethrow a non-missing load failure",
+    );
+    assertEquals(
+      logs.some((message) => message.includes("is not available from the root package")),
+      false,
+      `a resolvable package must not be reported as not installed, got: ${logs.join(" | ")}`,
+    );
+  });
+
+  it("rejects an invalid root-bundled deferred factory result", async () => {
+    const candidate = createDeferredBuiltinExtension({
       name: "ext-invalid",
       origin: "veryfront/ext-invalid",
       sourceDirectory: "ext-invalid",
+      availability: "root-bundled",
       factory: () => null as unknown as Extension,
     });
 
@@ -203,11 +326,12 @@ describe("createBuiltinExtensions", () => {
     );
   });
 
-  it("rejects optional factory identity drift", async () => {
-    const candidate = createOptionalBuiltinExtension({
+  it("rejects deferred factory identity drift", async () => {
+    const candidate = createDeferredBuiltinExtension({
       name: "ext-expected",
       origin: "veryfront/ext-expected",
       sourceDirectory: "ext-expected",
+      availability: "root-bundled",
       factory: () => ({
         name: "ext-unexpected",
         version: "1.0.0",
@@ -224,10 +348,11 @@ describe("createBuiltinExtensions", () => {
 
   it("does not materialize a builtin hidden by a higher-priority extension", async () => {
     let factoryCalls = 0;
-    const deferred = createOptionalBuiltinExtension({
+    const deferred = createDeferredBuiltinExtension({
       name: "ext-overridden",
       origin: "veryfront/ext-overridden",
       sourceDirectory: "ext-overridden",
+      availability: "root-bundled",
       factory: () => {
         factoryCalls++;
         return {
@@ -258,27 +383,56 @@ describe("createBuiltinExtensions", () => {
     await loader.teardownAll();
   });
 
-  it("declares explicit eval exporter ids for optional exporter builtins", () => {
-    const mlflow = OPTIONAL_BUILTIN_EXTENSIONS.find((definition) =>
+  it("declares eval CLI selectors for deferred exporter builtins", () => {
+    const http = DEFERRED_BUILTIN_EXTENSIONS.find((definition) =>
+      definition.name === "ext-eval-report-http"
+    );
+    const mlflow = DEFERRED_BUILTIN_EXTENSIONS.find((definition) =>
       definition.name === "ext-eval-report-mlflow"
     );
 
-    assertEquals(mlflow?.evalExporterId, "mlflow");
+    assertEquals(http?.evalExporterSelection, { kind: "any-selected" });
+    assertEquals(mlflow?.evalExporterSelection, { kind: "id", id: "mlflow" });
+  });
+
+  it("distinguishes deferred activation from implementation availability", () => {
+    const http = DEFERRED_BUILTIN_EXTENSIONS.find((definition) =>
+      definition.name === "ext-eval-report-http"
+    );
+    const mlflow = DEFERRED_BUILTIN_EXTENSIONS.find((definition) =>
+      definition.name === "ext-eval-report-mlflow"
+    );
+
+    assertEquals(http?.availability, "package");
+    assertEquals(mlflow?.availability, "root-bundled");
   });
 
   it("builds a minimal eval CLI builtin set for selected eval exporters", () => {
-    const names = createEvalCliBuiltinExtensions(["mlflow"]).map((entry) => entry.extension.name);
+    const names = createEvalCliBuiltinExtensions(["http", "mlflow"]).map((entry) =>
+      entry.extension.name
+    );
 
     assertEquals(names.includes("ext-schema-zod"), true);
+    assertEquals(names.includes("ext-eval-report-http"), true);
     assertEquals(names.includes("ext-eval-report-mlflow"), true);
     assertEquals(names.includes("ext-auth-jwt"), false);
     assertEquals(names.includes("ext-observability-opentelemetry"), false);
   });
 
-  it("does not load optional eval exporter builtins when no exporters are selected", () => {
+  it("does not load deferred eval exporter builtins when no exporters are selected", () => {
     const names = createEvalCliBuiltinExtensions([]).map((entry) => entry.extension.name);
 
+    assertEquals(names.includes("ext-eval-report-http"), false);
     assertEquals(names.includes("ext-eval-report-mlflow"), false);
     assertEquals(names.includes("ext-auth-jwt"), false);
+  });
+
+  it("loads the configurable HTTP exporter for custom selected ids", () => {
+    const names = createEvalCliBuiltinExtensions(["internal-gateway"]).map((entry) =>
+      entry.extension.name
+    );
+
+    assertEquals(names.includes("ext-eval-report-http"), true);
+    assertEquals(names.includes("ext-eval-report-mlflow"), false);
   });
 });

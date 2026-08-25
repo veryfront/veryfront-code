@@ -40,6 +40,36 @@ describe("AttachmentPill", () => {
     );
     assertStringIncludes(html, "md:focus-visible:opacity-100");
   });
+
+  it("surfaces a retry control only in the error state with an onRetry handler", () => {
+    const errored = renderToString(
+      <AttachmentPill attachment={{ ...readyFile, state: "error" }} onRetry={() => undefined} />,
+    );
+    assertStringIncludes(
+      errored,
+      'aria-label="Retry handoff-notes.md"',
+      "error state with onRetry exposes the retry control",
+    );
+
+    const uploaded = renderToString(
+      <AttachmentPill
+        attachment={{ ...readyFile, state: "uploaded" }}
+        onRetry={() => undefined}
+      />,
+    );
+    assert(
+      !uploaded.includes("Retry handoff-notes.md"),
+      "retry is hidden outside the error state",
+    );
+
+    const noHandler = renderToString(
+      <AttachmentPill attachment={{ ...readyFile, state: "error" }} />,
+    );
+    assert(
+      !noHandler.includes("Retry handoff-notes.md"),
+      "retry is hidden when no onRetry handler is supplied",
+    );
+  });
 });
 
 // The composability contract: a consuming developer must be able to recompose
@@ -61,10 +91,12 @@ describe("AttachmentPill — composability contract", () => {
     );
   });
 
-  it("accepts a per-sub-component icon override on .Remove", () => {
+  it("accepts a per-sub-component icon override as .Remove children", () => {
     const html = renderToString(
       <AttachmentPill attachment={readyFile} onRemove={() => undefined}>
-        <AttachmentPill.Remove icon={<span data-testid="custom-remove">x</span>} />
+        <AttachmentPill.Remove>
+          <span data-testid="custom-remove">x</span>
+        </AttachmentPill.Remove>
       </AttachmentPill>,
     );
     assertStringIncludes(html, "custom-remove");

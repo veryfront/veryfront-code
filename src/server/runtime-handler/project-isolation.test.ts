@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import { ProjectIsolationManager } from "./project-isolation.ts";
 
 describe("server/runtime-handler/project-isolation", () => {
@@ -72,7 +73,13 @@ describe("server/runtime-handler/project-isolation", () => {
       const result = manager.checkRequest("proj");
       assertEquals(result.allowed, false);
       assertEquals(result.reason, "circuit_open");
-      assertEquals(typeof result.waitTimeMs, "number");
+      const waitTimeMs = result.waitTimeMs ?? 0;
+      assert(waitTimeMs > 0, "an open circuit must return a positive retry hint");
+      assert(
+        waitTimeMs <= 60_000,
+        "the retry hint cannot exceed the configured circuitResetTimeMs",
+      );
+      assert(waitTimeMs > 59_000, "a just-opened circuit must report nearly the full reset window");
       manager.shutdown();
     });
 
@@ -174,6 +181,30 @@ describe("server/runtime-handler/project-isolation", () => {
       manager.startRequest("proj");
       manager.completeRequest("proj", true);
       assertEquals(manager.getStats()["proj"]?.circuitOpen, true);
+      manager.shutdown();
+    });
+
+    it("should not count failures older than the failure window", () => {
+      using time = new FakeTime();
+      const manager = createManager({ circuitBreakerThreshold: 2, failureWindowMs: 5_000 });
+
+      manager.startRequest("proj");
+      manager.completeRequest("proj", true);
+      // Below the 60s cleanup interval, so only recordTimeout's own filter can prune.
+      time.tick(6_000);
+      manager.startRequest("proj");
+      manager.completeRequest("proj", true);
+
+      assertEquals(
+        manager.getStats()["proj"]?.recentFailures,
+        1,
+        "a failure older than failureWindowMs must not count toward the breaker",
+      );
+      assertEquals(
+        manager.getStats()["proj"]?.circuitOpen,
+        false,
+        "two failures separated by more than the window must not open the circuit",
+      );
       manager.shutdown();
     });
   });

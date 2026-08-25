@@ -8,7 +8,7 @@
 
 import * as React from "react";
 import { createStrictContext } from "../../../create-strict-context.ts";
-import type { ChatMessage, ChatStatus } from "#veryfront/agent/react";
+import type { ChatFilePart, ChatMessage, ChatStatus } from "#veryfront/agent/react";
 import type { ChatTheme } from "../../theme.ts";
 import type { ModelOption } from "../../model-selector.tsx";
 import type { AttachmentInfo } from "../components/attachment-pill.tsx";
@@ -37,6 +37,10 @@ export interface ChatContextValue {
 
   // Submit / Stop
   onSubmit: (e?: React.FormEvent) => void | Promise<void>;
+  /** Send resolved composer text, attachments, and an optional request model through the session. */
+  sendMessage?: (message: { text: string; files?: ChatFilePart[]; model?: string }) =>
+    | void
+    | Promise<void>;
   onStop?: () => void;
   onReload?: () => void;
 
@@ -77,10 +81,25 @@ export interface ChatContextValue {
   theme: ChatTheme;
 }
 
-const [ChatContext, useChatContext] = createStrictContext<ChatContextValue>(
+const [ChatContext, useChatContextStrict] = createStrictContext<ChatContextValue>(
   "useChatContext",
   "a ChatRoot or Chat component",
 );
+
+/**
+ * Read the enclosing chat's shared state (messages, input, submit/stop, model,
+ * attachments, branches, theme). Provided by `<Chat.Root>` / `<Chat>`; throws
+ * when used outside one.
+ *
+ * @example
+ * ```tsx
+ * function SendButton() {
+ *   const { onSubmit, isLoading } = useChatContext();
+ *   return <button onClick={() => onSubmit()} disabled={isLoading}>Send</button>;
+ * }
+ * ```
+ */
+export const useChatContext = useChatContextStrict;
 
 /** React hook for chat context optional. */
 export function useChatContextOptional(): ChatContextValue | null {
@@ -89,4 +108,3 @@ export function useChatContextOptional(): ChatContextValue | null {
 
 /** Render chat context provider. */
 export const ChatContextProvider = ChatContext.Provider;
-export { useChatContext };

@@ -42,7 +42,6 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
     projectDir: "/tmp/test-project",
     adapter: createMockAdapter(),
     securityConfig: null,
-    cspUserHeader: null,
     ...overrides,
   };
 }
@@ -53,7 +52,7 @@ describe("server/handlers/response/cors", () => {
       const handler = new CorsHandler();
       assertEquals(handler.metadata.name, "CorsHandler");
       assertEquals(handler.metadata.patterns?.length, 1);
-      assertEquals(handler.metadata.patterns?.[0].method, "OPTIONS");
+      assertEquals(handler.metadata.patterns?.[0]?.method, "OPTIONS");
     });
 
     it("continues for non-OPTIONS requests", async () => {
@@ -119,6 +118,55 @@ describe("server/handlers/response/cors", () => {
       const ctx = makeCtx();
       const result = await handler.handle(req, ctx);
       assertEquals(result.response instanceof Response, true);
+    });
+
+    it("does not resolve or import project routes in a shared runtime", async () => {
+      let routeResolutionCalls = 0;
+      const handler = new CorsHandler({
+        resolveAppRouteFile: () => {
+          routeResolutionCalls++;
+          throw new Error("shared preflight reached project route discovery");
+        },
+      });
+      const result = await handler.handle(
+        new Request("https://tenant.example/api/private", {
+          method: "OPTIONS",
+          headers: {
+            Origin: "https://app.example",
+            "access-control-request-method": "POST",
+          },
+        }),
+        makeCtx({
+          prepareHostedConfigContext: (() => {
+            throw new Error("shared preflight prepared project config");
+          }) as HandlerContext["prepareHostedConfigContext"],
+        }),
+      );
+
+      assertEquals(result.response instanceof Response, true);
+      assertEquals(routeResolutionCalls, 0);
+    });
+
+    it("does not advertise infrastructure-only request headers", async () => {
+      const result = await new CorsHandler().handle(
+        new Request("http://localhost/api/test", {
+          method: "OPTIONS",
+          headers: {
+            Origin: "https://app.example",
+            "access-control-request-method": "POST",
+            "access-control-request-headers":
+              "Authorization, X-Token, X-Project-Id, X-Veryfront-Dispatch-JWS, X-App-Trace",
+          },
+        }),
+        makeCtx({
+          securityConfig: { cors: { origin: ["https://app.example"] } } as never,
+        }),
+      );
+
+      assertEquals(
+        result.response?.headers.get("access-control-allow-headers"),
+        "Authorization, X-App-Trace",
+      );
     });
   });
 });

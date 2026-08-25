@@ -9,7 +9,22 @@ describe("mcp/session", () => {
     const id = manager.create();
     assertExists(id);
     assertEquals(typeof id, "string");
-    assertEquals(id.length > 16, true); // UUIDs are 36 chars
+    assertEquals(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+        .test(id),
+      true,
+      "session id must be a random v4 UUID",
+    );
+
+    const ids = new Set<string>([id]);
+    for (const source of [manager, new SessionManager()]) {
+      for (let index = 0; index < 200; index++) ids.add(source.create());
+    }
+    assertEquals(
+      ids.size,
+      401,
+      "session ids must never repeat or follow a per-manager sequence",
+    );
   });
 
   it("validates an active session", () => {
@@ -87,5 +102,25 @@ describe("mcp/session", () => {
 
     manager.terminate(id);
     assertEquals(manager.requiresSessionHeader(), false);
+  });
+
+  it("keeps the session header required while other sessions are active", () => {
+    const manager = new SessionManager();
+    const first = manager.create();
+    const second = manager.create();
+
+    manager.terminate(first);
+    assertEquals(
+      manager.requiresSessionHeader(),
+      true,
+      "the session header stays required while another session is still active",
+    );
+
+    manager.terminate(second);
+    assertEquals(
+      manager.requiresSessionHeader(),
+      false,
+      "the session header requirement clears once the last session is terminated",
+    );
   });
 });

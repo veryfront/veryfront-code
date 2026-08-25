@@ -29,13 +29,17 @@ import type {
   HostedChatRuntimeCreationResult,
 } from "./chat-runtime-contract.ts";
 import {
+  getActiveHostedRunEventWriterCapability,
+  runWithHostedRunEventWriterCapability,
+} from "./child-run-event-writer-token.ts";
+import {
   type HostedChatRuntimeToolAssemblyResult,
   type HostedHostToolPolicy,
   prepareHostedChatRuntimeToolAssembly,
   type PrepareHostedChatRuntimeToolAssemblyInput,
 } from "./chat-runtime-tool-assembly.ts";
 import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
-import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
+import { buildInteractiveVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
 import {
   createHostedRuntimeStateResolver,
   type HostedRuntimeStateResolverContext,
@@ -45,7 +49,7 @@ import type {
   RuntimeAgentMarkdownDefinition,
   RuntimeAgentThinkingConfig,
 } from "../runtime/agent-definition.ts";
-import type { AgentConfig } from "../types.ts";
+import type { AgentConfig, AgentSystem } from "../types.ts";
 import type { RuntimeToolFilterConfig } from "../runtime/runtime-tool-config.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { runWithEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
@@ -120,6 +124,7 @@ export type DefaultHostedChatRuntimeSteeringMutationInput = {
 /** Input payload for default hosted chat runtime project switch. */
 export type DefaultHostedChatRuntimeProjectSwitchInput = {
   projectId: string;
+  projectSlug?: string;
   taskContext: DefaultHostedChatRuntimeTaskContext;
 };
 
@@ -139,7 +144,7 @@ export type CreateDefaultHostedChatRuntimeOptions = {
   ) => DefaultHostedChatRuntimeTaskContext;
   refreshSystem?: (
     input: DefaultHostedChatRuntimeSystemRefreshInput,
-  ) => Promise<string> | string;
+  ) => Promise<AgentSystem> | AgentSystem;
   onSteeringMutation?: (
     input: DefaultHostedChatRuntimeSteeringMutationInput,
   ) => Promise<void> | void;
@@ -195,7 +200,7 @@ async function buildToolAssembly(
     instructions: input.options.instructions,
     ...(liveProjectSteering === undefined ? {} : {
       renderInstructions: (modelVisibleToolNames: readonly string[]) =>
-        buildVeryfrontCloudRuntimeInstructions({
+        buildInteractiveVeryfrontCloudRuntimeInstructions({
           agentConfig: liveProjectSteering.agent,
           projectId: input.taskContext.projectId,
           branchId: input.taskContext.branchId,
@@ -213,6 +218,11 @@ async function buildToolAssembly(
     mcpServers: input.config.mcpServers,
     conversationId: input.options.conversationId,
     allowedToolNames: input.options.allowedTools ?? null,
+    ...(input.options.serverResolvedIntegrationToolNames !== undefined
+      ? {
+        serverResolvedIntegrationToolNames: input.options.serverResolvedIntegrationToolNames,
+      }
+      : {}),
     allowedProviderToolNames: input.options.allowedProviderTools,
     includeRuntimeEssentialToolsWhenEmpty: input.options.includeRuntimeEssentialToolsWhenEmpty,
     sourceProviderToolNames: input.options.liveProjectSteering?.agent.providerTools,
@@ -236,9 +246,12 @@ async function buildToolAssembly(
         incrementSteeringRevision(input.taskContext);
       }
     },
-    onStudioProjectSwitch: async (projectId) => {
+    onStudioProjectSwitch: async (projectId, confirmedProject) => {
       const changed = await input.onStudioProjectSwitch?.({
         projectId,
+        ...(confirmedProject?.projectSlug === undefined
+          ? {}
+          : { projectSlug: confirmedProject.projectSlug }),
         taskContext: input.taskContext,
       });
       if (changed) {
@@ -273,11 +286,15 @@ function createRuntimeAgentConfig(input: {
       markRuntimeLocalTool(runtimeTool),
     ]),
   );
+  const resolveHostedRuntimeState = createHostedRuntimeStateResolver({
+    taskContext: input.taskContext,
+    refreshSystem,
+  });
 
   const runtimeConfig: RuntimeToolFilterConfig = {
     id: "veryfront-hosted-runtime",
     model: input.modelId,
-    system: input.toolAssembly.systemInstructions,
+    system: input.toolAssembly.systemMessages ?? input.toolAssembly.systemInstructions,
     tools: runtimeTools,
     __vfToolLoadingMode: input.toolAssembly.toolLoadingMode,
     providerTools: input.toolAssembly.providerToolNames,
@@ -288,6 +305,7 @@ function createRuntimeAgentConfig(input: {
     __vfPersistToolExposureCheckpoint: input.options.persistToolExposureCheckpoint,
     __vfToolExposureCheckpointPersistenceRequired:
       input.options.requireToolExposureCheckpointPersistence === true,
+    ...(liveProjectSteering === undefined ? {} : { __vfPreassembledSkillContext: true }),
     temperature: input.options.temperature,
     maxSteps: input.options.maxSteps ?? 50,
     resolveModelTransport: ({ resolvedModel }) => {
@@ -300,10 +318,16 @@ function createRuntimeAgentConfig(input: {
       const reasoning = resolveVeryfrontCloudReasoningOption(resolvedModel, thinking);
       return providerOptions || reasoning ? { providerOptions, reasoning } : {};
     },
-    resolveRuntimeState: createHostedRuntimeStateResolver({
-      taskContext: input.taskContext,
-      refreshSystem,
-    }),
+    resolveRuntimeState: async ({ structuredSystem, system, ...request }) => {
+      const result = await resolveHostedRuntimeState({
+        ...request,
+        system,
+        ...(structuredSystem === undefined ? {} : { structuredSystem }),
+      });
+      return typeof result.system === "string"
+        ? { system: result.system, context: result.context }
+        : { structuredSystem: result.structuredSystem, context: result.context };
+    },
     onToolResult: createDefaultResearchRunArtifactMirrorHandler({
       taskContext: input.taskContext,
       remoteToolSource: input.toolAssembly.remoteToolSources[0],
@@ -369,6 +393,7 @@ function runWithDefaultHostedRequestContext<TResult>(
 export async function createDefaultHostedChatRuntime(
   input: CreateDefaultHostedChatRuntimeOptions,
 ): Promise<HostedChatRuntimeCreationResult> {
+  const effectiveRunEventWriterCapability = getActiveHostedRunEventWriterCapability();
   return await runWithEffectiveSourceIntegrationPolicy(
     input.sourceIntegrationPolicy,
     async () => {
@@ -383,10 +408,10 @@ export async function createDefaultHostedChatRuntime(
       const cleanup = input.cleanup ?? (() => Promise.resolve());
 
       try {
-        const toolAssembly = await buildToolAssembly({
-          ...input,
-          taskContext,
-        });
+        const toolAssembly = await runWithHostedRunEventWriterCapability(
+          effectiveRunEventWriterCapability,
+          () => buildToolAssembly({ ...input, taskContext }),
+        );
         const runtimeAgentConfig = createRuntimeAgentConfig({
           options: input.options,
           taskContext,
@@ -410,8 +435,14 @@ export async function createDefaultHostedChatRuntime(
             runId: taskContext.runId,
             agentId: taskContext.agentId,
             conversationId: taskContext.conversationId,
+            projectId: taskContext.projectId,
+            projectSlug: taskContext.projectSlug,
             authToken: taskContext.authToken,
             maxOutputTokens: input.options.maxOutputTokens,
+            resolveProjectContext: () => ({
+              ...(taskContext.projectId ? { projectId: taskContext.projectId } : {}),
+              ...(taskContext.projectSlug ? { projectSlug: taskContext.projectSlug } : {}),
+            }),
             runStream: (operation) =>
               runWithDefaultHostedRequestContext({
                 taskContext,

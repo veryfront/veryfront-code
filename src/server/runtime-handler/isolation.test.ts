@@ -8,6 +8,7 @@ import {
   completeIsolatedRequestOnSettlement,
   createIsolationErrorResponse,
   type IsolationCheckResult,
+  projectIsolation,
   startIsolatedRequest,
 } from "./isolation.ts";
 
@@ -47,6 +48,31 @@ describe("isolation", () => {
 
       checkRequestIsolation(undefined, true);
       assertEquals(receivedSlug, undefined);
+    });
+
+    it("reaches the real projectIsolation when no deps are injected", () => {
+      const slug = "isolation-default-probe";
+      __injectDepsForTests(null);
+
+      assertEquals(
+        checkRequestIsolation(slug, true),
+        { allowed: true },
+        "the default wiring must bind projectIsolation, not lose its receiver",
+      );
+
+      startIsolatedRequest(slug, true);
+      assertEquals(
+        projectIsolation.getStats()[slug]?.inFlight,
+        1,
+        "startRequest must reach the real manager",
+      );
+
+      completeIsolatedRequest(slug, true, false);
+      assertEquals(
+        projectIsolation.getStats()[slug]?.inFlight,
+        0,
+        "completeRequest must reach the real manager",
+      );
     });
   });
 

@@ -9,7 +9,7 @@ import {
   isJsonMode,
   outputJson,
 } from "../../shared/json-output.ts";
-import { parseTestOutput } from "./command.ts";
+import { parseTestOutput, type TestResult } from "./command.ts";
 
 const getTestArgsSchema = defineSchema((v) =>
   v.object({
@@ -62,7 +62,7 @@ export async function handleTestCommand(args: ParsedArgs): Promise<void> {
         code: "TEST_FAILURE",
         slug: "tests-failed",
         message: `${parsed.summary.failed} test(s) failed`,
-        context: parsed as unknown as Record<string, unknown>,
+        context: parsed as TestResult & Record<string, unknown>,
       }));
     }
   } else {

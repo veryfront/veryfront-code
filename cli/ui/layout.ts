@@ -9,18 +9,32 @@ import { getTerminalSize, isStdoutTTY } from "veryfront/platform";
 import { pad as sharedPad } from "#cli/ui/box";
 import { ANSI_REGEX, RESET, stripAnsi } from "./ansi.ts";
 
+/** Assumed terminal size when the real one is unusable. */
+export const FALLBACK_COLUMNS = 80;
+export const FALLBACK_ROWS = 24;
+
+/**
+ * A pty with no window size reports 0 columns rather than failing, so the
+ * platform's own fallback (which only applies when the query throws) never
+ * kicks in. Callers subtract from this value and feed it to `String.repeat`
+ * and `padEnd`, both of which throw on a negative count.
+ */
+export function usableSize(value: number, fallback: number): number {
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
 /**
  * Get terminal width, with fallback for non-TTY environments
  */
 export function getTerminalWidth(): number {
-  return getTerminalSize().columns;
+  return usableSize(getTerminalSize().columns, FALLBACK_COLUMNS);
 }
 
 /**
  * Get terminal height, with fallback for non-TTY environments
  */
 export function getTerminalHeight(): number {
-  return getTerminalSize().rows;
+  return usableSize(getTerminalSize().rows, FALLBACK_ROWS);
 }
 
 /**

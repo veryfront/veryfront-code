@@ -1,9 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { defineError, VeryfrontError } from "./types.ts";
+import { defineError, isVeryfrontErrorInstance, VeryfrontError } from "./types.ts";
 import type { ErrorSlug } from "./error-registry.ts";
 import { ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS } from "./safe-diagnostics.ts";
+import { ERROR_DOCS_BASE_URL } from "./diagnostic-policy.ts";
 
 describe("errors/types", () => {
   describe("defineError", () => {
@@ -108,6 +109,32 @@ describe("errors/types", () => {
       assertEquals(err instanceof VeryfrontError, true);
     });
 
+    it("should use captured WeakSet methods for construction and recognition", () => {
+      const originalAdd = WeakSet.prototype.add;
+      const originalHas = WeakSet.prototype.has;
+
+      try {
+        WeakSet.prototype.add = function () {
+          throw new Error("mutated add");
+        };
+        WeakSet.prototype.has = function () {
+          throw new Error("mutated has");
+        };
+
+        const err = new VeryfrontError("test", {
+          slug: "network-error",
+          category: "SERVER",
+          status: 503,
+          title: "Network error",
+        });
+
+        assertEquals(isVeryfrontErrorInstance(err), true);
+      } finally {
+        WeakSet.prototype.add = originalAdd;
+        WeakSet.prototype.has = originalHas;
+      }
+    });
+
     it("should generate RFC 9457 response", () => {
       const err = new VeryfrontError("Something went wrong", {
         slug: "render-error",
@@ -119,7 +146,7 @@ describe("errors/types", () => {
       });
 
       const rfc9457 = err.toRFC9457();
-      assertEquals(rfc9457.type, "https://veryfront.com/docs/errors/render-error");
+      assertEquals(rfc9457.type, "https://veryfront.com/docs/code/guides/errors#render-error");
       assertEquals(rfc9457.title, "Render error");
       assertEquals(rfc9457.status, 500);
       assertEquals(rfc9457.category, "RUNTIME");
@@ -142,7 +169,10 @@ describe("errors/types", () => {
       const problem = err.toRFC9457();
 
       assertEquals(parsedDocsUrl.search, "");
-      assertEquals(parsedDocsUrl.hash, "");
+      // The hostile slug is confined to the fragment: it cannot change the
+      // page it points at, nor open a query or a second fragment.
+      assertEquals(parsedDocsUrl.pathname, new URL(ERROR_DOCS_BASE_URL).pathname);
+      assertEquals(parsedDocsUrl.hash.slice(1).includes("#"), false);
       assert(docsUrl.includes("%2F"));
       assert(docsUrl.includes("%3F"));
       assert(docsUrl.includes("%23"));

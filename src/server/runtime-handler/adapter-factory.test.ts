@@ -5,6 +5,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
+import { API_CLIENT_ERROR } from "#veryfront/errors";
 import { resolveAdapter } from "./adapter-factory.ts";
 import { defaultDiscoveryCache, ProjectDiscoveryCache } from "./local-project-discovery.ts";
 
@@ -169,6 +170,7 @@ describe("adapter-factory", () => {
   afterEach(() => {
     localProjectCache.clear();
     localAdapterCache.clear();
+    Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
   });
 
   it("ignores x-project-path override outside proxy mode", async () => {
@@ -206,6 +208,7 @@ describe("adapter-factory", () => {
   });
 
   it("accepts validated x-project-path override in proxy mode when proxy trusted", async () => {
+    Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
     const adapter = createMockAdapter({
       "/trusted/project": { isDirectory: true },
       "/trusted/project/app": { isDirectory: true },
@@ -325,7 +328,7 @@ describe("adapter-factory", () => {
     },
   );
 
-  it("honours x-project-path in proxy mode when dispatch-JWS header is present", async () => {
+  it("does not let a valid dispatch JWS authorize x-project-path", async () => {
     const adapter = createMockAdapter({
       "/trusted/project": { isDirectory: true },
       "/trusted/project/app": { isDirectory: true },
@@ -356,8 +359,8 @@ describe("adapter-factory", () => {
       prepareHostedConfigContext: preparePreviewHostedConfigContext,
     });
 
-    assertEquals(result.isLocalProject, true);
-    assertEquals(result.projectDir, "/trusted/project");
+    assertEquals(result.isLocalProject, false);
+    assertEquals(result.projectDir, "/base/project");
   });
 
   it("returns original adapter when no local project found and not proxy mode", async () => {
@@ -519,7 +522,55 @@ describe("adapter-factory", () => {
     assertEquals("isLocalProject" in result, true);
   });
 
+  it("survives an adapter cache that drops the entry it was just given", async () => {
+    Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+    const cache = new ProjectDiscoveryCache();
+    const adapter = createMockAdapter({
+      "/trusted/project": { isDirectory: true },
+      "/trusted/project/app": { isDirectory: true },
+    });
+
+    // The adapter LRU estimates a RuntimeAdapter's size and evicts it again
+    // when it exceeds the byte budget, so set() can silently store nothing.
+    // Observed under Bun 1.3.6, where the same adapter object that caches
+    // fine on Node is dropped: set() then has()===false and size===0.
+    // resolveAdapter must not depend on reading back what it just wrote.
+    cache.adapters.set = () => {};
+
+    const result = await resolveAdapter({
+      req: await makeReq({ projectPath: "/trusted/project", trusted: true }),
+      projectDir: "/base/project",
+      adapter,
+      config: undefined,
+      projectSlug: "myproject",
+      projectId: "proj_123",
+      proxyToken: undefined,
+      releaseId: undefined,
+      proxyEnv: "preview",
+      branch: null,
+      environmentName: undefined,
+      parsedDomain: {
+        slug: null,
+        branch: null,
+        environment: null,
+        isVeryfrontDomain: false,
+        isDraft: false,
+        allowIframeEmbed: false,
+      },
+      isProxyMode: true,
+      cache,
+      prepareHostedConfigContext: preparePreviewHostedConfigContext,
+    });
+
+    assertEquals(
+      result.adapter === undefined || result.adapter === null,
+      false,
+      "resolveAdapter must hand on a real adapter even when the cache drops it",
+    );
+  });
+
   it("uses injected cache instead of default singleton", async () => {
+    Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
     const cache = new ProjectDiscoveryCache();
     const adapter = createMockAdapter({
       "/trusted/project": { isDirectory: true },
@@ -991,11 +1042,48 @@ describe("adapter-factory", () => {
       const base = createMockAdapter({});
 
       // Non-extended adapter (no runWithContext) takes the direct getConfig path.
-      // Config loading may succeed or throw — either outcome is valid.
-      let succeeded = false;
-      let threw = false;
-      try {
-        const result = await resolveAdapter({
+      const result = await resolveAdapter({
+        projectDir: "/base/project",
+        adapter: base,
+        config: undefined,
+        projectSlug: "proxy-slug",
+        projectId: "proj_proxy",
+        proxyToken: "tok-123",
+        releaseId: undefined,
+        proxyEnv: "preview",
+        branch: null,
+        environmentName: undefined,
+        parsedDomain: {
+          slug: null,
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        req: await makeReq(),
+        isProxyMode: true,
+        prepareHostedConfigContext: preparePreviewHostedConfigContext,
+      });
+
+      assertEquals(
+        result.configOutcome,
+        "hosted",
+        "a non-extended adapter still loads the project config",
+      );
+      assertEquals(
+        result.config?.title,
+        "Veryfront App",
+        "the loaded config, not a default, is returned",
+      );
+    });
+
+    it("surfaces a missing evaluation context for a non-extended adapter", async () => {
+      const base = createMockAdapter({});
+      const req = await makeReq();
+
+      const error = await assertRejects(() =>
+        resolveAdapter({
           projectDir: "/base/project",
           adapter: base,
           config: undefined,
@@ -1014,19 +1102,170 @@ describe("adapter-factory", () => {
             isDraft: false,
             allowIframeEmbed: false,
           },
-          req: await makeReq(),
+          req,
           isProxyMode: true,
-        });
-        succeeded = true;
-        // If it succeeds, verify the result has the expected shape
-        assertEquals("projectDir" in result, true);
-        assertEquals("adapter" in result, true);
-      } catch {
-        threw = true;
-      }
-
-      // One of the two paths must have been taken
-      assertEquals(succeeded || threw, true);
+        })
+      );
+      assertEquals(
+        (error as { slug?: string }).slug,
+        "cache-invariant-violation",
+        "a missing evaluation context must surface, not be swallowed",
+      );
     });
+
+    it("defers config for a production proxy request with no resolved release", async () => {
+      const { adapter } = createExtendedMockAdapter();
+
+      const result = await resolveAdapter({
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "proxy-slug",
+        projectId: "proj_proxy",
+        proxyToken: "tok-123",
+        releaseId: undefined,
+        proxyEnv: "production",
+        branch: null,
+        environmentName: undefined,
+        parsedDomain: {
+          slug: null,
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        req: new Request("http://example.com/"),
+        pathname: "/",
+        isProxyMode: true,
+        prepareHostedConfigContext: () => {
+          throw new Error("hosted config must not be prepared before a release is resolved");
+        },
+      });
+
+      assertEquals(result.config, undefined, "no config is loaded before a release is resolved");
+      assertEquals(
+        result.configOutcome,
+        "deferred",
+        "a production proxy request with no resolved releaseId must defer, not attempt a hosted config load",
+      );
+    });
+  });
+
+  it("uses defaults when the release published no config", async () => {
+    // A release with no config file gets a legitimate 404 from the API. It used
+    // to be re-thrown, so every request for such a project returned 404.
+    const adapter = createMockAdapter({});
+    adapter.fs.readFile = () =>
+      Promise.reject(
+        API_CLIENT_ERROR.create({ detail: "API request failed: 404 Not Found", status: 404 }),
+      );
+
+    const result = await resolveAdapter({
+      req: await makeReq(),
+      projectDir: "/base/project",
+      adapter,
+      config: { router: "pages" } as never,
+      projectSlug: "noconfig",
+      projectId: "proj_noconfig",
+      proxyToken: "token",
+      releaseId: "rel_1",
+      proxyEnv: "preview",
+      branch: null,
+      environmentName: undefined,
+      parsedDomain: {
+        slug: "noconfig",
+        branch: null,
+        environment: null,
+        isVeryfrontDomain: true,
+        isDraft: false,
+        allowIframeEmbed: false,
+      },
+      isProxyMode: true,
+      prepareHostedConfigContext: preparePreviewHostedConfigContext,
+    });
+
+    // Defaults, not the caller's config.
+    assertEquals(result.config, undefined);
+    // Downstream substitutes the process-wide security config for an absent
+    // project config, so the reason it is absent has to survive the return.
+    assertEquals(result.configOutcome, "hosted-absent");
+  });
+
+  it("uses defaults when the 404 arrives wrapped rather than at the top level", async () => {
+    // Same underlying 404, different error shape. readHostedConfigSource lets a
+    // VeryfrontError through untouched but wraps anything else in
+    // CONFIG_PARSE_ERROR, which buries the status one level down in `cause`.
+    // Reading only the outermost object made the fallback fire for one shape and
+    // not the other, so this project 404'd while an identical one did not.
+    const adapter = createMockAdapter({});
+    adapter.fs.readFile = () =>
+      Promise.reject(
+        Object.assign(new Error("API request failed: 404 Not Found"), { status: 404 }),
+      );
+
+    const result = await resolveAdapter({
+      req: await makeReq(),
+      projectDir: "/base/project",
+      adapter,
+      config: { router: "pages" } as never,
+      projectSlug: "noconfig",
+      projectId: "proj_noconfig",
+      proxyToken: "token",
+      releaseId: "rel_1",
+      proxyEnv: "preview",
+      branch: null,
+      environmentName: undefined,
+      parsedDomain: {
+        slug: "noconfig",
+        branch: null,
+        environment: null,
+        isVeryfrontDomain: true,
+        isDraft: false,
+        allowIframeEmbed: false,
+      },
+      isProxyMode: true,
+      prepareHostedConfigContext: preparePreviewHostedConfigContext,
+    });
+
+    assertEquals(result.config, undefined);
+    assertEquals(result.configOutcome, "hosted-absent");
+  });
+
+  it("still fails when a 404 comes from something other than the config read", async () => {
+    // Only getHostedConfig's own 404 means "no config published". A 404 from the
+    // snapshot refresh is a real failure and must not be read as absence.
+    const adapter = createMockAdapter({});
+    (adapter.fs as unknown as Record<string, unknown>).ensureSourceSnapshotFresh = () =>
+      Promise.reject(
+        API_CLIENT_ERROR.create({ detail: "API request failed: 404 Not Found", status: 404 }),
+      );
+
+    const req = await makeReq();
+    await assertRejects(() =>
+      resolveAdapter({
+        req,
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "snapshot404",
+        projectId: "proj_snapshot404",
+        proxyToken: "token",
+        releaseId: "rel_1",
+        proxyEnv: "preview",
+        branch: null,
+        environmentName: undefined,
+        parsedDomain: {
+          slug: "snapshot404",
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: true,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        isProxyMode: true,
+        prepareHostedConfigContext: preparePreviewHostedConfigContext,
+      })
+    );
   });
 });

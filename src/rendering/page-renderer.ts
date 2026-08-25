@@ -15,6 +15,7 @@ import type { RenderResult } from "./orchestrator/types.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
+import type { RenderEnvironment } from "#veryfront/rendering/context/render-context.ts";
 
 interface PageRenderOptions {
   params?: Record<string, string | string[]>;
@@ -29,12 +30,22 @@ interface PageRenderOptions {
   projectSlug?: string;
   /** Content source identifier for cache isolation (branch name or release ID) */
   contentSourceId?: string;
+  /** Release that owns the immutable browser artifacts for this render. */
+  releaseId?: string;
   /** Request-scoped dependency-pinning state used by transform caches. */
   dependencyPinningCacheKey?: string;
   /** Immutable package map paired with dependencyPinningCacheKey. */
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
   /** Exact package source namespace paired with the immutable snapshot. */
   dependencyPinningSource?: DependencyPinningSourceInput;
+  /** Internal signal for the render owner's total deadline. */
+  abortSignal?: AbortSignal;
+  /**
+   * Request environment for this render. Takes precedence over the renderer's
+   * own, so a renderer instance reused across environments never carries one
+   * render's instrumentation into the next.
+   */
+  environment?: RenderEnvironment;
 }
 
 interface PageBundleResult {
@@ -48,7 +59,13 @@ interface PageBundleResult {
 
 export class PageRenderer {
   private readonly projectDir: string;
+  /** Compile vocabulary: "development" | "production". */
   private readonly mode: string;
+  /**
+   * Request vocabulary: "preview" | "production". Drives studio
+   * instrumentation. Only the fallback: a per-render environment wins.
+   */
+  private readonly environment: RenderEnvironment;
   private readonly config: VeryfrontConfig;
   private readonly adapter: RuntimeAdapter;
   private readonly componentRegistry: ComponentRegistry;
@@ -58,11 +75,18 @@ export class PageRenderer {
     filePath?: string,
   ) => Promise<PageBundle>;
   private readonly moduleServerUrl?: string;
+  private readonly isLocalProject: boolean;
   private reactVersionPromise: Promise<string> | null = null;
 
   constructor(options: {
     projectDir: string;
+    /** Compile vocabulary: "development" | "production". */
     mode: string;
+    /**
+     * Request vocabulary: "preview" | "production". A hosted preview render is
+     * mode "production" with environment "preview", so the two are separate.
+     */
+    environment: RenderEnvironment;
     config: VeryfrontConfig;
     adapter: RuntimeAdapter;
     componentRegistry: ComponentRegistry;
@@ -72,14 +96,18 @@ export class PageRenderer {
       filePath?: string,
     ) => Promise<PageBundle>;
     moduleServerUrl?: string;
+    /** Server-trusted local-project identity. */
+    isLocalProject?: boolean;
   }) {
     this.projectDir = options.projectDir;
     this.mode = options.mode;
+    this.environment = options.environment;
     this.config = options.config;
     this.adapter = options.adapter;
     this.componentRegistry = options.componentRegistry;
     this.compileMDX = options.compileMDX;
     this.moduleServerUrl = options.moduleServerUrl;
+    this.isLocalProject = options.isLocalProject === true;
   }
 
   private async getMergedComponents(
@@ -87,12 +115,15 @@ export class PageRenderer {
     dependencyPinningDependencies?: Readonly<Record<string, string>>,
     dependencyPinningSource?: DependencyPinningSourceInput,
     moduleServerOrigin?: string,
+    environment: RenderEnvironment = this.environment,
   ): Promise<MDXComponents> {
     const snapshotKey = await this.componentRegistry.prepareDependencySnapshot(
       dependencyPinningCacheKey,
       dependencyPinningDependencies,
       dependencyPinningSource,
       moduleServerOrigin,
+      this.config.build?.serverExternalPackages,
+      environment,
     );
     return {
       ...createDefaultMDXComponents(),
@@ -171,6 +202,7 @@ export class PageRenderer {
                 url: options?.url,
                 props: options?.props,
                 nonce: options?.nonce,
+                releaseId: options?.releaseId,
                 dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
                 dependencyPinningDependencies: options?.dependencyPinningDependencies,
               }),
@@ -220,11 +252,14 @@ export class PageRenderer {
                   projectId: options?.projectId,
                   studioEmbed: options?.studioEmbed,
                   mode: this.mode,
+                  environment: options?.environment ?? this.environment,
                   contentSourceId: options?.contentSourceId,
                   reactVersion,
                   dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
                   dependencyPinningDependencies: options?.dependencyPinningDependencies,
                   dependencyPinningSource: options?.dependencyPinningSource,
+                  serverExternalPackages: this.config.build?.serverExternalPackages,
+                  signal: options?.abortSignal,
                 },
               ),
             { "render.component_path": pageInfo.entity.path },
@@ -251,6 +286,7 @@ export class PageRenderer {
                 options?.dependencyPinningDependencies,
                 options?.dependencyPinningSource,
                 options?.url?.origin,
+                options?.environment ?? this.environment,
               ),
               this.compileMDX,
               this.adapter,
@@ -261,11 +297,14 @@ export class PageRenderer {
                 projectId: options?.projectId,
                 studioEmbed: options?.studioEmbed,
                 projectSlug: options?.projectSlug,
+                mode: this.mode,
                 contentSourceId: options?.contentSourceId,
                 reactVersion,
+                serverExternalPackages: this.config.build?.serverExternalPackages,
                 dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
                 dependencyPinningDependencies: options?.dependencyPinningDependencies,
                 dependencyPinningSource: options?.dependencyPinningSource,
+                isLocalProject: this.isLocalProject,
               },
             ),
           { "render.mdx_path": pageInfo.entity.path },

@@ -23,12 +23,23 @@ function bundle(
 describe("build/asset-pipeline/css-optimizer/css-bundle-cache", () => {
   it("starts empty and clears all state", () => {
     const cache = new CacheManager();
-    assertEquals(cache.size(), 0);
+    assertEquals(cache.size(), 0, "a new cache holds no bundles");
     cache.addBundle("a.css", bundle("a.css", 10, "12345"));
-    assertEquals(cache.size(), 1);
+    assertEquals(cache.size(), 1, "an added bundle is held by the cache");
+    assertEquals(cache.getStats().totalFiles, 1, "stats are computed before clearing");
     cache.clear();
-    assertEquals(cache.size(), 0);
-    assertEquals(cache.getStats().totalFiles, 0);
+    assertEquals(cache.size(), 0, "clear() drops every bundle");
+    assertEquals(
+      cache.getStats(),
+      {
+        totalFiles: 0,
+        originalSize: 0,
+        minifiedSize: 0,
+        totalSavings: 0,
+        averageSavings: 0,
+      },
+      "clear() invalidates the memoized statistics",
+    );
   });
 
   it("computes aggregate byte savings", () => {

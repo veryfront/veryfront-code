@@ -1,5 +1,7 @@
 import { refreshLoggerConfig, serverLogger } from "./logger/index.ts";
-import { cwd as getCwd, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { sanitizeUrlCredentials } from "./logger/redact.ts";
+import { getEnv, setEnv } from "#veryfront/platform/compat/process/env.ts";
+import { cwd as getCwd } from "#veryfront/platform/compat/process/lifecycle.ts";
 import { isNotFoundError, readTextFile } from "#veryfront/platform/compat/fs.ts";
 
 const logger = serverLogger.component("env");
@@ -37,13 +39,15 @@ export async function loadEnv(
         envSources.set(key, file);
         totalVars++;
 
+        // Log only the key name and value length — never any part of the value.
+        // Env files routinely carry credentials (VERYFRONT_API_TOKEN, DSNs), and
+        // a 20-char prefix is enough to leak most of a token.
         if (debug) {
-          logger.debug(
-            `[env] ${key}=${value.substring(0, 20)}${value.length > 20 ? "..." : ""}`,
-          );
+          logger.debug(`[env] ${key} (${value.length} chars)`);
         }
         if (key === "VERYFRONT_API_BASE_URL") {
-          logger.info(`VERYFRONT_API_BASE_URL loaded: ${value}`);
+          // Hybrid setups can embed userinfo credentials in the URL; strip them.
+          logger.info(`VERYFRONT_API_BASE_URL loaded: ${sanitizeUrlCredentials(value)}`);
         }
       }
 

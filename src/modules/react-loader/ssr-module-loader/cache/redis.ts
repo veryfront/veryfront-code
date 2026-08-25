@@ -1,9 +1,11 @@
 /** Redis caching for cross-pod SSR module sharing */
 
 import { rendererLogger } from "#veryfront/utils";
-import { getSSRModuleRedisTTL } from "../constants.ts";
+import { getSSRModuleRedisTTL, LOCAL_DEV_SSR_MODULE_TTL_SEC } from "../constants.ts";
 import { CacheBackends, createDistributedCodeCacheAccessor } from "#veryfront/cache/backend.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
+import { isDevelopment } from "#veryfront/platform/environment.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 const SSR_MODULE_CACHE_PREFIX = "ssr-module";
@@ -19,16 +21,59 @@ const SHA256_KEY_PREFIX = "sha256:";
 const getDistributedCodeCache = createDistributedCodeCacheAccessor(
   () => CacheBackends.ssrModule(),
   "SSR-MODULE-LOADER",
+  getCacheBaseDir,
 );
+
+/**
+ * Background cache writes started by the render path.
+ *
+ * A transform publishes to the distributed cache without blocking the render on
+ * it, which leaves the write running with nobody holding its promise. Tracking
+ * those promises keeps the fire-and-forget deliberate rather than unobservable:
+ * a caller that is about to tear down the cache directory -- a test, or a
+ * shutdown path -- can wait for the disk to settle instead of racing it.
+ *
+ * Racing it is not harmless. The write fails mid-flight when its directory
+ * disappears, and the failure lands in a cleanup path that is still running
+ * after its owner has gone.
+ */
+const backgroundWrites = new Set<Promise<unknown>>();
+
+/** Register a write started without an owner awaiting it. */
+export function trackBackgroundWrite(write: Promise<unknown>): void {
+  backgroundWrites.add(write);
+  void write.catch(() => {}).finally(() => {
+    backgroundWrites.delete(write);
+  });
+}
+
+/**
+ * Wait for every tracked background write to settle.
+ *
+ * Loops because a settling write can register another one; the set is empty
+ * only when nothing is left in flight.
+ */
+export async function drainBackgroundWrites(): Promise<void> {
+  while (backgroundWrites.size > 0) {
+    await Promise.allSettled([...backgroundWrites]);
+  }
+}
+
+let distributedCacheEnabled = false;
 
 /** Initialize distributed caching for SSR modules */
 export async function initializeSSRDistributedCache(): Promise<boolean> {
-  return (await getDistributedCodeCache()) !== null;
+  distributedCacheEnabled = (await getDistributedCodeCache()) !== null;
+  return distributedCacheEnabled;
 }
 
-/** Check if distributed caching is enabled for SSR modules */
+/**
+ * Report whether initialization actually resolved a distributed backend.
+ * Stays false when the process runs on the in-memory backend, where
+ * `initializeSSRDistributedCache` is never called.
+ */
 export function isSSRDistributedCacheEnabled(): boolean {
-  return true;
+  return distributedCacheEnabled;
 }
 
 async function getDistributedCacheKey(cacheKey: string): Promise<string> {
@@ -72,7 +117,13 @@ export async function setInRedis(
   const gateway = await getDistributedCodeCache();
   if (!gateway) return;
 
-  const ttl = options?.ttlSeconds ?? getSSRModuleRedisTTL(options?.isProduction ?? true);
+  // The preview TTL is tuned for a shared branch cache and expires long before
+  // a developer returns to the project, so an on-disk local dev cache would go
+  // cold anyway. Keep those entries for a working day instead.
+  const ttl = options?.ttlSeconds ??
+    (isDevelopment() && gateway.type === "disk"
+      ? LOCAL_DEV_SSR_MODULE_TTL_SEC
+      : getSSRModuleRedisTTL(options?.isProduction ?? true));
 
   try {
     // Use setCode() for automatic tokenization

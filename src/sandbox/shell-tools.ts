@@ -6,6 +6,7 @@ import type {
   SandboxShellToolSet,
   SandboxShellToolsProvider,
 } from "#veryfront/extensions/sandbox/index.ts";
+import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 
 export type {
   SandboxShellClient as BashToolSandboxLike,
@@ -87,6 +88,11 @@ function normalizeJsonSchemaProperties(value: unknown): Record<string, JsonSchem
   return properties;
 }
 
+function normalizeJsonValue(value: unknown) {
+  const snapshot = snapshotBoundedJsonValue(value);
+  return snapshot.success ? snapshot.value : undefined;
+}
+
 function normalizeJsonSchema(value: unknown): JsonSchema | undefined {
   if (!isRecord(value)) {
     return undefined;
@@ -100,12 +106,17 @@ function normalizeJsonSchema(value: unknown): JsonSchema | undefined {
   const items = normalizeJsonSchema(value.items);
   const anyOf = normalizeJsonSchemaArray(value.anyOf);
   const prefixItems = normalizeJsonSchemaArray(value.prefixItems);
+  const enumValue = normalizeJsonValue(value.enum);
+  const constValue = Object.hasOwn(value, "const") ? normalizeJsonValue(value.const) : undefined;
+  const defaultValue = Object.hasOwn(value, "default")
+    ? normalizeJsonValue(value.default)
+    : undefined;
 
   if (type !== undefined) schema.type = type;
   if (description !== undefined) schema.description = description;
-  if (Array.isArray(value.enum)) schema.enum = [...value.enum];
-  if ("const" in value) schema.const = value.const;
-  if ("default" in value) schema.default = value.default;
+  if (Array.isArray(enumValue)) schema.enum = enumValue;
+  if (constValue !== undefined) schema.const = constValue;
+  if (defaultValue !== undefined) schema.default = defaultValue;
   if (properties !== undefined) schema.properties = properties;
   if (required !== undefined) schema.required = required;
   if (items !== undefined) schema.items = items;

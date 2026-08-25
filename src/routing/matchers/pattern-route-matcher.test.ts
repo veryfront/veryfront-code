@@ -60,6 +60,18 @@ describe("pattern-route-matcher", () => {
       assertEquals(match !== null, true);
     });
 
+    it("invalidates a negatively cached path when the route is registered later", () => {
+      const router = new PageRouteMatcher();
+
+      assertEquals(router.match("/late"), null, "unregistered path misses");
+      router.addRoute("/late", "late.tsx");
+      assertEquals(
+        router.match("/late")?.route.page,
+        "late.tsx",
+        "addRoute must clear the cached 404 so late-discovered routes resolve",
+      );
+    });
+
     it("should return null for unmatched routes", () => {
       const router = new PageRouteMatcher();
       router.addRoute("/about", "about.tsx");

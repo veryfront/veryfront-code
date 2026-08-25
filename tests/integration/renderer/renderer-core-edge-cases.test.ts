@@ -421,11 +421,7 @@ source: app
     });
 
     describe("Component Loading Edge Cases", () => {
-      // SKIPPED: Test expects error but ESBuild removes unused imports during transformation
-      // Root cause: ESBuild's transform() API removes unused imports as optimization, regardless of treeShaking setting
-      // See: src/transforms/esm/transform-core.ts:73
-      // Investigation: RENDERER_CORE_TEST_INVESTIGATION.md (Session 36-37)
-      it.skip("should handle component with import errors", async () => {
+      it("should handle component with import errors", async () => {
         await withTestContext("renderer-core-import-error", async (context) => {
           await remove(join(context.projectDir, "app"), { recursive: true });
 
@@ -434,7 +430,7 @@ source: app
             `import NonExistent from './non-existent.tsx';
 
 export default function Page() {
-  return <div>Test</div>;
+  return <NonExistent />;
 }`,
           );
 

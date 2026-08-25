@@ -226,7 +226,6 @@ export async function* streamOpenAICompatibleParts(
   let sawChoiceEnvelope = false;
   let sawFinishReason = false;
   let sawDone = false;
-  let sawPostFinishUsage = false;
   const toolArgumentBudget: OpenAIStreamToolArgumentBudget = {
     bytes: 0,
     fragments: 0,
@@ -258,27 +257,18 @@ export async function* streamOpenAICompatibleParts(
       if (!usageRecord) {
         throw invalidOpenAIStream(context, "event had neither choices nor usage");
       }
-      if (sawFinishReason) {
-        if (sawPostFinishUsage) {
-          throw invalidOpenAIStream(context, "stream contained multiple post-finish usage events");
-        }
-        sawPostFinishUsage = true;
-      }
       return;
     }
     if (!Array.isArray(record.choices)) {
       throw invalidOpenAIStream(context, "choices was not an array");
     }
+    // An empty `choices` array carries no content. Usage-only frames use this
+    // shape, and so does Azure OpenAI's `prompt_filter_results` preamble, which
+    // arrives before the first content chunk with neither choices nor usage.
+    // Both are informational, so skip the frame instead of failing the stream.
+    // The `choices` key being absent entirely is still rejected above — that is
+    // a malformed event rather than a content-free one.
     if (record.choices.length === 0) {
-      if (!usageRecord) {
-        throw invalidOpenAIStream(context, "empty choices event had no usage");
-      }
-      if (sawFinishReason) {
-        if (sawPostFinishUsage) {
-          throw invalidOpenAIStream(context, "stream contained multiple post-finish usage events");
-        }
-        sawPostFinishUsage = true;
-      }
       return;
     }
     if (sawFinishReason) {
@@ -313,14 +303,19 @@ export async function* streamOpenAICompatibleParts(
       delta = deltaRecord;
     }
 
+    // Optional delta fields are `null` rather than absent on many
+    // OpenAI-compatible gateways (Moonshot/Kimi sends `reasoning_content: null`
+    // on both the opening and the finish chunk). Treat `null` as "not present
+    // on this chunk", matching how `content`, `refusal`, `tool_calls`, and
+    // `finish_reason` are already handled below.
     if (
-      delta.role !== undefined &&
+      delta.role !== undefined && delta.role !== null &&
       delta.role !== "assistant"
     ) {
       throw invalidOpenAIStream(context, "choice delta role was not assistant");
     }
     if (
-      delta.reasoning_content !== undefined &&
+      delta.reasoning_content !== undefined && delta.reasoning_content !== null &&
       typeof delta.reasoning_content !== "string"
     ) {
       throw invalidOpenAIStream(context, "reasoning delta was malformed");
@@ -377,8 +372,12 @@ export async function* streamOpenAICompatibleParts(
         throw invalidOpenAIStream(context, "tool call index was malformed");
       }
       const toolCallIndex = index as number;
+      // As with the reasoning delta above, gateways repeat `id`, `type`, and
+      // `function.name` as `null` on continuation fragments instead of omitting
+      // them; only the opening fragment carries real values. Treat `null` as
+      // absent so the fragment merges into the call already being assembled.
       if (
-        toolCallRecord.id !== undefined &&
+        toolCallRecord.id !== undefined && toolCallRecord.id !== null &&
         !isBoundedOpenAIStreamString(
           toolCallRecord.id,
           MAX_OPENAI_STREAM_IDENTIFIER_BYTES,
@@ -387,7 +386,7 @@ export async function* streamOpenAICompatibleParts(
         throw invalidOpenAIStream(context, "tool call id was malformed");
       }
       if (
-        toolCallRecord.type !== undefined &&
+        toolCallRecord.type !== undefined && toolCallRecord.type !== null &&
         toolCallRecord.type !== "function"
       ) {
         throw invalidOpenAIStream(context, "tool call type was not function");
@@ -423,7 +422,7 @@ export async function* streamOpenAICompatibleParts(
           throw invalidOpenAIStream(context, "tool call function was not an object");
         }
         if (
-          fn.name !== undefined &&
+          fn.name !== undefined && fn.name !== null &&
           !isBoundedOpenAIStreamString(fn.name, MAX_OPENAI_STREAM_TOOL_NAME_BYTES)
         ) {
           throw invalidOpenAIStream(context, "tool call function name was malformed");
@@ -444,7 +443,10 @@ export async function* streamOpenAICompatibleParts(
           };
         }
 
-        if (fn.arguments !== undefined && typeof fn.arguments !== "string") {
+        if (
+          fn.arguments !== undefined && fn.arguments !== null &&
+          typeof fn.arguments !== "string"
+        ) {
           throw invalidOpenAIStream(context, "tool call arguments delta was malformed");
         }
         if (typeof fn.arguments === "string") {

@@ -8,6 +8,7 @@ import {
   __resetLogRecordEmitterForTests,
   type LogEntry,
 } from "#veryfront/utils/logger/logger.ts";
+import { isNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
 import { NodeFileSystemAdapter } from "./filesystem-adapter.ts";
 
 function captureDebugLogs(): { entries: LogEntry[]; restore: () => void } {
@@ -60,44 +61,85 @@ describe("NodeFileSystemAdapter", () => {
       await Deno.symlink(exact, link);
       const adapter = new NodeFileSystemAdapter();
 
-      assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), true);
-      const readSnapshot = adapter.readFileSnapshotWithinLimit;
-      if (readSnapshot === undefined) return;
-      assertExists(readSnapshot);
-      assertEquals([...await readSnapshot(empty, root, 1)], []);
-      assertEquals([...await readSnapshot(exact, root, 3)], [1, 2, 3]);
-      await assertRejects(
-        () => readSnapshot(oversized, root, 3),
-        RangeError,
+      assertEquals(
+        Object.hasOwn(adapter, "createFileBytesExclusive"),
+        true,
+        "the exclusive-create capability must be constructed on every platform",
       );
-      for (const limit of [0, Number.MAX_SAFE_INTEGER + 1]) {
+      if (Deno.build.os === "windows") {
+        assertEquals(
+          Object.hasOwn(adapter, "readFileSnapshotWithinLimit"),
+          false,
+          "Deno-hosted Windows has no usable Node snapshot identity",
+        );
+        assertEquals(
+          adapter.readFileSnapshotWithinLimit,
+          undefined,
+          "the absent capability must not be inherited",
+        );
+      } else {
+        assertEquals(
+          Object.hasOwn(adapter, "readFileSnapshotWithinLimit"),
+          true,
+          "POSIX Node adapters must construct a bounded snapshot reader",
+        );
+        assertExists(adapter.readFileSnapshotWithinLimit);
+        const readSnapshot = adapter.readFileSnapshotWithinLimit;
+        assertEquals(
+          [...await readSnapshot(empty, root, 1)],
+          [],
+          "an empty file must snapshot to zero bytes",
+        );
+        assertEquals(
+          [...await readSnapshot(exact, root, 3)],
+          [1, 2, 3],
+          "a file at the byte limit must snapshot exactly",
+        );
         await assertRejects(
-          () => readSnapshot(exact, root, limit),
+          () => readSnapshot(oversized, root, 3),
           RangeError,
+          undefined,
+          "a file over the byte limit must be refused",
+        );
+        for (const limit of [0, Number.MAX_SAFE_INTEGER + 1]) {
+          await assertRejects(
+            () => readSnapshot(exact, root, limit),
+            RangeError,
+            undefined,
+            `an out-of-range byte limit (${limit}) must be refused`,
+          );
+        }
+        await assertRejects(
+          () => readSnapshot(directory, root, 3),
+          TypeError,
+          undefined,
+          "a directory must not be snapshot as a file",
+        );
+        await assertRejects(
+          () => readSnapshot(link, root, 3),
+          TypeError,
+          undefined,
+          "a symlink must be refused instead of followed",
         );
       }
-      await assertRejects(
-        () => readSnapshot(directory, root, 3),
-        TypeError,
-      );
-      await assertRejects(
-        () => readSnapshot(link, root, 3),
-        TypeError,
-      );
     } finally {
       await Deno.remove(root, { recursive: true });
     }
   });
 
-  it("omits only snapshot authority for absent or zero O_NOFOLLOW", () => {
+  it("requires O_NOFOLLOW on POSIX and actual Node provenance on Windows", () => {
     const TestableAdapter = NodeFileSystemAdapter as unknown as new (
-      options: { noFollow?: number },
+      options: { noFollow?: number; platform?: "posix" | "windows" },
     ) => NodeFileSystemAdapter;
     for (const noFollow of [undefined, 0]) {
-      const adapter = new TestableAdapter({ noFollow });
+      const adapter = new TestableAdapter({ noFollow, platform: "posix" });
       assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), false);
       assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), true);
     }
+    const windowsAdapter = new TestableAdapter({ noFollow: 1, platform: "windows" });
+    // Tests run under Deno; changing path semantics must not forge Node runtime
+    // provenance for a Node-compatible filesystem implementation.
+    assertEquals(Object.hasOwn(windowsAdapter, "readFileSnapshotWithinLimit"), false);
   });
 
   it("does not log an expected missing path as an access failure", async () => {
@@ -130,5 +172,32 @@ describe("NodeFileSystemAdapter", () => {
     } finally {
       logs.restore();
     }
+  });
+
+  it("marks only direct built-in instances as native", () => {
+    class DerivedAdapter extends NodeFileSystemAdapter {}
+
+    assertEquals(isNativeFileSystemAdapter(new NodeFileSystemAdapter()), true);
+    assertEquals(isNativeFileSystemAdapter(new DerivedAdapter()), false);
+  });
+
+  it("refuses a subclass that hides its own prototype.constructor", () => {
+    class ConstructorDeletingAdapter extends NodeFileSystemAdapter {}
+    Reflect.deleteProperty(ConstructorDeletingAdapter.prototype, "constructor");
+
+    class ConstructorSpoofingAdapter extends NodeFileSystemAdapter {}
+    Object.defineProperty(ConstructorSpoofingAdapter.prototype, "constructor", {
+      configurable: true,
+      value: NodeFileSystemAdapter,
+    });
+
+    assertEquals(
+      isNativeFileSystemAdapter(new ConstructorDeletingAdapter()),
+      false,
+    );
+    assertEquals(
+      isNativeFileSystemAdapter(new ConstructorSpoofingAdapter()),
+      false,
+    );
   });
 });

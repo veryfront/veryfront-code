@@ -159,6 +159,21 @@ describe("mcp/standalone", () => {
       const names = skills.map((s: { name: string }) => s.name);
       assertEquals(names.includes("scaffold-app"), true);
       assertEquals(names.includes("deploy-safely"), true);
+      for (const skill of skills) {
+        assertEquals(Object.hasOwn(skill, "directory"), false);
+      }
+    });
+
+    it("uses ASCII punctuation in public MCP and CLI schema copy", async () => {
+      const server = new StandaloneMCPServer();
+      const [tools, resources, schema] = await Promise.all([
+        dispatch(server, "tools/list"),
+        dispatch(server, "resources/list"),
+        dispatch(server, "resources/read", { uri: "veryfront://schema" }),
+      ]);
+      const publicCopy = JSON.stringify([tools.result, resources.result, schema.result]);
+
+      assertEquals(/[\u2013\u2014]/.test(publicCopy), false);
     });
 
     it("resources/read unknown URI returns error", async () => {

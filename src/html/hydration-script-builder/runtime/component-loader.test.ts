@@ -167,13 +167,31 @@ describe("hydration-script-builder/runtime/component-loader", () => {
       assertEquals(loader.pathToModuleUrl("pages/blog.mdx"), assetUrl);
     });
 
-    it("ignores release assets while Studio embed or HMR is serving fresh modules", () => {
+    it("ignores release assets while HMR is serving fresh modules", () => {
       const assetUrl = "/_vf/assets/" + "d".repeat(64) + ".js";
       const { loader } = createLoaderHarness();
       loader.setReleaseAssetModules({ "pages/blog.mdx": assetUrl });
       loader.setHMRRefreshTimestamp("77");
 
       assertEquals(loader.pathToModuleUrl("pages/blog.mdx"), "/_vf_modules/pages/blog.js?t=77");
+    });
+
+    it("ignores release assets while Studio embed is serving fresh modules", () => {
+      const assetUrl = "/_vf/assets/" + "e".repeat(64) + ".js";
+      const { loader } = createLoaderHarness();
+      loader.setReleaseAssetModules({ "pages/blog.mdx": assetUrl });
+      loader.setStudioEmbed(true);
+
+      assertEquals(
+        loader.pathToModuleUrl("pages/blog.mdx"),
+        "/_vf_modules/pages/blog.js",
+        "studio embed must bypass immutable release assets so Studio edits appear",
+      );
+      assertEquals(
+        loader.pathToModuleUrl("pages/blog.mdx", true),
+        "/_vf_modules/pages/blog.js?studio_embed=true",
+        "an explicit studio-embed request must also bypass release assets",
+      );
     });
   });
 
@@ -307,10 +325,21 @@ describe("hydration-script-builder/runtime/component-loader", () => {
     it("forwards allowDocumentReload:false so a speculative load cannot reload the page", async () => {
       const { loader, reloadRequests, importedUrls } = createLoaderHarness();
 
+      await loader.loadComponent("pages/default.tsx");
+      assertEquals(
+        reloadRequests,
+        ["/_vf_modules/pages/default.js"],
+        "a foreground load must permit document-reload recovery",
+      );
+
       await loader.loadComponent("pages/a.tsx", undefined, { allowDocumentReload: false });
 
-      assertEquals(importedUrls.length, 1);
-      assertEquals(reloadRequests, []);
+      assertEquals(importedUrls.length, 2);
+      assertEquals(
+        reloadRequests,
+        ["/_vf_modules/pages/default.js"],
+        "allowDocumentReload:false must not request a document reload",
+      );
     });
 
     it("clears one path or the whole cache", async () => {

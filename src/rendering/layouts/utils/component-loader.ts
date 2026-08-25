@@ -1,11 +1,14 @@
 import {
+  awaitAbortable,
   computeHash,
   rendererLogger as logger,
+  throwIfAborted,
   TSX_LAYOUT_MAX_ENTRIES,
   TSX_LAYOUT_PER_PROJECT_MAX_ENTRIES,
 } from "#veryfront/utils";
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 import type { LayoutItem, MdxBundle, MDXComponents, MDXModule } from "#veryfront/types";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { createError, toError } from "#veryfront/errors";
@@ -19,12 +22,15 @@ import { getProjectReact } from "#veryfront/react";
 import { ensureValidChild } from "./ensure-valid-child.ts";
 import { buildLayoutComponentCacheKey, CacheKeyPrefix } from "#veryfront/cache/keys.ts";
 import { LAYOUT_EXTENSIONS } from "#veryfront/rendering/layouts/types.ts";
+import type { RenderModes } from "#veryfront/rendering/context/render-context.ts";
 import {
   type DependencyPinningSourceInput,
   resolveDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
+import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
 
 const loadMdxLayoutLog = logger.component("load-mdx-layout");
 const applyTsxLayoutLog = logger.component("apply-tsx-layout");
@@ -255,13 +261,18 @@ export async function loadTSXComponent(
   projectId: string,
   projectSlug: string,
   contentSourceId: string,
+  modes: RenderModes,
   reactVersion?: string,
   deps: LoadTSXComponentDeps = { loadComponentFromSource },
   dependencyPinningCacheKey?: string,
   dependencyPinningDependencies?: Readonly<Record<string, string>>,
   dependencyPinningSource?: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
+  serverExternalPackages?: readonly string[],
+  signal?: AbortSignal,
 ): Promise<BundledReact.ComponentType> {
+  throwIfAborted(signal);
+  const dev = modes.compileMode === "development";
   const source = await adapter.fs.readFile(componentPath);
   const dependencySnapshot = await resolveDependencyPinningSnapshot(
     dependencyPinningSource ?? projectDir,
@@ -276,14 +287,28 @@ export async function loadTSXComponent(
     dependencySnapshot.cacheKey,
     moduleServerOrigin,
   );
-  const cacheKey = cacheVariant ? `${legacyCacheKey}:pins:${cacheVariant}` : legacyCacheKey;
+  const serverExternalPackagesIdentity = buildServerExternalPackagesIdentity(
+    serverExternalPackages,
+  );
+  let cacheKey = cacheVariant ? `${legacyCacheKey}:pins:${cacheVariant}` : legacyCacheKey;
+  if (serverExternalPackagesIdentity) {
+    cacheKey += `:server-externals:${hashString(serverExternalPackagesIdentity)}`;
+  }
+  // The transform output differs by mode, so the two modes must not share an
+  // entry. Production keeps the historical key shape. Preview instruments the
+  // output with node positions on top of a production compile, so it needs its
+  // own entry too.
+  if (dev) cacheKey += ":dev";
+  if (modes.environment === "preview") cacheKey += ":preview";
 
+  throwIfAborted(signal);
   const cached = cache.get(cacheKey);
   if (cached) return cached;
 
   const loaded = await getTSXComponentFlights(cache).do(
     cacheKey,
     async (control) => {
+      throwIfAborted(control.signal);
       const cachedDuringFlight = cache.get(cacheKey);
       if (cachedDuringFlight) return cachedDuringFlight;
 
@@ -293,16 +318,19 @@ export async function loadTSXComponent(
         projectDir,
         adapter,
         {
-          dev: true,
+          dev,
           projectId,
           projectSlug,
           ssr: true,
           contentSourceId,
           reactVersion,
+          serverExternalPackages,
           moduleServerOrigin,
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
           dependencyPinningDependencies: dependencySnapshot.dependencies,
           dependencyPinningSource: dependencyPinningSource ?? projectDir,
+          mode: modes.environment,
+          signal: control.signal,
         },
       );
 
@@ -327,26 +355,80 @@ export async function loadTSXComponent(
           componentPath,
         });
       },
+      signal,
+      cancelWhenUnobserved: true,
     },
   );
   return loaded;
 }
 
+/**
+ * Inputs shared by every MDX layout module load.
+ *
+ * These are named rather than positional because the chain is long enough that
+ * a value in the wrong slot still type-checks. `modes` in particular carries
+ * two vocabularies that are both mode-shaped and disagree on a hosted preview
+ * render, so it travels as the pair and is unpacked at the one seam that
+ * consumes it.
+ */
+export interface MDXLayoutModuleOptions {
+  bundle: MdxBundle;
+  projectDir: string;
+  adapter: RuntimeAdapter;
+  projectId: string;
+  projectSlug: string;
+  contentSourceId: string;
+  /**
+   * Compile and request vocabularies for this render. `compileMode` selects the
+   * compile mode of the layout's own `/_vf_modules/*` imports. `environment`
+   * has no consumer below this seam today and is carried so that no caller has
+   * to choose between the two, which is the choice that type-checks when made
+   * wrongly.
+   */
+  modes: RenderModes;
+  reactVersion?: string;
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningSource?: DependencyPinningSourceInput;
+  moduleServerOrigin?: string;
+  config?: VeryfrontConfig;
+  isLocalProject?: boolean;
+  /**
+   * Request cancellation. The import-map preloader and ESM module loader do
+   * not take a signal themselves, so each stage is guarded and the module wait
+   * is raced against cancellation.
+   */
+  signal?: AbortSignal;
+}
+
+/** Inputs for {@link loadMDXLayout}. */
+export interface LoadMDXLayoutOptions extends MDXLayoutModuleOptions {
+  preloadedImportMap?: ImportMapConfig;
+}
+
 /** Load an MDX layout module from a bundle. */
 export function loadMDXLayout(
-  bundle: MdxBundle,
-  projectDir: string,
-  adapter: RuntimeAdapter,
-  projectId: string,
-  projectSlug: string,
-  contentSourceId: string,
-  preloadedImportMap?: ImportMapConfig,
-  reactVersion?: string,
-  dependencyPinningCacheKey?: string,
-  dependencyPinningDependencies?: Readonly<Record<string, string>>,
-  dependencyPinningSource?: DependencyPinningSourceInput,
-  moduleServerOrigin?: string,
+  options: LoadMDXLayoutOptions,
 ): Promise<BundledReact.ComponentType<{ components?: MDXComponents }> | undefined> {
+  const {
+    bundle,
+    projectDir,
+    adapter,
+    projectId,
+    projectSlug,
+    contentSourceId,
+    modes,
+    preloadedImportMap,
+    reactVersion,
+    dependencyPinningCacheKey,
+    dependencyPinningDependencies,
+    dependencyPinningSource,
+    moduleServerOrigin,
+    config,
+    isLocalProject,
+    signal,
+  } = options;
+
   return withSpan(
     SpanNames.LAYOUT_LOAD_MDX,
     async () => {
@@ -355,30 +437,45 @@ export function loadMDXLayout(
         hasPreloadedImportMap: !!preloadedImportMap,
       });
 
-      const map = preloadedImportMap ?? (await preloadImportMap(projectDir, adapter, projectId));
+      throwIfAborted(signal);
+      const map = preloadedImportMap ?? (await awaitAbortable(
+        preloadImportMap(projectDir, adapter, projectId, {
+          projectDir,
+          contentSourceId,
+          config,
+        }),
+        signal,
+      ));
       if (preloadedImportMap) {
         loadMdxLayoutLog.debug("Using preloaded import map", { projectSlug });
       }
 
+      throwIfAborted(signal);
       const code = transformImportsWithMap(bundle.compiledCode, map);
       loadMdxLayoutLog.debug("Loading module via loadModuleESM START", {
         projectSlug,
         codeLength: code.length,
       });
 
-      const mod = (await mdxRenderer.loadModuleESM(
-        code,
-        adapter,
-        projectId,
-        projectDir,
-        projectSlug,
-        contentSourceId,
-        reactVersion,
-        dependencyPinningCacheKey,
-        dependencyPinningDependencies,
-        dependencyPinningSource,
-        moduleServerOrigin,
+      const mod = (await awaitAbortable(
+        mdxRenderer.loadModuleESM(code, {
+          adapter,
+          projectId,
+          projectDir,
+          projectSlug,
+          contentSourceId,
+          mode: modes.compileMode,
+          reactVersion,
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
+          dependencyPinningSource,
+          moduleServerOrigin,
+          isLocalProject,
+          serverExternalPackages: config?.build?.serverExternalPackages,
+        }),
+        signal,
       )) as MDXModule;
+      throwIfAborted(signal);
 
       loadMdxLayoutLog.debug("loadModuleESM DONE", {
         projectSlug,
@@ -395,34 +492,16 @@ export function loadMDXLayout(
   );
 }
 
-/** Preload an MDX layout module into cache for faster subsequent loads. */
+/**
+ * Preload an MDX layout module into cache for faster subsequent loads.
+ *
+ * The preload resolves the import map itself, so it takes no
+ * `preloadedImportMap`.
+ */
 export async function preloadMDXLayoutModule(
-  bundle: MdxBundle,
-  projectDir: string,
-  adapter: RuntimeAdapter,
-  projectId: string,
-  projectSlug: string,
-  contentSourceId: string,
-  reactVersion?: string,
-  dependencyPinningCacheKey?: string,
-  dependencyPinningDependencies?: Readonly<Record<string, string>>,
-  dependencyPinningSource?: DependencyPinningSourceInput,
-  moduleServerOrigin?: string,
+  options: MDXLayoutModuleOptions,
 ): Promise<void> {
-  await loadMDXLayout(
-    bundle,
-    projectDir,
-    adapter,
-    projectId,
-    projectSlug,
-    contentSourceId,
-    undefined,
-    reactVersion,
-    dependencyPinningCacheKey,
-    dependencyPinningDependencies,
-    dependencyPinningSource,
-    moduleServerOrigin,
-  );
+  await loadMDXLayout(options);
 }
 
 export async function applyTSXLayout(
@@ -435,11 +514,14 @@ export async function applyTSXLayout(
   projectId: string,
   projectSlug: string,
   contentSourceId: string,
+  modes: RenderModes,
   reactVersion?: string,
   dependencyPinningCacheKey?: string,
   dependencyPinningDependencies?: Readonly<Record<string, string>>,
   dependencyPinningSource?: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
+  serverExternalPackages?: readonly string[],
+  signal?: AbortSignal,
 ): Promise<BundledReact.ReactElement> {
   const start = performance.now();
   applyTsxLayoutLog.debug("START", {
@@ -462,12 +544,15 @@ export async function applyTSXLayout(
       projectId,
       projectSlug,
       contentSourceId,
+      modes,
       reactVersion,
       undefined,
       dependencyPinningCacheKey,
       dependencyPinningDependencies,
       dependencyPinningSource,
       moduleServerOrigin,
+      serverExternalPackages,
+      signal,
     );
 
     applyTsxLayoutLog.debug("loadTSXComponent DONE", {
@@ -493,37 +578,18 @@ export async function applyTSXLayout(
   }
 }
 
+/** Inputs for {@link applyMDXLayout}. */
+export interface ApplyMDXLayoutOptions extends LoadMDXLayoutOptions {
+  element: BundledReact.ReactElement;
+  mergedComponents: MDXComponents;
+}
+
 export async function applyMDXLayout(
-  element: BundledReact.ReactElement,
-  bundle: MdxBundle,
-  projectDir: string,
-  mergedComponents: MDXComponents,
-  adapter: RuntimeAdapter,
-  projectId: string,
-  projectSlug: string,
-  contentSourceId: string,
-  preloadedImportMap?: ImportMapConfig,
-  reactVersion?: string,
-  dependencyPinningCacheKey?: string,
-  dependencyPinningDependencies?: Readonly<Record<string, string>>,
-  dependencyPinningSource?: DependencyPinningSourceInput,
-  moduleServerOrigin?: string,
+  options: ApplyMDXLayoutOptions,
 ): Promise<BundledReact.ReactElement> {
+  const { element, mergedComponents, reactVersion } = options;
   const React = await getProjectReact(reactVersion);
-  const LayoutFn = await loadMDXLayout(
-    bundle,
-    projectDir,
-    adapter,
-    projectId,
-    projectSlug,
-    contentSourceId,
-    preloadedImportMap,
-    reactVersion,
-    dependencyPinningCacheKey,
-    dependencyPinningDependencies,
-    dependencyPinningSource,
-    moduleServerOrigin,
-  );
+  const LayoutFn = await loadMDXLayout(options);
 
   if (!LayoutFn) {
     applyMdxLayoutLog.debug("No layout function found");

@@ -57,7 +57,7 @@ export function unwrapSandboxWorkingDirectoryCommand(command: string): string {
   return trimmedCommand.replace(SANDBOX_WORKING_DIRECTORY_PREFIX_PATTERN, "").trim();
 }
 
-/** Options accepted by create project scoped exec. */
+/** Options accepted by create project-scoped exec. */
 export function createProjectScopedExecOptions(
   projectReference: string | null | undefined,
 ): ExecOptions {

@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
 import { createConversationHostedTerminalAdapter } from "../conversation/hosted-terminal.ts";
 import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
+import type { ConversationRunMirrorDisableReason } from "../conversation/run-mirror.ts";
 import { createMirroredToolChunkState } from "../streaming/mirrored-tool-chunk-state.ts";
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
@@ -12,7 +13,20 @@ import { finalizeHostedChatRun } from "./hosted-chat-finalization.ts";
 function createDurableRunMirror(input: {
   calls: string[];
   chunks?: ChatUiMessageChunk<MessageMetadata>[];
+  disableReason?: ConversationRunMirrorDisableReason;
 }): ConversationRunChunkMirror {
+  const snapshot = () => ({
+    latestEventId: 0,
+    latestExternalEventSequence: 0,
+    pendingEventCount: 0,
+    consecutiveFailures: 0,
+    disabled: input.disableReason !== undefined,
+    hasFlushTimer: false,
+    hasRetryTimer: false,
+    inFlight: false,
+    ...(input.disableReason !== undefined ? { disableReason: input.disableReason } : {}),
+  });
+
   return {
     handleChunk: async (chunk) => {
       input.calls.push(`append:${chunk.type}:${"id" in chunk ? chunk.id : ""}`);
@@ -21,27 +35,9 @@ function createDurableRunMirror(input: {
     appendEvents: async () => {},
     flush: async () => {
       input.calls.push("flush");
-      return {
-        latestEventId: 0,
-        latestExternalEventSequence: 0,
-        pendingEventCount: 0,
-        consecutiveFailures: 0,
-        disabled: false,
-        hasFlushTimer: false,
-        hasRetryTimer: false,
-        inFlight: false,
-      };
+      return snapshot();
     },
-    getSnapshot: () => ({
-      latestEventId: 0,
-      latestExternalEventSequence: 0,
-      pendingEventCount: 0,
-      consecutiveFailures: 0,
-      disabled: false,
-      hasFlushTimer: false,
-      hasRetryTimer: false,
-      inFlight: false,
-    }),
+    getSnapshot: snapshot,
     dispose: () => {},
   };
 }
@@ -698,6 +694,69 @@ describe("agent/hosted-chat-finalization", () => {
     });
   }
 
+  it("preserves delivered output when a trailing model step fails after a completed tool handoff", async () => {
+    const calls: string[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+
+    await finalizeHostedChatRun({
+      kind: "response",
+      responseMessage: createResponseMessage({ parts: [] }),
+      isAborted: false,
+      streamResult: createStreamResult({
+        text: "The environment panel is open and ready.",
+        finishReason: "tool-calls",
+      }),
+      lifecycleAdapter: createLifecycleAdapter({
+        calls,
+        terminalStates,
+        mirror: createDurableRunMirror({ calls }),
+      }),
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+      streamError: new Error("Provider request failed with status 502"),
+    });
+
+    assertEquals(terminalStates, [{ status: "completed" }]);
+  });
+
+  it("fails a watchdog timeout after a completed tool handoff", async () => {
+    const calls: string[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+
+    await finalizeHostedChatRun({
+      kind: "response",
+      responseMessage: createResponseMessage({ parts: [] }),
+      isAborted: false,
+      streamResult: createStreamResult({
+        text: "The environment panel is open and ready.",
+        finishReason: "tool-calls",
+      }),
+      lifecycleAdapter: createLifecycleAdapter({
+        calls,
+        terminalStates,
+        mirror: createDurableRunMirror({ calls }),
+      }),
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+      streamError: new Error("Chat stream idle timeout after 300000ms"),
+    });
+
+    assertEquals(terminalStates, [{
+      status: "failed",
+      terminalErrorCode: "STREAM_TIMEOUT",
+      terminalErrorMessage:
+        "This run timed out after 5 minutes before the agent finished. Try again to continue, or narrow the request.",
+    }]);
+  });
+
   it("logs and suppresses cleanup errors after terminal dispatch", async () => {
     const calls: string[] = [];
     const terminalStates: HostedLifecycleTerminalState[] = [];
@@ -728,5 +787,297 @@ describe("agent/hosted-chat-finalization", () => {
         metadata: { error: "cleanup failed" },
       },
     ]);
+  });
+  // veryfront-issue-inbox#743: once the API has rejected an append with
+  // "Cannot append external events to a terminal run", the run is finished
+  // server-side and its row may already be gone. Completing it afterwards can only
+  // 400, so finalization must be skipped entirely rather than attempted and logged.
+  it("skips durable run finalization when the mirror stopped on an already-terminal run", async () => {
+    const calls: string[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const { errors, logger } = createLogger();
+
+    await finalizeHostedChatRun({
+      kind: "response",
+      responseMessage: createResponseMessage({ parts: [] }),
+      isAborted: false,
+      streamResult: createStreamResult({ text: "response fallback" }),
+      lifecycleAdapter: createLifecycleAdapter({
+        calls,
+        terminalStates,
+        mirror: createDurableRunMirror({ calls, disableReason: "run_terminal" }),
+      }),
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+      logger,
+      streamError: null,
+    });
+
+    assertEquals(calls.filter((call) => call.startsWith("terminal:")), []);
+    assertEquals(terminalStates, []);
+    assertEquals(calls.at(-1), "cleanup");
+    assertEquals(errors, []);
+  });
+
+  it("skips durable run finalization on the empty-response failure path too", async () => {
+    const calls: string[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+
+    await finalizeHostedChatRun({
+      kind: "response",
+      responseMessage: createResponseMessage({ parts: [] }),
+      isAborted: false,
+      streamResult: createStreamResult({}),
+      lifecycleAdapter: createLifecycleAdapter({
+        calls,
+        terminalStates,
+        mirror: createDurableRunMirror({ calls, disableReason: "run_terminal" }),
+      }),
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+      streamError: null,
+    });
+
+    assertEquals(calls, ["flush", "cleanup"]);
+    assertEquals(terminalStates, []);
+  });
+
+  // The critical guard: every other mirror stop leaves a live run that still needs
+  // completing. Only `run_terminal` may skip finalization -- widening this would
+  // trade a noisy bug for runs stranded in `running` forever.
+  it("still finalizes the durable run for every other mirror stop reason", async () => {
+    const otherReasons: ConversationRunMirrorDisableReason[] = [
+      "cursor_resyncs_exhausted",
+      "cursor_mismatch_ambiguous",
+      "non_appendable",
+      "ignorable_append_rejection",
+      "payload_too_large",
+      "auth_rejected",
+    ];
+
+    for (const disableReason of otherReasons) {
+      const calls: string[] = [];
+      const terminalStates: HostedLifecycleTerminalState[] = [];
+
+      await finalizeHostedChatRun({
+        kind: "response",
+        responseMessage: createResponseMessage({ parts: [] }),
+        isAborted: false,
+        streamResult: createStreamResult({ text: "response fallback" }),
+        lifecycleAdapter: createLifecycleAdapter({
+          calls,
+          terminalStates,
+          mirror: createDurableRunMirror({ calls, disableReason }),
+        }),
+        mirroredToolChunkState: createMirroredToolChunkState(),
+        capturedMessageId: "assistant-message-1",
+        incompleteToolCallsPartErrorText: "Tool call did not complete",
+        cleanup: async () => {
+          calls.push("cleanup");
+        },
+        streamError: null,
+      });
+
+      assertEquals(
+        calls.filter((call) => call.startsWith("terminal:")),
+        ["terminal:completed:"],
+        `expected ${disableReason} to still finalize the durable run`,
+      );
+      assertEquals(terminalStates, [{ status: "completed" }]);
+    }
+  });
+
+  it("still finalizes the durable run when the mirror never stopped", async () => {
+    const calls: string[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+
+    await finalizeHostedChatRun({
+      kind: "response",
+      responseMessage: createResponseMessage({ parts: [] }),
+      isAborted: false,
+      streamResult: createStreamResult({ text: "response fallback" }),
+      lifecycleAdapter: createLifecycleAdapter({
+        calls,
+        terminalStates,
+        mirror: createDurableRunMirror({ calls }),
+      }),
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+      streamError: null,
+    });
+
+    assertEquals(calls.filter((call) => call.startsWith("terminal:")), ["terminal:completed:"]);
+  });
+
+  const cancelledTerminalState: HostedLifecycleTerminalState = {
+    status: "cancelled",
+    terminalErrorCode: "ABORTED",
+    terminalErrorMessage: "Chat stream aborted",
+  };
+
+  it("resolves an aborted empty response run to cancelled instead of a failure", async () => {
+    const calls: string[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+
+    await finalizeHostedChatRun({
+      kind: "response",
+      responseMessage: createResponseMessage({ parts: [] }),
+      isAborted: true,
+      streamResult: createStreamResult({}),
+      lifecycleAdapter: createLifecycleAdapter({
+        calls,
+        terminalStates,
+        mirror: createDurableRunMirror({ calls }),
+      }),
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+      streamError: new Error("aborted"),
+    });
+
+    assertEquals(
+      terminalStates,
+      [cancelledTerminalState],
+      "aborted runs must resolve to cancelled",
+    );
+    assertEquals(
+      calls.some((call) => call.startsWith("terminal:failed:")),
+      false,
+      "aborted runs must not dispatch a failed terminal state",
+    );
+  });
+
+  it("resolves an aborted empty detached run to cancelled instead of a failure", async () => {
+    const calls: string[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+
+    await finalizeHostedChatRun({
+      kind: "detached",
+      isAborted: true,
+      mirroredDurableOutput: false,
+      streamResult: createStreamResult({}),
+      lifecycleAdapter: createLifecycleAdapter({
+        calls,
+        terminalStates,
+        mirror: createDurableRunMirror({ calls }),
+      }),
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+      streamError: new Error("aborted"),
+    });
+
+    assertEquals(
+      terminalStates,
+      [cancelledTerminalState],
+      "aborted runs must resolve to cancelled",
+    );
+    assertEquals(
+      calls.some((call) => call.startsWith("terminal:failed:")),
+      false,
+      "aborted runs must not dispatch a failed terminal state",
+    );
+  });
+
+  it("keeps an aborted run cancelled even with unfinished local tool parts", async () => {
+    const calls: string[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+
+    await finalizeHostedChatRun({
+      kind: "response",
+      responseMessage: createResponseMessage({
+        parts: [
+          { type: "text", text: "done" },
+          {
+            type: "tool-web_fetch",
+            toolCallId: "local-tool-1",
+            input: { url: "https://example.com/docs" },
+            state: "input-available",
+          },
+        ],
+      }),
+      isAborted: true,
+      streamResult: createStreamResult({}),
+      lifecycleAdapter: createLifecycleAdapter({
+        calls,
+        terminalStates,
+        mirror: createDurableRunMirror({ calls }),
+      }),
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+      streamError: null,
+    });
+
+    assertEquals(
+      terminalStates,
+      [cancelledTerminalState],
+      "aborted runs with unfinished tools must stay cancelled rather than INCOMPLETE_TOOL failures",
+    );
+  });
+
+  it("does not re-emit output-error for tool calls already mirrored as output-error", async () => {
+    const calls: string[] = [];
+    const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const state = createMirroredToolChunkState();
+    state.outputErrorToolCallIds.add("seen-1");
+
+    await finalizeHostedChatRun({
+      kind: "response",
+      responseMessage: createResponseMessage({
+        parts: [
+          { type: "text", text: "done" },
+          {
+            type: "tool-web_fetch",
+            toolCallId: "seen-1",
+            input: { url: "https://example.com/docs" },
+            state: "output-error",
+            errorText: "boom",
+          },
+        ],
+      }),
+      isAborted: false,
+      streamResult: createStreamResult({}),
+      lifecycleAdapter: createLifecycleAdapter({
+        calls,
+        terminalStates,
+        mirror: createDurableRunMirror({ calls, chunks }),
+      }),
+      mirroredToolChunkState: state,
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+      streamError: null,
+    });
+
+    assertEquals(
+      getToolOutputErrorChunks(chunks, "seen-1"),
+      [],
+      "an already-mirrored tool call must not receive a duplicate output-error chunk",
+    );
   });
 });

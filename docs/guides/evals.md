@@ -165,7 +165,9 @@ veryfront eval deep-research \
 
 Usage and p95 latency deltas are reported in `summary.json` whenever both the
 current report and baseline include those values. They fail the run only when
-the matching threshold flag is set.
+the matching threshold flag is set. A baseline is accepted only for the same
+eval definition and target; a report from another eval is rejected instead of
+being compared.
 
 Update the baseline explicitly after reviewing the current report:
 
@@ -229,10 +231,11 @@ veryfront eval deep-research \
 Policy metrics can reference `passRate`, `failed`, `gateFailures`,
 `groundednessScore`, `inputTokens`, `outputTokens`, `totalTokens`,
 `billableInputTokens`, `billableOutputTokens`, `costUsd`, `providerCostUsd`,
-`veryfrontChargeUsd`, `costCredits`, and `p95Ms`. `costUsd` remains a
-backward-compatible cost objective and prefers gateway Veryfront charge when it
-is available. Use `min`, `max`, and `maxRegressionPct` for constraints. Use
-`weight` with `direction` set to `"minimize"` or `"maximize"` for objectives.
+`veryfrontChargeUsd`, `veryfrontBilledUsd`, `costCredits`, and `p95Ms`.
+`costUsd` remains a backward-compatible cost objective and prefers gateway
+Veryfront charge when it is available. Use `min`, `max`, and
+`maxRegressionPct` for constraints. Use `weight` with `direction` set to
+`"minimize"` or `"maximize"` for objectives.
 
 Each report includes provenance metadata. Local runs record git SHA, branch,
 dirty state, and a dirty hash. Cloud runs prefer release, deployment, or preview
@@ -271,6 +274,72 @@ Use JSONL when each example should be reviewed as a single line:
 dataset: datasets.jsonl("datasets/research.jsonl");
 ```
 
+### Where dataset paths resolve from
+
+In CLI eval runs, a relative path passed to `datasets.json()` or
+`datasets.jsonl()` resolves against the **project root**, not against the
+directory the eval file lives in. An eval at `evals/agents/research.eval.ts`
+that loads `datasets.jsonl("datasets/research.jsonl")` reads
+`<project>/datasets/research.jsonl`, so a dataset stored next to the eval is
+addressed as `evals/agents/research.jsonl`.
+
+Programmatic `runEval()` callers resolve relative dataset paths against the
+current working directory by default. Pass `baseDir` when the process runs from
+another directory or when you want a different dataset root.
+
+Pass `--dataset-base <path>` to resolve relative dataset paths against a
+different directory:
+
+```bash
+veryfront eval --dataset-base evals
+```
+
+Absolute paths are used as given and ignore the base directory.
+
+### Grading text that was not produced by an agent
+
+`judges.llm.rubric()` grades an agent's answer to a task by default, and sends
+the task input alongside the answer. When the graded value was not produced in
+response to that input -- a stored document, a labelled corpus, a reply written
+earlier -- that framing works against you: the judge sees the same string as
+both the question and the answer and reads it as an agent that echoed its prompt
+instead of doing the work.
+
+Pass `framing: "text"` for those cases:
+
+```ts
+// evals/support-replies.eval.ts
+import { datasets, evalTool, judges, metrics } from "veryfront/eval";
+
+const PROFESSIONALISM_RUBRIC =
+  "The text must be polite, specific, concise, and free of internal jargon.";
+
+export default evalTool({
+  name: "Support reply professionalism",
+  target: "tool:return_saved_reply",
+  dataset: datasets.inline([
+    {
+      id: "billing-refund-reply",
+      input: "Hello, I checked the duplicate charge and started a refund.",
+      metadata: { locale: "en" },
+    },
+  ]),
+  input: (example) => example.input,
+  metrics: [
+    metrics.judge.rubric({
+      rubric: PROFESSIONALISM_RUBRIC,
+      judge: judges.llm.rubric({ framing: "text" }),
+    }),
+  ],
+});
+```
+
+Under `"text"` framing the judge is told the value was not produced in response
+to a task, the value is sent once as `text` rather than twice as `input` and
+`answer`, and the reference is omitted. The prompt-injection rules are the same
+in both framings. The default is unchanged, so existing evals grade exactly as
+before.
+
 ## Metrics
 
 Use deterministic metrics for stable requirements:
@@ -299,9 +368,11 @@ metrics.ops.tokens({ maxTotal: 4_000 }).budget();
 metrics.ops.cost({ maxUsd: 0.05 }).budget();
 ```
 
-`metrics.ops.cost` uses gateway `veryfrontChargeUsd` first, then legacy
-`costUsd`, then `providerCostUsd`. It does not maintain a separate pricing table
-inside the framework.
+`metrics.ops.cost` uses gateway `veryfrontBilledUsd` first, then
+`veryfrontChargeUsd`, legacy `costUsd`, and finally `providerCostUsd`. It does
+not maintain a separate pricing table inside the framework. Token and cost
+budgets fail when the measurement required by their configured limit is
+missing; absent usage evidence never passes a budget.
 
 Use `calledTool` when the agent must call a tool. Add `input` when the tool
 arguments must include specific fields. `match: "partial"` checks that the
@@ -574,6 +645,13 @@ proxy. The adapter reads AG-UI events into `record.trace.events`, records tool
 calls as `record.trace.toolCalls`, captures tool call IDs, status, streamed
 arguments, result payloads, and denied/error state when the AG-UI endpoint emits
 them, and puts the parsed text at `record.output.text`.
+
+Live adapters and CLI helpers require a non-empty `VERYFRONT_TOKEN`. CLI case
+filters cannot opt into mutation: a requested write case still requires
+`AG_UI_EVAL_WRITE=1`, and an experimental write case requires both
+`AG_UI_EVAL_WRITE=1` and `AG_UI_EVAL_EXPERIMENTAL=1`. Unknown, duplicate, or
+disabled case selections fail before any case runs. A run with no passing case
+exits unsuccessfully instead of treating an all-skipped selection as evidence.
 
 Projects with existing live AG-UI suites can also import reusable CLI, API, and
 durable canary helpers from `veryfront/eval/agent-service`. Use those helpers

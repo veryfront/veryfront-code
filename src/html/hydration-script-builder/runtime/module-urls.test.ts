@@ -48,6 +48,25 @@ describe("hydration-script-builder/runtime/module-urls", () => {
       );
     });
 
+    it("pins absolute module-server urls on the path, not the query", () => {
+      assertEquals(
+        appendDependencyPinningVersion(
+          "https://site.example/_vf_modules/pages/blog.js?t=1",
+          { dependencyPinningCacheKey: "on:sha-a" },
+        ),
+        "https://site.example/_vf_modules/_pins/on%3Asha-a/pages/blog.js?t=1",
+        "an absolute module-server url must be pinned via the _pins path segment",
+      );
+      assertEquals(
+        appendDependencyPinningVersion(
+          "/proxy/_vf_modules/pages/blog.js",
+          { dependencyPinningCacheKey: "on:sha-a" },
+        ),
+        "/proxy/_vf_modules/pages/blog.js?pins=on%3Asha-a",
+        "a non-origin prefix must fall back to the pins query parameter",
+      );
+    });
+
     it("pins non-module-server urls with a query parameter", () => {
       assertEquals(
         appendDependencyPinningVersion(

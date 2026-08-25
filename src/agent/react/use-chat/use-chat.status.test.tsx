@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   decodeConversationRecord,
   encodeConversationRecord,
@@ -90,12 +91,11 @@ function persistMessages(messages: UseChatResult["messages"]): UseChatResult["me
 describe("react/agent/useChat status lifecycle", () => {
   it("transitions submitted -> streaming -> ready and publishes the streaming id", async () => {
     const restoreDom = installDom();
-    const originalFetch = globalThis.fetch;
     // A small network gap lets the `submitted` render commit before the stream
     // opens — mirroring a real request rather than an instantaneous one.
-    globalThis.fetch = () => new Promise((resolve) => setTimeout(() => resolve(sseResponse()), 5));
-
+    installMockFetch(() => new Promise((resolve) => setTimeout(() => resolve(sseResponse()), 5)));
     const statuses: UseChatResult["status"][] = [];
+    const loadingFlags: boolean[] = [];
     const streamingIds: (string | null)[] = [];
     let latest: UseChatResult | null = null;
 
@@ -103,6 +103,7 @@ describe("react/agent/useChat status lifecycle", () => {
       const chat = useChat({ api: "/api/ag-ui" });
       latest = chat;
       statuses.push(chat.status);
+      loadingFlags.push(chat.isLoading);
       streamingIds.push(chat.streamingMessageId);
       return null;
     }
@@ -116,8 +117,22 @@ describe("react/agent/useChat status lifecycle", () => {
       await latest!.sendMessage({ text: "Hello" });
       await settle();
 
-      assert(statuses.includes("submitted"), "should pass through submitted");
-      assert(statuses.includes("streaming"), "should pass through streaming");
+      const deduped = statuses.filter((status, index) => status !== statuses[index - 1]);
+      assertEquals(
+        deduped,
+        ["ready", "submitted", "streaming", "ready"],
+        "status must advance ready -> submitted -> streaming -> ready in order",
+      );
+      assertEquals(
+        streamingIds[statuses.indexOf("submitted")],
+        null,
+        "streamingMessageId must stay null until the stream opens",
+      );
+      assertEquals(
+        statuses.filter((status, index) => status === "ready" && loadingFlags[index]),
+        [],
+        "the turn must never report ready while the request is still in flight",
+      );
       assert(
         streamingIds.includes("msg-1"),
         "streamingMessageId should surface the live assistant id",
@@ -129,16 +144,14 @@ describe("react/agent/useChat status lifecycle", () => {
     } finally {
       flushSync(() => root.unmount());
       await settle();
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
 
   it("moves to error when the request fails", async () => {
     const restoreDom = installDom();
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = () => Promise.resolve(new Response('{"error":"boom"}', { status: 500 }));
-
+    installMockFetch(() => Promise.resolve(new Response('{"error":"boom"}', { status: 500 })));
     let latest: UseChatResult | null = null;
     function Capture(): null {
       latest = useChat({ api: "/api/ag-ui" });
@@ -154,19 +167,57 @@ describe("react/agent/useChat status lifecycle", () => {
       assertEquals(latest!.status, "error", "failed turn reports error status");
       assertEquals(latest!.streamingMessageId, null);
       assertEquals(latest!.isLoading, false);
-      assert(latest!.error !== null, "error is populated");
+      assertEquals(
+        latest!.error?.message,
+        "boom",
+        "surfaces the server-supplied failure reason instead of a generic status message",
+      );
     } finally {
       flushSync(() => root.unmount());
       await settle();
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
+      restoreDom();
+    }
+  });
+
+  it("falls back to the status code when the error body is not JSON", async () => {
+    const restoreDom = installDom();
+    installMockFetch(() =>
+      Promise.resolve(new Response("<html>gateway timeout</html>", { status: 500 }))
+    );
+    let latest: UseChatResult | null = null;
+    function Capture(): null {
+      latest = useChat({ api: "/api/ag-ui" });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+      await latest!.sendMessage({ text: "Hello" });
+      await settle();
+
+      assertEquals(
+        latest!.status,
+        "error",
+        "non-JSON failures still report error status",
+      );
+      assertEquals(
+        latest!.error?.message,
+        "API error: 500",
+        "non-JSON error bodies fall back to the status-code message",
+      );
+    } finally {
+      flushSync(() => root.unmount());
+      await settle();
+      restoreMockFetch();
       restoreDom();
     }
   });
 
   it("keeps a default-model assistant response persistable", async () => {
     const restoreDom = installDom();
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = () => Promise.resolve(sseResponse());
+    installMockFetch(() => Promise.resolve(sseResponse()));
     let latest: UseChatResult | null = null;
 
     function Capture(): null {
@@ -187,7 +238,39 @@ describe("react/agent/useChat status lifecycle", () => {
     } finally {
       flushSync(() => root.unmount());
       await settle();
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
+      restoreDom();
+    }
+  });
+
+  it("uses a per-message model override for the request and response metadata", async () => {
+    const restoreDom = installDom();
+    let requestBody: { model?: string } | undefined;
+    installMockFetch((_input, init) => {
+      requestBody = JSON.parse(String((init as { body?: unknown } | undefined)?.body));
+      return Promise.resolve(sseResponse());
+    });
+    let latest: UseChatResult | null = null;
+
+    function Capture(): null {
+      latest = useChat({ api: "/api/ag-ui", model: "session-model" });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+      await latest!.sendMessage({ text: "Hello", model: "flat-model" });
+      await settle();
+
+      assertEquals(requestBody?.model, "flat-model");
+      const assistant = latest!.messages.find((message) => message.role === "assistant");
+      assert(assistant, "the streamed assistant response should be retained");
+      assertEquals(assistant.metadata?.model, "flat-model");
+    } finally {
+      flushSync(() => root.unmount());
+      await settle();
+      restoreMockFetch();
       restoreDom();
     }
   });
@@ -233,6 +316,77 @@ describe("react/agent/useChat status lifecycle", () => {
       assertEquals(part.state, "output-available");
       assertEquals(part.output, { matches: 1 });
       assertEquals(Object.hasOwn(part, "errorText"), false);
+    } finally {
+      flushSync(() => root.unmount());
+      await settle();
+      restoreDom();
+    }
+  });
+
+  it("routes client tool output to the matching dynamic tool part only", async () => {
+    const restoreDom = installDom();
+    let latest: UseChatResult | null = null;
+
+    function Capture(): null {
+      latest = useChat({
+        initialMessages: [{
+          id: "assistant-tool",
+          role: "assistant",
+          parts: [
+            {
+              type: "dynamic-tool",
+              toolCallId: "call-2",
+              toolName: "mcp__docs__search",
+              state: "input-available",
+              input: {},
+            },
+            {
+              type: "tool-search",
+              toolCallId: "call-1",
+              toolName: "search",
+              state: "input-available",
+              input: { query: "Veryfront" },
+            },
+          ],
+        }],
+      });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+      flushSync(() =>
+        latest!.addToolOutput({
+          tool: "mcp__docs__search",
+          toolCallId: "call-2",
+          output: { matches: 1 },
+        })
+      );
+
+      const parts = latest!.messages[0]?.parts ?? [];
+      const dynamicPart = parts[0] as { state?: string; output?: unknown };
+      const searchPart = parts[1] as { state?: string };
+      assertEquals(
+        dynamicPart.state,
+        "output-available",
+        "a dynamic-tool part receives its client output",
+      );
+      assertEquals(
+        dynamicPart.output,
+        { matches: 1 },
+        "the dynamic-tool part carries the client output payload",
+      );
+      assertEquals(
+        searchPart.state,
+        "input-available",
+        "a non-matching toolCallId is left untouched",
+      );
+      assertEquals(
+        Object.hasOwn(searchPart, "output"),
+        false,
+        "concurrent tool calls do not overwrite each other's results",
+      );
     } finally {
       flushSync(() => root.unmount());
       await settle();

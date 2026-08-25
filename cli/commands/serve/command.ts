@@ -5,6 +5,9 @@ import { exitProcess, registerTerminationSignals, showHeader } from "#cli/utils"
 import { generateDefaultProjectId } from "../../utils/project.ts";
 import { startCliProductionServer } from "#cli/shared/server-startup";
 import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
+import { isJsonMode } from "../../shared/json-output.ts";
+import { brand, success } from "../../ui/colors.ts";
+import { runStandaloneProxyRuntime } from "./proxy-runtime.ts";
 
 const STARTUP_ERROR_FLUSH_TIMEOUT_MS = 2_000;
 
@@ -141,39 +144,10 @@ async function runSplit(options: ServeOptions): Promise<void> {
 }
 
 async function runProxy(options: ServeOptions): Promise<void> {
-  showHeader();
-  cliLogger.info(`Starting proxy server on ${options.bindAddress}:${options.port}`);
-
-  const { setEnv } = await import("veryfront/platform");
-  setEnv("PORT", String(options.port));
-  setEnv("HOST", options.bindAddress);
-
-  const {
-    activateStandaloneProxyCacheExtension,
-    registerStandaloneProxyCacheExtensionTeardown,
-  } = await import(
-    "./proxy-extension-composition.ts"
-  );
-  const extensionLoader = await activateStandaloneProxyCacheExtension();
-  const teardownCacheExtension = await registerStandaloneProxyCacheExtensionTeardown(
-    extensionLoader,
-  );
-
-  // DenoHttpServer.serve() blocks until the server stops,
-  // so this import keeps the process alive.
-  try {
-    await import("veryfront/proxy/main");
-  } catch (error) {
-    try {
-      await teardownCacheExtension();
-    } catch (cleanupError) {
-      cliLogger.error("Failed to clean up proxy extensions after startup failure", cleanupError);
-    }
-    throw error;
-  }
-
-  // Keep the process alive (Deno.serve returns immediately in compiled binaries)
-  await new Promise(() => {});
+  await runStandaloneProxyRuntime({
+    bindAddress: options.bindAddress,
+    port: options.port,
+  });
 }
 
 function createDeferredProductionStartupErrorReporter(): {
@@ -209,6 +183,39 @@ function createDeferredProductionStartupErrorReporter(): {
 
 function loadProductionSentryModule(): Promise<ProductionSentryModule> {
   return import("veryfront/observability/sentry");
+}
+
+const WILDCARD_BIND_ADDRESSES = new Set(["", "0.0.0.0", "::", "[::]"]);
+
+/**
+ * Browsable URL for a server bound to `bindAddress`.
+ *
+ * A wildcard bind is not an address a developer can open, so it is rendered as
+ * `localhost` — the host the deploy docs tell them to visit.
+ */
+export function serveReadyUrl(bindAddress: string, port: number): string {
+  const host = WILDCARD_BIND_ADDRESSES.has(bindAddress) ? "localhost" : bindAddress;
+  const bracketed = host.startsWith("[") && host.endsWith("]");
+  const formattedHost = !bracketed && host.includes(":") ? `[${host}]` : host;
+  return `http://${formattedHost}:${port}`;
+}
+
+/**
+ * Print the ready block with the URL to open, mirroring `veryfront dev`.
+ *
+ * Port `0` asks the OS for an ephemeral port, so the requested port is not the
+ * port that was bound and there is no browsable URL to print here — the bound
+ * port is only known to the server's `onListen`, which already logs it as
+ * `Production server listening`. Printing `http://localhost:0` under it would
+ * contradict the one correct line on screen, so the block is skipped instead.
+ */
+export function printServeReady(options: { port: number; bindAddress: string }): void {
+  if (isJsonMode()) return;
+  if (options.port === 0) return;
+  console.log();
+  console.log(`  ${success("✓")} Ready`);
+  console.log(`  ${brand(serveReadyUrl(options.bindAddress, options.port))}`);
+  console.log();
 }
 
 export async function runProductionServer(
@@ -269,6 +276,8 @@ export async function runProductionServer(
     dependencies.ensureBundlerContracts ?? ensureCliBundlerContracts,
     initializeErrorReporting,
   );
+
+  printServeReady({ port: options.port, bindAddress: options.bindAddress });
 
   let shuttingDown = false;
   const shutdown = async (signal: "SIGINT" | "SIGTERM"): Promise<void> => {

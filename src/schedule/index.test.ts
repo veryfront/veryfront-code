@@ -6,10 +6,17 @@ import * as factoryModule from "./factory.ts";
 import * as scheduleModule from "./index.ts";
 import * as publicScheduleModule from "veryfront/schedule";
 import * as typesModule from "./types.ts";
+import * as validationModule from "./validation.ts";
 
 const expectedRuntimeExports = [
   "discoverSchedules",
   "isScheduleDefinition",
+  // Deliberate public addition: `veryfront schedule run --input <file>` replaces
+  // the authored input without passing back through `schedule()`, so the CLI is
+  // the only caller that can apply this rule to an operator-supplied file.
+  // Exporting the one implementation keeps both entry points rejecting the same
+  // shapes instead of the CLI re-deriving them.
+  "legacyScheduleTargetDiagnostic",
   "schedule",
 ];
 
@@ -23,11 +30,19 @@ describe("schedule/index.ts exports", () => {
     assertStrictEquals(scheduleModule.schedule, factoryModule.schedule);
     assertStrictEquals(scheduleModule.discoverSchedules, discoveryModule.discoverSchedules);
     assertStrictEquals(scheduleModule.isScheduleDefinition, typesModule.isScheduleDefinition);
+    assertStrictEquals(
+      scheduleModule.legacyScheduleTargetDiagnostic,
+      validationModule.legacyScheduleTargetDiagnostic,
+    );
     assertStrictEquals(publicScheduleModule.schedule, scheduleModule.schedule);
     assertStrictEquals(publicScheduleModule.discoverSchedules, scheduleModule.discoverSchedules);
     assertStrictEquals(
       publicScheduleModule.isScheduleDefinition,
       scheduleModule.isScheduleDefinition,
+    );
+    assertStrictEquals(
+      publicScheduleModule.legacyScheduleTargetDiagnostic,
+      scheduleModule.legacyScheduleTargetDiagnostic,
     );
   });
 });

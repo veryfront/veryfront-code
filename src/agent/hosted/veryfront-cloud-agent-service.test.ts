@@ -1,3 +1,5 @@
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { clearModelProviders, registerModelProvider } from "#veryfront/provider";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assert,
@@ -15,13 +17,21 @@ import {
 } from "#veryfront/observability/application-errors.ts";
 import { register, unregister } from "#veryfront/extensions/contracts.ts";
 import { SandboxShellToolsProviderName } from "#veryfront/extensions/sandbox/index.ts";
-import { tool, toolRegistry } from "#veryfront/tool";
+import {
+  createRemoteMCPToolSource,
+  type RemoteMCPToolSourceConfig,
+  type RemoteToolSource,
+  tool,
+  toolRegistry,
+} from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { __resetLogRecordEmitterForTests, agentLogger } from "#veryfront/utils/logger/index.ts";
 import {
   createExecuteSkillScriptTool,
   createLoadSkillReferenceTool,
 } from "#veryfront/skill/tools.ts";
+import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { agentRegistry } from "../composition/index.ts";
 import {
   createNodeVeryfrontCloudAgentServiceRuntime,
@@ -33,14 +43,26 @@ import {
   veryfrontStudioMcpServer,
 } from "./veryfront-cloud-agent-service.ts";
 import type { NodeVeryfrontCloudAgentServiceOptions } from "./veryfront-cloud-agent-service.ts";
+import { createAgentRuntime } from "./cloud-agent-chat-execution.ts";
+import { createInvokeAgentTool } from "./cloud-agent-child-tools.ts";
+import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import type { HostedRuntimeSourceIdentity } from "./runtime-source-binding.ts";
 import { initializeNodeAgentServiceSentryApplicationErrors } from "../service/node-sentry.ts";
+import { getRemoteToolSourceFactory } from "./cloud-agent-config.ts";
+import type { AgentSystem } from "#veryfront/agent/types.ts";
+import type { RuntimeClientProfile } from "#veryfront/agent/runtime/client-profile.ts";
 
 type CaptureRecord = {
   error: unknown;
   context: ApplicationErrorContext;
 };
+
+function systemIncludes(system: AgentSystem | undefined, text: string): boolean {
+  return typeof system === "string"
+    ? system.includes(text)
+    : system?.some((message) => message.content.includes(text)) ?? false;
+}
 
 Deno.test("public agent service options do not expose the internal eager rollback", () => {
   type HasOperationalToolLoadingOverride = "operationalToolLoadingOverride" extends
@@ -48,6 +70,204 @@ Deno.test("public agent service options do not expose the internal eager rollbac
     : false;
   const hasOperationalToolLoadingOverride: HasOperationalToolLoadingOverride = false;
   assertEquals(hasOperationalToolLoadingOverride, false);
+});
+
+Deno.test("public agent service options expose deployment-owned remote MCP composition", () => {
+  type HasCreateRemoteToolSource = "createRemoteToolSource" extends
+    keyof NodeVeryfrontCloudAgentServiceOptions ? true
+    : false;
+  const hasCreateRemoteToolSource: HasCreateRemoteToolSource = true;
+  assertEquals(hasCreateRemoteToolSource, true);
+});
+
+Deno.test("root and child runtimes use the deployment-owned remote MCP factory", async () => {
+  const createdConfigs: RemoteMCPToolSourceConfig[] = [];
+  let failStudioListing = false;
+  let modelCallCount = 0;
+  let switchedTaskContext: { projectId: string; projectSlug?: string } | undefined;
+  const injectedFactory = (config: RemoteMCPToolSourceConfig): RemoteToolSource => {
+    createdConfigs.push(config);
+    return {
+      id: config.id ?? "injected",
+      listTools: () =>
+        failStudioListing && config.endpoint === "https://studio.example/mcp"
+          ? Promise.reject(new Error("stop after transport capture"))
+          : Promise.resolve(
+            config.id === "studio-mcp"
+              ? [{
+                name: "studio_open_project",
+                description: "Open a project.",
+                parameters: { type: "object", properties: {} },
+              }]
+              : [],
+          ),
+      executeTool: (toolName) =>
+        Promise.resolve(
+          config.id === "studio-mcp" && toolName === "studio_open_project"
+            ? { success: true, project_id: "project-2", slug: "project-two" }
+            : null,
+        ),
+    };
+  };
+  const context = {
+    options: {
+      createBashTool,
+      createRemoteToolSource: injectedFactory,
+      mcpServers: [veryfrontApiMcpServer(), veryfrontStudioMcpServer()],
+    },
+    infrastructure: {
+      getConfig: () => ({
+        VERYFRONT_API_URL: "https://93.184.216.34",
+        VERYFRONT_MCP_URL: "https://93.184.216.34/mcp",
+        VERYFRONT_STUDIO_MCP_URL: "https://studio.example/mcp",
+        VERYFRONT_ENABLE_DURABLE_INVOKE_AGENT: false,
+      }),
+      logger: {
+        debug: () => undefined,
+        info: () => undefined,
+        warn: () => undefined,
+        error: () => undefined,
+      },
+      tracer: {
+        trace: (_name: string, operation: () => unknown) => operation(),
+        scope: () => ({ active: () => undefined }),
+      },
+      setActiveSpanAttributes: () => undefined,
+    },
+    discoveryResult: {
+      agents: new Map(),
+      tools: new Map(),
+      sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+    },
+    defaultAgentId: "root-agent",
+    projectSteeringByAgentId: new Map([["root-agent", {
+      createLoadSkillTool: () =>
+        tool({
+          id: "load_skill",
+          description: "Load a skill.",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({ ok: true }),
+        }),
+      refreshProjectSkillIds: (taskContext: { projectId: string; projectSlug?: string }) => {
+        switchedTaskContext = taskContext;
+        return Promise.resolve();
+      },
+    }]]),
+    trace: (_name: string, operation: () => unknown) => operation(),
+  } as never;
+  const clientProfile: RuntimeClientProfile = {
+    id: "veryfront-studio",
+    type: "web",
+    trusted: true,
+    capabilities: ["ui_panels"],
+  };
+
+  clearModelProviders();
+  registerModelProvider("test", () => ({
+    provider: "test",
+    modelId: "test/hosted-project-switch",
+    doGenerate: () => Promise.reject(new Error("unused")),
+    doStream: () => {
+      modelCallCount++;
+      return Promise.resolve({
+        stream: new ReadableStream<unknown>({
+          start(controller) {
+            if (modelCallCount === 1) {
+              controller.enqueue({
+                type: "tool-call",
+                toolCallId: "open-project-1",
+                toolName: "studio_open_project",
+                input: { project_reference: "project-two" },
+              });
+              controller.enqueue({ type: "finish", finishReason: "tool-calls", usage: {} });
+            } else {
+              controller.enqueue({ type: "text-delta", text: "opened" });
+              controller.enqueue({ type: "finish", finishReason: "stop", usage: {} });
+            }
+            controller.close();
+          },
+        }),
+      });
+    },
+  }));
+
+  const rootRuntime = await createAgentRuntime(context, {
+    projectId: "project-1",
+    branchId: "branch-1",
+    authToken: "token-1",
+    instructions: "Use the available tools.",
+    agentId: "root-agent",
+    model: "test/hosted-project-switch",
+    allowedTools: ["studio_open_project"],
+    allowDelegation: false,
+    clientProfile,
+  });
+  assertEquals(
+    await Promise.all(createdConfigs.map(async ({ id, endpoint }) => ({
+      id,
+      endpoint: typeof endpoint === "function" ? await endpoint() : endpoint,
+    }))),
+    [
+      { id: "veryfront-mcp", endpoint: "https://93.184.216.34/projects/project-1/mcp" },
+      { id: "studio-mcp", endpoint: "https://studio.example/mcp" },
+    ],
+  );
+
+  try {
+    await withMockFetch(
+      () => Promise.resolve(Response.json({ tools: [] })),
+      async () => {
+        const stream = await rootRuntime.agent.stream({
+          messages: [],
+          abortSignal: new AbortController().signal,
+        });
+        for await (const _chunk of stream.toUIMessageStream()) {
+          // Consume the project-switch tool round trip.
+        }
+      },
+    );
+  } finally {
+    await rootRuntime.cleanup();
+    clearModelProviders();
+  }
+  assertEquals(switchedTaskContext?.projectId, "project-2");
+  const rootApiConfig = createdConfigs.find((config) => config.id === "veryfront-mcp");
+  assertEquals(
+    typeof rootApiConfig?.endpoint === "function"
+      ? await rootApiConfig.endpoint()
+      : rootApiConfig?.endpoint,
+    "https://93.184.216.34/projects/project-2/mcp",
+  );
+
+  createdConfigs.length = 0;
+  failStudioListing = true;
+  const invokeAgent = createInvokeAgentTool(context, {
+    authToken: "token-1",
+    projectId: switchedTaskContext?.projectId ?? "project-1",
+    branchId: "branch-1",
+    agentId: "orchestrator",
+    clientProfile,
+  });
+  await invokeAgent.execute({
+    agent_id: "child-agent",
+    description: "Verify child MCP composition.",
+    prompt: "Inspect the available tools.",
+  }, { toolCallId: "tool-call-1" });
+  assertEquals(
+    await Promise.all(createdConfigs.map(async ({ id, endpoint }) => ({
+      id,
+      endpoint: typeof endpoint === "function" ? await endpoint() : endpoint,
+    }))),
+    [
+      { id: "veryfront-mcp-fork", endpoint: "https://93.184.216.34/projects/project-2/mcp" },
+      { id: "studio-mcp-live-tools", endpoint: "https://studio.example/mcp" },
+    ],
+  );
+
+  assertStrictEquals(
+    getRemoteToolSourceFactory({ options: {} } as never),
+    createRemoteMCPToolSource,
+  );
 });
 
 type TestDenoRuntime = {
@@ -159,7 +379,7 @@ async function withTempDir(
     await stopEsbuild();
     Deno.removeSync(dir, { recursive: true });
     agentRegistry.clearAll();
-    toolRegistry.clearAll();
+    toolRegistryInternal.clearAll();
     unregister(SandboxShellToolsProviderName);
   }
 }
@@ -235,10 +455,11 @@ function getRuntimeAgent(
 }
 
 Deno.test("getDiscoveredHostTools excludes shared skill infrastructure tools", () => {
+  const originalSkillToolIds = [...SKILL_TOOL_IDS];
   try {
-    toolRegistry.registerShared("load_skill_reference", createLoadSkillReferenceTool());
-    toolRegistry.registerShared("execute_skill_script", createExecuteSkillScriptTool());
-    toolRegistry.registerShared(
+    toolRegistryInternal.registerShared("load_skill_reference", createLoadSkillReferenceTool());
+    toolRegistryInternal.registerShared("execute_skill_script", createExecuteSkillScriptTool());
+    toolRegistryInternal.registerShared(
       "shared_echo",
       tool({
         id: "shared_echo",
@@ -247,6 +468,8 @@ Deno.test("getDiscoveredHostTools excludes shared skill infrastructure tools", (
         execute: () => ({ ok: true }),
       }),
     );
+    SKILL_TOOL_IDS.delete("execute_skill_script");
+    SKILL_TOOL_IDS.add("shared_echo");
 
     const tools = getDiscoveredHostTools();
 
@@ -254,7 +477,9 @@ Deno.test("getDiscoveredHostTools excludes shared skill infrastructure tools", (
     assertEquals("load_skill_reference" in tools, false);
     assertEquals("execute_skill_script" in tools, false);
   } finally {
-    toolRegistry.clearAll();
+    SKILL_TOOL_IDS.clear();
+    for (const toolId of originalSkillToolIds) SKILL_TOOL_IDS.add(toolId);
+    toolRegistryInternal.clearAll();
   }
 });
 
@@ -341,6 +566,7 @@ Deno.test("startAgentService keeps application-error reporting active after read
       .setInitializeApplicationErrorsForTests(async () => {
         const lifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
           env: {
+            SENTRY_ENABLED: "true",
             SENTRY_DSN: "https://public@example.ingest.sentry.io/1",
           },
           flushTimeoutMs: 5,
@@ -461,6 +687,7 @@ Deno.test("startAgentService captures, flushes, and resets terminal startup fail
       .setInitializeApplicationErrorsForTests(async () => {
         const lifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
           env: {
+            SENTRY_ENABLED: "true",
             SENTRY_DSN: "https://public@example.ingest.sentry.io/1",
           },
           flushTimeoutMs: 5,
@@ -613,7 +840,7 @@ Deno.test("hosted generic invocation is only replaced by explicit delegates", ()
         "get_file",
       ],
     }),
-    { kind: "legacy" },
+    { kind: "generic" },
   );
   assertEquals(
     veryfrontCloudAgentServiceInternals.resolveHostedDelegationBinding({
@@ -624,7 +851,7 @@ Deno.test("hosted generic invocation is only replaced by explicit delegates", ()
       skills: ["legacy-workflow"],
       tools: ["get_file"],
     }),
-    { kind: "legacy" },
+    { kind: "generic" },
   );
   assertEquals(
     veryfrontCloudAgentServiceInternals.resolveHostedDelegationBinding({
@@ -696,6 +923,7 @@ Deno.test("hosted nested delegates inherit child scope and durable lineage", () 
   assertEquals(context.conversationId, "child-conversation");
   assertEquals(context.parentRunId, "child-run");
   assertEquals(context.parentMessageId, "child-message");
+  assertEquals("runEventAppendToken" in context, false);
 });
 
 Deno.test("hosted nested delegates clear inherited skill catalog state for empty child selectors", () => {
@@ -1196,10 +1424,15 @@ Deno.test("startNodeVeryfrontCloudAgentService preserves startup error when regi
             },
           }),
         Error,
+        "Node server port must be an integer from 0 to 65535, got -1",
       );
 
       assertStrictEquals(rejected === rollbackError, false);
-      assertEquals(rejected instanceof Error && rejected.message.includes("options.port"), true);
+      assert(rejected instanceof Error);
+      assertEquals(
+        rejected.message,
+        "Node server port must be an integer from 0 to 65535, got -1",
+      );
     } finally {
       globalThis.fetch = originalFetch;
       globalThis.clearInterval = originalClearInterval;
@@ -1257,6 +1490,57 @@ Deno.test("hosted MCP resolver preserves default behavior without a service ceil
     [{
       kind: "veryfront-studio",
       toolPolicy: { allow: ["studio_open_project"] },
+    }],
+  );
+});
+
+Deno.test("hosted MCP resolver binds deployment-owned transports to first-party defaults", () => {
+  const createRemoteToolSource = () => ({
+    id: "injected",
+    listTools: () => Promise.resolve([]),
+    executeTool: () => Promise.resolve(null),
+  });
+  const serviceGenericMcpServer = {
+    id: "operator-docs",
+    endpoint: "https://operator.example/mcp",
+  } as const;
+  // Project agent parsing rejects generic endpoints. This unchecked shape
+  // verifies the resolver still fails closed if another caller bypasses it.
+  const untrustedGenericAgentConfig = {
+    mcpServers: [{ id: "operator-docs", endpoint: "https://project.example/mcp" }],
+  } as unknown as Pick<RuntimeAgentMarkdownDefinition, "mcpServers">;
+
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveMcpServers({ createRemoteToolSource }),
+    [{ kind: "veryfront-api" }, { kind: "veryfront-studio" }],
+  );
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveMcpServers(
+      { createRemoteToolSource },
+      untrustedGenericAgentConfig,
+    ),
+    [],
+  );
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveMcpServers(
+      { createRemoteToolSource, mcpServers: [serviceGenericMcpServer] },
+      untrustedGenericAgentConfig,
+    ),
+    [serviceGenericMcpServer],
+  );
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveMcpServers(
+      { createRemoteToolSource },
+      {
+        mcpServers: [{
+          kind: "veryfront-api",
+          toolPolicy: { allow: ["read_job"] },
+        }],
+      },
+    ),
+    [{
+      kind: "veryfront-api",
+      toolPolicy: { allow: ["read_job"] },
     }],
   );
 });
@@ -1332,6 +1616,13 @@ Deno.test("hosted child execution config resolves steering against the target pr
     name: "Extraction agent",
     description: "Extract job applications",
     instructions: "Extract the application.",
+    system: [{
+      role: "system" as const,
+      content: "Extract the application.",
+      providerOptions: {
+        anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+      },
+    }],
     model: "openai/gpt-5.4",
     temperature: 0.35,
   };
@@ -1369,7 +1660,15 @@ Deno.test("hosted child execution config resolves steering against the target pr
 
   assertEquals(config?.model, "openai/gpt-5.4");
   assertEquals(config?.temperature, 0.35);
-  assert(config?.system.includes("Use the target project's extraction policy."));
+  assert(Array.isArray(config?.system));
+  assertEquals(config.system[0]?.providerOptions, {
+    anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+  });
+  assert(
+    config.system.some((message) =>
+      message.content.includes("Use the target project's extraction policy.")
+    ),
+  );
   assertEquals(steeringLookups, [
     { projectId: "target-project", authToken: "token-1", branchId: null },
     { projectId: "target-project", authToken: "token-1", branchId: null },
@@ -1379,7 +1678,7 @@ Deno.test("hosted child execution config resolves steering against the target pr
 Deno.test("hosted child execution config hides skill infrastructure for skills empty and false", async () => {
   for (const skills of [[], false] as const) {
     try {
-      toolRegistry.registerShared(
+      toolRegistryInternal.registerShared(
         "get_file",
         tool({
           id: "get_file",
@@ -1388,8 +1687,8 @@ Deno.test("hosted child execution config hides skill infrastructure for skills e
           execute: () => ({ ok: true }),
         }),
       );
-      toolRegistry.registerShared("load_skill_reference", createLoadSkillReferenceTool());
-      toolRegistry.registerShared("execute_skill_script", createExecuteSkillScriptTool());
+      toolRegistryInternal.registerShared("load_skill_reference", createLoadSkillReferenceTool());
+      toolRegistryInternal.registerShared("execute_skill_script", createExecuteSkillScriptTool());
 
       const childAgent = {
         id: "extraction-agent",
@@ -1443,10 +1742,10 @@ Deno.test("hosted child execution config hides skill infrastructure for skills e
 
       assertEquals(config?.availableSkillIds, []);
       assertEquals(config?.toolNames, ["get_file"]);
-      assertEquals(config?.system.includes("global-skill"), false);
-      assertEquals(config?.system.includes("load_skill"), false);
-      assertEquals(config?.system.includes("load_skill_reference"), false);
-      assertEquals(config?.system.includes("execute_skill_script"), false);
+      assertEquals(systemIncludes(config?.system, "global-skill"), false);
+      assertEquals(systemIncludes(config?.system, "load_skill"), false);
+      assertEquals(systemIncludes(config?.system, "load_skill_reference"), false);
+      assertEquals(systemIncludes(config?.system, "execute_skill_script"), false);
       const childToolContext = veryfrontCloudAgentServiceInternals.buildHostedChildToolContext(
         {
           authToken: "token-1",
@@ -1471,14 +1770,14 @@ Deno.test("hosted child execution config hides skill infrastructure for skills e
       assertEquals("load_skill_reference" in hostTools, false);
       assertEquals("execute_skill_script" in hostTools, false);
     } finally {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
     }
   }
 });
 
 Deno.test("hosted child execution config keeps exact non-empty skill authorization", async () => {
   try {
-    toolRegistry.registerShared(
+    toolRegistryInternal.registerShared(
       "get_file",
       tool({
         id: "get_file",
@@ -1543,8 +1842,8 @@ Deno.test("hosted child execution config keeps exact non-empty skill authorizati
 
     assertEquals(config?.availableSkillIds, ["extraction-agent--extract"]);
     assertEquals(config?.toolNames, ["get_file", "load_skill"]);
-    assert(config?.system.includes("extraction-agent--extract"));
-    assertEquals(config?.system.includes("global-skill"), false);
+    assert(systemIncludes(config?.system, "extraction-agent--extract"));
+    assertEquals(systemIncludes(config?.system, "global-skill"), false);
 
     const childToolContext = veryfrontCloudAgentServiceInternals.buildHostedChildToolContext(
       {
@@ -1568,7 +1867,7 @@ Deno.test("hosted child execution config keeps exact non-empty skill authorizati
     assertEquals("get_file" in hostTools, true);
     assertEquals("load_skill" in hostTools, true);
   } finally {
-    toolRegistry.clearAll();
+    toolRegistryInternal.clearAll();
   }
 });
 

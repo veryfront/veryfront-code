@@ -44,6 +44,46 @@ describe("modules/react-loader/ssr-module-loader/concurrency/semaphore", () => {
       assertEquals(result, false);
     });
 
+    it("queues indefinitely when the timeout is not finite", async () => {
+      const sem = new Semaphore(1);
+
+      await sem.tryAcquire();
+
+      let settled = false;
+      const waiter = sem.tryAcquire(Number.POSITIVE_INFINITY).then((acquired) => {
+        settled = true;
+        return acquired;
+      });
+
+      // Drain the macrotask queue. An armed deadline would fire here: a
+      // non-finite setTimeout delay is coerced to fire on the next tick, so a
+      // waiter that asked to queue forever would silently fail admission.
+      for (let i = 0; i < 5; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assertEquals(settled, false, "an infinite-timeout waiter must not time out");
+      assertEquals(sem.waiting, 1, "an infinite-timeout waiter must stay queued");
+
+      sem.release();
+      assertEquals(await waiter, true, "release must grant the infinite-timeout waiter");
+      assertEquals(sem.waiting, 0, "the granted waiter must leave the queue");
+    });
+
+    it("rejects an aborted waiter that asked to queue indefinitely", async () => {
+      const sem = new Semaphore(1);
+      const controller = new AbortController();
+
+      await sem.tryAcquire();
+      const pending = sem.tryAcquire(Number.POSITIVE_INFINITY, { signal: controller.signal });
+      assertEquals(sem.waiting, 1, "the infinite-timeout waiter must be queued");
+
+      controller.abort(new DOMException("cancelled", "AbortError"));
+      await assertRejects(() => pending, DOMException, "cancelled");
+      assertEquals(sem.waiting, 0, "an aborted infinite waiter must leave the queue");
+
+      sem.release();
+      assertEquals(sem.available, 1, "the aborted waiter must not consume the released permit");
+    });
+
     it("should fail immediately without queueing when waiting is disabled", async () => {
       const sem = new Semaphore(1);
 
@@ -164,6 +204,35 @@ describe("modules/react-loader/ssr-module-loader/concurrency/semaphore", () => {
       assertEquals(sem.waiting, 2);
 
       await Promise.all([p1, p2]);
+    });
+
+    it("should report the queue depth a timed-out waiter observed", async () => {
+      const sem = new Semaphore(1);
+
+      await sem.tryAcquire();
+      const report = await sem.tryAcquireWithReport(5);
+
+      assertEquals(report.acquired, false);
+      assertEquals(report.waiting, 1, "the waiter that timed out must count itself");
+      assertEquals(sem.waiting, 0, "a timed-out waiter still leaves the queue");
+
+      sem.release();
+      assertEquals(sem.available, 1);
+    });
+
+    it("should report every queued waiter present when an acquire times out", async () => {
+      const sem = new Semaphore(1);
+
+      await sem.tryAcquire();
+      const firstReport = sem.tryAcquireWithReport(5);
+      const secondReport = sem.tryAcquireWithReport(200);
+      assertEquals(sem.waiting, 2);
+
+      assertEquals((await firstReport).waiting, 2, "both queued waiters must be counted");
+
+      sem.release();
+      assertEquals((await secondReport).acquired, true);
+      sem.release();
     });
 
     it("should remove timed-out waiters from queue", async () => {

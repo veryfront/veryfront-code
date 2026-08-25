@@ -1,7 +1,7 @@
 ---
 title: "veryfront/prompt"
 description: "Declare and register prompts exposable over MCP."
-order: 23
+order: 24
 ---
 
 ## Import
@@ -31,7 +31,7 @@ const content = await summarize.getContent({
 
 ### `prompt(config)`
 
-Create a typed prompt definition.
+Create a typed prompt definition whose explicit id contains non-whitespace text.
 
 **Returns:** `Prompt`
 
@@ -39,19 +39,23 @@ Create a typed prompt definition.
 
 ### Functions
 
-| Name | Description | Source |
-|------|-------------|--------|
-| `prompt` | Create a typed prompt definition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/factory.ts#L10) |
+| Name     | Description                                                                      | Source                                                                                    |
+| -------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `prompt` | Create a typed prompt definition whose explicit id contains non-whitespace text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/factory.ts#L25) |
 
 ### Types
 
-| Name | Description | Source |
-|------|-------------|--------|
-| `Prompt` | Public API contract for prompt. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/types.ts#L4) |
-| `PromptConfig` | Configuration used by prompt. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L16) |
+| Name                  | Description                                                                                                                                                   | Source                                                                                                  |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `Prompt`              | Public API contract for prompt.                                                                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/types.ts#L12)                 |
+| `PromptArgument`      | Public MCP argument metadata for a prompt.                                                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L80) |
+| `PromptConfig`        | Configuration used by prompt. An explicit id must contain non-whitespace text.                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L78) |
+| `PromptGenerateFn`    | Generate prompt content from interpolation variables.                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L17) |
+| `PromptMCPConfig`     | Public MCP exposure metadata for a prompt.                                                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L82) |
+| `PromptRenderContext` | Cancellation and absolute-deadline controls for one prompt render. A deadline is enforced before work begins and after interpolation or generation completes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L9)  |
 
 ### Constants
 
-| Name | Description | Source |
-|------|-------------|--------|
-| `promptRegistry` | Shared prompt registry value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/registry.ts#L30) |
+| Name             | Description                                              | Source                                                                                     |
+| ---------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `promptRegistry` | Application-facing project-scoped prompt registry value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/registry.ts#L62) |

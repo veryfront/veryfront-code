@@ -243,7 +243,7 @@ function snapshotArray(
       iteratorSymbol,
       freeze(() => createStableArrayIterator(output)),
     );
-    return freeze(output) as unknown as Readonly<RscActionAuthorizationArray>;
+    return freeze(output) as Readonly<RscActionAuthorizationArray>;
   } finally {
     leaveContainer(state, value);
   }

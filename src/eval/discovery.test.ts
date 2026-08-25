@@ -145,27 +145,58 @@ describe("eval/discovery", () => {
     assertEquals(result.errors.every((entry) => entry.error.includes("Duplicate eval id")), true);
   });
 
-  it("discovers eval files with source metadata for Studio editing", async () => {
+  it("resolves the evals directory against the project dir for local filesystems", async () => {
     const adapter = createRuntimeAdapter({
-      "/project/evals/deep-research.eval.ts": "",
+      "/project/evals/local.eval.ts": "",
     });
 
     const result = await discoverEvals({
       projectDir: "/project",
       adapter,
-      config: { fs: { type: "veryfront-api" } } as never,
       moduleLoader: async () => ({
         default: evalAgent({
-          id: "eval:deep-research",
-          name: "Deep research eval",
+          id: "eval:local",
           target: "agent:researcher",
-          dataset: datasets.inline([{ id: "q1", input: "capital", reference: "Paris" }]),
-          metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+          dataset: datasets.inline([{ id: "q1", input: "capital" }]),
         }),
       }),
     });
 
     assertEquals(result.errors, []);
+    assertEquals(
+      result.evals[0]?.filePath,
+      "/project/evals/local.eval.ts",
+      "local discovery joins projectDir with evalsDir",
+    );
+  });
+
+  it("discovers eval files with source metadata for Studio editing", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/evals/deep-research.eval.ts": "",
+    });
+    let receivedHostExecutionCapability: boolean | undefined;
+
+    const result = await discoverEvals({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+      allowHostProjectCodeExecution: true,
+      moduleLoader: async (_filePath, options) => {
+        receivedHostExecutionCapability = options.allowHostProjectCodeExecution;
+        return {
+          default: evalAgent({
+            id: "eval:deep-research",
+            name: "Deep research eval",
+            target: "agent:researcher",
+            dataset: datasets.inline([{ id: "q1", input: "capital", reference: "Paris" }]),
+            metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+          }),
+        };
+      },
+    });
+
+    assertEquals(result.errors, []);
+    assertEquals(receivedHostExecutionCapability, true);
     assertEquals(
       result.evals.map((item) => ({
         id: item.id,

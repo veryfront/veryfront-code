@@ -8,9 +8,12 @@
 export type {
   CacheEntry,
   DataContext,
+  DataResponseMetadata,
   DataResult,
   InferGetServerDataProps,
   PageWithData,
+  ResponseCookie,
+  StaticDataResult,
   StaticPathsResult,
 } from "./types.ts";
 export { DataFetcher, type FetchDataOptions } from "./data-fetcher.ts";

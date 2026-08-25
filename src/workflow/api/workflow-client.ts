@@ -5,14 +5,18 @@
  **************************/
 
 import { logger as baseLogger } from "#veryfront/utils";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import type {
   PendingApproval,
   RunFilter,
+  WaitNodeConfig,
   WorkflowDefinition,
+  WorkflowNode,
   WorkflowRun,
   WorkflowStatus,
 } from "../types.ts";
-import type { WorkflowBackend } from "../backends/types.ts";
+import { hasRunObservationSupport, type WorkflowBackend } from "../backends/types.ts";
+import { deriveWorkflowRunEventObservation, type WorkflowRunEventObservation } from "../events.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import {
   WorkflowExecutor,
@@ -21,8 +25,32 @@ import {
 } from "../executor/workflow-executor.ts";
 import { ApprovalManager, type ApprovalManagerConfig } from "../runtime/approval-manager.ts";
 import type { Workflow } from "../dsl/workflow.ts";
+import {
+  getPendingApprovalResponseSchemaId,
+  projectRunPendingApprovals,
+} from "../runtime/pending-approval-metadata.ts";
 
 const logger = baseLogger.component("workflow-client");
+const waitResponseSchemaId = Symbol("veryfront.workflow.waitResponseSchemaId");
+
+type IndexedWaitNodeConfig = WaitNodeConfig & {
+  readonly [waitResponseSchemaId]?: string;
+};
+
+function withWaitResponseSchemaId(
+  config: WaitNodeConfig,
+  responseSchemaId: string,
+): WaitNodeConfig {
+  const indexedConfig: IndexedWaitNodeConfig = { ...config };
+  Object.defineProperty(indexedConfig, waitResponseSchemaId, {
+    value: responseSchemaId,
+  });
+  return indexedConfig;
+}
+
+function getWaitResponseSchemaId(config: WaitNodeConfig): string | undefined {
+  return (config as IndexedWaitNodeConfig)[waitResponseSchemaId];
+}
 
 /** Configuration used by workflow client. */
 export interface WorkflowClientConfig {
@@ -36,55 +64,87 @@ export interface WorkflowClientConfig {
   debug?: boolean;
 }
 
+/** Supported observation stream or an explicit unsupported-backend result. */
+export type WorkflowRunEventsResult =
+  | ({ supported: true } & WorkflowRunEventObservation)
+  | { supported: false; reason: "unsupported" };
+
 /** Implement workflow client. */
 export class WorkflowClient {
   private backend: WorkflowBackend;
   private executor: WorkflowExecutor;
   private approvalManager: ApprovalManager;
   private debug: boolean;
+  /** Wait-node configs from registered definitions, keyed "<workflowId>::<nodeId>". */
+  private waitNodeConfigs = new Map<string, WaitNodeConfig>();
+  /** Registered response schemas keyed by a durable definition-path identity. */
+  private responseSchemas = new Map<string, Schema<unknown>>();
 
   constructor(config: WorkflowClientConfig = {}) {
     this.debug = config.debug ?? false;
     this.backend = config.backend ?? new MemoryBackend({ debug: this.debug });
 
     const userOnWaiting = config.executor?.onWaiting;
+    const userResponseSchemaResolver = config.approval?.responseSchemaResolver;
+    const userInternalResponseSchemaResolver = config.approval?.internalResponseSchemaResolver;
 
     this.executor = new WorkflowExecutor({
       backend: this.backend,
       debug: this.debug,
       ...config.executor,
-      onWaiting: async (run, nodeId) => {
+      onWaiting: async (run, nodeId, activeWaitConfig) => {
         const input = run.nodeStates[nodeId]?.input as
           | { type?: string; message?: string; payload?: unknown }
           | undefined;
 
         if (!input) {
           logger.debug("No wait config found for node", { nodeId });
-          await userOnWaiting?.(run, nodeId);
+          await userOnWaiting?.(run, nodeId, activeWaitConfig);
           return;
         }
 
         if (input.type !== "approval") {
-          await userOnWaiting?.(run, nodeId);
+          await userOnWaiting?.(run, nodeId, activeWaitConfig);
           return;
         }
 
-        const waitConfig = {
+        // Node state persists only the resolved message and payload. Carry the
+        // exact runtime config across the pause boundary so nested nodes that
+        // reuse an id and function-generated nodes retain their own policy.
+        // The registered definition remains a compatibility fallback for an
+        // execution result produced without the runtime config.
+        const registered = this.waitNodeConfigs.get(`${run.workflowId}::${nodeId}`);
+        const configured = activeWaitConfig ?? registered;
+        const waitConfig: WaitNodeConfig = {
           type: "wait" as const,
           waitType: "approval" as const,
           message: input.message,
           payload: input.payload,
+          ...(configured?.timeout !== undefined ? { timeout: configured.timeout } : {}),
+          ...(configured?.approvers !== undefined ? { approvers: configured.approvers } : {}),
+          ...(configured?.responseSchema !== undefined
+            ? { responseSchema: configured.responseSchema }
+            : {}),
         };
 
         try {
-          await this.approvalManager.createApproval(run, nodeId, waitConfig, run.context);
+          const responseSchemaId = configured?.responseSchema
+            ? getWaitResponseSchemaId(configured)
+            : undefined;
+          await this.approvalManager.createApproval(
+            run,
+            nodeId,
+            waitConfig,
+            run.context,
+            responseSchemaId === undefined ? undefined : { responseSchemaId },
+          );
           logger.debug("Created approval for node", { nodeId });
         } catch (error) {
           logger.error("Failed to create approval", error);
           throw error;
         }
 
-        await userOnWaiting?.(run, nodeId);
+        await userOnWaiting?.(run, nodeId, activeWaitConfig);
       },
     });
 
@@ -93,13 +153,156 @@ export class WorkflowClient {
       executor: this.executor,
       debug: this.debug,
       ...config.approval,
+      responseSchemaResolver: async (input) => {
+        return await userResponseSchemaResolver?.(input);
+      },
+      internalResponseSchemaResolver: async (input) => {
+        const responseSchemaId = getPendingApprovalResponseSchemaId(input.approval);
+        const registeredSchema = responseSchemaId !== undefined
+          ? this.responseSchemas.get(`${input.run.workflowId}::${responseSchemaId}`)
+          : this.waitNodeConfigs.get(`${input.run.workflowId}::${input.approval.nodeId}`)
+            ?.responseSchema;
+
+        if (registeredSchema !== undefined) {
+          return registeredSchema;
+        }
+
+        return await userInternalResponseSchemaResolver?.(input);
+      },
     });
   }
 
   register(workflow: Workflow | WorkflowDefinition): void {
     const definition = "definition" in workflow ? workflow.definition : workflow;
-    this.executor.register(definition);
+    const indexedDefinition = this.indexWaitNodeConfigs(definition);
+    this.executor.register(indexedDefinition);
     logger.debug("Registered workflow", { workflowId: definition.id });
+  }
+
+  /**
+   * Index every wait node under its runtime node id and registered-definition path.
+   *
+   * `responseSchema` is a live object and cannot be persisted on an approval.
+   * Persisting the definition-path identity lets a later process recover the
+   * exact registered schema even when a parent wait and a static sub-workflow
+   * wait share a runtime node id. Each static wait gets a definition-local config
+   * clone that carries its own path through execution, so one reused config
+   * object cannot overwrite another path. The node-id index remains the
+   * compatibility fallback for approvals created before definition-path
+   * identities existed.
+   * Static sub-workflows are indexed under the registering workflow's id
+   * because their approvals belong to the parent run.
+   *
+   * A workflow or loop whose `steps` is a function is not walked: the node list
+   * depends on runtime input/iteration state, so no schema can be recovered
+   * from the definition after a process restart. During execution, the exact
+   * runtime config supplies expiry, approvers, and response validation.
+   */
+  private indexWaitNodeConfigs(definition: WorkflowDefinition): WorkflowDefinition {
+    const keyPrefix = `${definition.id}::`;
+    for (const key of this.waitNodeConfigs.keys()) {
+      if (key.startsWith(keyPrefix)) {
+        this.waitNodeConfigs.delete(key);
+      }
+    }
+    for (const key of this.responseSchemas.keys()) {
+      if (key.startsWith(keyPrefix)) {
+        this.responseSchemas.delete(key);
+      }
+    }
+
+    if (!Array.isArray(definition.steps)) return definition;
+
+    const workflowId = definition.id;
+    const waitNodeConfigs = this.waitNodeConfigs;
+    const responseSchemas = this.responseSchemas;
+
+    function cloneDefinition(
+      nestedDefinition: WorkflowDefinition,
+      path: readonly string[],
+    ): WorkflowDefinition {
+      return Array.isArray(nestedDefinition.steps)
+        ? { ...nestedDefinition, steps: cloneNodes(nestedDefinition.steps, path) }
+        : nestedDefinition;
+    }
+
+    function cloneNodes(
+      nodes: readonly WorkflowNode[],
+      path: readonly string[],
+    ): WorkflowNode[] {
+      return nodes.map((node) => cloneNode(node, [...path, node.id]));
+    }
+
+    function cloneNode(node: WorkflowNode, nodePath: readonly string[]): WorkflowNode {
+      const config = node.config;
+      switch (config.type) {
+        case "wait": {
+          let indexedWaitConfig = config;
+          if (config.responseSchema) {
+            const responseSchemaId = JSON.stringify(nodePath);
+            responseSchemas.set(`${workflowId}::${responseSchemaId}`, config.responseSchema);
+            indexedWaitConfig = withWaitResponseSchemaId(config, responseSchemaId);
+          }
+          waitNodeConfigs.set(`${workflowId}::${node.id}`, indexedWaitConfig);
+          return { ...node, config: indexedWaitConfig };
+        }
+        case "parallel":
+          return {
+            ...node,
+            config: {
+              ...config,
+              nodes: cloneNodes(config.nodes, [...nodePath, "nodes"]),
+            },
+          };
+        case "branch":
+          return {
+            ...node,
+            config: {
+              ...config,
+              then: cloneNodes(config.then, [...nodePath, "then"]),
+              ...(config.else === undefined
+                ? {}
+                : { else: cloneNodes(config.else, [...nodePath, "else"]) }),
+            },
+          };
+        case "loop":
+          return Array.isArray(config.steps)
+            ? {
+              ...node,
+              config: {
+                ...config,
+                steps: cloneNodes(config.steps, [...nodePath, "steps"]),
+              },
+            }
+            : { ...node };
+        case "map": {
+          const processor = "steps" in config.processor
+            ? cloneDefinition(config.processor, [
+              ...nodePath,
+              "processor",
+              config.processor.id,
+            ])
+            : cloneNode(config.processor, [...nodePath, "processor", config.processor.id]);
+          return { ...node, config: { ...config, processor } };
+        }
+        case "subWorkflow":
+          return typeof config.workflow === "string" ? { ...node } : {
+            ...node,
+            config: {
+              ...config,
+              workflow: cloneDefinition(config.workflow, [
+                ...nodePath,
+                "workflow",
+                config.workflow.id,
+              ]),
+            },
+          };
+        case "step":
+          return { ...node };
+      }
+    }
+
+    return { ...definition, steps: cloneNodes(definition.steps, ["steps"]) };
   }
 
   registerAll(workflows: Array<Workflow | WorkflowDefinition>): void {
@@ -118,39 +321,60 @@ export class WorkflowClient {
     return this.executor.resume(runId, undefined, expectedWorkerId);
   }
 
+  retry(runId: string): Promise<void> {
+    return this.executor.retry(runId);
+  }
+
   cancel(runId: string): Promise<void> {
     return this.executor.cancel(runId);
   }
 
-  getRun(runId: string): Promise<WorkflowRun | null> {
-    return this.backend.getRun(runId);
+  /** Read a run, including the approvals it is currently waiting on. */
+  async getRun(runId: string): Promise<WorkflowRun | null> {
+    const run = await this.backend.getRun(runId);
+    return run ? projectRunPendingApprovals(run) : null;
   }
 
-  listRuns(filter?: RunFilter): Promise<WorkflowRun[]> {
-    return this.backend.listRuns(filter ?? {});
+  async listRuns(filter?: RunFilter): Promise<WorkflowRun[]> {
+    const runs = await this.backend.listRuns(filter ?? {});
+    return runs.map(projectRunPendingApprovals);
   }
 
-  getRunsByStatus(
+  async getRunsByStatus(
     status: WorkflowStatus | WorkflowStatus[],
     limit?: number,
   ): Promise<WorkflowRun[]> {
-    return this.backend.listRuns({ status, limit });
+    const runs = await this.backend.listRuns({ status, limit });
+    return runs.map(projectRunPendingApprovals);
   }
 
-  getRunsForWorkflow(workflowId: string, limit?: number): Promise<WorkflowRun[]> {
-    return this.backend.listRuns({ workflowId, limit });
+  async getRunsForWorkflow(workflowId: string, limit?: number): Promise<WorkflowRun[]> {
+    const runs = await this.backend.listRuns({ workflowId, limit });
+    return runs.map(projectRunPendingApprovals);
   }
 
   getPendingApprovals(runId: string): Promise<PendingApproval[]> {
     return this.approvalManager.getPendingApprovals(runId);
   }
 
-  approve(runId: string, approvalId: string, approver: string, comment?: string): Promise<void> {
-    return this.approvalManager.approve(runId, approvalId, approver, comment);
+  async approve(
+    runId: string,
+    approvalId: string,
+    approver: string,
+    comment?: string,
+    data?: unknown,
+  ): Promise<void> {
+    return await this.approvalManager.approve(runId, approvalId, approver, comment, data);
   }
 
-  reject(runId: string, approvalId: string, approver: string, comment?: string): Promise<void> {
-    return this.approvalManager.reject(runId, approvalId, approver, comment);
+  async reject(
+    runId: string,
+    approvalId: string,
+    approver: string,
+    comment?: string,
+    data?: unknown,
+  ): Promise<void> {
+    return await this.approvalManager.reject(runId, approvalId, approver, comment, data);
   }
 
   listAllPendingApprovals(filter?: {
@@ -158,6 +382,24 @@ export class WorkflowClient {
     approver?: string;
   }): Promise<Array<{ runId: string; approval: PendingApproval }>> {
     return this.approvalManager.listAllPending(filter);
+  }
+
+  /** Open an ordered event observation, or report unsupported custom backends explicitly. */
+  async observeRunEvents(
+    runId: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<WorkflowRunEventsResult | null> {
+    if (!hasRunObservationSupport(this.backend)) {
+      return { supported: false, reason: "unsupported" };
+    }
+    const observation = await this.backend.openRunObservation(runId, options);
+    if (!observation) return null;
+    const derived = deriveWorkflowRunEventObservation(observation);
+    return {
+      supported: true,
+      ...derived,
+      initial: projectRunPendingApprovals(derived.initial),
+    };
   }
 
   getBackend(): WorkflowBackend {

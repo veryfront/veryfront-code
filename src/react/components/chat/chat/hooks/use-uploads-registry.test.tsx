@@ -2,13 +2,12 @@ import * as React from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { JSDOM } from "npm:jsdom@28.0.0";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
+import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import {
-  useAttachments,
-  useUploadsRegistry,
-  type UseUploadsRegistryResult,
-} from "./use-uploads-registry.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { useAttachments } from "./use-uploads-registry.ts";
 
 function installDom(): () => void {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
@@ -61,12 +60,11 @@ function installDom(): () => void {
 function stubFetch(
   options: { deleteStatus?: number } = {},
 ): { deletes: string[]; deleteUrls: string[]; gets: string[]; restore: () => void } {
-  const previous = globalThis.fetch;
   const deletes: string[] = [];
   const deleteUrls: string[] = [];
   const gets: string[] = [];
   let counter = 0;
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+  const mockFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : String(input);
     const method = init?.method ?? "GET";
     if (method === "POST") {
@@ -96,12 +94,13 @@ function stubFetch(
     gets.push(url);
     return Promise.resolve(new Response("{}", { status: 200 }));
   }) as typeof fetch;
+  installMockFetch(mockFetch);
   return {
     deletes,
     deleteUrls,
     gets,
     restore: () => {
-      globalThis.fetch = previous;
+      restoreMockFetch();
     },
   };
 }
@@ -109,7 +108,7 @@ function stubFetch(
 function mount(storageKey: string) {
   let latest: ReturnType<typeof useAttachments> | null = null;
   function Capture(): null {
-    latest = useUploadsRegistry({ storageKey });
+    latest = useAttachments({ storageKey });
     return null;
   }
   const root = createRoot(document.getElementById("root")!);
@@ -153,25 +152,27 @@ function fakeFile(name: string): File {
   return new File(["1234567890"], name, { type: "text/plain" });
 }
 
-describe("react/components/chat/hooks/useUploadsRegistry", () => {
-  it("useUploadsRegistry is a back-compat alias of useAttachments", () => {
-    assert(useUploadsRegistry === useAttachments);
-  });
-
-  it("keeps the legacy result interface structurally source-compatible", () => {
-    const legacyResult = {
+describe("react/components/chat/hooks/useAttachments", () => {
+  it("keeps the canonical result interface structurally source-compatible", () => {
+    const result = {
       items: [],
       isLoading: false,
       isUploading: false,
       uploadError: null,
       clearUploadError: () => undefined,
+      storageError: null,
+      clearStorageError: () => undefined,
+      refreshError: null,
+      clearRefreshError: () => undefined,
+      removeError: null,
+      clearRemoveError: () => undefined,
       upload: () => undefined,
       add: () => undefined,
       remove: () => Promise.resolve(),
       clear: () => undefined,
       refresh: () => Promise.resolve(),
-    } satisfies UseUploadsRegistryResult;
-    assertEquals(legacyResult.items, []);
+    } satisfies ReturnType<typeof useAttachments>;
+    assertEquals(result.items, []);
   });
 
   it("uploads a file, captures the server id, and persists it", async () => {
@@ -188,13 +189,13 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       assertEquals(items[0]!.id, "srv-1", "the server id is captured (needed for DELETE)");
       assertEquals(items[0]!.type, "text/plain");
       assert((localStorage.getItem(key) ?? "").includes("srv-1"), "persisted to localStorage");
-      flushSync(() => a.root.unmount());
+      await unmountReactRoot(a.root);
       await flush(() => {});
 
       // Remount → the item is loaded back from localStorage.
       const b = mount(key);
       assertEquals(b.get().items.map((f) => f.id), ["srv-1"]);
-      flushSync(() => b.root.unmount());
+      await unmountReactRoot(b.root);
       await flush(() => {});
     } finally {
       fetchStub.restore();
@@ -211,7 +212,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       assertEquals(reg.get().isLoading, true, "loading immediately after mount");
       await flush(() => {});
       assertEquals(reg.get().isLoading, false, "cleared once the initial fetch resolves");
-      flushSync(() => reg.root.unmount());
+      await unmountReactRoot(reg.root);
       await flush(() => {});
     } finally {
       fetchStub.restore();
@@ -223,9 +224,9 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
     const restoreDom = installDom();
     const fetchStub = stubFetch();
     try {
-      let latest: UseUploadsRegistryResult | null = null;
+      let latest: ReturnType<typeof useAttachments> | null = null;
       const Capture = (): null => {
-        latest = useUploadsRegistry({
+        latest = useAttachments({
           storageKey: "test-inline-headers",
           headers: { authorization: "Bearer test" },
         });
@@ -237,9 +238,9 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       await flush(() => {});
       await flush(() => {});
 
-      assertEquals((latest as unknown as UseUploadsRegistryResult).isLoading, false);
+      assertEquals((latest as unknown as ReturnType<typeof useAttachments>).isLoading, false);
       assertEquals(fetchStub.gets.length, 1, "inline headers should not retrigger refresh");
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await flush(() => {});
     } finally {
       fetchStub.restore();
@@ -249,20 +250,20 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
 
   it("does not let a superseded endpoint refresh overwrite the current list", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
     const pending = new Map<string, {
       resolve: (response: Response) => void;
       signal?: AbortSignal | null;
     }>();
-    globalThis.fetch =
+    const mockFetch =
       ((input: RequestInfo | URL, init?: RequestInit) =>
         new Promise<Response>((resolve) => {
           pending.set(String(input), { resolve, signal: init?.signal });
         })) as typeof fetch;
+    installMockFetch(mockFetch);
 
-    let latest: UseUploadsRegistryResult | null = null;
+    let latest: ReturnType<typeof useAttachments> | null = null;
     const Capture = ({ url }: { url: string }): null => {
-      latest = useUploadsRegistry({ storageKey: "test-endpoint-switch", url });
+      latest = useAttachments({ storageKey: "test-endpoint-switch", url });
       return null;
     };
     const root = createRoot(document.getElementById("root")!);
@@ -282,7 +283,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       );
       await flush(() => {});
       assertEquals(
-        (latest as unknown as UseUploadsRegistryResult).items.map((item) => item.id),
+        (latest as unknown as ReturnType<typeof useAttachments>).items.map((item) => item.id),
         ["new"],
       );
 
@@ -295,14 +296,14 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       );
       await flush(() => {});
       assertEquals(
-        (latest as unknown as UseUploadsRegistryResult).items.map((item) => item.id),
+        (latest as unknown as ReturnType<typeof useAttachments>).items.map((item) => item.id),
         ["new"],
       );
 
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await flush(() => {});
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
@@ -322,7 +323,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
 
       assert(fetchStub.deletes.includes(id), "a DELETE was sent for the removed id");
       assertEquals(reg.get().items.length, 0, "the item is gone from the registry");
-      flushSync(() => reg.root.unmount());
+      await unmountReactRoot(reg.root);
       await flush(() => {});
     } finally {
       fetchStub.restore();
@@ -354,7 +355,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
         "/api/uploads?source=panel&id=current#details",
       );
       assertEquals(reg.get().items, []);
-      flushSync(() => reg.root.unmount());
+      await unmountReactRoot(reg.root);
     } finally {
       fetchStub.restore();
       restoreDom();
@@ -377,7 +378,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       assert(reg.get().removeError instanceof Error);
       flushSync(() => reg.get().clearRemoveError());
       assertEquals(reg.get().removeError, null);
-      flushSync(() => reg.root.unmount());
+      await unmountReactRoot(reg.root);
       await flush(() => {});
     } finally {
       fetchStub.restore();
@@ -385,7 +386,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
     }
   });
 
-  it("rejects malformed, oversized, and executable persisted registry data", () => {
+  it("rejects malformed, oversized, and executable persisted registry data", async () => {
     const restoreDom = installDom();
     const fetchStub = stubFetch();
     try {
@@ -400,13 +401,59 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       const invalid = mount("test-invalid-cache");
       assertEquals(invalid.get().items, []);
       assert(invalid.get().storageError instanceof Error);
-      flushSync(() => invalid.root.unmount());
+      await unmountReactRoot(invalid.root);
 
       localStorage.setItem("test-oversized-cache", `"${"x".repeat(1_100_000)}"`);
       const oversized = mount("test-oversized-cache");
       assertEquals(oversized.get().items, []);
       assert(oversized.get().storageError instanceof Error);
-      flushSync(() => oversized.root.unmount());
+      assertStringIncludes(
+        oversized.get().storageError!.message,
+        "exceeds",
+        "an over-cap payload is rejected by the byte guard, not by its shape",
+      );
+      await unmountReactRoot(oversized.root);
+
+      // A syntactically VALID registry that is simply too large: the shape
+      // checks all pass, so only the byte cap can reject it.
+      localStorage.setItem(
+        "test-oversized-array-cache",
+        JSON.stringify(
+          Array.from({ length: 300 }, (_unused, index) => ({
+            id: `i${index}`,
+            name: "x".repeat(4_000),
+            url: `/u/${index}`,
+          })),
+        ),
+      );
+      const oversizedArray = mount("test-oversized-array-cache");
+      assertEquals(oversizedArray.get().items, []);
+      assertStringIncludes(
+        oversizedArray.get().storageError!.message,
+        "exceeds",
+        "a well-formed but over-cap registry array is rejected by the byte guard",
+      );
+      await unmountReactRoot(oversizedArray.root);
+
+      // Small enough in bytes, but past the item cap.
+      localStorage.setItem(
+        "test-too-many-cache",
+        JSON.stringify(
+          Array.from({ length: 1_001 }, (_unused, index) => ({
+            id: `i${index}`,
+            name: "a.txt",
+            url: `/u/${index}`,
+          })),
+        ),
+      );
+      const tooMany = mount("test-too-many-cache");
+      assertEquals(tooMany.get().items, []);
+      assertStringIncludes(
+        tooMany.get().storageError!.message,
+        "bounded array",
+        "a registry past the item cap is rejected even when its bytes fit",
+      );
+      await unmountReactRoot(tooMany.root);
 
       localStorage.setItem(
         "test-duplicate-cache",
@@ -418,7 +465,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       const duplicate = mount("test-duplicate-cache");
       assertEquals(duplicate.get().items, []);
       assert(duplicate.get().storageError instanceof Error);
-      flushSync(() => duplicate.root.unmount());
+      await unmountReactRoot(duplicate.root);
     } finally {
       fetchStub.restore();
       restoreDom();
@@ -427,8 +474,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
 
   it("rejects executable URLs from list and upload responses", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
-    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+    const mockFetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === "POST") {
         return Promise.resolve(
           Response.json({
@@ -448,6 +494,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
         }),
       );
     }) as typeof fetch;
+    installMockFetch(mockFetch);
 
     try {
       localStorage.setItem(
@@ -469,24 +516,24 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       await flush(() => reg.get().upload([fakeFile("unsafe.html")]));
       assertEquals(reg.get().items.map((item) => item.id), ["cached"]);
       assert(reg.get().uploadError instanceof Error);
-      flushSync(() => reg.root.unmount());
+      await unmountReactRoot(reg.root);
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
 
   it("rejects invalid UTF-8 list responses without replacing the cache", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
     const encoder = new TextEncoder();
     const invalidResponse = new Uint8Array([
       ...encoder.encode('{"items":[{"id":"server","name":"'),
       0xff,
       ...encoder.encode('","url":"/uploads/server"}]}'),
     ]);
-    globalThis.fetch =
+    const mockFetch =
       (() => Promise.resolve(new Response(invalidResponse.slice()))) as typeof fetch;
+    installMockFetch(mockFetch);
 
     try {
       localStorage.setItem(
@@ -502,18 +549,18 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
 
       assertEquals(reg.get().items.map((item) => item.id), ["cached"]);
       assert(reg.get().refreshError instanceof Error);
-      flushSync(() => reg.root.unmount());
+      await unmountReactRoot(reg.root);
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
 
   it("surfaces failed and duplicate refreshes without erasing the cache", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
     let response = new Response("unavailable", { status: 503 });
-    globalThis.fetch = (() => Promise.resolve(response.clone())) as typeof fetch;
+    const mockFetch = (() => Promise.resolve(response.clone())) as typeof fetch;
+    installMockFetch(mockFetch);
 
     try {
       localStorage.setItem(
@@ -546,31 +593,111 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
         "an ambiguous snapshot must not replace the validated cache",
       );
       assert(reg.get().refreshError instanceof Error);
-      flushSync(() => reg.root.unmount());
+      await unmountReactRoot(reg.root);
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
 
   it("rejects a declared oversized list response before parsing it", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
-    globalThis.fetch = (() =>
+    const mockFetch = (() =>
       Promise.resolve(
         new Response('{"items":[]}', {
           headers: { "content-length": String(9 * 1024 * 1024) },
         }),
       )) as typeof fetch;
+    installMockFetch(mockFetch);
 
     try {
       const reg = mount("test-oversized-response");
       await flush(() => {});
       assertEquals(reg.get().items, []);
       assert(reg.get().refreshError instanceof Error);
-      flushSync(() => reg.root.unmount());
+      await unmountReactRoot(reg.root);
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
+      restoreDom();
+    }
+  });
+
+  it("rejects a declared oversized upload response", async () => {
+    const restoreDom = installDom();
+    const mockFetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        return Promise.resolve(
+          new Response('{"id":"x"}', {
+            headers: { "content-length": String(70_000) },
+          }),
+        );
+      }
+      return Promise.resolve(Response.json({ items: [] }));
+    }) as typeof fetch;
+    installMockFetch(mockFetch);
+
+    try {
+      const reg = mount("test-oversized-upload-response");
+      await flush(() => {});
+      await flush(() => reg.get().upload([fakeFile("a.txt")]));
+      assertEquals(
+        reg.get().items,
+        [],
+        "an oversized upload response must not add an item",
+      );
+      assert(reg.get().uploadError instanceof Error, "the upload failure is published");
+      assertStringIncludes(
+        reg.get().uploadError!.message,
+        "exceeds 65536 bytes",
+        "the upload response bound is reported",
+      );
+      await unmountReactRoot(reg.root);
+    } finally {
+      restoreMockFetch();
+      restoreDom();
+    }
+  });
+
+  it("rejects a streamed upload response that crosses the bound mid-read", async () => {
+    const restoreDom = installDom();
+    const mockFetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        // No content-length, so the header pre-check is skipped and the
+        // byte accumulation branch (plus reader.cancel()) is what rejects it.
+        const chunk = new Uint8Array(10_000);
+        return Promise.resolve(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                for (let i = 0; i < 7; i += 1) controller.enqueue(chunk);
+                controller.close();
+              },
+            }),
+          ),
+        );
+      }
+      return Promise.resolve(Response.json({ items: [] }));
+    }) as typeof fetch;
+    installMockFetch(mockFetch);
+
+    try {
+      const reg = mount("test-streamed-upload-response");
+      await flush(() => {});
+      await flush(() => reg.get().upload([fakeFile("a.txt")]));
+      assertEquals(
+        reg.get().items,
+        [],
+        "a streamed over-cap upload response must not add an item",
+      );
+      assert(reg.get().uploadError instanceof Error, "the upload failure is published");
+      assertStringIncludes(
+        reg.get().uploadError!.message,
+        "exceeds 65536 bytes",
+        "the bound is enforced while the body streams, not only from its header",
+      );
+      await unmountReactRoot(reg.root);
+    } finally {
+      restoreMockFetch();
       restoreDom();
     }
   });
@@ -610,7 +737,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       if (originalDescriptor) {
         Object.defineProperty(storagePrototype, "setItem", originalDescriptor);
       }
-      flushSync(() => reg.root.unmount());
+      await unmountReactRoot(reg.root);
     } finally {
       fetchStub.restore();
       restoreDom();
@@ -643,7 +770,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
         null,
         "the oversized payload must not be handed to localStorage",
       );
-      flushSync(() => reg.root.unmount());
+      await unmountReactRoot(reg.root);
     } finally {
       fetchStub.restore();
       restoreDom();
@@ -652,14 +779,13 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
 
   it("aborts an upload on endpoint switch and ignores a transport that completes late", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
     const pending: Array<{
       method: string;
       url: string;
       signal?: AbortSignal | null;
       resolve: (response: Response) => void;
     }> = [];
-    globalThis.fetch =
+    const mockFetch =
       ((input: RequestInfo | URL, init?: RequestInit) =>
         new Promise<Response>((resolve) => {
           pending.push({
@@ -669,6 +795,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
             resolve,
           });
         })) as typeof fetch;
+    installMockFetch(mockFetch);
 
     try {
       const reg = mountOptions({
@@ -705,23 +832,22 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       assertEquals(reg.get().uploadError, null);
       assertEquals(reg.get().isUploading, false);
 
-      flushSync(() => reg.root.unmount());
+      await unmountReactRoot(reg.root);
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
 
   it("does not let a stale delete remove the current endpoint's item", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
     const pending: Array<{
       method: string;
       url: string;
       signal?: AbortSignal | null;
       resolve: (response: Response) => void;
     }> = [];
-    globalThis.fetch =
+    const mockFetch =
       ((input: RequestInfo | URL, init?: RequestInit) =>
         new Promise<Response>((resolve) => {
           pending.push({
@@ -731,6 +857,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
             resolve,
           });
         })) as typeof fetch;
+    installMockFetch(mockFetch);
 
     try {
       const reg = mountOptions({ storageKey: "test-stale-delete", url: "/old" });
@@ -757,25 +884,25 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       await flush(() => {});
       assertEquals(reg.get().items.map((item) => item.name), ["current.txt"]);
 
-      flushSync(() => reg.root.unmount());
+      await unmountReactRoot(reg.root);
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
 
   it("latest refresh wins even when the endpoint identity is unchanged", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
     const pending: Array<{
       signal?: AbortSignal | null;
       resolve: (response: Response) => void;
     }> = [];
-    globalThis.fetch =
+    const mockFetch =
       ((_input: RequestInfo | URL, init?: RequestInit) =>
         new Promise<Response>((resolve) => {
           pending.push({ signal: init?.signal, resolve });
         })) as typeof fetch;
+    installMockFetch(mockFetch);
 
     try {
       const reg = mountOptions({ storageKey: "test-latest-refresh", url: "/uploads" });
@@ -792,18 +919,17 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       first.resolve(Response.json({ items: [{ id: "old", name: "old.txt" }] }));
       await flush(() => {});
       assertEquals(reg.get().items.map((item) => item.id), ["new"]);
-      flushSync(() => reg.root.unmount());
+      await unmountReactRoot(reg.root);
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
 
   it("follows bounded list pagination before publishing server truth", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
     const requested: string[] = [];
-    globalThis.fetch = ((input: RequestInfo | URL) => {
+    const mockFetch = ((input: RequestInfo | URL) => {
       const url = String(input);
       requested.push(url);
       const offset = Number(
@@ -827,6 +953,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
         ),
       );
     }) as typeof fetch;
+    installMockFetch(mockFetch);
 
     try {
       const reg = mountOptions({
@@ -844,18 +971,17 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
         ["newest", "older"],
       );
       assertEquals(reg.get().refreshError, null);
-      flushSync(() => reg.root.unmount());
+      await unmountReactRoot(reg.root);
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
 
   it("rejects pagination loops without issuing unbounded requests", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
     const requested: string[] = [];
-    globalThis.fetch = ((input: RequestInfo | URL) => {
+    const mockFetch = ((input: RequestInfo | URL) => {
       requested.push(String(input));
       return Promise.resolve(
         Response.json({
@@ -866,6 +992,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
         }),
       );
     }) as typeof fetch;
+    installMockFetch(mockFetch);
 
     try {
       localStorage.setItem(
@@ -884,9 +1011,9 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       ]);
       assertEquals(reg.get().items.map((item) => item.id), ["cached"]);
       assert(reg.get().refreshError instanceof Error);
-      flushSync(() => reg.root.unmount());
+      await unmountReactRoot(reg.root);
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
@@ -915,7 +1042,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
         ),
         ["b"],
       );
-      flushSync(() => reg.root.unmount());
+      await unmountReactRoot(reg.root);
     } finally {
       fetchStub.restore();
       restoreDom();
@@ -945,7 +1072,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       });
 
       assertEquals(reg.get().items.map((item) => item.id), ["b"]);
-      flushSync(() => reg.root.unmount());
+      await unmountReactRoot(reg.root);
     } finally {
       fetchStub.restore();
       restoreDom();
@@ -954,16 +1081,16 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
 
   it("aborts every fetch owner on unmount and consumes late rejections", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
     const pending: Array<{
       signal?: AbortSignal | null;
       reject: (error: Error) => void;
     }> = [];
-    globalThis.fetch =
+    const mockFetch =
       ((_input: RequestInfo | URL, init?: RequestInit) =>
         new Promise<Response>((_resolve, reject) => {
           pending.push({ signal: init?.signal, reject });
         })) as typeof fetch;
+    installMockFetch(mockFetch);
 
     try {
       const reg = mountOptions({ storageKey: "test-unmount", url: "/uploads" });
@@ -979,7 +1106,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       assertEquals(pending.length, 3, "GET, DELETE, and POST are all pending");
 
       const retained = reg.get();
-      flushSync(() => reg.root.unmount());
+      await unmountReactRoot(reg.root);
       assert(
         pending.every((request) => request.signal?.aborted),
         "all operation signals are aborted during cleanup",
@@ -999,23 +1126,23 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       await removal;
       await new Promise((resolve) => setTimeout(resolve, 0));
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
 
   it("an abandoned concurrent endpoint render cannot steal committed refresh ownership", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
     const pending: Array<{
       signal?: AbortSignal | null;
       resolve: (response: Response) => void;
     }> = [];
-    globalThis.fetch =
+    const mockFetch =
       ((_input: RequestInfo | URL, init?: RequestInit) =>
         new Promise<Response>((resolve) => {
           pending.push({ signal: init?.signal, resolve });
         })) as typeof fetch;
+    installMockFetch(mockFetch);
     let committed: ReturnType<typeof useAttachments> | null = null;
     let attemptedSuspendedRender = false;
     const never = new Promise<void>(() => undefined);
@@ -1054,7 +1181,10 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
           </React.Suspense>,
         );
       });
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await waitFor(() => attemptedSuspendedRender, {
+        interval: 1,
+        message: "Concurrent endpoint render did not start",
+      });
       assertEquals(attemptedSuspendedRender, true);
       assertEquals(pending[0]?.signal?.aborted, false);
       assertEquals(pending.length, 1, "an uncommitted scope must not start a refresh");
@@ -1077,9 +1207,9 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
           </React.Suspense>,
         )
       );
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });

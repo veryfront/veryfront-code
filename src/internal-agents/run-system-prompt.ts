@@ -18,15 +18,18 @@
  * @module
  */
 
-import type { Agent } from "#veryfront/agent";
+import type { Agent, AgentSystem } from "#veryfront/agent";
 import { buildAgentCallContext } from "#veryfront/agent/runtime/call-context.ts";
-import { getEffectiveAgentSystem } from "#veryfront/agent/runtime/effective-agent-system.ts";
-import { createRuntimePromptBlock } from "#veryfront/agent/runtime/prompt-block.ts";
 import {
-  flattenSystemInstructions,
-  withRuntimeToolInventory,
-} from "#veryfront/agent/runtime/tool-inventory.ts";
+  getEffectiveAgentSystem,
+  resolveAgentSystem,
+} from "#veryfront/agent/runtime/effective-agent-system.ts";
+import { createRuntimePromptBlock } from "#veryfront/agent/runtime/prompt-block.ts";
+import { resolveModelProviderOptionKey } from "#veryfront/agent/runtime/model-resolution.ts";
+import { withRuntimeToolInventory } from "#veryfront/agent/runtime/tool-inventory.ts";
+import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import type { RuntimeRunAgentInput } from "./schema.ts";
+import type { ModelRuntime } from "#veryfront/provider";
 
 const STUDIO_CONTEXT_ITEM_TITLE = "studio_context";
 const DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant.";
@@ -81,32 +84,45 @@ export function getInternalAgentStudioRunContext(
   return {};
 }
 
-async function resolveBaseSystemPrompt(system: Agent["config"]["system"]): Promise<string> {
-  if (typeof system === "string") {
-    return system;
+async function resolveBaseSystemPrompt(
+  system: Agent["config"]["system"],
+  providerOptionKey: string | undefined,
+): Promise<AgentSystem> {
+  const resolved = await resolveAgentSystem(system, providerOptionKey);
+  if (typeof resolved === "string") {
+    return resolved;
   }
-  if (typeof system === "function") {
-    return await system();
-  }
-  return DEFAULT_SYSTEM_PROMPT;
+  return resolved.length > 0 ? resolved : DEFAULT_SYSTEM_PROMPT;
 }
 
 /** Input payload for compose internal agent run system prompt. */
 export type ComposeInternalAgentRunSystemPromptInput = {
   agent: Agent;
+  resolvedBaseSystem?: AgentSystem;
   runInput: RuntimeRunAgentInput;
   projectId?: string | null;
   branchId?: string | null;
   toolNames: readonly string[];
+  providerOptionKey?: string;
+  modelRuntime?: ModelRuntime;
 };
 
 /** Composes the internal agent run system prompt. */
 export async function composeInternalAgentRunSystemPrompt(
   input: ComposeInternalAgentRunSystemPromptInput,
-): Promise<string> {
-  const baseInstructions = await resolveBaseSystemPrompt(getEffectiveAgentSystem(input.agent));
+): Promise<ChatSystemMessage[]> {
+  const baseSystem = input.resolvedBaseSystem === undefined
+    ? await resolveBaseSystemPrompt(
+      getEffectiveAgentSystem(input.agent),
+      input.providerOptionKey,
+    )
+    : typeof input.resolvedBaseSystem === "string" || input.resolvedBaseSystem.length > 0
+    ? input.resolvedBaseSystem
+    : DEFAULT_SYSTEM_PROMPT;
   const studioContext = getInternalAgentStudioRunContext(input.runInput.context);
   const projectId = input.projectId ?? studioContext.projectId;
+  const anthropicProviderAlias = input.providerOptionKey ??
+    resolveModelProviderOptionKey(input.agent.config.model, input.modelRuntime);
 
   const extraBlocks: string[] = [];
   if (input.agent.config.model) {
@@ -118,8 +134,9 @@ export async function composeInternalAgentRunSystemPrompt(
     );
   }
 
-  const messages = buildAgentCallContext({
-    instructions: baseInstructions,
+  const contextMessages = buildAgentCallContext({
+    instructions: baseSystem,
+    ...(anthropicProviderAlias ? { anthropicProviderAlias } : {}),
     ...(projectId
       ? {
         projectContext: {
@@ -129,11 +146,9 @@ export async function composeInternalAgentRunSystemPrompt(
       }
       : {}),
     extraBlocks,
-    availableToolNames: input.toolNames,
     ...(studioContext.environmentContext
       ? { environmentContext: studioContext.environmentContext }
       : {}),
   });
-
-  return flattenSystemInstructions(withRuntimeToolInventory(messages, input.toolNames));
+  return withRuntimeToolInventory(contextMessages, input.toolNames);
 }

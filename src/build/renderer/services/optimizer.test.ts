@@ -30,7 +30,6 @@ function createOptions(mode: "development" | "production"): BundlerOptions {
 
 describe(
   "build/renderer/services/optimizer",
-  { sanitizeOps: false, sanitizeResources: false },
   () => {
     afterAll(async () => {
       await esbuild.stop();
@@ -70,11 +69,9 @@ describe(
 
         const output = result.outputs.get("app.js");
         assertEquals(
-          output!.content.length <
-            "const   greeting   =   'hello world';  console.log(  greeting  );"
-              .length,
-          true,
-          "minified content should be shorter than original",
+          output!.content.trim(),
+          'const greeting="hello world";console.log(greeting);',
+          "production output is minified by esbuild",
         );
       });
 
@@ -127,8 +124,16 @@ describe(
         const options = createOptions("production");
         await optimizeBundle(result, options);
 
-        assertEquals(typeof result.outputs.get("a.js")!.content, "string", "a.js should be string");
-        assertEquals(typeof result.outputs.get("b.js")!.content, "string", "b.js should be string");
+        assertEquals(
+          result.outputs.get("a.js")!.content.trim(),
+          "const a=1;",
+          "first JS output must be minified",
+        );
+        assertEquals(
+          result.outputs.get("b.js")!.content.trim(),
+          "const b=2;",
+          "every JS output is minified, not just the first",
+        );
       });
     });
   },

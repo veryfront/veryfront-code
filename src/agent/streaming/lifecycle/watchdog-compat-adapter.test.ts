@@ -42,6 +42,24 @@ describe("mapWatchdogChunkToLifecycleActivity", () => {
       }),
       { type: "telemetry" },
     );
+    assertEquals(
+      mapWatchdogChunkToLifecycleActivity(state, {
+        type: "tool-input-delta",
+        toolCallId: "tool-1",
+        inputTextDelta: "",
+      }),
+      { type: "telemetry" },
+      "empty tool-input deltas must not extend the deadline",
+    );
+    assertEquals(
+      mapWatchdogChunkToLifecycleActivity(state, {
+        type: "reasoning-delta",
+        id: "r1",
+        delta: "",
+      }),
+      { type: "telemetry" },
+      "empty reasoning deltas must not extend the deadline",
+    );
   });
 
   it("classifies semantic progress, transitions, and completion", () => {
@@ -95,6 +113,54 @@ describe("mapWatchdogChunkToLifecycleActivity", () => {
     assertEquals(
       mapWatchdogChunkToLifecycleActivity(state, { type: "finish" }),
       { type: "completed" },
+    );
+
+    const toolState: ChatStreamWatchdogState = {
+      phase: "tool_input_streaming",
+      timeoutMs: 120,
+      toolCallId: "tool-1",
+      toolName: "bash",
+    };
+    assertEquals(
+      mapWatchdogChunkToLifecycleActivity(toolState, {
+        type: "tool-input-delta",
+        toolCallId: "tool-1",
+        inputTextDelta: '{"a":1}',
+      }),
+      {
+        type: "semantic_progress",
+        phase: "awaiting_tool_input",
+        toolCallId: "tool-1",
+        toolName: "bash",
+      },
+      "non-empty tool-input deltas are semantic progress carrying the current tool name",
+    );
+    assertEquals(
+      mapWatchdogChunkToLifecycleActivity(toolState, {
+        type: "tool-output-error",
+        toolCallId: "tool-1",
+        errorText: "boom",
+      }),
+      {
+        type: "semantic_progress",
+        phase: "streaming",
+        toolCallId: "tool-1",
+        toolName: "bash",
+      },
+      "a tool output error is semantic progress that returns the stream to streaming",
+    );
+    assertEquals(
+      mapWatchdogChunkToLifecycleActivity(toolState, {
+        type: "tool-output-denied",
+        toolCallId: "tool-1",
+      }),
+      {
+        type: "semantic_progress",
+        phase: "streaming",
+        toolCallId: "tool-1",
+        toolName: "bash",
+      },
+      "a denied tool output is semantic progress that returns the stream to streaming",
     );
   });
 });

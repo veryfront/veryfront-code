@@ -22,6 +22,38 @@ function result(overrides: Partial<ClaudeCodeResult> = {}): ClaudeCodeResult {
   };
 }
 
+/** Every event type the reducer is allowed to see, per CLAUDE_CODE_CORE_EVENT_TYPES. */
+const CORE_EVENT_TYPES = [
+  "iteration_start",
+  "text_delta",
+  "text_complete",
+  "tool_call_start",
+  "tool_call_input",
+  "tool_call_complete",
+  "tool_result",
+  "iteration_complete",
+  "thinking_start",
+  "thinking_delta",
+  "thinking_complete",
+  "complete",
+  "error",
+] as const;
+
+/** Transport-level events that must never reach the reducer. */
+const WEBSOCKET_ONLY_EVENT_TYPES = [
+  "approval_request",
+  "input_request",
+  "pong",
+  "cancelled",
+  "command_ack",
+] as const;
+
+function coreEventTypes(types: readonly string[]): string[] {
+  return types.filter((type) =>
+    isClaudeCodeCoreEvent({ type, timestamp: 1 } as unknown as ClaudeCodeEventExtended)
+  );
+}
+
 describe("workflow/claude-code/react/event-state-reducer", () => {
   it("reduces shared iteration, text, tool, and completion events", () => {
     const finalResult = result();
@@ -153,12 +185,37 @@ describe("workflow/claude-code/react/event-state-reducer", () => {
   });
 
   it("identifies core events and rejects websocket-only events", () => {
-    const events: ClaudeCodeEventExtended[] = [
-      { type: "pong", timestamp: 1 },
-      { type: "cancelled", timestamp: 2 },
-      { type: "text_complete", timestamp: 3, content: "done" },
-    ];
+    assertEquals(
+      coreEventTypes(CORE_EVENT_TYPES),
+      [...CORE_EVENT_TYPES],
+      "every core event type must reach the reducer",
+    );
+    assertEquals(
+      coreEventTypes(WEBSOCKET_ONLY_EVENT_TYPES),
+      [],
+      "websocket-only event types must never reach the reducer",
+    );
+  });
 
-    assertEquals(events.map(isClaudeCodeCoreEvent), [false, false, true]);
+  it("surfaces errors and only stops the run when the error is unrecoverable", () => {
+    const running = { ...createClaudeCodeEventState(), isRunning: true };
+
+    const recoverable = reduceClaudeCodeEventState(running, {
+      type: "error",
+      timestamp: 1,
+      message: "boom",
+      recoverable: true,
+    });
+    assertEquals(recoverable.error, "boom", "a recoverable error must surface its message");
+    assertEquals(recoverable.isRunning, true, "a recoverable error must leave the run in flight");
+
+    const fatal = reduceClaudeCodeEventState(running, {
+      type: "error",
+      timestamp: 2,
+      message: "fatal",
+      recoverable: false,
+    });
+    assertEquals(fatal.error, "fatal", "an unrecoverable error must surface its message");
+    assertEquals(fatal.isRunning, false, "an unrecoverable error must stop the run");
   });
 });

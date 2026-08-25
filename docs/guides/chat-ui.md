@@ -23,15 +23,31 @@ Create a client page:
 // app/page.tsx
 "use client";
 import { Chat, useChat } from "veryfront/chat";
+import { MarkdownRendererProvider } from "veryfront/markdown";
+import { MarkdownRenderer } from "./markdown-renderer.tsx";
 
 export default function ChatPage() {
   const chat = useChat();
-  return <Chat chat={chat} placeholder="Ask me anything..." />;
+  return (
+    <MarkdownRendererProvider renderer={MarkdownRenderer}>
+      <Chat chat={chat} placeholder="Ask me anything..." />
+    </MarkdownRendererProvider>
+  );
 }
 ```
 
 `useChat()` connects to `/api/ag-ui` by default. `Chat` renders the composer,
 message list, loading state, and scroll behavior.
+
+The `MarkdownRendererProvider` wrapper is required for readable answers.
+Assistants reply in Markdown, and `veryfront/markdown` presents plain escaped
+source until a renderer is installed, so a `<Chat>` without one shows
+`## Heading` rather than a heading. The chat starters scaffold the
+`app/markdown-renderer.tsx` this sample imports; the `minimal` and
+`agentic-workflow` templates do not. Create the file first if your project does
+not already have it. See
+[Render Markdown in chat](#render-markdown-in-chat). Wrap the other samples on
+this page the same way.
 
 ## Add request preprocessing
 
@@ -155,6 +171,13 @@ export default function CustomLayout() {
       <header className="border-b p-4">
         <h1>Assistant</h1>
       </header>
+      <Chat.If condition={(ctx) => ctx.isEmpty}>
+        <Chat.Empty
+          title="What can I help with?"
+          suggestions={["Explain React hooks", "Write a regex"]}
+          onSuggestionSelect={(suggestion) => chat.setInput(suggestion.prompt)}
+        />
+      </Chat.If>
       <Chat.MessageList messages={chat.messages} />
       <Chat.Input.Root
         input={chat.input}
@@ -168,15 +191,17 @@ export default function CustomLayout() {
           <Chat.Input.Send />
         </Chat.Input.Toolbar>
       </Chat.Input.Root>
-      <Chat.Empty
-        title="What can I help with?"
-        suggestions={["Explain React hooks", "Write a regex"]}
-        onSuggestionSelect={(suggestion) => chat.setInput(suggestion.prompt)}
-      />
     </Chat.Root>
   );
 }
 ```
+
+`<Chat.Empty>` renders whatever it is given; it does not hide itself. The preset
+`<Chat>` decides when to show its empty state for you, but a custom layout owns
+that decision, so gate the empty state on the thread being empty. `<Chat.If>`
+reads the nearest `<Chat.Root>`, where `ctx.isEmpty` is true only while
+`messages` is empty. Without the gate, the empty state stays mounted below the
+conversation once the first message is sent.
 
 Use `Message` when individual message rendering needs custom structure:
 
@@ -304,10 +329,67 @@ different requests would share the same store.
 Use chat context providers only when nested components need direct state access.
 Prefer preset props or composition components first.
 
-## Render Markdown directly
+## Render Markdown in chat
 
-Use `veryfront/markdown` when a page or custom message surface needs the same
-renderer without the rest of the chat composition:
+`veryfront/markdown` presents plain escaped source until a renderer is
+installed, so `<Chat>` shows raw Markdown on its own. Every chat starter
+scaffolds a renderer in `app/markdown-renderer.tsx` and installs it around
+`<Chat>`, so a new project renders assistant answers with no extra setup.
+
+Add the same two pieces to a project without one. Install the parser, pinned to
+an exact version: these packages reach the browser through the module pipeline,
+where a floating `^` range resolves to whatever is latest at request time.
+
+```bash
+npm install --save-exact react-markdown@9.0.3 remark-gfm@4.0.1
+```
+
+Then create the renderer and install it for the chat subtree:
+
+```tsx
+// app/markdown-renderer.tsx
+"use client";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import type { MarkdownRendererProps } from "veryfront/markdown";
+
+export function MarkdownRenderer({ source }: MarkdownRendererProps): React.JSX.Element {
+  return <ReactMarkdown remarkPlugins={[remarkGfm]}>{source}</ReactMarkdown>;
+}
+```
+
+```tsx
+// app/page.tsx
+"use client";
+import { Chat } from "veryfront/chat";
+import { MarkdownRendererProvider } from "veryfront/markdown";
+import { MarkdownRenderer } from "./markdown-renderer.tsx";
+
+export default function ChatPage() {
+  return (
+    <MarkdownRendererProvider renderer={MarkdownRenderer}>
+      <Chat agentId="assistant" />
+    </MarkdownRendererProvider>
+  );
+}
+```
+
+The provider covers assistant answers and reasoning. Chat applies its own prose
+styling around whatever the renderer returns, so lists, headings, and inline
+code match the rest of the chat surface. Pin the parser to an exact version:
+these packages reach the browser through the module pipeline, where a floating
+range resolves to whatever is latest at request time.
+
+Your renderer owns parsing, sanitization, and link policy. To add syntax
+highlighting, tables, or math, extend it with the remark and rehype plugins you
+want rather than changing anything in chat.
+
+## Present Markdown source safely
+
+`veryfront/markdown` is the dependency-free Markdown boundary used by chat
+surfaces. Without an installed rich renderer, it preserves the exact source in
+an escaped `<pre><code>` element. This is useful when source visibility matters
+more than semantic formatting:
 
 ````tsx
 import { Markdown } from "veryfront/markdown";
@@ -329,45 +411,74 @@ export default function Result() {
 }
 ````
 
-CommonMark and GitHub Flavored Markdown, including tables, task lists, and
-strikethrough, are server-rendered. Fenced source is also present in the server
-HTML. Shiki highlighting and Mermaid SVG rendering are browser enhancements;
-if either enhancement cannot load or render, the source remains readable.
+The default does not claim that CommonMark, GFM, highlighting, or diagrams were
+rendered. It emits no Markdown-authored links, images, or raw HTML, and the
+escaped source is present in server HTML.
 
-Replace fenced-code rendering without changing inline code:
+### Install a semantic renderer
 
-```tsx
-<Markdown
-  renderCodeBlock={({ language, code }) => (
-    <pre data-language={language}>
-      <code>{code}</code>
-    </pre>
-  )}
->
-  {answer}
-</Markdown>;
-```
-
-Use `components` to replace an HTML element renderer. Consumer entries win
-over the built-in link, table, cell, blockquote, and code-fence renderers:
+Semantic Markdown is an explicit extension capability. Select a trusted
+extension or application adapter that implements `MarkdownRendererProps`, then
+install its component for the relevant subtree. In this example,
+`ProjectMarkdownRenderer` comes from that adapter:
 
 ```tsx
-<Markdown
-  components={{
-    a: ({ href, children }) => <a href={href}>{children}</a>,
-  }}
->
-  {"Review the [Markdown section](#render-markdown-directly)."}
-</Markdown>;
+import { Markdown, MarkdownRendererProvider } from "veryfront/markdown";
+import { ProjectMarkdownRenderer } from "./project-markdown-renderer.tsx";
+
+export default function Result() {
+  return (
+    <MarkdownRendererProvider renderer={ProjectMarkdownRenderer}>
+      <Markdown>{answer}</Markdown>
+    </MarkdownRendererProvider>
+  );
+}
 ```
 
-Raw HTML and unsafe link protocols are not emitted by the default pipeline.
-`remarkPlugins`, `rehypePlugins`, and custom components execute as trusted
-application code and can change those guarantees; never build plugin lists
-from untrusted input. Remote Markdown images can initiate browser requests, so
-override the `img` component when untrusted content needs a stricter image or
-privacy policy. Bound untrusted Markdown size before rendering when the
-application accepts arbitrarily large documents.
+The per-instance `renderer` prop takes precedence over the provider. Pass
+`renderer={null}` when a nested surface must display plain source even though
+an ancestor installed a renderer.
+
+Parser-dependent options are forwarded only after a renderer has been selected.
+For example, replace fenced-code rendering without changing the renderer used
+for the rest of the document:
+
+```tsx
+<MarkdownRendererProvider renderer={ProjectMarkdownRenderer}>
+  <Markdown
+    renderCodeBlock={({ language, code }) => (
+      <pre data-language={language}>
+        <code>{code}</code>
+      </pre>
+    )}
+  >
+    {answer}
+  </Markdown>
+</MarkdownRendererProvider>;
+```
+
+Use `components` to pass framework-neutral element overrides to the selected
+renderer:
+
+```tsx
+<MarkdownRendererProvider renderer={ProjectMarkdownRenderer}>
+  <Markdown
+    components={{
+      a: ({ href, children }) => <a href={href}>{children}</a>,
+    }}
+  >
+    {"Review the [Markdown section](#present-markdown-source-safely)."}
+  </Markdown>
+</MarkdownRendererProvider>;
+```
+
+The extension owns parsing, sanitization, unsafe link protocols, image policy,
+highlighting, and diagram security. Configure parser-specific `remarkPlugins`
+or `rehypePlugins` on that extension, not on core `Markdown`; removed or unknown
+core props are rejected instead of ignored. Renderer failures propagate, so
+handle them with an application error boundary when recovery is required.
+Never derive plugin lists from untrusted input, and bound untrusted source size
+before rendering.
 
 ## Verify it worked
 
@@ -378,12 +489,17 @@ Run `veryfront dev` and open the page that renders the chat UI:
 - The preset renders its default controls.
 - Custom layouts keep the message list and composer wired to the same AG-UI
   stream.
+- In a custom layout, the empty state disappears after the first message is
+  sent and does not reappear below the conversation.
 - A persisted conversation remains in the sidebar after a page reload.
 - A conversation persistence failure renders an alert with the failed
   operation.
 - A chat using `memoryConversationStore()` starts empty after a page reload.
-- Standalone Markdown is semantic in the initial server HTML, and fenced code
-  remains readable before browser enhancement.
+- Standalone Markdown source is escaped and readable in the initial server
+  HTML; an injected renderer is used only in the subtree where it is installed.
+- An assistant answer containing a list or a heading renders as formatted
+  Markdown, not raw Markdown source, and the browser console reports no
+  missing-Markdown-renderer warning.
 
 If the assistant response is empty, check the dev-server log for provider or
 agent errors and confirm the AG-UI route is mounted.

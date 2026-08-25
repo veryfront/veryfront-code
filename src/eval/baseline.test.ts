@@ -168,6 +168,43 @@ describe("eval/baseline", () => {
     });
   });
 
+  it("flags a gate metric that vanished from the current run", () => {
+    const baseline = createReport({ runId: "evalrun_baseline" });
+    const current = createReport({
+      summary: {
+        records: 2,
+        passed: 2,
+        failed: 0,
+        passRate: 1,
+        metrics: [],
+        failedExamples: [],
+      },
+    });
+
+    const comparison = compareEvalReports(current, baseline);
+
+    assertEquals(
+      comparison.metricDeltas[0]?.currentPassRate,
+      null,
+      "a vanished metric reports no current pass rate",
+    );
+    assertEquals(
+      comparison.metricDeltas[0]?.baselinePassRate,
+      1,
+      "a vanished metric keeps the baseline pass rate",
+    );
+    assertEquals(
+      comparison.metricDeltas[0]?.regressed,
+      true,
+      "a metric present in the baseline but absent now is a regression",
+    );
+    assertEquals(
+      comparison.regressed,
+      true,
+      "a vanished gate metric regresses the comparison",
+    );
+  });
+
   it("applies pass-rate regression thresholds without hiding reported deltas", () => {
     const baseline = createReport({
       runId: "evalrun_baseline",
@@ -235,6 +272,8 @@ describe("eval/baseline", () => {
         usage: {
           totalTokens: 1000,
           costUsd: 0.1,
+          veryfrontChargeUsd: 0.05,
+          veryfrontBilledUsd: 0.2,
           costCredits: 1,
         },
         duration: {
@@ -258,6 +297,8 @@ describe("eval/baseline", () => {
         usage: {
           totalTokens: 1200,
           costUsd: 0.11,
+          veryfrontChargeUsd: 0.07,
+          veryfrontBilledUsd: 0.21,
           costCredits: 1.1,
         },
         duration: {
@@ -295,6 +336,26 @@ describe("eval/baseline", () => {
         regressed: false,
       },
       {
+        name: "veryfrontChargeUsd",
+        family: "usage",
+        baselineValue: 0.05,
+        currentValue: 0.07,
+        delta: 0.020000000000000004,
+        percentDelta: 0.4000000000000001,
+        threshold: null,
+        regressed: false,
+      },
+      {
+        name: "veryfrontBilledUsd",
+        family: "usage",
+        baselineValue: 0.2,
+        currentValue: 0.21,
+        delta: 0.009999999999999981,
+        percentDelta: 0.049999999999999906,
+        threshold: null,
+        regressed: false,
+      },
+      {
         name: "costCredits",
         family: "usage",
         baselineValue: 1,
@@ -321,7 +382,18 @@ describe("eval/baseline", () => {
       latencyIncreaseThreshold: 0.2,
     });
     assertEquals(gated.regressed, true);
-    assertEquals(gated.budgetDeltas.map((delta) => delta.regressed), [true, false, false, true]);
+    assertEquals(
+      gated.budgetDeltas.map((delta) => [delta.name, delta.regressed]),
+      [
+        ["totalTokens", true],
+        ["costUsd", false],
+        ["veryfrontChargeUsd", true],
+        ["veryfrontBilledUsd", false],
+        ["costCredits", false],
+        ["p95Ms", true],
+      ],
+      "billing-charge budgets are reported and gated by name",
+    );
   });
 
   it("rejects mismatched baselines and invalid regression policies", () => {
@@ -332,6 +404,19 @@ describe("eval/baseline", () => {
       () => compareEvalReports(current, wrongEval),
       Error,
       "identity mismatch",
+      "a different definition id is an identity mismatch",
+    );
+    assertThrows(
+      () => compareEvalReports(current, createReport({ targetKind: "tool" })),
+      Error,
+      "identity mismatch",
+      "a different target kind is an identity mismatch",
+    );
+    assertThrows(
+      () => compareEvalReports(current, createReport({ target: "agent:other" })),
+      Error,
+      "identity mismatch",
+      "a different target is an identity mismatch",
     );
     assertThrows(
       () => compareEvalReports(current, current, { passRateDropThreshold: Number.NaN }),

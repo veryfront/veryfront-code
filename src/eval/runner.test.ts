@@ -68,8 +68,49 @@ describe("eval/runner", () => {
         failed: 0,
         skipped: 0,
         passRate: 1,
+        label: "Answer matched the reference exactly",
       },
     ]);
+  });
+
+  it("fails a record on a blown budget metric but not on a soft metric", async () => {
+    const definition = evalAgent({
+      id: "eval:budget-severity",
+      target: "agent:researcher",
+      dataset: datasets.inline([
+        { id: "over-budget", input: "France capital?", reference: "Paris" },
+        { id: "soft-only", input: "Germany capital?", reference: "Berlin" },
+      ]),
+      metrics: [
+        metrics.ops.cost({ maxUsd: 0.0001 }).budget(),
+        metrics.answer.exactMatch().soft(),
+      ],
+    });
+
+    const report = await runEval(definition, {
+      adapters: {
+        agent: async ({ example }) => ({
+          text: "Wrong answer.",
+          usage: { costUsd: example.id === "over-budget" ? 0.5 : 0 },
+        }),
+      },
+    });
+
+    const overBudget = report.records.find((record) => record.exampleId === "over-budget");
+    const softOnly = report.records.find((record) => record.exampleId === "soft-only");
+    assertExists(overBudget);
+    assertExists(softOnly);
+    assertEquals(report.summary.failed, 1, "a failing budget metric fails the run");
+    assertEquals(
+      overBudget.completed,
+      false,
+      "a failing budget metric marks the record incomplete",
+    );
+    assertEquals(
+      softOnly.completed,
+      true,
+      "a failing soft metric leaves the record complete",
+    );
   });
 
   it("matches an agent's strict JSON text as structured output", async () => {
@@ -767,6 +808,55 @@ describe("eval/runner", () => {
         },
       },
     ]);
+  });
+
+  it("suppresses an inactive all-zero span context from eval report exports", async () => {
+    const registry = createEvalReportExporterRegistry();
+    const exportedContexts: unknown[] = [];
+
+    registry.register({
+      id: "capture",
+      export(_report, context) {
+        exportedContexts.push(context);
+      },
+    });
+
+    setGlobalActiveSpanAccessor({
+      getActiveSpan: () => ({
+        spanContext: () => ({
+          traceId: "0".repeat(32),
+          spanId: "0".repeat(16),
+          traceFlags: 0,
+        }),
+      } as Span),
+      getSpan: () => undefined,
+    });
+
+    const definition = evalAgent({
+      id: "eval:inactive-trace-export",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "France capital?", reference: "Paris" }]),
+      metrics: [metrics.answer.exactMatch().gate()],
+    });
+
+    await runEval(definition, {
+      adapters: {
+        agent: async () => ({ text: "Paris" }),
+      },
+      export: {
+        registry,
+        exporterIds: ["capture"],
+        context: {
+          projectReference: "docs-agent",
+        },
+      },
+    });
+
+    assertEquals(
+      exportedContexts,
+      [{ projectReference: "docs-agent" }],
+      "an all-zero span context is not exported as a trace",
+    );
   });
 
   it("preserves explicit eval report export trace context", async () => {

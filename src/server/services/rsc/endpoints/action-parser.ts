@@ -51,7 +51,7 @@ function snapshotArgs(value: unknown): unknown[] | null {
   ) return null;
 
   try {
-    const descriptors = getOwnPropertyDescriptors(value) as unknown as Record<
+    const descriptors = getOwnPropertyDescriptors(value) as Record<
       string,
       PropertyDescriptor
     >;

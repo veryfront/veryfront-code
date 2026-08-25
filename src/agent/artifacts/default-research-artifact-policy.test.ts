@@ -10,12 +10,26 @@ import {
 
 describe("default research artifact policy", () => {
   it("injects default artifact path for research tasks with save-to-project cue", () => {
-    const result = withDefaultResearchArtifactPath({
-      description: "Research AI trends",
-      prompt: "Research the latest AI trends and save the results to the project",
-      runId: "run_123",
-    });
+    const description = "Research AI trends";
+    const prompt = "Research the latest AI trends and save the results to the project";
+    const runId = "run_123";
+    const result = withDefaultResearchArtifactPath({ description, prompt, runId });
 
+    assertEquals(
+      result.startsWith(prompt),
+      true,
+      "original prompt must lead the returned string",
+    );
+    assertStringIncludes(
+      result,
+      "Research the latest AI trends and save the results to the project",
+      "original research request must survive injection",
+    );
+    assertEquals(
+      result,
+      `${prompt}\n\n${buildDefaultResearchArtifactPathReminder({ description, prompt, runId })}`,
+      "reminder is appended after the prompt, separated by a blank line",
+    );
     assertStringIncludes(result, "/research/ai-trends/runs/run_123.report.md");
     assertStringIncludes(result, "/research/ai-trends/report.md");
     assertStringIncludes(result, "/research/ai-trends/findings.md");
@@ -61,6 +75,45 @@ describe("default research artifact policy", () => {
     });
 
     assertStringIncludes(result, "/research/quantum-computing/runs/run-live-123.report.md");
+  });
+
+  it("sanitizes hostile run ids and topics into single path segments", () => {
+    const paths = buildDefaultResearchArtifactPaths({
+      description: "Research AI trends",
+      prompt: "Research AI trends and save the results to the project",
+      runId: "../../etc/passwd",
+    });
+
+    assertEquals(
+      paths.runReportPath,
+      "/research/ai-trends/runs/etc-passwd.report.md",
+      "a hostile run id is slugified into a single path segment",
+    );
+    assertEquals(
+      paths.runReportPath.includes(".."),
+      false,
+      "run id must not introduce parent-directory segments",
+    );
+    assertEquals(
+      paths.runReportPath.split("/").length,
+      5,
+      "run id must stay one path segment",
+    );
+  });
+
+  it("sanitizes hostile research topics into a single path segment", () => {
+    const paths = buildDefaultResearchArtifactPaths({
+      description: "Research ../../etc/passwd",
+      prompt: "Research ../../etc/passwd and save the results to the project",
+      runId: "run_123",
+    });
+
+    assertEquals(paths.topicSlug, "etc-passwd", "a hostile topic is slugified into one segment");
+    assertEquals(
+      paths.topicRootPath,
+      "/research/etc-passwd",
+      "topic root must not escape the research directory",
+    );
   });
 
   it("returns an exact run/current workspace reminder for implicit save-to-project research", () => {

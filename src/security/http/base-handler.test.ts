@@ -217,7 +217,7 @@ describe("BaseHandler.withProxyContext", () => {
     }
   });
 
-  it("runs fn() when requireToken is true and token is present", async () => {
+  it("does not treat the host token as a request credential", async () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_token");
     const handler = new TestHandler();
     let called = false;
@@ -231,7 +231,9 @@ describe("BaseHandler.withProxyContext", () => {
       { requireToken: true },
     );
 
-    assertEquals(called, true, "fn should run with valid token");
+    // This standalone test adapter is not credentialed, so direct execution is
+    // still valid. Contextual adapters below must reject without ctx.proxyToken.
+    assertEquals(called, true);
   });
 
   it("runs fn() when requireToken is false even without token", async () => {
@@ -286,6 +288,7 @@ describe("BaseHandler.withProxyContext", () => {
 
   for (const mode of ["multi-project", "contextual"] as const) {
     it(`rejects missing required credentials before ${mode} filesystem work`, async () => {
+      setEnv("VERYFRONT_API_TOKEN", "must-not-be-used-for-request-identity");
       const handler = new TestHandler();
       let callbackCalled = false;
       const fs = mode === "multi-project"
@@ -365,6 +368,12 @@ describe("BaseHandler.withProxyContext", () => {
   it("emits metrics with project and environment labels in multi-project request context", async () => {
     const handler = new TestHandler();
     const counterCalls: unknown[] = [];
+    let observedContext: {
+      slug: string;
+      token: string;
+      projectId?: string;
+      options?: Record<string, unknown>;
+    } | undefined;
 
     setGlobalMetricsAPI({
       getMeter() {
@@ -401,17 +410,18 @@ describe("BaseHandler.withProxyContext", () => {
           setRequestBranch() {},
           isMultiProjectMode: () => true,
           runWithContext: async (
-            _slug: string,
-            _token: string,
+            slug: string,
+            token: string,
             fn: () => Promise<unknown>,
-            _projectId?: string,
+            projectId?: string,
             options?: Record<string, unknown>,
           ) => {
+            observedContext = { slug, token, projectId, options };
             return await runWithRequestContext(
               {
-                projectSlug: "my-project",
-                token: "vf_proxy_token",
-                projectId: "project-123",
+                projectSlug: slug,
+                token,
+                projectId,
                 productionMode: options?.productionMode === true,
                 releaseId: options?.releaseId as string | undefined,
                 branch: options?.branch as string | undefined,
@@ -431,6 +441,22 @@ describe("BaseHandler.withProxyContext", () => {
       });
       return { continue: true };
     });
+
+    assertEquals(
+      observedContext,
+      {
+        slug: "my-project",
+        token: "vf_proxy_token",
+        projectId: "project-123",
+        options: {
+          productionMode: true,
+          releaseId: "release-123",
+          branch: null,
+          environmentName: "Staging",
+        },
+      },
+      "withProxyContext must hand the request tenant slug, request credential, project id and environment options to runWithContext",
+    );
 
     assertEquals(counterCalls, [
       {

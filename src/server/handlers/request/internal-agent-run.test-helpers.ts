@@ -2,6 +2,31 @@ import type { Agent, AgentResponse } from "#veryfront/agent";
 import { type Tool } from "#veryfront/tool";
 import type { HandlerContext } from "#veryfront/types";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
+import {
+  type ApplicationErrorContext,
+  setApplicationErrorReporter,
+} from "#veryfront/observability/application-errors.ts";
+
+export type CapturedApplicationError = {
+  error: unknown;
+  context: ApplicationErrorContext;
+};
+
+/** Install a recording application-error reporter. Call restore() in a finally. */
+export function stubApplicationErrorReporter(): {
+  captures: CapturedApplicationError[];
+  restore(): void;
+} {
+  const captures: CapturedApplicationError[] = [];
+  setApplicationErrorReporter({
+    capture: (error, context) => {
+      captures.push({ error, context });
+      return "test-event-id";
+    },
+    flush: () => Promise.resolve(true),
+  });
+  return { captures, restore: () => setApplicationErrorReporter(undefined) };
+}
 
 const encoder = new TextEncoder();
 
@@ -61,7 +86,7 @@ export async function createControlPlaneSignature(
 }
 
 export function createCtx(publicKeyPem?: string): HandlerContext {
-  return {
+  const ctx = {
     projectDir: "/project",
     adapter: {
       env: {
@@ -71,11 +96,11 @@ export function createCtx(publicKeyPem?: string): HandlerContext {
       fs: {},
     },
     securityConfig: null,
-    cspUserHeader: null,
     projectSlug: "demo-project",
     projectId: "proj-1",
     isLocalProject: false,
-  } as unknown as HandlerContext;
+  };
+  return ctx as HandlerContext & typeof ctx;
 }
 
 export function createAgent(id = "agent-1"): Agent {

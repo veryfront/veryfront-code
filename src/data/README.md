@@ -19,7 +19,7 @@ The Data module exports:
 - **`DataFetcher`** - Main class for data fetching with caching support
 - **`notFound()`** - Helper to return 404 responses
 - **`redirect()`** - Helper to return redirect responses
-- **Types** - `DataContext`, `DataResult`, `PageWithData`, `StaticPathsResult`, `InferGetServerDataProps`, `CacheEntry`
+- **Types** - `DataContext`, `DataResult`, `DataResponseMetadata`, `ResponseCookie`, `PageWithData`, `StaticDataResult`, `StaticPathsResult`, `InferGetServerDataProps`, `CacheEntry`
 
 ## File Structure
 
@@ -175,6 +175,18 @@ interface DataContext {
 Data fetching functions return a result object:
 
 ```typescript
+interface ResponseCookie {
+  name: string;
+  value: string;
+  domain?: string;
+  path?: string;
+  expires?: string;
+  maxAge?: number;
+  httpOnly?: boolean;
+  secure?: boolean;
+  sameSite?: "lax" | "strict" | "none";
+}
+
 interface DataResult<T = any> {
   props?: T; // Props to pass to component
   redirect?: { // Redirect response
@@ -183,8 +195,17 @@ interface DataResult<T = any> {
   };
   notFound?: boolean; // Return 404
   revalidate?: number; // ISR revalidation (seconds)
+  headers?: Record<string, string>; // Custom document response headers
+  cookies?: ResponseCookie[]; // Distinct Set-Cookie response fields
 }
 ```
+
+The response metadata fields apply only to `getServerData`. Veryfront validates
+the value from `getStaticData` as a `StaticDataResult`, which excludes response
+metadata so static caches cannot replay cookies. The public page type continues
+to accept legacy `DataResult` return annotations, but metadata returned at
+runtime is rejected. Framework-owned CORS, cache, content, redirect, security,
+transport, and `x-veryfront-*` headers cannot be set through `headers`.
 
 ### 3. Response Helpers
 

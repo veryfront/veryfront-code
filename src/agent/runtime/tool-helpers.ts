@@ -10,13 +10,14 @@ import type { RemoteToolSource, Tool, ToolDefinition, ToolExecutionContext } fro
 import { executeTool, isToolVisibleTo, toolRegistry } from "#veryfront/tool";
 import { assertLocalToolId, toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import { getRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
-import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
+import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { createError, PERMISSION_DENIED, toError } from "#veryfront/errors";
 import {
   executeRemoteIntegrationTool,
   isRemoteIntegrationTool,
 } from "#veryfront/integrations/remote-tools.ts";
+import type { RemoteIntegrationToolDiscoveryResult } from "#veryfront/integrations/remote-tools.ts";
 import {
   isIntegrationToolAllowedBySourcePolicy,
   type SourceIntegrationPolicyManifest,
@@ -172,6 +173,7 @@ async function getRemoteToolDefinitions(options?: {
   allowedRemoteToolNames?: string[];
   remoteToolSources?: RemoteToolSource[];
   remoteToolContext?: ToolExecutionContext;
+  onIntegrationToolDiscovery?: (result: RemoteIntegrationToolDiscoveryResult) => void;
 }): Promise<ToolDefinition[]> {
   const remoteToolContext = options?.remoteToolContext;
   const definitions: ToolDefinition[] = [];
@@ -210,11 +212,15 @@ async function getRemoteToolDefinitions(options?: {
   }
 
   try {
-    const { getRemoteIntegrationToolDefinitions } = await import(
+    const { getRemoteIntegrationToolDiscovery } = await import(
       "#veryfront/integrations/remote-tools.ts"
     );
-    for (const def of await getRemoteIntegrationToolDefinitions()) {
-      addDefinition(def);
+    const discovery = await getRemoteIntegrationToolDiscovery(remoteToolContext);
+    options?.onIntegrationToolDiscovery?.(discovery);
+    if (discovery.status === "ok") {
+      for (const def of discovery.tools) {
+        addDefinition(def);
+      }
     }
   } catch {
     return definitions;
@@ -428,6 +434,7 @@ export async function getAvailableTools(
     forwardedRemoteToolDefinitions?: ToolDefinition[];
     remoteToolSources?: RemoteToolSource[];
     remoteToolContext?: ToolExecutionContext;
+    onIntegrationToolDiscovery?: (result: RemoteIntegrationToolDiscoveryResult) => void;
     sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
     strictConfiguredToolsOnly?: boolean;
     /** Calling agent id for owner-aware tool visibility. */
@@ -451,7 +458,7 @@ export async function getAvailableTools(
       return def;
     }).filter((def) => {
       // Exclude skill tools unless explicitly included
-      if (SKILL_TOOL_IDS.has(def.name) && !options?.includeSkillTools) return false;
+      if (isSkillInfrastructureToolId(def.name) && !options?.includeSkillTools) return false;
       return true;
     });
 

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { OpenAPIHandler } from "./openapi.handler.ts";
 import type { HandlerContext } from "../types.ts";
@@ -51,14 +51,14 @@ function createCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
     projectDir: "/project",
     adapter: { fs: createMockFs().fs } as never,
     config: { openapi: { enabled: true } },
-    isLocalProject: false,
+    isLocalProject: true,
     ...overrides,
   } as unknown as HandlerContext;
 }
 
 describe("server/handlers/request/openapi.handler", () => {
-  describe("proxy mode uses runWithContext", () => {
-    it("should call runWithContext when in proxy mode with extended FS", async () => {
+  describe("remote execution isolation", () => {
+    it("fails closed before route discovery or proxy context setup", async () => {
       const { fs, calls } = createMockFs({ needsContext: true });
       const handler = new OpenAPIHandler();
       const ctx = createCtx({
@@ -74,12 +74,15 @@ describe("server/handlers/request/openapi.handler", () => {
       const req = new Request("https://example.com/_openapi.json");
       const result = await handler.handle(req, ctx);
 
-      assertEquals(result.response?.status, 200);
+      assertEquals(result.response?.status, 503);
       const body = JSON.parse(await result.response!.text());
-      assertEquals(typeof body.paths, "object");
-      assertEquals(calls.includes("runWithContext"), true);
+      assertEquals(body.error, "Isolated OpenAPI generation is unavailable");
+      assertEquals(calls.includes("runWithContext"), false);
+      assertEquals(calls.some((call) => call.startsWith("exists:")), false);
     });
+  });
 
+  describe("local generation", () => {
     it("should NOT call runWithContext for local projects", async () => {
       const { fs, calls } = createMockFs({ needsContext: true });
       const handler = new OpenAPIHandler();
@@ -95,103 +98,106 @@ describe("server/handlers/request/openapi.handler", () => {
 
       assertEquals(result.response?.status, 200);
       assertEquals(calls.includes("runWithContext"), false);
+      assertEquals(
+        result.response!.headers.get("content-type"),
+        "application/json; charset=utf-8",
+        "the json route must serve JSON",
+      );
+      const spec = JSON.parse(await result.response!.text());
+      assertEquals(spec.openapi, "3.1.0", "the served document must be a real OpenAPI spec");
+      assertExists(spec.paths, "the spec must carry a paths object");
+      assertExists(spec.info, "the spec must carry an info object");
     });
 
-    it("should NOT call runWithContext when no proxyToken", async () => {
-      const { fs, calls } = createMockFs({ needsContext: true });
-      const handler = new OpenAPIHandler();
-      const ctx = createCtx({
-        adapter: { fs } as never,
-        isLocalProject: false,
-        projectSlug: "test-project",
-        proxyToken: undefined,
-      });
-
-      const req = new Request("https://example.com/_openapi.json");
-      const result = await handler.handle(req, ctx);
-
-      assertEquals(result.response?.status, 200);
-      assertEquals(calls.includes("runWithContext"), false);
-    });
-
-    it("should NOT call runWithContext when extended FS lacks multi-project mode", async () => {
-      const { fs, calls } = createMockFs({ needsContext: true, multiProject: false });
-      const handler = new OpenAPIHandler();
-      const ctx = createCtx({
-        adapter: { fs } as never,
-        isLocalProject: false,
-        projectSlug: "test-project",
-        proxyToken: "test-token",
-        projectId: "proj-123",
-        resolvedEnvironment: "production",
-        parsedDomain: { branch: null } as never,
-      });
-
-      const req = new Request("https://example.com/_openapi.json");
-      const result = await handler.handle(req, ctx);
-
-      assertEquals(result.response?.status, 200);
-      assertEquals(calls.includes("runWithContext"), false);
-    });
-  });
-
-  describe("spec caching", () => {
-    it("should use different cache keys for different branches", async () => {
+    it("serves the YAML document on the yaml route", async () => {
       const { fs } = createMockFs({ needsContext: true });
       const handler = new OpenAPIHandler();
+      const ctx = createCtx({ adapter: { fs } as never, isLocalProject: true });
 
-      // First request on branch "main"
-      const ctx1 = createCtx({
-        adapter: { fs } as never,
-        isLocalProject: false,
-        projectSlug: "test-project",
-        proxyToken: "test-token",
-        parsedDomain: { branch: "main" } as never,
-        releaseId: "rel-1",
+      const result = await handler.handle(
+        new Request("https://example.com/_openapi.yaml"),
+        ctx,
+      );
+
+      assertEquals(result.response?.status, 200);
+      assertEquals(
+        result.response!.headers.get("content-type"),
+        "text/yaml; charset=utf-8",
+        "the yaml route must serve YAML",
+      );
+      const body = await result.response!.text();
+      assertStringIncludes(body, "openapi:", "the yaml route must serve YAML, not JSON");
+      assertEquals(body.trimStart().startsWith("{"), false, "the yaml body must not be JSON");
+    });
+
+    it("serves the document on configured paths instead of the defaults", async () => {
+      const handler = new OpenAPIHandler();
+      const ctx = createCtx({
+        config: {
+          openapi: { enabled: true, paths: { json: "/docs/spec.json", yaml: "/docs/spec.yaml" } },
+        } as never,
       });
-      const req1 = new Request("https://example.com/_openapi.json");
-      const result1 = await handler.handle(req1, ctx1);
-      assertEquals(result1.response?.status, 200);
 
-      // Second request on branch "feature" — should NOT serve stale spec
-      const ctx2 = createCtx({
-        adapter: { fs } as never,
-        isLocalProject: false,
-        projectSlug: "test-project",
-        proxyToken: "test-token",
-        parsedDomain: { branch: "feature" } as never,
-        releaseId: "rel-2",
-      });
-      const req2 = new Request("https://example.com/_openapi.json");
-      const result2 = await handler.handle(req2, ctx2);
-      assertEquals(result2.response?.status, 200);
+      const custom = await handler.handle(new Request("https://example.com/docs/spec.json"), ctx);
+      assertEquals(custom.response?.status, 200, "the configured json path must be served");
+      const customYaml = await handler.handle(
+        new Request("https://example.com/docs/spec.yaml"),
+        ctx,
+      );
+      assertEquals(
+        customYaml.response?.headers.get("content-type"),
+        "text/yaml; charset=utf-8",
+        "the configured yaml path must serve YAML",
+      );
 
-      // Both should succeed without serving stale cached spec from first branch
-      // (The handler's internal cacheKey should differ for different branches/releases)
+      const fallback = await handler.handle(new Request("https://example.com/_openapi.json"), ctx);
+      assertEquals(
+        fallback.continue,
+        true,
+        "the default json path must not be served once overridden",
+      );
+      assertEquals(
+        fallback.response,
+        undefined,
+        "the default json path must produce no response once overridden",
+      );
+
+      // The yaml default is a separate branch from the json default, so a
+      // regression that only re-enables /_openapi.yaml would slip past the
+      // json assertions above.
+      const fallbackYaml = await handler.handle(
+        new Request("https://example.com/_openapi.yaml"),
+        ctx,
+      );
+      assertEquals(
+        fallbackYaml.continue,
+        true,
+        "the default yaml path must not be served once overridden",
+      );
+      assertEquals(
+        fallbackYaml.response,
+        undefined,
+        "the default yaml path must produce no response once overridden",
+      );
     });
   });
 
-  describe("spec generation with route discovery in proxy mode", () => {
-    it("should attempt directory existence checks within runWithContext", async () => {
-      const { fs, calls } = createMockFs({ needsContext: true, existsReturn: true });
+  describe("metadata.enabled", () => {
+    it("opts out when config.openapi.enabled is false", () => {
       const handler = new OpenAPIHandler();
-      const ctx = createCtx({
-        adapter: { fs } as never,
-        isLocalProject: false,
-        projectSlug: "test-project",
-        proxyToken: "test-token",
-        projectId: "proj-123",
-        resolvedEnvironment: "production",
-        parsedDomain: { branch: null } as never,
-      });
+      const enabled = handler.metadata.enabled!;
 
-      const req = new Request("https://example.com/_openapi.json");
-      await handler.handle(req, ctx);
-
-      // Verify runWithContext was used and discovery directories were checked
-      assertEquals(calls.includes("runWithContext"), true);
-      const existsCalls = calls.filter((c) => c.startsWith("exists:"));
-      assertEquals(existsCalls.length > 0, true);
+      assertEquals(
+        enabled(createCtx({ config: { openapi: { enabled: false } } as never })),
+        false,
+        "config.openapi.enabled === false must disable the handler",
+      );
+      assertEquals(enabled(createCtx()), true, "an enabled config must keep the handler on");
+      assertEquals(
+        enabled(createCtx({ config: {} as never })),
+        true,
+        "the handler must be on by default when openapi config is absent",
+      );
     });
   });
 });

@@ -17,14 +17,28 @@ export type VeryfrontCloudModelThinkingConfig = {
 
 /** Public API contract for Veryfront Cloud chat model. */
 export type VeryfrontCloudChatModel = {
-  id: string;
-  modelId: string;
-  provider: VeryfrontCloudProviderId;
-  name: string;
-  description: string;
-  thinking?: boolean;
-  thinkingBudgetTokens?: number;
+  readonly id: string;
+  readonly modelId: string;
+  readonly provider: VeryfrontCloudProviderId;
+  readonly name: string;
+  readonly description: string;
+  readonly thinking?: boolean;
+  readonly thinkingBudgetTokens?: number;
 };
+
+function isPositiveSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function requireThinkingBudgetTokens(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (!isPositiveSafeInteger(value)) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Veryfront Cloud thinking budgetTokens must be a positive safe integer",
+    });
+  }
+  return value;
+}
 
 /**
  * Default Veryfront Cloud model ID used when no model is configured.
@@ -35,23 +49,82 @@ export const DEFAULT_VERYFRONT_CLOUD_MODEL_ID = "gpt-5.4-nano";
 /** Shared Veryfront Cloud model prefix value. */
 export const VERYFRONT_CLOUD_MODEL_PREFIX = "veryfront-cloud/";
 
-const VERYFRONT_CLOUD_GATEWAY_MODEL_PROVIDER_PREFIXES = [
-  "anthropic/",
-  "openai/",
-  "google/",
-  "google-ai-studio/",
-  "mistral/",
-  "moonshotai/",
-];
-/**
- * Anthropic models that use the adaptive thinking API (type: "adaptive").
- * New Opus/Sonnet versions supporting adaptive thinking must be added here,
- * otherwise they fall back to the standard budget-token thinking path.
- */
-const ANTHROPIC_ADAPTIVE_THINKING_ONLY_MODELS = new Set([
-  "anthropic/claude-opus-4-7",
-  "anthropic/claude-opus-4-8",
+const VERYFRONT_CLOUD_PROVIDER_ALIASES = new Map<string, VeryfrontCloudProviderId>([
+  ["anthropic", "anthropic"],
+  ["openai", "openai"],
+  ["google", "google"],
+  ["google-ai-studio", "google"],
+  ["mistral", "mistral"],
+  ["moonshotai", "moonshotai"],
 ]);
+
+const VERYFRONT_CLOUD_GATEWAY_MODEL_PROVIDER_PREFIXES = Object.freeze(
+  Array.from(VERYFRONT_CLOUD_PROVIDER_ALIASES.keys(), (provider) => `${provider}/`),
+);
+
+/** Resolve a supported gateway provider alias without consulting object prototypes. */
+export function normalizeVeryfrontCloudProviderAlias(
+  provider: string,
+): VeryfrontCloudProviderId | undefined {
+  return VERYFRONT_CLOUD_PROVIDER_ALIASES.get(provider);
+}
+
+type VeryfrontCloudModelTransportCapabilities = {
+  readonly anthropicThinkingMode?: "adaptive";
+  readonly openAITransport?: "chat-completions" | "responses";
+  readonly openAIChatReasoningWithFunctionTools?: boolean;
+};
+
+/**
+ * Model-specific transport capabilities that cannot be inferred from the
+ * provider family. Both provider-specific and provider-neutral option
+ * resolution must consult this catalog so the two representations cannot
+ * contradict each other.
+ */
+const VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES = new Map<
+  string,
+  Readonly<VeryfrontCloudModelTransportCapabilities>
+>([
+  ["anthropic/claude-opus-4-7", Object.freeze({ anthropicThinkingMode: "adaptive" })],
+  ["anthropic/claude-opus-4-8", Object.freeze({ anthropicThinkingMode: "adaptive" })],
+  [
+    "openai/gpt-5.4",
+    Object.freeze({
+      openAITransport: "chat-completions",
+      openAIChatReasoningWithFunctionTools: false,
+    }),
+  ],
+  [
+    "openai/gpt-5.5",
+    Object.freeze({
+      openAITransport: "chat-completions",
+      openAIChatReasoningWithFunctionTools: false,
+    }),
+  ],
+]);
+
+function getVeryfrontCloudModelTransportCapabilities(
+  modelId: string,
+): Readonly<VeryfrontCloudModelTransportCapabilities> | undefined {
+  return VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES.get(
+    normalizeVeryfrontCloudModelId(modelId),
+  );
+}
+
+/** Resolves a model-specific OpenAI transport override for Veryfront Cloud. */
+export function resolveVeryfrontCloudOpenAITransport(
+  modelId: string,
+): "chat-completions" | "responses" | undefined {
+  return getVeryfrontCloudModelTransportCapabilities(modelId)?.openAITransport;
+}
+
+/** Resolves whether a model's Chat transport can combine reasoning with function tools. */
+export function resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(
+  modelId: string,
+): boolean | undefined {
+  return getVeryfrontCloudModelTransportCapabilities(modelId)
+    ?.openAIChatReasoningWithFunctionTools;
+}
 
 /** Returns true if the given model ID is a Mistral model in the catalog. */
 export function isSupportedMistralModelId(modelId: string): boolean {
@@ -60,8 +133,7 @@ export function isSupportedMistralModelId(modelId: string): boolean {
   );
 }
 
-/** Shared Veryfront Cloud chat models value. */
-export const VERYFRONT_CLOUD_CHAT_MODELS: VeryfrontCloudChatModel[] = [
+const veryfrontCloudChatModels: VeryfrontCloudChatModel[] = [
   {
     id: "opus",
     modelId: "anthropic/claude-opus-4-8",
@@ -189,6 +261,38 @@ export const VERYFRONT_CLOUD_CHAT_MODELS: VeryfrontCloudChatModel[] = [
   },
 ];
 
+/** Shared Veryfront Cloud chat models value. */
+export const VERYFRONT_CLOUD_CHAT_MODELS: readonly VeryfrontCloudChatModel[] = Object.freeze(
+  veryfrontCloudChatModels.map((model) => {
+    if (
+      model.thinkingBudgetTokens !== undefined &&
+      !isPositiveSafeInteger(model.thinkingBudgetTokens)
+    ) {
+      throw new TypeError(
+        `Veryfront Cloud model "${model.id}" thinkingBudgetTokens must be a positive safe integer`,
+      );
+    }
+    return Object.freeze(model);
+  }),
+);
+
+const defaultVeryfrontCloudChatModel = VERYFRONT_CLOUD_CHAT_MODELS.find(
+  (model) => model.id === DEFAULT_VERYFRONT_CLOUD_MODEL_ID,
+);
+if (!defaultVeryfrontCloudChatModel) {
+  throw new Error(
+    `Veryfront Cloud default model "${DEFAULT_VERYFRONT_CLOUD_MODEL_ID}" is missing from the catalog`,
+  );
+}
+
+/** Catalog-backed default model descriptor. */
+export const DEFAULT_VERYFRONT_CLOUD_CHAT_MODEL = defaultVeryfrontCloudChatModel;
+/** Canonical direct provider/model ID for the default chat model. */
+export const DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID = DEFAULT_VERYFRONT_CLOUD_CHAT_MODEL.modelId;
+/** Canonical hosted runtime ID for the default chat model. */
+export const DEFAULT_VERYFRONT_CLOUD_RUNTIME_MODEL_ID =
+  `${VERYFRONT_CLOUD_MODEL_PREFIX}${DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID}`;
+
 /** Find Veryfront Cloud model. */
 export function findVeryfrontCloudModel(id: string): VeryfrontCloudChatModel | undefined {
   return VERYFRONT_CLOUD_CHAT_MODELS.find((model) => model.id === id);
@@ -214,17 +318,9 @@ export function getVeryfrontCloudProviderFromModelId(
   modelId: string,
 ): VeryfrontCloudProviderId {
   const normalizedModelId = normalizeVeryfrontCloudModelId(modelId);
-  const prefix = normalizedModelId.split("/")[0];
-
-  switch (prefix) {
-    case "google-ai-studio":
-      return "google";
-    case "openai":
-    case "anthropic":
-    case "mistral":
-    case "moonshotai":
-      return prefix;
-  }
+  const prefix = normalizedModelId.split("/", 1)[0] ?? "";
+  const provider = normalizeVeryfrontCloudProviderAlias(prefix);
+  if (provider) return provider;
 
   throw INVALID_ARGUMENT.create({
     detail: `Unknown model provider prefix "${prefix}" in model ID "${modelId}"`,
@@ -303,10 +399,7 @@ export function resolveVeryfrontCloudModelThinking(
   }
 
   const model = findVeryfrontCloudModelByModelId(modelId) ?? findVeryfrontCloudModel(modelId);
-  const budgetTokens = typeof model?.thinkingBudgetTokens === "number" &&
-      model.thinkingBudgetTokens > 0
-    ? model.thinkingBudgetTokens
-    : undefined;
+  const budgetTokens = requireThinkingBudgetTokens(model?.thinkingBudgetTokens);
   if (model?.thinking !== true && budgetTokens === undefined) {
     return undefined;
   }
@@ -338,12 +431,16 @@ export function resolveVeryfrontCloudReasoningOption(
     return undefined;
   }
 
+  const budgetTokens = requireThinkingBudgetTokens(thinking.budgetTokens);
+  const capabilities = getVeryfrontCloudModelTransportCapabilities(modelId);
+  if (capabilities?.anthropicThinkingMode === "adaptive") {
+    return undefined;
+  }
+
   return {
     enabled: true,
     ...(thinking.effort ? { effort: thinking.effort } : {}),
-    ...(typeof thinking.budgetTokens === "number" && thinking.budgetTokens > 0
-      ? { budgetTokens: Math.floor(thinking.budgetTokens) }
-      : {}),
+    ...(budgetTokens !== undefined ? { budgetTokens } : {}),
   };
 }
 
@@ -361,8 +458,9 @@ export function resolveVeryfrontCloudThinkingProviderOptions(
     return undefined;
   }
 
-  const normalizedModelId = normalizeVeryfrontCloudModelId(modelId);
-  if (ANTHROPIC_ADAPTIVE_THINKING_ONLY_MODELS.has(normalizedModelId)) {
+  const capabilities = getVeryfrontCloudModelTransportCapabilities(modelId);
+  if (capabilities?.anthropicThinkingMode === "adaptive") {
+    requireThinkingBudgetTokens(thinking.budgetTokens);
     return {
       anthropic: {
         thinking: {
@@ -376,16 +474,15 @@ export function resolveVeryfrontCloudThinkingProviderOptions(
     };
   }
 
-  if (typeof thinking.budgetTokens !== "number" || thinking.budgetTokens <= 0) {
-    return undefined;
-  }
+  const budgetTokens = requireThinkingBudgetTokens(thinking.budgetTokens);
+  if (budgetTokens === undefined) return undefined;
 
   return {
     anthropic: {
       temperature: 1,
       thinking: {
         type: "enabled",
-        budget_tokens: Math.floor(thinking.budgetTokens),
+        budget_tokens: budgetTokens,
       },
     },
   };
@@ -409,14 +506,16 @@ const PROVIDER_ORDER: VeryfrontCloudProviderId[] = [
 
 /** Group Veryfront Cloud models by provider. */
 export function groupVeryfrontCloudModelsByProvider(): Array<{
-  provider: VeryfrontCloudProviderId;
-  label: string;
-  models: VeryfrontCloudChatModel[];
+  readonly provider: VeryfrontCloudProviderId;
+  readonly label: string;
+  readonly models: readonly VeryfrontCloudChatModel[];
 }> {
   return PROVIDER_ORDER.map((provider) => ({
     provider,
     label: PROVIDER_LABELS[provider],
-    models: VERYFRONT_CLOUD_CHAT_MODELS.filter((model) => model.provider === provider),
+    models: Object.freeze(
+      VERYFRONT_CLOUD_CHAT_MODELS.filter((model) => model.provider === provider),
+    ),
   })).filter((group) => group.models.length > 0);
 }
 

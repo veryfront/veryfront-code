@@ -19,7 +19,7 @@ import {
   readGoogleExecutableCode,
   readGooglePartDataField,
 } from "./google-content-parts.ts";
-import { readGoogleRawAssistantParts } from "./google-thought-signatures.ts";
+import { readGoogleRawAssistantReplay } from "./google-thought-signatures.ts";
 
 export interface OpenAICompatibleLanguageOptions extends ModelRuntimeCallOptions {
   requestLabels?: Record<string, string>;
@@ -106,6 +106,7 @@ function invalidGoogleProviderHistory(): TypeError {
 
 function readGoogleRawToolHistory(
   rawAssistantParts: readonly Record<string, unknown>[],
+  rawAssistantPartIndexes: readonly number[],
 ): GoogleRawToolHistory {
   const registry = createGoogleToolCallCorrelationRegistry();
   const ordinaryCalls: CanonicalProviderCall[] = [];
@@ -135,7 +136,10 @@ function readGoogleRawToolHistory(
         throw invalidGoogleProviderHistory();
       }
       const providerId = typeof functionCall.id === "string" ? functionCall.id : undefined;
-      const id = registry.registerFunctionCall(partIndex, providerId);
+      const id = registry.registerFunctionCall(
+        rawAssistantPartIndexes[partIndex] ?? partIndex,
+        providerId,
+      );
       // Histories persisted before raw-position ids used the anonymous-call
       // occurrence instead. Build both complete projections so validation
       // cannot accept a mixture that no implementation ever emitted.
@@ -257,6 +261,7 @@ function survivingToolEvents(
 function validateGoogleToolReplay(
   message: Extract<ModelRuntimePromptMessage, { readonly role: "assistant" }>,
   rawAssistantParts: readonly Record<string, unknown>[],
+  rawAssistantPartIndexes: readonly number[],
 ): void {
   const providerToolCalls = (message.providerToolCalls ?? []).map((call) => ({
     id: call.toolCallId,
@@ -329,7 +334,7 @@ function validateGoogleToolReplay(
 
   let rawHistory: GoogleRawToolHistory;
   try {
-    rawHistory = readGoogleRawToolHistory(rawAssistantParts);
+    rawHistory = readGoogleRawToolHistory(rawAssistantParts, rawAssistantPartIndexes);
   } catch {
     throw invalidGoogleProviderHistory();
   }
@@ -430,10 +435,14 @@ function toGoogleContents(
         });
         break;
       case "assistant": {
-        const rawAssistantParts = readGoogleRawAssistantParts(message.providerMetadata);
-        if (rawAssistantParts) {
-          validateGoogleToolReplay(message, rawAssistantParts);
-          contents.push({ role: "model", parts: rawAssistantParts });
+        const rawAssistantReplay = readGoogleRawAssistantReplay(message.providerMetadata);
+        if (rawAssistantReplay) {
+          validateGoogleToolReplay(
+            message,
+            rawAssistantReplay.parts,
+            rawAssistantReplay.partIndexes,
+          );
+          contents.push({ role: "model", parts: rawAssistantReplay.parts });
           break;
         }
 
@@ -855,6 +864,25 @@ function resolveGoogleThinkingConfig(
   return config;
 }
 
+/**
+ * Map a framework response format onto Gemini generation config keys.
+ *
+ * Gemini constrains generation with `responseMimeType` plus, for arbitrary
+ * JSON Schema documents, `responseJsonSchema`. It has no counterpart for the
+ * format name, description, or strict flag, which are therefore not sent.
+ */
+function buildGoogleStructuredOutputConfig(
+  responseFormat: OpenAICompatibleLanguageOptions["responseFormat"],
+): Record<string, unknown> {
+  if (!responseFormat || responseFormat.type === "text") return {};
+  return {
+    responseMimeType: "application/json",
+    ...(responseFormat.type === "json_schema"
+      ? { responseJsonSchema: unwrapToolInputSchema(responseFormat.schema) }
+      : {}),
+  };
+}
+
 function buildGoogleGenerationConfig(
   options: OpenAICompatibleLanguageOptions,
 ): Record<string, unknown> | undefined {
@@ -869,6 +897,7 @@ function buildGoogleGenerationConfig(
       : {}),
     ...(options.seed !== undefined ? { seed: options.seed } : {}),
     ...(thinkingConfig ? { thinkingConfig } : {}),
+    ...buildGoogleStructuredOutputConfig(options.responseFormat),
   };
 
   return Object.keys(config).length > 0 ? config : undefined;
@@ -893,15 +922,6 @@ export function buildGoogleGenerateContentRequest(
       provider: "google",
       setting: "frequencyPenalty",
       details: "Gemini generateContent does not accept frequencyPenalty; the value was dropped.",
-    });
-  }
-  if (options.responseFormat && options.responseFormat.type !== "text") {
-    warnings.push({
-      type: "unsupported-setting",
-      provider: "google",
-      setting: "responseFormat",
-      details:
-        "Gemini uses generationConfig.responseMimeType + responseSchema for structured outputs, which is a separate surface and not yet wired through this option.",
     });
   }
 
@@ -930,5 +950,15 @@ export function buildGoogleGenerateContentRequest(
   };
 
   Object.assign(body, readProviderOptions(options.providerOptions, "google", providerName));
+  // Provider options replace `generationConfig` wholesale, so re-pin the
+  // runtime-owned structured-output keys the caller asked for.
+  const structuredOutput = buildGoogleStructuredOutputConfig(options.responseFormat);
+  if (Object.keys(structuredOutput).length > 0) {
+    const generationConfig = { ...(readRecord(body.generationConfig) ?? {}) };
+    if ("responseJsonSchema" in structuredOutput) {
+      delete generationConfig.responseSchema;
+    }
+    body.generationConfig = { ...generationConfig, ...structuredOutput };
+  }
   return body;
 }

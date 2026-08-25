@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import * as esbuild from "veryfront/extensions/bundler";
 import { generateDevClientRendererScript } from "./dev-client-renderer.ts";
@@ -7,6 +7,7 @@ import {
   generateProdHydrationModule,
   getProdHydrationModulePath,
   getProdScripts,
+  getProdScriptsForPath,
   PROD_HYDRATION_MODULE_PATH,
 } from "./prod-scripts.ts";
 
@@ -98,6 +99,30 @@ describe("hydration-script-builder/prod-scripts", () => {
       const result = getProdScripts("page");
       assertEquals(result.includes("nonce="), false);
     });
+
+    it("should use an explicitly selected release runtime path", () => {
+      const releaseRuntimePath = "/_veryfront/hydration-runtime.1a2b3c4d.js";
+      const result = getProdScriptsForPath(releaseRuntimePath, "nonce-abc");
+
+      assertEquals(result.includes(`src="${releaseRuntimePath}"`), true);
+      assertEquals(result.includes(getProdHydrationModulePath()), false);
+    });
+
+    it("should use the rollout-stable unversioned runtime path", () => {
+      const result = getProdScriptsForPath(PROD_HYDRATION_MODULE_PATH, "nonce-abc");
+
+      assertEquals(result.includes(`src="${PROD_HYDRATION_MODULE_PATH}"`), true);
+      assertEquals(result.includes(getProdHydrationModulePath()), false);
+    });
+
+    it("should reject an invalid selected runtime path", () => {
+      const error = assertThrows(
+        () => getProdScriptsForPath('"><script>alert(1)</script>'),
+        Error,
+      );
+
+      assertEquals((error as { slug?: unknown }).slug, "render-error");
+    });
   });
 
   describe("generateProdHydrationModule", () => {
@@ -144,6 +169,12 @@ describe("hydration-script-builder/prod-scripts", () => {
       const result = generateProdHydrationModule();
       assertEquals(result.includes("renderPage"), true);
       assertEquals(result.includes("createHydrationRenderer"), true);
+      // The identifiers survive any refactor; only the invocation hydrates a page.
+      assertEquals(
+        /createHydrationRenderer\(\{[\s\S]*?\}\)\.start\(\)/.test(result),
+        true,
+        "the runtime entry must invoke start() on the hydration renderer",
+      );
     });
 
     it("should not ship the type-only hydration data contract", () => {

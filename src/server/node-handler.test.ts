@@ -1,4 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { isRequestFromLoopbackPeer } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { toNodeHandler } from "./node-handler.ts";
 
 type FakeRes = {
@@ -8,6 +10,7 @@ type FakeRes = {
   setHeaderCalls: Array<[string, unknown]>;
   chunks: Uint8Array[];
   ended: boolean;
+  endBody?: string;
   writeHead(status: number, headers?: Record<string, unknown>): void;
   setHeader(name: string, value: unknown): void;
   write(chunk: Uint8Array): void;
@@ -37,8 +40,9 @@ function createFakeRes(): FakeRes {
     write(chunk) {
       this.chunks.push(chunk);
     },
-    end(_body) {
+    end(body) {
       this.ended = true;
+      this.endBody = body;
     },
     on(_event, _listener) {
       // no-op: close-handler registration is not exercised in unit tests
@@ -47,13 +51,30 @@ function createFakeRes(): FakeRes {
 }
 
 function createFakeReq(
-  init: { method?: string; url?: string; headers?: Record<string, string | string[] | undefined> },
+  init: {
+    method?: string;
+    url?: string;
+    headers?: Record<string, string | string[] | undefined>;
+    remoteAddress?: string;
+  },
 ): import("node:http").IncomingMessage {
   return {
     method: init.method ?? "GET",
     url: init.url ?? "/",
     headers: { host: "localhost", ...(init.headers ?? {}) },
+    socket: { remoteAddress: init.remoteAddress },
   } as unknown as import("node:http").IncomingMessage;
+}
+
+function decodeBody(res: FakeRes): string {
+  const total = res.chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+  const joined = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of res.chunks) {
+    joined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(joined);
 }
 
 function collectSetCookies(res: FakeRes): string[] {
@@ -79,88 +100,221 @@ function collectSetCookies(res: FakeRes): string[] {
   return cookies;
 }
 
-Deno.test("toNodeHandler preserves multiple Set-Cookie headers as distinct values", async () => {
-  const handler = () => {
-    const headers = new Headers();
-    headers.append("Set-Cookie", "a=1; Path=/");
-    headers.append("Set-Cookie", "b=2; Path=/");
-    return new Response("ok", { status: 200, headers });
-  };
+describe("toNodeHandler", () => {
+  it("preserves multiple Set-Cookie headers as distinct values", async () => {
+    const handler = () => {
+      const headers = new Headers();
+      headers.append("Set-Cookie", "a=1; Path=/");
+      headers.append("Set-Cookie", "b=2; Path=/");
+      return new Response("ok", { status: 200, headers });
+    };
 
-  const nodeHandler = toNodeHandler(handler);
-  const res = createFakeRes();
-  await nodeHandler(
-    createFakeReq({ url: "/" }),
-    res as unknown as import("node:http").ServerResponse,
-  );
+    const nodeHandler = toNodeHandler(handler);
+    const res = createFakeRes();
+    await nodeHandler(
+      createFakeReq({ url: "/" }),
+      res as unknown as import("node:http").ServerResponse,
+    );
 
-  const cookies = collectSetCookies(res);
-  assertEquals(cookies.length, 2);
-  assertEquals(cookies.includes("a=1; Path=/"), true);
-  assertEquals(cookies.includes("b=2; Path=/"), true);
-});
+    const cookies = collectSetCookies(res);
+    assertEquals(cookies.length, 2);
+    assertEquals(cookies.includes("a=1; Path=/"), true);
+    assertEquals(cookies.includes("b=2; Path=/"), true);
 
-Deno.test("toNodeHandler does not throw when a Headers adapter omits getSetCookie", async () => {
-  // Simulate a compatible Headers adapter that omits getSetCookie. We wrap a
-  // real Headers in a Proxy that hides getSetCookie
-  // while still exposing an iterator that yields each Set-Cookie as a distinct
-  // entry (matching undici's iteration behaviour). A real Response is returned
-  // but with its `headers` accessor pointed at the legacy-like object.
-  const realHeaders = new Headers();
-  realHeaders.append("Set-Cookie", "a=1; Path=/");
-  realHeaders.append("Set-Cookie", "b=2; Path=/");
-  realHeaders.set("content-type", "text/plain");
+    // The response body must actually be pumped into the Node response.
+    assertEquals(res.chunks.length > 0, true, "body chunks must reach res.write");
+    assertEquals(
+      decodeBody(res),
+      "ok",
+      "the Response body must be pumped into the Node response",
+    );
+  });
 
-  const legacyHeaders = new Proxy(realHeaders, {
-    get(target, prop, receiver) {
-      // Pretend getSetCookie does not exist on this runtime.
-      if (prop === "getSetCookie") return undefined;
-      const value = Reflect.get(target, prop, receiver);
-      return typeof value === "function" ? value.bind(target) : value;
-    },
-  }) as unknown as Headers;
+  it("does not throw when a Headers adapter omits getSetCookie", async () => {
+    // Simulate a compatible Headers adapter that omits getSetCookie. We wrap a
+    // real Headers in a Proxy that hides getSetCookie
+    // while still exposing an iterator that yields each Set-Cookie as a distinct
+    // entry (matching undici's iteration behaviour). A real Response is returned
+    // but with its `headers` accessor pointed at the legacy-like object.
+    const realHeaders = new Headers();
+    realHeaders.append("Set-Cookie", "a=1; Path=/");
+    realHeaders.append("Set-Cookie", "b=2; Path=/");
+    realHeaders.set("content-type", "text/plain");
 
-  const handler = () => {
-    const response = new Response("ok", { status: 200 });
-    Object.defineProperty(response, "headers", {
-      get: () => legacyHeaders,
-      configurable: true,
-    });
-    return response;
-  };
+    const legacyHeaders = new Proxy(realHeaders, {
+      get(target, prop, receiver) {
+        // Pretend getSetCookie does not exist on this runtime.
+        if (prop === "getSetCookie") return undefined;
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as unknown as Headers;
 
-  const nodeHandler = toNodeHandler(handler);
-  const res = createFakeRes();
-  await nodeHandler(
-    createFakeReq({ url: "/" }),
-    res as unknown as import("node:http").ServerResponse,
-  );
+    const handler = () => {
+      const response = new Response("ok", { status: 200 });
+      Object.defineProperty(response, "headers", {
+        get: () => legacyHeaders,
+        configurable: true,
+      });
+      return response;
+    };
 
-  // Must not have fallen into the catch block and emitted a 500.
-  assertEquals(res.statusCode, 200);
-  assertEquals(res.ended, true);
+    const nodeHandler = toNodeHandler(handler);
+    const res = createFakeRes();
+    await nodeHandler(
+      createFakeReq({ url: "/" }),
+      res as unknown as import("node:http").ServerResponse,
+    );
 
-  // Fallback preserves both cookies when the iterator exposes them separately.
-  const cookies = collectSetCookies(res);
-  assertEquals(cookies.length, 2);
-  assertEquals(cookies.includes("a=1; Path=/"), true);
-  assertEquals(cookies.includes("b=2; Path=/"), true);
-});
+    // Must not have fallen into the catch block and emitted a 500.
+    assertEquals(res.statusCode, 200);
+    assertEquals(res.ended, true);
 
-Deno.test("toNodeHandler passes array-valued request headers through to the Request", async () => {
-  let seen: string | null = null;
-  const handler = (req: Request) => {
-    seen = req.headers.get("x-multi");
-    return new Response("ok", { status: 200 });
-  };
+    // Fallback preserves both cookies when the iterator exposes them separately.
+    const cookies = collectSetCookies(res);
+    assertEquals(cookies.length, 2);
+    assertEquals(cookies.includes("a=1; Path=/"), true);
+    assertEquals(cookies.includes("b=2; Path=/"), true);
+  });
 
-  const nodeHandler = toNodeHandler(handler);
-  const res = createFakeRes();
-  await nodeHandler(
-    createFakeReq({ url: "/", headers: { "x-multi": ["one", "two"] } }),
-    res as unknown as import("node:http").ServerResponse,
-  );
+  it("passes array-valued request headers through to the Request", async () => {
+    let seen: string | null = null;
+    const handler = (req: Request) => {
+      seen = req.headers.get("x-multi");
+      return new Response("ok", { status: 200 });
+    };
 
-  // A collapsed-to-first-element bug would yield only "one".
-  assertEquals(seen, "one, two");
+    const nodeHandler = toNodeHandler(handler);
+    const res = createFakeRes();
+    await nodeHandler(
+      createFakeReq({ url: "/", headers: { "x-multi": ["one", "two"] } }),
+      res as unknown as import("node:http").ServerResponse,
+    );
+
+    // A collapsed-to-first-element bug would yield only "one".
+    assertEquals(seen, "one, two");
+  });
+
+  it("records the native socket peer on the Web Request", async () => {
+    let sawLoopbackPeer = false;
+    const handler = (req: Request) => {
+      sawLoopbackPeer = isRequestFromLoopbackPeer(req);
+      return new Response("ok", { status: 200 });
+    };
+
+    const nodeHandler = toNodeHandler(handler);
+    const res = createFakeRes();
+    await nodeHandler(
+      createFakeReq({ url: "/_projects", remoteAddress: "127.0.0.1" }),
+      res as unknown as import("node:http").ServerResponse,
+    );
+
+    assertEquals(sawLoopbackPeer, true);
+  });
+
+  it("streams a POST request body into the Web Request", async () => {
+    // A Node IncomingMessage is an async-iterable stream, so the adapter has to
+    // forward it as the Request body (which also requires duplex: "half").
+    const req = Object.assign(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"a":1}'));
+          controller.close();
+        },
+      }),
+      {
+        method: "POST",
+        url: "/api",
+        headers: { host: "localhost", "content-type": "application/json" },
+        socket: {},
+      },
+    ) as unknown as import("node:http").IncomingMessage;
+
+    let seen: string | null = null;
+    const handler = async (request: Request) => {
+      seen = await request.text();
+      return new Response("ok", { status: 200 });
+    };
+
+    const nodeHandler = toNodeHandler(handler);
+    const res = createFakeRes();
+    await nodeHandler(req, res as unknown as import("node:http").ServerResponse);
+
+    assertEquals(
+      res.statusCode,
+      200,
+      "a POST with a stream body must not fall into the 500 catch block",
+    );
+    assertEquals(
+      seen,
+      '{"a":1}',
+      "toNodeHandler must stream the Node request body into the Web Request for non-GET methods",
+    );
+  });
+
+  it("gives a HEAD request a null body", async () => {
+    let sawBody: ReadableStream<Uint8Array> | null = null;
+    let sawMethod: string | null = null;
+    const handler = (request: Request) => {
+      sawBody = request.body;
+      sawMethod = request.method;
+      return new Response(null, { status: 200 });
+    };
+
+    const nodeHandler = toNodeHandler(handler);
+    const res = createFakeRes();
+    await nodeHandler(
+      createFakeReq({ method: "HEAD", url: "/" }),
+      res as unknown as import("node:http").ServerResponse,
+    );
+
+    assertEquals(sawMethod, "HEAD", "the request method must be forwarded unchanged");
+    assertEquals(sawBody, null, "a HEAD request must reach the handler with a null body");
+  });
+
+  it("leaves the socket untouched for a 101 upgrade response", async () => {
+    // Response cannot be constructed with a 1xx status, so mirror an upgrade
+    // response by overriding the status accessor.
+    const handler = () => {
+      const response = new Response(null, { status: 200 });
+      Object.defineProperty(response, "status", { get: () => 101, configurable: true });
+      return response;
+    };
+
+    const nodeHandler = toNodeHandler(handler);
+    const res = createFakeRes();
+    await nodeHandler(
+      createFakeReq({ url: "/ws" }),
+      res as unknown as import("node:http").ServerResponse,
+    );
+
+    assertEquals(
+      res.headersSent,
+      false,
+      "a 101 upgrade must not write a head onto the upgraded socket",
+    );
+    assertEquals(res.statusCode, undefined, "a 101 upgrade must not set a response status");
+    assertEquals(res.ended, false, "a 101 upgrade must not end the upgraded socket");
+  });
+
+  it("answers a thrown handler with a 500 and an error payload", async () => {
+    const handler = () => {
+      throw new Error("handler exploded");
+    };
+
+    const nodeHandler = toNodeHandler(handler);
+    const res = createFakeRes();
+    await nodeHandler(
+      createFakeReq({ url: "/boom" }),
+      res as unknown as import("node:http").ServerResponse,
+    );
+
+    assertEquals(res.statusCode, 500, "a handler failure must be served as a 500");
+    assertEquals(res.ended, true, "a failed request must still be ended");
+    assertEquals(
+      res.endBody,
+      "Internal Server Error",
+      "a handler failure must send the Internal Server Error payload",
+    );
+  });
 });

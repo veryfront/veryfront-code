@@ -12,7 +12,7 @@ const noopLogger = { debug() {}, info() {}, warn() {}, error() {} };
 describe("ext-css-tailwind", () => {
   it("aligns package, factory, contract, and capability metadata", () => {
     const extension = factory();
-    assertEquals(extensionPackage.veryfront.activation, "explicit");
+    assertEquals(extensionPackage.veryfront.activation, "auto");
     assertEquals(extension.name, "ext-css-tailwind");
     assertEquals(extension.version, extensionPackage.version);
     assertEquals(extension.contracts?.provides, ["CSSProcessor"]);

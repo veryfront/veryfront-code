@@ -1,6 +1,10 @@
 import type { StreamLifecycleFrame } from "#veryfront/agent/streaming/lifecycle/index.ts";
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
-import { type ConversationRunEvent, conversationRunEventTypes } from "./run-events.ts";
+import {
+  type ConversationRunEvent,
+  conversationRunEventTypes,
+  serializeConversationToolResultContent,
+} from "./run-events.ts";
 
 /**
  * Thrown when a supposedly validated lifecycle frame sequence violates a
@@ -48,15 +52,9 @@ export function createLifecycleRunEventAdapter(input: {
     DEFAULT_MAX_BUFFERED_CONTENT_BYTES;
   const flushDelayMs = input.flushDelayMs ?? DEFAULT_FLUSH_DELAY_MS;
   const setTimer = input.setTimer ??
-    ((callback: () => void, delayMs: number) =>
-      globalThis.setTimeout(callback, delayMs) as unknown as number);
+    ((callback: () => void, delayMs: number) => globalThis.setTimeout(callback, delayMs));
   const clearTimer = input.clearTimer ??
-    ((timerId: number) =>
-      globalThis.clearTimeout(
-        timerId as unknown as ReturnType<
-          typeof globalThis.setTimeout
-        >,
-      ));
+    ((timerId: number) => globalThis.clearTimeout(timerId));
 
   let logicalSequence = 0;
   let pending: PendingDurableContent | null = null;
@@ -289,12 +287,13 @@ export function createLifecycleRunEventAdapter(input: {
       case "provider_tool_start":
         return;
       case "provider_tool_result": {
+        if (event.preliminary === true) return;
         const storedInput = toolInputs.get(event.toolCallId);
         emit({
           type: conversationRunEventTypes.toolCallResult,
           toolCallId: event.toolCallId,
           toolName: event.toolName,
-          content: serialize(event.output),
+          ...serializeConversationToolResultContent(event.output),
           isError: event.isError,
           providerExecuted: true,
           ...(storedInput !== undefined ? { input: storedInput } : {}),

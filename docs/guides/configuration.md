@@ -90,9 +90,24 @@ defineConfig({
   build: {
     outDir: "dist", // Output directory
     trailingSlash: false, // Add trailing slashes to URLs
+    serverExternalPackages: ["knex", "@prisma/client"],
   },
 });
 ```
+
+Use `serverExternalPackages` for npm packages that must run only on the server,
+such as database, cache, or messaging clients. Veryfront leaves these imports
+external during server rendering so the runtime resolves the installed package
+instead of sending it through the module CDN. If a declared package or one of
+its subpaths reaches a browser transform, Veryfront stops with a
+`server-only-in-client` error that names the import and source module.
+
+When adopting this option, move shared imports behind a server-only boundary
+first: for example, into server data hooks, API routes, or server components.
+Declaring a package does not make it browser-safe and does not silently stub it.
+Undeclared packages keep their existing browser-compatible resolution behavior;
+Veryfront does not infer additional server-only packages from source code. Use
+package roots only. Do not include versions or subpaths.
 
 ### Layout
 
@@ -111,6 +126,12 @@ defineConfig({
   // app: false,                // Disable app wrapper
 });
 ```
+
+The app wrapper must stay inside the project directory, both in its configured
+path and after symlinks are resolved. Absolute paths are supported only when
+they point inside the project. When upgrading an existing project that uses an
+external wrapper or an in-project symlink to an external file, move the wrapper
+into the project and update `app` to that project-local path.
 
 ### React version
 
@@ -132,6 +153,11 @@ defineConfig({
   },
 });
 ```
+
+Layout rendering now always uses the secure ESM path. If an existing
+configuration contains `experimental.esmLayouts: false`, remove that setting;
+the `false` value is no longer supported. `experimental.esmLayouts: true` may
+remain during migration, but is optional.
 
 ### AI discovery
 
@@ -187,6 +213,18 @@ Notes:
 - `paths` are relative to your project root.
 - Defaults are `tools`, `agents`, `skills`, `prompts`, `resources`, `workflows`, and `tasks`.
 - Set `enabled: false` to disable discovery for that primitive.
+- Eval, task, trigger, and workflow definitions with filenames containing
+  `.test.` or `.spec.` are ignored during discovery. Rename production
+  definitions that use those filename segments before upgrading.
+- Discovery prefers a valid default export, then falls back to valid named
+  exports from the same module. A tool needs an `execute` function, an agent
+  needs an agent definition, and so on. A plain helper module sitting in a
+  discovery directory is not registered as a primitive.
+- Discovery still **imports** every candidate file in those directories in order
+  to inspect its default export, so any module-level side effects run at startup
+  even when nothing is registered. Keep shared helpers outside the discovered
+  directories, or narrow `paths` to the subdirectories that hold real
+  definitions.
 
 ### AI providers and MCP
 
@@ -224,8 +262,9 @@ Common groups:
   `VERYFRONT_AGENT_SERVICE_REGION`.
 - **Provider keys**: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`,
   and provider-specific base URLs.
-- **Runtime**: `PORT`, `NODE_ENV`, `REDIS_URL`, request timeouts, SSR limits,
-  and `VERYFRONT_EXPERIMENTAL_RSC`.
+- **Runtime**: `PORT`, `NODE_ENV`, `REDIS_URL` (backs the SSR transform cache,
+  see [SSR transform cache](#ssr-transform-cache)), request timeouts, SSR
+  limits, and `VERYFRONT_EXPERIMENTAL_RSC`.
 - **Observability**: `VERYFRONT_OTEL`, `OTEL_TRACES_ENABLED`,
   `OTEL_METRICS_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`,
   `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`, and related `OTEL_*`
@@ -242,6 +281,41 @@ own process boundary.
 Use [Providers](./providers.md) for model-provider setup. Use
 [Agent service runtime](./agent-service-runtime.md) for the registration
 variables used by standalone agent services.
+
+## SSR transform cache
+
+Veryfront compiles every page and its local import tree before it can render on
+the server. The compiled output goes in the SSR transform cache, so a route
+pays that cost once instead of on every request.
+
+### Local development
+
+`veryfront dev` keeps the transform cache on disk in the `.cache` directory of
+the project it serves, including when you pass `--project` from another
+directory. A restart reuses what the previous run compiled, so only files you
+changed while the server was down are recompiled. This needs no setup and no
+external service.
+
+Cache entries are keyed by the Veryfront version, the project, the file path,
+and a hash of the file contents, so an edit or an upgrade produces a new key
+and never reuses stale output.
+
+Run `veryfront clean --cache` to reset the cache. Deleting the project `.cache`
+directory has the same effect. Both are safe: the next request recompiles what
+it needs.
+
+Set `VERYFRONT_CACHE_DIR` to keep the cache somewhere else. Set
+`VF_CACHE_BACKEND=memory` to turn disk persistence off and keep the cache in
+memory for the life of the process.
+
+### Deployed runtimes
+
+Set `REDIS_URL` to back the SSR transform cache with Redis. Runtime instances
+then share compiled output, so a new instance starts warm instead of
+recompiling every route. Veryfront Cloud provides this cache for you, so
+`REDIS_URL` matters only for self-hosted deployments. Self-hosting adds no
+local dev requirement: `REDIS_URL` is unset by default and dev uses the disk
+cache.
 
 ## Environment-based config
 

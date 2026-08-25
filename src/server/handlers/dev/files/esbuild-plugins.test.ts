@@ -1,9 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
-import { asyncLocalStorage } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import {
+  getCurrentRequestContext,
+  runWithRequestContext,
+} from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../../../release-assets/constants.ts";
 import {
@@ -22,6 +25,113 @@ import {
   createHttpExternalPlugin,
   createRelativeFsPlugin,
 } from "./esbuild-plugins.ts";
+import type { LockfileManager } from "#veryfront/utils/import-lockfile.ts";
+import * as esbuild from "veryfront/extensions/bundler";
+import type {
+  OnLoadArgs,
+  OnResolveArgs,
+  PluginBuild,
+  ResolveResult,
+} from "veryfront/extensions/bundler";
+
+function createMockBuild(
+  onLoad: PluginBuild["onLoad"],
+): PluginBuild {
+  const resolveResult: ResolveResult = {
+    errors: [],
+    warnings: [],
+    path: "",
+    external: false,
+    sideEffects: false,
+    namespace: "",
+    pluginData: null,
+  };
+
+  return {
+    initialOptions: {},
+    resolve: () => Promise.resolve(resolveResult),
+    onStart: () => {},
+    onEnd: () => {},
+    onResolve: () => {},
+    onLoad,
+    onDispose: () => {},
+    esbuild,
+  } as unknown as PluginBuild;
+}
+
+async function resolveWithBareExternalPlugin(
+  path: string,
+  importer: string,
+  projectDir: string,
+  serverExternalPackages: readonly string[],
+  kind: OnResolveArgs["kind"] = "import-statement",
+): Promise<string> {
+  let resolveHandler: ((args: OnResolveArgs) => unknown) | undefined;
+  const plugin = createBareExternalPlugin({ projectDir, serverExternalPackages });
+  const build = createMockBuild(() => {});
+  build.onResolve = (_options, handler) => {
+    resolveHandler = handler;
+  };
+  plugin.setup(build);
+  assertExists(resolveHandler);
+
+  const result = await resolveHandler({
+    path,
+    importer,
+    namespace: "file",
+    resolveDir: projectDir,
+    kind,
+    pluginData: undefined,
+  }) as { errors?: Array<{ text: string }> };
+
+  assertExists(result.errors?.[0]);
+  return result.errors[0].text;
+}
+
+async function runHttpExternalResolver(
+  path: string,
+  importer: string,
+  projectDir: string,
+  serverExternalPackages: readonly string[],
+  kind: OnResolveArgs["kind"],
+): Promise<{ errors?: Array<{ text: string }> } | undefined> {
+  let resolveHandler: ((args: OnResolveArgs) => unknown) | undefined;
+  const plugin = createHttpExternalPlugin({ projectDir, serverExternalPackages });
+  const build = createMockBuild(() => {});
+  build.onResolve = (_options, handler) => {
+    resolveHandler = handler;
+  };
+  plugin.setup(build);
+  assertExists(resolveHandler);
+
+  return await resolveHandler({
+    path,
+    importer,
+    namespace: "file",
+    resolveDir: projectDir,
+    kind,
+    pluginData: undefined,
+  }) as { errors?: Array<{ text: string }> } | undefined;
+}
+
+async function resolveWithHttpExternalPlugin(
+  path: string,
+  importer: string,
+  projectDir: string,
+  serverExternalPackages: readonly string[],
+  kind: OnResolveArgs["kind"],
+): Promise<string> {
+  const result = await runHttpExternalResolver(
+    path,
+    importer,
+    projectDir,
+    serverExternalPackages,
+    kind,
+  );
+
+  assertExists(result?.errors?.[0]);
+  return result.errors[0].text;
+}
 
 function writableDependencySource(
   cacheNamespace: string,
@@ -49,6 +159,7 @@ function writableDependencySource(
 async function bundleWithPlugin(
   contents: string,
   importMapImports: Record<string, string>,
+  serverExternalPackages?: readonly string[],
 ): Promise<string> {
   const { build } = await import("veryfront/extensions/bundler");
   const result = await build({
@@ -63,7 +174,10 @@ async function bundleWithPlugin(
       sourcefile: "/project/app/page.js",
       resolveDir: "/project/app",
     },
-    plugins: [createBareExternalPlugin({ importMapImports }), createHttpExternalPlugin()],
+    plugins: [
+      createBareExternalPlugin({ importMapImports, serverExternalPackages }),
+      createHttpExternalPlugin({ serverExternalPackages }),
+    ],
   });
 
   return result.outputFiles?.[0]?.text ?? "";
@@ -97,6 +211,70 @@ describe(
       assertEquals(output.includes('from "https://esm.sh/react@19"'), true);
     });
 
+    it("serves fetched https modules when lockfile flush hits a read-only filesystem", async () => {
+      const originalFetch = globalThis.fetch;
+      const moduleSource = "export const ok = true;";
+      const entries = new Map<string, {
+        resolved: string;
+        integrity: string;
+        fetchedAt?: string;
+      }>();
+      let lockfileSets = 0;
+      let lockfileFlushes = 0;
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+
+      const readOnlyLockfile: LockfileManager = {
+        read: () => Promise.resolve(null),
+        write: () => Promise.reject(new Error("read-only lockfile")),
+        get: (url) => Promise.resolve(entries.get(url) ?? null),
+        set: (url, entry) => {
+          lockfileSets += 1;
+          entries.set(url, entry);
+          return Promise.resolve();
+        },
+        has: () => Promise.resolve(false),
+        clear: () => Promise.resolve(),
+        flush: () => {
+          lockfileFlushes += 1;
+          return Promise.reject(
+            new Error(
+              "Read-only file system (os error 30): writefile '/app/project/veryfront.lock'",
+            ),
+          );
+        },
+      };
+
+      const plugin = createBareExternalPlugin({
+        bundle: true,
+        lockfile: readOnlyLockfile,
+      });
+      plugin.setup(createMockBuild((_opts, fn) => {
+        loadHandler = fn;
+      }));
+      assertExists(loadHandler);
+
+      try {
+        globalThis.fetch = (async () =>
+          new Response(moduleSource, {
+            status: 200,
+          })) as typeof fetch;
+
+        const result = await loadHandler({
+          path: "https://esm.sh/yaml@2/stringify",
+          namespace: "https",
+          pluginData: undefined,
+          suffix: "",
+        });
+
+        assertEquals((result as { contents?: string }).contents, moduleSource);
+        assertEquals((result as { errors?: Array<{ text: string }> }).errors, undefined);
+        assertEquals(lockfileSets, 1);
+        assertEquals(lockfileFlushes, 1);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
     it("fails closed on a node: builtin import in a browser bundle", async () => {
       // A server-only `node:*` import must never be silently rewritten to
       // https://esm.sh/node:crypto (which 404s on esm.sh and throws
@@ -116,6 +294,126 @@ describe(
       const output = await bundleWithPlugin(
         'import x from "lodash"; console.log(x);',
         {},
+      );
+
+      assertEquals(output.includes("esm.sh/lodash"), true);
+    });
+
+    it("fails loud when a declared server external reaches a browser bundle", async () => {
+      const cases = [
+        ["knex", 'import knex from "knex"; console.log(knex);'],
+        ["knex", 'export const load = () => import("knex");'],
+        ["knex", 'const knex = require("knex"); console.log(knex);'],
+        [
+          "knex",
+          'const knex = require("https://esm.sh/knex@3.1.0"); console.log(knex);',
+        ],
+        [
+          "npm:@prisma/client",
+          'import prisma from "npm:@prisma/client"; console.log(prisma);',
+        ],
+        [
+          "npm:@prisma/client/runtime/library",
+          'export const load = () => import("npm:@prisma/client/runtime/library");',
+        ],
+        [
+          "@prisma/client/runtime/library",
+          'import prisma from "@prisma/client/runtime/library"; console.log(prisma);',
+        ],
+      ] as const;
+
+      for (const [specifier, source] of cases) {
+        const error = await assertRejects(() =>
+          bundleWithPlugin(source, {}, ["knex", "@prisma/client"])
+        );
+        const message = error instanceof Error ? error.message : String(error);
+        assertEquals(message.includes(specifier), true);
+        assertEquals(message.includes("build.serverExternalPackages"), true);
+        assertEquals(message.includes("server-only-in-client"), true);
+      }
+    });
+
+    it("reports a project-relative importer for declared server externals", async () => {
+      const projectDir = "/redacted-project-root";
+      const message = await resolveWithBareExternalPlugin(
+        "knex",
+        `${projectDir}/app/page.js`,
+        projectDir,
+        ["knex"],
+      );
+
+      assertEquals(message.includes("app/page.js"), true);
+      assertEquals(message.includes(projectDir), false);
+    });
+
+    it("rejects declared server externals loaded through CommonJS", async () => {
+      const message = await resolveWithBareExternalPlugin(
+        "zod",
+        "/redacted-project-root/app/page.js",
+        "/redacted-project-root",
+        ["zod"],
+        "require-call",
+      );
+
+      assertEquals(message.includes("server-only-in-client"), true);
+      assertEquals(message.includes("zod"), true);
+    });
+
+    it("rejects delivered declared HTTP externals for CommonJS resolve kinds", async () => {
+      for (const kind of ["require-call", "require-resolve"] as const) {
+        const message = await resolveWithHttpExternalPlugin(
+          "https://esm.sh/knex@3.1.0",
+          "/redacted-project-root/app/page.js",
+          "/redacted-project-root",
+          ["knex"],
+          kind,
+        );
+        assertEquals(message.includes("server-only-in-client"), true);
+        assertEquals(message.includes("knex"), true);
+      }
+    });
+
+    it("preserves undeclared CommonJS URL resolver behavior", async () => {
+      for (const kind of ["require-call", "require-resolve"] as const) {
+        assertEquals(
+          await runHttpExternalResolver(
+            "https://esm.sh/lodash@4.17.21",
+            "/redacted-project-root/app/page.js",
+            "/redacted-project-root",
+            ["knex"],
+            kind,
+          ),
+          undefined,
+        );
+      }
+    });
+
+    it("does not let an import map bypass a declared server external", async () => {
+      const error = await assertRejects(() =>
+        bundleWithPlugin(
+          'import knex from "knex"; console.log(knex);',
+          { knex: "https://cdn.example/knex.js" },
+          ["knex"],
+        )
+      );
+
+      assertEquals(String(error).includes("build.serverExternalPackages"), true);
+
+      const scopedNpmError = await assertRejects(() =>
+        bundleWithPlugin(
+          'import prisma from "npm:@prisma/client/runtime/library"; console.log(prisma);',
+          { "npm:@prisma/client/runtime/library": "https://cdn.example/prisma.js" },
+          ["@prisma/client"],
+        )
+      );
+      assertEquals(String(scopedNpmError).includes("server-only-in-client"), true);
+    });
+
+    it("keeps undeclared packages browser-compatible when declarations exist", async () => {
+      const output = await bundleWithPlugin(
+        'import x from "lodash"; console.log(x);',
+        {},
+        ["knex"],
       );
 
       assertEquals(output.includes("esm.sh/lodash"), true);
@@ -170,34 +468,82 @@ describe(
       }
     }
 
-    const ESCAPE_IMPORTS: ReadonlyArray<[string, string]> = [
-      ["plain ../../../../etc/hostname", "../../../../etc/hostname"],
-      ["plain absolute /etc/hostname", "/etc/hostname"],
-      ["mixed-depth traversal", "../../../etc/passwd"],
-      ["traversal that escapes via /", "/../../etc/hostname"],
+    // [label, import specifier, host file the import would reach, whether the
+    // containment check itself must refuse it]. Absolute specifiers are
+    // project-relative, so "/etc/hostname" joins to /project/etc/hostname and
+    // never escapes; only a genuine traversal must hit the containment error.
+    const ESCAPE_IMPORTS: ReadonlyArray<[string, string, string, boolean]> = [
+      ["plain ../../../../etc/hostname", "../../../../etc/hostname", "/etc/hostname", true],
+      ["plain absolute /etc/hostname", "/etc/hostname", "/etc/hostname", false],
+      ["mixed-depth traversal", "../../../etc/passwd", "/etc/passwd", true],
+      ["traversal that escapes via /", "/../../etc/hostname", "/etc/hostname", true],
     ];
 
-    for (const [label, importPath] of ESCAPE_IMPORTS) {
+    for (const [label, importPath, hostPath, escapes] of ESCAPE_IMPORTS) {
       it(`refuses ${label}`, async () => {
+        // Seed the host file so containment is the only thing that can refuse it.
+        const adapter = createMockAdapter();
+        adapter.fs.files.set(hostPath, "export const HOSTLEAK = 1; export default HOSTLEAK;");
         const { errors, output } = await bundleEntry(
           `import x from "${importPath}"; console.log(x);`,
           "/project",
+          adapter,
         );
-        // The bundle must not embed the host file contents. Either esbuild
-        // reports a containment error, or resolution fails so the output is
-        // empty/externalised — but we must never see /etc/* contents inlined.
-        const leaked = /\broot:x:0:0\b/.test(output) ||
-          /localhost\./.test(output);
-        assertEquals(leaked, false, `${label} leaked host content`);
-        // And we expect either a plugin error or an esbuild resolve failure.
-        const refused = errors.length > 0 || output === "";
         assertEquals(
-          refused || !output.includes("etc/"),
-          true,
-          `${label} was not refused: errors=${JSON.stringify(errors)}`,
+          output.includes("HOSTLEAK"),
+          false,
+          `${label}: a host file must never be inlined into the bundle`,
         );
+        assertEquals(errors.length > 0, true, `${label} was not refused`);
+        if (escapes) {
+          assertEquals(
+            errors.some(({ text }) => text.includes("Import escapes project directory")),
+            true,
+            `${label} must be refused by the containment check: errors=${JSON.stringify(errors)}`,
+          );
+        }
       });
     }
+
+    // The table above can only prove that "/etc/hostname" never leaks the host
+    // file; it cannot tell "resolved inside the project but the file is
+    // missing" apart from "refused as an escape". Seed the project-relative
+    // copy so the allowed branch has to actually resolve and bundle.
+    it("resolves a project-relative absolute import to the project copy", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/etc/hostname.ts",
+        "export const HOSTLEAK = 1; export default HOSTLEAK;",
+      );
+      adapter.fs.files.set(
+        "/project/etc/hostname.ts",
+        "export const PROJECTCOPY = 2; export default PROJECTCOPY;",
+      );
+
+      const { errors, output } = await bundleEntry(
+        'import x from "/etc/hostname"; console.log(x);',
+        "/project",
+        adapter,
+      );
+
+      assertEquals(
+        errors.length,
+        0,
+        `an absolute import that joins inside the project must resolve: errors=${
+          JSON.stringify(errors)
+        }`,
+      );
+      assertEquals(
+        output.includes("PROJECTCOPY"),
+        true,
+        "the project-relative copy must be the module that gets bundled",
+      );
+      assertEquals(
+        output.includes("HOSTLEAK"),
+        false,
+        "the host file must never be inlined into the bundle",
+      );
+    });
 
     it("refuses NUL byte in import path", async () => {
       const { errors } = await bundleEntry(
@@ -205,24 +551,46 @@ describe(
         'import x from "./legit\u0000.ts"; console.log(x);',
         "/project",
       );
-      assertEquals(errors.length > 0, true);
+      assertEquals(
+        errors.some(({ text }) => text.includes("NUL byte")),
+        true,
+        "the plugin must reject the NUL byte itself, not merely fail to resolve",
+      );
     });
 
-    it("refuses double-encoded traversal as a literal segment (no decode)", async () => {
-      // %2e%2e is NOT decoded by esbuild plugins, so this should be treated as
-      // a literal filename. After joining with /project/app the candidate is
-      // /project/app/%2e%2e/%2e%2e/etc/hostname which IS within /project.
-      // The lookup will fail because the file doesn't exist — but the plugin
-      // must NOT have escaped the project to find it.
+    it("treats a percent-encoded segment as a literal path segment (no decode)", async () => {
+      // %2e%2e is NOT decoded by esbuild plugins, so it must be treated as a
+      // literal directory name under /project/app rather than as "..".
+      const adapter = createMockAdapter();
+      adapter.fs.files.set("/project/app/%2e%2e/x.ts", "export const q = 7;");
       const { errors, output } = await bundleEntry(
-        'import x from "./%2e%2e/%2e%2e/etc/hostname"; console.log(x);',
+        'import { q } from "./%2e%2e/x.ts"; console.log(q);',
         "/project",
+        adapter,
       );
-      // No path escape and no real file embedded.
-      assertEquals(output.includes("root:x:0:0"), false);
-      // Either the resolution failed (no errors but no output) or esbuild
-      // reported a "could not resolve" error.
-      assertEquals(errors.length === 0 || errors.length > 0, true);
+      assertEquals(errors.length, 0, `unexpected errors: ${JSON.stringify(errors)}`);
+      assertEquals(
+        output.includes("7"),
+        true,
+        "%2e%2e must be treated as a literal path segment, never decoded",
+      );
+    });
+
+    it("refuses a literal traversal that reaches a seeded host file", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set("/etc/hostname", "export const HOSTLEAK = 1; export default HOSTLEAK;");
+      const { errors, output } = await bundleEntry(
+        'import x from "../../etc/hostname"; console.log(x);',
+        "/project",
+        adapter,
+      );
+      assertEquals(output.includes("HOSTLEAK"), false, "a host file must never be inlined");
+      assertEquals(errors.length > 0, true, "the traversal must be refused");
+      assertEquals(
+        errors.some(({ text }) => text.includes("Import escapes project directory")),
+        true,
+        `the traversal must be refused by the containment check: errors=${JSON.stringify(errors)}`,
+      );
     });
 
     it("positive: legitimate relative import inside the project resolves", async () => {
@@ -715,7 +1083,7 @@ describe(
       const contextBoundAdapter = {
         fs: {
           stat: (path: string) => {
-            if (!asyncLocalStorage.getStore()) {
+            if (!getCurrentRequestContext()) {
               return Promise.reject(new Error("No request context available"));
             }
             return files[path]
@@ -723,7 +1091,7 @@ describe(
               : Promise.reject(new Error("not found"));
           },
           readFile: (path: string) => {
-            if (!asyncLocalStorage.getStore()) {
+            if (!getCurrentRequestContext()) {
               return Promise.reject(new Error("No request context available"));
             }
             return files[path] !== undefined
@@ -733,8 +1101,8 @@ describe(
         },
       } as unknown as ReturnType<typeof createMockAdapter>;
 
-      const result = await asyncLocalStorage.run(
-        {} as NonNullable<ReturnType<typeof asyncLocalStorage.getStore>>,
+      const result = await runWithRequestContext(
+        { projectSlug: "esbuild-project", token: "esbuild-token" },
         () =>
           esbuild.build({
             bundle: true,

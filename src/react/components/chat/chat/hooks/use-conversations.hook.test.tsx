@@ -8,8 +8,10 @@ import * as React from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { JSDOM } from "npm:jsdom@28.0.0";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import type { ChatMessage } from "#veryfront/agent/react";
 import {
   conversationSummary,
@@ -167,7 +169,7 @@ describe("react/components/chat/hooks/useConversations — active conversation l
       assertEquals(view.get().activeConversation?.id, "b");
       assertEquals(activeConversationLoading(view.get()), false);
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -218,7 +220,7 @@ describe("react/components/chat/hooks/useConversations — active conversation l
       assertEquals(view.get().activeConversation?.title, "Current scope");
       assertEquals(activeConversationLoading(view.get()), false);
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -250,7 +252,7 @@ describe("react/components/chat/hooks/useConversations — active conversation l
       assert(view.get().activeConversation?.id !== "missing");
       assertEquals(activeConversationLoading(view.get()), false);
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -283,7 +285,7 @@ describe("react/components/chat/hooks/useConversations — active conversation l
       assertEquals(persistenceError(view.get())?.operation, "load");
       assertEquals(persistenceError(view.get())?.cause, failure);
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -318,7 +320,7 @@ describe("react/components/chat/hooks/useConversations — active conversation l
       assertEquals(activeConversationLoading(view.get()), false);
       assertEquals(betaLoads, 0);
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -367,7 +369,7 @@ describe("react/components/chat/hooks/useConversations — active conversation l
       assertEquals(view.get().activeConversation?.title, "Updated Beta");
       assertEquals(activeConversationLoading(view.get()), false);
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -394,7 +396,7 @@ describe("react/components/chat/hooks/useConversations — active conversation l
       assert(rejectLoad);
       assertEquals(activeConversationLoading(view.get()), true);
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       rejectLoad(new Error("late active load failure"));
       await settle();
       assertEquals(reported, []);
@@ -428,7 +430,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       flushSync(() => view.get().clearError?.());
       assertEquals(persistenceError(view.get()), null);
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -438,6 +440,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
   it("consumes an initial list rejection after unmount", async () => {
     const restoreDom = installDom();
     let rejectList: ((reason: unknown) => void) | undefined;
+    const reported: ConversationStoreError[] = [];
     const store: ConversationStore = {
       list: () =>
         new Promise((_resolve, reject) => {
@@ -448,12 +451,22 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       delete: () => Promise.resolve(),
     };
     try {
-      const view = mount(store);
+      const view = mount(store, (error) => reported.push(error));
       await Promise.resolve();
       assert(rejectList);
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       rejectList(new Error("late list failure"));
       await settle();
+      assertEquals(
+        reported,
+        [],
+        "a list rejection that lands after unmount must not be reported to the consumer",
+      );
+      assertEquals(
+        persistenceError(view.get()),
+        null,
+        "a post-unmount list rejection must not be written into state",
+      );
     } finally {
       restoreDom();
     }
@@ -468,10 +481,10 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       const view = mount(store);
       await settle();
 
-      assertEquals(view.get().active, view.get().activeConversation);
-      assertEquals(view.get().activeId, view.get().activeConversationId);
+      assertEquals(view.get().activeConversation?.id, "active");
+      assertEquals(view.get().activeConversationId, "active");
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -501,7 +514,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       assertEquals(reused?.agentId, "");
       assertEquals(view.get().conversations.map((item) => item.id), ["empty"]);
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -536,7 +549,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
         ["agent-a-draft", created.id].sort(),
       );
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -564,7 +577,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
         "active conversation should load",
       );
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -593,7 +606,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       assertEquals(summary.messageCount, 1);
 
       // Persistence is debounced; unmount flushes the pending save.
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
       await settle();
       assertEquals((await store.load("new"))?.title, "Hello world");
@@ -617,7 +630,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       assertEquals(matches[0]?.title, "Renamed");
 
       // Persistence is debounced; unmount flushes the pending save.
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
       await settle();
       assertEquals((await store.load("seed"))?.title, "Renamed");
@@ -650,7 +663,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       assertEquals(persisted?.messages.length, 1);
       assertEquals(view.get().conversations[0]?.title, "Command snapshot");
       assertEquals(view.get().conversations[0]?.messageCount, 1);
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -682,7 +695,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       assertEquals(view.get().conversations[0]?.title, "Client title (server)");
       assertEquals(view.get().conversations[0]?.updatedAt, 109);
       assertEquals(view.get().activeConversation?.title, "Client title (server)");
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -711,7 +724,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       await settle();
 
       assertEquals(await store.load("seed"), null, "removed conversation must stay deleted");
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -741,7 +754,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       assertEquals(persistenceError(view.get())?.operation, "delete");
       assertEquals(persistenceError(view.get())?.cause, failure);
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -796,7 +809,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
         false,
       );
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -828,7 +841,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       assertEquals(persistenceError(view.get()), failure);
       assertEquals(persistenceError(view.get())?.cause, cause);
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -877,7 +890,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
         { type: "text", text: "persisted" },
       );
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -929,7 +942,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
         "unsaved",
       );
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -997,7 +1010,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
         { type: "text", text: "persisted" },
       );
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -1021,7 +1034,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       const view = mount(store);
       await settle();
       view.get().save(conversation({ title: "Pending", updatedAt: 2 }));
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
       assert(rejectSave);
       rejectSave(new Error("late save failure"));
@@ -1057,7 +1070,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       assertEquals(await store.load("draft"), null);
       assert(await store.load(replacementId));
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -1108,7 +1121,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       assertEquals(view.get().conversations.map((item) => item.id), ["active"]);
       assertEquals(await base.load("target"), null);
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -1149,7 +1162,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       assertEquals(view.get().conversations[0]?.agentId, "agent-latest");
       assertEquals(view.get().conversations[0]?.updatedAt, persisted?.updatedAt);
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -1199,7 +1212,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       assertEquals(persisted?.title, "Renamed");
       assertEquals(persisted?.agentId, "agent-2");
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -1236,7 +1249,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
         "a failed load must roll back metadata that was never applied",
       );
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -1278,7 +1291,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       );
       assertEquals((await base.load("target"))?.title, "Target");
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -1327,7 +1340,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
         "a later failure must retain the newest successfully persisted revision",
       );
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -1375,7 +1388,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       );
       assertEquals((await base.load("target"))?.title, "Target");
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -1436,7 +1449,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
         "retained",
       );
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -1498,7 +1511,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
         "retained",
       );
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -1530,7 +1543,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       assertEquals((view.get().error?.cause as Error)?.name, "ConversationNotFoundError");
       assertEquals(view.get().conversations.some((item) => item.id === "target"), false);
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -1580,7 +1593,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       assertEquals(await base.load("seed"), null);
       assertEquals(view.get().conversations.map((item) => item.id), ["other"]);
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -1626,7 +1639,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       await settle();
       assertEquals((await base.load("seed"))?.title, "Explicit recreation");
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -1674,7 +1687,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       assertEquals(persistenceError(view.get())?.cause, failure);
       assertEquals(view.get().conversations.map((item) => item.id), ["seed"]);
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -1719,7 +1732,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       assertEquals(newSaveCalls, 1);
       assertEquals((await newBase.load("seed"))?.title, "Version two");
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -1770,7 +1783,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
         "a retired scope completion must not schedule work in its replacement",
       );
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -1842,7 +1855,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
         "Saved from child layout",
       );
 
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await settle();
     } finally {
       restoreDom();
@@ -1880,7 +1893,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       assertEquals(view.get().conversations.map((item) => item.id), ["b"]);
       assertEquals(view.get().activeConversationId, "b");
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -1933,7 +1946,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       assertEquals(view.get().conversations.map((item) => item.id), ["b"]);
       assertEquals(view.get().activeConversationId, "b");
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -1982,29 +1995,37 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       retainedA.remove("seed");
       retainedA.select("seed");
       retainedA.clearError();
-      let staleCreateThrew = false;
-      try {
-        retainedA.create();
-      } catch {
-        staleCreateThrew = true;
-      }
+      const staleError = assertThrows(
+        () => retainedA.create(),
+        Error,
+        "inactive hook scope",
+        "a retained create() from a handed-off scope is rejected",
+      );
+      assertEquals(
+        (staleError as Error).name,
+        "ConversationHookScopeError",
+        "the stale create() rejection keeps its scope-error identity",
+      );
       await new Promise((resolve) => setTimeout(resolve, 350));
-      assertEquals(staleCreateThrew, true);
       assertEquals(callsA, afterSwitchA);
       assertEquals(callsB, afterSwitchB);
 
       const retainedB = view.get();
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       retainedB.save(conversation({ title: "After unmount" }));
       retainedB.remove("seed");
-      let unmountedCreateThrew = false;
-      try {
-        retainedB.create();
-      } catch {
-        unmountedCreateThrew = true;
-      }
+      const unmountedError = assertThrows(
+        () => retainedB.create(),
+        Error,
+        "inactive hook scope",
+        "a retained create() from an unmounted scope is rejected",
+      );
+      assertEquals(
+        (unmountedError as Error).name,
+        "ConversationHookScopeError",
+        "the post-unmount create() rejection keeps its scope-error identity",
+      );
       await new Promise((resolve) => setTimeout(resolve, 350));
-      assertEquals(unmountedCreateThrew, true);
       assertEquals(callsB, afterSwitchB);
     } finally {
       restoreDom();
@@ -2065,7 +2086,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       assertEquals(disposalsA, 0);
       assertEquals(disposalsB, 0);
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
       assertEquals(unsubscribesA, 1);
       assertEquals(unsubscribesB, 1);
@@ -2120,7 +2141,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
         "remote",
       );
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -2163,7 +2184,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       assertEquals(view.get().conversations[0]?.title, "Optimistic");
       assertEquals((await base.load("seed"))?.title, "Optimistic");
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -2202,7 +2223,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       assertEquals(view.get().error, null);
       assertEquals((continuationErrors[0] as Error)?.message, "router failed");
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       if (previousReportError) {
@@ -2269,7 +2290,10 @@ describe("react/components/chat/hooks/useConversations — save", () => {
           </React.Suspense>,
         );
       });
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await waitFor(() => attemptedSuspendedRender, {
+        interval: 1,
+        message: "Concurrent conversations render did not start",
+      });
       assertEquals(attemptedSuspendedRender, true);
 
       const failure = new Error("committed list failed");
@@ -2280,7 +2304,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       assertEquals(abandonedErrors, []);
       assertEquals((committed as unknown as ConversationsHookResult).error?.cause, failure);
 
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await settle();
     } finally {
       restoreDom();

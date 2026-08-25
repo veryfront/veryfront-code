@@ -39,13 +39,15 @@ export function useDropZone(
   const handleDragEnter = React.useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (!e.dataTransfer.types.includes("Files")) return;
     dragCounter.current++;
-    if (e.dataTransfer.types.includes("Files")) setDragActive(true);
+    setDragActive(true);
   }, []);
 
   const handleDragLeave = React.useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (!e.dataTransfer.types.includes("Files")) return;
     dragCounter.current--;
     if (dragCounter.current === 0) setDragActive(false);
   }, []);

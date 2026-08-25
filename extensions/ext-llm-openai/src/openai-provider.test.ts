@@ -1,4 +1,5 @@
-import { assertEquals, assertRejects } from "@std/assert";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertRejects } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 // Error classes are shared plumbing — import from the shared barrel so this
 // test stays decoupled from core's runtime-loader internals.
@@ -74,6 +75,19 @@ function _readRequestHeader(init: RequestInit | undefined, name: string): string
 // ---------------------------------------------------------------------------
 
 describe("openai-provider", () => {
+  it("exposes canonical model providers independently of runtime display labels", () => {
+    for (const createRuntime of [createOpenAIModelRuntime, createOpenAIResponsesRuntime]) {
+      const runtime = createRuntime({
+        apiKey: "test-openai-key",
+        name: "prod-openai",
+        providerName: " OpenAI ",
+      }, "gpt-5.4-nano");
+
+      assertEquals(runtime.provider, "prod-openai");
+      assertEquals(runtime.modelProvider, "openai");
+    }
+  });
+
   it("creates an OpenAI-compatible language runtime without SDK helpers for generate", async () => {
     let requestedUrl = "";
     let requestedInit: RequestInit | undefined;
@@ -995,6 +1009,93 @@ describe("openai-provider", () => {
     assertEquals(chatResult.content, [{ type: "text", text: "Chat response" }]);
   });
 
+  it("rejects hosted search when Chat Completions is explicitly configured", async () => {
+    let fetchCalled = false;
+    const provider = new OpenAIProvider();
+    const runtime = provider.createModel("gpt-5.4", {
+      credential: "test-openai-key",
+      baseURL: "https://example.openai.test/v1",
+      openAITransport: "chat-completions",
+      fetch: () => {
+        fetchCalled = true;
+        return Promise.resolve(new Response("{}", { status: 200 }));
+      },
+    });
+
+    await assertRejects(
+      () =>
+        runtime.doGenerate({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Research Veryfront." }] }],
+          tools: [{
+            type: "provider",
+            name: "web_search",
+            id: "openai.web_search",
+            args: {},
+          }],
+        }),
+      TypeError,
+      "OpenAI hosted tools require the Responses API",
+    );
+    await assertRejects(
+      () =>
+        runtime.doStream({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Research Veryfront." }] }],
+          tools: [{
+            type: "provider",
+            name: "web_search",
+            id: "openai.web_search",
+            args: {},
+          }],
+        }),
+      TypeError,
+      "OpenAI hosted tools require the Responses API",
+    );
+    assertEquals(fetchCalled, false);
+  });
+
+  it("applies Chat function-tool reasoning capabilities to generate requests", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const provider = new OpenAIProvider();
+    const runtime = provider.createModel("gpt-5.5", {
+      credential: "test-openai-key",
+      baseURL: "https://example.openai.test/v1",
+      name: "veryfront-cloud",
+      providerName: "veryfront-cloud",
+      openAITransport: "chat-completions",
+      openAIChatReasoningWithFunctionTools: false,
+      fetch: (_input, init) => {
+        requestBody = JSON.parse(readRequestBody(init) ?? "{}");
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [{
+                finish_reason: "stop",
+                message: { role: "assistant", content: "Done." },
+              }],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      },
+    });
+
+    await runtime.doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Use the tool." }] }],
+      tools: [{
+        type: "function",
+        name: "lookup",
+        inputSchema: { type: "object", properties: {} },
+      }],
+    });
+
+    assertEquals(requestBody?.reasoning_effort, undefined);
+    assertEquals(
+      (requestBody?.tools as Array<{ function?: { name?: string } }> | undefined)?.[0]
+        ?.function?.name,
+      "lookup",
+    );
+  });
+
   it("keeps OpenAI-compatible provider identity separate from display labels", async () => {
     const encoder = new TextEncoder();
     let requestedUrl = "";
@@ -1037,6 +1138,68 @@ describe("openai-provider", () => {
     assertEquals(requestedUrl, "https://example.compatible.test/v1/chat/completions");
     assertEquals(requestBody.reasoning, undefined);
     assertEquals(requestBody.reasoning_effort, undefined);
+    assertEquals(parts.map((part) => (part as { type: string }).type), [
+      "text-delta",
+      "finish",
+    ]);
+  });
+
+  it("streams through strict OpenAI-compatible endpoints with one merged system message", async () => {
+    const encoder = new TextEncoder();
+    let requestBody: { messages?: Array<{ content: string; role: string }> } | undefined;
+    const runtime = createOpenAIModelRuntime({
+      apiKey: "test-local-key",
+      baseURL: "https://strict-compatible.test/v1",
+      fetch: (_input, init) => {
+        requestBody = JSON.parse(readRequestBody(init) ?? "{}");
+        const systemMessages = requestBody?.messages?.filter((message) =>
+          message.role === "system"
+        ) ?? [];
+        if (systemMessages.length !== 1) {
+          return Promise.resolve(
+            Response.json(
+              { error: { message: "Only one system message is supported" } },
+              { status: 400 },
+            ),
+          );
+        }
+        return Promise.resolve(
+          new Response(
+            ReadableStream.from([
+              encoder.encode('data: {"choices":[{"delta":{"content":"Ready."}}]}\n\n'),
+              encoder.encode(
+                'data: {"choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":8,"completion_tokens":2,"total_tokens":10}}\n\n',
+              ),
+              encoder.encode("data: [DONE]\n\n"),
+            ]),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+        );
+      },
+    }, "local-model");
+
+    const result = await runtime.doStream({
+      prompt: [{
+        role: "system",
+        content: "You are a helpful local assistant.",
+      }, {
+        role: "system",
+        content: "<runtime_context>current_date_utc: 2026-08-20</runtime_context>",
+      }, {
+        role: "user",
+        content: [{ type: "text", text: "Say hello" }],
+      }],
+    });
+
+    const parts = await collectAsync(result.stream);
+    assertEquals(requestBody?.messages, [{
+      role: "system",
+      content:
+        "You are a helpful local assistant.\n\n<runtime_context>current_date_utc: 2026-08-20</runtime_context>",
+    }, {
+      role: "user",
+      content: "Say hello",
+    }]);
     assertEquals(parts.map((part) => (part as { type: string }).type), [
       "text-delta",
       "finish",
@@ -1896,6 +2059,22 @@ describe("openai-provider", () => {
       });
       assertEquals("service_tier" in (captured ?? {}), false);
       assertEquals("parallel_tool_calls" in (captured ?? {}), false);
+    });
+
+    it("advertises structured output support on both transports", () => {
+      const config = {
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () => Promise.reject(new Error("not called")),
+      };
+      assertEquals(
+        createOpenAIModelRuntime(config, "gpt-4o-mini").runtimeCapabilities?.structuredOutput,
+        true,
+      );
+      assertEquals(
+        createOpenAIResponsesRuntime(config, "gpt-4o-mini").runtimeCapabilities?.structuredOutput,
+        true,
+      );
     });
 
     it("emits OpenAI response_format json_schema when responseFormat is structured", async () => {

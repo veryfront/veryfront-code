@@ -12,6 +12,8 @@
  */
 
 import { build, emptyDir } from "#dnt";
+import { STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES } from "#veryfront/extensions/first-party-defaults.ts";
+import { PUBLISHED_RUNTIME_HELPERS } from "../../src/platform/compat/published-runtime-helpers.ts";
 import {
 	BROWSER_SAFE_CLIENT_MODULES,
 	BROWSER_SAFE_DNT_TIMER_MODULES,
@@ -22,8 +24,14 @@ import {
 	readDenoConfigSet,
 } from "./npm-dependency-sources.ts";
 import { buildExtensionPackages } from "./build-npm-extension-packages.ts";
-import { patchDntArgvPolyfill } from "./dnt-polyfill.ts";
+import {
+	patchDntArgvPolyfill,
+	patchDntCryptoShim,
+	patchDntDenoShim,
+} from "./dnt-polyfill.ts";
+import { NPM_DNT_COMPILER_OPTIONS } from "./dnt-compiler-options.ts";
 import { normalizeNpmPackageMetadata } from "./npm-package-metadata.ts";
+import { assertNpmRuntimeHelperContract } from "./npm-runtime-helper-contract.ts";
 import { normalizeEsmShReactNpmShims } from "./npm-react-shims.ts";
 import { NPM_NODE_ENGINE } from "./runtime-support.ts";
 
@@ -79,6 +87,9 @@ await build({
 
 	// ESM only (no CommonJS) - allows top-level await
 	scriptModule: false,
+	// dnt 0.42 enabled declaration maps by default. Preserve that published
+	// artifact contract after 0.43 changed the default to false.
+	declarationMap: true,
 
 	// Skip type checking - runtime compatibility is verified by Deno's type checker
 	// dnt's Node type environment differs significantly from Deno's web-standard types
@@ -100,19 +111,14 @@ await build({
 	// FormData/File/Blob as globals natively, so no shim is needed.
 	shims: {
 		deno: true,
-		// Supported Node releases provide native timers. Keeping the dnt timer shim here turns
-		// Timeout objects into numbers, which prevents unrefTimer() from releasing
-		// framework background intervals in short-lived Node processes.
-		timers: false,
+		// Supported Node releases provide native timers. Do not add a custom timer
+		// shim because numeric timer IDs prevent unrefTimer() from releasing framework
+		// background intervals in short-lived Node processes.
 		crypto: true,
 	},
 
-	// Compiler options for declaration generation
-	compilerOptions: {
-		lib: ["ES2022", "DOM", "DOM.Iterable"],
-		target: "ES2022",
-		skipLibCheck: true,
-	},
+	// Compiler options for declaration generation and JavaScript emission
+	compilerOptions: NPM_DNT_COMPILER_OPTIONS,
 
 	// Map Deno std and type packages to npm equivalents
 	mappings: {
@@ -174,9 +180,6 @@ await build({
 		dependencies: {
 			"@types/react": npmDependencyRange(denoConfigSet, "@types/react"),
 			"@types/react-dom": npmDependencyRange(denoConfigSet, "@types/react-dom"),
-			// Root deno.json intentionally rejects core npm imports; ws is a
-			// Node-only dynamic import used by the npm server/HMR path.
-			"ws": "8.21.0",
 		},
 		keywords: [
 			"react",
@@ -194,6 +197,8 @@ await build({
 
 	// Post-build steps
 	async postBuild() {
+		await assertNpmRuntimeHelperContract("./npm/esm", PUBLISHED_RUNTIME_HELPERS);
+
 		const pkgPath = "./npm/package.json";
 		const initialPkg = JSON.parse(await Deno.readTextFile(pkgPath));
 		normalizeNpmPackageMetadata(initialPkg);
@@ -227,6 +232,27 @@ await build({
 		// Fix dnt polyfill bug: process.argv[1] can be undefined in dynamic imports
 		await patchDntArgvPolyfill(
 			"./npm/esm/_dnt.polyfills.js",
+			{ required: true },
+		);
+
+		// dnt re-exports `@deno/shim-deno` unconditionally, so `deno run -A
+		// npm:veryfront` ran the Node reimplementations of Deno APIs instead of
+		// the runtime's own. Deno.listen in particular reads `server._handle.fd`
+		// off a node:net server, which is null under Deno's node compatibility
+		// layer, so every command that binds a port died before starting.
+		await patchDntDenoShim(
+			"./npm/esm/_dnt.shims.js",
+			{ required: true },
+		);
+
+		// Both shims must be lazy, not just the Deno one. The esm transform
+		// rewrites each bare specifier into an absolute file:// bundle, and Deno
+		// cannot prepare that graph node when node_modules is unmanaged, which is
+		// what `deno install -g` writes (`nodeModulesDir: "manual"`). A single
+		// remaining static shim import keeps a globally installed CLI failing
+		// every request with "Loading unprepared module".
+		await patchDntCryptoShim(
+			"./npm/esm/_dnt.shims.js",
 			{ required: true },
 		);
 
@@ -276,13 +302,19 @@ await build({
 			);
 		}
 
-		// Note: Templates are now embedded in manifest.json which is bundled by dnt
+		// Templates are embedded in a compressed generated module bundled by dnt.
 		// No need to copy template files separately
 
 		// Copy bin wrapper
 		await Deno.mkdir("./npm/bin", { recursive: true });
 		await Deno.copyFile("./scripts/build/bin-wrapper.js", "./npm/bin/veryfront.js");
 		await Deno.chmod("./npm/bin/veryfront.js", 0o755);
+		// The shim imports this before any framework module, so it has to sit
+		// beside it and stay loadable on Node releases below the supported floor.
+		await Deno.copyFile(
+			"./scripts/build/node-engine-precondition.js",
+			"./npm/bin/node-engine-precondition.js",
+		);
 
 		// Copy package documentation files (must exist at repo root)
 		await Deno.mkdir("./npm/assets", { recursive: true });
@@ -313,13 +345,9 @@ await build({
 		pkg.dependencies ??= {};
 		// Add after build-local npm install so releases do not require the
 		// just-built auto-loaded extension versions to already exist in the registry.
-		pkg.dependencies["@veryfront/ext-bundler-esbuild"] = version;
-		pkg.dependencies["@veryfront/ext-content-mdx"] = version;
-		pkg.dependencies["@veryfront/ext-css-tailwind"] = version;
-		// ext-parser-babel provides the CodeParser contract that `veryfront serve`
-		// needs to vet client-page modules for /_veryfront/rsc/module hydration;
-		// without it the endpoint 404s and client pages render without hydrating.
-		pkg.dependencies["@veryfront/ext-parser-babel"] = version;
+		for (const extensionDirectory of STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES) {
+			pkg.dependencies[`@veryfront/${extensionDirectory}`] = version;
+		}
 		pkg.files = ["esm", "script", "bin", "assets", "tsconfig.json", "LICENSE", "NOTICE", "README.md"];
 		pkg.exports["./tsconfig.json"] = "./tsconfig.json";
 		addTypesExportEntries(pkg.exports);
@@ -339,23 +367,78 @@ await buildExtensionPackages({
 await verifyNpmRootImportLifecycle();
 
 async function verifyNpmRootImportLifecycle(): Promise<void> {
+	const consumerDirectory = await Deno.makeTempDir({
+		prefix: "veryfront-npm-lifecycle-",
+	});
+	try {
+		await installBuiltNpmLifecycleConsumer(consumerDirectory);
+		await runNpmRootImportLifecycleProbe(consumerDirectory);
+	} finally {
+		await Deno.remove(consumerDirectory, { recursive: true }).catch(() => undefined);
+	}
+}
+
+async function installBuiltNpmLifecycleConsumer(consumerDirectory: string): Promise<void> {
+	const localPackageDirectories = await Promise.all([
+		Deno.realPath("./npm"),
+		...STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES.map((extensionDirectory) =>
+			Deno.realPath(`./npm/extensions/${extensionDirectory}`)
+		),
+	]);
+	await Deno.writeTextFile(
+		`${consumerDirectory}/package.json`,
+		JSON.stringify({ private: true, type: "module" }),
+	);
+	const install = await new Deno.Command("npm", {
+		args: [
+			"install",
+			"--ignore-scripts",
+			"--legacy-peer-deps",
+			"--no-audit",
+			"--no-fund",
+			"--no-package-lock",
+			"--install-links",
+			...localPackageDirectories,
+		],
+		cwd: consumerDirectory,
+		stdout: "piped",
+		stderr: "piped",
+	}).output();
+	if (!install.success) {
+		const stderr = new TextDecoder().decode(install.stderr).trim();
+		throw new Error(
+			`Built npm lifecycle consumer install failed with exit code ${install.code}.` +
+				(stderr ? `\n${stderr}` : ""),
+		);
+	}
+}
+
+async function runNpmRootImportLifecycleProbe(consumerDirectory: string): Promise<void> {
 	const timeoutMs = 10_000;
 	const probeSource = `
-const root = await import("./esm/src/index.js");
+const root = await import("veryfront");
 if (typeof root.defineConfig !== "function") {
   throw new Error("defineConfig export missing");
 }
 
-const { createEvalCliBuiltinExtensions } = await import(
-  "./esm/src/extensions/builtin-extensions.js"
+const agent = await import("veryfront/agent");
+const metadata = agent.parseRuntimeSkillMetadata(
+  "---\\nname: public-api\\ndescription: Public API\\n---\\nBody",
+);
+if (metadata?.name !== "public-api") {
+  throw new Error("public runtime Skill parser default unavailable");
+}
+
+const { createBuiltinExtensions, createEvalCliBuiltinExtensions } = await import(
+  "./node_modules/veryfront/esm/src/extensions/builtin-extensions.js"
 );
 const { getDeferredExtensionState } = await import(
-  "./esm/src/extensions/deferred-extension.js"
+  "./node_modules/veryfront/esm/src/extensions/deferred-extension.js"
 );
 const {
   createEvalReportExporterRegistry,
   EvalReportExporterRegistryName,
-} = await import("./esm/src/extensions/eval/index.js");
+} = await import("./node_modules/veryfront/esm/src/extensions/eval/index.js");
 
 const registry = createEvalReportExporterRegistry();
 const resolved = createEvalCliBuiltinExtensions(["mlflow"]).find(
@@ -369,6 +452,34 @@ const logger = {
   warn() {},
   error() {},
 };
+
+for (const [extensionName, contractName] of [
+  ["ext-css-tailwind", "CSSProcessor"],
+  ["ext-dev-ui-react", "DevUiAssetProvider"],
+  ["ext-node-websocket-ws", "NodeWebSocketServerProvider"],
+]) {
+  const candidate = createBuiltinExtensions().find(
+    (entry) => entry.extension.name === extensionName,
+  );
+  if (!candidate) throw new Error("standard builtin missing: " + extensionName);
+  const standardDeferred = getDeferredExtensionState(candidate);
+  if (!standardDeferred) throw new Error("standard builtin was not deferred: " + extensionName);
+  const standardExtension = await standardDeferred.load(logger);
+  if (!standardExtension) throw new Error("standard builtin failed to load: " + extensionName);
+  let provided;
+  await standardExtension.setup?.({
+    get() {},
+    require(contract) { throw new Error("unexpected extension contract: " + contract); },
+    provide(contract, implementation) {
+      if (contract === contractName) provided = implementation;
+    },
+    config: {},
+    logger,
+  });
+  if (!provided) throw new Error("standard builtin did not provide " + contractName);
+  await standardExtension.teardown?.();
+}
+
 const deferred = getDeferredExtensionState(resolved);
 if (!deferred) throw new Error("bundled MLflow extension was not deferred");
 const extension = await deferred.load(logger);
@@ -404,7 +515,7 @@ if (registry.has("mlflow")) {
 			"--eval",
 			probeSource,
 		],
-		cwd: "./npm",
+		cwd: consumerDirectory,
 		env: {
 			MLFLOW_TRACKING_URI: "http://127.0.0.1:5000",
 			VF_DISABLE_LRU_INTERVAL: "0",

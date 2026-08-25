@@ -29,11 +29,19 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(headers.projectSlug, "my-project");
     });
 
-    it("extracts project id from header", () => {
+    it("ignores project id from an untrusted request", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-project-id": "proj-123" },
       });
       const headers = extractRequestHeaders(req, new URL(req.url));
+      assertEquals(headers.projectId, undefined);
+    });
+
+    it("extracts project id only at an operator-authenticated proxy boundary", () => {
+      const req = new Request("http://localhost/", {
+        headers: { "x-project-id": "proj-123" },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url), false, true);
       assertEquals(headers.projectId, "proj-123");
     });
 
@@ -45,20 +53,60 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(headers.releaseId, "rel-456");
     });
 
-    it("extracts branch id from header", () => {
+    it("extracts branch id only at an operator-authenticated proxy boundary", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-branch-id": "branch-1" },
       });
-      const headers = extractRequestHeaders(req, new URL(req.url));
+      const headers = extractRequestHeaders(req, new URL(req.url), false, true);
       assertEquals(headers.branchId, "branch-1");
     });
 
-    it("extracts branch name from header", () => {
+    it("extracts branch name only at an operator-authenticated proxy boundary", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-branch-name": "feature-x" },
       });
-      const headers = extractRequestHeaders(req, new URL(req.url));
+      const headers = extractRequestHeaders(req, new URL(req.url), false, true);
       assertEquals(headers.branchName, "feature-x");
+    });
+
+    it("normalizes the trusted branch name like the default branch name", () => {
+      const req = new Request("http://localhost/", {
+        headers: {
+          "x-branch-name": "vf-utf8:%20%20feature-x%20%20",
+          "x-default-branch-name": "vf-utf8:%20%20trunk%20%20",
+        },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url), false, true);
+      assertEquals(headers.branchName, "feature-x");
+      assertEquals(headers.defaultBranchName, "trunk");
+    });
+
+    it("extracts the default branch name only at an operator-authenticated proxy boundary", () => {
+      const req = new Request("http://localhost/", {
+        headers: { "x-default-branch-name": "trunk" },
+      });
+      assertEquals(
+        extractRequestHeaders(req, new URL(req.url), false, true).defaultBranchName,
+        "trunk",
+      );
+      assertEquals(
+        extractRequestHeaders(req, new URL(req.url), false, false).defaultBranchName,
+        undefined,
+      );
+    });
+
+    it("ignores branch identity from an untrusted request", () => {
+      const req = new Request("http://localhost/", {
+        headers: {
+          "x-branch-id": "branch-1",
+          "x-branch-name": "feature-x",
+          "x-default-branch-name": "trunk",
+        },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url));
+      assertEquals(headers.branchId, undefined);
+      assertEquals(headers.branchName, undefined);
+      assertEquals(headers.defaultBranchName, undefined);
     });
 
     it("extracts environment from header when proxy headers are trusted", () => {
@@ -89,7 +137,7 @@ describe("server/runtime-handler/project-resolution", () => {
       const req = new Request("http://127.0.0.1:3001/", {
         headers: {
           "x-environment": "preview",
-          "x-forwarded-host": "my-project.preview.lvh.me",
+          "x-forwarded-host": "my-project.preview.localhost",
         },
       });
       const headers = extractRequestHeaders(req, new URL(req.url), true);
@@ -116,12 +164,28 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(result.proxyEnv, undefined);
     });
 
-    it("extracts environment-id from header", () => {
+    it("ignores environment-id from an untrusted request", () => {
       const req = new Request("http://localhost/", {
-        headers: { "x-environment-id": "env-1" },
+        headers: {
+          "x-environment-id": "env-1",
+          "x-environment-name": "production",
+        },
       });
       const headers = extractRequestHeaders(req, new URL(req.url));
+      assertEquals(headers.environmentId, undefined);
+      assertEquals(headers.environmentName, undefined);
+    });
+
+    it("extracts environment identity only at an operator-authenticated proxy boundary", () => {
+      const req = new Request("http://localhost/", {
+        headers: {
+          "x-environment-id": "env-1",
+          "x-environment-name": "staging",
+        },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url), false, true);
       assertEquals(headers.environmentId, "env-1");
+      assertEquals(headers.environmentName, "staging");
     });
 
     // x-forwarded-host is client-controlled and only honoured behind a trusted
@@ -131,7 +195,7 @@ describe("server/runtime-handler/project-resolution", () => {
       Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
       try {
         const req = new Request("http://127.0.0.1:3001/", {
-          headers: { "x-forwarded-host": "my-project.preview.lvh.me" },
+          headers: { "x-forwarded-host": "my-project.preview.localhost" },
         });
         const headers = extractRequestHeaders(req, new URL(req.url));
         assertEquals(headers.projectSlug, "my-project");
@@ -145,7 +209,7 @@ describe("server/runtime-handler/project-resolution", () => {
       try {
         const req = new Request("http://127.0.0.1:3001/", {
           headers: {
-            "x-forwarded-host": "my-project.preview.lvh.me",
+            "x-forwarded-host": "my-project.preview.localhost",
             "x-project-slug": "   ",
           },
         });
@@ -161,7 +225,7 @@ describe("server/runtime-handler/project-resolution", () => {
       try {
         const req = new Request("http://127.0.0.1:3001/", {
           headers: {
-            "x-forwarded-host": "my-project.preview.lvh.me",
+            "x-forwarded-host": "my-project.preview.localhost",
             "x-project-slug": "",
           },
         });
@@ -177,7 +241,7 @@ describe("server/runtime-handler/project-resolution", () => {
       try {
         const req = new Request("http://127.0.0.1:3001/", {
           headers: {
-            "x-forwarded-host": "my-project.preview.lvh.me, proxy2.internal",
+            "x-forwarded-host": "my-project.preview.localhost, proxy2.internal",
           },
         });
         const headers = extractRequestHeaders(req, new URL(req.url));
@@ -192,7 +256,7 @@ describe("server/runtime-handler/project-resolution", () => {
       // the project slug via x-forwarded-host; resolution falls back to the Host
       // header (127.0.0.1 here), which does not parse to the spoofed slug.
       const req = new Request("http://127.0.0.1:3001/", {
-        headers: { "x-forwarded-host": "my-project.preview.lvh.me" },
+        headers: { "x-forwarded-host": "my-project.preview.localhost" },
       });
       const headers = extractRequestHeaders(req, new URL(req.url));
       assertEquals(headers.projectSlug !== "my-project", true);
@@ -568,7 +632,7 @@ describe("server/runtime-handler/project-resolution", () => {
         getEnvironmentType: () => undefined,
       });
 
-      const req = new Request("http://my-project.preview.veryfront.dev/");
+      const req = new Request("http://my-project.preview.localhost/");
       const url = new URL(req.url);
       const headers = extractRequestHeaders(req, url);
       const result = await resolveProject(req, url, headers, {
@@ -581,6 +645,101 @@ describe("server/runtime-handler/project-resolution", () => {
 
       assertEquals(result.parsedDomain.isVeryfrontDomain, true);
       assertEquals(result.parsedDomain.slug, "my-project");
+    });
+
+    it("resolves the active release for a production veryfront domain without an x-release-id", async () => {
+      let lookupCount = 0;
+      __injectDepsForTests({
+        parseProjectDomain: () => ({
+          ...defaultParsedDomain,
+          slug: "my-project",
+          environment: "production",
+          isVeryfrontDomain: true,
+          isDraft: false,
+        }),
+        lookupProjectByDomain: () => {
+          lookupCount++;
+          return Promise.resolve({
+            project_id: "proj-7",
+            project_slug: "my-project",
+            project_name: "My Project",
+            environment: { id: "env-7", name: "Production" },
+            release_id: "rel-7",
+          });
+        },
+        getEnvironmentType: () => undefined,
+      });
+
+      const req = new Request("http://my-project.production.veryfront.com/");
+      const url = new URL(req.url);
+      const headers = extractRequestHeaders(req, url);
+      const result = await resolveProject(req, url, headers, {
+        config: { fs: { veryfront: { apiToken: "test-token" } } } as unknown as VeryfrontConfig,
+        reqCtx: { slug: "my-project", mode: undefined, branch: null, token: undefined },
+        defaultProjectSlug: undefined,
+        defaultProjectId: undefined,
+        wsSlugOverride: undefined,
+      });
+
+      assertEquals(lookupCount, 1, "a production veryfront domain must look up its release");
+      assertEquals(
+        result.releaseId,
+        "rel-7",
+        "a production veryfront domain must resolve its active release",
+      );
+      assertEquals(result.projectId, "proj-7", "the release lookup must supply the project id");
+      assertEquals(
+        result.environmentName,
+        "Production",
+        "the release lookup must supply the environment name",
+      );
+      assertEquals(
+        result.proxyEnv,
+        "production",
+        "a resolved release pins the production environment",
+      );
+    });
+
+    it("skips the release lookup for a draft veryfront domain", async () => {
+      let lookupCount = 0;
+      __injectDepsForTests({
+        parseProjectDomain: () => ({
+          ...defaultParsedDomain,
+          slug: "my-project",
+          environment: "production",
+          isVeryfrontDomain: true,
+          isDraft: true,
+        }),
+        lookupProjectByDomain: () => {
+          lookupCount++;
+          return Promise.resolve({
+            project_id: "proj-7",
+            project_slug: "my-project",
+            project_name: "My Project",
+            environment: { id: "env-7", name: "Production" },
+            release_id: "rel-7",
+          });
+        },
+        getEnvironmentType: () => undefined,
+      });
+
+      const req = new Request("http://my-project.production.veryfront.com/");
+      const url = new URL(req.url);
+      const headers = extractRequestHeaders(req, url);
+      const result = await resolveProject(req, url, headers, {
+        config: { fs: { veryfront: { apiToken: "test-token" } } } as unknown as VeryfrontConfig,
+        reqCtx: { slug: "my-project", mode: undefined, branch: null, token: undefined },
+        defaultProjectSlug: undefined,
+        defaultProjectId: undefined,
+        wsSlugOverride: undefined,
+      });
+
+      assertEquals(lookupCount, 0, "a draft veryfront domain must not look up a release");
+      assertEquals(
+        result.releaseId,
+        undefined,
+        "a draft veryfront domain must not resolve a release",
+      );
     });
   });
 });

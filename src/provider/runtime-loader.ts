@@ -9,18 +9,25 @@ import type { ProviderKind } from "./runtime-loader/provider-http.ts";
 import type { ModelRuntimePromptMessage, ModelRuntimeToolDefinition } from "./types.ts";
 import {
   buildProviderError,
+  DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS,
+  DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS,
   parseRetryAfterMs,
   requestJson,
   requestStream,
+  waitForProviderStreamRetry,
 } from "./runtime-loader/provider-http.ts";
 import { readRecord } from "./runtime-loader/provider-records.ts";
 import {
   TOOL_INPUT_PENDING_THRESHOLD_MS,
   withToolInputStatusTransitions,
 } from "./runtime-loader/tool-input-status.ts";
-import { snapshotJsonValue } from "./runtime-loader/json-snapshot.ts";
+import { snapshotProviderJsonValue } from "./runtime-loader/json-snapshot.ts";
 
-export { jsonValuesEqual, snapshotJsonValue } from "./runtime-loader/json-snapshot.ts";
+export {
+  jsonValuesEqual,
+  snapshotJsonValue,
+  snapshotProviderJsonValue,
+} from "./runtime-loader/json-snapshot.ts";
 export type { JsonSnapshotOptions, JsonSnapshotValue } from "./runtime-loader/json-snapshot.ts";
 export {
   ProviderError,
@@ -32,6 +39,8 @@ export {
 export { TOOL_INPUT_PENDING_THRESHOLD_MS, withToolInputStatusTransitions };
 export {
   buildProviderError,
+  DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS,
+  DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS,
   isNumberArray,
   mergeUsage,
   parseRetryAfterMs,
@@ -39,6 +48,7 @@ export {
   readRecord,
   requestJson,
   requestStream,
+  waitForProviderStreamRetry,
 };
 export type { RuntimePromptMessage } from "./types.ts";
 export type { RuntimeUsage };
@@ -146,7 +156,12 @@ export function createWarningCollector(): WarningCollector {
 /** Serialize a JSON-compatible value. */
 export function stringifyJsonValue(value: unknown): string {
   try {
-    const serialized = JSON.stringify(snapshotJsonValue(value, { sortObjectKeys: false }));
+    const serialized = JSON.stringify(
+      snapshotProviderJsonValue(value, {
+        sortObjectKeys: false,
+        dropUndefinedMembers: true,
+      }),
+    );
     if (serialized === undefined) {
       throw new TypeError("value has no JSON representation");
     }
@@ -162,6 +177,13 @@ export function stringifyJsonValue(value: unknown): string {
 /** Preserve provider-native argument text while serializing structured tool inputs. */
 export function stringifyToolArguments(value: unknown): string {
   return typeof value === "string" ? value : stringifyJsonValue(value);
+}
+
+/** Preserve text tool results while serializing structured tool results. */
+export function stringifyToolResultValue(value: unknown): string {
+  // Same serialization contract as tool arguments — delegate so the two
+  // cannot drift.
+  return stringifyToolArguments(value);
 }
 
 /** Read text content parts from provider messages. */
@@ -212,7 +234,11 @@ function incompatibleProviderReplayError(subject: "calls" | "results"): TypeErro
   );
 }
 
-/** Convert runtime prompt messages into OpenAI-compatible chat messages. */
+/**
+ * Convert runtime prompt messages into OpenAI-compatible chat messages.
+ * Adjacent non-empty system layers become one ordered instruction so strict
+ * Chat Completions providers receive a compatible message sequence.
+ */
 export function toOpenAICompatibleMessages(
   prompt: readonly ModelRuntimePromptMessage[],
 ): OpenAICompatibleChatMessage[] {
@@ -220,9 +246,18 @@ export function toOpenAICompatibleMessages(
 
   for (const message of prompt) {
     switch (message.role) {
-      case "system":
-        messages.push({ role: "system", content: message.content });
+      case "system": {
+        if (message.content.trim().length === 0) {
+          break;
+        }
+        const previous = messages.at(-1);
+        if (previous?.role === "system") {
+          previous.content = `${previous.content}\n\n${message.content}`;
+        } else {
+          messages.push({ role: "system", content: message.content });
+        }
         break;
+      }
       case "user":
         messages.push({ role: "user", content: toOpenAICompatibleUserContent(message.content) });
         break;
@@ -271,7 +306,7 @@ export function toOpenAICompatibleMessages(
           messages.push({
             role: "tool",
             tool_call_id: part.toolCallId,
-            content: stringifyJsonValue(part.output.value),
+            content: stringifyToolResultValue(part.output.value),
           });
         }
         break;

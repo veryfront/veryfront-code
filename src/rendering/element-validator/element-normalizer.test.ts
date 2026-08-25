@@ -35,12 +35,22 @@ describe("rendering/element-validator/element-normalizer", () => {
       const result = ensureValidReactElement("hello world", baseOptions);
       assertEquals(React.isValidElement(result), true);
       assertEquals(result.type, React.Fragment);
+      assertEquals(
+        (result.props as { children?: unknown }).children,
+        "hello world",
+        "the Fragment must carry the wrapped string",
+      );
     });
 
     it("should wrap a number in a Fragment", () => {
       const result = ensureValidReactElement(42, baseOptions);
       assertEquals(React.isValidElement(result), true);
       assertEquals(result.type, React.Fragment);
+      assertEquals(
+        (result.props as { children?: unknown }).children,
+        42,
+        "the Fragment must carry the wrapped number",
+      );
     });
 
     it("should wrap null in a Fragment", () => {
@@ -65,6 +75,11 @@ describe("rendering/element-validator/element-normalizer", () => {
       ];
       const result = ensureValidReactElement(arr, baseOptions);
       assertEquals(React.isValidElement(result), true);
+      assertEquals(
+        (result.props as { children?: unknown }).children,
+        arr,
+        "the Fragment must carry the normalized array children",
+      );
     });
 
     it("should perform deep inspection when enabled", () => {

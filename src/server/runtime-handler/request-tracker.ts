@@ -45,6 +45,13 @@ const MODULE_REQUEST_LOG_THRESHOLD_MS = 100;
 /** Attach request-profiler details to completion logs at or above this duration. */
 const DEFAULT_SLOW_REQUEST_PROFILE_LOG_THRESHOLD_MS = 2_000;
 
+/** Control-plane execution can legitimately run until the configured request timeout. */
+const RUN_EXECUTION_PATH_PATTERN = /^\/api\/control-plane\/runs\/[^/]+\/execute$/u;
+
+function isExpectedLongRunningRequest(path: string, method: string): boolean {
+  return method === "POST" && RUN_EXECUTION_PATH_PATTERN.test(path);
+}
+
 function getSlowRequestProfileLogThresholdMs(): number {
   const raw = getEnv("VERYFRONT_SLOW_REQUEST_PROFILE_LOG_THRESHOLD_MS");
   if (!raw) return DEFAULT_SLOW_REQUEST_PROFILE_LOG_THRESHOLD_MS;
@@ -163,9 +170,13 @@ class RequestTracker {
       productionRuntime,
     };
 
-    // WebSocket connections are long-lived by design and lightweight internal
-    // asset/module requests can be noisy under CI jitter — don't flag them as stuck.
-    if (!isWebSocketPath(path) && !isLightweightPath(path)) {
+    // WebSocket connections and control-plane execution are long-lived by design.
+    // Lightweight internal asset/module requests can be noisy under CI jitter.
+    if (
+      !isExpectedLongRunningRequest(path, method) &&
+      !isWebSocketPath(path) &&
+      !isLightweightPath(path)
+    ) {
       tracked.slowTimer = setTimeout(() => {
         const elapsedMs = Math.round(performance.now() - startTime);
         logger.warn("Slow request detected", {

@@ -597,7 +597,7 @@ export function TooltipTrigger(
     if (event.key === "Escape") context?.dismiss();
   };
 
-  const triggerProps: React.HTMLAttributes<HTMLElement> & {
+  const triggerProps: AnyProps & React.HTMLAttributes<HTMLElement> & {
     ref: React.RefCallback<HTMLElement>;
   } = {
     ...props,
@@ -614,8 +614,8 @@ export function TooltipTrigger(
 
   if (!child) return <span {...triggerProps}>{children}</span>;
   const mergedProps = mergeAsChildProps(
-    triggerProps as unknown as AnyProps,
-    childProps as unknown as AnyProps,
+    triggerProps,
+    childProps as AnyProps,
   );
   mergedProps["aria-describedby"] = resolvedDescribedBy;
   mergedProps.id = resolvedId;

@@ -19,6 +19,13 @@ import {
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import { nodeAdapter } from "../../platform/adapters/node.ts";
 import type { ResolvedNodeVeryfrontCloudAgentServiceOptions } from "./cloud-agent-provider-bootstrap.ts";
+import type { SkillDocumentParserProvider } from "#veryfront/extensions/parser/skill-document-parser.ts";
+import { getDefaultSkillDocumentParserProvider } from "#veryfront/extensions/parser/skill-defaults.ts";
+import {
+  createRemoteMCPToolSource,
+  type RemoteMCPToolSourceConfig,
+  type RemoteToolSource,
+} from "#veryfront/tool";
 import {
   resolveBaseDir,
   resolveDefaultProcessTarget,
@@ -33,6 +40,13 @@ import {
 export type NodeVeryfrontCloudAgentServiceContext = ReturnType<
   typeof createNodeVeryfrontCloudAgentServiceContext
 >;
+
+/** Resolve the deployment-owned remote source factory, preserving guarded egress by default. */
+export function getRemoteToolSourceFactory(
+  context: Pick<NodeVeryfrontCloudAgentServiceContext, "options">,
+): (config: RemoteMCPToolSourceConfig) => RemoteToolSource {
+  return context.options.createRemoteToolSource ?? createRemoteMCPToolSource;
+}
 
 /** Creates the shared runtime context for a cloud agent service instance. */
 export function createNodeVeryfrontCloudAgentServiceContext(
@@ -68,6 +82,7 @@ export function createNodeVeryfrontCloudAgentServiceContext(
     discoveryResult: null as ProjectAgentRuntimeDiscovery | null,
     agentConfig: null as RuntimeAgentMarkdownDefinition | null,
     agentConfigs: new Map<string, RuntimeAgentMarkdownDefinition>(),
+    skillDocumentParserProvider: null as Readonly<SkillDocumentParserProvider> | null,
   };
 }
 
@@ -141,6 +156,7 @@ async function discoverProjectPrimitives(
   context.discoveryResult = await discoverProjectAgentRuntime({
     projectDir: context.projectDir,
     adapter: nodeAdapter,
+    allowHostProjectCodeExecution: true,
   });
 }
 
@@ -169,6 +185,7 @@ function resolveDefaultAgentId(context: NodeVeryfrontCloudAgentServiceContext): 
 export async function initializeNodeVeryfrontCloudAgentServiceContext(
   context: NodeVeryfrontCloudAgentServiceContext,
 ): Promise<void> {
+  context.skillDocumentParserProvider = await getDefaultSkillDocumentParserProvider();
   await discoverProjectPrimitives(context);
   context.defaultAgentId = resolveDefaultAgentId(context);
   context.agentConfig = await resolveAgentConfig(context, context.defaultAgentId);
@@ -195,12 +212,20 @@ export function getProjectSteering(
     return cachedProjectSteering;
   }
 
+  const skillDocumentParserProvider = context.skillDocumentParserProvider;
+  if (skillDocumentParserProvider === null) {
+    throw INITIALIZATION_ERROR.create({
+      detail: "Agent service Skill parser has not been initialized.",
+    });
+  }
+
   const projectSteering = createHostedAgentProjectSteering({
     baseDir: resolveBaseDir(context.options),
     agentId,
     getApiUrl: () => context.infrastructure.getConfig().VERYFRONT_API_URL,
     logger: context.infrastructure.logger,
     trace: context.trace,
+    skillDocumentParserProvider,
   });
 
   context.projectSteeringByAgentId.set(agentId, projectSteering);

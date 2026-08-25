@@ -29,6 +29,7 @@ import {
 } from "#veryfront/transforms/import-rewriter/dependency-resolution.ts";
 import { replaySSRDependencyResolutionObservations } from "#veryfront/transforms/import-rewriter/ssr-adapter.ts";
 import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
+import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
 
 const logger = rendererLogger.component("module-loader");
 
@@ -61,6 +62,7 @@ interface TransformOptions {
   ssr: boolean;
   reactVersion?: string;
   moduleServerOrigin?: string;
+  serverExternalPackages?: readonly string[];
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
   dependencyPinningSource?: DependencyPinningSourceInput;
@@ -68,6 +70,7 @@ interface TransformOptions {
     observation: DependencyResolutionObservation,
   ) => void;
   onProgress?: TransformProgressListener;
+  abortSignal?: AbortSignal;
 }
 
 interface PipelineResult {
@@ -78,7 +81,10 @@ export interface ModuleTransformCacheDeps {
   initializeTransformCache: typeof initializeTransformCache;
   getOrComputeTransform: (
     key: string,
-    compute: (reportProgress?: TransformProgressListener) => Promise<string>,
+    compute: (
+      reportProgress?: TransformProgressListener,
+      abortSignal?: AbortSignal,
+    ) => Promise<string>,
     ttlSeconds: number,
     onProgress?: TransformProgressListener,
     signal?: AbortSignal,
@@ -139,6 +145,7 @@ export interface TransformModuleCodeWithCacheInput {
   adapter: RuntimeAdapter;
   reactVersion?: string;
   moduleServerOrigin?: string;
+  serverExternalPackages?: readonly string[];
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
   dependencyPinningSource?: DependencyPinningSourceInput;
@@ -213,8 +220,14 @@ export async function transformModuleCodeWithCache(
     input.mode,
     reactVersion,
   ];
+  const serverExternalPackagesIdentity = buildServerExternalPackagesIdentity(
+    input.serverExternalPackages,
+  );
+  const extendedConfig = serverExternalPackagesIdentity
+    ? [...legacyConfig, `server-externals:${serverExternalPackagesIdentity}`]
+    : legacyConfig;
   const configHash = hashCodeHex(JSON.stringify(
-    cacheVariant ? [...legacyConfig, cacheVariant] : legacyConfig,
+    cacheVariant ? [...extendedConfig, cacheVariant] : extendedConfig,
   ));
   const cacheKey = generateTransformCacheKey(
     scopedPath,
@@ -227,12 +240,13 @@ export async function transformModuleCodeWithCache(
     string,
     DependencyResolutionObservation
   >();
-  const transformOptions = {
+  const transformOptions: TransformOptions = {
     projectId: input.effectiveProjectId,
     dev: input.mode === "development",
     ssr: true,
     reactVersion,
     moduleServerOrigin,
+    serverExternalPackages: input.serverExternalPackages,
     dependencyPinningCacheKey: input.dependencyPinningCacheKey,
     dependencyPinningDependencies: input.dependencyPinningDependencies,
     dependencyPinningSource: input.dependencyPinningSource,
@@ -246,14 +260,14 @@ export async function transformModuleCodeWithCache(
 
   const transformResult = await deps.getOrComputeTransform(
     cacheKey,
-    (reportProgress) => {
+    (reportProgress, abortSignal) => {
       logger.debug("Transform cache miss, transforming", { filePath: input.filePath });
       return deps.transformToESM(
         input.fileContent,
         input.filePath,
         input.projectDir,
         input.adapter,
-        { ...transformOptions, onProgress: reportProgress },
+        { ...transformOptions, abortSignal, onProgress: reportProgress },
       );
     },
     ttlSeconds,
@@ -317,7 +331,7 @@ export async function transformModuleCodeWithCache(
       input.fileContent,
       input.filePath,
       input.projectDir,
-      transformOptions,
+      { ...transformOptions, abortSignal: input.signal },
     );
     transformedCode = pipelineResult.code;
 

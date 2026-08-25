@@ -75,6 +75,7 @@ export type DeclarativeConfigWorkerInfrastructureReason =
   | "worker-aborted"
   | "worker-overloaded"
   | "worker-protocol"
+  | "worker-memory-limit-unavailable"
   | "worker-timeout"
   | "worker-unavailable";
 
@@ -175,17 +176,18 @@ const ERROR_REASON_TABLE = ObjectFreeze(
     "worker-aborted": true,
     "worker-overloaded": true,
     "worker-protocol": true,
+    "worker-memory-limit-unavailable": true,
     "worker-timeout": true,
     "worker-unavailable": true,
   } as const satisfies Readonly<Record<DeclarativeConfigErrorReason, true>>,
 );
 
-function hasOwn(value: object, key: PropertyKey): boolean {
+function hasOwn(value: PropertyDescriptor, key: PropertyKey): boolean {
   return ReflectApply(ObjectPrototypeHasOwnProperty, value, [key]) as boolean;
 }
 
 function defineDataProperty(
-  target: object,
+  target: Record<string, unknown>,
   key: PropertyKey,
   value: unknown,
 ): void {
@@ -316,7 +318,10 @@ function captureStringMap(value: unknown): Readonly<Record<string, string>> {
   return ObjectFreeze(captured);
 }
 
-function isKnownEnumValue(value: unknown, table: object): value is string {
+function isKnownEnumValue(
+  value: unknown,
+  table: Readonly<Record<string, true>>,
+): value is string {
   if (typeof value !== "string") return false;
   let descriptor: PropertyDescriptor | undefined;
   try {
@@ -347,6 +352,7 @@ function isWorkerReason(
   return value === "worker-aborted" ||
     value === "worker-overloaded" ||
     value === "worker-protocol" ||
+    value === "worker-memory-limit-unavailable" ||
     value === "worker-timeout" ||
     value === "worker-unavailable";
 }
@@ -378,6 +384,7 @@ function isLegalErrorTuple(
     if (phase !== "worker" || !isWorkerReason(reason)) return false;
     return retryable === (
       reason === "worker-overloaded" ||
+      reason === "worker-memory-limit-unavailable" ||
       reason === "worker-timeout" ||
       reason === "worker-unavailable"
     );

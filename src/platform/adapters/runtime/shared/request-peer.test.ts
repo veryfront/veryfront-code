@@ -4,6 +4,8 @@ import {
   getRequestPeerProvenance,
   inheritRequestPeerProvenance,
   isRequestFromLoopbackPeer,
+  recordDenoServeRequestPeer,
+  recordHandlerRequestPeer,
   recordRequestPeerFromTransport,
   type RequestPeerRuntime,
 } from "./request-peer.ts";
@@ -17,6 +19,68 @@ function requestFromPeer(hostname?: string, runtime: RequestPeerRuntime = "node"
 }
 
 describe("runtime request peer provenance", () => {
+  it("records a Deno serve peer before a portable handler reads the request", () => {
+    const request = new Request("http://localhost/_projects");
+
+    assertEquals(
+      recordDenoServeRequestPeer(request, {
+        remoteAddr: {
+          transport: "tcp",
+          hostname: "::1",
+          port: 52_000,
+        },
+      }),
+      true,
+    );
+    assertEquals(getRequestPeerProvenance(request), {
+      runtime: "deno",
+      transport: "tcp",
+      hostname: "::1",
+    });
+    assertEquals(isRequestFromLoopbackPeer(request), true);
+  });
+
+  it("records a framework-hosted Node request from its native transport", () => {
+    const request = new Request("http://localhost/_projects");
+
+    assertEquals(
+      recordHandlerRequestPeer(request, {
+        socket: { remoteAddress: "127.0.0.1" },
+      }),
+      true,
+    );
+    assertEquals(getRequestPeerProvenance(request), {
+      runtime: "node",
+      transport: "tcp",
+      hostname: "127.0.0.1",
+    });
+    assertEquals(isRequestFromLoopbackPeer(request), true);
+  });
+
+  it("records a framework-hosted Bun request from its native transport", () => {
+    const request = new Request("http://localhost/_projects");
+
+    assertEquals(
+      recordHandlerRequestPeer(request, {
+        requestIP(seenRequest: Request) {
+          assertStrictEquals(seenRequest, request);
+          return {
+            address: "127.0.0.1",
+            port: 52_000,
+            family: "IPv4",
+          };
+        },
+      }),
+      true,
+    );
+    assertEquals(getRequestPeerProvenance(request), {
+      runtime: "bun",
+      transport: "tcp",
+      hostname: "127.0.0.1",
+    });
+    assertEquals(isRequestFromLoopbackPeer(request), true);
+  });
+
   it("recognizes loopback peers across canonical transport representations", () => {
     for (
       const hostname of [

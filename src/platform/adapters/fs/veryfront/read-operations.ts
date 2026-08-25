@@ -10,13 +10,13 @@ import { PathNormalizer } from "./path-normalizer.ts";
 import type { ContentContextProvider } from "./file-list-access.ts";
 import {
   assertProjectSourcePath,
-  buildContentPreview,
   buildExtensionCandidatePaths,
   buildReadFetchState,
   createNotFoundLikeError,
   getResolvedCacheKey,
   isNotFoundLikeError,
   READ_OPERATION_EXTENSION_PRIORITY as EXTENSION_PRIORITY,
+  requiresExactPublishedPath,
   splitKnownFileExtension,
 } from "./read-operations-helpers.ts";
 import type { ResolvedContentContext } from "./types.ts";
@@ -119,6 +119,7 @@ export class ReadOperations {
             return await this.readExactApiPath(apiPath, admittedLimit, isPublished, context);
           } catch (error) {
             if (!isPublished || !isNotFoundLikeError(error)) throw error;
+            if (requiresExactPublishedPath(apiPath)) throw error;
             const split = splitKnownFileExtension(apiPath);
             if (!split) throw error;
             for (const extension of EXTENSION_PRIORITY) {
@@ -209,7 +210,6 @@ export class ReadOperations {
       path: normalizedPath,
       cacheKey,
       contentLength: requestCached.length,
-      preview: buildContentPreview(requestCached).replace(/\n/g, "\\n"),
     });
     return requestCached;
   }
@@ -250,7 +250,6 @@ export class ReadOperations {
       path: normalizedPath,
       cacheKey,
       contentLength: cached.length,
-      preview: buildContentPreview(cached).replace(/\n/g, "\\n"),
     });
     setRequestScopedFile(cacheKey, cached);
     return cached;
@@ -735,6 +734,10 @@ export class ReadOperations {
         throw error;
       }
 
+      if (requiresExactPublishedPath(apiPath)) {
+        throw createNotFoundLikeError(normalizedPath);
+      }
+
       const fallbackContent = await this.tryFallbackExtensions(
         apiPath,
         cacheKey,
@@ -871,7 +874,6 @@ export class ReadOperations {
     logger.debug("API_FETCH_DONE - got content from API", {
       path: normalizedPath,
       contentLength: content.length,
-      preview: buildContentPreview(content).replace(/\n/g, "\\n"),
       willCache: shouldCache,
     });
 

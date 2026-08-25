@@ -45,9 +45,14 @@ export class RSCProductionOptimizer {
       hash = Math.imul(hash, 16777619);
     }
 
-    for (const key of Object.keys(payload.clientRefs).sort()) {
-      for (let i = 0; i < key.length; i++) {
-        hash ^= key.charCodeAt(i);
+    for (
+      const [key, moduleUrl] of Object.entries(payload.clientRefs).sort(([a], [b]) =>
+        a < b ? -1 : a > b ? 1 : 0
+      )
+    ) {
+      const clientReference = `${key}\0${moduleUrl}\0`;
+      for (let i = 0; i < clientReference.length; i++) {
+        hash ^= clientReference.charCodeAt(i);
         hash = Math.imul(hash, 16777619);
       }
     }
@@ -55,8 +60,8 @@ export class RSCProductionOptimizer {
     const dependencyPinningCacheKey = payload.dependencyPinningCacheKey?.startsWith("on:")
       ? payload.dependencyPinningCacheKey
       : "";
-    for (const char of dependencyPinningCacheKey) {
-      hash ^= char.charCodeAt(0);
+    for (let i = 0; i < dependencyPinningCacheKey.length; i++) {
+      hash ^= dependencyPinningCacheKey.charCodeAt(i);
       hash = Math.imul(hash, 16777619);
     }
 

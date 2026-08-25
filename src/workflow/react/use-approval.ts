@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { ApprovalDecision, PendingApproval } from "#veryfront/workflow/types.ts";
+import { workflowMutationHeaders } from "./mutation-headers.ts";
 
 /** Options accepted by use approval. */
 export interface UseApprovalOptions {
@@ -15,8 +16,8 @@ export interface UseApprovalOptions {
 /** Result returned from use approval. */
 export interface UseApprovalResult {
   approval: PendingApproval | null;
-  approve: (comment?: string) => Promise<void>;
-  reject: (comment?: string) => Promise<void>;
+  approve: (comment?: string, data?: unknown) => Promise<void>;
+  reject: (comment?: string, data?: unknown) => Promise<void>;
   submitDecision: (decision: ApprovalDecision) => Promise<void>;
   isSubmitting: boolean;
   isLoading: boolean;
@@ -82,9 +83,10 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
       setError(null);
 
       try {
-        const response = await fetch(`${apiBase}/runs/${runId}/approvals/${approvalId}`, {
+        const requestUrl = `${apiBase}/runs/${runId}/approvals/${approvalId}`;
+        const response = await fetch(requestUrl, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: workflowMutationHeaders(requestUrl, { "Content-Type": "application/json" }),
           body: JSON.stringify(decision),
         });
 
@@ -121,15 +123,15 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
   );
 
   const approve = useCallback(
-    async (comment?: string): Promise<void> => {
-      return submitDecision({ approved: true, approver, comment });
+    async (comment?: string, data?: unknown): Promise<void> => {
+      return submitDecision({ approved: true, approver, comment, data });
     },
     [submitDecision, approver],
   );
 
   const reject = useCallback(
-    async (comment?: string): Promise<void> => {
-      return submitDecision({ approved: false, approver, comment });
+    async (comment?: string, data?: unknown): Promise<void> => {
+      return submitDecision({ approved: false, approver, comment, data });
     },
     [submitDecision, approver],
   );

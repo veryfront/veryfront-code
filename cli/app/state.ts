@@ -2,20 +2,20 @@ import type { ListItem, ListSelectState } from "./components/list-select.ts";
 import { createListState } from "./components/list-select.ts";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import { cwd } from "veryfront/platform";
+import { join } from "veryfront/platform/path";
+import type { InitTemplate } from "../commands/init/types.ts";
 
 export type AppView =
   | "dashboard"
-  | "project-detail"
   | "new-project"
   | "templates"
-  | "examples"
   | "auth"
   | "help";
 
 export interface ProjectInfo {
   slug: string;
   path: string;
-  type: "local" | "example" | "template";
+  type: "local" | "template" | "remote";
 }
 
 export interface ServerStatus {
@@ -36,20 +36,20 @@ export interface MCPStatus {
 
 export interface RemoteState {
   user: { email: string; name?: string } | null;
-  projects: Array<{ id: string; name: string; slug: string }>;
-  /** Currently focused index in remote projects list */
-  focusedIndex: number;
-  /** Scroll offset for remote projects list */
-  scrollOffset: number;
 }
+
+/**
+ * Why the app is asking for text. Declarative so the key transition stays a
+ * pure function of state, a callback here would put behaviour back in state.
+ */
+export type InputPurpose = { kind: "create-project"; template: InitTemplate };
 
 export interface InputState {
   active: boolean;
   prompt: string;
   value: string;
   cursorPos: number;
-  onSubmit: ((value: string) => void) | null;
-  onCancel: (() => void) | null;
+  purpose: InputPurpose | null;
 }
 
 export interface LogMeta {
@@ -77,20 +77,15 @@ export interface AppState {
   mcp: MCPStatus;
   remote: RemoteState;
 
+  /**
+   * Selectable lists. `activeList` indexes this state directly, so every list
+   * it can name must be a ListSelectState living at the top level.
+   */
   projects: ListSelectState<ProjectInfo>;
-  examples: ListSelectState<ProjectInfo>;
+  remoteProjects: ListSelectState<ProjectInfo>;
   templates: ListSelectState<ProjectInfo>;
 
-  activeList: "projects" | "examples" | "templates" | "remoteProjects";
-  selectedProject: ProjectInfo | null;
-
-  wizard: {
-    step: number;
-    startType: "scratch" | "template" | "example" | null;
-    selectedTemplate: string | null;
-    integrations: string[];
-    projectName: string;
-  };
+  activeList: "projects" | "remoteProjects";
 
   input: InputState;
 
@@ -113,7 +108,7 @@ export function createInitialState(): AppState {
     previousView: null,
     server: {
       running: false,
-      url: "http://veryfront.me:8080",
+      url: "http://localhost:8080",
       port: 8080,
       errors: 0,
       warnings: 0,
@@ -123,31 +118,17 @@ export function createInitialState(): AppState {
       transport: null,
       connected: false,
     },
-    remote: {
-      user: null,
-      projects: [],
-      focusedIndex: 0,
-      scrollOffset: 0,
-    },
+    remote: { user: null },
     projects: createListState([]),
-    examples: createListState([]),
+    remoteProjects: createListState([]),
     templates: createListState([]),
     activeList: "projects",
-    selectedProject: null,
-    wizard: {
-      step: 0,
-      startType: null,
-      selectedTemplate: null,
-      integrations: [],
-      projectName: "",
-    },
     input: {
       active: false,
       prompt: "",
       value: "",
       cursorPos: 0,
-      onSubmit: null,
-      onCancel: null,
+      purpose: null,
     },
     logs: [],
     maxLogs: 100,
@@ -177,20 +158,31 @@ export function setProjects(
   });
 }
 
-export function setExamples(
-  examples: Array<{ slug: string; path: string; description?: string }>,
+/**
+ * Remote projects are the same concept as local ones and navigate through the
+ * same list module. A remote project's path is where a pull would put it,
+ * under `baseDir/projects/` (the working directory by default).
+ */
+export function setRemoteProjects(
+  projects: Array<{ slug: string }>,
+  baseDir: string = cwd(),
 ): StateUpdater {
-  return (state) => ({
-    ...state,
-    examples: createListState(
-      examples.map((e) => ({
-        id: e.slug,
-        label: e.slug,
-        description: e.description,
-        data: { slug: e.slug, path: e.path, type: "example" },
-      })),
-    ),
-  });
+  return (state) =>
+    withSelectableActiveList({
+      ...state,
+      remoteProjects: createListState(
+        projects.map((p) => ({
+          id: p.slug,
+          label: p.slug,
+          data: { slug: p.slug, path: remoteProjectPath(p.slug, baseDir), type: "remote" as const },
+        })),
+      ),
+    });
+}
+
+/** Where `pull` places a remote project, and what the IDE opens. */
+export function remoteProjectPath(slug: string, baseDir: string = cwd()): string {
+  return join(baseDir, "projects", slug);
 }
 
 export function setTemplates(
@@ -217,8 +209,21 @@ export function updateMCP(update: Partial<MCPStatus>): StateUpdater {
   return (state) => ({ ...state, mcp: { ...state.mcp, ...update } });
 }
 
-export function updateRemote(update: Partial<RemoteState>): StateUpdater {
-  return (state) => ({ ...state, remote: { ...state.remote, ...update } });
+/**
+ * The dashboard renders the remote section only for a signed-in user with at
+ * least one project. Pointing `activeList` at a section that is not rendered
+ * shows no cursor anywhere and resolves action keys to no project, so keep the
+ * two in step whenever either input changes.
+ */
+function withSelectableActiveList(state: AppState): AppState {
+  if (state.activeList !== "remoteProjects") return state;
+
+  const selectable = !!state.remote.user && state.remoteProjects.items.length > 0;
+  return selectable ? state : { ...state, activeList: "projects" };
+}
+
+export function setRemoteUser(user: RemoteState["user"]): StateUpdater {
+  return (state) => withSelectableActiveList({ ...state, remote: { ...state.remote, user } });
 }
 
 export function navigateTo(view: AppView): StateUpdater {
@@ -234,7 +239,7 @@ export function goBack(): StateUpdater {
 }
 
 export function setActiveList(
-  list: "projects" | "examples" | "templates" | "remoteProjects",
+  list: "projects" | "remoteProjects",
 ): StateUpdater {
   return (state) => ({ ...state, activeList: list });
 }
@@ -242,47 +247,12 @@ export function setActiveList(
 export function updateActiveList(
   updater: (list: ListSelectState<ProjectInfo>) => ListSelectState<ProjectInfo>,
 ): StateUpdater {
-  return (state) => {
-    if (state.activeList === "remoteProjects") return state;
-    const key = state.activeList;
-    return { ...state, [key]: updater(state[key]) };
-  };
-}
-
-export function selectProject(project: ProjectInfo | null): StateUpdater {
-  return (state) => {
-    if (!project) return { ...state, selectedProject: null };
-
-    return {
-      ...state,
-      selectedProject: project,
-      view: "project-detail",
-      previousView: state.view,
-    };
-  };
-}
-
-export function updateWizard(update: Partial<AppState["wizard"]>): StateUpdater {
-  return (state) => ({ ...state, wizard: { ...state.wizard, ...update } });
-}
-
-export function resetWizard(): StateUpdater {
-  return (state) => ({
-    ...state,
-    wizard: {
-      step: 0,
-      startType: null,
-      selectedTemplate: null,
-      integrations: [],
-      projectName: "",
-    },
-  });
+  return (state) => ({ ...state, [state.activeList]: updater(state[state.activeList]) });
 }
 
 export function startInput(
   prompt: string,
-  onSubmit: (value: string) => void,
-  onCancel?: () => void,
+  purpose: InputPurpose,
   initialValue?: string,
 ): StateUpdater {
   return (state) => ({
@@ -292,8 +262,7 @@ export function startInput(
       prompt,
       value: initialValue ?? "",
       cursorPos: initialValue?.length ?? 0,
-      onSubmit,
-      onCancel: onCancel ?? null,
+      purpose,
     },
   });
 }
@@ -313,8 +282,7 @@ export function endInput(): StateUpdater {
       prompt: "",
       value: "",
       cursorPos: 0,
-      onSubmit: null,
-      onCancel: null,
+      purpose: null,
     },
   });
 }
@@ -329,10 +297,6 @@ export function addLog(
     if (logs.length > state.maxLogs) logs.shift();
     return { ...state, logs };
   };
-}
-
-export function clearLogs(): StateUpdater {
-  return (state) => ({ ...state, logs: [], logScroll: 0 });
 }
 
 export function toggleLogsExpanded(): StateUpdater {
@@ -374,10 +338,13 @@ function shortenPath(path: string, env: EnvironmentConfig = getEnvironmentConfig
   return path;
 }
 
+export function getActiveList(state: AppState): ListSelectState<ProjectInfo> {
+  return state[state.activeList];
+}
+
 export function getActiveSelection(
   state: AppState,
 ): ListItem<ProjectInfo> | undefined {
-  if (state.activeList === "remoteProjects") return undefined;
-  const list = state[state.activeList];
+  const list = getActiveList(state);
   return list.items[list.selectedIndex];
 }

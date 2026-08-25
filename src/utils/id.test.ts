@@ -52,9 +52,65 @@ describe("id", () => {
 
       assertEquals(ids.size, 100);
     });
+
+    it("should draw alphabet characters without modulo bias", () => {
+      // With `byte % 62`, the first 8 alphabet characters ("0"-"7") are drawn
+      // at 5/256 each (8 * 5/256 ~= 0.1563 combined) instead of the uniform
+      // 8/62 ~= 0.1290. The 0.145 midpoint threshold sits ~17 standard
+      // deviations from both distributions at this sample size.
+      let firstEightCount = 0;
+      let totalCount = 0;
+
+      for (let i = 0; i < 20_000; i++) {
+        for (const char of generateId()) {
+          totalCount++;
+          if (char >= "0" && char <= "7") firstEightCount++;
+        }
+      }
+
+      assertEquals(firstEightCount / totalCount < 0.145, true);
+    });
+
+    it("should not invoke a typed-array iterator replaced after module import", async () => {
+      const idModuleUrl = new URL("./id.ts", import.meta.url).href;
+      const source = `
+        import { generateId } from ${JSON.stringify(idModuleUrl)};
+
+        Uint8Array.prototype[Symbol.iterator] = function () {
+          throw new Error("poisoned typed-array iterator");
+        };
+        console.log(generateId());
+      `;
+      const command = new Deno.Command(Deno.execPath(), {
+        args: ["eval", "--no-check", "--frozen", "--config=deno.json", source],
+        stdout: "piped",
+        stderr: "piped",
+      });
+
+      const result = await command.output();
+      const stderr = new TextDecoder().decode(result.stderr);
+      assertEquals(result.success, true, stderr);
+      assertMatch(new TextDecoder().decode(result.stdout).trim(), /^[0-9a-zA-Z]{16}$/);
+    });
   });
 
   describe("createIdGenerator", () => {
+    it("should reject invalid sizes", () => {
+      for (
+        const size of [
+          0,
+          -1,
+          1.5,
+          Number.NaN,
+          Number.POSITIVE_INFINITY,
+          Number.MAX_SAFE_INTEGER + 1,
+          1_025,
+        ]
+      ) {
+        assertThrows(() => createIdGenerator({ size }), RangeError);
+      }
+    });
+
     it("should create generator with prefix", () => {
       const generate = createIdGenerator({ prefix: "test" });
       assertMatch(generate(), /^test-[0-9a-zA-Z]{16}$/);

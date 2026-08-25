@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createEsmCache, createModuleCache, generateHash } from "./cache.ts";
 
@@ -37,7 +37,17 @@ describe("module-loader/cache", () => {
     });
 
     it("should handle unicode content", async () => {
-      await assertHexHash("Hello");
+      await assertHexHash("café");
+      assertNotEquals(
+        await generateHash("café"),
+        await generateHash("cafe"),
+        "accented and unaccented sources must not share a module cache key",
+      );
+      assertNotEquals(
+        await generateHash("東京"),
+        await generateHash("大阪"),
+        "distinct CJK sources must not share a module cache key",
+      );
     });
   });
 

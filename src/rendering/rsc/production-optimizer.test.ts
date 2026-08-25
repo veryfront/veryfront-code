@@ -17,15 +17,23 @@ function makePayload(overrides: Partial<RSCPayload> = {}): RSCPayload {
 describe("rendering/rsc/production-optimizer", () => {
   describe("optimizePayload", () => {
     it("should strip HTML comments", () => {
-      const payload = makePayload({ html: "<div><!-- comment -->text</div>" });
+      const payload = makePayload({ html: "<div><!--a-->KEEP<!--b--></div>" });
       const result = RSCProductionOptimizer.optimizePayload(payload);
-      assertEquals(result.html.includes("<!--"), false);
+      assertEquals(
+        result.html,
+        "<div>KEEP</div>",
+        "comment stripping must not eat markup between comments",
+      );
     });
 
     it("should remove whitespace between tags", () => {
       const payload = makePayload({ html: "<div>  <span>  text  </span>  </div>" });
       const result = RSCProductionOptimizer.optimizePayload(payload);
-      assertEquals(result.html.includes(">  <"), false);
+      assertEquals(
+        result.html,
+        "<div><span>  text  </span></div>",
+        "only whitespace between tags is collapsed, not text content",
+      );
     });
 
     it("should strip tree from output", () => {
@@ -92,6 +100,52 @@ describe("rendering/rsc/production-optimizer", () => {
       assertEquals(a !== b, true);
     });
 
+    it("should differ for different client reference maps", () => {
+      const a = RSCProductionOptimizer.generateETag(
+        makePayload({ clientRefs: { App: "/a.js" } }),
+      );
+      const b = RSCProductionOptimizer.generateETag(
+        makePayload({ clientRefs: { App: "/b.js" } }),
+      );
+      assertEquals(a !== b, true, "ETag must cover the client reference map");
+    });
+
+    it("should hash every code unit in astral client reference URLs", () => {
+      const a = RSCProductionOptimizer.generateETag(
+        makePayload({ clientRefs: { App: "/😀.js" } }),
+      );
+      const b = RSCProductionOptimizer.generateETag(
+        makePayload({ clientRefs: { App: "/😁.js" } }),
+      );
+
+      assertEquals(a !== b, true, "ETag must cover complete UTF-16 client reference values");
+    });
+
+    it("is independent of canonically equivalent key insertion order", () => {
+      const composedFirst = RSCProductionOptimizer.generateETag(
+        makePayload({
+          clientRefs: {
+            "é": "/composed.js",
+            "é": "/decomposed.js",
+          },
+        }),
+      );
+      const decomposedFirst = RSCProductionOptimizer.generateETag(
+        makePayload({
+          clientRefs: {
+            "é": "/decomposed.js",
+            "é": "/composed.js",
+          },
+        }),
+      );
+
+      assertEquals(
+        composedFirst,
+        decomposedFirst,
+        "ETag must not depend on client reference insertion order",
+      );
+    });
+
     it("differs for identical output rendered under different dependency snapshots", () => {
       const a = RSCProductionOptimizer.generateETag(
         makePayload({ dependencyPinningCacheKey: "on:pins-a" }),
@@ -116,6 +170,24 @@ describe("rendering/rsc/production-optimizer", () => {
     it("should match weak ETags", () => {
       assertEquals(RSCProductionOptimizer.checkETag('W/"abc"', '"abc"'), true);
     });
+
+    it("should not match different ETags", () => {
+      assertEquals(
+        RSCProductionOptimizer.checkETag('"abc"', '"def"'),
+        false,
+        "different ETags must not produce a 304",
+      );
+      assertEquals(
+        RSCProductionOptimizer.checkETag('W/"abc"', '"abcd"'),
+        false,
+        "normalizing W/ and quotes must not turn a prefix into a match",
+      );
+      assertEquals(
+        RSCProductionOptimizer.checkETag('""', '"abc"'),
+        false,
+        "an empty quoted ETag must not match",
+      );
+    });
   });
 
   describe("optimizeClientRefs", () => {
@@ -135,11 +207,35 @@ describe("rendering/rsc/production-optimizer", () => {
   describe("bundlePayloads", () => {
     it("should create bundles and manifest from payloads", () => {
       const payloads = new Map<string, RSCPayload>([
-        ["/", makePayload({ clientRefs: { App: "/app.js" } })],
+        [
+          "/",
+          makePayload({
+            clientRefs: { App: "/app.js" },
+            html: "<div><!-- c -->  <span>x</span>  </div>",
+            tree: { type: "fragment" } as RSCPayload["tree"],
+          }),
+        ],
+        ["/about", makePayload({ clientRefs: { About: "/about.js" } })],
       ]);
       const { bundles, manifest } = RSCProductionOptimizer.bundlePayloads(payloads);
-      assertEquals("_" in bundles, true);
+
+      assertEquals(
+        Object.keys(bundles).sort(),
+        ["_", "_about"],
+        "each route gets its own bundle id",
+      );
+      assertEquals(
+        bundles["_"]?.tree,
+        undefined,
+        "bundled payloads must not carry the render tree",
+      );
+      assertEquals(
+        bundles["_"]?.html,
+        "<div><span>x</span></div>",
+        "bundlePayloads must minify each payload",
+      );
       assertEquals(manifest["/"], ["App"]);
+      assertEquals(manifest["/about"], ["About"]);
     });
   });
 
@@ -161,17 +257,43 @@ describe("rendering/rsc/production-optimizer", () => {
   describe("generateCSP", () => {
     it("should return a valid CSP string", () => {
       const csp = RSCProductionOptimizer.generateCSP();
-      assertEquals(csp.includes("default-src 'none'"), true);
-      assertEquals(csp.includes("script-src"), true);
-      assertEquals(csp.includes("upgrade-insecure-requests"), true);
+      assertEquals(csp.includes("default-src 'none'"), true, "CSP denies everything by default");
+      assertEquals(
+        csp.includes("script-src 'self' https://esm.sh"),
+        true,
+        "the serialized script-src must stay self plus esm.sh",
+      );
+      assertEquals(
+        csp.includes("frame-ancestors 'none'"),
+        true,
+        "the serialized CSP must forbid framing",
+      );
+      assertEquals(
+        csp.includes("unsafe-inline"),
+        false,
+        "generated CSP must never permit inline scripts",
+      );
+      assertEquals(
+        csp.includes("upgrade-insecure-requests"),
+        true,
+        "the valueless directive is serialized as a bare key",
+      );
     });
   });
 
   describe("getCSPDirectives", () => {
     it("should return directives object", () => {
       const dirs = RSCProductionOptimizer.getCSPDirectives();
-      assertEquals(dirs["default-src"], ["'none'"]);
-      assertEquals(dirs["object-src"], ["'none'"]);
+      assertEquals(dirs["default-src"], ["'none'"], "RSC responses deny everything by default");
+      assertEquals(dirs["object-src"], ["'none'"], "RSC responses must not embed objects");
+      assertEquals(
+        dirs["script-src"],
+        ["'self'", "https://esm.sh"],
+        "RSC script-src must stay self plus esm.sh",
+      );
+      assertEquals(dirs["frame-ancestors"], ["'none'"], "RSC responses must not be framable");
+      assertEquals(dirs["base-uri"], ["'none'"], "RSC responses must not rebase relative URLs");
+      assertEquals(dirs["form-action"], ["'none'"], "RSC responses must not submit forms");
     });
   });
 });

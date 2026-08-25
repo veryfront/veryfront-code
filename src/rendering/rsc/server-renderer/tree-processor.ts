@@ -34,7 +34,7 @@ export async function renderTree<Props extends RSCComponentProps = RSCComponentP
     return { type: "html", html: escapeHtml(String(Component)) };
   }
 
-  const rscComponent = Component as unknown as RSCComponent;
+  const rscComponent = Component as RSCComponent;
 
   if (isClientComponent(rscComponent, clientManifest)) {
     const componentId = getComponentId(rscComponent);
@@ -104,7 +104,7 @@ export async function processElement(
       return { type: "html", html };
     }
 
-    const attrs = renderAttributes(props);
+    const attrs = renderAttributes(props, type);
     const childrenHtml = await Promise.all(
       processedChildren.map((child) => treeToHTML(child, clientRefs, clientManifest)),
     );

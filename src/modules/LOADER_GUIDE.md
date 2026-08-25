@@ -54,6 +54,12 @@ Both functions require source code, its logical file path, the project root,
 and a `RuntimeAdapter`. `loadComponentFromSource` validates and returns a React
 component export; `loadModuleFromSource` returns the module namespace.
 
+Both functions also require `dev`, the render mode of the current request.
+`true` selects development semantics for every transform the load triggers: no
+minification, no tree shaking, inline sourcemaps, and the dev-only SSR loader
+branches. It is required rather than defaulted so that a production render
+cannot inherit development semantics by omission.
+
 Set `ssr: true` for server execution. In hosted code, also pass stable
 `projectId`, `contentSourceId`, React version, and the request-bound import map
 when it is already available.

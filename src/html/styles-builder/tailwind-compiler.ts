@@ -6,7 +6,9 @@
  * an explicit CSSOptimizationEngine owns minification.
  */
 
-import { resolve } from "#veryfront/extensions/contracts.ts";
+import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import { formatExtensionSetupHint } from "#veryfront/extensions/setup-hint.ts";
+import { getRecommendation } from "#veryfront/extensions/recommendations.ts";
 import {
   captureCSSOptimizationEngine,
   type CSSOptimizationEngine,
@@ -70,6 +72,7 @@ const weakSetAdd = WeakSet.prototype.add;
 const weakSetHas = WeakSet.prototype.has;
 const CSS_PIPELINE_IDENTITY_SCHEMA = "veryfront.css-pipeline.v2";
 const cssGenerationSessions = new WeakSet<object>();
+let reportedMissingOptimizationEngine = false;
 const inFlightProjectCSS = new Map<
   string,
   Promise<{ css: string; hash: string; fromCache: boolean }>
@@ -128,9 +131,58 @@ function getCSSPipelineCacheIdentity(
 /** Capture all output-affecting providers before the operation performs an await. */
 export function acquireCSSGenerationSession(minify: boolean): CSSGenerationSession {
   const compilationSession = acquireCSSCompilationSession();
-  const optimizationEngine = minify
-    ? captureCSSOptimizationEngine(resolve<unknown>(CSSOptimizationEngineName))
-    : undefined;
+  // Minification is an optional enhancement, not a precondition for serving
+  // CSS. No first-party package registers a CSSOptimizationEngine -- it ships
+  // only in @veryfront/ext-css-lightning, which `veryfront` does not depend on
+  // -- while the production shell always asks for minify:true. Resolving
+  // through `resolve()` therefore made the fail-closed path unreachable-by-
+  // design for a default project: it could only ever fire as an outage. Absent
+  // an engine the CSS is emitted unminified and the identity below records it
+  // as such, so no cache can serve a stale minified entry in its place.
+  const optimizationProvider = minify ? tryResolve<unknown>(CSSOptimizationEngineName) : undefined;
+  if (optimizationProvider !== undefined) {
+    // Re-arm: an engine that disappears later is a new regression to report.
+    reportedMissingOptimizationEngine = false;
+  } else if (minify && !reportedMissingOptimizationEngine) {
+    // Warn, not debug: this is a silent quality regression for a project that
+    // did select an optimizer and whose registration failed. It must not be
+    // indistinguishable from a project that never wanted one.
+    //
+    // Once per process, not once per acquisition: regenerateCSSByHash acquires
+    // a session on every cold-cache request, which made this the single most
+    // frequent line in a hosted project's logs.
+    //
+    // State the effect and the whole remedy. An earlier revision borrowed
+    // `resolve()`'s "install it with: deno add <package>" hint, which is only
+    // true for an auto-activating extension: `@veryfront/ext-css-lightning`
+    // declares `activation: "explicit"`, so installing it registers nothing
+    // until a `veryfront.config.ts` `extensions` entry activates it. Advice
+    // that stops at the install reads as actionable and leaves the CSS exactly
+    // as unminified as before. The contract name stays out of the instruction:
+    // it is an internal registration hook the guides never mention, and
+    // `component=css-compiler` already identifies the source.
+    //
+    // Naming the package is likewise not enough to act on, so the remedy is
+    // steps the reader can paste. `formatExtensionSetupHint` owns both: an
+    // install command derived from the manifest that owns the project's
+    // dependencies rather than one hard-coded client, and the config edit --
+    // "create" or "add to", with the import lines, depending on whether the
+    // project has a config file. `veryfront init --template minimal` writes
+    // none, so the earlier "add it to the extensions in veryfront.config.ts"
+    // named a file that did not exist and never said what to put in it.
+    reportedMissingOptimizationEngine = true;
+    const recommendation = getRecommendation(CSSOptimizationEngineName);
+    logger.warn(
+      recommendation === undefined
+        ? "Veryfront emits unminified CSS because no CSS optimizer is active"
+        : `Veryfront emits unminified CSS because no CSS optimizer is active. ${
+          formatExtensionSetupHint(recommendation)
+        }`,
+    );
+  }
+  const optimizationEngine = optimizationProvider === undefined
+    ? undefined
+    : captureCSSOptimizationEngine(optimizationProvider);
   const session: CSSGenerationSession = {
     minify,
     compilationSession,
@@ -288,7 +340,12 @@ export async function regenerateCSSByHash(
   projectSlug: string | undefined,
 ): Promise<string | undefined> {
   if (!isCSSContentHash(expectedHash)) return undefined;
-  const generationSession = acquireCSSGenerationSession(true);
+  // The session tolerates an absent optimizer and records the result in its
+  // cache identity, so asking for minify here is safe whether or not an engine
+  // is registered. The request below must pass the same value, or
+  // resolveGenerationSession rejects the pair.
+  const minify = true;
+  const generationSession = acquireCSSGenerationSession(minify);
   const inFlightKey = `${hashString(generationSession.cacheIdentity)}:${expectedHash}`;
   const pending = inFlightRegeneration.get(inFlightKey);
   if (pending) return await pending;
@@ -305,7 +362,7 @@ export async function regenerateCSSByHash(
       const result = await generateTailwindCSS(
         inputs.stylesheet,
         inputs.candidates,
-        { minify: true, projectSlug },
+        { minify, projectSlug },
         { generationSession },
       );
       if (hashCSS(result.css) !== expectedHash) return undefined;

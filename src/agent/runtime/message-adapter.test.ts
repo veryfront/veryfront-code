@@ -216,6 +216,43 @@ describe("agent runtime message adapter", () => {
     assertStringIncludes(text, "application/pdf");
   });
 
+  it("omits inline data URLs from the uploaded files annotation", () => {
+    const agentRuntimeMessages = convertProviderMessagesToAgentRuntimeMessages([
+      providerMessage({
+        role: "user",
+        content: [
+          { type: "text", text: "look" },
+          {
+            type: "image",
+            data: "data:image/png;base64,ABCPAYLOAD==",
+            url: "data:image/png;base64,ABCPAYLOAD==",
+            mediaType: "image/png",
+            filename: "inline.png",
+          },
+        ],
+      }),
+    ]);
+
+    const parts = agentRuntimeMessages[0]?.parts ?? [];
+    const text = parts
+      .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : [])
+      .join("\n");
+
+    assertStringIncludes(text, "<uploaded_files>", "the attachment must still be annotated");
+    assertStringIncludes(text, "inline.png", "the annotation must name the attachment");
+    assertEquals(
+      text.includes("base64,ABCPAYLOAD"),
+      false,
+      "inline data URLs must never be copied into the uploaded_files annotation",
+    );
+    const imagePart = parts.find((part) => part.type === "image");
+    assertEquals(
+      imagePart && "url" in imagePart ? imagePart.url : undefined,
+      "data:image/png;base64,ABCPAYLOAD==",
+      "the bytes must still ride in the native image part",
+    );
+  });
+
   it("does not append a second uploaded files annotation during provider round trips", () => {
     const agentRuntimeMessages = convertProviderMessagesToAgentRuntimeMessages([
       providerMessage({

@@ -16,7 +16,6 @@ function createMockCtx(): HandlerContext {
       },
     },
     securityConfig: null,
-    cspUserHeader: null,
     isLocalProject: true,
   } as unknown as HandlerContext;
 }
@@ -215,18 +214,18 @@ describe("Dashboard API - GET endpoints", () => {
     assertEquals("errors" in body, true);
     assertEquals("categories" in body, true);
     assertEquals("count" in body, true);
-    assertEquals(body.count, 63);
+    assertEquals(body.count, 67);
     assertEquals(body.categories, {
       config: 7,
-      build: 8,
+      build: 9,
       runtime: 7,
       route: 6,
       server: 8,
-      module: 6,
+      module: 8,
       dev: 5,
       rsc: 6,
       deployment: 4,
-      general: 6,
+      general: 7,
     });
 
     const errorsByCode = new Map<string, { code: string; category: string }>(
@@ -285,12 +284,21 @@ describe("Dashboard API - GET endpoints", () => {
   });
 
   it("/_dev/api/file-content returns text file content", async () => {
+    const readFilePaths: string[] = [];
     const ctx = createMockCtxWithFs({
-      readFile: async () => "const x = 1;\n",
+      readFile: async (path: string) => {
+        readFilePaths.push(path);
+        return "const x = 1;\n";
+      },
     });
     const req = new Request("http://localhost/_dev/api/file-content?path=src/index.ts");
     const res = await handleDashboardAPI(req, ctx);
     assertEquals(res?.status, 200);
+    assertEquals(
+      readFilePaths,
+      ["/project/src/index.ts"],
+      "file content must be read from the validated path under the project directory",
+    );
     const body = await res!.json();
     assertEquals(body.extension, "ts");
     assertEquals(body.content, "const x = 1;\n");
@@ -306,6 +314,152 @@ describe("Dashboard API - GET endpoints", () => {
     assertEquals(res?.status, 200);
     const body = await res!.json();
     assertEquals(body.isBinary, true);
+  });
+
+  it("/_dev/api/file-content keeps .env.example visible", async () => {
+    let readFileCalled = false;
+    const ctx = createMockCtxWithFs({
+      readFile: async () => {
+        readFileCalled = true;
+        return "API_KEY=<API_KEY>\n";
+      },
+    });
+    const req = new Request("http://localhost/_dev/api/file-content?path=.env.example");
+
+    const res = await handleDashboardAPI(req, ctx);
+
+    assertEquals(res?.status, 200);
+    assertEquals(readFileCalled, true);
+    const body = await res!.json();
+    assertEquals(body.content, "API_KEY=<API_KEY>\n");
+  });
+
+  for (
+    const path of [
+      ".env",
+      ".env.local",
+      ".ENV.production",
+      "config/production.env",
+      "env",
+      ".envrc",
+      ".npmrc",
+      ".pypirc",
+      ".netrc",
+      "credentials.json",
+      "secrets.json",
+      "certs/private.pem",
+      ".git/config",
+      ".env ",
+      ".env... ",
+      ".env::$DATA",
+      ".aws /credentials",
+      ".ssh./id_rsa",
+    ]
+  ) {
+    it(`/_dev/api/file-content blocks sensitive file ${path}`, async () => {
+      let readFileCalled = false;
+      const ctx = createMockCtxWithFs({
+        readFile: async () => {
+          readFileCalled = true;
+          return "must not be returned";
+        },
+      });
+      const req = new Request(
+        `http://localhost/_dev/api/file-content?path=${encodeURIComponent(path)}`,
+      );
+
+      const res = await handleDashboardAPI(req, ctx);
+
+      assertEquals(res?.status, 403);
+      assertEquals(await res!.json(), { error: "File content is not available" });
+      assertEquals(readFileCalled, false);
+    });
+  }
+
+  it("/_dev/api/files omits sensitive files and directories", async () => {
+    const entries = [
+      { name: "src", isDirectory: true },
+      { name: ".git", isDirectory: true },
+      { name: "README.md", isDirectory: false },
+      { name: ".gitignore", isDirectory: false },
+      { name: ".env", isDirectory: false },
+      { name: ".env.local", isDirectory: false },
+      { name: ".env::$DATA", isDirectory: false },
+      { name: ".npmrc", isDirectory: false },
+      { name: "private.pem", isDirectory: false },
+    ];
+    const ctx = createMockCtxWithFs({
+      readDir: async function* () {
+        yield* entries;
+      },
+    });
+    const req = new Request("http://localhost/_dev/api/files");
+
+    const res = await handleDashboardAPI(req, ctx);
+
+    assertEquals(res?.status, 200);
+    const body = await res!.json();
+    assertEquals(body.files, [
+      { name: "src", type: "directory", path: "src" },
+      { name: ".gitignore", type: "file", path: ".gitignore" },
+      { name: "README.md", type: "file", path: "README.md" },
+    ]);
+    assertEquals(body.count, 3);
+  });
+
+  it("/_dev/api/files keeps .env.example files and env directories visible", async () => {
+    const entries = [
+      { name: "env", isDirectory: true },
+      { name: ".env.example", isDirectory: false },
+    ];
+    const ctx = createMockCtxWithFs({
+      readDir: async function* () {
+        yield* entries;
+      },
+    });
+    const req = new Request("http://localhost/_dev/api/files");
+
+    const res = await handleDashboardAPI(req, ctx);
+
+    assertEquals(res?.status, 200);
+    const body = await res!.json();
+    assertEquals(body.files, [
+      { name: "env", type: "directory", path: "env" },
+      { name: ".env.example", type: "file", path: ".env.example" },
+    ]);
+  });
+
+  it("/_dev/api/files permits direct listing of an env directory", async () => {
+    let readDirCalled = false;
+    const ctx = createMockCtxWithFs({
+      readDir: async function* () {
+        readDirCalled = true;
+        yield { name: "example.ts", isDirectory: false };
+      },
+    });
+    const req = new Request("http://localhost/_dev/api/files?path=examples/env");
+
+    const res = await handleDashboardAPI(req, ctx);
+
+    assertEquals(res?.status, 200);
+    assertEquals(readDirCalled, true);
+  });
+
+  it("/_dev/api/files blocks direct listing of sensitive directories", async () => {
+    let readDirCalled = false;
+    const ctx = createMockCtxWithFs({
+      // deno-lint-ignore require-yield
+      readDir: async function* () {
+        readDirCalled = true;
+      },
+    });
+    const req = new Request("http://localhost/_dev/api/files?path=.git");
+
+    const res = await handleDashboardAPI(req, ctx);
+
+    assertEquals(res?.status, 403);
+    assertEquals(await res!.json(), { error: "File content is not available" });
+    assertEquals(readDirCalled, false);
   });
 
   it("/_dev/api/files with readDir error returns empty list", async () => {
@@ -589,10 +743,30 @@ describe("Dashboard API path validation (VULN-FS-2)", () => {
     const req = new Request(
       "http://localhost/_dev/api/files?path=%252e%252e%252F%252e%252e%252Fetc%252Fpasswd",
     );
-    const res = await handleDashboardAPI(req, createMockCtx());
-    // Must never leak the sensitive file — either 200 with empty listing or
-    // 400 is acceptable, but never 200 with /etc/passwd contents.
-    assertEquals(res?.status === 200 || res?.status === 400, true);
+    const readDirPaths: string[] = [];
+    const ctx = createMockCtxWithFs({
+      readDir: (path: string) => {
+        readDirPaths.push(path);
+        return (async function* () {})();
+      },
+    });
+    const res = await handleDashboardAPI(req, ctx);
+    assertEquals(
+      res?.status,
+      200,
+      "a double-encoded segment is a literal filename, not a traversal",
+    );
+    assertEquals(readDirPaths.length, 1, "the listing must reach the adapter exactly once");
+    assertEquals(
+      readDirPaths[0]?.startsWith("/project/"),
+      true,
+      "resolved listing path must stay under the project directory",
+    );
+    assertEquals(
+      readDirPaths[0]?.includes("/etc/passwd"),
+      false,
+      "a double-decoded path must never resolve to /etc/passwd",
+    );
   });
 
   it("unicode NFC form in relative path is accepted", async () => {

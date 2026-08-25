@@ -78,7 +78,15 @@ export function createMockServer(
   return { server, port, hostname, url: `http://${hostname}:${port}` };
 }
 
-export function withEnv(vars: Record<string, string>): () => void {
+/**
+ * Set environment variables now and return a restore callback.
+ *
+ * Named apart from the async, callback-scoped `withEnv` in
+ * `src/testing/deno-compat.ts` so the two contracts cannot be confused: this
+ * one is synchronous and leaves restoration to the caller, which suits tests
+ * that set up in one hook and tear down in another.
+ */
+export function withEnvSync(vars: Record<string, string>): () => void {
   const prev: Record<string, string | undefined> = {};
 
   for (const [key, value] of Object.entries(vars)) {

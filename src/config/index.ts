@@ -18,6 +18,11 @@ export {
   type VeryfrontConfigFile,
   type VeryfrontConfigFileName,
 } from "./config-files.ts";
+export {
+  findHostedConfigIncompatibility,
+  formatHostedConfigIncompatibility,
+  type HostedConfigIncompatibility,
+} from "./hosted-compatibility.ts";
 export { defineConfig, defineConfigWithEnv, mergeConfigs } from "./define-config.ts";
 export { getApiTokenEnv, isCiEnv, isDenoTestingEnv, isRscExperimentalEnabled } from "./env.ts";
 

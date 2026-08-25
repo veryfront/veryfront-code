@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   asBundleHash,
@@ -7,9 +7,22 @@ import {
   assertLocal,
   assertPortable,
   CACHE_DIR_TOKEN,
+  VeryfrontError,
 } from "./http-cache-invariants.ts";
 
 describe("transforms/esm/http-cache-invariants", () => {
+  // Consumers such as bundle-recovery match on the slug, not the message, so
+  // every invariant failure must carry the registry's identity.
+  function assertCacheInvariantViolation(fn: () => unknown, why: string): void {
+    const error = assertThrows(fn, VeryfrontError, undefined, why) as VeryfrontError;
+    assertEquals(
+      error.slug,
+      "cache-invariant-violation",
+      `${why}: consumers match on the cache-invariant-violation slug`,
+    );
+    assertEquals(error.status, 500, `${why}: the registry classifies this as a 500`);
+  }
+
   describe("CACHE_DIR_TOKEN", () => {
     it("is a non-empty string", () => {
       assertEquals(typeof CACHE_DIR_TOKEN, "string");
@@ -23,6 +36,16 @@ describe("transforms/esm/http-cache-invariants", () => {
         `import foo from "file://${CACHE_DIR_TOKEN}/veryfront-http-bundle/http-123.mjs";`;
       // Should not throw
       assertPortable(code as never);
+    });
+
+    it("throws when code still contains hardcoded cache paths", () => {
+      assertCacheInvariantViolation(
+        () =>
+          assertPortable(
+            `import a from "file:///app/.cache/veryfront-http-bundle/http-111111.mjs";` as never,
+          ),
+        "non-portable code must never reach the distributed cache",
+      );
     });
 
     it("does not throw for plain JavaScript code", () => {
@@ -39,13 +62,10 @@ describe("transforms/esm/http-cache-invariants", () => {
     it("throws for code containing CACHE_DIR_TOKEN", () => {
       const code =
         `import foo from "file://${CACHE_DIR_TOKEN}/veryfront-http-bundle/http-123.mjs";`;
-      let threw = false;
-      try {
-        assertLocal(code as never);
-      } catch (_) {
-        threw = true;
-      }
-      assertEquals(threw, true);
+      assertCacheInvariantViolation(
+        () => assertLocal(code as never),
+        "tokenized code must fail the local invariant",
+      );
     });
 
     it("does not throw for plain JavaScript code", () => {
@@ -60,23 +80,17 @@ describe("transforms/esm/http-cache-invariants", () => {
     });
 
     it("throws for non-numeric hash", () => {
-      let threw = false;
-      try {
-        asBundleHash("abc-not-numeric");
-      } catch (_) {
-        threw = true;
-      }
-      assertEquals(threw, true);
+      assertCacheInvariantViolation(
+        () => asBundleHash("abc-not-numeric"),
+        "a non-hexadecimal hash must fail the bundle-hash invariant",
+      );
     });
 
     it("throws for empty string", () => {
-      let threw = false;
-      try {
-        asBundleHash("");
-      } catch (_) {
-        threw = true;
-      }
-      assertEquals(threw, true);
+      assertCacheInvariantViolation(
+        () => asBundleHash(""),
+        "an empty hash must fail the bundle-hash invariant",
+      );
     });
 
     it("accepts large numeric strings", () => {
@@ -92,25 +106,20 @@ describe("transforms/esm/http-cache-invariants", () => {
     });
 
     it("rejects shortened hexadecimal hashes", () => {
-      let threw = false;
-      try {
-        asBundleHash("d9daafa3b706faf7");
-      } catch (_) {
-        threw = true;
-      }
-      assertEquals(threw, true);
+      assertCacheInvariantViolation(
+        () => asBundleHash("d9daafa3b706faf7"),
+        "a shortened hexadecimal hash must fail the bundle-hash invariant",
+      );
     });
 
     it("rejects uppercase SHA-256 hashes", () => {
-      let threw = false;
-      try {
-        asBundleHash(
-          "D9DAAFA3B706FAF7AF89C03417596D23BEED4C1AE964D7EE7EAD5D335B683412",
-        );
-      } catch (_) {
-        threw = true;
-      }
-      assertEquals(threw, true);
+      assertCacheInvariantViolation(
+        () =>
+          asBundleHash(
+            "D9DAAFA3B706FAF7AF89C03417596D23BEED4C1AE964D7EE7EAD5D335B683412",
+          ),
+        "an uppercase SHA-256 hash must fail the bundle-hash invariant",
+      );
     });
   });
 
@@ -123,13 +132,10 @@ describe("transforms/esm/http-cache-invariants", () => {
 
     it("throws for code containing portable tokens", () => {
       const code = `import foo from "file://${CACHE_DIR_TOKEN}/test.mjs";`;
-      let threw = false;
-      try {
-        asLocalModuleCode(code);
-      } catch (_) {
-        threw = true;
-      }
-      assertEquals(threw, true);
+      assertCacheInvariantViolation(
+        () => asLocalModuleCode(code),
+        "tokenized code must never be branded as local module code",
+      );
     });
   });
 });

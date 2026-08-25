@@ -38,6 +38,8 @@ interface GenerateSpecOptions {
   description?: string;
   /** Server URLs to include */
   servers?: Array<{ url: string; description?: string }>;
+  /** Explicit trusted-local capability required before route modules are imported. */
+  allowHostProjectCodeExecution?: boolean;
 }
 
 export async function generateOpenAPISpec(
@@ -47,6 +49,12 @@ export async function generateOpenAPISpec(
   config?: VeryfrontConfig,
   options?: GenerateSpecOptions,
 ): Promise<OpenAPISpec> {
+  if (options?.allowHostProjectCodeExecution !== true) {
+    throw new TypeError(
+      "OpenAPI generation requires explicit trusted-local route execution",
+    );
+  }
+
   const spec: OpenAPISpec = {
     openapi: "3.1.0",
     info: {
@@ -95,6 +103,7 @@ async function processRoute(
     modulePath: entry.route.page,
     adapter,
     config,
+    allowHostProjectCodeExecution: true,
   });
 
   if (!module) return null;

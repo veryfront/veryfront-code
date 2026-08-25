@@ -27,6 +27,20 @@ function isTransientStatus(status: number): boolean {
   return status === 502 || status === 503 || status === 504;
 }
 
+/**
+ * Classify failures from an idempotent API read conservatively.
+ *
+ * A structured HTTP status is authoritative: authentication, validation, and
+ * other client failures must not become retryable merely because an attached
+ * cause resembles a connection error.
+ */
+export function isRetryableApiReadError(error: unknown): boolean {
+  const status = typeof error === "object" && error !== null
+    ? (error as { status?: unknown }).status
+    : undefined;
+  return typeof status === "number" ? isTransientStatus(status) : isRetryableConnectionError(error);
+}
+
 /** Sleep for `ms` milliseconds plus a random jitter up to 20% of `ms`. */
 function sleepWithJitter(ms: number): Promise<void> {
   const jitter = Math.floor(ms * 0.2 * Math.random());
@@ -56,7 +70,14 @@ export const getResolvedConfigSchema = defineSchema((v) =>
 );
 export const ResolvedConfigSchema = lazySchema(getResolvedConfigSchema);
 export type ResolvedConfig = InferSchema<ReturnType<typeof getResolvedConfigSchema>>;
-type ApiTokenSource = NonNullable<ResolvedConfig["apiTokenSource"]>;
+export type ApiTokenSource = NonNullable<ResolvedConfig["apiTokenSource"]>;
+
+export interface ApiCredentialCandidate {
+  apiToken: string;
+  apiTokenSource: ApiTokenSource;
+  validationEnv: EnvironmentConfig;
+  authoritative: boolean;
+}
 
 interface ConfigFileResolution {
   config: VeryfrontConfig | null;
@@ -115,18 +136,7 @@ async function readConfigFileResolution(projectDir: string): Promise<ConfigFileR
   // veryfront.json is always merged in: veryfront.config.ts owns the
   // projectSlug when both define one, but apiUrl/apiToken only live in
   // veryfront.json and must not be dropped because a TS config exists.
-  const configJsonPath = join(projectDir, "veryfront.json");
-  let jsonConfig: VeryfrontConfig | null = null;
-
-  try {
-    if (await fs.exists(configJsonPath)) {
-      const content = await fs.readTextFile(configJsonPath);
-      const parsed = VeryfrontConfigSchema.safeParse(JSON.parse(content));
-      jsonConfig = parsed.success ? parsed.data : null;
-    }
-  } catch (error) {
-    cliLogger.debug(`Failed to read veryfront.json:`, error);
-  }
+  const jsonConfig = await readConfigJsonFile(projectDir);
 
   const config = !moduleProjectSlug && !jsonConfig ? null : {
     ...jsonConfig,
@@ -142,6 +152,23 @@ async function readConfigFileResolution(projectDir: string): Promise<ConfigFileR
 
 export async function readConfigFile(projectDir: string): Promise<VeryfrontConfig | null> {
   return (await readConfigFileResolution(projectDir)).config;
+}
+
+export async function readConfigJsonFile(projectDir: string): Promise<VeryfrontConfig | null> {
+  const fs = createFileSystem();
+  const configJsonPath = join(projectDir, "veryfront.json");
+
+  try {
+    if (await fs.exists(configJsonPath)) {
+      const content = await fs.readTextFile(configJsonPath);
+      const parsed = VeryfrontConfigSchema.safeParse(JSON.parse(content));
+      return parsed.success ? parsed.data : null;
+    }
+  } catch (error) {
+    cliLogger.debug(`Failed to read veryfront.json:`, error);
+  }
+
+  return null;
 }
 
 export async function writeProjectSlug(projectDir: string, slug: string): Promise<void> {
@@ -197,37 +224,92 @@ async function resolveApiTokenForMode(
   configFile: VeryfrontConfig | null,
   interactive: boolean,
 ): Promise<{ apiToken: string | null; apiTokenSource?: ApiTokenSource }> {
-  const envToken = env.apiToken;
-  const envSource = envToken ? getEnvSource("VERYFRONT_API_TOKEN") : { source: "unset" as const };
-  const storedToken = await readToken(env);
-
-  if (envToken && envSource.source !== "env-file") {
+  const [candidate] = await resolveApiCredentialCandidates(env, configFile, interactive, env);
+  if (candidate) {
     return {
-      apiToken: envToken,
-      apiTokenSource: "env",
+      apiToken: candidate.apiToken,
+      apiTokenSource: candidate.apiTokenSource,
     };
-  }
-
-  if (configFile?.apiToken) {
-    return { apiToken: configFile.apiToken, apiTokenSource: "config-file" };
-  }
-
-  if (interactive && envToken && envSource.source === "env-file" && storedToken) {
-    return { apiToken: storedToken, apiTokenSource: "token-store" };
-  }
-
-  if (envToken) {
-    return {
-      apiToken: envToken,
-      apiTokenSource: envSource.source === "env-file" ? "env-file" : "env",
-    };
-  }
-
-  if (storedToken) {
-    return { apiToken: storedToken, apiTokenSource: "token-store" };
   }
 
   return { apiToken: null };
+}
+
+async function resolveApiCredentialCandidates(
+  env: EnvironmentConfig,
+  configFile: VeryfrontConfig | null,
+  interactive: boolean,
+  validationEnv: EnvironmentConfig,
+): Promise<ApiCredentialCandidate[]> {
+  const envToken = env.apiToken;
+  const envSource = envToken ? getEnvSource("VERYFRONT_API_TOKEN") : { source: "unset" as const };
+  const storedToken = await readToken(env);
+  const candidates: ApiCredentialCandidate[] = [];
+
+  const shellEnvToken = envToken && envSource.source !== "env-file";
+  const projectEnvTokenAfterStored = interactive && envToken && envSource.source === "env-file" &&
+    storedToken;
+
+  if (shellEnvToken) {
+    candidates.push({
+      apiToken: envToken,
+      apiTokenSource: "env",
+      validationEnv,
+      authoritative: true,
+    });
+  }
+
+  if (configFile?.apiToken) {
+    candidates.push({
+      apiToken: configFile.apiToken,
+      apiTokenSource: "config-file",
+      validationEnv,
+      authoritative: true,
+    });
+  }
+
+  if (projectEnvTokenAfterStored) {
+    candidates.push({
+      apiToken: storedToken,
+      apiTokenSource: "token-store",
+      validationEnv,
+      authoritative: false,
+    });
+  }
+
+  if (envToken && !shellEnvToken) {
+    candidates.push({
+      apiToken: envToken,
+      apiTokenSource: envSource.source === "env-file" ? "env-file" : "env",
+      validationEnv,
+      authoritative: envSource.source !== "env-file",
+    });
+  }
+
+  if (storedToken && !projectEnvTokenAfterStored) {
+    candidates.push({
+      apiToken: storedToken,
+      apiTokenSource: "token-store",
+      validationEnv,
+      authoritative: false,
+    });
+  }
+
+  return candidates;
+}
+
+export async function resolveApiCredentialCandidatesForAuth(
+  env: EnvironmentConfig = getEnvironmentConfig(),
+  projectDir: string = cwd(),
+  interactive = true,
+): Promise<ApiCredentialCandidate[]> {
+  const configFile = await readConfigJsonFile(projectDir);
+  const validationEnv = {
+    ...env,
+    apiUrl: resolveCliApiUrl(env, configFile?.apiUrl),
+  };
+
+  return resolveApiCredentialCandidates(env, configFile, interactive, validationEnv);
 }
 
 async function resolveConfigBase(
@@ -244,7 +326,7 @@ async function resolveConfigBase(
   let { apiToken, apiTokenSource } = await resolveApiTokenForMode(env, configFile, interactive);
 
   if (!apiToken && interactive) {
-    const userInfo = await ensureAuthenticated(env);
+    const userInfo = await ensureAuthenticated(env, dir);
     if (!userInfo) throw new Error("Authentication required for this operation.");
     apiToken = (await readToken(env)) ?? null;
     apiTokenSource = apiToken ? "token-store" : undefined;
@@ -343,10 +425,21 @@ function resolveConfigByMode(
   return resolveConfigBase(projectDir, env ?? getEnvironmentConfig(), interactive);
 }
 
+export interface ApiReadOptions {
+  /** Abort the in-flight HTTP request when this signal fires. */
+  signal?: AbortSignal;
+  /** Use `none` when a caller owns retry timing or replaying a write would be ambiguous. */
+  retryPolicy?: "default" | "none";
+}
+
 export interface ApiClient {
-  get<T>(path: string, params?: Record<string, string>): Promise<T>;
+  get<T>(
+    path: string,
+    params?: Record<string, string>,
+    options?: ApiReadOptions,
+  ): Promise<T>;
   post<T>(path: string, body?: unknown): Promise<T>;
-  put<T>(path: string, body?: unknown): Promise<T>;
+  put<T>(path: string, body?: unknown, options?: ApiReadOptions): Promise<T>;
   patch<T>(path: string, body?: unknown): Promise<T>;
   delete<T>(path: string): Promise<T>;
 }
@@ -384,9 +477,11 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
     method: string,
     url: string,
     body?: unknown,
+    signal?: AbortSignal,
   ): Promise<T> {
     const response = await fetch(url, {
       method,
+      ...(signal ? { signal } : {}),
       headers: {
         Authorization: `Bearer ${apiToken}`,
         "Content-Type": "application/json",
@@ -429,6 +524,7 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
     path: string,
     body?: unknown,
     params?: Record<string, string>,
+    options: ApiReadOptions = {},
   ): Promise<T> {
     const url = new URL(`${apiUrl}${path}`);
 
@@ -438,26 +534,21 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
 
     const urlStr = url.toString();
     let lastError: unknown;
+    const maxAttempts = options.retryPolicy === "none" ? 1 : API_MAX_RETRIES;
 
-    for (let attempt = 0; attempt < API_MAX_RETRIES; attempt++) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
-        return await requestOnce<T>(method, urlStr, body);
+        return await requestOnce<T>(method, urlStr, body, options.signal);
       } catch (error) {
         lastError = error;
 
-        const status = (error as { status?: number }).status;
-        const isTransient = status !== undefined
-          ? isTransientStatus(status)
-          : isRetryableConnectionError(error);
         const isRefused = isConnectionRefusedError(error);
 
-        // Idempotent: retry on transient HTTP status or any retryable connection error.
+        // Idempotent: retry on transient HTTP status or status-less retryable connection errors.
         // Non-idempotent: retry only on connection-refused (request never reached server).
-        const shouldRetry = isIdempotent(method)
-          ? (isTransient || isRetryableConnectionError(error))
-          : isRefused;
+        const shouldRetry = isIdempotent(method) ? isRetryableApiReadError(error) : isRefused;
 
-        if (!shouldRetry || attempt >= API_MAX_RETRIES - 1) {
+        if (!shouldRetry || attempt >= maxAttempts - 1) {
           throw error;
         }
 
@@ -473,14 +564,18 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
   }
 
   return {
-    get<T>(path: string, params?: Record<string, string>): Promise<T> {
-      return request<T>("GET", path, undefined, params);
+    get<T>(
+      path: string,
+      params?: Record<string, string>,
+      options?: ApiReadOptions,
+    ): Promise<T> {
+      return request<T>("GET", path, undefined, params, options);
     },
     post<T>(path: string, body?: unknown): Promise<T> {
       return request<T>("POST", path, body);
     },
-    put<T>(path: string, body?: unknown): Promise<T> {
-      return request<T>("PUT", path, body);
+    put<T>(path: string, body?: unknown, options?: ApiReadOptions): Promise<T> {
+      return request<T>("PUT", path, body, undefined, options);
     },
     patch<T>(path: string, body?: unknown): Promise<T> {
       return request<T>("PATCH", path, body);

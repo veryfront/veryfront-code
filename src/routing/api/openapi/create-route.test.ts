@@ -18,11 +18,17 @@ describe("createRoute", () => {
   it("should attach metadata to handler", () => {
     const handler = createRoute({
       summary: "Get user",
+      description: "Fetch a single user",
       handler: () => new Response("ok"),
     });
 
     const metadata = getMetadata(handler);
-    assertEquals(metadata.summary, "Get user");
+    assertEquals(metadata.summary, "Get user", "createRoute must carry the operation summary");
+    assertEquals(
+      metadata.description,
+      "Fetch a single user",
+      "createRoute must carry the operation description into OpenAPI metadata",
+    );
   });
 
   it("should convert params schema to JSON Schema", () => {
@@ -89,6 +95,18 @@ describe("createRoute", () => {
     assertExists(metadata.responses);
     assertExists(metadata.responses["200"]);
     assertEquals(metadata.responses["200"].description, "Successful response");
+
+    const content = metadata.responses["200"].content?.["application/json"];
+    assertExists(content, "a response schema must be emitted as application/json content");
+    assertEquals(
+      content.schema.type,
+      "object",
+      "the converted response schema keeps its object type",
+    );
+    assertExists(
+      content.schema.properties?.id,
+      "the response schema exposes its declared properties",
+    );
   });
 
   it("should handle response with schema and description", () => {
@@ -112,6 +130,23 @@ describe("createRoute", () => {
     assertExists(metadata.responses["404"]);
     assertEquals(metadata.responses["200"]!.description, "User found");
     assertEquals(metadata.responses["404"]!.description, "User not found");
+
+    const okContent = metadata.responses["200"]!.content?.["application/json"];
+    assertExists(okContent, "the 200 response schema must be emitted as application/json content");
+    assertExists(
+      okContent.schema.properties?.id,
+      "the 200 response schema exposes its declared properties",
+    );
+
+    const notFoundContent = metadata.responses["404"]!.content?.["application/json"];
+    assertExists(
+      notFoundContent,
+      "the 404 response schema must be emitted as application/json content",
+    );
+    assertExists(
+      notFoundContent.schema.properties?.error,
+      "the 404 response schema exposes its declared properties",
+    );
   });
 
   it("should preserve tags and deprecated flag", () => {
@@ -134,6 +169,7 @@ describe("createRoute", () => {
     const mockContext = {
       params: {},
       searchParams: new URLSearchParams(),
+      env: {},
     };
     const response = await handler(new Request("http://test.com"), mockContext);
     assertEquals(await response.text(), "success");

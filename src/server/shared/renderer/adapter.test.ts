@@ -10,12 +10,15 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { Renderer, RendererOptions } from "#veryfront/rendering/renderer.ts";
 import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { isBun } from "#veryfront/platform/compat/runtime.ts";
 import {
   destroyRendererAdapter,
   getRendererForProject,
   type RendererInitializer,
   setRendererInitializer,
 } from "./adapter.ts";
+
+const hostedWorkerIt = isBun ? it.skip : it;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -30,7 +33,13 @@ type RendererCallCounts = {
   destroy: number;
 };
 
-function createMockRenderer(): Renderer & { calls: RendererCallCounts } {
+type MockRenderer = Renderer & {
+  calls: RendererCallCounts;
+  // deno-lint-ignore no-explicit-any
+  lastCtx: any;
+};
+
+function createMockRenderer(): MockRenderer {
   const calls: RendererCallCounts = {
     renderPage: 0,
     resolvePageData: 0,
@@ -39,8 +48,9 @@ function createMockRenderer(): Renderer & { calls: RendererCallCounts } {
     destroy: 0,
   };
 
-  return {
+  const mock = {
     calls,
+    lastCtx: undefined,
     // deno-lint-ignore no-explicit-any
     async renderPage(_slug: string, _ctx: any, _opts?: any) {
       calls.renderPage++;
@@ -52,7 +62,8 @@ function createMockRenderer(): Renderer & { calls: RendererCallCounts } {
       return { data: {} } as any; // deno-lint-ignore no-explicit-any
     },
     // deno-lint-ignore no-explicit-any
-    async getAllPages(_ctx: any) {
+    async getAllPages(ctx: any) {
+      mock.lastCtx = ctx;
       calls.getAllPages++;
       return ["/"];
     },
@@ -65,7 +76,8 @@ function createMockRenderer(): Renderer & { calls: RendererCallCounts } {
     },
     // deno-lint-ignore no-explicit-any
     async initialize(_opts?: any) {},
-  } as unknown as Renderer & { calls: RendererCallCounts };
+  };
+  return mock as unknown as MockRenderer;
 }
 
 /**
@@ -154,8 +166,31 @@ function stubHandlerContext(): any {
 // Tests
 // ---------------------------------------------------------------------------
 
+/** Hosted-context factory shared by the multi-project config tests. */
+async function hostedConfigContext() {
+  return {
+    sourceContext: { productionMode: false, branch: "feature/hosted-render" } as const,
+    preparedContext: await prepareDeclarativeConfigContext({
+      environmentName: "preview",
+      environment: { TENANT: "tenant-value" },
+    }),
+  };
+}
+
+/** A handler context shaped like a hosted multi-project render. */
+function stubHostedRenderContext(): any {
+  const ctx = stubHandlerContext();
+  ctx.enriched = undefined;
+  ctx.config = undefined;
+  ctx.isLocalProject = false;
+  ctx.projectDir = "/tmp/hosted-project";
+  ctx.resolvedEnvironment = "preview";
+  ctx.requestContext = { branch: "feature/hosted-render", mode: "preview" };
+  return ctx;
+}
+
 describe("RendererAdapter with RendererInitializer", () => {
-  let mockRenderer: Renderer & { calls: Record<string, number> };
+  let mockRenderer: MockRenderer;
   let mockInit: RendererInitializer & { initCount: number; destroyCount: number };
 
   beforeEach(() => {
@@ -368,6 +403,38 @@ describe("RendererAdapter with RendererInitializer", () => {
       // Adapter should work
       const pages = await adapter.getAllPages();
       assertEquals(pages, ["/"]);
+      assertEquals(
+        mockRenderer.lastCtx.allowHostProjectCodeExecution,
+        true,
+        "a local project keeps host execution",
+      );
+    });
+
+    it("does not grant host code execution to a hosted enriched context", async () => {
+      const ctx = stubHandlerContext();
+      ctx.isLocalProject = false;
+      ctx.enriched.isLocalProject = false;
+      const adapter = await getRendererForProject(ctx);
+      await adapter.getAllPages();
+      assertEquals(
+        mockRenderer.lastCtx.allowHostProjectCodeExecution,
+        false,
+        "a shared hosted render context must not claim the host code-execution capability",
+      );
+    });
+
+    it("propagates an explicit host code execution grant on the fast path", async () => {
+      const ctx = stubHandlerContext();
+      ctx.isLocalProject = false;
+      ctx.enriched.isLocalProject = false;
+      ctx.allowHostProjectCodeExecution = true;
+      const adapter = await getRendererForProject(ctx);
+      await adapter.getAllPages();
+      assertEquals(
+        mockRenderer.lastCtx.allowHostProjectCodeExecution,
+        true,
+        "an explicit host-execution grant must reach the render context",
+      );
     });
 
     it("builds enriched context when not pre-populated", async () => {
@@ -440,6 +507,71 @@ describe("RendererAdapter with RendererInitializer", () => {
       assertEquals(ctx.enriched.environment, "preview");
     });
 
+    it("resolves production environment from a production domain", async () => {
+      const ctx = stubHandlerContext();
+      ctx.enriched = undefined;
+      ctx.resolvedEnvironment = undefined;
+      ctx.parsedDomain = {
+        slug: null,
+        branch: null,
+        environment: "production",
+        isVeryfrontDomain: false,
+        isDraft: false,
+        allowIframeEmbed: false,
+      } as any;
+      ctx.config = { pages: { include: ["**/*.mdx"] } };
+      ctx.adapter = {
+        fs: {
+          exists: () => Promise.resolve(false),
+          readFile: () => Promise.resolve(""),
+          readDir: async function* () {},
+          stat: () => Promise.resolve({ isFile: false, isDirectory: false }),
+        },
+        env: { get: () => undefined, set: () => {}, delete: () => {}, toObject: () => ({}) },
+      } as unknown as any;
+
+      await getRendererForProject(ctx);
+      assertEquals(ctx.enriched !== undefined, true);
+      assertEquals(
+        ctx.enriched.environment,
+        "production",
+        "a production domain resolves production when no explicit environment is set",
+      );
+    });
+
+    it("falls back to the request context mode when the domain has no environment", async () => {
+      const ctx = stubHandlerContext();
+      ctx.enriched = undefined;
+      ctx.resolvedEnvironment = undefined;
+      ctx.parsedDomain = {
+        slug: null,
+        branch: null,
+        environment: null,
+        isVeryfrontDomain: false,
+        isDraft: false,
+        allowIframeEmbed: false,
+      } as any;
+      ctx.requestContext = { mode: "production" };
+      ctx.config = { pages: { include: ["**/*.mdx"] } };
+      ctx.adapter = {
+        fs: {
+          exists: () => Promise.resolve(false),
+          readFile: () => Promise.resolve(""),
+          readDir: async function* () {},
+          stat: () => Promise.resolve({ isFile: false, isDirectory: false }),
+        },
+        env: { get: () => undefined, set: () => {}, delete: () => {}, toObject: () => ({}) },
+      } as unknown as any;
+
+      await getRendererForProject(ctx);
+      assertEquals(ctx.enriched !== undefined, true);
+      assertEquals(
+        ctx.enriched.environment,
+        "production",
+        "the request context mode decides when the domain carries no environment",
+      );
+    });
+
     it("loads config when not provided and enriched is absent", async () => {
       const ctx = stubHandlerContext();
       ctx.enriched = undefined;
@@ -462,27 +594,83 @@ describe("RendererAdapter with RendererInitializer", () => {
       assertEquals(pages, ["/"]);
     });
 
-    it("evaluates shared multi-project config through the request's hosted context", async () => {
-      const ctx = stubHandlerContext();
-      ctx.enriched = undefined;
-      ctx.config = undefined;
-      ctx.isLocalProject = false;
-      ctx.projectDir = "/tmp/hosted-project";
-      ctx.resolvedEnvironment = "preview";
-      ctx.requestContext = { branch: "feature/hosted-render", mode: "preview" };
+    hostedWorkerIt(
+      "evaluates shared multi-project config through the request's hosted context",
+      async () => {
+        const ctx = stubHandlerContext();
+        ctx.enriched = undefined;
+        ctx.config = undefined;
+        ctx.isLocalProject = false;
+        ctx.projectDir = "/tmp/hosted-project";
+        ctx.resolvedEnvironment = "preview";
+        ctx.requestContext = { branch: "feature/hosted-render", mode: "preview" };
 
-      const sourceContext = {
-        productionMode: false,
-        branch: "feature/hosted-render",
-      } as const;
-      ctx.prepareHostedConfigContext = async () => ({
-        sourceContext,
-        preparedContext: await prepareDeclarativeConfigContext({
-          environmentName: "preview",
-          environment: { TENANT: "tenant-value" },
-        }),
-      });
+        const sourceContext = {
+          productionMode: false,
+          branch: "feature/hosted-render",
+        } as const;
+        ctx.prepareHostedConfigContext = async () => ({
+          sourceContext,
+          preparedContext: await prepareDeclarativeConfigContext({
+            environmentName: "preview",
+            environment: { TENANT: "tenant-value" },
+          }),
+        });
 
+        const fs = {
+          isVeryfrontAdapter: () => true,
+          getUnderlyingAdapter: () => ({}),
+          isMultiProjectMode: () => true,
+          runWithContext: (
+            projectSlug: string,
+            token: string,
+            fn: () => Promise<unknown>,
+            projectId?: string,
+            opts?: Record<string, unknown>,
+          ) =>
+            runWithRequestContext(
+              { projectSlug, token, projectId, ...opts },
+              fn as () => Promise<never>,
+            ),
+          exists: () => Promise.reject(new Error("hosted config must not probe exists")),
+          readFile: (path: string) => {
+            if (path !== "/veryfront.config.ts") {
+              return Promise.reject(
+                Object.assign(new Error(`File not found: ${path}`), { code: "ENOENT" }),
+              );
+            }
+            return Promise.resolve(`
+            import { defineConfigWithEnv, getEnv } from "veryfront";
+            export default defineConfigWithEnv((environmentName) => ({
+              title: \`\${environmentName}:\${getEnv("TENANT") ?? "missing"}\`,
+            }));
+          `);
+          },
+          readDir: async function* () {},
+          stat: () => Promise.resolve({ isFile: false, isDirectory: false }),
+        };
+        ctx.adapter = {
+          fs,
+          env: { get: () => undefined, set: () => {}, delete: () => {}, toObject: () => ({}) },
+        } as unknown as any;
+
+        await getRendererForProject(ctx);
+
+        assertEquals(ctx.enriched !== undefined, true);
+        assertEquals(ctx.enriched.config.title, "preview:tenant-value");
+      },
+    );
+
+    it("falls back to defaults when the release published no config", async () => {
+      // A release with no config answers 404. adapter-factory.ts already treats
+      // that as an ordinary project shape; this second load has to agree, or a
+      // project without a config clears that guard and dies here instead.
+      const ctx = stubHostedRenderContext();
+      let prepareCalls = 0;
+      ctx.prepareHostedConfigContext = async () => {
+        prepareCalls++;
+        return await hostedConfigContext();
+      };
       const fs = {
         isVeryfrontAdapter: () => true,
         getUnderlyingAdapter: () => ({}),
@@ -499,19 +687,7 @@ describe("RendererAdapter with RendererInitializer", () => {
             fn as () => Promise<never>,
           ),
         exists: () => Promise.reject(new Error("hosted config must not probe exists")),
-        readFile: (path: string) => {
-          if (path !== "/veryfront.config.ts") {
-            return Promise.reject(
-              Object.assign(new Error(`File not found: ${path}`), { code: "ENOENT" }),
-            );
-          }
-          return Promise.resolve(`
-            import { defineConfigWithEnv, getEnv } from "veryfront";
-            export default defineConfigWithEnv((environmentName) => ({
-              title: \`\${environmentName}:\${getEnv("TENANT") ?? "missing"}\`,
-            }));
-          `);
-        },
+        readFile: () => Promise.reject(Object.assign(new Error("Not Found"), { status: 404 })),
         readDir: async function* () {},
         stat: () => Promise.resolve({ isFile: false, isDirectory: false }),
       };
@@ -523,7 +699,61 @@ describe("RendererAdapter with RendererInitializer", () => {
       await getRendererForProject(ctx);
 
       assertEquals(ctx.enriched !== undefined, true);
-      assertEquals(ctx.enriched.config.title, "preview:tenant-value");
+      assertEquals(ctx.enriched.config.title, "Veryfront App");
+      // Preparation happens once, outside the try. The old shape called it a
+      // second time in the catch and threw the result away.
+      assertEquals(prepareCalls, 1);
+    });
+
+    it("propagates a 404 raised while preparing the hosted context", async () => {
+      // hasNotFoundStatus is scoped to the config load alone. A 404 from
+      // context preparation means the project, release or token did not
+      // resolve -- a real failure, not "this release published no config".
+      //
+      // The old shape wrapped preparation in the same try and then retried it
+      // inside the catch, so whether the 404 surfaced depended on whether that
+      // retry happened to fail too. When it succeeded the error was swallowed
+      // and the request rendered a default config with HTTP 200. Preparation
+      // fails once here and succeeds after, which is the case that exposed it.
+      const ctx = stubHostedRenderContext();
+      let prepareCalls = 0;
+      ctx.prepareHostedConfigContext = async () => {
+        prepareCalls++;
+        if (prepareCalls === 1) {
+          throw Object.assign(new Error("project lookup failed"), { status: 404 });
+        }
+        return await hostedConfigContext();
+      };
+      const fs = {
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => true,
+        runWithContext: (
+          projectSlug: string,
+          token: string,
+          fn: () => Promise<unknown>,
+          projectId?: string,
+          opts?: Record<string, unknown>,
+        ) =>
+          runWithRequestContext(
+            { projectSlug, token, projectId, ...opts },
+            fn as () => Promise<never>,
+          ),
+        exists: () => Promise.reject(new Error("hosted config must not probe exists")),
+        readFile: () => Promise.reject(new Error("config load must not be reached")),
+        readDir: async function* () {},
+        stat: () => Promise.resolve({ isFile: false, isDirectory: false }),
+      };
+      ctx.adapter = {
+        fs,
+        env: { get: () => undefined, set: () => {}, delete: () => {}, toObject: () => ({}) },
+      } as unknown as any;
+
+      await assertRejects(
+        () => getRendererForProject(ctx),
+        Error,
+        "project lookup failed",
+      );
     });
 
     it("derives projectId from projectDir when no explicit id", async () => {

@@ -202,6 +202,31 @@ describe("observability/tracing/otlp-setup", () => {
     );
   });
 
+  it("withSpan preserves the original error when error status mapping fails", async () => {
+    const { withSpan } = await import("./otlp-setup.ts");
+    const applicationError = new Error("application failed");
+    let caught: unknown;
+
+    try {
+      await withSpan(
+        "failure",
+        async () => {
+          throw applicationError;
+        },
+        {},
+        {
+          errorStatus: () => {
+            throw new Error("telemetry classification failed");
+          },
+        },
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    assertStrictEquals(caught, applicationError);
+  });
+
   it("withSpan preserves exact accessor-backed errors during descriptor-value poisoning", async () => {
     const { withSpan } = await import("./otlp-setup.ts");
     const applicationError = new Error("application failure");

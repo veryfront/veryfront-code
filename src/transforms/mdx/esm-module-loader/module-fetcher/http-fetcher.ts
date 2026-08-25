@@ -13,7 +13,11 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { rewriteVeryfrontImports } from "./import-rewriter.ts";
-import { findNestedImports } from "./nested-imports.ts";
+import {
+  dynamicDependencyFailure,
+  findNestedImports,
+  toImportStringLiteral,
+} from "./nested-imports.ts";
 import { replaceSourceSpans, type SourceSpanReplacement } from "../utils/source-spans.ts";
 import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 import { readHttpModuleText } from "../../../shared/http-module-response.ts";
@@ -22,9 +26,13 @@ import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/constants/limits.ts";
 import { parallelMap } from "#veryfront/utils/parallel.ts";
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
 import { assertMdxModuleImportCount, MAX_MDX_MODULE_TRANSFORM_CONCURRENCY } from "./limits.ts";
+import { createStubModule, type DeferredImportErrorDescriptor } from "../utils/stub-module.ts";
 
 export interface FetchModuleViaHttpOptions {
+  esmCacheDir?: string;
   fetchFn?: typeof fetch;
+  moduleServerOrigin?: string;
+  strictMissingModules?: boolean;
   timeoutMs?: number;
 }
 
@@ -55,7 +63,71 @@ function requireProjectSlug(value: string | undefined): string {
   ) {
     throw new TypeError("Project slug must be a valid DNS label");
   }
-  return `${value}.lvh.me`;
+  return `${value}.localhost`;
+}
+
+function isLocalhostSubdomain(hostname: string): boolean {
+  return hostname !== "localhost" && hostname.endsWith(".localhost");
+}
+
+/**
+ * True for errors that mean "the hostname could not be resolved".
+ *
+ * Deliberately excludes aborts (timeout/cancellation), which must not be retried.
+ */
+function isNameResolutionError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === "AbortError") return false;
+  if (!(error instanceof Error)) return false;
+  const text = `${error.message} ${(error.cause as Error | undefined)?.message ?? ""}`
+    .toLowerCase();
+  return text.includes("dns error") ||
+    text.includes("failed to lookup address") ||
+    text.includes("enotfound") ||
+    text.includes("eai_again") ||
+    text.includes("name or service not known");
+}
+
+/**
+ * Fetch the module, falling back to bare `localhost` when a project subdomain
+ * cannot be resolved.
+ *
+ * RFC 6761 only *recommends* that resolvers map the `.localhost` tree to
+ * loopback. macOS, systemd-resolved and CI honour it for arbitrary subdomains,
+ * but a plain glibc NSS setup can resolve only the bare name and fail
+ * `<slug>.localhost` with EAI_AGAIN/ENOTFOUND, which would make this fallback
+ * unable to reach the dev server at all.
+ *
+ * Pinning the connection to 127.0.0.1 while keeping subdomain routing is not an
+ * option: Deno's fetch silently drops a `Host` header override (verified), so
+ * the request would arrive with `Host: 127.0.0.1` and lose the project.
+ *
+ * The retry therefore carries the project in `x-project-slug`, which the dev
+ * server reads inbound (see server/context/request-context.ts and
+ * server/runtime-handler/project-resolution.ts) and which fetch, unlike `Host`,
+ * is allowed to set. Without it a multi-project workspace would lose tenant
+ * identity, because resolveDefaultProjectSlug() returns undefined there.
+ */
+async function fetchModuleWithLoopbackFallback(
+  fetchFn: typeof fetch,
+  url: URL,
+  init: RequestInit,
+  log: Logger,
+  projectSlug?: string,
+): Promise<Response> {
+  try {
+    return await fetchFn(url.toString(), init);
+  } catch (error) {
+    if (!isLocalhostSubdomain(url.hostname) || !isNameResolutionError(error)) throw error;
+    const fallbackUrl = new URL(url);
+    fallbackUrl.hostname = "localhost";
+    const headers = new Headers(init.headers);
+    if (projectSlug) headers.set("x-project-slug", projectSlug);
+    log.debug(
+      `${LOG_PREFIX_MDX_LOADER} ${url.hostname} did not resolve; retrying via ${fallbackUrl.host}` +
+        `${projectSlug ? ` with x-project-slug: ${projectSlug}` : ""}`,
+    );
+    return await fetchFn(fallbackUrl.toString(), { ...init, headers });
+  }
 }
 
 function requireFetchTimeout(value: number): number {
@@ -97,13 +169,21 @@ export async function fetchModuleViaHTTP(
 
   log.debug(`${LOG_PREFIX_MDX_LOADER} Direct read failed, falling back to HTTP: ${normalizedPath}`);
 
-  const port = requireLocalDevPort(
-    adapter.env.get("VERYFRONT_DEV_PORT") || adapter.env.get("PORT") || "3001",
-  );
-  const host = requireProjectSlug(projectSlug);
   const timeoutMs = requireFetchTimeout(options.timeoutMs ?? HTTP_FETCH_TIMEOUT_MS);
   const fetchFn = options.fetchFn ?? fetch;
-  const moduleUrl = new URL(`http://${host}:${port}`);
+  const moduleServerOrigin = options.moduleServerOrigin ??
+    `http://${requireProjectSlug(projectSlug)}:${
+      requireLocalDevPort(
+        adapter.env.get("VERYFRONT_DEV_PORT") || adapter.env.get("PORT") || "3001",
+      )
+    }`;
+  const moduleServerUrl = new URL(
+    moduleServerOrigin,
+  );
+  if (moduleServerUrl.protocol !== "http:" && moduleServerUrl.protocol !== "https:") {
+    throw new TypeError("Module server origin must use http or https");
+  }
+  const moduleUrl = new URL(moduleServerUrl.origin);
   moduleUrl.pathname = `/${normalizedPath}`;
   moduleUrl.searchParams.set("ssr", "true");
   if (dependencyPinningCacheKey?.startsWith("on:")) {
@@ -126,12 +206,22 @@ export async function fetchModuleViaHTTP(
   try {
     response = await withSpan(
       SpanNames.HTTP_CLIENT_FETCH,
-      () => fetchFn(moduleUrlString, { signal: controller.signal, redirect: "error" }),
+      () =>
+        fetchModuleWithLoopbackFallback(
+          fetchFn,
+          moduleUrl,
+          {
+            signal: controller.signal,
+            redirect: "error",
+          },
+          log,
+          projectSlug,
+        ),
       {
         "http.method": "GET",
         "http.url": moduleUrlString,
         "http.target": `/${normalizedPath}`,
-        "http.host": host,
+        "http.host": moduleUrl.host,
         "mdx.module_path": normalizedPath,
       },
     );
@@ -154,18 +244,24 @@ export async function fetchModuleViaHTTP(
 
     const { vfModules, relative } = findNestedImports(moduleCode);
     const allImports = [
-      ...vfModules.map(({ original, path, start, end }) => ({
+      ...vfModules.map(({ original, path, suffix, start, end, isDynamic, isSideEffect }) => ({
         original,
         path,
+        suffix,
         start,
         end,
+        isDynamic,
+        isSideEffect,
         key: "nestedPath" as const,
       })),
-      ...relative.map(({ original, path, start, end }) => ({
+      ...relative.map(({ original, path, suffix, start, end, isDynamic, isSideEffect }) => ({
         original,
         path,
+        suffix,
         start,
         end,
+        isDynamic,
+        isSideEffect,
         key: "relativePath" as const,
       })),
     ];
@@ -173,9 +269,38 @@ export async function fetchModuleViaHTTP(
 
     const results = await parallelMap(
       allImports,
-      async ({ original, path, start, end, key }) => {
-        const nestedFilePath = await fetchAndCacheModuleFn(path, normalizedPath);
-        return { original, start, end, nestedFilePath, [key]: path };
+      async ({ original, path, suffix, start, end, isDynamic, isSideEffect, key }) => {
+        let nestedFilePath: string | null;
+        let deferredError: DeferredImportErrorDescriptor | undefined;
+        try {
+          nestedFilePath = await fetchAndCacheModuleFn(path, normalizedPath);
+        } catch (error) {
+          deferredError = isDynamic
+            ? dynamicDependencyFailure(path, error) ?? undefined
+            : undefined;
+          if (!deferredError || !options.esmCacheDir) throw error;
+          nestedFilePath = null;
+        }
+
+        if (!nestedFilePath && isDynamic && options.esmCacheDir) {
+          nestedFilePath = await createStubModule(
+            path,
+            moduleCode,
+            original,
+            options.esmCacheDir,
+            { failOnImport: options.strictMissingModules ?? true, deferredError },
+          );
+        }
+        return {
+          original,
+          start,
+          end,
+          suffix,
+          isDynamic,
+          isSideEffect,
+          nestedFilePath,
+          [key]: path,
+        };
       },
       {
         semaphore: new Semaphore(MAX_MDX_MODULE_TRANSFORM_CONCURRENCY),
@@ -183,13 +308,23 @@ export async function fetchModuleViaHTTP(
     );
 
     const replacements: SourceSpanReplacement[] = [];
-    for (const { original, start, end, nestedFilePath } of results) {
+    for (
+      const { original, start, end, suffix, isDynamic, isSideEffect, nestedFilePath } of results
+    ) {
       if (nestedFilePath) {
+        // The suffix and the cache path are author- and filesystem-controlled.
+        // Interpolating either into a hand-written double-quoted literal emits
+        // a module that fails to parse whenever one contains `"` or `\`.
+        const importTarget = toImportStringLiteral(`file://${nestedFilePath}${suffix ?? ""}`);
         replacements.push({
           start,
           end,
           expected: original,
-          replacement: `from "file://${nestedFilePath}"`,
+          replacement: isDynamic
+            ? importTarget
+            : isSideEffect
+            ? `import ${importTarget}`
+            : `from ${importTarget}`,
         });
       }
     }

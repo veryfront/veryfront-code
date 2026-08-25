@@ -1,8 +1,8 @@
 import { LRUCacheAdapter } from "./cache/stores/memory/lru-cache-adapter.ts";
 import type { LRUCacheOptions } from "./cache/stores/memory/types.ts";
 import { DEFAULT_LRU_MAX_ENTRIES } from "#veryfront/utils";
-import { unrefTimer } from "#veryfront/platform/compat/process.ts";
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { unrefTimer } from "#veryfront/platform/compat/process/lifecycle.ts";
+import { getEnv } from "#veryfront/platform/compat/process/env.ts";
 
 /** Default interval between expired-entry cleanup sweeps (1 minute) */
 const DEFAULT_CLEANUP_INTERVAL_MS = 60_000;
@@ -72,7 +72,7 @@ export class LRUCache<K, V> {
   }
 
   has(key: K): boolean {
-    return this.adapter.get(this.toStringKey(key)) !== undefined;
+    return this.adapter.has(this.toStringKey(key));
   }
 
   get(key: K): V | undefined {
@@ -85,7 +85,7 @@ export class LRUCache<K, V> {
 
   delete(key: K): boolean {
     const stringKey = this.toStringKey(key);
-    const had = this.adapter.get(stringKey) !== undefined;
+    const had = this.adapter.has(stringKey);
     this.adapter.delete(stringKey);
     return had;
   }

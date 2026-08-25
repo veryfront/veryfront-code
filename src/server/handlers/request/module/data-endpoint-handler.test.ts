@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
 import type { HandlerContext, HandlerResult } from "../../types.ts";
@@ -60,7 +60,6 @@ function makeCtx(projectDir: string): HandlerContext {
     projectDir,
     adapter: createMockAdapter(),
     securityConfig: null,
-    cspUserHeader: null,
   };
 }
 
@@ -360,6 +359,19 @@ describe("server/handlers/request/module/data-endpoint-handler", () => {
         ),
         true,
       );
+
+      const etag = response.headers.get("etag");
+      assertExists(etag, "the data endpoint must return a validator");
+      const second = await callDataEndpoint(
+        new Request(
+          "http://localhost/_veryfront/data/docs.json?view=full&pins=app-value",
+          { headers: { "if-none-match": etag } },
+        ),
+        makeCtx(projectDir),
+      );
+      assertEquals(second.status, 304, "a matching if-none-match must short-circuit");
+      assertEquals(await second.text(), "", "304 must carry no body");
+      assertEquals(second.headers.get("etag"), etag, "304 must echo the validator");
     } finally {
       restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
       clearReactVersionCache();
@@ -443,6 +455,59 @@ describe("server/handlers/request/module/data-endpoint-handler", () => {
 
     it("answers 500 for a generic failure", async () => {
       assertEquals(await statusForRejection(new Error("render blew up")), 500);
+    });
+  });
+
+  describe("slug derivation", () => {
+    async function slugFor(
+      pathname: string,
+      ctx: HandlerContext,
+    ): Promise<{ slug: string | undefined; status: number }> {
+      let slug: string | undefined;
+      setRendererInitializer(
+        createInitializer(
+          ((observed: string) => {
+            slug = observed;
+            return Promise.resolve({ frontmatter: {}, headings: [], html: "" });
+          }) as unknown as Renderer["renderPage"],
+        ),
+      );
+
+      const response = await callDataEndpoint(
+        new Request(`http://localhost${pathname}`),
+        ctx,
+      );
+      return { slug, status: response.status };
+    }
+
+    it("maps index.json to the root slug and a nested path to its slug", async () => {
+      const ctx = makeCtx("/project");
+      assertEquals((await slugFor("/_veryfront/data/index.json", ctx)).slug, "");
+      assertEquals((await slugFor("/_veryfront/data/docs/intro.json", ctx)).slug, "docs/intro");
+    });
+
+    it("strips only the leading namespace, not a later repeat of it", async () => {
+      const ctx = makeCtx("/project");
+      assertEquals(
+        (await slugFor("/_veryfront/data/a/_veryfront/data/b.json", ctx)).slug,
+        "a/_veryfront/data/b",
+      );
+    });
+
+    it("refuses a dot-segment slug in production instead of rendering it", async () => {
+      const ctx = { ...makeCtx("/project"), resolvedEnvironment: "production" } as HandlerContext;
+      const result = await slugFor("/_veryfront/data/.veryfront/secrets.json", ctx);
+
+      assertEquals(result.slug, undefined);
+      assertEquals(result.status, 404);
+    });
+
+    it("still renders a dot-segment slug outside production", async () => {
+      const ctx: HandlerContext = { ...makeCtx("/project"), resolvedEnvironment: "preview" };
+      assertEquals(
+        (await slugFor("/_veryfront/data/.veryfront/secrets.json", ctx)).slug,
+        ".veryfront/secrets",
+      );
     });
   });
 });

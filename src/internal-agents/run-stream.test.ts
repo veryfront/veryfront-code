@@ -1,8 +1,17 @@
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
-import { type Agent, agent as createAgent, type AgentMessage } from "#veryfront/agent";
+import {
+  type Agent,
+  agent as createAgent,
+  type AgentMessage,
+  DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER,
+} from "#veryfront/agent";
+import { flattenSystemInstructions } from "#veryfront/agent/runtime/tool-inventory.ts";
+import { resolveAgentSystem } from "#veryfront/agent/runtime/effective-agent-system.ts";
 import {
   _resetShimForTests,
   type AttributeValue,
@@ -16,11 +25,44 @@ import type {
   AgentServiceSandboxToolsResult,
   CreateSandboxBashTool,
 } from "#veryfront/sandbox";
-import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
-import { type RemoteToolSource, type Tool, toolRegistry } from "#veryfront/tool";
+import { registerSkill } from "#veryfront/skill/registry.ts";
+import { type ModelRuntime, registerModelProvider } from "#veryfront/provider";
+import type { RemoteToolSource, Tool } from "#veryfront/tool";
 import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/logger/logger.ts";
+import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
+import { getActiveRunEventSinks } from "#veryfront/runtime/run-event-sink-context.ts";
 import { AgentRunSessionManager } from "./session-manager.ts";
-import { buildMergedTools, createRuntimeAgentStreamResponse } from "./run-stream.ts";
+import {
+  buildMergedTools,
+  createRuntimeAgentStreamResponse,
+  MODEL_CALL_CONTEXT_SSE_EVENT_NAME,
+} from "./run-stream.ts";
+
+function parseSseFrames(body: string): Array<{ event: string; data: unknown }> {
+  return body.split("\n\n").flatMap((frame) => {
+    const event = /^event: (.+)$/m.exec(frame)?.[1];
+    const data = /^data: (.+)$/m.exec(frame)?.[1];
+    return event && data ? [{ event, data: JSON.parse(data) as unknown }] : [];
+  });
+}
+
+async function resolveTestAgentSystem(system: unknown): Promise<Agent["config"]["system"]> {
+  if (typeof system === "function") {
+    return await resolveAgentSystem(system as Agent["config"]["system"], undefined);
+  }
+  return system as Agent["config"]["system"];
+}
+
+async function getAgentSystemText(system: unknown): Promise<string> {
+  const resolved = await resolveTestAgentSystem(system);
+  if (typeof resolved === "string") {
+    return resolved;
+  }
+  if (Array.isArray(resolved)) {
+    return flattenSystemInstructions(resolved);
+  }
+  throw new Error("Expected agent system instructions");
+}
 
 class RecordingSpan implements Span {
   readonly attributes: Record<string, AttributeValue> = {};
@@ -164,11 +206,11 @@ async function withJsonDebugLogFormat<T>(fn: () => Promise<T>): Promise<T> {
 describe("internal-agents/run-stream", () => {
   afterEach(() => {
     _resetShimForTests();
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
   });
 
   it("includes skill infrastructure for tools: true agents without a skills selector", () => {
-    toolRegistry.clearAll();
+    toolRegistryInternal.clearAll();
     try {
       const runtimeAgent = createAgent({
         id: "universal-skill-agent",
@@ -193,7 +235,7 @@ describe("internal-agents/run-stream", () => {
         "load_skill_reference",
       ]);
     } finally {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
     }
   });
 
@@ -207,7 +249,7 @@ describe("internal-agents/run-stream", () => {
       execute: () => ({ randomNumber: 7 }),
     } as unknown as Tool;
 
-    toolRegistry.register("number-generator", projectTool);
+    toolRegistryInternal.register("number-generator", projectTool);
     try {
       const runtimeAgent = {
         id: "random",
@@ -237,7 +279,7 @@ describe("internal-agents/run-stream", () => {
       assertEquals((entry as Tool).description, "Caller-supplied shadow definition");
       assertEquals(entry === projectTool, false);
     } finally {
-      toolRegistry.delete("number-generator");
+      toolRegistryInternal.delete("number-generator");
     }
   });
 
@@ -251,7 +293,7 @@ describe("internal-agents/run-stream", () => {
       execute: () => ({ randomNumber: 7 }),
     } as unknown as Tool;
 
-    toolRegistry.register("number-generator", projectTool);
+    toolRegistryInternal.register("number-generator", projectTool);
     try {
       const runtimeAgent = {
         id: "random",
@@ -280,7 +322,7 @@ describe("internal-agents/run-stream", () => {
       assertEquals(typeof entry, "object");
       assertEquals((entry as Tool).description, "Caller-supplied shadow definition");
     } finally {
-      toolRegistry.delete("number-generator");
+      toolRegistryInternal.delete("number-generator");
     }
   });
 
@@ -294,7 +336,7 @@ describe("internal-agents/run-stream", () => {
       execute: () => ({ randomNumber: 7 }),
     } as unknown as Tool;
 
-    toolRegistry.register("number-generator", projectTool);
+    toolRegistryInternal.register("number-generator", projectTool);
     try {
       const runtimeAgent = {
         id: "random",
@@ -326,7 +368,7 @@ describe("internal-agents/run-stream", () => {
 
       assertEquals(mergedTools?.["number-generator"], projectTool);
     } finally {
-      toolRegistry.delete("number-generator");
+      toolRegistryInternal.delete("number-generator");
     }
   });
 
@@ -427,9 +469,15 @@ describe("internal-agents/run-stream", () => {
       },
     });
 
-    const system = capturedAgent?.config.system;
-    assertEquals(typeof system, "string");
-    const prompt = system as string;
+    const system = await resolveTestAgentSystem(capturedAgent?.config.system);
+    assertEquals(Array.isArray(system), true);
+    if (!Array.isArray(system)) {
+      throw new Error("Expected structured internal run system messages");
+    }
+    assertEquals(system[0]?.providerOptions, {
+      anthropic: { cacheControl: { type: "ephemeral" } },
+    });
+    const prompt = flattenSystemInstructions(system);
     assertStringIncludes(prompt, "You are Custom Agent.");
     assertStringIncludes(prompt, 'project_reference: "project-1"');
     assertStringIncludes(prompt, "branch_id: main (no branch_id needed for file operations)");
@@ -439,6 +487,215 @@ describe("internal-agents/run-stream", () => {
     assertStringIncludes(prompt, "Current run tool inventory:");
     assertStringIncludes(prompt, "- create_file");
     assertStringIncludes(prompt, "- outlook__send_email");
+  });
+
+  it("preserves an agent factory marker through internal runtime dispatch", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedSystem: Agent["config"]["system"] | undefined;
+    const runtimeAgent = createAgent({
+      id: "marker-agent",
+      model: "anthropic/claude-opus-4-6",
+      skills: false,
+      environmentContext: "Factory environment context.",
+      system: [{
+        role: "system",
+        content:
+          `Instructions before.\n\n${DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER}\n\nInstructions after.`,
+        providerOptions: {
+          anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+        },
+      }],
+    });
+    const input = {
+      agentId: runtimeAgent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_marker_agent",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {},
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(input, runtimeAgent, {
+      sessionManager,
+      projectAgentSandbox: { projectId: "project-1" },
+      createRuntime: (agent) => {
+        capturedSystem = agent.config.system;
+        return {
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            }),
+        };
+      },
+    });
+
+    const resolvedSystem = await resolveTestAgentSystem(capturedSystem);
+    assertEquals(Array.isArray(resolvedSystem), true);
+    if (!Array.isArray(resolvedSystem)) {
+      throw new Error("Expected structured internal runtime system messages");
+    }
+    assertEquals(resolvedSystem[0]?.content, "Instructions before.");
+    const projectIndex = resolvedSystem.findIndex((message) =>
+      message.content.includes('project_reference: "project-1"')
+    );
+    const factoryContextIndex = resolvedSystem.findIndex((message) =>
+      message.content.includes("Factory environment context.")
+    );
+    const authoredTailIndex = resolvedSystem.findIndex((message) =>
+      message.content.includes("Instructions after.")
+    );
+    assertEquals(projectIndex > 0 && projectIndex < authoredTailIndex, true);
+    assertEquals(factoryContextIndex > 0 && factoryContextIndex < authoredTailIndex, true);
+    assertEquals(
+      flattenSystemInstructions(resolvedSystem).split("Instructions after.").length - 1,
+      1,
+    );
+  });
+
+  it("keeps structured cache metadata through internal runtime dispatch", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedSystem: Agent["config"]["system"] | undefined;
+    const agent = {
+      id: "structured-system-agent",
+      config: {
+        id: "structured-system-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: [{
+          role: "system",
+          content: "Shared internal instructions.",
+          providerOptions: {
+            anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+          },
+        }],
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_structured_system",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: (runtimeAgent) => {
+        capturedSystem = runtimeAgent.config.system;
+        return {
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            }),
+        };
+      },
+    });
+
+    const resolvedSystem = await resolveTestAgentSystem(capturedSystem);
+    assertEquals(Array.isArray(resolvedSystem), true);
+    if (!Array.isArray(resolvedSystem)) {
+      throw new Error("Expected structured internal runtime system messages");
+    }
+    assertEquals(resolvedSystem[0], {
+      role: "system",
+      content: "Shared internal instructions.",
+      providerOptions: {
+        anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+      },
+    });
+  });
+
+  it("uses the effective runtime provider key during internal runtime dispatch", async () => {
+    let observedSystem: unknown;
+    let authoredSystemCalls = 0;
+    let modelTransportCalls = 0;
+    const model: ModelRuntime = {
+      provider: "AWS-Anthropic",
+      modelId: "claude-sonnet",
+      // deno-lint-ignore require-await
+      async doGenerate() {
+        throw new Error("Internal streaming must not use generate");
+      },
+      // deno-lint-ignore require-await
+      async doStream(options: unknown) {
+        observedSystem = (options as {
+          prompt?: Array<{ role?: string; content?: unknown; providerOptions?: unknown }>;
+        }).prompt?.filter((message) => message.role === "system");
+        return {
+          stream: new ReadableStream<unknown>({
+            start(controller) {
+              controller.enqueue({ type: "finish", finishReason: "stop" });
+              controller.close();
+            },
+          }),
+        };
+      },
+    } as unknown as ModelRuntime;
+    const unregister = registerModelProvider("bedrock", () => model);
+
+    try {
+      const runtimeAgent = createAgent({
+        id: "internal-runtime-provider-key",
+        model: "bedrock/claude-sonnet",
+        system: () => {
+          authoredSystemCalls += 1;
+          return Promise.resolve([{
+            role: "system" as const,
+            content: "Shared internal instructions.",
+            providerOptions: {
+              "AWS-Anthropic": { cacheControl: { type: "ephemeral" as const, ttl: "1h" as const } },
+            },
+          }, {
+            role: "system" as const,
+            content: "Authored dynamic instructions.",
+          }]);
+        },
+        resolveModelTransport: () => {
+          modelTransportCalls += 1;
+          return Promise.resolve({ model });
+        },
+        skills: false,
+      });
+      const response = await createRuntimeAgentStreamResponse(
+        {
+          agentId: runtimeAgent.id,
+          threadId: crypto.randomUUID(),
+          runId: "run_runtime_provider_key",
+          messages: [],
+          tools: [],
+          context: [],
+        } as Parameters<typeof createRuntimeAgentStreamResponse>[0],
+        runtimeAgent,
+        {
+          sessionManager: new AgentRunSessionManager(),
+        },
+      );
+      await response.text();
+
+      assertEquals(authoredSystemCalls, 1);
+      assertEquals(modelTransportCalls, 1);
+      if (!Array.isArray(observedSystem)) {
+        throw new Error("Expected the model runtime to receive system messages");
+      }
+      assertEquals(observedSystem.slice(0, 2), [{
+        role: "system",
+        content: "Shared internal instructions.",
+        providerOptions: {
+          "AWS-Anthropic": { cacheControl: { type: "ephemeral", ttl: "1h" } },
+        },
+      }, {
+        role: "system",
+        content: "Authored dynamic instructions.",
+      }]);
+      assertEquals(observedSystem[2]?.providerOptions, undefined);
+    } finally {
+      unregister();
+    }
   });
 
   it("includes the resolved system prompt in message compaction overhead", async () => {
@@ -1122,8 +1379,7 @@ describe("internal-agents/run-stream", () => {
     );
 
     assertEquals(capturedAllowedRemoteTools, undefined);
-    assertEquals(typeof runtimeSystem, "string");
-    const prompt = runtimeSystem as string;
+    const prompt = await getAgentSystemText(runtimeSystem);
     assertEquals(prompt.includes("- gmail__list_emails"), false);
   });
 
@@ -1194,8 +1450,7 @@ describe("internal-agents/run-stream", () => {
     );
 
     assertEquals(capturedAllowedRemoteTools, ["gmail__list_emails"]);
-    assertEquals(typeof runtimeSystem, "string");
-    const prompt = runtimeSystem as string;
+    const prompt = await getAgentSystemText(runtimeSystem);
     assertStringIncludes(prompt, "- gmail__list_emails");
     assertEquals(prompt.includes("- gmail__delete_email"), false);
   });
@@ -1371,7 +1626,7 @@ describe("internal-agents/run-stream", () => {
         id: "ops-agent",
         model: "openai/gpt-5.4-nano",
         system: "test",
-        providerTools: ["web_search"],
+        providerTools: ["web_search", "web_fetch"],
       },
     } as unknown as Agent;
 
@@ -1400,9 +1655,11 @@ describe("internal-agents/run-stream", () => {
       },
     });
 
-    assertEquals(typeof runtimeSystem, "string");
-    const prompt = runtimeSystem as string;
+    const prompt = await getAgentSystemText(runtimeSystem);
+    // OpenAI exposes a native web_search but no native web_fetch, so only the
+    // supported half may reach the inventory.
     assertEquals(prompt.includes("- web_search"), true);
+    assertEquals(prompt.includes("- web_fetch"), false);
   });
 
   it("keeps local tools required without protecting remote placeholders from provider caps", async () => {
@@ -1452,8 +1709,7 @@ describe("internal-agents/run-stream", () => {
       },
     });
 
-    assertEquals(typeof runtimeSystem, "string");
-    const prompt = runtimeSystem as string;
+    const prompt = await getAgentSystemText(runtimeSystem);
     assertStringIncludes(prompt, "- zzz_local");
     assertEquals(prompt.includes("- remote_127"), false);
   });
@@ -1509,6 +1765,111 @@ describe("internal-agents/run-stream", () => {
     );
 
     assertEquals(capturedToolNames, ["read_baseline"]);
+  });
+
+  it("withholds invoke_agent when the signed runtime request denies delegation", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedToolNames: string[] = [];
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: {
+          read_baseline: { description: "Read the telemetry baseline" },
+          invoke_agent: { description: "Delegate to another agent" },
+        },
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      allowDelegation: false,
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: (_agent, mergedTools) => {
+        capturedToolNames = Object.keys(mergedTools ?? {}).sort();
+        return {
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            }),
+        };
+      },
+    });
+
+    assertEquals(capturedToolNames, ["read_baseline"]);
+  });
+
+  it("strips invoke_agent from the remote tool grants when delegation is denied", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedAllowedRemoteTools: string[] | undefined;
+    let capturedToolNames: string[] = [];
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        __vfAllowedRemoteTools: ["invoke_agent"],
+        tools: {
+          read_baseline: { description: "Read the telemetry baseline" },
+          invoke_agent: { description: "Delegate to another agent" },
+        },
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      allowDelegation: false,
+      forwardedProps: {
+        runtimeOverrides: {
+          allowedTools: ["search_knowledge"],
+        },
+      },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: (runtimeAgent, mergedTools) => {
+        capturedAllowedRemoteTools = (
+          runtimeAgent.config as Agent["config"] & { __vfAllowedRemoteTools?: string[] }
+        ).__vfAllowedRemoteTools;
+        capturedToolNames = Object.keys(mergedTools ?? {}).sort();
+        return {
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            }),
+        };
+      },
+    });
+
+    assertEquals(
+      capturedAllowedRemoteTools,
+      ["search_knowledge"],
+      "a signed request denying delegation must strip invoke_agent from the remote grants too",
+    );
+    assertEquals(capturedToolNames.includes("invoke_agent"), false);
   });
 
   it("preserves invoke_agent delegation when visible skills are hidden from the catalog", async () => {
@@ -2083,7 +2444,7 @@ describe("internal-agents/run-stream", () => {
     } as unknown as Tool;
     let capturedToolEntry: Tool | boolean | undefined;
 
-    toolRegistry.register("number-generator", projectTool);
+    toolRegistryInternal.register("number-generator", projectTool);
     try {
       const agent = {
         id: "random",
@@ -2138,7 +2499,7 @@ describe("internal-agents/run-stream", () => {
         },
       );
     } finally {
-      toolRegistry.delete("number-generator");
+      toolRegistryInternal.delete("number-generator");
     }
 
     assertEquals(capturedToolEntry, projectTool);
@@ -2387,6 +2748,62 @@ describe("internal-agents/run-stream", () => {
     assertEquals(sessionManager.getRunStatus(input.runId), null);
   });
 
+  it("logs an expected runtime cancellation as lifecycle info", async () => {
+    const logs = captureConsoleJsonLogs();
+    try {
+      await withJsonDebugLogFormat(async () => {
+        const sessionManager = new AgentRunSessionManager();
+        const agent = {
+          id: "cancelled-agent",
+          config: {
+            id: "cancelled-agent",
+            model: "anthropic/claude-opus-4-6",
+            system: "test",
+          },
+        } as unknown as Agent;
+        const input = {
+          agentId: agent.id,
+          threadId: crypto.randomUUID(),
+          runId: "run_cancelled",
+          messages: [],
+          tools: [],
+          context: [],
+        } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+        const response = await createRuntimeAgentStreamResponse(input, agent, {
+          sessionManager,
+          createRuntime: () => ({
+            stream: async () => {
+              sessionManager.cancelRun(input.runId);
+              return new ReadableStream<Uint8Array>();
+            },
+          }),
+        });
+        await response.text();
+      });
+    } finally {
+      logs.restore();
+    }
+
+    const entries = logs.getEntries();
+    const cancellationEntry = entries.find((entry) =>
+      entry.message === "Internal agent runtime session cancelled"
+    );
+    assertEquals(cancellationEntry?.level, "info");
+    assertEquals(cancellationEntry?.context?.status, "cancelled");
+    assertEquals(cancellationEntry?.context?.error, undefined);
+    assertEquals(
+      entries.find((entry) => entry.message === "Internal agent runtime stream aborted")?.level,
+      "debug",
+    );
+    assertEquals(
+      entries.some((entry) =>
+        entry.level === "warn" && entry.message === "Internal agent runtime stream cancelled"
+      ),
+      false,
+    );
+  });
+
   it("cancels and releases a runtime reader after a non-EOF mapping failure", async () => {
     const sessionManager = new AgentRunSessionManager();
     const agent = {
@@ -2435,6 +2852,86 @@ describe("internal-agents/run-stream", () => {
     assertEquals(runtimeCancelCalls, 1);
     assertEquals(runtimeStream?.locked, false);
     assertEquals(sessionManager.getRunStatus(input.runId), null);
+  });
+
+  it("pre-registers the tool-result wait when a tool call starts streaming", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "tool-wait-agent",
+      config: {
+        id: "tool-wait-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_tool_wait",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    let runtimeController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async () =>
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              runtimeController = controller;
+              controller.enqueue(
+                new TextEncoder().encode(
+                  'data: {"type":"tool-input-start","toolCallId":"tool-1","toolName":"bash"}\n\n',
+                ),
+              );
+            },
+          }),
+      }),
+    });
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error("Expected a runtime response body");
+    }
+
+    const decoder = new TextDecoder();
+    let streamed = "";
+    while (!streamed.includes("event: ToolCallStart")) {
+      const chunk = await reader.read();
+      if (chunk.done) {
+        break;
+      }
+      streamed += decoder.decode(chunk.value, { stream: true });
+    }
+    assertStringIncludes(streamed, "event: ToolCallStart");
+
+    // A Studio client can POST its result before the runtime invokes the tool,
+    // so the wait has to exist as soon as the frame reaches the client.
+    let thrown: unknown;
+    try {
+      sessionManager.submitToolResult(input.runId, {
+        toolCallId: "tool-1",
+        result: { ok: true },
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    assertEquals(
+      thrown,
+      undefined,
+      "the tool-result wait must be pre-registered when ToolCallStart is emitted",
+    );
+
+    runtimeController?.close();
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) {
+        break;
+      }
+    }
+    reader.releaseLock();
   });
 
   it("cancels an active runtime stream when the client disconnects before a tool wait", async () => {
@@ -2555,5 +3052,130 @@ describe("internal-agents/run-stream", () => {
       entry.message === "Internal agent runtime reader cancellation failed during cleanup"
     );
     assertEquals(debugEntry?.component, "internal-agent-run-stream");
+  });
+  describe("model call context", () => {
+    const modelCallContextEvent = {
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      messages: [{ role: "system", content: "test system prompt" }],
+      tools: [{ type: "function", name: "granted_tool", inputSchema: {} }],
+    };
+
+    function contextAgent(): Agent {
+      return {
+        id: "context-agent",
+        config: { id: "context-agent", model: "anthropic/claude-opus-4-6", system: "test" },
+      } as unknown as Agent;
+    }
+
+    function contextRunInput(runId: string) {
+      return {
+        agentId: "context-agent",
+        threadId: crypto.randomUUID(),
+        runId,
+        messages: [],
+        tools: [],
+        context: [],
+      } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+    }
+
+    it("streams a context emitted while the runtime stream is created", async () => {
+      let sinkDuringCreate: AgentRunEventSink | undefined;
+
+      const response = await createRuntimeAgentStreamResponse(
+        contextRunInput("run_context_setup"),
+        contextAgent(),
+        {
+          sessionManager: new AgentRunSessionManager(),
+          createRuntime: () => ({
+            stream: async () => {
+              // The real runtime dispatches its first model call here, so the
+              // sink has to already be scoped by the time stream() runs.
+              sinkDuringCreate = getActiveRunEventSinks().mandatory;
+              await sinkDuringCreate?.(modelCallContextEvent as never);
+              return new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              });
+            },
+          }),
+        },
+      );
+
+      const frames = parseSseFrames(await response.text());
+      assertEquals(Boolean(sinkDuringCreate), true);
+      const contextFrame = frames.find((frame) =>
+        frame.event === MODEL_CALL_CONTEXT_SSE_EVENT_NAME
+      );
+      const contextEvent = contextFrame?.data as Record<string, unknown> | undefined;
+      assertEquals(contextEvent?.type, modelCallContextEvent.type);
+      assertEquals(contextEvent?.messages, modelCallContextEvent.messages);
+      assertEquals(contextEvent?.tools, modelCallContextEvent.tools);
+      assertEquals(
+        typeof contextEvent?.elapsedMs === "number" &&
+          Number.isFinite(contextEvent.elapsedMs) && contextEvent.elapsedMs >= 0,
+        true,
+      );
+      assertEquals(
+        typeof contextEvent?.emittedAt === "number" &&
+          Number.isInteger(contextEvent.emittedAt) && contextEvent.emittedAt > 0,
+        true,
+      );
+    });
+
+    it("keeps the context ahead of the step it describes", async () => {
+      const response = await createRuntimeAgentStreamResponse(
+        contextRunInput("run_context_order"),
+        contextAgent(),
+        {
+          sessionManager: new AgentRunSessionManager(),
+          createRuntime: () => ({
+            stream: async () => {
+              await getActiveRunEventSinks().mandatory?.(modelCallContextEvent as never);
+              return new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              });
+            },
+          }),
+        },
+      );
+
+      const names = parseSseFrames(await response.text()).map((frame) => frame.event);
+      assertEquals(names[0], "RunStarted");
+      assertEquals(names[1], MODEL_CALL_CONTEXT_SSE_EVENT_NAME);
+    });
+
+    it("streams a context emitted for a later step while the client reads", async () => {
+      let sinkDuringConsume: AgentRunEventSink | undefined;
+
+      const response = await createRuntimeAgentStreamResponse(
+        contextRunInput("run_context_step_two"),
+        contextAgent(),
+        {
+          sessionManager: new AgentRunSessionManager(),
+          createRuntime: () => ({
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                // Multi-step runs dispatch later model calls as the stream is
+                // pulled, long after stream() returned.
+                async pull(controller) {
+                  sinkDuringConsume = getActiveRunEventSinks().mandatory;
+                  await sinkDuringConsume?.(modelCallContextEvent as never);
+                  controller.close();
+                },
+              }),
+          }),
+        },
+      );
+
+      const frames = parseSseFrames(await response.text());
+      assertEquals(Boolean(sinkDuringConsume), true);
+      assertEquals(
+        frames.filter((frame) => frame.event === MODEL_CALL_CONTEXT_SSE_EVENT_NAME).length,
+        1,
+      );
+    });
   });
 });

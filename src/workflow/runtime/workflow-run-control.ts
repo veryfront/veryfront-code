@@ -1,5 +1,6 @@
 import { logger as baseLogger } from "#veryfront/utils";
 import { ensureError, ORCHESTRATION_ERROR, RESOURCE_NOT_FOUND } from "#veryfront/errors";
+import { getActiveTraceparent } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
   hasLockSupport,
   hasWorkerSupport,
@@ -7,7 +8,13 @@ import {
   type WorkflowBackend,
 } from "../backends/types.ts";
 import type { CheckpointOwnership } from "../executor/checkpoint-manager.ts";
-import type { ApprovalDecision, NodeState, WorkflowContext, WorkflowRun } from "../types.ts";
+import type {
+  ApprovalDecision,
+  NodeState,
+  WaitNodeConfig,
+  WorkflowContext,
+  WorkflowRun,
+} from "../types.ts";
 import {
   requireWorkflowSourceIntegrationPolicy,
   runWithWorkflowSourceIntegrationPolicy,
@@ -20,6 +27,7 @@ export interface WorkflowRunControlExecuteResult {
   completed?: boolean;
   waiting?: boolean;
   waitingNode?: string;
+  waitingConfig?: WaitNodeConfig;
   context: WorkflowContext;
   nodeStates: Record<string, NodeState>;
   error?: string;
@@ -50,7 +58,11 @@ export interface WorkflowRunControlExecuteInput {
     error: Error,
     context: WorkflowContext,
   ): void | Promise<void>;
-  onWaiting?(run: WorkflowRun, nodeId: string): void | Promise<void>;
+  onWaiting?(
+    run: WorkflowRun,
+    nodeId: string,
+    waitConfig?: WaitNodeConfig,
+  ): void | Promise<void>;
 }
 
 export interface WorkflowRunControlExecuteOutcome {
@@ -141,6 +153,11 @@ export interface WorkflowRunControlReconcileOutcome {
 const DEFAULT_DECISION_RECONCILIATION_ATTEMPTS = 8;
 const ACTIVE_RECONCILE_STATUSES: WorkflowRun["status"][] = ["pending", "running", "waiting"];
 
+type ClaimPhase =
+  | { kind: "before-execution-owner" }
+  | { kind: "assigning-execution-owner"; workerId: string }
+  | { kind: "execution-owner-assigned"; workerId: string };
+
 export async function reconcileWorkflowRunControl(
   input: WorkflowRunControlReconcileInput,
 ): Promise<WorkflowRunControlReconcileOutcome> {
@@ -171,14 +188,16 @@ export async function claimWorkflowRunControl(
   const workerId = `run-execution:${executionId}`;
   let pendingLockToken: string | null = null;
   let runToProcess: WorkflowRun | null = run;
-  let claimed = false;
+  let claimPhase: ClaimPhase = { kind: "before-execution-owner" };
+  let managerClaimWorkerId: string | undefined;
 
   try {
     if (run.status === "running") {
       if (!hasWorkerSupport(backend)) return { status: "skipped-stalled-claim-lost" };
+      managerClaimWorkerId = `mgr:${managerId}`;
       const stalledClaimed = await backend.claimStalledRun(
         runId,
-        `mgr:${managerId}`,
+        managerClaimWorkerId,
         stalledThreshold,
       );
       if (!stalledClaimed) return { status: "skipped-stalled-claim-lost" };
@@ -202,8 +221,9 @@ export async function claimWorkflowRunControl(
     requireWorkflowSourceIntegrationPolicy(runToProcess);
 
     const now = new Date();
-    const expectedWorkerId = run.status === "running" ? `mgr:${managerId}` : undefined;
-    claimed = await updateRunIfStatus(
+    const expectedWorkerId = managerClaimWorkerId;
+    claimPhase = { kind: "assigning-execution-owner", workerId };
+    const claimed = await updateRunIfStatus(
       backend,
       runId,
       [runToProcess.status],
@@ -220,6 +240,7 @@ export async function claimWorkflowRunControl(
         status: run.status === "running" ? "skipped-stalled-claim-lost" : "skipped-status-changed",
       };
     }
+    claimPhase = { kind: "execution-owner-assigned", workerId };
 
     const executionConfig: RunExecutionConfig = {
       executionId,
@@ -245,7 +266,13 @@ export async function claimWorkflowRunControl(
       },
     };
   } catch (error) {
-    return await failClaim(input, runToProcess ?? run, workerId, claimed, ensureError(error));
+    return await failClaim(
+      input,
+      runToProcess ?? run,
+      claimPhase,
+      ensureError(error),
+      managerClaimWorkerId,
+    );
   } finally {
     if (pendingLockToken) {
       try {
@@ -266,7 +293,8 @@ async function reconcileApprovalDecision(
   const decisionContext = {
     approved: operation.decision.approved,
     approver: operation.decision.approver,
-    comment: operation.decision.comment,
+    ...(operation.decision.comment === undefined ? {} : { comment: operation.decision.comment }),
+    ...(operation.decision.data === undefined ? {} : { data: operation.decision.data }),
     decidedAt: decidedAt.toISOString(),
   };
 
@@ -293,7 +321,10 @@ async function reconcileApprovalDecision(
           output: {
             approved: operation.decision.approved,
             approver: operation.decision.approver,
-            comment: operation.decision.comment,
+            ...(operation.decision.comment === undefined
+              ? {}
+              : { comment: operation.decision.comment }),
+            ...(operation.decision.data === undefined ? {} : { data: operation.decision.data }),
           },
           attempt: 1,
           completedAt: decidedAt,
@@ -374,8 +405,9 @@ async function reconcileHydrateEnv(
     },
     operation.expectedWorkerId,
   );
-  const latest = (await backend.getRun(run.id)) ?? run;
-  if (updated) return { status: "reconciled", run: latest };
+  const latest = await backend.getRun(run.id);
+  if (updated) return { status: "reconciled", run: latest ?? undefined };
+  if (!latest) return { status: "skipped-terminal" };
   if (!ACTIVE_RECONCILE_STATUSES.includes(latest.status)) {
     return { status: "skipped-terminal", run: latest };
   }
@@ -424,9 +456,9 @@ async function reconcileExecutionFailure(
 async function failClaim(
   input: WorkflowRunControlClaimInput,
   run: WorkflowRun,
-  workerId: string,
-  claimed: boolean,
+  claimPhase: ClaimPhase,
   error?: Error,
+  managerClaimWorkerId?: string,
 ): Promise<WorkflowRunControlClaimOutcome> {
   const message = `RUN_EXECUTION_CREATION_FAILED: Failed to create run execution: ${
     error?.message ?? "run ownership changed before execution creation"
@@ -437,8 +469,27 @@ async function failClaim(
     completedAt: new Date(),
   };
 
-  if (claimed) {
-    await updateRunIfStatus(input.backend, run.id, ["running"], failure, workerId);
+  if (claimPhase.kind !== "before-execution-owner") {
+    const updated = await updateRunIfStatus(
+      input.backend,
+      run.id,
+      ["pending", "waiting", "running"],
+      failure,
+      claimPhase.workerId,
+    );
+    if (updated) return { status: "failed-after-claim", error };
+
+    const latest = await input.backend.getRun(run.id);
+    if (
+      !latest ||
+      !ACTIVE_RECONCILE_STATUSES.includes(latest.status) ||
+      (latest.workerId !== undefined && latest.workerId !== managerClaimWorkerId)
+    ) {
+      return { status: "failed-after-claim", error };
+    }
+  }
+
+  if (claimPhase.kind === "execution-owner-assigned") {
     return { status: "failed-after-claim", error };
   }
 
@@ -447,6 +498,7 @@ async function failClaim(
     run.id,
     ["pending", "waiting", "running"],
     failure,
+    managerClaimWorkerId,
   );
   return { status: "failed-before-claim", error };
 }
@@ -500,6 +552,12 @@ export async function executeWorkflowRunControl(
     }
 
     const now = new Date();
+    // This is the one write per execution that is already fenced and already
+    // inside the run's span, so the run's trace identity rides along with it
+    // rather than costing a round trip of its own. A later execution reads it
+    // back and links to it; nothing else in the framework consumes it, so a
+    // process with no tracer simply leaves the field alone.
+    const traceContext = getActiveTraceparent();
     const activated = await updateRunIfStatus(
       backend,
       runId,
@@ -508,6 +566,7 @@ export async function executeWorkflowRunControl(
         status: "running",
         startedAt: run.startedAt || now,
         heartbeatAt: now,
+        ...(traceContext ? { _traceContext: traceContext } : {}),
       },
       expectedWorkerId,
     );
@@ -642,7 +701,7 @@ export async function executeWorkflowRunControl(
           run: pausedRun ?? undefined,
         };
       }
-      await input.onWaiting?.(pausedRun, result.waitingNode!);
+      await input.onWaiting?.(pausedRun, result.waitingNode!, result.waitingConfig);
       return { status: "waiting", run: pausedRun };
     }
 
@@ -734,7 +793,7 @@ async function completeRun(
     !input.isCurrentExecution(run.id, executionController)
   ) return null;
 
-  const publicContext = toPublicContext(result.context);
+  const publicContext = toPersistedWorkflowContext(result.context);
   const output = determineOutput(publicContext);
   const completed = await updateRunIfStatus(
     backend,
@@ -745,6 +804,10 @@ async function completeRun(
       output,
       context: publicContext,
       nodeStates: result.nodeStates,
+      // A run that resumes past its final wait reaches here with the wait
+      // still named from when it parked; nothing is current once it completes.
+      currentNodes: [],
+      error: undefined,
       completedAt: new Date(),
     },
     expectedWorkerId,
@@ -767,7 +830,7 @@ async function failRun(
   if (currentRun?.status === "cancelled") return false;
   if (!input.isCurrentExecution(run.id, executionController)) return false;
 
-  const publicContext = toPublicContext(result.context);
+  const publicContext = toPersistedWorkflowContext(result.context);
   return await updateRunIfStatus(
     backend,
     run.id,
@@ -800,7 +863,7 @@ async function pauseRun(
     !input.isCurrentExecution(run.id, executionController)
   ) return false;
 
-  const publicContext = toPublicContext(result.context);
+  const publicContext = toPersistedWorkflowContext(result.context);
   return await updateRunIfStatus(
     backend,
     run.id,
@@ -815,7 +878,8 @@ async function pauseRun(
   );
 }
 
-function toPublicContext(context: WorkflowContext): WorkflowContext {
+/** Remove request-only tenant authority before persisting workflow context. */
+export function toPersistedWorkflowContext(context: WorkflowContext): WorkflowContext {
   const { _tenant: _tenant, ...publicContext } = context;
   return publicContext;
 }

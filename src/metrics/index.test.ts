@@ -301,6 +301,91 @@ describe("metrics public SDK", () => {
     );
   });
 
+  it("keeps exporting after a non-ok collector response", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    let status = 500;
+
+    Deno.env.set("OTEL_METRICS_ENABLED", "true");
+    Deno.env.set("OTEL_EXPORTER_OTLP_ENDPOINT", "https://collector.example/otlp");
+    Deno.env.set("OTEL_SERVICE_NAME", "veryfront-server");
+
+    globalThis.fetch = ((url: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: String(url), init });
+      return Promise.resolve(new Response("", { status }));
+    }) as typeof fetch;
+
+    try {
+      metrics.counter("vf_rejected_batch_total", 1, { project_id: "project-123" });
+      assertEquals(
+        await (metrics as unknown as { __flushForTests(): Promise<void> }).__flushForTests(),
+        undefined,
+        "a non-ok collector response must not reject the flush",
+      );
+      assertEquals(requests.length, 1, "the rejected batch must still have been sent once");
+
+      status = 200;
+      metrics.counter("vf_recovered_batch_total", 1, { project_id: "project-123" });
+      await (metrics as unknown as { __flushForTests(): Promise<void> }).__flushForTests();
+    } finally {
+      globalThis.fetch = originalFetch;
+      Deno.env.delete("OTEL_METRICS_ENABLED");
+      Deno.env.delete("OTEL_EXPORTER_OTLP_ENDPOINT");
+      Deno.env.delete("OTEL_SERVICE_NAME");
+    }
+
+    assertEquals(requests.length, 2, "the next batch must still be exported");
+    const body = JSON.parse(String(requests[1]?.init?.body));
+    assertEquals(
+      body.resourceMetrics[0].scopeMetrics[0].metrics.map((entry: { name: string }) => entry.name),
+      ["vf_recovered_batch_total"],
+      "a non-ok collector response degrades silently and does not poison the queue",
+    );
+  });
+
+  it("keeps exporting after the collector request rejects", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    let failing = true;
+
+    Deno.env.set("OTEL_METRICS_ENABLED", "true");
+    Deno.env.set("OTEL_EXPORTER_OTLP_ENDPOINT", "https://collector.example/otlp");
+    Deno.env.set("OTEL_SERVICE_NAME", "veryfront-server");
+
+    globalThis.fetch = ((url: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: String(url), init });
+      if (failing) return Promise.reject(new TypeError("network down"));
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }) as typeof fetch;
+
+    try {
+      metrics.counter("vf_unreachable_batch_total", 1, { project_id: "project-123" });
+      assertEquals(
+        await (metrics as unknown as { __flushForTests(): Promise<void> }).__flushForTests(),
+        undefined,
+        "a failed collector request must not reject out of the flush timer",
+      );
+      assertEquals(requests.length, 1, "the failed batch must still have been attempted once");
+
+      failing = false;
+      metrics.counter("vf_reachable_batch_total", 1, { project_id: "project-123" });
+      await (metrics as unknown as { __flushForTests(): Promise<void> }).__flushForTests();
+    } finally {
+      globalThis.fetch = originalFetch;
+      Deno.env.delete("OTEL_METRICS_ENABLED");
+      Deno.env.delete("OTEL_EXPORTER_OTLP_ENDPOINT");
+      Deno.env.delete("OTEL_SERVICE_NAME");
+    }
+
+    assertEquals(requests.length, 2, "the next batch must still be exported");
+    const body = JSON.parse(String(requests[1]?.init?.body));
+    assertEquals(
+      body.resourceMetrics[0].scopeMetrics[0].metrics.map((entry: { name: string }) => entry.name),
+      ["vf_reachable_batch_total"],
+      "a network failure degrades silently and does not poison the queue",
+    );
+  });
+
   it("routes hosted project metrics through the internal API proxy", async () => {
     const originalFetch = globalThis.fetch;
     const requests: Array<{ url: string; init?: RequestInit }> = [];
@@ -457,11 +542,14 @@ describe("metrics public SDK", () => {
     assertEquals(metric.histogram.dataPoints[0].count, 2);
     assertEquals(metric.histogram.dataPoints[0].sum, 162);
     assertEquals(
-      metric.histogram.dataPoints[0].bucketCounts.reduce(
-        (sum: number, count: number) => sum + count,
-        0,
-      ),
-      2,
+      metric.histogram.dataPoints[0].explicitBounds,
+      [0, 10, 50, 100, 250, 500, 1000, 2500, 5000, 10000],
+      "exported histogram must carry the documented bucket boundaries",
+    );
+    assertEquals(
+      metric.histogram.dataPoints[0].bucketCounts,
+      [0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0],
+      "42ms lands in the (10,50] bucket and 120ms in the (100,250] bucket",
     );
   });
 

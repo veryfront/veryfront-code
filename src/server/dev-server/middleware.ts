@@ -10,11 +10,25 @@ import { cors } from "#veryfront/security";
 import { getBaseLogger, type RequestContext, runWithRequestContextAsync } from "#veryfront/utils";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import { generateRequestId } from "#veryfront/utils/request-id.ts";
+import { isExplicitHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 
 export type MiddlewareFunction = MiddlewareHandler;
 
 interface MiddlewareLoadOptions {
   throwOnError?: boolean;
+  /** Explicit host-owned capability for a trusted local or dedicated runtime. */
+  allowHostProjectCodeExecution?: boolean;
+}
+
+/**
+ * Internal control signal used when project middleware exists but the current
+ * runtime is not permitted to evaluate it in the host process.
+ */
+export class ProjectMiddlewareHostExecutionDeniedError extends TypeError {
+  constructor() {
+    super("Project middleware host loading requires explicit trusted-local execution");
+    this.name = "ProjectMiddlewareHostExecutionDeniedError";
+  }
 }
 
 const baseLogger = getBaseLogger("SERVER");
@@ -107,6 +121,12 @@ export async function loadMiddlewareFile(
   for (const middlewareFile of middlewareFiles) {
     const middlewarePath = join(projectDir, middlewareFile);
     if (!(await adapter.fs.exists(middlewarePath))) continue;
+    // Shared runtimes may inspect project-scoped metadata to determine that no
+    // middleware exists, but they must never read or evaluate a discovered
+    // middleware module in the host process.
+    if (!isExplicitHostProjectCodeExecutionAllowed(options)) {
+      throw new ProjectMiddlewareHostExecutionDeniedError();
+    }
 
     try {
       logger.debug(`Loading ${middlewareFile}`);

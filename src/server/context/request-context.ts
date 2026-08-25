@@ -12,6 +12,12 @@ export interface RequestContext {
 export interface CreateRequestContextOptions {
   /** Whether the request has already passed the proxy trust check. */
   proxyTrusted?: boolean;
+  /**
+   * Whether a missing request credential may use the standalone host API
+   * token. Shared proxy requests must set this to false so attacker-selected
+   * project identity is never combined with a host credential.
+   */
+  allowHostTokenFallback?: boolean;
 }
 
 export function createRequestContext(
@@ -45,7 +51,8 @@ export function createRequestContext(
   return {
     // Framework-owned token: bypass project env overlay so proxy mode works
     // when a remote project overlay is active.
-    token: req.headers.get("x-token") ?? getHostEnv("VERYFRONT_API_TOKEN") ?? "",
+    token: req.headers.get("x-token") ??
+      (options.allowHostTokenFallback === false ? "" : getHostEnv("VERYFRONT_API_TOKEN") ?? ""),
     slug: headerProjectSlug ?? parsed.slug ?? "",
     branch: parsed.branch,
     mode,

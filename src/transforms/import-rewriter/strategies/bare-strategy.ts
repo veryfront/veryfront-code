@@ -5,6 +5,12 @@
  * Handles: lodash, @tanstack/react-query, etc.
  */
 
+import { isCrossProjectImport } from "#veryfront/transforms/shared/cross-project-import.ts";
+import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
+import {
+  isConfiguredServerExternalPackage,
+  isServerOnlyPackage,
+} from "#veryfront/transforms/shared/server-only-packages.ts";
 import { rendererLogger } from "#veryfront/utils";
 import type {
   ImportRewriteStrategy,
@@ -13,11 +19,11 @@ import type {
   RewriteResult,
 } from "../types.ts";
 import { buildEsmShUrl, TAILWIND_VERSION } from "../url-builder.ts";
-import { parseBarePackageSpecifier } from "../../shared/package-specifier.ts";
-import { isServerOnlyPackage } from "../../shared/server-only-packages.ts";
-import { isCrossProjectImport } from "#veryfront/transforms/shared/cross-project-import.ts";
-import { isDependencyPinningEnabled } from "#veryfront/transforms/esm/npm-registry-client.ts";
-import { resolveDependencyPinForImport } from "../dependency-resolution.ts";
+import {
+  isPinningEnabledForRewrite,
+  resolveDependencyPinForImport,
+} from "../dependency-resolution.ts";
+import { throwConfiguredServerExternalBrowserViolation } from "../commonjs-policy.ts";
 
 const logger = rendererLogger.component("esm");
 
@@ -28,16 +34,6 @@ function hasVersionSpecifier(specifier: string): boolean {
   // @canary) are recognised as version specifiers and are never overridden by
   // a cached numeric pin.
   return parseBarePackageSpecifier(specifier)?.version != null;
-}
-
-function isPinningEnabledForRewrite(ctx: RewriteContext): boolean {
-  // "on:unknown" means the dependency state could not be established
-  // (unreadable package.json); fall back to conservative flag-off behavior,
-  // matching the canonical guard in dependency-resolution.ts.
-  if (ctx.dependencyPinningCacheKey === "on:unknown") return false;
-  return ctx.dependencyPinningCacheKey
-    ? ctx.dependencyPinningCacheKey.startsWith("on:")
-    : isDependencyPinningEnabled();
 }
 
 function warnUnversionedImport(specifier: string, projectId: string): void {
@@ -121,6 +117,22 @@ export class BareStrategy implements ImportRewriteStrategy {
       });
     }
 
+    // Explicit declarations are a project-owned server/client boundary. Unlike
+    // the compatibility list below, crossing that boundary is actionable and
+    // must fail during the browser transform instead of leaving a bare import
+    // that crashes later during hydration.
+    if (
+      ctx.target === "browser" &&
+      parsed &&
+      isConfiguredServerExternalPackage(parsed.packageName, ctx.serverExternalPackages)
+    ) {
+      throwConfiguredServerExternalBrowserViolation(
+        info.specifier,
+        parsed.packageName,
+        ctx,
+      );
+    }
+
     // Known server-only packages (`redis`, `pg`, …), including their explicit
     // `npm:` form, must never be routed through esm.sh — they only run
     // server-side and either fail to build for the browser or produce a client
@@ -128,7 +140,7 @@ export class BareStrategy implements ImportRewriteStrategy {
     // resolves them natively (node_modules on Node, npm: on Deno). The
     // framework's adapters only `import()` these behind a lazy, configured code
     // path, so an app that does not use the backend never loads them at all.
-    if (parsed && isServerOnlyPackage(parsed.packageName)) {
+    if (parsed && isServerOnlyPackage(parsed.packageName, ctx.serverExternalPackages)) {
       return { specifier: null };
     }
 

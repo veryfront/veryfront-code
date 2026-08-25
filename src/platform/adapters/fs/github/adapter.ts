@@ -48,12 +48,6 @@ export class GitHubFSAdapter implements FSAdapter {
       retry: githubConfig.retry,
     };
 
-    if (!rawConfig.token) {
-      throw CONFIG_INVALID.create({
-        detail: "GitHub adapter requires a token; set GITHUB_TOKEN or pass config.github.token",
-      });
-    }
-
     this.config = createGitHubConfig(rawConfig);
     this.client = new GitHubApiClient(this.config);
 
@@ -102,6 +96,11 @@ export class GitHubFSAdapter implements FSAdapter {
   async readTextFile(path: string): Promise<string> {
     await this.ensureInitialized();
     return this.readOps.readTextFile(path);
+  }
+
+  async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+    await this.ensureInitialized();
+    return await this.readOps.readFileBytesWithinLimit(path, byteLimit);
   }
 
   async exists(path: string): Promise<boolean> {

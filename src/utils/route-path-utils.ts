@@ -13,6 +13,7 @@ export const COMPONENT_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js"] as const;
 
 /** Regex for matching and removing file extensions */
 const EXTENSION_REGEX = /\.(tsx|jsx|ts|js|mdx|md)$/;
+const ROUTE_PARAMETER_FILE_SUFFIX_REGEX = /^\.(tsx|jsx|ts|js|mdx|md)$/i;
 
 /** Reject control characters before paths reach runtime filesystem adapters. */
 export function containsPathControlCharacters(value: string): boolean {
@@ -23,44 +24,80 @@ export function containsPathControlCharacters(value: string): boolean {
   return false;
 }
 
-/** Patterns for dynamic segment detection */
-const DYNAMIC_SEGMENT_PATTERNS = {
-  standard: /^\[[\w]+\]$/, // [id]
-  catchAll: /^\[\.\.\.[\w]+\]$/, // [...slug]
-  optionalCatchAll: /^\[\[\.\.\.[\w]+\]\]$/, // [[...slug]]
-  withExtension: /^\[\.{0,3}\w+\]\.\w+$/, // [id].tsx or [...slug].ts
-} as const;
+export type RouteParameterKind =
+  | "dynamic"
+  | "catch-all"
+  | "optional-catch-all";
+
+export interface ParsedRouteParameter {
+  name: string;
+  kind: RouteParameterKind;
+  /** Literal suffix after the route parameter, such as `.tsx`. */
+  suffix: string;
+}
+
+function isValidParameterName(name: string): boolean {
+  return /^[\w-]+(?:\.[\w-]+)*$/.test(name);
+}
+
+/** Parse a complete dynamic route segment using the public route grammar. */
+export function parseRouteParameterSegment(
+  segment: string,
+): ParsedRouteParameter | null {
+  if (!segment.startsWith("[") || containsPathControlCharacters(segment)) {
+    return null;
+  }
+
+  let marker: string;
+  let kind: RouteParameterKind;
+  let closing: string;
+  if (segment.startsWith("[[...")) {
+    marker = "[[...";
+    kind = "optional-catch-all";
+    closing = "]]";
+  } else if (segment.startsWith("[...")) {
+    marker = "[...";
+    kind = "catch-all";
+    closing = "]";
+  } else {
+    marker = "[";
+    kind = "dynamic";
+    closing = "]";
+  }
+
+  const closingIndex = segment.indexOf(closing, marker.length);
+  if (closingIndex === -1) return null;
+
+  const name = segment.slice(marker.length, closingIndex);
+  const suffix = segment.slice(closingIndex + closing.length);
+  if (!isValidParameterName(name)) return null;
+  if (suffix !== "" && !ROUTE_PARAMETER_FILE_SUFFIX_REGEX.test(suffix)) {
+    return null;
+  }
+  return { name, kind, suffix };
+}
 
 /**
  * Check if a segment name is a dynamic route segment.
  * Handles both directory names like "[id]" and file names like "[id].tsx"
  */
 export function isDynamicSegment(name: string): boolean {
-  if (!name.startsWith("[")) return false;
-
-  if (name.endsWith("]")) {
-    return (
-      DYNAMIC_SEGMENT_PATTERNS.standard.test(name) ||
-      DYNAMIC_SEGMENT_PATTERNS.catchAll.test(name) ||
-      DYNAMIC_SEGMENT_PATTERNS.optionalCatchAll.test(name)
-    );
-  }
-
-  return DYNAMIC_SEGMENT_PATTERNS.withExtension.test(name);
+  return parseRouteParameterSegment(name) !== null;
 }
 
 /**
  * Check if a route pattern contains any dynamic segments
  */
 export function isDynamicRoute(pattern: string): boolean {
-  return /\[[\w.]+\]/.test(pattern);
+  return pattern.split(/[\\/]/).some(isDynamicSegment);
 }
 
 /**
  * Check if a segment is a catch-all segment ([...slug] or [[...slug]])
  */
 export function isCatchAllSegment(name: string): boolean {
-  return name.startsWith("[...") || name.startsWith("[[...");
+  const parameter = parseRouteParameterSegment(name);
+  return parameter?.kind === "catch-all" || parameter?.kind === "optional-catch-all";
 }
 
 /**
@@ -77,7 +114,7 @@ export function removeFileExtension(path: string): string {
  * "[[...params]]" -> "params"
  */
 export function extractParamName(segment: string): string {
-  return segment.replace(/\[\[\.\.\.|\[\.\.\.|\[|\]\]|\]/g, "");
+  return parseRouteParameterSegment(segment)?.name ?? segment;
 }
 
 /**
@@ -145,7 +182,7 @@ export function extractRouteParams(
   slug: string,
   directories: RouterDirectories = {},
 ): ExtractedRouteParams {
-  const params: Record<string, string | string[]> = {};
+  const params: Record<string, string | string[]> = Object.create(null);
 
   const { relativePath } = extractRouterBasePath(pageEntityId, directories);
   if (!relativePath) return { params, matched: false };
@@ -169,6 +206,17 @@ export function extractRouteParams(
     }
 
     params[paramName] = slugSegments[i]!;
+  }
+
+  const nextPathSegment = pathSegments[slugSegments.length];
+  const nextParameter = nextPathSegment ? parseRouteParameterSegment(nextPathSegment) : null;
+  if (nextParameter?.kind === "optional-catch-all") {
+    const staticPrefixMatches = pathSegments
+      .slice(0, slugSegments.length)
+      .every((segment, index) => isDynamicSegment(segment) || segment === slugSegments[index]);
+    if (staticPrefixMatches) {
+      params[nextParameter.name] = [];
+    }
   }
 
   return { params, matched: Object.keys(params).length > 0 };
@@ -204,7 +252,7 @@ export function extractParamsFromPattern(
   const patternParts = pattern.split("/").filter(Boolean);
   const slugParts = slug.split("/").filter(Boolean);
 
-  const params: Record<string, string | string[]> = {};
+  const params: Record<string, string | string[]> = Object.create(null);
 
   const hasCatchAll = patternParts.some(isCatchAllSegment);
   if (!hasCatchAll && patternParts.length !== slugParts.length) return null;

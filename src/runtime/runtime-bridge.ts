@@ -6,6 +6,8 @@
  * types and calls into this bridge at the edge.
  */
 import type { TextGenerationRuntimeMessage } from "#veryfront/agent/runtime/text-generation-runtime-message-types.ts";
+import { recordErrorCount } from "#veryfront/observability/metrics/index.ts";
+import { serverLogger } from "#veryfront/utils";
 import type {
   RuntimeGenerateTextResult,
   RuntimeStreamPart,
@@ -17,15 +19,32 @@ import type {
   EmbeddingRuntime,
   ModelRuntime,
   ModelRuntimeGenerateResult,
+  RuntimeResponseFormat,
 } from "#veryfront/provider/types.ts";
+import {
+  getModelRuntimeId,
+  supportsModelRuntimeStructuredOutput,
+} from "#veryfront/provider/runtime-inspection.ts";
+import { NOT_SUPPORTED } from "#veryfront/errors";
 import type { RuntimeReasoningOption } from "#veryfront/agent/types.ts";
+import { resolveOpenAIReasoningConfig } from "#veryfront/provider/shared/openai-reasoning.ts";
+import { DurableRunEventPersistenceError } from "#veryfront/agent/conversation/private-run-event.ts";
+import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import type {
-  ModelCallContext,
+  AgentRunModelCallContextEvent,
   ModelCallMessage,
-  ModelCallRecorder,
+  ModelCallRequest,
   ModelCallTool,
 } from "./model-call-context.ts";
-import { resolveModelCallRecorder } from "./model-call-recorder-context.ts";
+import { getActiveRunEventSinks } from "./run-event-sink-context.ts";
+
+const cloneStructuredValue = globalThis.structuredClone;
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectHasOwn = Object.hasOwn;
+const ReflectApply = Reflect.apply;
+const ReflectOwnKeys = Reflect.ownKeys;
+const logger = serverLogger.component("runtime-bridge");
 
 type GenerateTextOptions = {
   model: ModelRuntime;
@@ -45,8 +64,8 @@ type GenerateTextOptions = {
   headers?: HeadersInit;
   providerOptions?: Record<string, unknown>;
   reasoning?: RuntimeReasoningOption;
+  responseFormat?: RuntimeResponseFormat;
   abortSignal?: AbortSignal;
-  modelCallRecorder?: ModelCallRecorder;
 };
 
 type StreamTextOptions = {
@@ -67,9 +86,9 @@ type StreamTextOptions = {
   headers?: HeadersInit;
   providerOptions?: Record<string, unknown>;
   reasoning?: RuntimeReasoningOption;
+  responseFormat?: RuntimeResponseFormat;
   includeRawChunks?: boolean;
   abortSignal?: AbortSignal;
-  modelCallRecorder?: ModelCallRecorder;
 };
 
 type EmbedOptions = {
@@ -123,41 +142,124 @@ type DirectGenerateResult = {
   >;
   finishReason?: string | { unified?: string | null } | null;
   usage?: unknown;
+  providerMetadata?: Record<string, unknown>;
 };
 
 type DirectStreamResult = {
   stream: ReadableStream<unknown>;
 };
 type DirectTextOptions = GenerateTextOptions | StreamTextOptions;
+type DirectModelMessage =
+  | Exclude<ModelCallMessage, { role: "assistant" }>
+  | (Extract<ModelCallMessage, { role: "assistant" }> & {
+    providerMetadata?: Record<string, unknown>;
+  });
+type ModelCallRequestSource = Pick<
+  GenerateTextOptions,
+  | "maxOutputTokens"
+  | "temperature"
+  | "topP"
+  | "topK"
+  | "stopSequences"
+  | "seed"
+  | "presencePenalty"
+  | "frequencyPenalty"
+  | "reasoning"
+>;
 type DirectModelOptions = Record<string, unknown> & {
-  prompt: ModelCallMessage[];
+  prompt: DirectModelMessage[];
   tools?: ModelCallTool[];
-};
+} & ModelCallRequestSource;
 
-function normalizeSystemPrompt(system: GenerateTextOptions["system"]): string | undefined {
+function readSystemProviderOptions(
+  system: unknown,
+): Record<string, unknown> | undefined {
+  if (!system || typeof system !== "object") return undefined;
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+      system,
+      "providerOptions",
+    ]) as PropertyDescriptor | undefined;
+  } catch {
+    throw new TypeError(
+      "System message providerOptions must be an own enumerable data property",
+    );
+  }
+
+  if (descriptor === undefined) return undefined;
+  if (!ObjectHasOwn(descriptor, "value") || descriptor.enumerable !== true) {
+    throw new TypeError(
+      "System message providerOptions must be an own enumerable data property",
+    );
+  }
+
+  const providerOptions = descriptor.value;
+  return providerOptions && typeof providerOptions === "object" &&
+      !Array.isArray(providerOptions)
+    ? providerOptions as Record<string, unknown>
+    : undefined;
+}
+
+function readSystemContent(system: unknown): string | undefined {
+  if (!system || typeof system !== "object") return undefined;
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+      system,
+      "content",
+    ]) as PropertyDescriptor | undefined;
+  } catch {
+    throw new TypeError(
+      "System message content must be an own enumerable data property",
+    );
+  }
+
+  if (descriptor === undefined) return undefined;
+  if (!ObjectHasOwn(descriptor, "value") || descriptor.enumerable !== true) {
+    throw new TypeError(
+      "System message content must be an own enumerable data property",
+    );
+  }
+  return typeof descriptor.value === "string" ? descriptor.value : undefined;
+}
+
+function normalizeSystemMessages(system: GenerateTextOptions["system"]): ChatSystemMessage[] {
   if (typeof system === "string") {
-    return system;
+    return system.length > 0 ? [{ role: "system", content: system }] : [];
   }
 
   if (!system || typeof system !== "object") {
-    return undefined;
+    return [];
   }
 
-  if ("content" in system && typeof system.content === "string") {
-    return system.content;
+  const content = readSystemContent(system);
+  if (content !== undefined) {
+    const providerOptions = readSystemProviderOptions(system);
+    return [{
+      role: "system",
+      content,
+      ...(providerOptions ? { providerOptions } : {}),
+    }];
   }
 
   if (Array.isArray(system)) {
-    const parts = system.flatMap((entry) =>
-      entry && typeof entry === "object" && "content" in entry && typeof entry.content === "string"
-        ? [entry.content]
-        : []
-    );
-
-    return parts.length > 0 ? parts.join("\n") : undefined;
+    const messages: ChatSystemMessage[] = [];
+    for (const entry of system) {
+      if (!entry || typeof entry !== "object") continue;
+      const entryContent = readSystemContent(entry);
+      if (entryContent === undefined) continue;
+      const providerOptions = readSystemProviderOptions(entry);
+      messages.push({
+        role: "system",
+        content: entryContent,
+        ...(providerOptions ? { providerOptions } : {}),
+      });
+    }
+    return messages;
   }
 
-  return undefined;
+  return [];
 }
 
 function getProviderRequestMessages(
@@ -173,14 +275,14 @@ function getProviderRequestMessages(
 }
 
 function toRuntimePrompt(
-  system: string | undefined,
+  system: readonly ChatSystemMessage[],
   messages: TextGenerationRuntimeMessage[],
-): ModelCallMessage[] {
-  const prompt: ModelCallMessage[] = [];
-
-  if (system && system.length > 0) {
-    prompt.push({ role: "system", content: system });
-  }
+): DirectModelMessage[] {
+  const prompt: DirectModelMessage[] = system.map((message) => ({
+    role: "system",
+    content: message.content,
+    ...(message.providerOptions === undefined ? {} : { providerOptions: message.providerOptions }),
+  }));
 
   for (const message of messages) {
     switch (message.role) {
@@ -206,6 +308,9 @@ function toRuntimePrompt(
               input: part.input,
             }
           ),
+          ...(message.providerMetadata === undefined
+            ? {}
+            : { providerMetadata: message.providerMetadata }),
         });
         break;
       case "tool":
@@ -223,6 +328,106 @@ function toRuntimePrompt(
   }
 
   return prompt;
+}
+
+type PersistedCacheControl = {
+  type: "ephemeral";
+  ttl?: "5m" | "1h";
+};
+
+function readOwnEnumerableDataDescriptor(
+  value: object,
+  key: PropertyKey,
+): PropertyDescriptor | undefined {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+      value,
+      key,
+    ]) as PropertyDescriptor | undefined;
+  } catch {
+    return undefined;
+  }
+  return descriptor?.enumerable === true && ObjectHasOwn(descriptor, "value")
+    ? descriptor
+    : undefined;
+}
+
+function sanitizePersistedCacheControl(value: unknown): PersistedCacheControl | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const type = readOwnEnumerableDataDescriptor(value, "type");
+  if (type?.value !== "ephemeral") {
+    return undefined;
+  }
+  const ttl = readOwnEnumerableDataDescriptor(value, "ttl");
+  if (ttl && ttl.value !== undefined && ttl.value !== "5m" && ttl.value !== "1h") {
+    return undefined;
+  }
+  return {
+    type: "ephemeral",
+    ...(ttl?.value === "5m" || ttl?.value === "1h" ? { ttl: ttl.value } : {}),
+  };
+}
+
+function sanitizePersistedProviderOptions(
+  value: unknown,
+): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  let keys: PropertyKey[];
+  try {
+    keys = ReflectApply(ReflectOwnKeys, undefined, [value]) as PropertyKey[];
+  } catch {
+    return undefined;
+  }
+  const sanitized: Record<string, unknown> = {};
+  let retained = false;
+  for (const key of keys) {
+    if (typeof key !== "string" || key.length === 0) {
+      continue;
+    }
+    const providerBucket = readOwnEnumerableDataDescriptor(value, key)?.value;
+    if (!providerBucket || typeof providerBucket !== "object" || Array.isArray(providerBucket)) {
+      continue;
+    }
+    const cacheControl = sanitizePersistedCacheControl(
+      readOwnEnumerableDataDescriptor(providerBucket, "cacheControl")?.value,
+    );
+    if (!cacheControl) {
+      continue;
+    }
+    ReflectApply(ObjectDefineProperty, undefined, [sanitized, key, {
+      configurable: true,
+      enumerable: true,
+      value: { cacheControl },
+      writable: true,
+    }]);
+    retained = true;
+  }
+  return retained ? sanitized : undefined;
+}
+
+function sanitizeModelCallContextMessages(
+  messages: readonly DirectModelMessage[],
+): ModelCallMessage[] {
+  return messages.map((message) => {
+    if (message.role === "assistant") {
+      return { role: "assistant", content: message.content };
+    }
+    if (message.role !== "system") {
+      return message;
+    }
+    const providerOptions = sanitizePersistedProviderOptions(message.providerOptions);
+    return {
+      role: "system",
+      content: message.content,
+      ...(providerOptions ? { providerOptions } : {}),
+    };
+  });
 }
 
 function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
@@ -452,13 +657,32 @@ async function resolveDirectTools(
   return resolvedTools.length > 0 ? resolvedTools : undefined;
 }
 
+/**
+ * Reject a requested response format the resolved runtime cannot honor.
+ *
+ * Both generation paths converge on `buildDirectModelOptions`, so this is the
+ * one place where a schema would otherwise be handed to a provider that
+ * silently ignores it and returns prose.
+ */
+function assertStructuredOutputSupported(options: DirectTextOptions): void {
+  const responseFormat = options.responseFormat;
+  if (!responseFormat || responseFormat.type === "text") return;
+  if (supportsModelRuntimeStructuredOutput(options.model, responseFormat)) return;
+  throw NOT_SUPPORTED.create({
+    detail: `Model "${
+      getModelRuntimeId(options.model) ?? "unknown"
+    }" does not support structured output format "${responseFormat.type}", so it cannot be applied.`,
+  });
+}
+
 function buildDirectModelOptions(
   options: DirectTextOptions,
   tools: ModelCallTool[] | undefined,
 ): DirectModelOptions {
+  assertStructuredOutputSupported(options);
   return {
     prompt: toRuntimePrompt(
-      normalizeSystemPrompt(options.system),
+      normalizeSystemMessages(options.system),
       getProviderRequestMessages(options.messages),
     ),
     maxOutputTokens: options.maxOutputTokens,
@@ -476,6 +700,7 @@ function buildDirectModelOptions(
     ...(options.headers ? { headers: options.headers } : {}),
     ...(options.providerOptions ? { providerOptions: options.providerOptions } : {}),
     ...(options.reasoning ? { reasoning: options.reasoning } : {}),
+    ...(options.responseFormat ? { responseFormat: options.responseFormat } : {}),
     ...("includeRawChunks" in options && options.includeRawChunks !== undefined
       ? { includeRawChunks: options.includeRawChunks }
       : {}),
@@ -483,18 +708,163 @@ function buildDirectModelOptions(
   };
 }
 
-async function recordModelCallContext(
+function buildModelCallRequest(
+  options: ModelCallRequestSource,
+  reasoning = options.reasoning,
+): ModelCallRequest | undefined {
+  const projectedReasoning = reasoning
+    ? {
+      ...(reasoning.enabled !== undefined ? { enabled: reasoning.enabled } : {}),
+      ...(reasoning.effort !== undefined ? { effort: reasoning.effort } : {}),
+      ...(reasoning.budgetTokens !== undefined ? { budgetTokens: reasoning.budgetTokens } : {}),
+    }
+    : undefined;
+  const request: ModelCallRequest = {
+    ...(options.maxOutputTokens !== undefined ? { maxOutputTokens: options.maxOutputTokens } : {}),
+    ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+    ...(options.topP !== undefined ? { topP: options.topP } : {}),
+    ...(options.topK !== undefined ? { topK: options.topK } : {}),
+    ...(options.stopSequences !== undefined ? { stopSequences: [...options.stopSequences] } : {}),
+    ...(options.seed !== undefined ? { seed: options.seed } : {}),
+    ...(options.presencePenalty !== undefined ? { presencePenalty: options.presencePenalty } : {}),
+    ...(options.frequencyPenalty !== undefined
+      ? { frequencyPenalty: options.frequencyPenalty }
+      : {}),
+    ...(projectedReasoning && Object.keys(projectedReasoning).length > 0
+      ? { reasoning: projectedReasoning }
+      : {}),
+  };
+  return Object.keys(request).length > 0 ? request : undefined;
+}
+
+function resolveModelProvider(model: ModelRuntime): string | undefined {
+  if (typeof model.modelProvider === "string" && model.modelProvider !== "") {
+    return model.modelProvider;
+  }
+  return model.provider === "veryfront-cloud" ? undefined : model.provider;
+}
+
+function resolvePersistedReasoning(
+  model: ModelRuntime,
+  options: DirectModelOptions,
+): RuntimeReasoningOption | undefined {
+  const modelProvider = resolveModelProvider(model);
+  if (modelProvider === "openai" && typeof model.modelId === "string") {
+    const reasoning = resolveOpenAIReasoningConfig(model.modelId, modelProvider, options.reasoning);
+    return reasoning ? { enabled: true, effort: reasoning.effort } : options.reasoning;
+  }
+
+  // The Anthropic request builder only gives neutral reasoning precedence when
+  // it enables thinking; otherwise a raw provider thinking config remains effective.
+  if (modelProvider !== "anthropic" || options.reasoning?.enabled === true) {
+    return options.reasoning;
+  }
+
+  const providerOptions = options.providerOptions;
+  if (!providerOptions || typeof providerOptions !== "object" || Array.isArray(providerOptions)) {
+    return options.reasoning;
+  }
+  const anthropic = readOwnEnumerableDataDescriptor(providerOptions, "anthropic")?.value;
+  if (!anthropic || typeof anthropic !== "object" || Array.isArray(anthropic)) {
+    return options.reasoning;
+  }
+  const thinking = readOwnEnumerableDataDescriptor(anthropic, "thinking")?.value;
+  if (!thinking || typeof thinking !== "object" || Array.isArray(thinking)) {
+    return options.reasoning;
+  }
+  const thinkingType = readOwnEnumerableDataDescriptor(thinking, "type")?.value;
+  if (thinkingType === "disabled") {
+    return { enabled: false };
+  }
+  if (thinkingType !== "adaptive" && thinkingType !== "enabled") {
+    return options.reasoning;
+  }
+
+  if (thinkingType === "enabled") {
+    const budgetTokens = readOwnEnumerableDataDescriptor(thinking, "budget_tokens")?.value;
+    return {
+      enabled: true,
+      ...(typeof budgetTokens === "number" && Number.isInteger(budgetTokens) && budgetTokens >= 0
+        ? { budgetTokens }
+        : {}),
+    };
+  }
+
+  const outputConfig = readOwnEnumerableDataDescriptor(anthropic, "output_config")?.value;
+  const effort = outputConfig && typeof outputConfig === "object" && !Array.isArray(outputConfig)
+    ? readOwnEnumerableDataDescriptor(outputConfig, "effort")?.value
+    : undefined;
+  return {
+    enabled: true,
+    ...(effort === "low" || effort === "medium" || effort === "high" || effort === "max"
+      ? { effort }
+      : {}),
+  };
+}
+
+async function emitModelCallContextEvent(
   options: DirectTextOptions,
   directOptions: DirectModelOptions,
 ): Promise<void> {
-  const recorder = resolveModelCallRecorder(options.modelCallRecorder);
-  if (!recorder) return;
+  const sinks = getActiveRunEventSinks();
+  if (!sinks.mandatory && !sinks.public) return;
+  const request = buildModelCallRequest(
+    directOptions,
+    resolvePersistedReasoning(options.model, directOptions),
+  );
 
-  const context: ModelCallContext = {
-    messages: directOptions.prompt,
+  const event: AgentRunModelCallContextEvent = {
+    type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+    ...(options.model.modelId
+      ? {
+        model: {
+          id: options.model.modelId,
+          ...(resolveModelProvider(options.model)
+            ? { modelProvider: resolveModelProvider(options.model) }
+            : {}),
+        },
+      }
+      : {}),
+    ...(request ? { request } : {}),
+    messages: sanitizeModelCallContextMessages(directOptions.prompt),
     ...(directOptions.tools ? { tools: directOptions.tools } : {}),
   };
-  await recorder(structuredClone(context));
+
+  const cloneEvent = ():
+    | { ok: true; event: AgentRunModelCallContextEvent }
+    | { ok: false; error: unknown } => {
+    try {
+      return { ok: true, event: cloneStructuredValue(event) };
+    } catch (error) {
+      const failureClass = error instanceof DOMException && error.name === "DataCloneError"
+        ? "DataCloneError"
+        : "unknown";
+      recordErrorCount({
+        slug: "model-call-context-clone-failed",
+        failure_class: failureClass,
+      });
+      logger.warn("Model call context event was not persisted because it is not cloneable", {
+        failureClass,
+      });
+      return { ok: false, error };
+    }
+  };
+  const mandatoryClone = sinks.mandatory ? cloneEvent() : undefined;
+  if (mandatoryClone?.ok === false) {
+    throw new DurableRunEventPersistenceError(
+      "Mandatory model call context event is not cloneable",
+      { cause: mandatoryClone.error },
+    );
+  }
+  const mandatoryEvent = mandatoryClone?.ok ? mandatoryClone.event : undefined;
+  const publicClone = sinks.public && sinks.public !== sinks.mandatory ? cloneEvent() : undefined;
+  const publicEvent = publicClone?.ok ? publicClone.event : undefined;
+  if (sinks.mandatory && mandatoryEvent) {
+    await sinks.mandatory(mandatoryEvent);
+  }
+  if (sinks.public && sinks.public !== sinks.mandatory && publicEvent) {
+    await sinks.public(publicEvent);
+  }
 }
 
 function isDirectToolCallPart(
@@ -527,6 +897,7 @@ function isDirectToolResultPart(
   toolName: string;
   result: unknown;
   isError?: boolean;
+  providerExecuted?: boolean;
 } {
   return !!part &&
     typeof part === "object" &&
@@ -566,6 +937,7 @@ function buildDirectGenerateResult(
         toolName: part.toolName,
         result: part.result,
         ...(part.isError === true ? { isError: true } : {}),
+        ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
       });
     }
   }
@@ -576,6 +948,7 @@ function buildDirectGenerateResult(
     ...(toolResults.length > 0 ? { toolResults } : {}),
     usage: normalizeUsage(result.usage),
     finishReason: normalizeFinishReason(result.finishReason),
+    ...(result.providerMetadata === undefined ? {} : { providerMetadata: result.providerMetadata }),
   };
 }
 
@@ -652,6 +1025,7 @@ async function buildGenerateResultFromStream(
   let text = "";
   let usage: RuntimeGenerateTextResult["usage"];
   let finishReason: string | null = null;
+  let providerMetadata: Record<string, unknown> | undefined;
   const toolCalls = new Map<string, NonNullable<RuntimeGenerateTextResult["toolCalls"]>[number]>();
   const toolInputs = new Map<string, { toolCallId: string; toolName: string; input: string }>();
   const toolResults: NonNullable<RuntimeGenerateTextResult["toolResults"]> = [];
@@ -741,6 +1115,7 @@ async function buildGenerateResultFromStream(
       case "finish":
         finishReason = part.finishReason ?? null;
         usage = streamUsageToGenerateUsage(part.totalUsage);
+        providerMetadata = part.providerMetadata;
         break;
     }
   }
@@ -753,6 +1128,7 @@ async function buildGenerateResultFromStream(
     ...(toolResults.length > 0 ? { toolResults } : {}),
     usage,
     finishReason,
+    ...(providerMetadata === undefined ? {} : { providerMetadata }),
   };
 }
 
@@ -781,6 +1157,7 @@ function normalizeStreamPart(part: unknown): unknown {
     usage?: unknown;
     totalUsage?: unknown;
     finishReason?: unknown;
+    providerMetadata?: Record<string, unknown>;
   };
   const usage = normalizeUsage(finishPart.usage) ?? normalizeUsage(finishPart.totalUsage);
   const recomputedTotal = usage ? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0) : undefined;
@@ -788,6 +1165,9 @@ function normalizeStreamPart(part: unknown): unknown {
   return {
     type: "finish",
     finishReason: normalizeFinishReason(finishPart.finishReason),
+    ...(finishPart.providerMetadata === undefined
+      ? {}
+      : { providerMetadata: finishPart.providerMetadata }),
     ...(usage
       ? {
         totalUsage: {
@@ -874,7 +1254,7 @@ async function* textDeltasFromStream(stream: ReadableStream<unknown>): AsyncIter
 export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeGenerateTextResult> {
   return resolveDirectTools(options.tools).then(async (tools) => {
     const directOptions = buildDirectModelOptions(options, tools);
-    await recordModelCallContext(options, directOptions);
+    await emitModelCallContextEvent(options, directOptions);
     if (shouldGenerateViaStream(options.model)) {
       return options.model.doStream(directOptions).then(({ stream }) =>
         buildGenerateResultFromStream(stream)
@@ -888,7 +1268,7 @@ export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeG
 export function streamText(options: StreamTextOptions): RuntimeStreamResult {
   const directResultPromise = resolveDirectTools(options.tools).then(async (tools) => {
     const directOptions = buildDirectModelOptions(options, tools);
-    await recordModelCallContext(options, directOptions);
+    await emitModelCallContextEvent(options, directOptions);
     return options.model.doStream(directOptions);
   });
   // Guard against an unhandled rejection when a branch is consumed lazily (or a
@@ -936,47 +1316,88 @@ export function embed(options: EmbedOptions) {
   return options.model.doEmbed({
     values: [options.value],
     abortSignal: options.abortSignal,
-  }).then((result) => ({
-    embedding: result.embeddings[0] ?? [],
-    embeddings: result.embeddings,
-    usage: result.usage,
-    rawResponse: result.rawResponse,
-    warnings: result.warnings ?? [],
-  }));
+  }).then((result) => {
+    assertValidEmbeddingVectors(result.embeddings, 1);
+    return {
+      embedding: result.embeddings[0]!,
+      embeddings: result.embeddings,
+      usage: result.usage,
+      rawResponse: result.rawResponse,
+      warnings: result.warnings ?? [],
+    };
+  });
 }
 
 export function embedMany(options: EmbedManyOptions) {
+  const values = [...options.values];
+  const expectedCount = values.length;
   return options.model.doEmbed({
-    values: options.values,
+    values,
     abortSignal: options.abortSignal,
-  }).then((result) => ({
-    embeddings: result.embeddings,
-    usage: result.usage,
-    rawResponse: result.rawResponse,
-    warnings: result.warnings ?? [],
-  }));
+  }).then((result) => {
+    assertValidEmbeddingVectors(result.embeddings, expectedCount);
+    return {
+      embeddings: result.embeddings,
+      usage: result.usage,
+      rawResponse: result.rawResponse,
+      warnings: result.warnings ?? [],
+    };
+  });
 }
+
+function assertValidEmbeddingVectors(
+  value: unknown,
+  expectedCount: number,
+): asserts value is number[][] {
+  if (!Array.isArray(value) || value.length !== expectedCount) {
+    throw new TypeError("Embedding runtime returned invalid vectors");
+  }
+  let dimension: number | undefined;
+  for (const vector of value) {
+    if (!Array.isArray(vector) || vector.length === 0) {
+      throw new TypeError("Embedding runtime returned invalid vectors");
+    }
+    if (dimension === undefined) dimension = vector.length;
+    else if (vector.length !== dimension) {
+      throw new TypeError("Embedding runtime returned invalid vectors");
+    }
+    for (const component of vector) {
+      if (typeof component !== "number" || !Number.isFinite(component)) {
+        throw new TypeError("Embedding runtime returned invalid vectors");
+      }
+    }
+  }
+}
+
 /** Compute cosine similarity between two numeric vectors. */
 export function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length === 0 || b.length === 0 || a.length !== b.length) {
     return 0;
   }
 
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
+  let scaleA = 0;
+  let scaleB = 0;
 
   for (let i = 0; i < a.length; i++) {
     const av = a[i] ?? 0;
     const bv = b[i] ?? 0;
+    if (!Number.isFinite(av) || !Number.isFinite(bv)) return 0;
+    scaleA = Math.max(scaleA, Math.abs(av));
+    scaleB = Math.max(scaleB, Math.abs(bv));
+  }
+  if (scaleA === 0 || scaleB === 0) return 0;
+
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    const av = (a[i] ?? 0) / scaleA;
+    const bv = (b[i] ?? 0) / scaleB;
     dot += av * bv;
     normA += av * av;
     normB += bv * bv;
   }
 
-  if (normA === 0 || normB === 0) {
-    return 0;
-  }
-
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+  const similarity = dot / (Math.sqrt(normA) * Math.sqrt(normB));
+  return Number.isFinite(similarity) ? Math.max(-1, Math.min(1, similarity)) : 0;
 }

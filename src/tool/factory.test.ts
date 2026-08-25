@@ -272,6 +272,173 @@ describe("tool factory", () => {
       );
     });
 
+    it("rejects transparent MCP config proxies before descriptor inspection", () => {
+      const mcp = new Proxy({ enabled: true }, {});
+
+      assertThrows(
+        () =>
+          tool({
+            id: "proxied-mcp-config",
+            description: "desc",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: async () => null,
+            mcp,
+          }),
+        Error,
+        "MCP configuration must contain only data properties",
+      );
+    });
+
+    it("rejects MCP accessors despite descriptor prototype pollution", () => {
+      const originalValue = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+      let accessorCalls = 0;
+      const mcp = Object.defineProperty({}, "enabled", {
+        enumerable: true,
+        get() {
+          accessorCalls += 1;
+          throw new Error("MCP accessors must not run");
+        },
+      });
+      let thrown: unknown;
+
+      try {
+        Object.defineProperty(Object.prototype, "value", {
+          configurable: true,
+          value: true,
+          writable: true,
+        });
+
+        try {
+          tool({
+            id: "accessor-mcp-config",
+            description: "desc",
+            inputSchema: { type: "object" },
+            execute: async () => null,
+            mcp,
+          });
+        } catch (error) {
+          thrown = error;
+        }
+      } finally {
+        if (originalValue) {
+          Object.defineProperty(Object.prototype, "value", originalValue);
+        } else {
+          Reflect.deleteProperty(Object.prototype, "value");
+        }
+      }
+
+      assertEquals(thrown instanceof Error, true);
+      assertEquals(accessorCalls, 0);
+    });
+
+    it("copies special MCP property names without changing object prototypes", () => {
+      const mcp = Object.create(null) as Record<string, unknown>;
+      Object.defineProperty(mcp, "__proto__", {
+        enumerable: true,
+        value: { polluted: true },
+      });
+      Object.defineProperty(mcp, "enabled", {
+        enumerable: true,
+        value: true,
+      });
+
+      const result = tool({
+        id: "special-key-mcp-config",
+        description: "desc",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => null,
+        mcp,
+      }).mcp as Record<string, unknown>;
+
+      assertEquals(Object.getPrototypeOf(result), Object.prototype);
+      assertEquals(Object.getOwnPropertyDescriptor(result, "__proto__")?.value, {
+        polluted: true,
+      });
+      assertEquals(({} as { polluted?: boolean }).polluted, undefined);
+    });
+
+    it("loads MCP config through structured clone when proxy detection is unavailable", async () => {
+      const script = `
+        Object.defineProperty(globalThis, "caches", {
+          configurable: true,
+          value: {},
+        });
+        Object.defineProperty(globalThis, "WebSocketPair", {
+          configurable: true,
+          value: function WebSocketPair() {},
+        });
+
+        const {
+          canIdentifyProxyWithoutHooks,
+        } = await import("./src/platform/compat/error-introspection.ts");
+        const { tool } = await import("./src/tool/factory.ts");
+
+        let trapCalls = 0;
+        const plainMcp = {
+          enabled: true,
+          title: "Edge tool",
+          annotations: { readOnlyHint: true },
+        };
+        const proxiedMcp = new Proxy({ enabled: true }, {
+          ownKeys() {
+            trapCalls += 1;
+            throw new Error("ownKeys trap must not escape");
+          },
+          getOwnPropertyDescriptor() {
+            trapCalls += 1;
+            throw new Error("descriptor trap must not escape");
+          },
+        });
+        const result = {
+          canIdentifyProxyWithoutHooks,
+          trapCalls,
+          plainMcp: undefined,
+          proxyMessage: "",
+        };
+        result.plainMcp = tool({
+          id: "edge-mcp-config",
+          description: "desc",
+          inputSchema: { type: "object" },
+          execute: async () => null,
+          mcp: plainMcp,
+        }).mcp;
+        try {
+          tool({
+            id: "edge-mcp-config-proxy",
+            description: "desc",
+            inputSchema: { type: "object" },
+            execute: async () => null,
+            mcp: proxiedMcp,
+          });
+        } catch (error) {
+          result.proxyMessage = error instanceof Error ? error.message : String(error);
+          result.trapCalls = trapCalls;
+        }
+        console.log(JSON.stringify(result));
+      `;
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: ["eval", "--config=deno.json", script],
+        cwd: new URL("../../", import.meta.url),
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      const stderr = new TextDecoder().decode(output.stderr);
+      assertEquals(output.code, 0, stderr);
+
+      const result = JSON.parse(new TextDecoder().decode(output.stdout));
+      assertEquals(result, {
+        canIdentifyProxyWithoutHooks: false,
+        trapCalls: 0,
+        plainMcp: {
+          enabled: true,
+          title: "Edge tool",
+          annotations: { readOnlyHint: true },
+        },
+        proxyMessage:
+          'Tool "edge-mcp-config-proxy" MCP configuration must contain only data properties',
+      });
+    });
+
     it("snapshots raw schemas and metadata at construction", () => {
       const inputSchema: JsonSchema = {
         type: "object",

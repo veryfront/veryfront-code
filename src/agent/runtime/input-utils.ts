@@ -1,5 +1,9 @@
 import type { Message } from "../types.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
+import {
+  isRuntimeGeneratedUserMessage,
+  markRuntimeGeneratedUserMessage,
+} from "./runtime-message-origin.ts";
 
 export function normalizeInput(input: string | Message[]): Message[] {
   const now = Date.now();
@@ -20,11 +24,14 @@ export function normalizeInput(input: string | Message[]): Message[] {
       throw INVALID_ARGUMENT.create({ detail: "Message id cannot be empty." });
     }
 
-    return {
+    const normalized = {
       ...msg,
       id: msg.id ?? `msg_${now}_${index}`,
       timestamp: msg.timestamp ?? now,
     };
+    return isRuntimeGeneratedUserMessage(msg)
+      ? markRuntimeGeneratedUserMessage(normalized)
+      : normalized;
   });
 }
 
@@ -148,9 +155,25 @@ export function accumulateUsage(
 export function getMaxSteps(
   configuredMaxSteps: number | undefined,
   edgeMaxSteps: number | undefined,
-  platformLimit: number,
+  executionPolicyLimit: number = Infinity,
   defaultMaxSteps: number = 20,
 ): number {
+  assertStepLimit(configuredMaxSteps, "Configured maxSteps");
+  assertStepLimit(edgeMaxSteps, "Edge maxSteps");
+  assertStepLimit(defaultMaxSteps, "Default maxSteps");
+  if (executionPolicyLimit !== Infinity) {
+    assertStepLimit(executionPolicyLimit, "Execution policy maxSteps");
+  }
+
   const effectiveMaxSteps = edgeMaxSteps ?? configuredMaxSteps ?? defaultMaxSteps;
-  return Math.min(effectiveMaxSteps, platformLimit);
+  return Math.min(effectiveMaxSteps, executionPolicyLimit);
+}
+
+function assertStepLimit(value: number | undefined, label: string): void {
+  if (value === undefined) return;
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw INVALID_ARGUMENT.create({
+      detail: `${label} must be a positive safe integer`,
+    });
+  }
 }

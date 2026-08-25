@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   computeEtag,
@@ -30,6 +30,21 @@ describe("server/handlers/utils/etag", () => {
     it("should accept Uint8Array", () => {
       const etag = computeEtag(new Uint8Array([72, 101, 108, 108, 111]));
       assertEquals(etag.startsWith('W/"'), true);
+      assertNotEquals(
+        computeEtag(new Uint8Array([1, 2, 3])),
+        computeEtag(new Uint8Array([3, 2, 1])),
+        "byte order must change the ETag",
+      );
+      assertNotEquals(
+        computeEtag(new Uint8Array([1, 2, 3])),
+        computeEtag(new Uint8Array([1, 2, 4])),
+        "byte values must change the ETag",
+      );
+      assertEquals(
+        computeEtag("Hello"),
+        computeEtag(new TextEncoder().encode("Hello")),
+        "string and byte forms of the same ASCII content must agree",
+      );
     });
 
     it("should produce strong ETag when weak=false", () => {

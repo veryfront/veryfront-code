@@ -2,7 +2,12 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
-import { getModuleCacheKey, resolveCachedModulePath } from "./module-cache-lookup.ts";
+import {
+  buildModuleTransformCacheVariant,
+  getModuleCacheKey,
+  resolveCachedModulePath,
+} from "./module-cache-lookup.ts";
+import { MDX_MODULE_DEV_COMPILE_VARIANT } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 
 async function withCachedFile<T>(
   content: string,
@@ -86,6 +91,95 @@ describe("module-loader/module-cache-lookup", () => {
     assertEquals(flagOffWithOrigin, flagOff);
   });
 
+  it("isolates module paths by the configured server external package set", () => {
+    const base = [
+      "/project/app/page.tsx",
+      "project-id",
+      "/project",
+      "source-id",
+      "19.0.0",
+      "production",
+      "off",
+      undefined,
+    ] as const;
+    const baseline = getModuleCacheKey(...base);
+    const knex = getModuleCacheKey(...base, ["knex"]);
+    const combined = getModuleCacheKey(...base, ["knex", "@prisma/client"]);
+    const reordered = getModuleCacheKey(...base, ["@prisma/client", "knex"]);
+
+    assertEquals(knex === baseline, false);
+    assertEquals(combined === knex, false);
+    assertEquals(reordered, combined);
+    assertEquals(
+      buildModuleTransformCacheVariant("off", undefined, ["knex"])?.startsWith(
+        "on:server-externals-",
+      ),
+      true,
+    );
+  });
+
+  it("carries the compile mode into the artifact cache variant", () => {
+    const base = [
+      "/project/app/page.tsx",
+      "project-id",
+      "/project",
+      "source-id",
+      "19.0.0",
+    ] as const;
+
+    // The in-memory key and the on-disk artifact variant have to agree on the
+    // compile mode, or a lookup promotes an artifact compiled the other way.
+    assertEquals(
+      getModuleCacheKey(...base, "development").includes(MDX_MODULE_DEV_COMPILE_VARIANT),
+      true,
+    );
+    assertEquals(
+      getModuleCacheKey(...base, "production").includes(MDX_MODULE_DEV_COMPILE_VARIANT),
+      false,
+    );
+    assertEquals(
+      buildModuleTransformCacheVariant(undefined, undefined, undefined, true),
+      MDX_MODULE_DEV_COMPILE_VARIANT,
+    );
+    assertEquals(
+      buildModuleTransformCacheVariant(undefined, undefined, undefined, false),
+      undefined,
+    );
+  });
+
+  it("looks up MDX-ESM artifacts under the compile mode it may reuse", async () => {
+    const observedVariants: Array<string | undefined> = [];
+    const lookupWithDev = async (dev: boolean) => {
+      await resolveCachedModulePath({
+        cacheKey: `cache-key-${dev}`,
+        filePath: "/project/app/page.tsx",
+        projectDir: "/project",
+        projectId: "project-id",
+        contentSourceId: "source-id",
+        reactVersion: "19.1.0",
+        dev,
+        moduleCache: new Map<string, string>(),
+        lookupMdxCache: (
+          _path,
+          _cacheDir,
+          _projectDir,
+          _unused,
+          _options,
+          _react,
+          cacheVariant,
+        ) => {
+          observedVariants.push(cacheVariant);
+          return Promise.resolve({ status: "miss" });
+        },
+      });
+    };
+
+    await lookupWithDev(true);
+    await lookupWithDev(false);
+
+    assertEquals(observedVariants, [MDX_MODULE_DEV_COMPILE_VARIANT, undefined]);
+  });
+
   it("returns a valid in-memory cached module path", async () => {
     await withCachedFile("export const ok = true;", async (cachedPath) => {
       const moduleCache = new Map([["cache-key", cachedPath]]);
@@ -141,6 +235,88 @@ describe("module-loader/module-cache-lookup", () => {
       );
       assertEquals(moduleCache.has("cache-key"), false);
     });
+  });
+
+  it("evicts in-memory entries whose cached file no longer exists", async () => {
+    const moduleCache = new Map([["cache-key", "/tmp/gone.js"]]);
+
+    assertEquals(
+      await resolveCachedModulePath({
+        cacheKey: "cache-key",
+        filePath: "/project/app/page.tsx",
+        projectDir: "/project",
+        moduleCache,
+        readTextFile: () => Promise.reject(new Deno.errors.NotFound("gone")),
+      }),
+      undefined,
+      "a cached artifact that no longer exists on disk must not be reused",
+    );
+    assertEquals(
+      moduleCache.has("cache-key"),
+      false,
+      "the stale in-memory pointer must be evicted so the next load rebuilds",
+    );
+  });
+
+  it("does not consult the MDX-ESM artifact cache without both project and content-source ids", async () => {
+    let lookups = 0;
+    const lookupMdxCache = () => {
+      lookups += 1;
+      return Promise.resolve({ status: "miss" } as const);
+    };
+
+    assertEquals(
+      await resolveCachedModulePath({
+        cacheKey: "cache-key",
+        filePath: "/project/app/page.tsx",
+        projectDir: "/project",
+        projectId: "project-id",
+        moduleCache: new Map<string, string>(),
+        lookupMdxCache,
+      }),
+      undefined,
+      "a project without a content source has no artifact directory to read",
+    );
+    assertEquals(
+      await resolveCachedModulePath({
+        cacheKey: "cache-key",
+        filePath: "/project/app/page.tsx",
+        projectDir: "/project",
+        contentSourceId: "source-id",
+        moduleCache: new Map<string, string>(),
+        lookupMdxCache,
+      }),
+      undefined,
+      "a content source without a project has no artifact directory to read",
+    );
+    assertEquals(
+      lookups,
+      0,
+      "artifact lookup must stay scoped to a project and content source",
+    );
+  });
+
+  it("percent-encodes the content-source id in the artifact cache directory", async () => {
+    let observedCacheDir = "";
+
+    await resolveCachedModulePath({
+      cacheKey: "cache-key",
+      filePath: "/project/app/page.tsx",
+      projectDir: "/project",
+      projectId: "project-id",
+      contentSourceId: "a/../b",
+      moduleCache: new Map<string, string>(),
+      lookupMdxCache: (_path, cacheDir) => {
+        observedCacheDir = cacheDir;
+        return Promise.resolve({ status: "miss" });
+      },
+    });
+
+    assertEquals(
+      observedCacheDir.endsWith("/project-id/a%2F..%2Fb"),
+      true,
+      "content-source id must not escape its project cache directory",
+    );
   });
 
   it("promotes an MDX-ESM cache hit into the in-memory cache", async () => {

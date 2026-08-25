@@ -7,7 +7,7 @@
  * @module platform/compat/proxy-topology
  */
 
-import { getHostEnv } from "./process.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 
 const TRUST_FORWARDED_HEADERS_ENV = "VERYFRONT_TRUST_FORWARDED_HEADERS";
 

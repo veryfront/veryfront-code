@@ -49,6 +49,7 @@ function createRecoveryCacheOptions(
     cacheDir,
     importMap: identity?.importMap ?? EMPTY_IMPORT_MAP,
     reactVersion: identity?.reactVersion,
+    serverExternalPackages: identity?.serverExternalPackages,
   };
 }
 

@@ -65,6 +65,8 @@ interface TriggerDiscoveryBaseOptions {
   config?: VeryfrontConfig;
   /** Source definition kind used in diagnostics. */
   sourceKind: SourceTriggerKind;
+  /** Explicit host-owned capability for a trusted local or dedicated runtime. */
+  allowHostProjectCodeExecution?: boolean;
 }
 
 /** Shared filesystem, directory, and source-kind options for trigger discovery. */
@@ -361,6 +363,7 @@ export async function discoverSourceTriggers<T extends TriggerDefinitionWithId>(
     sourceKind,
     validate,
     normalize = (value: T): T => value,
+    allowHostProjectCodeExecution,
   } = options;
   validateDiscoveryProjectDir(projectDir);
   if (sourceKind !== "schedule" && sourceKind !== "webhook") {
@@ -392,6 +395,7 @@ export async function discoverSourceTriggers<T extends TriggerDefinitionWithId>(
           const module = await importDiscoveryModule(file.path, {
             adapter,
             projectDir,
+            allowHostProjectCodeExecution,
           }) as Record<string, unknown>;
           const triggerExport = selectTriggerExport(module, validate);
 

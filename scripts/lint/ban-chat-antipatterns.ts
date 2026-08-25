@@ -15,7 +15,15 @@
  *
  * Scope: chat component source only (`src/react/components/chat`), excluding
  * tests and stories.
+ *
+ * Where the rules come from: these are RFC 29's hard rules, mechanised.
+ * See veryfront/veryfront-issue-inbox#739 — rule 1 ("No `xxxClassName` /
+ * `xxxProps` bags. Ever."), rule 7 ("Style state via `data-*`, not props"),
+ * the resolved decision banning `icon` slot props, and "React 19: ref as a
+ * prop". Change a baseline here only alongside the tracked design decision.
  */
+
+import { stripCommentsAndStrings } from "./ratchet.ts";
 
 const SCAN_ROOT = "src/react/components/chat";
 
@@ -38,16 +46,6 @@ const PASSTHROUGH_RE =
   /(?:^|\s)(?:[a-z][A-Za-z]*ClassName|icons|dragProps)\??:\s/gm;
 /** Inline `Provider value={{…}}` — a fresh object every render (F-3). */
 const INLINE_CONTEXT_RE = /\.Provider\s+value=\{\{/g;
-
-/** Strip comments + string/template literals so they can't trigger matches. */
-function stripCommentsAndStrings(text: string): string {
-  let out = text.replace(/\/\*[\s\S]*?\*\//g, "");
-  out = out.replace(/(^|[^:])\/\/[^\n]*/g, "$1");
-  out = out.replace(/`(?:\\.|[^`])*`/gs, "``");
-  out = out.replace(/'(?:\\.|[^'\n])*'/g, "''");
-  out = out.replace(/"(?:\\.|[^"\n])*"/g, '""');
-  return out;
-}
 
 export interface AntipatternCounts {
   forwardRef: number;
@@ -96,18 +94,30 @@ async function walk(
 const FILE_SIZE_CEILINGS: Record<string, number> = {
   // Chat preset implementation lives in chat/chat-preset.tsx. This barrel grew
   // only for the explicit conversation-persistence contracts exported here.
-  "src/react/components/chat/chat/index.tsx": 280,
+  "src/react/components/chat/chat/index.tsx": 279,
   // Message.Sources extracted to composition/message-sources.tsx.
-  "src/react/components/chat/chat/composition/message.tsx": 906,
-  // Includes the ChatSidebar.Item menu compound (Item.Menu/.Rename/.Delete).
+  "src/react/components/chat/chat/composition/message.tsx": 793,
+  // Includes the ChatSidebar.Item compound (Item.Title/.Menu/.Rename/.Delete).
   // Split responsibilities before adding more behavior to this file.
-  "src/react/components/chat/chat/components/sidebar.tsx": 721,
-  // useComposerValue extracted to composition/use-composer-value.ts.
-  "src/react/components/chat/chat/composition/chat-composer.tsx": 619,
-  "src/react/components/chat/agent-picker.tsx": 494,
-  "src/react/components/chat/chat-actions.tsx": 315,
+  "src/react/components/chat/chat/components/sidebar.tsx": 685,
+  // Composer state and native action leaves live in focused sibling modules.
+  "src/react/components/chat/chat/composition/chat-composer.tsx": 389,
+  "src/react/components/chat/chat/composition/chat-input-actions.tsx": 159,
+  "src/react/components/chat/agent-picker.tsx": 429,
+  "src/react/components/chat/chat-actions.tsx": 203,
   "src/react/components/chat/chat/controlled-chat.tsx": 242,
   "src/react/components/chat/chat/app-mode-chat.tsx": 177,
+  // Chat core: message construction and provider-conversion, split along its
+  // real seams (part-field-access, message-part-parsing, tool-replay
+  // reconciliation). Not React components, so this map does not subject them
+  // to the antipattern ratchets above — it only pins their size.
+  "src/chat/conversation.ts": 557,
+  "src/chat/message-prep.ts": 2016,
+  "src/chat/tool-replay-reconciliation.ts": 291,
+  "src/chat/message-part-parsing.ts": 264,
+  "src/chat/part-field-access.ts": 65,
+  "src/chat/provider-input-types.ts": 34,
+  "src/chat/provider-message-conversion.ts": 447,
 };
 
 function checkFileSizes(): boolean {

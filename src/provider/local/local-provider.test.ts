@@ -15,7 +15,12 @@ import {
   assertThrows,
 } from "#std/assert";
 import { afterEach, describe, it } from "#std/testing/bdd";
-import { DEFAULT_LOCAL_MODEL, getLocalModelIds, resolveLocalModel } from "./model-catalog.ts";
+import {
+  DEFAULT_LOCAL_MODEL,
+  getLocalModelIds,
+  resolveLocalEmbeddingModel,
+  resolveLocalModel,
+} from "./model-catalog.ts";
 import { createLocalModel } from "./model-runtime-adapter.ts";
 import { clearModelProviders, ensureModelReady } from "../model-registry.ts";
 import { fromError } from "#veryfront/errors/legacy-error-codec.ts";
@@ -81,6 +86,31 @@ describe("model-catalog", () => {
       "gemma4-e4b-it",
     ]);
   });
+
+  it("resolves embedding model IDs and falls back to raw HuggingFace repos", () => {
+    assertEquals(
+      resolveLocalEmbeddingModel("qwen3-embedding-0.6b").pooling,
+      "last_token",
+      "Qwen3 embeddings must use last-token pooling, not the mean default",
+    );
+    assertEquals(
+      resolveLocalEmbeddingModel("all-MiniLM-L6-v2").hfId,
+      "Xenova/all-MiniLM-L6-v2",
+      "the default embedding id must resolve to its HuggingFace repo",
+    );
+
+    const custom = resolveLocalEmbeddingModel("my-org/my-embedder");
+    assertEquals(
+      custom.hfId,
+      "my-org/my-embedder",
+      "an uncatalogued embedding id must pass through as a raw HuggingFace repo",
+    );
+    assertEquals(
+      custom.dtype,
+      "q4",
+      "the custom embedding fallback must default to q4",
+    );
+  });
 });
 
 describe("model-runtime-adapter", () => {
@@ -101,10 +131,11 @@ describe("model-runtime-adapter", () => {
     assertEquals((model as any).modelId, "local/qwen3.5-0.8b");
   });
 
-  it("sets _isVfLocalModel marker for ensureModelReady detection", () => {
+  it("declares server-local placement and readiness explicitly", () => {
     const model = createLocalModel("qwen3.5-0.8b");
-    const m = model as Record<string, unknown>;
-    assertEquals(m._isVfLocalModel, true);
+    assertEquals(model.executionMode, "server-local");
+    assertEquals(model.runtimeCapabilities?.toolCalling, false);
+    assertEquals(typeof model.prepare, "function");
   });
 
   it("fails before creating a stream when local AI is disabled", async () => {
@@ -133,8 +164,8 @@ describe("ensureModelReady", () => {
     clearModelProviders();
   });
 
-  it("is a no-op for non-local models (no _isVfLocalModel marker)", async () => {
-    // A mock model without _isVfLocalModel should pass through immediately
+  it("is a no-op for runtimes without a preparation hook", async () => {
+    // A runtime without prepare() should pass through immediately.
     const mockModel = {
       specificationVersion: "v2" as const,
       provider: "openai",
@@ -143,7 +174,7 @@ describe("ensureModelReady", () => {
       doGenerate: async () => ({}),
       doStream: async () => ({ stream: new ReadableStream() }),
     };
-    // Should not throw. This returns without verifying runtime.
+    // Should not throw. This returns without running preparation.
     // deno-lint-ignore no-explicit-any
     await ensureModelReady(mockModel as any);
   });
@@ -182,6 +213,23 @@ describe("ensureModelReady", () => {
     await ensureModelReady(model, abortController.signal);
 
     assertEquals(receivedSignal, abortController.signal);
+  });
+
+  it("lets a cancelled caller detach from local runtime preparation", async () => {
+    const previous = Deno.env.get("VERYFRONT_DISABLE_LOCAL_AI");
+    Deno.env.set("VERYFRONT_DISABLE_LOCAL_AI", "1");
+    const cancellation = new DOMException("request cancelled", "AbortError");
+    const abortController = new AbortController();
+    abortController.abort(cancellation);
+
+    try {
+      const localModel = createLocalModel("qwen3.5-0.8b");
+      const error = await assertRejects(() => ensureModelReady(localModel, abortController.signal));
+      assertEquals(error, cancellation);
+    } finally {
+      if (previous === undefined) Deno.env.delete("VERYFRONT_DISABLE_LOCAL_AI");
+      else Deno.env.set("VERYFRONT_DISABLE_LOCAL_AI", previous);
+    }
   });
 
   it("throws no_ai_available for local models when runtime unavailable", async () => {

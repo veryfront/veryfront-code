@@ -4,12 +4,17 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS } from "#veryfront/errors/safe-diagnostics.ts";
 import { getAllWorkflowIds, getWorkflow, registerWorkflow, workflowRegistry } from "./registry.ts";
+import { workflowRegistry as publicWorkflowRegistry } from "./index.ts";
+import type { NodeInfo, WorkflowMetadata } from "./index.ts";
+import * as publicWorkflowRegistrySubpath from "veryfront/workflow/registry";
+import { waitForApproval } from "./dsl/wait.ts";
 import type { WorkflowDefinition, WorkflowNode } from "./types.ts";
 import { MAX_WORKFLOW_DEFINITION_DEPTH, MAX_WORKFLOW_DEFINITION_NODES } from "./limits.ts";
 import { workflow } from "./dsl/workflow.ts";
 import { step } from "./dsl/step.ts";
 import { parallel } from "./dsl/parallel.ts";
 import { branch } from "./dsl/branch.ts";
+import { loop } from "./dsl/loop.ts";
 import { captureWorkflowDefinition } from "./executor/workflow-definition-snapshot.ts";
 
 function node(id: string, type: string): WorkflowNode {
@@ -57,6 +62,11 @@ describe("WorkflowRegistry", () => {
         description: "Test description",
         version: "1.0.0",
         timeout: "30m",
+        integrationRequirements: [{
+          integration: "slack",
+          requiredScopes: ["channels:read"],
+          resources: [{ kind: "channel", id: "C012345" }],
+        }],
         steps: [
           node("step1", "step"),
           parallel("step2", [node("parallel-child", "step")]),
@@ -71,10 +81,56 @@ describe("WorkflowRegistry", () => {
       assertEquals(metadata.description, "Test description");
       assertEquals(metadata.version, "1.0.0");
       assertEquals(metadata.timeout, "30m");
+      assertEquals(metadata.integrationRequirements, [{
+        integration: "slack",
+        requiredScopes: ["channels:read"],
+        resources: [{ kind: "channel", id: "C012345" }],
+      }]);
       assertEquals(metadata.nodeCount, 2);
       assertEquals([...metadata.nodeTypes].sort(), ["parallel", "step"]);
       assertEquals(metadata.hasInputSchema, false);
       assertEquals(metadata.hasOutputSchema, false);
+    });
+
+    it("keeps integration metadata immutable without ambient freeze", () => {
+      const originalObjectFreeze = Object.freeze;
+      let poisonCalls = 0;
+
+      try {
+        Object.freeze = ((value: object) => {
+          poisonCalls += 1;
+          return value;
+        }) as typeof Object.freeze;
+        workflowRegistry.register({
+          id: "freeze-poison-workflow",
+          steps: () => [],
+          integrationRequirements: [{
+            integration: "slack",
+            requiredScopes: ["chat:write"],
+            resources: [],
+          }],
+        });
+      } finally {
+        Object.freeze = originalObjectFreeze;
+      }
+
+      const stored = workflowRegistry.getDefinition("freeze-poison-workflow");
+      const metadata = workflowRegistry.get("freeze-poison-workflow");
+      assertEquals(poisonCalls, 0);
+      assertEquals(Object.isFrozen(stored), true);
+      assertEquals(Object.isFrozen(metadata), true);
+      assertThrows(
+        () => {
+          (stored as { integrationRequirements?: unknown[] }).integrationRequirements = [];
+        },
+        TypeError,
+      );
+      assertThrows(
+        () => {
+          (metadata as { integrationRequirements?: unknown[] }).integrationRequirements = [];
+        },
+        TypeError,
+      );
     });
   });
 
@@ -126,6 +182,11 @@ describe("WorkflowRegistry", () => {
     it("stores detached immutable definition and metadata snapshots", () => {
       const staticInput = { nested: { value: 1 } };
       const dependencies = ["first"];
+      const integrationRequirements = [{
+        integration: "slack",
+        requiredScopes: ["channels:read"],
+        resources: [{ kind: "channel", id: "C012345" }],
+      }];
       const steps: WorkflowNode[] = [
         node("first", "step"),
         {
@@ -140,6 +201,7 @@ describe("WorkflowRegistry", () => {
       ];
       const definition: WorkflowDefinition = {
         id: "detached-registration",
+        integrationRequirements,
         steps,
       };
 
@@ -147,6 +209,8 @@ describe("WorkflowRegistry", () => {
 
       steps.push(node("late", "step"));
       dependencies[0] = "late";
+      integrationRequirements[0]!.requiredScopes![0] = "mutated";
+      integrationRequirements[0]!.resources![0]!.id = "mutated";
       staticInput.nested.value = 2;
       (steps[1]!.config as unknown as Record<string, unknown>).agent = "mutated-agent";
 
@@ -167,6 +231,16 @@ describe("WorkflowRegistry", () => {
         1,
       );
       assertEquals(metadata.agentRefs, ["original-agent"]);
+      assertEquals(stored.integrationRequirements, [{
+        integration: "slack",
+        requiredScopes: ["channels:read"],
+        resources: [{ kind: "channel", id: "C012345" }],
+      }]);
+      assertEquals(metadata.integrationRequirements, [{
+        integration: "slack",
+        requiredScopes: ["channels:read"],
+        resources: [{ kind: "channel", id: "C012345" }],
+      }]);
       assertEquals(metadata.nodes.find((entry) => entry.id === "second")?.dependsOn, ["first"]);
       assertEquals(Object.isFrozen(stored), true);
       assertEquals(Object.isFrozen(stored.steps), true);
@@ -181,6 +255,55 @@ describe("WorkflowRegistry", () => {
         TypeError,
       );
       assertEquals(workflowRegistry.get(definition.id)?.agentRefs, ["original-agent"]);
+    });
+
+    it("rejects malformed integration requirement metadata", () => {
+      assertThrows(
+        () =>
+          workflowRegistry.register({
+            id: "invalid-integration-label",
+            integrationRequirements: [{ integration: "Slack" }],
+            steps: validSteps(),
+          }),
+        Error,
+        "Workflow integrationRequirements[0].integration",
+      );
+
+      for (
+        const [integrationRequirements, message] of [
+          [[{ integration: 42 }], "integration"],
+          [[{ integration: "slack", requiredScopes: "channels:read" }], "requiredScopes"],
+          [[{ integration: "slack", resources: [{ kind: "channel", id: 42 }] }], "resources"],
+          [[{ integration: "Slack" }], "lowercase integration identifier"],
+          [[{ integration: "slack" }, { integration: "slack" }], "duplicate integration"],
+          [[{
+            integration: "slack",
+            requiredScopes: ["channels:read", "channels:read"],
+          }], "duplicate scope"],
+          [[{
+            integration: "slack",
+            resources: [{ kind: "Channel", id: "C012345" }],
+          }], "lowercase resource kind"],
+          [[{
+            integration: "slack",
+            resources: [
+              { kind: "channel", id: "C012345" },
+              { kind: "channel", id: "C012345" },
+            ],
+          }], "duplicate resource identity"],
+        ] as const
+      ) {
+        assertThrows(
+          () =>
+            workflowRegistry.register({
+              id: "invalid-integration-requirements",
+              integrationRequirements,
+              steps: validSteps(),
+            } as unknown as WorkflowDefinition),
+          Error,
+          message,
+        );
+      }
     });
 
     it("unwraps workflow instances without evaluating wrapper accessors", () => {
@@ -723,5 +846,130 @@ describe("Auto-registration with workflow() DSL", () => {
     const metadata = workflowRegistry.get("branch-test");
     assertExists(metadata);
     assertEquals(metadata.nodeTypes.includes("branch"), true);
+  });
+});
+
+describe("workflow graph metadata as a public surface", () => {
+  beforeEach(() => workflowRegistry.clear());
+  afterEach(() => workflowRegistry.clear());
+
+  it("is reachable from the package entry point", () => {
+    registerWorkflow(
+      workflow({ id: "public-surface", steps: [step("only", { tool: "t" })] }),
+    );
+
+    const metadata: WorkflowMetadata | undefined = publicWorkflowRegistry.get("public-surface");
+    assertExists(metadata);
+    const nodes: readonly NodeInfo[] = metadata.nodes;
+    assertEquals(nodes.map((n) => n.id), ["only"]);
+  });
+
+  it("keeps framework-only registry internals out of the public subpath", () => {
+    assertEquals("registerWorkflow" in publicWorkflowRegistrySubpath, true);
+    assertEquals("workflowRegistry" in publicWorkflowRegistrySubpath, true);
+    assertEquals("WorkflowRegistryClass" in publicWorkflowRegistrySubpath, false);
+    assertEquals("workflowRegistryInternal" in publicWorkflowRegistrySubpath, false);
+  });
+
+  it("reports composite child ids exactly as the executor keys them", () => {
+    registerWorkflow(
+      workflow({
+        id: "id-scheme",
+        steps: [
+          step("first", { tool: "t" }),
+          parallel("group", [step("p1", { tool: "t" })]),
+          branch("gate", {
+            condition: () => true,
+            then: [waitForApproval("inner-wait", { message: "m" })],
+            else: [step("otherwise", { tool: "t" })],
+          }),
+        ],
+      }),
+    );
+
+    const metadata = publicWorkflowRegistry.get("id-scheme");
+    assertExists(metadata);
+    // These are the same strings the executor writes into run.nodeStates, so a
+    // consumer can join metadata to run state without guessing the scheme.
+    assertEquals(metadata.nodes.map((n) => n.id), [
+      "first",
+      "group/p1",
+      "group",
+      "gate/then/inner-wait",
+      "gate/else/otherwise",
+      "gate",
+    ]);
+  });
+
+  it("carries an optional per-node description through to the metadata", () => {
+    registerWorkflow(
+      workflow({
+        id: "described",
+        steps: [
+          step("verify", { tool: "t", description: "Check the claim against the record" }),
+          parallel("fan-out", [step("child", { tool: "t" })], {
+            description: "Run the independent checks together",
+          }),
+        ],
+      }),
+    );
+
+    const metadata = publicWorkflowRegistry.get("described");
+    assertExists(metadata);
+    const byId = new Map(metadata.nodes.map((n) => [n.id, n]));
+    assertEquals(byId.get("verify")!.description, "Check the claim against the record");
+    assertEquals(byId.get("fan-out")!.description, "Run the independent checks together");
+    assertEquals(byId.get("fan-out/child")!.description, undefined);
+  });
+
+  it("includes static loop children in graph metadata", () => {
+    registerWorkflow(
+      workflow({
+        id: "static-loop-metadata",
+        steps: [
+          loop("review-loop", {
+            while: () => false,
+            maxIterations: 1,
+            description: "Loop over known review checks",
+            steps: [
+              step("check", {
+                tool: "reviewer",
+                description: "Check one review item",
+              }),
+            ],
+          }),
+        ],
+      }),
+    );
+
+    const metadata = publicWorkflowRegistry.get("static-loop-metadata");
+    assertExists(metadata);
+    assertEquals(metadata.nodes.map((n) => n.id), ["check", "review-loop"]);
+    const byId = new Map(metadata.nodes.map((n) => [n.id, n]));
+    assertEquals(byId.get("review-loop")!.children, ["check"]);
+    assertEquals(byId.get("review-loop")!.description, "Loop over known review checks");
+    assertEquals(byId.get("check")!.description, "Check one review item");
+  });
+
+  it("marks dynamic loop children as unavailable in graph metadata", () => {
+    registerWorkflow(
+      workflow({
+        id: "dynamic-loop-metadata",
+        steps: [
+          loop("dynamic-loop", {
+            while: () => false,
+            maxIterations: 1,
+            steps: () => [step("runtime-only", { tool: "runtime-tool" })],
+          }),
+        ],
+      }),
+    );
+
+    const metadata = publicWorkflowRegistry.get("dynamic-loop-metadata");
+    assertExists(metadata);
+    assertEquals(metadata.nodes.map((n) => n.id), ["dynamic-loop"]);
+    assertEquals(metadata.nodes[0]!.children, undefined);
+    assertEquals(metadata.nodeTypes, ["loop"]);
+    assertEquals(metadata.toolRefs, []);
   });
 });

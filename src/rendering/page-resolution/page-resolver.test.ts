@@ -1,7 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { PageResolver } from "./page-resolver.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import {
+  clearRouterDetectionCacheForProject,
+  primeRouterDetectionCache,
+} from "#veryfront/rendering/router-detection.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 
@@ -11,13 +22,30 @@ interface DirEntry {
   isDirectory: boolean;
 }
 
+function fileNotFoundError(): Error {
+  return Object.assign(new Error("File not found"), { code: "ENOENT" });
+}
+
+function virtualTextRead(readFile: (path: string) => Promise<string>) {
+  return {
+    symlinkSemantics: "none" as const,
+    readFile,
+    async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+      const bytes = new TextEncoder().encode(await readFile(path));
+      if (bytes.byteLength > byteLimit) throw new RangeError("File exceeds byte limit");
+      return bytes;
+    },
+  };
+}
+
 function createMockAdapter(
   dirEntries: Record<string, DirEntry[]> = {},
   existingDirs: string[] = [],
 ): RuntimeAdapter {
   return {
+    id: "memory",
     fs: {
-      readFile: async () => "",
+      ...virtualTextRead(async () => ""),
       exists: async (path: string) => existingDirs.includes(path),
       readDir: async function* (path: string) {
         const entries = dirEntries[path] ?? [];
@@ -38,6 +66,25 @@ function createMockConfig(overrides: Partial<VeryfrontConfig> = {}): VeryfrontCo
   } as VeryfrontConfig;
 }
 
+/** An adapter whose project holds no routable file at all. */
+function createEmptyProjectAdapter(): RuntimeAdapter {
+  return {
+    id: "memory",
+    fs: {
+      ...virtualTextRead(() => Promise.reject(fileNotFoundError())),
+      resolveFile: async () => null,
+      stat: async () => {
+        throw fileNotFoundError();
+      },
+      exists: async () => false,
+      readDir: async function* () {},
+      writeFile: async () => {},
+      mkdir: async () => {},
+    },
+    env: { get: () => undefined },
+  } as unknown as RuntimeAdapter;
+}
+
 describe("rendering/page-resolution/page-resolver", () => {
   describe("PageResolver constructor", () => {
     it("should create a resolver with required options", () => {
@@ -51,16 +98,48 @@ describe("rendering/page-resolution/page-resolver", () => {
       assertEquals(resolver instanceof PageResolver, true);
     });
 
-    it("should accept optional projectId", () => {
-      const adapter = createMockAdapter();
+    it("should accept optional projectId", async () => {
+      // The router-detection cache is keyed by projectId, so a primed entry is
+      // the observable proof that the constructor kept the identity.
+      const adapter = createMockAdapter(
+        {
+          "/project": [{ name: "pages", isFile: false, isDirectory: true }],
+          "/project/pages": [],
+        },
+        ["/project/pages"],
+      );
       const config = createMockConfig();
-      const resolver = new PageResolver({
-        projectDir: "/project",
-        projectId: "my-project",
-        config,
-        adapter,
-      });
-      assertEquals(resolver instanceof PageResolver, true);
+      clearRouterDetectionCacheForProject("my-project");
+      clearRouterDetectionCacheForProject("/project");
+      primeRouterDetectionCache("my-project", "app");
+
+      try {
+        const resolver = new PageResolver({
+          projectDir: "/project",
+          projectId: "my-project",
+          config,
+          adapter,
+        });
+        assertEquals(
+          await resolver.getRouterMode(),
+          "app",
+          "projectId must key the router-detection cache",
+        );
+
+        const withoutProjectId = new PageResolver({
+          projectDir: "/project",
+          config,
+          adapter,
+        });
+        assertEquals(
+          await withoutProjectId.getRouterMode(),
+          "pages",
+          "a resolver without projectId must not read another project's primed detection",
+        );
+      } finally {
+        clearRouterDetectionCacheForProject("my-project");
+        clearRouterDetectionCacheForProject("/project");
+      }
     });
   });
 
@@ -71,12 +150,13 @@ describe("rendering/page-resolution/page-resolver", () => {
         ["/project/src/content/[slug].tsx", "export default function Page() { return null; }"],
       ]);
       const adapter = {
+        id: "memory",
         fs: {
-          readFile: async (path: string) => {
+          ...virtualTextRead(async (path: string) => {
             const source = files.get(path);
-            if (source === undefined) throw new Error("File not found");
+            if (source === undefined) throw fileNotFoundError();
             return source;
-          },
+          }),
           resolveFile: async (path: string) => {
             if (path === "/project/src/content/index") {
               return "/project/src/content/index.tsx";
@@ -90,7 +170,7 @@ describe("rendering/page-resolution/page-resolver", () => {
             if (path === "/project/src/content") {
               return { isFile: false, isDirectory: true, isSymlink: false };
             }
-            throw new Error("File not found");
+            throw fileNotFoundError();
           },
           exists: async (path: string) => path === "/project/src/content",
           readDir: async function* (path: string) {
@@ -125,17 +205,18 @@ describe("rendering/page-resolution/page-resolver", () => {
     it("resolves dynamic App Router pages without remote stat misses", async () => {
       let statCalls = 0;
       const adapter = {
+        id: "memory",
         fs: {
-          readFile: async (path: string) => {
+          ...virtualTextRead(async (path: string) => {
             if (path === "/project/app/[slug]/page.tsx") {
               return "export default function Page() { return null; }";
             }
-            throw new Error("File not found");
-          },
+            throw fileNotFoundError();
+          }),
           resolveFile: async () => null,
           stat: async () => {
             statCalls++;
-            throw new Error("File not found");
+            throw fileNotFoundError();
           },
           readDir: async function* (path: string) {
             if (path === "/project/app") {
@@ -159,15 +240,107 @@ describe("rendering/page-resolution/page-resolver", () => {
       assertEquals(statCalls, 0);
     });
 
+    it("propagates an App Router resolution deadline through active adapter work", async () => {
+      let releaseResolveFile!: (path: string | null) => void;
+      const blockedResolveFile = new Promise<string | null>((resolve) => {
+        releaseResolveFile = resolve;
+      });
+      const adapter = {
+        id: "memory",
+        fs: {
+          ...virtualTextRead(() => Promise.resolve("# Page")),
+          resolveFile: () => blockedResolveFile,
+          readDir: async function* () {},
+          writeFile: async () => {},
+          mkdir: async () => {},
+        },
+        env: { get: () => undefined },
+      } as unknown as RuntimeAdapter;
+      const resolver = new PageResolver({
+        projectDir: "/project",
+        projectId: "app-timeout-project",
+        config: createMockConfig({ router: "app" }),
+        adapter,
+      });
+
+      await assertRejects(
+        () =>
+          resolver.resolvePage("", {
+            deadline: Date.now() + 50,
+          }),
+        Error,
+        "deadline",
+      );
+
+      releaseResolveFile(null);
+      await Promise.resolve();
+    });
+
+    it("propagates a resolution deadline while auto router detection is active", async () => {
+      let releaseDirectoryReads!: () => void;
+      const directoryReadsReleased = new Promise<void>((resolve) => {
+        releaseDirectoryReads = resolve;
+      });
+      const adapter = {
+        id: "memory",
+        fs: {
+          ...virtualTextRead(() => Promise.resolve("# Page")),
+          resolveFile: async () => null,
+          readDir: () => ({
+            [Symbol.asyncIterator]() {
+              return {
+                async next() {
+                  await directoryReadsReleased;
+                  return { done: true as const, value: undefined };
+                },
+              };
+            },
+          }),
+          writeFile: async () => {},
+          mkdir: async () => {},
+        },
+        env: { get: () => undefined },
+      } as unknown as RuntimeAdapter;
+      const resolver = new PageResolver({
+        projectDir: "/project",
+        projectId: "auto-timeout-project",
+        config: createMockConfig(),
+        adapter,
+      });
+
+      const request = resolver.resolvePage("article", {
+        deadline: Date.now() + 50,
+      });
+      let pendingTimer: ReturnType<typeof setTimeout> | undefined;
+      const outcome = await Promise.race([
+        request.then(
+          () => "resolved" as const,
+          (error) =>
+            error instanceof Error && error.message.includes("deadline")
+              ? "deadline" as const
+              : "other-error" as const,
+        ),
+        new Promise<"still-pending">((resolve) => {
+          pendingTimer = setTimeout(() => resolve("still-pending"), 200);
+        }),
+      ]);
+      if (pendingTimer !== undefined) clearTimeout(pendingTimer);
+      releaseDirectoryReads();
+      await request.catch(() => undefined);
+
+      assertEquals(outcome, "deadline");
+    });
+
     it("resolves optional catch-all App Router pages across remaining segments", async () => {
       const adapter = {
+        id: "memory",
         fs: {
-          readFile: async (path: string) => {
+          ...virtualTextRead(async (path: string) => {
             if (path === "/project/app/[[...slug]]/page.tsx") {
               return "export default function Page() { return null; }";
             }
-            throw new Error("File not found");
-          },
+            throw fileNotFoundError();
+          }),
           resolveFile: async () => null,
           readDir: async function* (path: string) {
             if (path === "/project/app") {
@@ -192,13 +365,14 @@ describe("rendering/page-resolution/page-resolver", () => {
 
     it("keeps auto router detection aligned with the structural app router", async () => {
       const adapter = {
+        id: "memory",
         fs: {
-          readFile: async (path: string) => {
+          ...virtualTextRead(async (path: string) => {
             if (path === "/project/app/page.tsx") {
               return "export default function Page() { return null; }";
             }
-            throw new Error("File not found");
-          },
+            throw fileNotFoundError();
+          }),
           resolveFile: async (path: string) => {
             if (path === "/project/app/page") {
               return "/project/app/page.tsx";
@@ -213,7 +387,7 @@ describe("rendering/page-resolution/page-resolver", () => {
                 isSymlink: false,
               };
             }
-            throw new Error("File not found");
+            throw fileNotFoundError();
           },
           exists: async (path: string) => path === "/project/app",
           readDir: async function* (path: string) {
@@ -246,14 +420,15 @@ describe("rendering/page-resolution/page-resolver", () => {
       const resolveCalls: string[] = [];
       const readCalls: string[] = [];
       const adapter = {
+        id: "memory",
         fs: {
-          readFile: async (path: string) => {
+          ...virtualTextRead(async (path: string) => {
             readCalls.push(path);
             if (path === "/project/pages/index.tsx") {
               return "export default function Page() { return null; }";
             }
-            throw new Error("File not found");
-          },
+            throw fileNotFoundError();
+          }),
           resolveFile: async (path: string) => {
             resolveCalls.push(path);
             if (path === "/project/app/page") {
@@ -279,7 +454,7 @@ describe("rendering/page-resolution/page-resolver", () => {
                 isSymlink: false,
               };
             }
-            throw new Error("File not found");
+            throw fileNotFoundError();
           },
           exists: async (path: string) => path === "/project/pages",
           readDir: async function* (path: string) {
@@ -314,13 +489,14 @@ describe("rendering/page-resolution/page-resolver", () => {
 
     it("does not poison auto router detection from a pages fallback", async () => {
       const adapter = {
+        id: "memory",
         fs: {
-          readFile: async (path: string) => {
+          ...virtualTextRead(async (path: string) => {
             if (path === "/project/pages/index.tsx") {
               return "export default function Page() { return null; }";
             }
-            throw new Error("File not found");
-          },
+            throw fileNotFoundError();
+          }),
           resolveFile: async (path: string) => {
             if (path === "/project/app/page") {
               return null;
@@ -345,7 +521,7 @@ describe("rendering/page-resolution/page-resolver", () => {
                 isSymlink: false,
               };
             }
-            throw new Error("File not found");
+            throw fileNotFoundError();
           },
           exists: async (path: string) => path === "/project/app" || path === "/project/pages",
           readDir: async function* (path: string) {
@@ -382,6 +558,113 @@ describe("rendering/page-resolution/page-resolver", () => {
 
       assertEquals(page.entity.path, "/project/pages/index.tsx");
       assertEquals(routerMode, "app");
+    });
+  });
+
+  describe("resolvePage failures", () => {
+    it("raises the registry file-not-found identity for an unknown slug", async () => {
+      const resolver = new PageResolver({
+        projectDir: "/project",
+        projectId: "missing-app",
+        config: createMockConfig({ router: "app" } as any),
+        adapter: createEmptyProjectAdapter(),
+      });
+
+      const error = await assertRejects(
+        () => resolver.resolvePage("does-not-exist"),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(
+        error,
+        VeryfrontError,
+        "the rejection must carry the registry error identity",
+      );
+      assertEquals(
+        error.slug,
+        "file-not-found",
+        "pageExists and the API 404 path key off this slug",
+      );
+      assertStringIncludes(
+        error.detail ?? error.message,
+        "Page not found: does-not-exist",
+        "the failure must name the slug that could not be resolved",
+      );
+      assertEquals(
+        (error.context as { router?: string } | undefined)?.router,
+        "app",
+        "the failure records the router that searched for the page",
+      );
+    });
+
+    it("records the pages router on a missing pages-router page", async () => {
+      const resolver = new PageResolver({
+        projectDir: "/project",
+        projectId: "missing-pages",
+        config: createMockConfig({ router: "pages" } as any),
+        adapter: createEmptyProjectAdapter(),
+      });
+
+      const error = await assertRejects(
+        () => resolver.resolvePage("does-not-exist"),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(
+        error,
+        VeryfrontError,
+        "the rejection must carry the registry error identity",
+      );
+      assertEquals(
+        error.slug,
+        "file-not-found",
+        "pageExists and the API 404 path key off this slug",
+      );
+      assertEquals(
+        (error.context as { router?: string } | undefined)?.router,
+        "pages",
+        "the failure records the router that searched for the page",
+      );
+    });
+  });
+
+  describe("pageExists", () => {
+    it("reports a missing page as absent", async () => {
+      const resolver = new PageResolver({
+        projectDir: "/project",
+        projectId: "exists-missing",
+        config: createMockConfig({ router: "pages" } as any),
+        adapter: createEmptyProjectAdapter(),
+      });
+
+      assertEquals(
+        await resolver.pageExists("/no-such-page"),
+        false,
+        "a missing page must resolve false",
+      );
+    });
+
+    it("propagates a resolution failure instead of reporting the page missing", async () => {
+      const resolver = new PageResolver({
+        projectDir: "/project",
+        projectId: "exists-cancelled",
+        config: createMockConfig({ router: "pages" } as any),
+        adapter: createEmptyProjectAdapter(),
+      });
+      const controller = new AbortController();
+      const reason = new Error("cancelled");
+      controller.abort(reason);
+
+      const error = await assertRejects(
+        () => resolver.pageExists("/no-such-page", { signal: controller.signal }),
+        Error,
+      );
+
+      assertStrictEquals(
+        error,
+        reason,
+        "a cancelled resolution must not be reported as a missing page",
+      );
     });
   });
 

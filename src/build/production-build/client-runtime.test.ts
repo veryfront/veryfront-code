@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import * as esbuild from "veryfront/extensions/bundler";
+import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import {
   generateAppModule,
   generateClientModule,
@@ -9,6 +10,7 @@ import {
   generatePrefetchScript,
   generateRouterScript,
 } from "./client-runtime.ts";
+import { VERSION } from "#veryfront/utils/version-constant.ts";
 
 describe(
   "build/production-build/client-runtime",
@@ -32,12 +34,12 @@ describe(
       it("should contain version export", () => {
         const result = getResult();
         assertEquals(result.includes("export const version"), true);
-        assertEquals(result.includes("2.0.0"), true);
+        assertEquals(result.includes(JSON.stringify(VERSION)), true);
       });
 
-      it("should contain hydrate export", () => {
+      it("should contain an async hydrate export", () => {
         const result = getResult();
-        assertEquals(result.includes("export const hydrate"), true);
+        assertEquals(result.includes("export async function hydrate"), true);
       });
 
       it("should contain window.__veryfront setup", () => {
@@ -46,10 +48,11 @@ describe(
         assertEquals(result.includes("__veryfront.initialized"), true);
       });
 
-      it("should set data-hydrated attribute on root element", () => {
+      it("should delegate hydration to the generated router runtime", () => {
         const result = getResult();
-        assertEquals(result.includes("data-hydrated"), true);
-        assertEquals(result.includes("getElementById('root')"), true);
+        assertEquals(result.includes("import { boot } from './router.js'"), true);
+        assertEquals(result.includes("return boot({ ...options, slug })"), true);
+        assertEquals(result.includes("data-hydrated"), false);
       });
     });
 
@@ -193,6 +196,12 @@ describe(
     );
 
     describe("generateImportMap", () => {
+      function parseImportMap(importMap: string): { imports: Record<string, string> } {
+        const jsonMatch = importMap.match(/<script type="importmap">\s*([\s\S]*?)\s*<\/script>/);
+        assertEquals(jsonMatch !== null, true, "import map must be wrapped in a script tag");
+        return JSON.parse(jsonMatch![1]!) as { imports: Record<string, string> };
+      }
+
       it("should return an HTML script tag with importmap", async () => {
         const importMap = await generateImportMap();
         assertEquals(importMap.includes('<script type="importmap">'), true);
@@ -201,31 +210,41 @@ describe(
 
       it("should contain react in the import map", async () => {
         const importMap = await generateImportMap();
-        assertEquals(importMap.includes("react"), true);
+        const parsed = parseImportMap(importMap);
+        assertEquals(
+          parsed.imports,
+          getReactImportMap(REACT_DEFAULT_VERSION),
+          "import map must be the shared React import map for the default version",
+        );
+        assertStringIncludes(
+          parsed.imports["react"] as string,
+          REACT_DEFAULT_VERSION,
+          "react specifier pins the configured React version",
+        );
       });
 
       it("should contain valid JSON inside the script tag", async () => {
         const importMap = await generateImportMap();
-        const jsonMatch = importMap.match(/<script type="importmap">\s*([\s\S]*?)\s*<\/script>/);
-        assertEquals(jsonMatch !== null, true);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[1]!);
-          assertEquals(typeof parsed.imports, "object");
-        }
+        const parsed = parseImportMap(importMap);
+        assertEquals(
+          parsed.imports !== null && typeof parsed.imports === "object",
+          true,
+          "imports is a non-null object",
+        );
       });
     });
 
     describe("generateAppModule edge cases", () => {
-      it("should include IIFE wrapper", () => {
+      it("should expose the compatibility API without a placeholder IIFE", () => {
         const result = generateAppModule();
-        assertEquals(result.includes("(() => {"), true);
-        assertEquals(result.includes("})()"), true);
+        assertEquals(result.includes("export async function hydrate"), true);
+        assertEquals(result.includes("(() => {"), false);
       });
 
       it("should include hydration support", () => {
         const result = generateAppModule();
-        assertEquals(result.includes("window.hydrate"), true);
-        assertEquals(result.includes("async function"), true);
+        assertEquals(result.includes("window.hydrate = hydrate"), true);
+        assertEquals(result.includes("return boot({ ...options, slug })"), true);
       });
     });
   },

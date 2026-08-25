@@ -1,3 +1,5 @@
+import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
+import { isTenantSourceBuildError } from "#veryfront/errors/tenant-classification.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import { sanitizeTelemetryAttributes, sanitizeTelemetryText } from "./telemetry-error.ts";
 import { MAX_APPLICATION_ERROR_CONTEXT_VALUE_LENGTH } from "./limits.ts";
@@ -32,6 +34,9 @@ export type ApplicationErrorReporterLifecycle = {
 };
 
 const MAX_APPLICATION_ERROR_SERVICE_NAME_LENGTH = 255;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+const ReflectApply = Reflect.apply;
+const ReflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 
 let reporter: ApplicationErrorReporter | undefined;
 let reporterOwner: symbol | undefined;
@@ -220,6 +225,44 @@ export function initializeApplicationErrorReporter(options: {
   });
 }
 
+const TENANT_BUILD_ERROR_CLASS = "tenant-build";
+
+/**
+ * Tag applied by the module loader only after an explicit tenant-source
+ * classification.
+ *
+ * The tag is read through the shared symbol registry instead of importing the
+ * rendering layer; see src/rendering/orchestrator/module-loader/build-failure.ts.
+ */
+const TENANT_BUILD_FAILURE_TAG = Symbol.for("veryfront.module-loader.tenant-build-failure");
+
+function hasOwnTrueSymbol(value: Error, key: symbol): boolean {
+  const descriptor = ReflectGetOwnPropertyDescriptor(value, key);
+  return descriptor !== undefined &&
+    ReflectApply(ObjectPrototypeHasOwnProperty, descriptor, ["value"]) === true &&
+    descriptor.value === true;
+}
+
+/**
+ * Whether `error` describes tenant build/content failing to compile (a page
+ * that does not build, MDX that does not parse) rather than a framework fault.
+ *
+ * Recognizes the existing discriminators at their capture seam:
+ * - the module loader's tenant-build-failure tag, and
+ * - the shared slug/context classification in `#veryfront/errors`, which is the
+ *   single owner of the tenant-source verdict.
+ */
+function isTenantBuildError(error: unknown): boolean {
+  try {
+    if (error instanceof Error) {
+      if (hasOwnTrueSymbol(error, TENANT_BUILD_FAILURE_TAG)) return true;
+    }
+    return isTenantSourceBuildError(error);
+  } catch {
+    return false;
+  }
+}
+
 export function captureApplicationError(
   error: unknown,
   context: ApplicationErrorContext,
@@ -229,7 +272,17 @@ export function captureApplicationError(
   if (!currentReporter) return undefined;
 
   try {
-    const snapshot = snapshotApplicationErrorContext(context);
+    // Tenant build/content failures stay captured for escalation analysis,
+    // but are tagged and downgraded so per-request tenant mistakes stop
+    // surfacing as error-level framework issues.
+    const classifiedContext = isTenantBuildError(error)
+      ? {
+        ...context,
+        errorClass: context.errorClass ?? TENANT_BUILD_ERROR_CLASS,
+        level: context.level ?? "warning" as const,
+      }
+      : context;
+    const snapshot = snapshotApplicationErrorContext(classifiedContext);
     return snapshot ? currentReporter.capture(error, snapshot) : undefined;
   } catch {
     // Error reporting is diagnostic and must never replace the application
@@ -265,7 +318,13 @@ export async function flushApplicationErrors(timeoutMs = 2_000): Promise<boolean
 
 export function isExpectedApplicationError(error: unknown): boolean {
   try {
-    return error instanceof DOMException && error.name === "AbortError";
+    if (error instanceof DOMException && error.name === "AbortError") return true;
+    // Client-class (4xx) VeryfrontErrors describe caller or tenant content
+    // (e.g. a rejected hosted config), not a server fault. They are still
+    // logged at their throw sites; reporting them per request would flood the
+    // error tracker with failures no code change here can fix.
+    const snapshot = snapshotVeryfrontError(error);
+    return snapshot !== null && snapshot.status >= 400 && snapshot.status < 500;
   } catch {
     return false;
   }
@@ -279,11 +338,16 @@ function snapshotApplicationErrorContext(
   if (!boundary) return null;
 
   const snapshot: ApplicationErrorContext = { boundary };
-  for (const key of ["method", "processRole", "requestId", "spanId", "traceId"] as const) {
+  for (
+    const key of ["method", "processRole", "requestId", "spanId", "traceId", "errorClass"] as const
+  ) {
     const value = context[key];
     if (value === undefined) continue;
     const normalized = normalizeContextValue(value);
     if (normalized) snapshot[key] = normalized;
+  }
+  if (context.level === "error" || context.level === "warning") {
+    snapshot.level = context.level;
   }
   const attributes = sanitizeTelemetryAttributes(context.attributes);
   if (attributes && Object.keys(attributes).length > 0) {

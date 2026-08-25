@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
   # Required for merge-queue entries: queued runs report checks via merge_group.
   merge_group:
     types: [checks_requested]
@@ -21,14 +20,147 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     name: Analyze
     runs-on: ubuntu-latest
+    # CodeQL takes ~10 minutes on this repo. Cap the job well under the merge
+    # queue's check_response_timeout (1800s) so that a hung step fails fast and
+    # visibly, rather than stalling until the Actions default of 360 minutes —
+    # which would reproduce the very ejection this workflow exists to prevent.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-      - uses: github/codeql-action/init@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81  # v4.37.3
+      - uses: github/codeql-action/init@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28  # v4.37.8
         with:
           languages: javascript-typescript
           queries: security-and-quality
 
-      - uses: github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81  # v4.37.3
+      # A merge-queue batch can dissolve while this job is still running. GitHub
+      # then deletes the ephemeral gh-readonly-queue ref, and the SARIF upload —
+      # which starts ~10 minutes in, after the analysis itself has already
+      # succeeded — fails with "ref ... not found in this repository". Nothing is
+      # being merged at that point, so the run is moot rather than failing, but
+      # the queue reads the red check as the PR's fault and ejects it.
+      #
+      # github/codeql-action offers no supported way to express "this run is
+      # moot" (github/codeql-action#1572, open since March 2023 with no fix), so
+      # the outcome is captured here and re-raised by the guard below.
+      #
+      # What the guard actually tolerates, stated plainly: ANY analyze failure on
+      # a merge_group run whose target ref has provably gone away, or has moved
+      # to a different SHA. That is broader than the upload 404 that motivated it
+      # — an extractor crash or a query failure landing in the same window is
+      # swallowed too. It is safe because check runs are bound to a SHA: if the
+      # queue branch is gone or has moved, nothing can be merged on the strength
+      # of this run, and the rebuilt entry re-runs CodeQL from scratch. Every
+      # other case fails the build — a non-merge_group event, a ref still live at
+      # our SHA, an unparseable response, or any indeterminate API status.
+      #
+      # ASSUMPTION — the merge queue's merge_method is SQUASH, which mints a
+      # fresh SHA for every rebuild, so a moot run's SHA can never recur on a
+      # later live entry. Under REBASE a no-op rebase could reproduce the same
+      # SHA, and this run's moot-green could then satisfy a live entry. If the
+      # queue's merge method ever changes, revisit this guard first.
+      - id: analyze
+        uses: github/codeql-action/analyze@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28  # v4.37.8
+        continue-on-error: true
         with:
           category: "/language:javascript-typescript"
+
+      - name: Re-raise CodeQL failure unless the target ref is gone
+        if: ${{ steps.analyze.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          TARGET_REF: ${{ github.ref }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # Only merge-queue refs are ephemeral. Every other event keeps its ref,
+          # so a CodeQL failure there is always the build's problem.
+          if [ "$EVENT_NAME" != "merge_group" ]; then
+            echo "::error::CodeQL failed on a ${EVENT_NAME} run. Failing the build."
+            exit 1
+          fi
+
+          body="$(mktemp)"
+          trap 'rm -f "$body"' EXIT
+
+          # This turns a red required check green, so every tolerated path leaves
+          # an auditable line in the job summary, not only in the raw log.
+          summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+
+          # curl already emits 000 through -w on a transport failure, so no
+          # shell-side fallback is wanted: `|| echo 000` would append a second
+          # sentinel and yield the literal string 000000. The explicit assignment
+          # below keeps the sentinel exactly three zeroes.
+          #
+          # The request is bounded and retried. An unbounded hang against
+          # api.github.com would hold the job open past the queue's
+          # check_response_timeout and eject the PR — the exact failure this
+          # guard exists to prevent. Worst case here is ~2 minutes.
+          if ! status="$(curl -sS \
+            --connect-timeout 10 \
+            --max-time 30 \
+            --retry 3 \
+            --retry-delay 2 \
+            --retry-all-errors \
+            -o "$body" -w '%{http_code}' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/git/ref/${TARGET_REF#refs/}")"; then
+            status="000"
+          fi
+
+          case "$status" in
+            404)
+              echo "::notice::${TARGET_REF} no longer exists: the merge-queue batch dissolved" \
+                "while CodeQL was uploading. Nothing is being merged from this run, so its" \
+                "result cannot gate anything. Treating it as moot."
+              {
+                echo "### CodeQL failure tolerated as moot"
+                echo
+                echo "A failing CodeQL run was reported as successful."
+                echo
+                echo "- Target ref: \`${TARGET_REF}\`"
+                echo "- Run SHA: \`${TARGET_SHA}\`"
+                echo "- Reason: the ref returned HTTP 404 — the merge-queue batch dissolved while this job was running, so this run cannot gate any merge."
+              } >> "$summary"
+              ;;
+            200)
+              # A 200 whose body carries no object SHA leaves us unable to tell a
+              # live ref from a dead one. That must fail closed: without this
+              # check an empty value compares unequal to TARGET_SHA and falls
+              # into the tolerant "batch was rebuilt" path below.
+              if ! current="$(jq -r '.object.sha // empty' "$body")"; then
+                current=""
+              fi
+              if [ -z "$current" ]; then
+                echo "::error::${TARGET_REF} returned HTTP 200 but the response carried no object SHA," \
+                  "so whether this run is still live cannot be determined. Failing closed."
+                exit 1
+              fi
+              if [ "$current" = "$TARGET_SHA" ]; then
+                echo "::error::${TARGET_REF} still points at ${TARGET_SHA}, so this run is live." \
+                  "The CodeQL failure is genuine. Failing the build."
+                exit 1
+              fi
+              echo "::notice::${TARGET_REF} has moved from ${TARGET_SHA} to ${current}: the batch" \
+                "was rebuilt without this run. Its result cannot gate the new head. Treating it as moot."
+              {
+                echo "### CodeQL failure tolerated as moot"
+                echo
+                echo "A failing CodeQL run was reported as successful."
+                echo
+                echo "- Target ref: \`${TARGET_REF}\`"
+                echo "- Run SHA: \`${TARGET_SHA}\`"
+                echo "- Ref now at: \`${current}\`"
+                echo "- Reason: the batch was rebuilt without this run, so this run cannot gate the new head."
+              } >> "$summary"
+              ;;
+            *)
+              echo "::error::Could not determine whether ${TARGET_REF} still exists (HTTP ${status};" \
+                "000 means the request failed at the transport level). Failing closed."
+              exit 1
+              ;;
+          esac

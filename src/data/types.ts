@@ -5,7 +5,15 @@
  */
 
 // Re-export schema types
-export type { CacheEntry, DataContext, DataResult, StaticPathsResult } from "./schemas/index.ts";
+export type {
+  CacheEntry,
+  DataContext,
+  DataResponseMetadata,
+  DataResult,
+  ResponseCookie,
+  StaticDataResult,
+  StaticPathsResult,
+} from "./schemas/index.ts";
 
 // Import for use in interfaces
 import type { DataContext, DataResult, StaticPathsResult } from "./schemas/index.ts";

@@ -110,7 +110,8 @@ export interface UseChatResult {
   setInput: (input: string) => void;
   /** Change the model for subsequent requests */
   setModel: (model: string | undefined) => void;
-  sendMessage: (message: { text: string; files?: ChatFilePart[] }) => Promise<void>;
+  /** Send a message. A message model overrides the session model for this request only. */
+  sendMessage: (message: { text: string; files?: ChatFilePart[]; model?: string }) => Promise<void>;
   /** Edit a user message and resubmit — truncates history to that point */
   editMessage: (messageId: string, newText: string) => Promise<void>;
   /** Get branch info for a message (returns { current, total }; total=1 if no branches) */

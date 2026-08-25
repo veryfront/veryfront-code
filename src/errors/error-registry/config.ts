@@ -67,6 +67,22 @@ export const CONFIG_VALIDATION_FAILED = defineError({
   suggestion: "Check configuration values against requirements",
 });
 
+export const LOCAL_INTEGRATION_CONFIG_INVALID = defineError({
+  slug: "local-integration-config-invalid",
+  category: "CONFIG",
+  status: 400,
+  title: "Invalid local integration configuration",
+  suggestion: "Use exact catalog tool IDs and supported local credential and endpoint contracts",
+});
+
+export const LOCAL_INTEGRATION_CREDENTIALS_MISSING = defineError({
+  slug: "local-integration-credentials-missing",
+  category: "CONFIG",
+  status: 400,
+  title: "Local integration credentials are missing",
+  suggestion: "Set the named environment variables or configure a credential provider",
+});
+
 /** Webhook definition validation failures (required fields, target, eventFilter) */
 export const WEBHOOK_CONFIG_INVALID = defineError({
   slug: "webhook-config-invalid",
@@ -96,6 +112,20 @@ export const TRIGGER_CONFIG_INVALID = defineError({
     "Check trigger ID format (lowercase, alphanumeric, dots/slashes/hyphens) and ensure all input values are JSON-serializable",
 });
 
+/**
+ * `veryfront init --template <name>` (and `npm create veryfront -- --template`)
+ * was given a name that is not in the starter catalog. The detail carries the
+ * list of valid names so a wrong guess is self-correcting.
+ */
+export const TEMPLATE_NOT_FOUND = defineError({
+  slug: "template-not-found",
+  category: "CONFIG",
+  status: 404,
+  title: "Unknown project template",
+  suggestion: "Run 'veryfront init --help' to see the available templates",
+  exitCode: 2,
+});
+
 /** Registry fragment for CONFIG errors (slug → definition). */
 export const CONFIG_REGISTRY = {
   "config-not-found": CONFIG_NOT_FOUND,
@@ -106,7 +136,10 @@ export const CONFIG_REGISTRY = {
   "import-map-invalid": IMPORT_MAP_INVALID,
   "cors-config-invalid": CORS_CONFIG_INVALID,
   "config-validation-failed": CONFIG_VALIDATION_FAILED,
+  "local-integration-config-invalid": LOCAL_INTEGRATION_CONFIG_INVALID,
+  "local-integration-credentials-missing": LOCAL_INTEGRATION_CREDENTIALS_MISSING,
   "webhook-config-invalid": WEBHOOK_CONFIG_INVALID,
   "schedule-config-invalid": SCHEDULE_CONFIG_INVALID,
   "trigger-config-invalid": TRIGGER_CONFIG_INVALID,
+  "template-not-found": TEMPLATE_NOT_FOUND,
 } as const;

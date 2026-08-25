@@ -1,4 +1,5 @@
 import type { ComponentProps, RenderMetadata } from "#veryfront/types";
+import { RENDER_ERROR } from "#veryfront/errors";
 import { isAbsolute, resolve } from "#veryfront/platform/compat/path/index.ts";
 import { profilePhase, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -25,8 +26,8 @@ import {
   generateHydrationData,
   getDevScripts,
   getProdHydrationModulePath,
-  getProdScripts,
 } from "./hydration-script-builder/index.ts";
+import { getProdScriptsForPath } from "./hydration-script-builder/prod-scripts.ts";
 import { getPreviewStylesheetLink, getStudioScripts } from "./dev-scripts.ts";
 import { processMetadata } from "./metadata-builder.ts";
 import {
@@ -181,6 +182,7 @@ export function generateHTMLShellParts(
   props?: ComponentProps,
   contentForTailwind?: string,
   projectCSSPromise?: Promise<ProjectCSSResult>,
+  hydrationDataOverrides?: { managedHeadPayload?: string },
 ): Promise<{ start: string; end: string }> {
   return withSpan(
     SpanNames.HTML_GENERATE_SHELL_PARTS,
@@ -192,6 +194,7 @@ export function generateHTMLShellParts(
         props,
         contentForTailwind,
         projectCSSPromise,
+        hydrationDataOverrides,
       ),
     {
       "html.slug": meta.slug || "",
@@ -209,6 +212,7 @@ async function generateHTMLShellPartsImpl(
   props?: ComponentProps,
   contentForTailwind?: string,
   prefetchedProjectCSSPromise?: Promise<ProjectCSSResult>,
+  hydrationDataOverrides?: { managedHeadPayload?: string },
 ): Promise<{ start: string; end: string }> {
   const stylesheetContent = options.globalCSS;
 
@@ -284,17 +288,29 @@ async function generateHTMLShellPartsImpl(
     params ?? {},
     props ?? {},
     { ...options, releaseAssetManifest: releaseManifest },
-    { pretty: useDevScripts, managedHeadPayload },
+    {
+      pretty: useDevScripts,
+      managedHeadPayload: hydrationDataOverrides?.managedHeadPayload ?? managedHeadPayload,
+    },
   );
 
   const nonce = options.nonce ?? "";
+  const prodHydrationModulePath = options.prodHydrationModulePath;
+  if (!useDevScripts && options.releaseId && !prodHydrationModulePath) {
+    throw RENDER_ERROR.create({
+      detail: "Release hydration runtime must be selected before HTML generation",
+    });
+  }
 
   const modeScripts = useDevScripts
     ? getDevScripts(meta.slug || "", options.config, params, props, nonce, {
       skipDevHMR,
       skipErrorLogger,
+      // Preview renders user-facing output, so it must not be marked as a
+      // development render even though it serves the dev scripts for HMR.
+      skipDevFlag: isPreviewMode,
     })
-    : getProdScripts(meta.slug || "", params, props, nonce);
+    : getProdScriptsForPath(prodHydrationModulePath ?? getProdHydrationModulePath(), nonce);
 
   const modeStyles = useDevScripts ? getErrorOverlayStyles(nonce) : "";
 
@@ -310,7 +326,9 @@ async function generateHTMLShellPartsImpl(
     : "";
   const prodHydrationModulePreload = useDevScripts
     ? ""
-    : `<link rel="modulepreload" href="${getProdHydrationModulePath()}">`;
+    : `<link rel="modulepreload" href="${
+      prodHydrationModulePath ?? getProdHydrationModulePath()
+    }">`;
 
   const nonceAttr = buildNonceAttribute(nonce);
 
@@ -427,6 +445,11 @@ async function generateHTMLShellPartsImpl(
   ${slugForOverlay}
 </head>
 <body${bodyClass ? ` class="${escapeHTML(bodyClass)}"` : ""} suppressHydrationWarning>
+  <!-- Server-owned hydration metadata; this must remain the first body element. -->
+  <script id="veryfront-hydration-data" type="application/json"${nonceAttr}>
+  ${hydrationDataJson}
+  </script>
+
   <div ${rootAttributes}>`;
 
   const relativePagePath = getRelativePagePath(options.pagePath, options.projectDir);
@@ -464,11 +487,6 @@ mermaid.run();
 
   const end = `</div>
   <div id="veryfront-portals"></div>
-
-  <!-- Hydration metadata for component tree reconstruction -->
-  <script id="veryfront-hydration-data" type="application/json"${nonceAttr}>
-  ${hydrationDataJson}
-  </script>
 
   ${scriptTags}
   ${modeScripts}

@@ -1,55 +1,21 @@
 import * as React from "react";
 import { flushSync } from "react-dom";
-import { createRoot, hydrateRoot, type Root } from "react-dom/client";
+import { createRoot, hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { type ComponentDomOptions, installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "./dropdown-menu.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "./popover.tsx";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./select.tsx";
 import { Floating } from "./floating.tsx";
 
-function installDom(dom: JSDOM): () => void {
-  const window = dom.window;
-  const replacements: Record<string, unknown> = {
-    window,
-    document: window.document,
-    navigator: window.navigator,
-    self: window,
-    Node: window.Node,
-    Element: window.Element,
-    HTMLElement: window.HTMLElement,
-    MouseEvent: window.MouseEvent,
-    KeyboardEvent: window.KeyboardEvent,
-    innerWidth: window.innerWidth,
-    innerHeight: window.innerHeight,
-    addEventListener: window.addEventListener.bind(window),
-    removeEventListener: window.removeEventListener.bind(window),
-    requestAnimationFrame: window.requestAnimationFrame.bind(window),
-    cancelAnimationFrame: window.cancelAnimationFrame.bind(window),
-  };
-  const previous = new Map<string, PropertyDescriptor | undefined>();
-
-  for (const [key, value] of Object.entries(replacements)) {
-    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
-    Object.defineProperty(globalThis, key, {
-      configurable: true,
-      enumerable: true,
-      value,
-      writable: true,
-    });
-  }
-
-  return () => {
-    for (const key of Object.keys(replacements)) {
-      const descriptor = previous.get(key);
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-      else delete (globalThis as Record<string, unknown>)[key];
-    }
-    dom.window.close();
-  };
-}
+const DOM_OPTIONS: ComponentDomOptions = {
+  windowGlobals: ["self", "KeyboardEvent", "innerWidth", "innerHeight"],
+  windowBound: ["addEventListener", "removeEventListener"],
+};
 
 async function waitFor(condition: () => boolean, timeoutMs = 3000): Promise<void> {
   const startedAt = Date.now();
@@ -101,15 +67,16 @@ const surfaceCases: SurfaceCase[] = [
 ];
 
 /**
- * Unmount and drain the scheduler task React leaves behind.
+ * Wait for the Escape dismissal layer to be registered.
  *
- * React's scheduler holds a `setImmediate` until it next runs. It completes on
- * its own, but the test has to yield once more or Deno's leak sanitizer sees
- * the timer still pending.
+ * `Floating` registers its dismissable layer from a passive effect, so the
+ * surface is committed one tick before the document listener exists. A keydown
+ * is one-shot, so an Escape dispatched in that window is dropped for good and
+ * the surface never closes. Yield the macrotask React's scheduler queued at
+ * commit time first.
  */
-async function unmount(root: Root): Promise<void> {
-  flushSync(() => root.unmount());
-  await new Promise((resolve) => setTimeout(resolve, 0));
+function escapeLayerRegistered(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("Floating SSR and hydration", () => {
@@ -130,7 +97,7 @@ describe("Floating SSR and hydration", () => {
         `<!doctype html><html><body><div id="root">${serverMarkup}</div></body></html>`,
         { pretendToBeVisual: true, url: "https://example.com/" },
       );
-      const restore = installDom(dom);
+      const restore = installComponentDom(dom, DOM_OPTIONS);
       let root: ReturnType<typeof hydrateRoot> | undefined;
 
       try {
@@ -157,13 +124,13 @@ describe("Floating SSR and hydration", () => {
         );
         assertEquals(recoverableErrors, []);
 
-        await unmount(root);
+        await unmountReactRoot(root);
         root = undefined;
         await waitFor(() =>
           document.querySelector(`[data-floating-surface="${surfaceId}"]`) === null
         );
       } finally {
-        if (root) await unmount(root);
+        if (root) await unmountReactRoot(root);
         restore();
       }
     });
@@ -185,7 +152,7 @@ describe("Floating SSR and hydration", () => {
       `<!doctype html><html><body><div id="root">${serverMarkup}</div></body></html>`,
       { pretendToBeVisual: true, url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     let root: ReturnType<typeof hydrateRoot> | undefined;
 
     try {
@@ -206,7 +173,7 @@ describe("Floating SSR and hydration", () => {
       assertEquals(rootElement.contains(surface), false);
       assertEquals(recoverableErrors, []);
     } finally {
-      if (root) await unmount(root);
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });
@@ -234,7 +201,7 @@ describe("Floating SSR and hydration", () => {
       `<!doctype html><html><body><div id="root">${serverMarkup}</div></body></html>`,
       { pretendToBeVisual: true, url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     let root: ReturnType<typeof hydrateRoot> | undefined;
 
     try {
@@ -280,6 +247,7 @@ describe("Floating SSR and hydration", () => {
 
       inside.focus();
       assertEquals(document.activeElement, inside);
+      await escapeLayerRegistered();
       document.dispatchEvent(
         new KeyboardEvent("keydown", {
           bubbles: true,
@@ -290,7 +258,7 @@ describe("Floating SSR and hydration", () => {
       await waitFor(() => document.querySelector('[data-floating-surface="geometry"]') === null);
       await waitFor(() => document.activeElement === trigger);
     } finally {
-      if (root) await unmount(root);
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });
@@ -300,7 +268,7 @@ describe("Floating SSR and hydration", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { pretendToBeVisual: true, url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const rootElement = document.getElementById("root");
     assert(rootElement);
     const root = createRoot(rootElement);
@@ -363,9 +331,22 @@ describe("Floating SSR and hydration", () => {
       replacement.dispatchEvent(
         new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true }),
       );
-      assert(document.querySelector("[data-reanchored-surface]"));
+      // The dismissal listener is a native (non-React) handler, so its setOpen
+      // lands on a scheduler task: drain it before asserting the surface stayed.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert(
+        document.querySelector("[data-reanchored-surface]"),
+        "mousedown on the replacement trigger does not dismiss the surface",
+      );
+
+      // Negative control: an outside pointer still dismisses, which proves the
+      // listener was rebound to the new anchor rather than left dead.
+      document.body.dispatchEvent(
+        new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true }),
+      );
+      await waitFor(() => document.querySelector("[data-reanchored-surface]") === null);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -379,7 +360,7 @@ describe("Floating SSR and hydration", () => {
       '<!doctype html><html><body><div id="owner-root"></div></body></html>',
       { pretendToBeVisual: true, url: "https://owner.example/" },
     );
-    const restore = installDom(globalDom);
+    const restore = installComponentDom(globalDom, DOM_OPTIONS);
     const ownerRoot = ownerDom.window.document.getElementById("owner-root");
     assert(ownerRoot);
     const root = createRoot(ownerRoot);
@@ -419,6 +400,7 @@ describe("Floating SSR and hydration", () => {
       assertEquals(surface.parentElement, scope);
       assertEquals(globalDom.window.document.querySelector("[data-owner-surface]"), null);
 
+      await escapeLayerRegistered();
       ownerDom.window.document.dispatchEvent(
         new ownerDom.window.KeyboardEvent("keydown", {
           bubbles: true,
@@ -429,7 +411,7 @@ describe("Floating SSR and hydration", () => {
       await waitFor(() => ownerDom.window.document.querySelector("[data-owner-surface]") === null);
       assertEquals(reasons, ["escape"]);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
       ownerDom.window.close();
     }

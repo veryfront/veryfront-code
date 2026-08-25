@@ -23,6 +23,7 @@
 
 import {
   DevServer,
+  type DevServerHandler,
   type DevServerOptions,
   type FileWatcherMetrics,
   type RouteDirectory,
@@ -36,6 +37,7 @@ import {
 } from "./production-server.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { isWebSocketUpgradeResponse } from "#veryfront/platform/adapters/base.ts";
+import { recordHandlerRequestPeer } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { bootstrapProd } from "./bootstrap.ts";
 import { createVeryfrontHandler } from "./runtime-handler/index.ts";
@@ -54,7 +56,7 @@ import { type NodeUpgradeEventSource, NodeUpgradeLifecycle } from "./node-upgrad
 /** Default server port when no port is specified */
 const DEFAULT_SERVER_PORT = 3_000;
 
-export { DevServer, startDevServer, startProductionServer };
+export { DevServer, type DevServerHandler, startDevServer, startProductionServer };
 export {
   gracefullyShutdownProductionServer,
   type GracefulProductionShutdownOptions,
@@ -88,7 +90,12 @@ export { ReloadNotifier };
 export { RouteDiscovery } from "./dev-server/route-discovery.ts";
 export type { BuildOptions, BuildStats } from "./build-types.ts";
 export { defaultDistributedCacheInitializers } from "./distributed-cache-initializers.ts";
-export { parseProjectDomain } from "./utils/domain-parser.ts";
+export {
+  HOSTED_ENVIRONMENT_NAMES,
+  type HostedEnvironmentName,
+  isHostedEnvironmentName,
+  parseProjectDomain,
+} from "./utils/domain-parser.ts";
 
 /** Shared options for both development and production server modes. */
 interface BaseServerOptions {
@@ -150,7 +157,7 @@ export interface VeryfrontServer {
 }
 
 /** Web API request handler with WebSocket upgrade and HMR helpers. */
-export type VeryfrontHandler = ((req: Request) => Promise<Response>) & {
+export type VeryfrontHandler = ((req: Request, nativeContext?: unknown) => Promise<Response>) & {
   /**
    * Attach WebSocket upgrade handling to a Node.js HTTP server.
    * Required for HMR live reload when using an external server like Hono, Express, etc.
@@ -175,11 +182,12 @@ export type VeryfrontHandler = ((req: Request) => Promise<Response>) & {
  * ```ts
  * import { Hono } from "hono"
  * import { serve } from "@hono/node-server"
+ * import type { HttpBindings } from "@hono/node-server"
  * import { createHandler } from "veryfront"
  *
- * const app = new Hono()
+ * const app = new Hono<{ Bindings: HttpBindings }>()
  * const handler = await createHandler()
- * app.all("*", (c) => handler(c.req.raw))
+ * app.all("*", (c) => handler(c.req.raw, c.env.incoming))
  * const server = serve({ fetch: app.fetch, port: 3000 })
  * handler.upgrade(server)
  * ```
@@ -196,7 +204,7 @@ function toNativeResponse(res: Response): Response {
   if (res instanceof _NativeResponse) return res;
   // TS narrows to `never` after the instanceof check because it can't see the
   // runtime class divergence between DNT's polyfill Response and native Response.
-  const src = res as unknown as Response;
+  const src = res as Response;
   return new _NativeResponse(src.body, {
     status: src.status,
     statusText: src.statusText,
@@ -239,7 +247,10 @@ export async function createHandler(
     const adapter = await runtime.get();
     const bootstrap = await bootstrapProd(projectDir, adapter);
     const internalHandler = createVeryfrontHandler(projectDir, bootstrap.adapter, { projectDir });
-    const handler = async (req: Request) => toNativeResponse(await internalHandler(req));
+    const handler = async (req: Request, info?: unknown) => {
+      recordHandlerRequestPeer(req, info);
+      return toNativeResponse(await internalHandler(req));
+    };
     const dispose = createRetryableHandlerDisposer(async () => {
       await bootstrap.dispose?.();
     });
@@ -267,14 +278,14 @@ export async function createHandler(
   const internalFetch = devServer.handler;
   const nodeWebSocketServerProvider = devServer.nodeWebSocketServerProvider;
   let disposalStarted = false;
-  const fetch = async (req: Request) => {
+  const fetch = async (req: Request, info?: unknown) => {
     if (disposalStarted) {
       return new _NativeResponse("Handler is shutting down", {
         status: 503,
         headers: { "cache-control": "no-store" },
       });
     }
-    return toNativeResponse(await internalFetch(req));
+    return toNativeResponse(await internalFetch(req, info));
   };
   const hmrRateLimiter = new RateLimiter(HMR_MAX_MESSAGES_PER_MINUTE);
   const nodeUpgradeLifecycle = new NodeUpgradeLifecycle();
@@ -433,8 +444,8 @@ export async function createHandler(
     };
 
     nodeUpgradeLifecycle.attach(
-      httpServer as unknown as NodeUpgradeEventSource,
-      upgradeListener as unknown as (...args: unknown[]) => void,
+      httpServer as NodeUpgradeEventSource,
+      upgradeListener as (...args: unknown[]) => void,
     );
   };
 

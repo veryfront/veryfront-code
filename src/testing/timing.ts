@@ -1,6 +1,6 @@
 import { getTimeScale, scaleDuration } from "#veryfront/platform/compat/time-scale.ts";
 
-/** Return test time scale. */
+/** Return the current test time scale. Preserved for compatibility. */
 export function getTestTimeScale(): number {
   return getTimeScale();
 }

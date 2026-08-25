@@ -5,6 +5,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { ReloadNotifier } from "veryfront/server";
 import {
   vfGetDebugContext,
@@ -60,6 +61,87 @@ describe("mcp/tools/dev-tools", () => {
 
     it("has execute function", () => {
       assertEquals(typeof vfGetDebugContext.execute, "function");
+    });
+
+    it("keeps the canonical project host when native resolution succeeds", async () => {
+      let request: Request | undefined;
+      const result = await withMockFetch(
+        (input, init) => {
+          request = new Request(input, init);
+          return Promise.resolve(Response.json({
+            context: {
+              projectSlug: "alpha",
+              projectDir: "/project",
+              requestContext: { mode: "development" },
+            },
+            adapter: { isMultiProjectMode: true },
+          }));
+        },
+        () => vfGetDebugContext.execute({ port: 4321, project: "alpha" }),
+      );
+
+      assertEquals(request?.url, "http://alpha.localhost:4321/_vf_debug/context");
+      assertEquals(request?.headers.get("x-project-slug"), null);
+      assertEquals(result.success, true);
+      assertEquals(result.context?.projectSlug, "alpha");
+    });
+
+    for (
+      const [runtime, resolutionError] of [
+        [
+          "Node",
+          new TypeError("fetch failed", {
+            cause: new Error("getaddrinfo ENOTFOUND alpha.localhost"),
+          }),
+        ],
+        [
+          "Deno",
+          new TypeError(
+            "client error (Connect): dns error: failed to lookup address information",
+          ),
+        ],
+      ] as const
+    ) {
+      it(`falls back to loopback after a ${runtime} project-host resolution failure`, async () => {
+        const requests: Request[] = [];
+        const result = await withMockFetch(
+          (input, init) => {
+            requests.push(new Request(input, init));
+            if (requests.length === 1) return Promise.reject(resolutionError);
+            return Promise.resolve(Response.json({
+              context: { projectSlug: "alpha", projectDir: "/project" },
+              adapter: { isMultiProjectMode: true },
+            }));
+          },
+          () => vfGetDebugContext.execute({ port: 4321, project: "alpha" }),
+        );
+
+        assertEquals(requests.map((request) => request.url), [
+          "http://alpha.localhost:4321/_vf_debug/context",
+          "http://127.0.0.1:4321/_vf_debug/context",
+        ]);
+        assertEquals(requests[1]?.headers.get("x-project-slug"), "alpha");
+        assertEquals(result.success, true);
+      });
+    }
+
+    it("does not fall back after a non-DNS connection failure", async () => {
+      let requests = 0;
+      const result = await withMockFetch(
+        () => {
+          requests += 1;
+          return Promise.reject(
+            new TypeError("fetch failed", {
+              cause: new Error("connect ECONNREFUSED 127.0.0.1:4321"),
+            }),
+          );
+        },
+        () => vfGetDebugContext.execute({ port: 4321, project: "alpha" }),
+      );
+
+      assertEquals(requests, 1);
+      assertEquals(result.success, false);
+      assertExists(result.error);
     });
   });
 

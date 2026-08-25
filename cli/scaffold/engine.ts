@@ -2,6 +2,7 @@ import { dirname, join } from "veryfront/platform/path";
 import { createFileSystem } from "veryfront/platform";
 import { ensureDir, fileExists } from "../utils/fs.ts";
 import { toComponentName, toSlug } from "../utils/string.ts";
+import { filenameToId } from "veryfront/discovery";
 
 export type ScaffoldRouter = "app-router" | "pages-router";
 export const SCAFFOLD_TYPES = [
@@ -71,10 +72,13 @@ const SCAFFOLD_DEFINITIONS: Record<ScaffoldType, ScaffoldDefinition> = {
     },
   },
   api: {
+    // Both routers serve API handlers from an "api" segment, so the segment is
+    // owned by the scaffold rather than the caller. Accept a slug that already
+    // spells it so `generate api api/users/[id]` does not nest a second one.
     getPath: ({ projectDir, router, slug }) =>
       router === "app-router"
-        ? join(projectDir, "app", slug, "route.ts")
-        : joinPagesFile(join(projectDir, "pages", "api"), slug, ".ts"),
+        ? join(projectDir, "app", "api", stripApiPrefix(slug), "route.ts")
+        : joinPagesFile(join(projectDir, "pages", "api"), stripApiPrefix(slug), ".ts"),
     getContent: ({ router, methods }) => generateApiTemplate(methods, router),
   },
   layout: {
@@ -94,7 +98,10 @@ const SCAFFOLD_DEFINITIONS: Record<ScaffoldType, ScaffoldDefinition> = {
   },
   tool: {
     getPath: ({ projectDir, slug }) => join(projectDir, "tools", `${slug}.ts`),
-    getContent: ({ name }) => generateToolTemplate(name),
+    // Discovery derives a tool's id from its filename, and an explicit `id`
+    // overrides that. Declare the id discovery would have derived so the
+    // generated tool registers under the name the filename promises.
+    getContent: ({ slug }) => generateToolTemplate(filenameToId(`${slug}.ts`)),
   },
   agent: {
     getPath: ({ projectDir, slug }) => join(projectDir, "agents", `${slug}.ts`),
@@ -187,6 +194,10 @@ function resolveInput(input: ScaffoldInput): ResolvedScaffoldInput {
   };
 }
 
+function stripApiPrefix(slug: string): string {
+  return slug === "api" ? "" : slug.replace(/^api\//, "");
+}
+
 function joinPagesFile(base: string, slug: string, extension: ".mdx" | ".ts"): string {
   const parts = slug.split("/").filter(Boolean);
   const fileName = `${parts.pop() || "index"}${extension}`;
@@ -270,7 +281,7 @@ export function ${componentName}({ children }: ${componentName}Props) {
 `;
 }
 
-function generateToolTemplate(name: string): string {
+function generateToolTemplate(id: string): string {
   return `import { defineSchema } from "veryfront/schemas";
 import { tool } from "veryfront/tool";
 
@@ -279,7 +290,7 @@ const inputSchema = defineSchema((v) => v.object({
 }))();
 
 export default tool({
-  id: "${name}",
+  id: "${id}",
   description: "Description of what this tool does",
   inputSchema,
   execute: ({ input }) => {

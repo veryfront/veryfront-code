@@ -16,7 +16,13 @@ import { createPortal, flushSync } from "react-dom";
 import { createRoot, hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
-import { assert, assertThrows } from "#veryfront/testing/assert.ts";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
+import {
+  assert,
+  assertEquals,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ToastProvider, ToastViewport, useToast } from "../toast.tsx";
 import { UIAdapterProvider } from "./context.tsx";
@@ -94,10 +100,13 @@ export function runToastConformance(
     return {
       dom,
       text: () => document.body.textContent ?? "",
-      cleanup: () => {
-        root.unmount();
-        restore();
-        api = null;
+      cleanup: async () => {
+        try {
+          await unmountReactRoot(root);
+        } finally {
+          restore();
+          api = null;
+        }
       },
     };
   }
@@ -112,7 +121,7 @@ export function runToastConformance(
         flushSync(() => api!.dismiss(id));
         await waitFor(() => !h.text().includes("Saved"));
       } finally {
-        h.cleanup();
+        await h.cleanup();
       }
     });
 
@@ -125,7 +134,7 @@ export function runToastConformance(
         assert(item.textContent?.includes("0") === true, "renders a numeric zero title");
         assert(item.querySelector("p"), "retains an empty-string description node");
       } finally {
-        h.cleanup();
+        await h.cleanup();
       }
     });
 
@@ -148,7 +157,7 @@ export function runToastConformance(
         assert(ran, "action onClick fired");
         await waitFor(() => !h.text().includes("Undo"));
       } finally {
-        h.cleanup();
+        await h.cleanup();
       }
     });
 
@@ -159,7 +168,7 @@ export function runToastConformance(
         await waitFor(() => h.text().includes("custom "));
         assert(h.text().includes("custom "), "custom node rendered");
       } finally {
-        h.cleanup();
+        await h.cleanup();
       }
     });
 
@@ -175,7 +184,7 @@ export function runToastConformance(
         assert(!h.text().includes("First"), "oldest toast was evicted");
         assert(h.text().includes("Second") && h.text().includes("Third"), "newest toasts remain");
       } finally {
-        h.cleanup();
+        await h.cleanup();
       }
     });
 
@@ -199,7 +208,7 @@ export function runToastConformance(
         assert(h.text().includes("Persistent override"), "per-toast duration overrides provider");
         flushSync(() => api!.dismiss(persistentId));
       } finally {
-        h.cleanup();
+        await h.cleanup();
       }
     });
 
@@ -213,11 +222,11 @@ export function runToastConformance(
           "active adapter realizes the manual viewport",
         );
       } finally {
-        h.cleanup();
+        await h.cleanup();
       }
     });
 
-    it("shares public provider and per-call validation across adapters", () => {
+    it("shares public provider and per-call validation across adapters", async () => {
       assertThrows(
         () =>
           renderToString(
@@ -238,7 +247,7 @@ export function runToastConformance(
           "2147483647",
         );
       } finally {
-        h.cleanup();
+        await h.cleanup();
       }
     });
   });
@@ -275,7 +284,7 @@ describe("Toast presentational parts", () => {
 });
 
 describe("Builtin Toast viewport and timer lifecycle", () => {
-  it("renders zero and empty-string structured content", () => {
+  it("renders zero and empty-string structured content", async () => {
     const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
     const restore = installDomGlobals(dom);
     const root = createRoot(document.getElementById("root")!);
@@ -303,7 +312,7 @@ describe("Builtin Toast viewport and timer lifecycle", () => {
       assert(body.children[0]!.textContent === "0", "renders a numeric zero title");
       assert(body.children[1]!.textContent === "", "renders an empty-string description");
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -334,15 +343,14 @@ describe("Builtin Toast viewport and timer lifecycle", () => {
         document.body.querySelectorAll('[aria-label="Notifications"]').length === 1
       );
       assert(recoverableErrors.length === 0, "hydration reports no recoverable errors");
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       unmounted = true;
       assert(
         document.body.querySelectorAll('[aria-label="Notifications"]').length === 0,
         "portal viewport is removed on unmount",
       );
     } finally {
-      if (!unmounted) flushSync(() => root.unmount());
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (!unmounted) await unmountReactRoot(root);
       restore();
     }
   });
@@ -376,7 +384,7 @@ describe("Builtin Toast viewport and timer lifecycle", () => {
         "shell document is untouched",
       );
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       restore();
       foreignDom.window.close();
     }
@@ -396,7 +404,7 @@ describe("Builtin Toast viewport and timer lifecycle", () => {
       );
       assert(document.querySelectorAll('[aria-label="Notifications"]').length === 1, "one owner");
       assert(document.querySelector("[data-manual]"), "manual viewport is realized");
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -453,7 +461,7 @@ describe("Builtin Toast viewport and timer lifecycle", () => {
       document.dispatchEvent(new dom.window.Event("visibilitychange"));
       await waitFor(() => !document.body.textContent?.includes("Paused"));
     } finally {
-      root.unmount();
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -491,7 +499,7 @@ describe("Builtin Toast viewport and timer lifecycle", () => {
       action.blur();
       await waitFor(() => !document.body.textContent?.includes("Focused"));
     } finally {
-      root.unmount();
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -551,7 +559,7 @@ describe("Builtin Toast viewport and timer lifecycle", () => {
       flushSync(() => item.dispatchEvent(new dom.window.MouseEvent("mouseout", { bubbles: true })));
       await waitFor(() => !document.body.contains(item));
     } finally {
-      root.unmount();
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -744,10 +752,17 @@ const altToastWithAdditionalState: ToastParts = {
 };
 
 describe("Toast adapter switching", () => {
-  it("remounts the adapter hook bridge when hook implementations differ", () => {
+  it("remounts the adapter hook bridge when hook implementations differ", async () => {
     const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
     const restore = installDomGlobals(dom);
-    const root = createRoot(document.getElementById("root")!);
+    // React 19 reports render errors through the root callbacks rather than
+    // rethrowing out of flushSync, so a hook-order violation is only visible
+    // if the test collects them.
+    const errors: unknown[] = [];
+    const root = createRoot(document.getElementById("root")!, {
+      onUncaughtError: (error: unknown) => errors.push(error),
+      onCaughtError: (error: unknown) => errors.push(error),
+    });
     let api: ToastState | null = null;
 
     function Probe(): null {
@@ -777,10 +792,20 @@ describe("Toast adapter switching", () => {
       assert(api, "initial adapter state is available");
       const button = document.querySelector("button");
       assert(button, "adapter switch is rendered");
+      // Clear the captured state so the post-switch assertion cannot be
+      // satisfied by the value the first render published.
+      api = null;
       flushSync(() => button.click());
-      assert(api, "replacement adapter state is available");
+      assert(api, "the bridge re-renders and republishes the toast state after the adapter swap");
+      flushSync(() => api!.toast({ title: "after", duration: Infinity }));
+      assertStringIncludes(
+        document.body.textContent ?? "",
+        "after",
+        "the post-swap toast API drives the live viewport",
+      );
+      assertEquals(errors, [], "the adapter swap must not raise a React hook-order error");
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       restore();
     }
   });

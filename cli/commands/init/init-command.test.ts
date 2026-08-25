@@ -5,10 +5,9 @@ import "#veryfront/schemas/_test-setup.ts";
  * Tests the init command types and options validation.
  */
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
-import { cwd } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import { stripAnsi } from "../../ui/ansi.ts";
 import { initCommand } from "./init-command.ts";
@@ -37,7 +36,6 @@ describe("InitCommand Types", () => {
     it("creates a named project beneath parentDir", async () => {
       const parentDir = await makeTempDir({ prefix: "veryfront-init-parent-" });
       const name = `parent-target-${crypto.randomUUID()}`;
-      const cwdTarget = join(cwd(), name);
 
       try {
         await initCommand({
@@ -50,11 +48,12 @@ describe("InitCommand Types", () => {
         });
 
         assertEquals(await exists(join(parentDir, name, "app")), true);
-        assertEquals(await exists(join(parentDir, name, "package.json")), false);
-        assertEquals(await exists(cwdTarget), false);
+        assertEquals(
+          await exists(join(parentDir, name, "package.json")),
+          false,
+        );
       } finally {
         await remove(parentDir, { recursive: true }).catch(() => {});
-        await remove(cwdTarget, { recursive: true }).catch(() => {});
       }
     });
 
@@ -120,11 +119,6 @@ describe("InitCommand Types", () => {
       assertEquals(options.skipEnvPrompt, true);
     });
 
-    it("should allow features array", () => {
-      const options: InitOptions = { features: [] };
-      assertEquals(options.features?.length, 0);
-    });
-
     it("should allow integrations array", () => {
       const options: InitOptions = { integrations: [] };
       assertEquals(options.integrations?.length, 0);
@@ -136,7 +130,6 @@ describe("InitCommand Types", () => {
         template: "ai-agent",
         skipInstall: false,
         skipEnvPrompt: false,
-        features: [],
         integrations: [],
       };
 
@@ -144,7 +137,6 @@ describe("InitCommand Types", () => {
       assertEquals(options.template, "ai-agent");
       assertEquals(options.skipInstall, false);
       assertEquals(options.skipEnvPrompt, false);
-      assertExists(options.features);
       assertExists(options.integrations);
     });
 
@@ -178,10 +170,6 @@ describe("InitCommand Types", () => {
       assertEquals(options.skipEnvPrompt, undefined);
     });
 
-    it("should default features to undefined when not specified", () => {
-      assertEquals(options.features, undefined);
-    });
-
     it("should default integrations to undefined when not specified", () => {
       assertEquals(options.integrations, undefined);
     });
@@ -189,5 +177,72 @@ describe("InitCommand Types", () => {
     it("should default runtime to undefined when not specified", () => {
       assertEquals(options.runtime, undefined);
     });
+  });
+});
+
+describe("initCommand target directory", () => {
+  it("rejects an existing target directory so the CLI exits non-zero", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-init-existing-" });
+    const name = "taken";
+    const keepsake = join(parentDir, name, "README.md");
+
+    try {
+      await Deno.mkdir(join(parentDir, name));
+      await Deno.writeTextFile(keepsake, "keep me\n");
+
+      // `veryfront init x && cd x && npm run dev` must stop at the refusal. A
+      // printed message with a zero exit lets the chain run on in the wrong
+      // directory, so the refusal has to surface as an error, not a return.
+      await assertRejects(
+        () =>
+          initCommand({
+            name,
+            parentDir,
+            template: "minimal",
+            skipInstall: true,
+            skipEnvPrompt: true,
+            quiet: true,
+          }),
+        Error,
+        `Directory "${name}" already contains README.md`,
+      );
+
+      assertEquals(await Deno.readTextFile(keepsake), "keep me\n");
+      assertEquals(await exists(join(parentDir, name, "app")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+});
+
+describe("initCommand into the current directory", () => {
+  it("refuses to overwrite files already in the directory without --force", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-init-cwd-" });
+    const readme = join(parentDir, "README.md");
+
+    try {
+      await Deno.writeTextFile(readme, "mine\n");
+
+      // Non-interactive `veryfront init` with no name scaffolds into the
+      // current directory. It must hold the same line as the named path: an
+      // existing file is refused, not replaced.
+      await assertRejects(
+        () =>
+          initCommand({
+            parentDir,
+            template: "minimal",
+            skipInstall: true,
+            skipEnvPrompt: true,
+            quiet: true,
+          }),
+        Error,
+        "README.md",
+      );
+
+      assertEquals(await Deno.readTextFile(readme), "mine\n");
+      assertEquals(await exists(join(parentDir, "app")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
   });
 });

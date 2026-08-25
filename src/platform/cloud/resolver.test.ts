@@ -127,6 +127,17 @@ describe("platform/cloud/resolver", () => {
     assertEquals(getVeryfrontCloudProjectSlug(), "env-project");
   });
 
+  it("does not pair a scoped endpoint with a host-owned token", () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_host_token");
+
+    runWithVeryfrontCloudContext({ apiBaseUrl: "https://untrusted.example.com" }, () => {
+      assertEquals(getVeryfrontCloudBootstrap().apiBaseUrl, "https://untrusted.example.com");
+      assertEquals(getVeryfrontCloudBootstrap().apiToken, undefined);
+      assertEquals(getVeryfrontCloudAuthToken(), undefined);
+      assertEquals(isVeryfrontCloudEnabled(), false);
+    });
+  });
+
   it("keeps direct host bootstrap identity isolated from scoped request context", () => {
     setEnv("VERYFRONT_API_URL", "https://api.veryfront.org");
     setEnv("VERYFRONT_API_TOKEN", "vf_host_token");

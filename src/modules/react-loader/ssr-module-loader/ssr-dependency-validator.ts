@@ -9,10 +9,11 @@
 
 import type { CrossProjectImport, MissingImport } from "#veryfront/transforms/esm/import-parser.ts";
 import { parseLocalImports } from "#veryfront/transforms/esm/import-parser.ts";
+import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
 import { registerCSSImport } from "../css-import-collector.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { createError, toError } from "#veryfront/errors";
-import { rendererLogger } from "#veryfront/utils";
+import { BUILD_FAILED, createError, toError, VeryfrontError } from "#veryfront/errors";
+import { rendererLogger, throwIfAborted } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { MAX_TRANSFORM_DEPTH, TRANSFORM_BATCH_SIZE } from "./constants.ts";
 import type { ModuleCacheEntry } from "./types.ts";
@@ -22,6 +23,68 @@ import {
 } from "#veryfront/cache/dependency-graph.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
+
+export interface ResolvedCachedDependencies {
+  localImportPaths: Map<string, string>;
+  crossProjectPaths: Map<string, string>;
+}
+
+export interface DependencyTransformCacheOptions {
+  skipDistributedCache?: boolean;
+  skipMdxPathCache?: boolean;
+}
+
+/**
+ * Whether cached transformed code points at every dependency output produced
+ * from the current source tree.
+ *
+ * Dependency module paths include their transformed-content hash. A parent
+ * whose source is unchanged can therefore retain an old child path across a
+ * dev-server restart even though that old file still exists. Validate actual
+ * import specifiers, not arbitrary strings or file existence, before reusing
+ * the parent.
+ */
+export async function cachedCodeUsesResolvedDependencies(
+  code: string,
+  dependencies: ResolvedCachedDependencies,
+): Promise<boolean> {
+  const expectedPaths = new Set([
+    ...dependencies.localImportPaths.values(),
+    ...dependencies.crossProjectPaths.values(),
+  ]);
+  if (expectedPaths.size === 0) return true;
+
+  const cachedSpecifiers = new Set(
+    (await parseImports(code)).map((entry) => entry.n).filter((entry): entry is string => !!entry),
+  );
+  return [...expectedPaths].every((path) => cachedSpecifiers.has(`file://${path}`));
+}
+
+function isTerminalHttpModuleFetchFailure(error: unknown): error is VeryfrontError {
+  if (!(error instanceof VeryfrontError) || error.slug !== BUILD_FAILED.slug) return false;
+  const context = error.context;
+  return typeof context === "object" && context !== null &&
+    (context as { phase?: unknown }).phase === "http-module-fetch";
+}
+
+/**
+ * Pick the rejection a settled dependency batch should propagate.
+ *
+ * Both batch loops catch everything except a terminal HTTP module fetch
+ * failure, so today every rejection is that failure. Select on the predicate
+ * rather than on "first rejection" so a throw added outside either try block
+ * later cannot be mistaken for the terminal failure — and fall back to the
+ * first rejection so such a throw is still propagated rather than dropped.
+ */
+function selectPropagatedFailure(
+  results: PromiseSettledResult<unknown>[],
+): PromiseRejectedResult | undefined {
+  const rejections = results.filter((result): result is PromiseRejectedResult =>
+    result.status === "rejected"
+  );
+  return rejections.find((rejection) => isTerminalHttpModuleFetchFailure(rejection.reason)) ??
+    rejections[0];
+}
 
 /**
  * Manages dependency validation for SSR module loading:
@@ -39,9 +102,12 @@ export class SSRDependencyValidator {
       source: string | undefined,
       depth: number,
       dependencyHashCache: DependencyHashCache,
+      signal?: AbortSignal,
+      options?: DependencyTransformCacheOptions,
     ) => Promise<ModuleCacheEntry>,
     private transformCrossProjectImport: (
       crossProjectImport: CrossProjectImport,
+      signal?: AbortSignal,
     ) => Promise<string>,
     private adapter: RuntimeAdapter,
     private projectDir: string,
@@ -87,8 +153,12 @@ export class SSRDependencyValidator {
     code: string,
     filePath: string,
     depth: number = 0,
-  ): Promise<void> {
-    if (depth > MAX_TRANSFORM_DEPTH) return;
+    signal?: AbortSignal,
+  ): Promise<ResolvedCachedDependencies> {
+    throwIfAborted(signal);
+    if (depth > MAX_TRANSFORM_DEPTH) {
+      return { localImportPaths: new Map(), crossProjectPaths: new Map() };
+    }
 
     const parseResult = await parseLocalImports(
       code,
@@ -107,21 +177,52 @@ export class SSRDependencyValidator {
     }
 
     const localFs = createFileSystem();
-    await this.processLocalImports(
+    const localImportPaths = await this.processLocalImports(
       parseResult.imports,
       filePath,
       depth,
       localFs,
       createDependencyHashCache(),
+      signal,
     );
 
-    for (let i = 0; i < parseResult.crossProjectImports.length; i += TRANSFORM_BATCH_SIZE) {
-      const batch = parseResult.crossProjectImports.slice(i, i + TRANSFORM_BATCH_SIZE);
-      await Promise.all(
+    const crossProjectPaths = await this.processCrossProjectImports(
+      parseResult.crossProjectImports,
+      filePath,
+      signal,
+    );
+    throwIfAborted(signal);
+    return { localImportPaths, crossProjectPaths };
+  }
+
+  /**
+   * Process cross-project imports in batches, building a map of
+   * specifier -> temp file path.
+   *
+   * Non-terminal failures are aggregated into {@link missingDependencies} so the
+   * caller can report every unresolved specifier at once. A terminal HTTP module
+   * fetch failure is rethrown untouched instead: it means the source could not be
+   * retrieved at all, so reporting it as a missing dependency would mislabel a
+   * transient network failure as a broken component.
+   */
+  async processCrossProjectImports(
+    crossProjectImports: CrossProjectImport[],
+    filePath: string,
+    signal?: AbortSignal,
+  ): Promise<Map<string, string>> {
+    throwIfAborted(signal);
+    const crossProjectPaths = new Map<string, string>();
+
+    for (let i = 0; i < crossProjectImports.length; i += TRANSFORM_BATCH_SIZE) {
+      const batch = crossProjectImports.slice(i, i + TRANSFORM_BATCH_SIZE);
+      const results = await Promise.allSettled(
         batch.map(async (crossImport) => {
           try {
-            await this.transformCrossProjectImport(crossImport);
+            const tempPath = await this.transformCrossProjectImport(crossImport, signal);
+            crossProjectPaths.set(crossImport.specifier, tempPath);
           } catch (error) {
+            throwIfAborted(signal);
+            if (isTerminalHttpModuleFetchFailure(error)) throw error;
             this.missingDependencies.push({
               specifier: crossImport.specifier,
               fromFile: filePath,
@@ -132,7 +233,12 @@ export class SSRDependencyValidator {
           }
         }),
       );
+      const failure = selectPropagatedFailure(results);
+      if (failure) throw failure.reason;
+      throwIfAborted(signal);
     }
+
+    return crossProjectPaths;
   }
 
   /**
@@ -145,12 +251,15 @@ export class SSRDependencyValidator {
     depth: number,
     localFs: ReturnType<typeof createFileSystem>,
     dependencyHashCache: DependencyHashCache,
+    signal?: AbortSignal,
+    options?: DependencyTransformCacheOptions,
   ): Promise<Map<string, string>> {
+    throwIfAborted(signal);
     const importPathMap = new Map<string, string>();
 
     for (let i = 0; i < imports.length; i += TRANSFORM_BATCH_SIZE) {
       const batch = imports.slice(i, i + TRANSFORM_BATCH_SIZE);
-      await Promise.all(
+      const results = await Promise.allSettled(
         batch.map(async (imp) => {
           try {
             const depSource = await this.readLocalImportSource(imp.absolutePath, localFs);
@@ -160,11 +269,15 @@ export class SSRDependencyValidator {
               depSource,
               depth + 1,
               dependencyHashCache,
+              signal,
+              options,
             );
 
             importPathMap.set(imp.specifier, depEntry.tempPath);
             importPathMap.set(imp.absolutePath, depEntry.tempPath);
           } catch (error) {
+            throwIfAborted(signal);
+            if (isTerminalHttpModuleFetchFailure(error)) throw error;
             this.missingDependencies.push({
               specifier: imp.specifier,
               fromFile: fromFilePath,
@@ -175,6 +288,9 @@ export class SSRDependencyValidator {
           }
         }),
       );
+      const failure = selectPropagatedFailure(results);
+      if (failure) throw failure.reason;
+      throwIfAborted(signal);
     }
 
     return importPathMap;

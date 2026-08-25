@@ -1,9 +1,9 @@
-import { extname, join } from "#veryfront/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
-import { MAX_IMAGE_FILES, SUPPORTED_EXTENSIONS } from "./constants.ts";
+import { getOptimizableImageSourceExtension } from "#veryfront/utils/image-variant-widths.ts";
+import { MAX_IMAGE_FILES } from "./constants.ts";
 
-const supportedExtensionsSet = new Set(SUPPORTED_EXTENSIONS);
 const MAX_DIRECTORY_DEPTH = 64;
 const MAX_DISCOVERED_ENTRIES = 1_000_000;
 
@@ -66,7 +66,7 @@ export function findImages(
             continue;
           }
           if (!entry.isFile) continue;
-          if (!supportedExtensionsSet.has(extname(entry.name).toLowerCase())) {
+          if (getOptimizableImageSourceExtension(entry.name) === null) {
             continue;
           }
           images.push(path);

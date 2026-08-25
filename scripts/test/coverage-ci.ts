@@ -1,4 +1,9 @@
 import { walk } from "#std/fs/walk";
+import {
+  buildTestProcessEnv,
+  DENO_TEST_ENV,
+  PROVIDER_EGRESS_DENY_NET,
+} from "./suites.ts";
 
 export interface ShardSpec {
   index: number;
@@ -7,7 +12,7 @@ export interface ShardSpec {
 
 export interface DenoTestCommandOptions {
   coverageDir: string;
-  files: string[];
+  files: readonly string[];
 }
 
 interface LcovLineRecord {
@@ -15,14 +20,7 @@ interface LcovLineRecord {
   line: number;
 }
 
-const UNIT_COVERAGE_ROOTS = ["src", "cli"];
-const UNIT_COVERAGE_ENV = {
-  VF_DISABLE_LRU_INTERVAL: "1",
-  SSR_TRANSFORM_PER_PROJECT_LIMIT: "0",
-  REVALIDATION_PER_PROJECT_LIMIT: "0",
-  NODE_ENV: "production",
-  LOG_FORMAT: "text",
-};
+const UNIT_COVERAGE_ENV = DENO_TEST_ENV;
 
 export function parseShardSpec(value: string): ShardSpec {
   const match = /^(\d+)\/(\d+)$/.exec(value);
@@ -41,42 +39,19 @@ export function parseShardSpec(value: string): ShardSpec {
   return { index, total };
 }
 
-export function selectShardFiles(files: string[], shard: ShardSpec): string[] {
-  return [...files]
-    .sort((a, b) => a.localeCompare(b))
-    .filter((_, index) => index % shard.total === shard.index - 1);
-}
-
-export async function collectUnitCoverageTestFiles(): Promise<string[]> {
-  const files: string[] = [];
-
-  for (const root of UNIT_COVERAGE_ROOTS) {
-    if (!(await exists(root))) continue;
-
-    for await (
-      const entry of walk(root, {
-        includeDirs: false,
-        exts: [".ts", ".tsx"],
-      })
-    ) {
-      const normalizedPath = entry.path.replaceAll("\\", "/");
-      if (!isUnitCoverageTestFile(normalizedPath)) continue;
-      files.push(normalizedPath);
-    }
-  }
-
-  return files.sort((a, b) => a.localeCompare(b));
-}
-
 export function buildDenoTestCommandArgs(
   options: DenoTestCommandOptions,
 ): string[] {
   return [
     "test",
-    "--preload=src/schemas/_test-setup.ts",
+    "--preload=src/testing/preload.ts",
     "--no-check",
     "--parallel",
+    // Leaks here are load-dependent and do not reproduce on demand, so the
+    // first failure has to carry the stack rather than advise a rerun.
+    "--trace-leaks",
     "--allow-all",
+    PROVIDER_EGRESS_DENY_NET,
     "--v8-flags=--max-old-space-size=8192",
     `--coverage=${options.coverageDir}`,
     "--coverage-raw-data-only",
@@ -93,11 +68,26 @@ export function buildCoverageCommandArgs(profileDirs: string[]): string[] {
     "coverage",
     ...profileDirs,
     "--include=src/",
-    "--exclude=tests",
-    "--exclude=src/**/*_test.ts",
-    "--exclude=src/**/*_test.tsx",
-    "--exclude=src/**/*.test.ts",
-    "--exclude=src/**/*.test.tsx",
+    // cli/ ships as a published export and the unit suite already runs its 184
+    // test files on every shard; without this their coverage was collected and
+    // then discarded at report time. Adding it puts 267 cli/ source files and
+    // 29,263 lines into the report and into the 80% gate.
+    "--include=cli/",
+    // `--exclude` takes a regex matched against the file URL, not a glob. Two
+    // consequences, both verified against deno 2.7.7:
+    //
+    // 1. Bare `tests` also matched `cli/mcp/tools/run-tests-tool.ts`, the
+    //    published module behind the `vf_run_tests` MCP tool. It would have
+    //    dropped out of the report the moment cli/ entered it. Anchoring on
+    //    slashes keeps the two test directories out and leaves production
+    //    filenames alone.
+    // 2. Glob-shaped patterns such as `src/**/*.test.ts` never compile to
+    //    anything that matches, so they were doing nothing. Test files stay out
+    //    because deno always applies its own `test\.(js|mjs|ts|jsx|tsx)$`
+    //    exclusion on top of these, which covers both `x.test.ts` and
+    //    `x_test.ts`. Do not add glob patterns back here.
+    "--exclude=/tests/",
+    "--exclude=/__tests__/",
     "--lcov",
   ];
 }
@@ -154,16 +144,14 @@ async function runShard(args: string[]): Promise<void> {
   await removeIfExists(coverageDir);
   await runDeno(["task", "generate"]);
 
-  const files = selectShardFiles(await collectUnitCoverageTestFiles(), shard);
-  if (files.length === 0) {
-    throw new Error(
-      `Coverage shard ${shard.index}/${shard.total} selected no test files.`,
-    );
-  }
+  // Keep merge mode usable with `--no-npm`: the planner owns shard selection,
+  // but its layout validator imports the Babel parser and is only needed here.
+  const { planSuiteFiles } = await import("./run-suite.ts");
+  const { files } = await planSuiteFiles({ suite: "coverage:unit", shard });
 
   await runDeno(
     buildDenoTestCommandArgs({ coverageDir, files }),
-    UNIT_COVERAGE_ENV,
+    { ...UNIT_COVERAGE_ENV },
   );
 
   await clearEmptyCoverageProfileJson(coverageDir);
@@ -174,7 +162,9 @@ async function runShard(args: string[]): Promise<void> {
 
 async function runMerge(args: string[]): Promise<void> {
   const threshold = Number(readOption(args, "--threshold") ?? "80");
-  const coveragePaths = args.filter((arg) => !arg.startsWith("--"));
+  const coveragePaths = args.filter((arg, index) =>
+    !arg.startsWith("--") && args[index - 1] !== "--threshold"
+  );
 
   if (!Number.isFinite(threshold)) {
     throw new Error("Coverage threshold must be a number.");
@@ -216,13 +206,6 @@ function parseLcovLine(line: string): LcovLineRecord | undefined {
   return { line: lineNumber, covered };
 }
 
-export function isUnitCoverageTestFile(path: string): boolean {
-  return (path.endsWith(".test.ts") || path.endsWith(".test.tsx")) &&
-    !path.endsWith(".integration.test.ts") &&
-    !path.endsWith(".integration.test.tsx") &&
-    !path.startsWith("src/workflow/__tests__/");
-}
-
 function readOption(args: string[], name: string): string | undefined {
   const prefix = `${name}=`;
   const inline = args.find((arg) => arg.startsWith(prefix));
@@ -231,16 +214,6 @@ function readOption(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
   if (index >= 0) return args[index + 1];
   return undefined;
-}
-
-async function exists(path: string): Promise<boolean> {
-  try {
-    await Deno.stat(path);
-    return true;
-  } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return false;
-    throw error;
-  }
 }
 
 async function collectLcovFiles(paths: string[]): Promise<string[]> {
@@ -307,7 +280,8 @@ async function runDeno(
 ): Promise<void> {
   const child = new Deno.Command("deno", {
     args,
-    env,
+    clearEnv: true,
+    env: buildTestProcessEnv(Deno.env.toObject(), env),
     stdout: "inherit",
     stderr: "inherit",
   }).spawn();
@@ -320,6 +294,8 @@ async function runDeno(
 async function captureDeno(args: string[]): Promise<string> {
   const output = await new Deno.Command("deno", {
     args,
+    clearEnv: true,
+    env: buildTestProcessEnv(Deno.env.toObject()),
     stdout: "piped",
     stderr: "inherit",
   }).output();

@@ -2,6 +2,14 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { isCacheWriteRaceError, verifyCacheFileExists, writeCacheFile } from "./cache-file-ops.ts";
+import {
+  __resetLoggerConfigForTests,
+  __resetLogRecordEmitterForTests,
+  __subscribeLogRecordEmitter,
+  type LogEntry,
+  LogLevel,
+  setLogLevel,
+} from "./logger/logger.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 
@@ -20,6 +28,10 @@ const DIR_STAT: FileInfo = {
   size: 0,
   mtime: null,
 };
+
+function filesystemError(message: string, code: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code });
+}
 
 function createMockFs(overrides: Partial<FileSystem> = {}): FileSystem {
   return {
@@ -101,13 +113,25 @@ describe("cache-file-ops", () => {
       );
     });
 
-    it("returns false when post-write verification fails", async () => {
+    it("returns false when post-write verification finds a missing file", async () => {
       const fs = createMockFs({
-        stat: () => Promise.reject(new Error("file gone")),
+        stat: () => Promise.reject(filesystemError("file gone", "ENOENT")),
       });
 
       const result = await writeCacheFile(fs, "/cache/dir/file.js", "content", "TEST");
       assertEquals(result, false);
+    });
+
+    it("propagates operational post-write verification failures", async () => {
+      const fs = createMockFs({
+        stat: () => Promise.reject(filesystemError("permission denied", "EACCES")),
+      });
+
+      await assertRejects(
+        () => writeCacheFile(fs, "/cache/dir/file.js", "content", "TEST"),
+        Error,
+        "permission denied",
+      );
     });
 
     it("returns false when stat says not a file", async () => {
@@ -132,11 +156,81 @@ describe("cache-file-ops", () => {
 
     it("returns false when file does not exist", async () => {
       const fs = createMockFs({
-        stat: () => Promise.reject(new Error("not found")),
+        stat: () => Promise.reject(filesystemError("not found", "ENOENT")),
       });
 
       const result = await verifyCacheFileExists(fs, "/cache/file.js", "TEST");
       assertEquals(result, false);
+    });
+
+    it("propagates operational existence-check failures", async () => {
+      const fs = createMockFs({
+        stat: () => Promise.reject(filesystemError("permission denied", "EACCES")),
+      });
+
+      await assertRejects(
+        () => verifyCacheFileExists(fs, "/cache/file.js", "TEST"),
+        Error,
+        "permission denied",
+      );
+    });
+
+    it("redacts the cache path from operational failure logs", async () => {
+      const originalDebug = console.debug;
+      const records: LogEntry[] = [];
+      const path = "/srv/private workspace/cache/file.js";
+      const fs = createMockFs({
+        stat: () =>
+          Promise.reject(filesystemError(`EACCES: permission denied, stat '${path}'`, "EACCES")),
+      });
+
+      console.debug = () => {};
+      __resetLogRecordEmitterForTests();
+      setLogLevel(LogLevel.DEBUG);
+      const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+        records.push(entry);
+      });
+
+      try {
+        await assertRejects(
+          () => verifyCacheFileExists(fs, path, "TEST"),
+          Error,
+          "permission denied",
+        );
+      } finally {
+        unsubscribe();
+        __resetLogRecordEmitterForTests();
+        __resetLoggerConfigForTests();
+        console.debug = originalDebug;
+      }
+
+      assertEquals(records.length, 1);
+      assertEquals(records[0]?.context?.error, "EACCES: permission denied, stat '[path]'");
+      assertEquals(String(records[0]?.context?.error).includes("private workspace"), false);
+    });
+
+    it("propagates I/O failures instead of reporting a cache miss", async () => {
+      const fs = createMockFs({
+        stat: () => Promise.reject(filesystemError("input/output error", "EIO")),
+      });
+
+      await assertRejects(
+        () => verifyCacheFileExists(fs, "/cache/file.js", "TEST"),
+        Error,
+        "input/output error",
+      );
+    });
+
+    it("requires custom adapters to classify missing paths", async () => {
+      const fs = createMockFs({
+        stat: () => Promise.reject(new Error("not found")),
+      });
+
+      await assertRejects(
+        () => verifyCacheFileExists(fs, "/cache/file.js", "TEST"),
+        Error,
+        "not found",
+      );
     });
 
     it("returns false when path is a directory", async () => {

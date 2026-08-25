@@ -88,9 +88,7 @@ export interface ModelSelectorProps {
   /**
    * Render each model yourself instead of using `ModelSelector.Item`.
    */
-  renderItem?: (
-    options: { item: ModelOption; index: number },
-  ) => React.ReactNode;
+  renderItem?: (options: { item: ModelOption; index: number }) => React.ReactNode;
   /**
    * Compose your own menu from `ModelSelector.Trigger` / `Content` / `List` /
    * `Item`. When omitted, the default data-driven preset is rendered.
@@ -142,8 +140,6 @@ export interface ModelSelectorContextValue {
   value?: string;
   /** The resolved selected option (from `value`, else the first model). */
   selectedModel?: ModelOption;
-  /** @deprecated Use `selectedModel`. */
-  selected?: ModelOption;
   /** Select a model by value (also closes the menu). */
   onSelect: (value: string) => void;
   /** Popover open state. */
@@ -154,11 +150,28 @@ export interface ModelSelectorContextValue {
   disabled?: boolean;
 }
 
-const [ModelSelectorContext, useModelSelector] = createStrictContext<ModelSelectorContextValue>(
+const [ModelSelectorContext, useModelSelectorContext] = createStrictContext<
+  ModelSelectorContextValue
+>(
   "useModelSelector",
   "a ModelSelector",
 );
-export { useModelSelector };
+
+/**
+ * Read the current `ModelSelector`'s selection + open state from a
+ * `ModelSelector.*` sub-part. Throws when called outside a `ModelSelector` /
+ * `ModelSelector.Root`.
+ *
+ * @example
+ * ```tsx
+ * function CurrentModel() {
+ *   const { selectedModel, onSelect } = useModelSelector();
+ *   return <button onClick={() => onSelect("openai/gpt-4o")}>{selectedModel?.label}</button>;
+ * }
+ * // <ModelSelector.Root models={models} onChange={setModel}><CurrentModel /></ModelSelector.Root>
+ * ```
+ */
+export const useModelSelector = useModelSelectorContext;
 
 /** Props for `ModelSelector.Trigger` — the pill/icon combobox button. */
 export interface ModelSelectorTriggerProps {
@@ -167,11 +180,12 @@ export interface ModelSelectorTriggerProps {
   /** Override the trigger contents; defaults to the selected model. */
   children?: React.ReactNode;
   className?: string;
+  ref?: React.Ref<HTMLButtonElement>;
 }
 
 /** The pill (or icon) combobox trigger. Toggles the popover. */
 function ModelSelectorTrigger(
-  { variant = "pill", children, className }: ModelSelectorTriggerProps,
+  { variant = "pill", children, className, ref }: ModelSelectorTriggerProps,
 ): React.ReactElement {
   const { selectedModel, disabled } = useModelSelector();
 
@@ -213,7 +227,7 @@ function ModelSelectorTrigger(
       </Pill>
     );
 
-  return <PopoverTrigger asChild>{trigger}</PopoverTrigger>;
+  return <PopoverTrigger asChild ref={ref}>{trigger}</PopoverTrigger>;
 }
 ModelSelectorTrigger.displayName = "ModelSelector.Trigger";
 
@@ -222,30 +236,32 @@ export interface ModelSelectorSearchProps {
   /** Search input placeholder. */
   placeholder?: string;
   className?: string;
+  ref?: React.Ref<HTMLInputElement>;
 }
 
 /** Search input for a composed model menu. */
 function ModelSelectorSearch(
-  { placeholder = "Search models...", className }: ModelSelectorSearchProps,
+  { placeholder = "Search models...", className, ref }: ModelSelectorSearchProps,
 ): React.ReactElement {
-  return <CommandInput placeholder={placeholder} className={className} />;
+  return <CommandInput placeholder={placeholder} className={className} ref={ref} />;
 }
 ModelSelectorSearch.displayName = "ModelSelector.Search";
 
 /** Props for `ModelSelector.Content` — the popover surface + `Command` shell. */
-export interface ModelSelectorContentProps {
-  children?: React.ReactNode;
-  className?: string;
+export interface ModelSelectorContentProps extends React.HTMLAttributes<HTMLDivElement> {
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** The popover surface wrapping a `Command` (search + list region). */
 function ModelSelectorContent(
-  { children, className }: ModelSelectorContentProps,
+  { children, className, ref, ...props }: ModelSelectorContentProps,
 ): React.ReactElement {
   return (
     <PopoverContent
       align="start"
       className={cn("min-w-[260px] p-0! rounded-lg", className)}
+      ref={ref}
+      {...props}
     >
       <Command className="bg-transparent">
         {children}
@@ -257,10 +273,12 @@ ModelSelectorContent.displayName = "ModelSelector.Content";
 
 /** The scrollable `Command` list region. */
 function ModelSelectorList(
-  { children, className }: { children?: React.ReactNode; className?: string },
+  { children, className, ref, ...props }:
+    & React.HTMLAttributes<HTMLDivElement>
+    & { ref?: React.Ref<HTMLDivElement> },
 ): React.ReactElement {
   return (
-    <CommandList className={cn("max-h-[320px]", className)}>
+    <CommandList className={cn("max-h-[320px]", className)} ref={ref} {...props}>
       {children}
     </CommandList>
   );
@@ -274,11 +292,12 @@ export interface ModelSelectorItemProps {
   /** Force selected styling; defaults to matching the context `value`. */
   selected?: boolean;
   className?: string;
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** A single model row (provider logo + label + optional badge + check). */
 function ModelSelectorItem(
-  { model, selected, className }: ModelSelectorItemProps,
+  { model, selected, className, ref }: ModelSelectorItemProps,
 ): React.ReactElement {
   const { value, selectedModel, onSelect } = useModelSelector();
   const selectedValue = value ?? selectedModel?.value;
@@ -288,6 +307,7 @@ function ModelSelectorItem(
       value={model.label}
       onSelect={() => onSelect(model.value)}
       className={className}
+      ref={ref}
     >
       <ProviderLogo provider={providerOf(model)} className="size-4.5" />
       <span className="min-w-0 flex-1 truncate">{model.label}</span>
@@ -385,7 +405,6 @@ function ModelSelectorRoot({
   const context: ModelSelectorContextValue = {
     value,
     selectedModel: selected,
-    selected,
     onSelect: handleSelect,
     open,
     setOpen,

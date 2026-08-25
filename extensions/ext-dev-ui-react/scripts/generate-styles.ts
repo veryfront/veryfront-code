@@ -23,6 +23,20 @@ const SHELL_SOURCE_PATHS = [
 const MAX_SOURCE_FILES = 1_000;
 const MAX_SOURCE_BYTES = 16 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
+/**
+ * The Dev UI ships to local evergreen browsers only. Every target below
+ * understands `oklch()` natively, so Lightning CSS keeps Tailwind's color
+ * literals verbatim instead of computing `lab()` fallbacks. That conversion
+ * runs platform-dependent floating-point math (libm differs across glibc
+ * versions and macOS), which broke byte-exact regeneration between dev
+ * machines and CI.
+ */
+const DEV_UI_BROWSER_QUERIES = [
+  "chrome >= 111",
+  "edge >= 111",
+  "firefox >= 115",
+  "safari >= 16.4",
+] as const;
 const encoder = new TextEncoder();
 
 const STYLESHEET = `@import "tailwindcss";
@@ -114,7 +128,9 @@ async function generateStyles(): Promise<string> {
     .sort();
   const compiler = await new TailwindCSSProcessor().compile(STYLESHEET);
   const generated = compiler.build(candidates);
-  let optimized = new LightningCSSOptimizationEngine().optimize({
+  let optimized = new LightningCSSOptimizationEngine({
+    browserQueries: DEV_UI_BROWSER_QUERIES,
+  }).optimize({
     css: generated,
     sourcePath: "veryfront-dev-ui.css",
     minify: true,
@@ -176,8 +192,28 @@ export const DEV_UI_STYLES = ${JSON.stringify(styles)} as const;
 if (checkOnly) {
   const existing = await Deno.readTextFile(OUTPUT_PATH).catch(() => null);
   if (existing !== output) {
+    const existingIdentity = existing === null
+      ? "missing"
+      : `${await sha256(existing)} (${existing.length} characters)`;
+    if (existing !== null) {
+      let divergence = 0;
+      const limit = Math.min(existing.length, output.length);
+      while (divergence < limit && existing[divergence] === output[divergence]) {
+        divergence++;
+      }
+      const from = Math.max(0, divergence - 80);
+      console.error(
+        `[ext-dev-ui-react] Styles diverge at character ${divergence}.\n` +
+          `computed:   ${JSON.stringify(output.slice(from, divergence + 120))}\n` +
+          `checked-in: ${JSON.stringify(existing.slice(from, divergence + 120))}`,
+      );
+    }
     throw new Error(
-      "Extension-owned Dev UI styles are stale; run deno task generate:dev-ui",
+      "Extension-owned Dev UI styles are stale; run deno task generate:dev-ui. " +
+        `Computed ${await sha256(
+          output,
+        )} (${output.length} characters) vs checked-in ${existingIdentity}; ` +
+        `stylesheet sha256:${identity} (${styles.length} characters).`,
     );
   }
   console.log(

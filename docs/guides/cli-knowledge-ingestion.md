@@ -223,3 +223,7 @@ veryfront knowledge ingest uploads/sample.pdf --json | jq '.ingested'
 The `ingested` array names every file the command wrote. If the array is empty
 or the command exited non-zero, check `skipped`, `failed`, and the command
 output for the reason.
+
+Next, use [Project knowledge](./project-knowledge.md) to search the generated
+paths and frontmatter, retrieve an exact Markdown document, or index the files
+for semantic retrieval.

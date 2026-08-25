@@ -64,6 +64,45 @@ async function settle(): Promise<void> {
 }
 
 /**
+ * Wait for a condition the copy handler reaches asynchronously.
+ *
+ * `settle` spends a fixed budget of one microtask and one macrotask, which is
+ * enough for the success path but not reliably for the failure path: a rejected
+ * `clipboard.writeText` falls back to `execCommand`, and only once that returns
+ * false does the failed state get set. That chain is several ticks long, so on
+ * a loaded machine the assertion could run against the pre-failure render. Poll
+ * for the state the test is actually about, against a wall-clock deadline
+ * rather than an iteration count: under load each poll costs more, so a fixed
+ * number of attempts is an arbitrary proxy for how long the test is willing to
+ * wait.
+ */
+const WAIT_FOR_TIMEOUT_MS = 2_000;
+
+async function waitFor(
+  predicate: () => boolean,
+  description: string,
+  timeoutMs: number = WAIT_FOR_TIMEOUT_MS,
+): Promise<void> {
+  // `performance.now()` rather than `Date.now()`: a wall clock corrected mid-run
+  // by NTP or a VM host can jump backwards, holding the loop open past its
+  // bound, or forwards, timing out a test that was about to pass. Elapsed time
+  // is what this is measuring, so measure it monotonically.
+  const deadline = performance.now() + timeoutMs;
+
+  for (;;) {
+    flushSync(() => {});
+    if (predicate()) return;
+    // Checked after the predicate, so a state that lands exactly on the
+    // deadline still counts, and before the sleep, so a failed final check
+    // does not pay for a tick it will never use.
+    if (performance.now() >= deadline) {
+      throw new Error(`Timed out after ${timeoutMs}ms waiting for ${description}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+}
+
+/**
  * Unmount and drain the one-shot tasks the runtime leaves behind.
  *
  * The `execCommand` copy fallback selects a textarea, and jsdom queues that
@@ -76,6 +115,67 @@ async function unmount(root: Root): Promise<void> {
   flushSync(() => root.unmount());
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
+
+describe("waitFor", () => {
+  // The helper decides whether the clipboard assertions run against a settled
+  // render, so a version that resolved early or swallowed a timeout would make
+  // those tests pass without checking anything.
+
+  it("returns as soon as the predicate holds", async () => {
+    let polls = 0;
+    await waitFor(() => ++polls >= 3, "the third poll", 1_000);
+    assertEquals(polls, 3, "stops on the poll that succeeds rather than running to the deadline");
+  });
+
+  it("succeeds on a state that lands within the deadline", async () => {
+    let ready = false;
+    setTimeout(() => (ready = true), 5);
+    await waitFor(() => ready, "a state that arrives late", 1_000);
+    assertEquals(ready, true);
+  });
+
+  it("throws a named error naming its timeout", async () => {
+    let message = "";
+    try {
+      await waitFor(() => false, "something that never happens", 20);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    assertEquals(message, "Timed out after 20ms waiting for something that never happens");
+  });
+
+  it("does not sleep after the check that gives up", async () => {
+    // The contract is predicate, then deadline, then sleep: every poll except
+    // the last is followed by a sleep. A trailing sleep would mean waiting a
+    // tick the loop can never use.
+    const realSetTimeout = globalThis.setTimeout;
+    let sleeps = 0;
+    let polls = 0;
+    (globalThis as { setTimeout: typeof setTimeout }).setTimeout = ((
+      handler: TimerHandler,
+      timeout?: number,
+    ) => {
+      sleeps += 1;
+      return realSetTimeout(handler as () => void, timeout);
+    }) as typeof setTimeout;
+
+    try {
+      await waitFor(
+        () => {
+          polls += 1;
+          return false;
+        },
+        "never",
+        20,
+      ).catch(() => {});
+    } finally {
+      (globalThis as { setTimeout: typeof setTimeout }).setTimeout = realSetTimeout;
+    }
+
+    assert(polls > 1, "the loop polls more than once before giving up");
+    assertEquals(sleeps, polls - 1, "one sleep between polls, none after the last");
+  });
+});
 
 describe("CodeBlock renderer boundary", () => {
   it("keeps the standalone CodeSurface renderer optional", () => {
@@ -351,7 +451,10 @@ describe("CodeBlock clipboard integration", () => {
       assert(button, "copy control renders");
 
       button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
-      await settle();
+      await waitFor(
+        () => button.dataset.failed === "true",
+        "both clipboard mechanisms to fail",
+      );
 
       assertEquals(button.dataset.copied, "false");
       assertEquals(button.dataset.failed, "true");
@@ -383,7 +486,10 @@ describe("CodeBlock clipboard integration", () => {
       assert(button, "copy control renders");
 
       button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
-      await settle();
+      await waitFor(
+        () => button.getAttribute("aria-label") === "Unable to copy code",
+        "the copy control to report failure",
+      );
 
       assertEquals(button.getAttribute("aria-label"), "Unable to copy code");
       assertEquals(

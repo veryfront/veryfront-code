@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ErrorPages, generateErrorHtml } from "./error-html.ts";
 
@@ -101,6 +101,42 @@ describe("server/utils/error-html", () => {
 
       assertIncludes(html, "Service Temporarily Unavailable");
     });
+
+    it("escapes request-controlled text in the styled page", () => {
+      const html = ErrorPages.notFound("/<img src=x onerror=alert(1)>");
+
+      assertEquals(
+        html.includes("<img src=x"),
+        false,
+        "a reflected pathname must not reach the 404 body as live markup",
+      );
+      assertStringIncludes(
+        html,
+        "&lt;img src=x",
+        "a reflected pathname must be HTML-escaped in the 404 body",
+      );
+    });
+
+    it("escapes title and message metacharacters in the styled page", () => {
+      const html = generateErrorHtml({
+        statusCode: 500,
+        title: "A & B <b>",
+        message: '"quoted" <script>alert(1)</script>',
+      });
+
+      assertStringIncludes(html, "&lt;script&gt;", "the message script tag must be escaped");
+      assertStringIncludes(html, "&amp;", "the title ampersand must be escaped");
+      assertEquals(
+        html.includes("<script>alert(1)</script>"),
+        false,
+        "the raw message script must not appear anywhere in the document",
+      );
+      assertEquals(
+        html.includes("<b>"),
+        false,
+        "the raw title markup must not appear anywhere in the document, including <title>",
+      );
+    });
   });
 
   describe("postMessage errors", () => {
@@ -111,7 +147,6 @@ describe("server/utils/error-html", () => {
       assertIncludes(html, '"https://veryfront.com"');
       assertNotIncludes(html, "studio.veryfront.com");
       assertNotIncludes(html, "endsWith");
-      assertNotIncludes(html, ".veryfront.dev");
       assertNotIncludes(html, "}, '*'");
     });
 
@@ -139,6 +174,21 @@ describe("server/utils/error-html", () => {
       const html = ErrorPages.memoryPressure();
 
       assertIncludes(html, "type: 'error'");
+    });
+
+    it("unicode-escapes a closing script tag inside the inline script", () => {
+      const html = ErrorPages.notFound("/a</script><img src=x onerror=alert(1)>");
+
+      assertStringIncludes(
+        html,
+        "\\u003c/script>",
+        "a path containing </script> must be unicode-escaped inside the inline script",
+      );
+      assertEquals(
+        html.includes("/a</script>"),
+        false,
+        "the raw closing tag must never reach the inline script body",
+      );
     });
   });
 });

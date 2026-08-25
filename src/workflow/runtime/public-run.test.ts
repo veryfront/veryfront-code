@@ -7,7 +7,12 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
-import type { NodeState, WorkflowContext, WorkflowRun } from "../types.ts";
+import type {
+  CheckpointResumeEnvelope,
+  NodeState,
+  WorkflowContext,
+  WorkflowRun,
+} from "../types.ts";
 import {
   FRAMEWORK_CONTEXT_PROJECTION_KIND,
   INTERNAL_RUNTIME_PROJECTION_KIND,
@@ -161,6 +166,7 @@ describe("workflow/runtime/public-run", () => {
       sourceIntegrationPolicy: SOURCE_POLICY,
       _tenant: frameworkTenant,
       _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
+      _traceContext: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
     };
 
     const projected = toPublicWorkflowRun(run);
@@ -168,6 +174,8 @@ describe("workflow/runtime/public-run", () => {
 
     assertEquals(projected._tenant, undefined);
     assertEquals(projected._runtimeStateVersion, undefined);
+    // Trace identity is telemetry infrastructure, not run data.
+    assertEquals(projected._traceContext, undefined);
     assertEquals(projected.context.env, undefined);
     assertEquals(projected.context._tenant, undefined);
     assertEquals(projected.context.parallel, {
@@ -383,6 +391,22 @@ describe("workflow/runtime/public-run", () => {
           context: {},
           inputKind: SUBWORKFLOW_INPUT_KIND,
         },
+        _resumeEnvelope: {
+          schemaVersion: 2,
+          ownerNodeId: "nested",
+          context: {
+            input: {},
+            env: { PROJECT_SECRET: "envelope-secret" },
+            _tenant: {
+              projectSlug: "acme",
+              token: "tenant-token",
+              projectId: "p-1",
+              productionMode: true,
+            },
+          },
+          nodeStates: {},
+          workflowProjection: { context: {} },
+        } as unknown as CheckpointResumeEnvelope,
       }],
       pendingApprovals: [],
       createdAt: new Date(0),
@@ -394,6 +418,11 @@ describe("workflow/runtime/public-run", () => {
     const projected = toPublicWorkflowRun(run);
     assertEquals(projected.checkpoints[0]?.context.input, undefined);
     assertEquals(projected.checkpoints[0]?._workflowProjection, undefined);
+    assertEquals(
+      projected.checkpoints[0]?._resumeEnvelope,
+      undefined,
+      "the framework resume envelope must never reach a public run",
+    );
   });
 
   it("projects owned slots after downstream mutation without touching equal unowned values", () => {

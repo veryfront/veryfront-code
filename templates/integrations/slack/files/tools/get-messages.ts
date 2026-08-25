@@ -1,0 +1,57 @@
+import { tool } from "veryfront/tool";
+import { defineSchema } from "veryfront/schemas";
+import { createSlackClient } from "../lib/slack-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
+
+type SlackMessage = {
+  text?: string;
+  user?: string;
+  ts: string;
+  thread_ts?: string;
+  reply_count?: number;
+  reactions?: Array<{ name: string; count: number }>;
+};
+
+export default tool({
+  id: "slack-get-messages",
+  description: "Get recent messages from a Slack channel",
+  inputSchema: defineSchema((v) => v.object({
+    channel: v.string().describe("Channel ID (e.g., 'C1234567890')"),
+    limit: v
+      .number()
+      .min(1)
+      .max(100)
+      .default(20)
+      .describe("Maximum number of messages to return"),
+  }))(),
+  execute: async ({ channel, limit }, context) => {
+    const userId = requireUserIdFromContext(context);
+
+    try {
+      const slack = createSlackClient(userId);
+      const messages = await slack.getMessages(channel, { limit });
+
+      return {
+        messages: messages.map((msg: SlackMessage) => ({
+          text: msg.text ?? "",
+          user: msg.user ?? "unknown",
+          timestamp: msg.ts,
+          threadTs: msg.thread_ts,
+          replyCount: msg.reply_count ?? 0,
+          reactions: msg.reactions?.map((r) => `${r.name} (${r.count})`) ?? [],
+        })),
+        count: messages.length,
+        channel,
+        message: `Retrieved ${messages.length} message(s) from channel.`,
+      };
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("not connected")) {
+        return {
+          error: "Slack not connected. Please connect your Slack account.",
+          connectUrl: "/api/auth/slack",
+        };
+      }
+      throw error;
+    }
+  },
+});

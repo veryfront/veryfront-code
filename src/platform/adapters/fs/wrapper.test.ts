@@ -168,7 +168,7 @@ describe("FSAdapterWrapper", () => {
     });
 
     it("isVeryfrontAdapter should return true for MultiProjectFSAdapter", () => {
-      class MultiProjectFSAdapter {
+      const MockMultiProjectFSAdapter = class MultiProjectFSAdapter {
         readFile = () => Promise.resolve("content");
         exists = () => Promise.resolve(true);
         stat = () =>
@@ -179,9 +179,9 @@ describe("FSAdapterWrapper", () => {
             isSymlink: false,
             mtime: new Date(),
           });
-      }
+      };
 
-      const wrapper = new FSAdapterWrapper(new MultiProjectFSAdapter() as FSAdapter);
+      const wrapper = new FSAdapterWrapper(new MockMultiProjectFSAdapter() as FSAdapter);
       assertEquals(wrapper.isVeryfrontAdapter(), true);
     });
   });
@@ -206,6 +206,26 @@ describe("FSAdapterWrapper", () => {
       await wrapper.refreshSourceSnapshot?.("review-comment");
 
       assertEquals(refreshedReason, "review-comment");
+    });
+
+    it("rejects an accessor-valued refreshSourceSnapshot", () => {
+      let getterCalls = 0;
+      const fsAdapter = createMockFSAdapter();
+      Object.defineProperty(fsAdapter, "refreshSourceSnapshot", {
+        configurable: true,
+        get() {
+          getterCalls++;
+          return () => Promise.resolve();
+        },
+      });
+
+      assertThrows(
+        () => new FSAdapterWrapper(fsAdapter),
+        TypeError,
+        "must be a data-property method",
+        "an accessor-valued refreshSourceSnapshot must be rejected",
+      );
+      assertEquals(getterCalls, 0, "the accessor must never be invoked during capture");
     });
   });
 

@@ -3,6 +3,8 @@ import { basename, join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type * as React from "react";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { ALREADY_EXISTS } from "#veryfront/errors/error-registry/general.ts";
+import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 
 export interface ComponentExports {
   default?: unknown;
@@ -10,11 +12,15 @@ export interface ComponentExports {
 }
 
 export interface ComponentInfo {
-  name: string;
-  path: string;
-  content?: string;
-  isLoaded: boolean;
-  exports?: ComponentExports;
+  readonly name: string;
+  readonly path: string;
+  readonly content?: string;
+  readonly isLoaded: boolean;
+  readonly exports?: ComponentExports;
+}
+
+function immutableComponentInfo(info: ComponentInfo): ComponentInfo {
+  return Object.freeze(info);
 }
 
 export interface ComponentRegistryOptions {
@@ -32,10 +38,14 @@ export type ComponentLoader = {
 
 export class ComponentRegistry {
   private components = new Map<string, ComponentInfo>();
+  private manualComponents = new Set<string>();
   private componentDirs: string[];
   private initializedPromise: Promise<void> | null = null;
+  private discoveryInFlight: Promise<void> | null = null;
+  private discoveryMutations: Set<string> | null = null;
+  // Bumped by clear() so async work started before it discards its result.
+  private lifecycleGeneration = 0;
   private adapter: RuntimeAdapter;
-  private initialized = false;
 
   constructor(private options: ComponentRegistryOptions) {
     this.adapter = options.adapter;
@@ -48,43 +58,65 @@ export class ComponentRegistry {
   }
 
   discover(): Promise<void> {
-    return withSpan(
+    if (this.discoveryInFlight) return this.discoveryInFlight;
+
+    const generation = this.lifecycleGeneration;
+    const mutations = new Set<string>();
+    this.discoveryMutations = mutations;
+    const discovery = withSpan(
       "modules.componentRegistry.discover",
       async () => {
-        this.initialized = false;
-        this.initializedPromise = (async () => {
-          await this._discoverInternal();
-          this.initialized = true;
-        })();
-        await this.initializedPromise;
+        const discovered = await this._discoverInternal();
+        if (generation !== this.lifecycleGeneration) return;
+        const nextComponents = new Map<string, ComponentInfo>();
+
+        for (const name of this.manualComponents) {
+          const component = this.components.get(name);
+          if (component) nextComponents.set(name, component);
+        }
+        for (const [name, component] of discovered) {
+          if (this.manualComponents.has(name) || mutations.has(name)) continue;
+          nextComponents.set(name, component);
+        }
+
+        this.components = nextComponents;
       },
       { "registry.projectDir": this.options.projectDir },
     );
+    const trackedDiscovery = discovery.finally(() => {
+      if (this.discoveryInFlight === trackedDiscovery) {
+        this.discoveryInFlight = null;
+        if (this.discoveryMutations === mutations) this.discoveryMutations = null;
+      }
+    });
+    this.discoveryInFlight = trackedDiscovery;
+    this.initializedPromise = trackedDiscovery;
+    return trackedDiscovery;
   }
 
-  private async _discoverInternal(): Promise<void> {
+  private async _discoverInternal(): Promise<Map<string, ComponentInfo>> {
     logger.debug(`Discovering components in: ${this.componentDirs.join(", ")}`);
+    const discovered = new Map<string, ComponentInfo>();
 
     for (const dir of this.componentDirs) {
       const fullPath = join(this.options.projectDir, dir);
 
       try {
-        await this.walkDirectory(fullPath);
+        await this.walkDirectory(fullPath, discovered);
       } catch (error) {
-        // Silently skip missing directories - they're optional
-        const code = (error as NodeJS.ErrnoException | undefined)?.code;
-        const isNotFound = code === "ENOENT" ||
-          (error instanceof Error && error.name === "NotFound");
-        if (isNotFound) continue;
-
-        logger.warn(`Failed to discover components in ${fullPath}:`, error);
+        if (isCanonicalNotFoundError(error)) continue;
+        throw error;
       }
     }
 
-    logger.debug(`Discovered ${this.components.size} components`);
+    logger.debug(`Discovered ${discovered.size} components`);
+    return discovered;
   }
 
-  private async walkDirectory(dir: string): Promise<void> {
+  private async walkDirectory(
+    dir: string,
+    discovered: Map<string, ComponentInfo>,
+  ): Promise<void> {
     const entries = this.adapter.fs.readDir(dir);
 
     for await (const entry of entries) {
@@ -99,7 +131,7 @@ export class ComponentRegistry {
       const fullPath = join(dir, entry.name);
 
       if (entry.isDirectory) {
-        await this.walkDirectory(fullPath);
+        await this.walkDirectory(fullPath, discovered);
         continue;
       }
 
@@ -109,11 +141,22 @@ export class ComponentRegistry {
       const componentName = basename(entry.name, ext);
       if (componentName === "index") continue;
 
-      this.components.set(componentName, {
-        name: componentName,
-        path: fullPath,
-        isLoaded: false,
-      });
+      const existing = discovered.get(componentName);
+      if (existing && existing.path !== fullPath) {
+        throw ALREADY_EXISTS.create({
+          detail: `Component name '${componentName}' is already registered`,
+          context: { componentName },
+        });
+      }
+
+      discovered.set(
+        componentName,
+        immutableComponentInfo({
+          name: componentName,
+          path: fullPath,
+          isLoaded: false,
+        }),
+      );
 
       logger.debug(`Discovered component: ${componentName} at ${fullPath}`);
     }
@@ -134,13 +177,28 @@ export class ComponentRegistry {
         if (component.isLoaded) return component;
 
         try {
-          component.content = await this.adapter.fs.readFile(component.path);
-          component.isLoaded = true;
+          const content = await this.adapter.fs.readFile(component.path);
+          if (this.components.get(name) !== component) {
+            // The entry changed while the source was being read; load the
+            // current entry instead of storing stale metadata.
+            return this.loadComponent(name);
+          }
+          const loaded = immutableComponentInfo({
+            ...component,
+            content,
+            isLoaded: true,
+          });
+          this.components.set(name, loaded);
           logger.debug(`Loaded component: ${name}`);
-          return component;
+          return loaded;
         } catch (error) {
-          logger.error(`Failed to load component ${name}:`, error);
-          return null;
+          if (this.components.get(name) !== component) {
+            // The failed read belonged to a stale entry. A replacement may
+            // already be loadable even though the old source disappeared.
+            return this.loadComponent(name);
+          }
+          if (isCanonicalNotFoundError(error)) return null;
+          throw error;
         }
       },
       { "registry.componentName": name },
@@ -151,6 +209,7 @@ export class ComponentRegistry {
     return withSpan(
       "modules.componentRegistry.loadAll",
       async () => {
+        await this.initializedPromise;
         await Promise.all(Array.from(this.components.keys(), (name) => this.loadComponent(name)));
       },
       { "registry.componentCount": this.components.size },
@@ -185,23 +244,33 @@ export class ComponentRegistry {
   }
 
   add(name: string, info: Partial<ComponentInfo>): void {
-    this.components.set(name, {
+    this.discoveryMutations?.add(name);
+    this.manualComponents.add(name);
+    this.components.set(
       name,
-      path: info.path ?? `virtual:${name}`,
-      content: info.content,
-      isLoaded: true,
-      exports: info.exports,
-    });
+      immutableComponentInfo({
+        name,
+        path: info.path ?? `virtual:${name}`,
+        content: info.content,
+        isLoaded: info.isLoaded ?? (info.content !== undefined || info.exports !== undefined),
+        exports: info.exports,
+      }),
+    );
   }
 
   remove(name: string): void {
+    this.discoveryMutations?.add(name);
+    this.manualComponents.delete(name);
     this.components.delete(name);
   }
 
   clear(): void {
+    this.lifecycleGeneration++;
     this.components.clear();
-    this.initialized = false;
+    this.manualComponents.clear();
     this.initializedPromise = null;
+    this.discoveryInFlight = null;
+    this.discoveryMutations = null;
   }
 
   getComponentNames(): string[] {

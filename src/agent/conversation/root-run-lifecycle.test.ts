@@ -5,6 +5,11 @@ import {
   prepareConversationRootRunLifecycle,
   prepareHostedConversationRootRunContext,
 } from "./root-run-lifecycle.ts";
+import {
+  createHostedRunEventWriterCapability,
+  runWithHostedRunEventWriterCapability,
+} from "../hosted/child-run-event-writer-token.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 
 describe("agent/conversation-root-run-lifecycle", () => {
   it("starts a run and derives root-run lineage plus a mirror in one helper", async () => {
@@ -92,50 +97,59 @@ describe("agent/conversation-root-run-lifecycle", () => {
     const debugMessages: string[] = [];
     const authorizationHeaders: Array<string | null> = [];
     const conversationId = "11111111-1111-4111-a111-111111111111";
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
-      const request = input instanceof Request ? input : new Request(input, init);
-      authorizationHeaders.push(request.headers.get("Authorization"));
-      return Promise.resolve(Response.json({
-        latest_event_id: 6,
-        latest_external_event_sequence: 7,
-        appended_count: 1,
-        run: {
-          run_id: "run-1",
-          conversation_id: conversationId,
+    installMockFetch(
+      ((input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        authorizationHeaders.push(request.headers.get("Authorization"));
+        return Promise.resolve(Response.json({
           latest_event_id: 6,
           latest_external_event_sequence: 7,
-        },
-      }));
-    }) as typeof fetch;
+          appended_count: 1,
+          run: {
+            run_id: "run-1",
+            conversation_id: conversationId,
+            latest_event_id: 6,
+            latest_external_event_sequence: 7,
+          },
+        }));
+      }) as typeof fetch,
+    );
 
     try {
-      const context = await prepareHostedConversationRootRunContext(
-        {
-          authToken: "user-api-token",
-          runEventAppendToken: "run-event-service-token",
+      const context = await runWithHostedRunEventWriterCapability(
+        createHostedRunEventWriterCapability({
           apiUrl: "https://api.example.test",
-          conversationId,
-          projectId: "project-1",
-          branchId: "branch-1",
-          agentId: "agent-1",
-          messages: [],
-          providedRun: {
-            runId: "run-1",
-            messageId: "msg-1",
-            latestEventId: 5,
-            latestExternalEventSequence: 6,
-          },
-          persistLatestUserMessageBeforeRun: true,
-          parentRunId: "parent-run",
-          parentMessageId: "parent-message",
-          instrumentation: {
-            debug: (message) => {
-              debugMessages.push(message);
+          runId: "run-1",
+          runEventAppendToken: "run-event-service-token",
+          fetch: globalThis.fetch,
+        }),
+        () =>
+          prepareHostedConversationRootRunContext(
+            {
+              authToken: "user-api-token",
+              apiUrl: "https://api.example.test",
+              conversationId,
+              projectId: "project-1",
+              branchId: "branch-1",
+              agentId: "agent-1",
+              messages: [],
+              providedRun: {
+                runId: "run-1",
+                messageId: "msg-1",
+                latestEventId: 5,
+                latestExternalEventSequence: 6,
+              },
+              persistLatestUserMessageBeforeRun: true,
+              parentRunId: "parent-run",
+              parentMessageId: "parent-message",
+              instrumentation: {
+                debug: (message) => {
+                  debugMessages.push(message);
+                },
+              },
             },
-          },
-        },
-        { abortSignal: new AbortController().signal },
+            { abortSignal: new AbortController().signal },
+          ),
       );
 
       try {
@@ -167,7 +181,84 @@ describe("agent/conversation-root-run-lifecycle", () => {
         context.durableRunMirror?.dispose();
       }
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
+    }
+  });
+
+  it("persists the latest user message before creating a hosted root run", async () => {
+    const conversationId = "11111111-1111-4111-a111-111111111111";
+    const userMessageId = "22222222-2222-4222-a222-222222222222";
+
+    async function prepareWithoutProvidedRun(persistLatestUserMessageBeforeRun: boolean) {
+      const recordedUrls: string[] = [];
+      let createdRunId = "";
+      installMockFetch(
+        (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          recordedUrls.push(request.url);
+          if (request.url.endsWith("/messages")) {
+            return Response.json({ id: userMessageId }, { status: 201 });
+          }
+          if (request.url.endsWith("/runs")) {
+            const body = await request.json() as { public_id: string };
+            createdRunId = body.public_id;
+            return Response.json({ accepted: true, run: { run_id: createdRunId } }, {
+              status: 202,
+            });
+          }
+          return Response.json({
+            run_id: createdRunId,
+            conversation_id: conversationId,
+            message_id: userMessageId,
+            latest_event_id: 0,
+            latest_external_event_sequence: 0,
+            status: "running",
+          });
+        }) as typeof fetch,
+      );
+
+      const context = await prepareHostedConversationRootRunContext(
+        {
+          authToken: "user-api-token",
+          apiUrl: "https://api.example.test",
+          conversationId,
+          projectId: "project-1",
+          agentId: "agent-1",
+          messages: [{ id: userMessageId, role: "user", parts: [{ type: "text", text: "Hello" }] }],
+          persistLatestUserMessageBeforeRun,
+        },
+        { abortSignal: new AbortController().signal },
+      );
+      context.durableRunMirror?.dispose();
+      return recordedUrls;
+    }
+
+    try {
+      const persistedUrls = await prepareWithoutProvidedRun(true);
+      assertEquals(
+        persistedUrls[0],
+        `https://api.example.test/conversations/${conversationId}/messages`,
+        "the latest user message must be persisted before the run is created",
+      );
+      assertEquals(
+        persistedUrls[1],
+        "https://api.example.test/runs",
+        "the run is created only after the user turn is stored",
+      );
+
+      const skippedUrls = await prepareWithoutProvidedRun(false);
+      assertEquals(
+        skippedUrls.filter((url) => url.endsWith("/messages")),
+        [],
+        "a disabled persistLatestUserMessageBeforeRun must not store the user turn",
+      );
+      assertEquals(
+        skippedUrls[0],
+        "https://api.example.test/runs",
+        "the run is still created when persistence is disabled",
+      );
+    } finally {
+      restoreMockFetch();
     }
   });
 
@@ -198,6 +289,42 @@ describe("agent/conversation-root-run-lifecycle", () => {
         value: { runId: "child-run-1" },
       }]);
       assertEquals(context.durableRunMirror?.getSnapshot().pendingEventCount, 1);
+      assertEquals(context.privateDurableRunMirror, null);
+    } finally {
+      context.durableRunMirror?.dispose();
+    }
+  });
+
+  it("rejects wrong-root writer authority without granting private fallback", async () => {
+    const context = await runWithHostedRunEventWriterCapability(
+      createHostedRunEventWriterCapability({
+        apiUrl: "https://api.example.test",
+        runId: "different-root-run",
+        runEventAppendToken: "wrong-root-writer-token",
+      }),
+      () =>
+        prepareHostedConversationRootRunContext(
+          {
+            authToken: "user-api-token",
+            apiUrl: "https://api.example.test",
+            conversationId: "conv-1",
+            projectId: "project-1",
+            agentId: "agent-1",
+            messages: [],
+            providedRun: {
+              runId: "expected-root-run",
+              messageId: "msg-1",
+              latestEventId: 5,
+              latestExternalEventSequence: 6,
+            },
+            persistLatestUserMessageBeforeRun: false,
+          },
+          { abortSignal: new AbortController().signal },
+        ),
+    );
+
+    try {
+      assertEquals(context.durableRunMirror !== null, true);
       assertEquals(context.privateDurableRunMirror, null);
     } finally {
       context.durableRunMirror?.dispose();

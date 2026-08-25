@@ -1,6 +1,6 @@
 import type { AgentServiceSandboxToolsOptions } from "#veryfront/sandbox";
-import { agentLogger } from "#veryfront/utils";
-import { __registerTraceContextGetter } from "../../utils/logger/logger.ts";
+import type { RemoteMCPToolSourceConfig, RemoteToolSource } from "#veryfront/tool";
+import { __registerTraceContextGetter, agentLogger } from "#veryfront/utils";
 import {
   type BootstrapAgentServiceOptions,
   runAgentServiceMain,
@@ -118,6 +118,15 @@ export type NodeVeryfrontCloudAgentServiceOptions = {
   forwardedConfigNamespace?: string;
   /** Framework host tools this service deployment authorizes. */
   hostToolPolicy?: HostedHostToolPolicy;
+  /**
+   * Deployment-owned remote MCP source composition.
+   *
+   * The selector receives service- and agent-configured sources. A trusted
+   * host that grants a privileged transport must match only exact endpoints
+   * captured from immutable deployment configuration and use
+   * `createRemoteMCPToolSource` for every other source.
+   */
+  createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
   createBashTool?: AgentServiceSandboxToolsOptions["createBashTool"];
   env?: CreateNodeAgentServiceRuntimeInfrastructureOptions["env"];
   processTarget?: NodeVeryfrontCloudAgentServiceProcessTarget;

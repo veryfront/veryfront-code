@@ -39,6 +39,8 @@ import {
   resolveFrameworkSourcePath,
   resolveRelativeFrameworkSourceImport,
 } from "#veryfront/platform/compat/framework-source-resolver.ts";
+import { PUBLISHED_RUNTIME_HELPERS } from "#veryfront/platform/compat/published-runtime-helpers.ts";
+import { getFrameworkRoot } from "#veryfront/platform/compat/vfs-paths.ts";
 import { normalizeHttpUrl } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 import { extractSourceUrl } from "#veryfront/transforms/esm/source-url-embed.ts";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
@@ -56,6 +58,7 @@ import { FRAMEWORK_CANDIDATES } from "#veryfront/server/handlers/dev/framework-c
 import { validateLexicalPath } from "#veryfront/security/path-validation.ts";
 import {
   CSS_IMPORTING_SOURCE_EXTENSIONS,
+  extractCssImportSpecifiers,
   resolveCssImportPath,
 } from "#veryfront/html/styles-builder/css-import-extraction.ts";
 import { rewriteCssModuleContent } from "#veryfront/transforms/css-modules/naming.ts";
@@ -459,6 +462,25 @@ function frameworkSourcePathToSourceKey(sourcePath: string, lookupDirs: string[]
   return null;
 }
 
+/**
+ * Published npm packages emit DNT runtime helpers (`_dnt.shims.js`,
+ * `_dnt.polyfills.js`, `deno.js`) at the package ESM root, outside every
+ * framework source lookup dir. Detect those exact files (relative to the
+ * importing module's package root) so the release dependency walk can publish
+ * them instead of leaving the relative import unresolved.
+ */
+function matchPublishedRuntimeHelper(
+  resolvedPath: string,
+  fromSourcePath: string,
+): string | null {
+  const packageRoot = getFrameworkRoot(fromSourcePath);
+  if (!packageRoot) return null;
+  for (const helper of PUBLISHED_RUNTIME_HELPERS) {
+    if (resolvedPath === join(packageRoot, helper)) return helper;
+  }
+  return null;
+}
+
 /** Sanitize an error for state reporting (no internal paths / stack traces). */
 function sanitizeError(error: unknown): string {
   try {
@@ -705,13 +727,6 @@ function dependencyUrlForSpecifier(
   }
 
   return null;
-}
-
-export function releaseAssetDependencyUrlForSpecifier(
-  dependencyUrls: Map<string, string>,
-  specifier: string,
-): string | null {
-  return dependencyUrlForSpecifier(dependencyUrls, specifier);
 }
 
 function buildDependencyUrlMap(
@@ -1146,10 +1161,24 @@ class IncompleteReleaseAssetBuildError extends Error {
   }
 }
 
-function assertCompleteReleaseAssetCoverage(coverageFailures: readonly string[]): void {
-  if (coverageFailures.length > 0) {
-    throw new IncompleteReleaseAssetBuildError(coverageFailures);
-  }
+/**
+ * Fail the build when any structural gap remains.
+ *
+ * `moduleGaps` never fails a build on its own -- per-module failures cost only
+ * their own routes. It is passed here so that when something structural does
+ * fail, the report still names the modules that failed on the way there. Those
+ * are usually the actionable part, and omitting them hid the failing page
+ * behind a generic dependency error.
+ */
+function assertCompleteReleaseAssetCoverage(
+  coverageFailures: readonly string[],
+  moduleGaps: readonly string[] = [],
+): void {
+  if (coverageFailures.length === 0) return;
+
+  const combined = [...coverageFailures];
+  for (const gap of moduleGaps) pushGap(combined, gap);
+  throw new IncompleteReleaseAssetBuildError(combined);
 }
 
 function dependencyLookupKeys(specifier: string): Set<string> {
@@ -1892,6 +1921,8 @@ async function buildFrameworkDependencies(
   const lookupDirs = [FRAMEWORK_SRC_DIR, FRAMEWORK_EMBEDDED_SRC_DIR, join(tempDir, "src")];
   const moduleAssets = new Map<string, PreparedAsset>();
   const visiting = new Set<string>();
+  const publishedHelperPaths = new Map<string, string>();
+  const publishedHelperKeysByPath = new Map<string, string>();
 
   async function resolveFrameworkImport(
     specifier: string,
@@ -1899,7 +1930,21 @@ async function buildFrameworkDependencies(
   ): Promise<string | null> {
     if (specifier.startsWith("./") || specifier.startsWith("../")) {
       const resolvedPath = await resolveRelativeFrameworkSourceImport(specifier, fromSourcePath);
-      return resolvedPath ? frameworkSourcePathToSourceKey(resolvedPath, lookupDirs) : null;
+      if (!resolvedPath) return null;
+      const helperName = matchPublishedRuntimeHelper(resolvedPath, fromSourcePath);
+      if (helperName) {
+        // Key helpers by resolved path: distinct package roots can each emit
+        // a helper with the same filename but different contents.
+        let helperSourceKey = publishedHelperKeysByPath.get(resolvedPath);
+        if (!helperSourceKey) {
+          const stem = helperName.replace(/\.js$/, "");
+          helperSourceKey = `_published-runtime/${publishedHelperKeysByPath.size}/${stem}`;
+          publishedHelperKeysByPath.set(resolvedPath, helperSourceKey);
+          publishedHelperPaths.set(helperSourceKey, resolvedPath);
+        }
+        return helperSourceKey;
+      }
+      return frameworkSourcePathToSourceKey(resolvedPath, lookupDirs);
     }
 
     if (specifier.startsWith(FRAMEWORK_MODULE_URL_PREFIX)) {
@@ -1921,9 +1966,12 @@ async function buildFrameworkDependencies(
       return null;
     }
 
-    const frameworkSource = await resolveFrameworkSourcePath(sourceKey, {
-      extraLookupDirs: [join(tempDir, "src")],
-    });
+    const publishedHelperPath = publishedHelperPaths.get(sourceKey);
+    const frameworkSource = publishedHelperPath
+      ? { path: publishedHelperPath, lookupDir: dirname(publishedHelperPath) }
+      : await resolveFrameworkSourcePath(sourceKey, {
+        extraLookupDirs: [join(tempDir, "src")],
+      });
     const embeddedCode = frameworkSource ? null : embeddedFrameworkModuleCode(sourceKey);
     if (!frameworkSource && embeddedCode === null) {
       pushGap(gaps, `dependency-missing:${publicSpecifier}:${sourceKey}`);
@@ -2375,6 +2423,12 @@ async function runBuildInner(
   const transformedModules = new Map<string, TransformedProjectModule>();
   const dependencyModules = createDependencyModuleCollection();
   const gaps: string[] = [];
+  // Per-module failures are held apart from the structural gaps in `gaps`. A
+  // module that cannot be built costs its own routes, not the release: it never
+  // reaches `modules`, and the browser-module endpoint already refuses anything
+  // absent from the manifest. These are promoted into `gaps` at route assembly,
+  // and only when they leave the release with no serveable route at all.
+  const moduleGaps: string[] = [];
   const uploadQueue: PreparedAsset[] = [];
   // Bytes are held per-hash only until uploaded, then dropped (M3).
   const pendingBytes = createPendingAssetStore();
@@ -2436,7 +2490,7 @@ async function runBuildInner(
       });
     } catch (error) {
       const sanitized = sanitizeError(error);
-      pushGap(gaps, `module-transform-failed:${logicalPath}`);
+      pushGap(moduleGaps, `module-transform-failed:${logicalPath}`);
       logger.warn("Module transform failed during release asset build", {
         path: logicalPath,
         error: sanitized,
@@ -2444,7 +2498,7 @@ async function runBuildInner(
       return [];
     }
     if (typeof code !== "string") {
-      pushGap(gaps, `module-transform-failed:${logicalPath}`);
+      pushGap(moduleGaps, `module-transform-failed:${logicalPath}`);
       logger.warn("Module transform returned a non-string result", {
         path: logicalPath,
       });
@@ -2452,7 +2506,7 @@ async function runBuildInner(
     }
     const transformedSize = textEncoder.encode(code).byteLength;
     if (transformedSize > RELEASE_ASSET_MAX_SIZE_BYTES) {
-      pushGap(gaps, `oversized:${logicalPath}`);
+      pushGap(moduleGaps, `oversized:${logicalPath}`);
       logger.warn("Module transform output exceeds the release asset limit", {
         path: logicalPath,
         size: transformedSize,
@@ -2482,6 +2536,11 @@ async function runBuildInner(
         imports = vendoredImports;
       } catch (error) {
         const sanitized = sanitizeError(error);
+        // Deliberately fatal rather than route-local, unlike the other
+        // per-module failures. This path does not drop the module: it keeps
+        // going with the *unvendored* code, and it is this gap that stops that
+        // result from being published. Degrading it to a route-local gap would
+        // let a module whose dependencies were never vendored reach a manifest.
         pushGap(gaps, `module-dependency-vendor-failed:${logicalPath}`);
         logger.warn("HTTP dependency vendoring failed during release asset build", {
           path: logicalPath,
@@ -2496,7 +2555,7 @@ async function runBuildInner(
         imports = await collectProjectModuleImports(code, logicalPath, knownPaths);
       } catch (error) {
         const sanitized = sanitizeError(error);
-        pushGap(gaps, `module-import-parse-failed:${logicalPath}`);
+        pushGap(moduleGaps, `module-import-parse-failed:${logicalPath}`);
         logger.warn("Module import parse failed during release asset build", {
           path: logicalPath,
           error: sanitized,
@@ -2616,7 +2675,7 @@ async function runBuildInner(
     dependencyUrls,
     uploadQueue,
     pendingBytes,
-    gaps,
+    moduleGaps,
     !vendorDependencies,
   );
 
@@ -2644,10 +2703,10 @@ async function runBuildInner(
   const resolvedStylesheet = resolveProjectStylesheet(sourceByPath, stylesheetPath);
   if (stylesheetPath !== undefined && resolvedStylesheet === undefined) {
     pushGap(gaps, `stylesheet-missing:${stylesheetPath}`);
-    assertCompleteReleaseAssetCoverage(gaps);
+    assertCompleteReleaseAssetCoverage(gaps, moduleGaps);
   }
-  const stylesheet = await mergeModuleCssImports(sourceByPath, resolvedStylesheet, gaps);
-  assertCompleteReleaseAssetCoverage(gaps);
+  const stylesheet = await mergeModuleCssImports(sourceByPath, resolvedStylesheet);
+  assertCompleteReleaseAssetCoverage(gaps, moduleGaps);
   const cssRequested = candidates.size > 0 || stylesheet !== undefined;
   if (cssRequested) {
     const stylesheetBytes = stylesheet ? textEncoder.encode(stylesheet).byteLength : 0;
@@ -2694,6 +2753,7 @@ async function runBuildInner(
   // B2. Routes: walk the transformed browser import closure from each page entrypoint.
   // Modules missing from transformedModules are recorded as closure gaps.
   const routes: Record<string, ReleaseAssetRouteEntry> = {};
+  const droppedRoutes = new Map<string, string[]>();
   const pageModules = Object.keys(modules).filter((p) =>
     routeForConfiguredPage(p, routeDirectories) !== null
   );
@@ -2728,16 +2788,44 @@ async function runBuildInner(
         pushGap(closureGaps, `route-gap:${route}:${missing}`);
       }
     }
+
+    // A route with a hole in its closure is omitted rather than published with
+    // one. Shipping it would hand the browser an import map pointing at a
+    // module the admission boundary refuses.
     if (closureGaps.length > 0) {
-      for (const gap of closureGaps) pushGap(gaps, gap);
+      droppedRoutes.set(route, closureGaps);
+      continue;
     }
 
     routes[route] = { modules: manifestedModules, css: cssHashes };
   }
 
+  // Every route the release could not cover, so an operator sees which pages
+  // this build left unserveable even when the manifest publishes.
+  if (droppedRoutes.size > 0) {
+    logger.warn("Omitting routes with incomplete release asset coverage", {
+      dropped: [...droppedRoutes.keys()],
+      published: Object.keys(routes).length,
+    });
+  }
+
+  // One unbuildable page must not take the site down. Module and route gaps
+  // only become fatal when they leave nothing to serve -- a project whose sole
+  // page is broken still fails closed, while a project with one bad page among
+  // many publishes the rest. Before this, a single unresolvable import failed
+  // the whole manifest, and the renderer then 503'd every module on every
+  // route because manifest admission had nothing to admit against.
+  const hasServeableRoute = Object.keys(routes).length > 0;
+  if (!hasServeableRoute) {
+    for (const gap of moduleGaps) pushGap(gaps, gap);
+    for (const routeGaps of droppedRoutes.values()) {
+      for (const gap of routeGaps) pushGap(gaps, gap);
+    }
+  }
+
   // A v2 manifest is publishable only when every requested module,
   // dependency, route closure, and stylesheet has complete immutable coverage.
-  assertCompleteReleaseAssetCoverage(gaps);
+  assertCompleteReleaseAssetCoverage(gaps, moduleGaps);
 
   // Upload only after coverage is proven complete, so failed builds do not
   // leave unreferenced immutable assets behind.
@@ -2870,41 +2958,49 @@ function resolveProjectStylesheet(
 async function mergeModuleCssImports(
   sourceByPath: Map<string, string>,
   stylesheet: { content: string; path: string } | undefined,
-  gaps: string[],
 ): Promise<string | undefined> {
   const importedPaths = new Set<string>();
   for (const [path, content] of sourceByPath) {
     if (!CSS_IMPORTING_SOURCE_EXTENSIONS.some((ext) => path.endsWith(ext))) continue;
-    let imports: Awaited<ReturnType<typeof parseImports>>;
-    try {
-      imports = await parseImports(content);
-    } catch (error) {
-      pushGap(gaps, `stylesheet-import-parse-failed:${path}`);
-      logger.warn("CSS import parsing failed during release asset build", {
-        path,
-        error: sanitizeError(error),
-      });
-      continue;
-    }
-
-    for (const imp of imports) {
-      const specifier = imp.n;
-      if (!specifier) continue;
+    // Regex extraction, not the ESM lexer. This runs over project source --
+    // .tsx/.jsx/.mdx/.ts by definition, see CSS_IMPORTING_SOURCE_EXTENSIONS --
+    // and es-module-lexer parses none of those. Every file containing JSX threw
+    // here, each throw recorded a gap, and gaps are fatal since #3244, so no
+    // project with a JSX component could publish a release at all.
+    //
+    // This is the same extractor the dev CSS scanner has always used, so the
+    // two paths now agree. It also removes the failure mode rather than
+    // handling it: a scanner that cannot throw cannot fail a release for a
+    // reason that has nothing to do with the release.
+    for (const specifier of extractCssImportSpecifiers(content)) {
       const cssPath = specifier.split(/[?#]/, 1)[0] ?? "";
       if (!cssPath.endsWith(".css")) continue;
+      // Nothing this scan fails to resolve is fatal, because a regex match is
+      // not knowledge that the build needs the file. extractCssImportSpecifiers
+      // is text-based by design and says so ("over-matching is harmless"); this
+      // path broke that contract by turning its output into a coverage gap, and
+      // assertCompleteReleaseAssetCoverage throws on gaps. Three rounds of
+      // review found three more ways ordinary source produces a phantom
+      // specifier, each of which would have blocked a project's releases.
+      //
+      // Merging module CSS is an enhancement: when it cannot resolve something
+      // the right outcome is unmerged CSS, not a refused release. Genuine
+      // missing-CSS detection belongs on the resolved module graph
+      // (collectProjectModuleImports, over transformed code where the lexer is
+      // trustworthy), not on this text scan.
       if (cssPath !== specifier) {
-        pushGap(gaps, `stylesheet-import-unsupported:${path}`);
+        logger.debug("Skipping CSS import with an unsupported specifier", { path, specifier });
         continue;
       }
       const importedPath = resolveCssImportPath(specifier, `/${path}`, "/");
       if (!importedPath) {
-        pushGap(gaps, `stylesheet-import-unsupported:${path}`);
+        logger.debug("Skipping CSS import that does not resolve", { path, specifier });
         continue;
       }
 
       const relativePath = importedPath.replace(/^\/+/, "");
       if (!sourceByPath.has(relativePath)) {
-        pushGap(gaps, `stylesheet-import-missing:${relativePath}`);
+        logger.debug("Skipping CSS import with no matching source file", { path, relativePath });
         continue;
       }
       importedPaths.add(relativePath);

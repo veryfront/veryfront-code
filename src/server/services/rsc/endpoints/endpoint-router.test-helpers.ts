@@ -22,7 +22,13 @@ export function createMockAdapter(
     }>;
   } = {},
 ): RuntimeAdapter {
-  return {
+  const exists = fsOverrides.exists ??
+    ((path: string) => Promise.resolve(fsOverrides.knownFiles?.includes(path) === true));
+  const readFile = fsOverrides.readFile ?? (async (path: string) => {
+    if (await exists(path)) return "";
+    throw new Deno.errors.NotFound("not found");
+  });
+  const adapter = {
     id: "memory",
     name: "mock",
     capabilities: {
@@ -34,14 +40,20 @@ export function createMockAdapter(
       workers: false,
     },
     fs: {
-      exists: fsOverrides.exists ?? (() => Promise.resolve(false)),
-      readFile: fsOverrides.readFile ?? (() => Promise.resolve("")),
+      symlinkSemantics: "none" as const,
+      exists,
+      readFile,
+      readFileBytesWithinLimit: async (path: string, byteLimit: number) => {
+        const bytes = new TextEncoder().encode(await readFile(path));
+        if (bytes.byteLength > byteLimit) throw new RangeError("mock file exceeds byte limit");
+        return bytes;
+      },
       writeFile: () => Promise.resolve(),
       readDir: fsOverrides.readDir ?? createKnownFilesReader(fsOverrides.knownFiles ?? []),
       mkdir: () => Promise.resolve(),
       remove: () => Promise.resolve(),
       stat: fsOverrides.stat ?? (async (path: string) => {
-        if (await (fsOverrides.exists?.(path) ?? Promise.resolve(false))) {
+        if (await exists(path)) {
           return { isFile: true, isDirectory: false, size: 0, mtime: null };
         }
         throw new Deno.errors.NotFound("not found");
@@ -57,7 +69,8 @@ export function createMockAdapter(
       createHandler: () => () => new Response(),
     },
     serve: () => Promise.resolve({ close: () => Promise.resolve() } as any),
-  } as unknown as RuntimeAdapter;
+  };
+  return adapter as RuntimeAdapter & typeof adapter;
 }
 
 function createKnownFilesReader(
@@ -94,15 +107,15 @@ function createKnownFilesReader(
 /** Config with RSC enabled */
 export const rscEnabledConfig: VeryfrontConfig = {
   experimental: { rsc: true },
-} as unknown as VeryfrontConfig;
+} as VeryfrontConfig & { experimental: { rsc: boolean } };
 
 /** Config with RSC disabled */
 export const rscDisabledConfig: VeryfrontConfig = {
   experimental: { rsc: false },
-} as unknown as VeryfrontConfig;
+} as VeryfrontConfig & { experimental: { rsc: boolean } };
 
 /** Config with no experimental section */
-export const noExperimentalConfig: VeryfrontConfig = {} as unknown as VeryfrontConfig;
+export const noExperimentalConfig: VeryfrontConfig = {} as VeryfrontConfig;
 
 export function makeParams(
   overrides: Partial<RSCEndpointParams> & { pathname: string },
@@ -112,6 +125,8 @@ export function makeParams(
     adapter: overrides.adapter ?? createMockAdapter(),
     config: overrides.config,
     ...overrides,
+    isLocalProject: overrides.isLocalProject ?? true,
+    allowHostProjectCodeExecution: overrides.allowHostProjectCodeExecution ?? true,
     req: overrides.req ?? new Request("http://localhost" + overrides.pathname),
   };
 }

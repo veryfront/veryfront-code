@@ -9,6 +9,7 @@ import {
   schedulePlatformDependencyResolution,
   scheduleUndeclaredDependencyResolution,
 } from "#veryfront/transforms/esm/npm-registry-client.ts";
+import { isProjectInDependencyPinningCohort } from "#veryfront/transforms/esm/dependency-pinning-cohort.ts";
 
 export interface DependencyResolutionObservation {
   readonly packageName: string;
@@ -78,13 +79,24 @@ export interface ImportDependencyResolutionContext {
   dependencyResolutionObservationOnly?: boolean;
 }
 
-function isPinningEnabledForRewrite(
+/**
+ * Decide whether pinning applies to this rewrite.
+ *
+ * A cache key means the snapshot already decided, and that decision is
+ * authoritative: re-deciding here would let a mid-render configuration change
+ * split a single render across two policies. Only the keyless fallback path
+ * consults the rollout cohort. "on:unknown" means the dependency state could
+ * not be established (unreadable package.json), so it falls back to
+ * conservative flag-off behavior.
+ */
+export function isPinningEnabledForRewrite(
   ctx: ImportDependencyResolutionContext,
 ): boolean {
   if (ctx.dependencyPinningCacheKey === "on:unknown") return false;
-  return ctx.dependencyPinningCacheKey
-    ? ctx.dependencyPinningCacheKey.startsWith("on:")
-    : isDependencyPinningEnabled();
+  if (ctx.dependencyPinningCacheKey) {
+    return ctx.dependencyPinningCacheKey.startsWith("on:");
+  }
+  return isDependencyPinningEnabled() && isProjectInDependencyPinningCohort(ctx.projectId);
 }
 
 /**

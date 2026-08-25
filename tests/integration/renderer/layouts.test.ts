@@ -11,6 +11,7 @@ import {
   createLayoutCache,
   createMockCompileMDX,
   discoverLayoutsForTest,
+  PRODUCTION_MODES,
   withLayoutsTestContext,
 } from "./layouts.test-helpers.ts";
 
@@ -473,6 +474,7 @@ describe("Layout Handling", () => {
         };
 
         const result = await applyLayoutsEsmForTest(context, adapter, pageElement, {
+          modes: PRODUCTION_MODES,
           layoutBundle,
           cache,
         });
@@ -525,6 +527,7 @@ describe("Layout Handling", () => {
         ];
 
         const result = await applyLayoutsEsmForTest(context, adapter, pageElement, {
+          modes: PRODUCTION_MODES,
           nestedLayouts,
           cache,
         });
@@ -540,7 +543,10 @@ describe("Layout Handling", () => {
 
         const pageElement = React.createElement("div", {}, "Page");
 
-        const result = await applyLayoutsEsmForTest(context, adapter, pageElement, { cache });
+        const result = await applyLayoutsEsmForTest(context, adapter, pageElement, {
+          cache,
+          modes: PRODUCTION_MODES,
+        });
 
         assertEquals(result, pageElement);
       });
@@ -548,7 +554,7 @@ describe("Layout Handling", () => {
   });
 
   describe("applyLayoutsFunctionBody", () => {
-    it("applies MDX layout using function body wrapping", async () => {
+    it("applies MDX layout through the compatibility alias", async () => {
       await withLayoutsTestContext("layouts-apply-function-body", async (context, adapter) => {
         const cache = createLayoutCache();
 
@@ -556,16 +562,18 @@ describe("Layout Handling", () => {
 
         const layoutBundle: MdxBundle = {
           compiledCode: `
+              import React from 'react';
               function _createMdxContent(props) {
                 const { components, children } = props;
                 return React.createElement('div', { className: 'layout' }, children);
               }
-              return { default: _createMdxContent, MDXLayout: _createMdxContent };
+              export { _createMdxContent as default, _createMdxContent as MDXLayout };
             `,
           frontmatter: {},
         };
 
         const result = await applyLayoutsFunctionBodyForTest(context, adapter, pageElement, {
+          modes: PRODUCTION_MODES,
           layoutBundle,
           cache,
         });
@@ -575,7 +583,7 @@ describe("Layout Handling", () => {
       });
     });
 
-    it("applies nested layouts in correct order (function body)", async () => {
+    it("applies nested layouts in correct order through the compatibility alias", async () => {
       await withLayoutsTestContext("layouts-nested-function-body", async (context, adapter) => {
         const cache = createLayoutCache();
 
@@ -586,10 +594,11 @@ describe("Layout Handling", () => {
             kind: "mdx",
             bundle: {
               compiledCode: `
+                  import React from 'react';
                   function _createMdxContent(props) {
                     return React.createElement('div', { id: 'outer' }, props.children);
                   }
-                  return { MDXLayout: _createMdxContent };
+                  export { _createMdxContent as MDXLayout };
                 `,
               frontmatter: {},
             },
@@ -597,6 +606,7 @@ describe("Layout Handling", () => {
         ];
 
         const result = await applyLayoutsFunctionBodyForTest(context, adapter, pageElement, {
+          modes: PRODUCTION_MODES,
           nestedLayouts,
           cache,
         });
@@ -613,6 +623,7 @@ describe("Layout Handling", () => {
         const pageElement = React.createElement("div", {}, "Page");
 
         const result = await applyLayoutsFunctionBodyForTest(context, adapter, pageElement, {
+          modes: PRODUCTION_MODES,
           cache,
         });
 
@@ -642,15 +653,17 @@ describe("Layout Handling", () => {
 
         const layoutBundle: MdxBundle = {
           compiledCode: `
+              import React from 'react';
               function Layout(props) {
                 return React.createElement('div', {}, props.children);
               }
-              return { default: Layout };
+              export default Layout;
             `,
           frontmatter: {},
         };
 
         const result = await applyLayoutsFunctionBodyForTest(context, adapter, pageElement, {
+          modes: PRODUCTION_MODES,
           layoutBundle,
           cache,
         });
@@ -673,15 +686,17 @@ describe("Layout Handling", () => {
 
         const layoutBundle: MdxBundle = {
           compiledCode: `
+              import React from 'react';
               function Layout(props) {
                 return React.createElement('article', {}, props.children);
               }
-              return { default: Layout };
+              export default Layout;
             `,
           frontmatter: {},
         };
 
         const result = await applyLayoutsFunctionBodyForTest(context, adapter, pageElement, {
+          modes: PRODUCTION_MODES,
           layoutBundle,
           cache,
         });
@@ -704,16 +719,18 @@ describe("Layout Handling", () => {
 
         const layoutBundle: MdxBundle = {
           compiledCode: `
+              import React from 'react';
               function Layout(props) {
                 const { components } = props;
                 return React.createElement('div', { className: 'with-custom' }, props.children);
               }
-              return { default: Layout };
+              export default Layout;
             `,
           frontmatter: {},
         };
 
         const result = await applyLayoutsFunctionBodyForTest(context, adapter, pageElement, {
+          modes: PRODUCTION_MODES,
           layoutBundle,
           components: customComponents,
           cache,
@@ -763,6 +780,7 @@ describe("Layout Handling", () => {
         const cache = createLayoutCache();
 
         const result = await applyLayoutsFunctionBodyForTest(context, adapter, pageElement, {
+          modes: PRODUCTION_MODES,
           nestedLayouts: layouts,
           cache,
         });
@@ -803,6 +821,7 @@ describe("Layout Handling", () => {
         const cache = createLayoutCache();
 
         const result = await applyLayoutsFunctionBodyForTest(context, adapter, pageElement, {
+          modes: PRODUCTION_MODES,
           nestedLayouts: layouts,
           cache,
         });

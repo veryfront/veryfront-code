@@ -34,6 +34,40 @@ describe("agent/child-run-final-step-support", () => {
     ]);
   });
 
+  it("deduplicates repeats inside a single fallback batch", () => {
+    const existing = [{ toolCallId: "tc-1", toolName: "bash" }];
+    appendMissingChildRunToolCalls(existing, [
+      { toolCallId: "tc-2", toolName: "readFile" },
+      { toolCallId: "tc-2", toolName: "readFile" },
+    ]);
+
+    assertEquals(
+      existing,
+      [
+        { toolCallId: "tc-1", toolName: "bash" },
+        { toolCallId: "tc-2", toolName: "readFile" },
+      ],
+      "a fallback batch repeating a tool call id appends it exactly once",
+    );
+  });
+
+  it("deduplicates repeated tool results inside a single fallback batch", () => {
+    const existing = [{ toolCallId: "tc-1", toolName: "bash", input: {}, output: "ok" }];
+    appendMissingChildRunToolResults(existing, [
+      { toolCallId: "tc-2", toolName: "readFile", input: { path: "/a" }, output: "first" },
+      { toolCallId: "tc-2", toolName: "readFile", input: { path: "/a" }, output: "second" },
+    ]);
+
+    assertEquals(
+      existing,
+      [
+        { toolCallId: "tc-1", toolName: "bash", input: {}, output: "ok" },
+        { toolCallId: "tc-2", toolName: "readFile", input: { path: "/a" }, output: "first" },
+      ],
+      "a fallback batch repeating a tool result id appends only the first occurrence",
+    );
+  });
+
   it("builds exhausted step budget messages with deduplicated tool names", () => {
     const message = buildChildRunExhaustedStepBudgetErrorMessage(50, [
       { toolName: "bash" },

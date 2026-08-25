@@ -21,10 +21,8 @@ import type {
   HydrationRuntimeEnv,
   ModuleNamespace,
   ReactLike,
-  ReactRoot,
   RuntimeDocument,
   RuntimeFetchInit,
-  RuntimeResponse,
   RuntimeWindow,
 } from "./env.ts";
 import { createLogging, moduleServerUrl } from "./shared.ts";
@@ -39,18 +37,18 @@ import { createRouterRuntime } from "./router.ts";
 import { createHydrationRenderer } from "./renderer.ts";
 import { resolveNavigationStore } from "./navigation-store.ts";
 
-const runtimeWindow = globalThis as unknown as RuntimeWindow;
-const runtimeDocument = (globalThis as unknown as { document: RuntimeDocument }).document;
+const runtimeWindow: RuntimeWindow = globalThis as typeof globalThis & RuntimeWindow;
+const runtimeDocument: RuntimeDocument =
+  (globalThis as typeof globalThis & { document: RuntimeDocument }).document;
 
 const env: HydrationRuntimeEnv = {
   window: runtimeWindow,
   document: runtimeDocument,
-  fetch: (url: string, init?: RuntimeFetchInit) =>
-    fetch(url, init as RequestInit) as unknown as Promise<RuntimeResponse>,
-  React: React as unknown as ReactLike,
+  fetch: (url: string, init?: RuntimeFetchInit) => fetch(url, init as RequestInit),
+  React: React as typeof React & ReactLike,
   RouterProvider,
   PageContextProvider,
-  createRoot: (container: unknown) => createRoot(container as HTMLElement) as unknown as ReactRoot,
+  createRoot: (container: unknown) => createRoot(container as HTMLElement),
   importModule: (moduleUrl: string) => import(moduleUrl) as Promise<ModuleNamespace>,
   useRouterFromModule,
   setTimeout: (handler: () => void, timeout?: number) => setTimeout(handler, timeout),
@@ -68,7 +66,7 @@ const snapshotModules = createSnapshotModuleImporter({
   importModule: env.importModule,
   fetchModule: env.fetch,
   reloadDocument: () => runtimeWindow.location.reload(),
-  recoveryState: runtimeWindow as unknown as Record<string, unknown>,
+  recoveryState: runtimeWindow as RuntimeWindow & Record<string, unknown>,
 });
 
 const componentLoader = createComponentLoader({

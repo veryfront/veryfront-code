@@ -5,7 +5,7 @@ import type {
   WorkflowContext,
   WorkflowNode,
 } from "../types.ts";
-import { validateNodeId } from "./validation.ts";
+import { namespaceWorkflowNodes, validateNodeId } from "./validation.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 /** Options accepted by parallel. */
@@ -32,19 +32,18 @@ export function parallel(
   }
 
   const prefix = `${id}/`;
-  const prefixedNodes = nodes.map((node, index) => {
+  nodes.forEach((node, index) => {
     if (typeof node.id !== "string" || node.id.length === 0) {
       throw INVALID_ARGUMENT.create({
         detail: `Child node at index ${index} in parallel "${id}" has invalid ID`,
       });
     }
-
-    const childId = node.id.startsWith(prefix) ? node.id : `${prefix}${node.id}`;
-    return { ...node, id: childId };
   });
+  const prefixedNodes = namespaceWorkflowNodes(prefix, nodes);
 
   const config: ParallelNodeConfig = {
     type: "parallel",
+    description: options.description,
     nodes: prefixedNodes,
     strategy: options.strategy ?? "all",
     checkpoint: options.checkpoint ?? true,

@@ -20,6 +20,7 @@ const CONCEPT_FILES = new Set<string>([
   "concepts/eval.md",
   "concepts/run.md",
   "concepts/schedule.md",
+  "concepts/webhook.md",
   "concepts/prompt.md",
   "concepts/resource.md",
   "concepts/skill.md",
@@ -74,7 +75,13 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "guides/agents.md": {
     references: ["../api-reference/veryfront/agent.md"],
-    snippets: ["createAgUiHandler", "load_skill_reference", "RunFinished"],
+    snippets: [
+      "createAgUiHandler",
+      "load_skill_reference",
+      "RunFinished",
+      "// app/api/debug/agent/route.ts",
+      "curl http://localhost:3000/api/debug/agent",
+    ],
   },
   "guides/build-a-rag-app.md": {
     references: [
@@ -90,7 +97,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "indexContentDir",
       "createAgUiHandler",
       "beforeStream",
-      "useUploadsRegistry",
+      "useAttachments",
       ".veryfront/rag/uploads/",
       "DocumentExtractor",
       "XLS, XLSX",
@@ -170,6 +177,17 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "fails closed",
     ],
   },
+  "guides/ui-components.md": {
+    references: ["../api-reference/veryfront/ui.md"],
+    snippets: [
+      "veryfront/ui",
+      "UIAdapterProvider",
+      "useTokenScope",
+      "builtin",
+      "asChild",
+      "baseUiAdapter",
+    ],
+  },
   "guides/cli-knowledge-ingestion.md": {
     references: ["../api-reference/veryfront/cli.md"],
     snippets: [
@@ -220,6 +238,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "getting-started/quickstart.md": {
     references: [
       "../guides/providers.md",
+      "../guides/multi-agent.md",
       "./create-project.md",
       "../api-reference/veryfront/agent.md",
       "../api-reference/veryfront/tool.md",
@@ -227,10 +246,32 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
     snippets: [
       "npm create veryfront@latest support-agent",
-      "npx veryfront deploy",
+      "does not require a Veryfront account or Veryfront Cloud",
+      'export OPENAI_API_KEY="<API_KEY>"',
+      "npm run eval -- assistant",
+      "Self-host the app",
       "calculator.ts",
       "What is 128 divided by 8?",
-      "curl -N -X POST",
+      "Inference OpenAI direct",
+      'delegates: ["researcher", "writer"]',
+      "agent_researcher",
+      "agent_writer",
+    ],
+  },
+  "getting-started/cloud-quickstart.md": {
+    references: [
+      "./quickstart.md",
+      "./deploy-project.md",
+      "../guides/deploying.md",
+      "../guides/providers.md",
+    ],
+    snippets: [
+      "npm create veryfront@latest support-agent",
+      "npx veryfront@latest login",
+      "npx veryfront@latest push",
+      "Veryfront Cloud AI Gateway",
+      "npm run eval -- assistant",
+      "npx veryfront@latest deploy --env production",
     ],
   },
   "guides/configuration.md": {
@@ -256,13 +297,47 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/utils.md",
     ],
     snippets: [
-      "Pick one production path",
+      "Pick one deployment boundary",
       "veryfront build",
       "veryfront serve",
-      "npx veryfront deploy",
+      "npx veryfront@latest deploy",
       "last verified Push receipt",
       "prints the environment URL",
       "veryfront open",
+    ],
+  },
+  "guides/cloud-environment-access.md": {
+    references: ["./deploying.md"],
+    snippets: [
+      "protected by default",
+      "`authToken` cookie",
+      "VERYFRONT_API_TOKEN",
+      "veryfront env token",
+      "Public Environment",
+      "<environment-url>/<route>",
+    ],
+  },
+  "guides/self-hosting.md": {
+    references: [
+      "../getting-started/quickstart.md",
+      "./providers.md",
+      "../api-reference/veryfront/server.md",
+    ],
+    snippets: [
+      "does not require a Veryfront account",
+      "veryfront build",
+      "veryfront serve",
+      "ship the whole project directory, not just `dist/`",
+      "Dockerfile",
+      "Check capability support",
+      "Integration tools",
+      "createLocalIntegrationToolSource",
+      "loadRemoteToolsFromSource",
+      "Deploy to Kubernetes",
+      "--from-env-file=.env",
+      "startupProbe:",
+      "rollout restart deployment/veryfront-app",
+      "kubectl apply -f k8s.yaml",
     ],
   },
   "guides/deploy-from-ci.md": {
@@ -272,8 +347,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "./deploying.md",
     ],
     snippets: [
-      "veryfront push --branch main --prune --dry-run",
-      "veryfront push --branch main --prune --yes",
+      "veryfront push --branch main --prune --force --dry-run",
+      "veryfront push --branch main --prune --force --yes",
       "veryfront deploy --branch main --env staging --yes",
       "veryfront deploy --branch main --env production --yes",
       ".veryfront/push-receipt.json",
@@ -306,6 +381,10 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     references: ["../api-reference/veryfront/extensions.md"],
     snippets: ["defineConfig", "extRedis", "First-party extension areas"],
   },
+  "guides/errors.md": {
+    references: [],
+    snippets: ["### port-in-use", "**HTTP status:**", "**What to do:**"],
+  },
   "guides/evals.md": {
     references: ["../api-reference/veryfront/eval.md"],
     snippets: [
@@ -333,14 +412,14 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "getting-started/index.md": {
     references: [],
     snippets: [
-      "Veryfront app",
-      "Getting started",
-      "Contents",
-      "Before you start",
+      "Apache-2.0 open-source framework",
+      "Choose a path",
+      "Local quickstart",
+      "Cloud quickstart",
+      "Self-host",
+      "Build individual parts",
       "Installation",
       "Coding agents",
-      "TypeScript",
-      "React",
     ],
   },
   "concepts/framework-overview.md": {
@@ -364,7 +443,9 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Configuration",
       "Workflows",
       "Extensions",
-      "Build and deploy",
+      "Deploy and extend",
+      "Self-host Veryfront Code",
+      "Manage Cloud deployments",
       "Deploy from CI",
       "Move Studio changes into Git",
     ],
@@ -478,6 +559,12 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
     snippets: ["schedule", "runs", "trigger"],
   },
+  "concepts/webhook.md": {
+    references: [
+      "../api-reference/veryfront/webhook.md",
+    ],
+    snippets: ["eventFilter", "promptTemplate", "64 KiB", "filtered event is ignored"],
+  },
   "concepts/prompt.md": {
     references: ["../api-reference/veryfront/prompt.md"],
     snippets: ["instruction text", "template variables", "MCP"],
@@ -488,7 +575,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "concepts/skill.md": {
     references: ["../guides/skills.md"],
-    snippets: ["agent instructions", "allowed-tools policy", "SKILL.md"],
+    snippets: ["agent instructions", "not an authorization boundary", "SKILL.md"],
   },
   "concepts/integration.md": {
     references: [
@@ -539,7 +626,46 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Connection inventory",
       "veryfront.config.ts",
       "Managed OAuth",
+      "createLocalIntegrationToolSource",
+      "loadRemoteToolsFromSource",
+      "integrations.allow only narrows",
+      "never sends local credentials to Veryfront",
       "Available integrations",
+    ],
+  },
+  "guides/integrations/github.md": {
+    references: ["../../api-reference/veryfront/integrations.md"],
+    snippets: [
+      "Connect a GitHub user",
+      "https://api.veryfront.com/oauth/callback/github",
+      "GITHUB_CLIENT_ID",
+      "Verify it worked",
+    ],
+  },
+  "guides/integrations/jira.md": {
+    references: ["../../api-reference/veryfront/integrations.md"],
+    snippets: [
+      "Connect a Jira user",
+      "/api/auth/jira/callback",
+      "read:jira-user",
+      "ATLASSIAN_CLIENT_ID",
+      "JIRA_CLOUD_ID",
+    ],
+  },
+  "guides/integrations/salesforce.md": {
+    references: [
+      "../../api-reference/veryfront/integrations.md",
+      "../../concepts/salesforce-integration.md",
+    ],
+    snippets: [
+      "Connect a Salesforce user",
+      "VERYFRONT_HOST_ADAPTER_INTEGRATIONS=salesforce",
+      "SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID",
+      "SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET",
+      "SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL",
+      "createLocalIntegrationToolSource",
+      "Create an External Client App",
+      "Verify it worked",
     ],
   },
   "guides/runs.md": {
@@ -576,7 +702,12 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/agent.md",
       "../api-reference/veryfront/workflow.md",
     ],
-    snippets: ["agentAsTool", "getAgentsAsTools", "workflow"],
+    snippets: [
+      "Direct local delegation does not require a Veryfront account",
+      "agentAsTool",
+      "getAgentsAsTools",
+      "workflow",
+    ],
   },
   "guides/oauth.md": {
     references: ["../api-reference/veryfront/oauth.md"],
@@ -588,11 +719,22 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/context.md",
       "../api-reference/veryfront/mdx.md",
     ],
-    snippets: ["app router", "useRouter", "Link"],
+    snippets: ["app router", "useRouter", "Link", "MDXProvider"],
   },
   "guides/project-structure.md": {
     references: ["../api-reference/veryfront/index.md"],
     snippets: ["app/", "agents/", "tools/"],
+  },
+  "guides/project-knowledge.md": {
+    references: ["../api-reference/veryfront/knowledge.md"],
+    snippets: [
+      "projectKnowledge",
+      "createSearchKnowledgeTool",
+      'mode: "browse"',
+      "release-backed content",
+      "lookup_target",
+      "page_info.next",
+    ],
   },
   "guides/project-metrics.md": {
     references: ["../api-reference/veryfront/observability.md"],
@@ -616,8 +758,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "deno add npm:veryfront",
       "npm create veryfront",
       "npm install -g veryfront",
-      "npx veryfront",
-      "veryfront install agents",
+      "npx veryfront@latest",
+      "veryfront install --target agents",
     ],
   },
   "getting-started/create-agent.md": {
@@ -638,6 +780,27 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/embedding.md",
     ],
     snippets: ["provider/model", "OPENAI_API_KEY", "registerModelProvider"],
+  },
+  "getting-started/add-to-existing-project.md": {
+    references: [
+      "./create-project.md",
+      "./installation.md",
+      "./create-agent.md",
+      "./create-api.md",
+      "./create-frontend.md",
+      "../guides/providers.md",
+    ],
+    snippets: [
+      "npm install veryfront",
+      '"extends": "veryfront/tsconfig.json"',
+      '"moduleResolution": "bundler"',
+      '"jsx": "react-jsx"',
+      '"skipLibCheck": true',
+      '"noEmit": true',
+      "@types/mdx",
+      "// app/page.tsx",
+      "npx veryfront dev",
+    ],
   },
   "getting-started/create-project.md": {
     references: ["./installation.md", "./create-agent.md"],
@@ -679,17 +842,18 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "getting-started/deploy-project.md": {
     references: [
-      "./create-project.md",
+      "./cloud-quickstart.md",
       "../guides/configuration.md",
-      "../api-reference/veryfront/index.md",
+      "../guides/cloud-environment-access.md",
+      "../guides/deploying.md",
     ],
     snippets: [
-      "veryfront build",
-      "veryfront serve",
-      "npx veryfront deploy",
-      "last verified Push receipt",
+      "veryfront login",
+      "npx veryfront@latest push",
+      "npx veryfront@latest deploy",
       "prints the environment URL",
-      "veryfront open",
+      "open --site",
+      "Public Environment",
     ],
   },
   "guides/move-studio-changes-to-git.md": {
@@ -718,12 +882,34 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
     snippets: ["Sandbox.create", "executeCommand", "sandbox.close"],
   },
+  "guides/security-headers.md": {
+    references: [],
+    snippets: [
+      "security.csp",
+      "fonts.googleapis.com",
+      "fonts.gstatic.com",
+      "styleSrc",
+      "fontSrc",
+      "VERYFRONT_CSP",
+    ],
+  },
   "guides/skills.md": {
     references: [
       "../api-reference/veryfront/agent.md",
       "../api-reference/veryfront/skill.md",
     ],
-    snippets: ["SKILL.md", "allowed_tools", "veryfront skills validate"],
+    snippets: [
+      "SKILL.md",
+      "allowed_tools",
+      "veryfront skills validate",
+      "Hosted chat providers use nested `load_skill` input",
+      "Direct local tool consumers use flat load input",
+      '`load_skill({ skillId: "<SKILL_ID>" })`',
+      "Standalone project runtime consumers can page the authorized inventory",
+      "`load_skill({})`",
+      "`load_skill({ cursor: <CURSOR> })`",
+      '`load_skill_reference({ skillId: "<SKILL_ID>", reference: "<PATH>" })`',
+    ],
   },
   "guides/storybook-ui-workbench.md": {
     references: [],
@@ -782,6 +968,8 @@ describe("published guide contracts", () => {
         !CONCEPT_FILES.has(filename) &&
         filename !== "getting-started/index.md" &&
         filename !== "guides/index.md" &&
+        // A generated lookup table of error slugs, not a procedure to follow.
+        filename !== "guides/errors.md" &&
         filename !== "getting-started/installation.md"
       ) {
         assertStringIncludes(guide, "## Verify it worked");

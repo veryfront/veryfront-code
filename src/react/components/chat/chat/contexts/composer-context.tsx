@@ -1,7 +1,7 @@
 /**
- * ComposerContext — Input/composer state for the chat input area.
+ * ChatInputContext — input state for the chat composer area.
  *
- * Provided by Composer.Root or ChatRoot. Consumed by input, submit button,
+ * Provided by ChatInput.Root or ChatRoot. Consumed by input, submit button,
  * attachment controls, model selector, voice input, etc.
  *
  * @module react/components/chat/contexts/composer-context
@@ -12,8 +12,10 @@ import { createStrictContext } from "../../../create-strict-context.ts";
 import type { AttachmentInfo } from "../components/attachment-pill.tsx";
 import type { ModelOption } from "../../model-selector.tsx";
 
-/** Public API contract for composer context value. */
-export interface ComposerContextValue {
+/**
+ * Public API contract for the chat input context value.
+ */
+export interface ChatInputContextValue {
   // Input
   input: string;
   setInput: (value: string) => void;
@@ -22,6 +24,8 @@ export interface ComposerContextValue {
   // Attachments
   attachments: AttachmentInfo[];
   onAttach?: (files: FileList) => void;
+  /** Open the native file input owned by the enclosing ChatInput provider. */
+  onOpenAttachmentPicker?: () => void;
   onSelectAttachment?: () => void;
   onRemoveAttachment?: (id: string) => void;
   attachAccept?: string;
@@ -45,16 +49,24 @@ export interface ComposerContextValue {
   onModelChange?: (modelId: string) => void;
 }
 
-const [ComposerContext, useComposerContext] = createStrictContext<ComposerContextValue>(
-  "useComposerContext",
-  "a Composer or Chat component",
+const [ChatInputContext, useChatInputContextInternal] = createStrictContext<ChatInputContextValue>(
+  "useChatInputContext",
+  "a ChatInput or Chat component",
 );
 
-/** React hook for composer context optional. */
-export function useComposerContextOptional(): ComposerContextValue | null {
-  return React.useContext(ComposerContext);
+/**
+ * Read the enclosing `<ChatInput>` context, or null outside one.
+ */
+export function useChatInputContextOptional(): ChatInputContextValue | null {
+  return React.useContext(ChatInputContext);
 }
 
-/** Render composer context provider. */
-export const ComposerContextProvider = ComposerContext.Provider;
-export { useComposerContext };
+/**
+ * Read the enclosing `<ChatInput>` context; throws outside one.
+ */
+export const useChatInputContext = useChatInputContextInternal;
+
+/**
+ * Provider for `<ChatInput>` context.
+ */
+export const ChatInputContextProvider = ChatInputContext.Provider;

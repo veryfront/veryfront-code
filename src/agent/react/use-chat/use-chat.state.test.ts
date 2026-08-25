@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   handleAgUiStreamingResponse,
@@ -376,6 +376,9 @@ describe("use-chat internal state helpers", () => {
           "event: MessagesSnapshot",
           'data: {"messages":[{"id":"u1","role":"user","content":"Question"}]}',
           "",
+          "event: StateDelta",
+          'data: {"delta":{"phase":"planning"}}',
+          "",
           "event: TextMessageStart",
           'data: {"messageId":"msg-1","contentId":"text:0","role":"assistant"}',
           "",
@@ -403,12 +406,88 @@ describe("use-chat internal state helpers", () => {
 
     const message = messages[0];
     assertExists(message);
-    assertEquals(message.parts, [
-      { type: "text", text: "Done", state: "done" },
-    ]);
-    assertEquals(dataEvents, [
-      { context: "private" },
-      [{ id: "u1", role: "user", content: "Question" }],
-    ]);
+    assertEquals(
+      message.parts,
+      [
+        { type: "text", text: "Done", state: "done" },
+      ],
+      "internal state events must not become renderable assistant parts",
+    );
+    assertEquals(
+      dataEvents,
+      [
+        { context: "private" },
+        [{ id: "u1", role: "user", content: "Question" }],
+        { phase: "planning" },
+      ],
+      "snapshot and delta payloads still reach onData",
+    );
+  });
+
+  it("surfaces an AG-UI run error as a rejected stream", async () => {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode([
+          "event: TextMessageStart",
+          'data: {"messageId":"msg-1","contentId":"text:0","role":"assistant"}',
+          "",
+          "event: TextMessageContent",
+          'data: {"messageId":"msg-1","contentId":"text:0","delta":"Done"}',
+          "",
+          "event: TextMessageEnd",
+          'data: {"messageId":"msg-1","contentId":"text:0"}',
+          "",
+          "event: RunError",
+          'data: {"message":"Runtime failed"}',
+          "",
+          "",
+        ].join("\n")));
+        controller.close();
+      },
+    });
+
+    await assertRejects(
+      () =>
+        handleAgUiStreamingResponse(body, {
+          onData: () => {},
+          onMessage: () => {},
+        }),
+      Error,
+      "Runtime failed",
+      "a RunError must reject the stream rather than finish silently",
+    );
+  });
+
+  it("treats a cancelled AG-UI run as an abort rather than an error", async () => {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode([
+          "event: TextMessageStart",
+          'data: {"messageId":"msg-1","contentId":"text:0","role":"assistant"}',
+          "",
+          "event: TextMessageContent",
+          'data: {"messageId":"msg-1","contentId":"text:0","delta":"Done"}',
+          "",
+          "event: TextMessageEnd",
+          'data: {"messageId":"msg-1","contentId":"text:0"}',
+          "",
+          "event: RunError",
+          'data: {"message":"Cancelled by the user","code":"CANCELLED"}',
+          "",
+          "",
+        ].join("\n")));
+        controller.close();
+      },
+    });
+    const messages: ChatMessage[] = [];
+
+    await handleAgUiStreamingResponse(body, {
+      onData: () => {},
+      onMessage: (message) => messages.push(message),
+    });
+
+    assertEquals(messages, [], "a cancelled run resolves without committing an assistant message");
   });
 });

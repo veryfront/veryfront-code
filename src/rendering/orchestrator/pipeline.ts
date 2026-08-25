@@ -20,6 +20,7 @@ import { createBuildVersion } from "#veryfront/utils/version.ts";
 import { profilePhase, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { FILE_NOT_FOUND, RENDER_ERROR, VeryfrontError } from "#veryfront/errors";
+import { isMissingProjectSourceError } from "../ssr-outcome.ts";
 import { buildQueryAwareCacheKey } from "#veryfront/cache/keys.ts";
 import {
   buildDependencyPinnedRenderCacheKey,
@@ -50,7 +51,18 @@ import type { LayoutOrchestrator } from "./layout.ts";
 import type { SSROrchestrator } from "./ssr-orchestrator.ts";
 import type { PageDataResponse, RenderOptions, RenderResult } from "./types.ts";
 import { DataFetcher, type FetchDataOptions } from "#veryfront/data/index.ts";
-import type { DataContext, PageWithData } from "#veryfront/data/types.ts";
+import type {
+  DataContext,
+  DataResponseMetadata,
+  PageWithData,
+  ResponseCookie,
+} from "#veryfront/data/types.ts";
+import {
+  attachDataResponseMetadata,
+  mergeDataResponseMetadata,
+  unwrapDataResponseMetadataError,
+  wrapDataResponseMetadataError,
+} from "#veryfront/data/response-metadata.ts";
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
 import { setupSSRGlobals } from "../ssr-globals.ts";
 import { LAYOUT_EXTENSIONS } from "../layouts/types.ts";
@@ -69,7 +81,7 @@ import {
 } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import { getReadyManifestForRender } from "#veryfront/release-assets/manifest-cache.ts";
 import { createEsmCache, createModuleCache, loadModule } from "./module-loader/index.ts";
-import { isBuildFailure } from "./module-loader/build-failure.ts";
+import { isBuildFailure, isTenantBuildFailure } from "./module-loader/build-failure.ts";
 import type { ModuleLoaderConfig } from "./module-loader/index.ts";
 import {
   getCSSImports,
@@ -121,8 +133,13 @@ export { __injectCssCacheForTests } from "./css-cache.ts";
  * can supply a context-aware adapter without an unsafe `as any` cast.
  */
 export interface PipelineCacheCoordinator {
-  checkCache(slug: string, cacheKey?: string): Promise<CacheLookupResult>;
-  persistResult(result: RenderResult, slug: string, cacheKey?: string): Promise<void>;
+  checkCache(slug: string, cacheKey?: string, nonce?: string): Promise<CacheLookupResult>;
+  persistResult(
+    result: RenderResult,
+    slug: string,
+    cacheKey?: string,
+    nonce?: string,
+  ): Promise<void>;
 }
 
 export interface RenderPipelineConfig {
@@ -135,7 +152,9 @@ export interface RenderPipelineConfig {
   mode: "development" | "production";
   projectDir: string;
   /** Whether browser module URLs may use the local filesystem endpoint. */
-  isLocalProject?: boolean;
+  isLocalProject: boolean;
+  /** Narrow host-owned capability for project-code execution. */
+  allowHostProjectCodeExecution?: boolean;
   /** Stable project identity used to isolate transformed module caches. */
   projectId?: string;
   /** Release or preview source used to isolate transformed module caches. */
@@ -154,6 +173,8 @@ interface DataResolutionResult {
   params: Record<string, string | string[]>;
   pageProps: Record<string, unknown>;
   layoutProps: Map<string, Record<string, unknown>>;
+  headers?: Record<string, string>;
+  cookies?: ResponseCookie[];
 }
 
 interface MdxMetadataResult {
@@ -172,6 +193,13 @@ interface FetchedDataResult {
   id: string;
   result: Awaited<ReturnType<RenderPipeline["dataFetcher"]["fetchData"]>> | null;
   error: Error | null;
+}
+
+interface DataWorkerIdentity {
+  readonly isLocalProject: boolean;
+  readonly allowHostProjectCodeExecution: boolean;
+  readonly workerScope?: string;
+  readonly sourceGeneration?: string;
 }
 
 const PRE_RESOLVED_DATA = Symbol("veryfront.preResolvedData");
@@ -300,6 +328,7 @@ export class RenderPipeline {
       moduleServerOrigin: dependencySnapshot.cacheKey.startsWith("on:")
         ? options?.url?.origin
         : undefined,
+      serverExternalPackages: this.config.config?.build?.serverExternalPackages,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
       dependencyPinningSource,
@@ -342,8 +371,11 @@ export class RenderPipeline {
    * we throw an error instead of silently continuing with missing props. This prevents
    * users from seeing broken pages with no indication of the problem.
    *
-   * Layout modules are considered non-critical - their failures are logged as warnings
-   * and the page continues to render (possibly without that layout's data).
+   * A layout module that fails to load does not stop this phase: the page
+   * continues without that layout's data, and the apply phase loads the layout
+   * again. That second attempt is what decides the render, so a failure here is
+   * only provisional - unless the project's source is gone, in which case the
+   * reload fails identically and the render is already over.
    */
   private async loadModulesInParallel(
     modules: ModuleToLoad[],
@@ -382,7 +414,13 @@ export class RenderPipeline {
     );
 
     const loaded: LoadedModule[] = [];
-    const criticalFailures: Array<{ path: string; error: string; buildFailure: boolean }> = [];
+    const criticalFailures: Array<{
+      path: string;
+      error: string;
+      buildFailure: boolean;
+      tenantBuildFailure: boolean;
+      missingSource: boolean;
+    }> = [];
 
     for (const result of results) {
       if (result.mod && !result.error) {
@@ -399,6 +437,8 @@ export class RenderPipeline {
           path: result.path,
           error: errorMessage,
           buildFailure: isBuildFailure(result.error),
+          tenantBuildFailure: isTenantBuildFailure(result.error),
+          missingSource: isMissingProjectSourceError(result.error),
         });
         renderPageLog.error("Critical page module failed to load", {
           path: result.path,
@@ -407,7 +447,18 @@ export class RenderPipeline {
         continue;
       }
 
-      renderPageLog.warn("Layout module failed to load (non-critical)", {
+      if (isMissingProjectSourceError(result.error)) {
+        // The apply phase reloads this layout from the same unreachable source,
+        // so the render is already lost. Logging it as a recoverable warning
+        // misleads anyone triaging by severity.
+        renderPageLog.error("Layout module source is unavailable; render will fail", {
+          path: result.path,
+          error: errorMessage,
+        });
+        continue;
+      }
+
+      renderPageLog.warn("Layout module failed to load; apply phase will retry it", {
         path: result.path,
         error: errorMessage,
       });
@@ -417,7 +468,17 @@ export class RenderPipeline {
       const failedDetails = criticalFailures
         .map((f) => `${f.path}: ${f.error}`)
         .join("\n");
-      throw RENDER_ERROR.create({
+      // A page module the adapter could not retrieve is the same condition the
+      // layout path already answers 404 for, so it is re-raised with the same
+      // identity the adapter used. Wrapping it in a `render-error` would answer
+      // 500 for a deleted project on the page path while answering 404 on the
+      // layout path.
+      //
+      // `every`, matching `tenantBuildFailure` below: one module that loaded and
+      // threw, or an infrastructure `file-not-found` such as http-cache's write
+      // verification, must not be reported as an absent release.
+      const missingSource = criticalFailures.every((f) => f.missingSource);
+      const failure = (missingSource ? FILE_NOT_FOUND : RENDER_ERROR).create({
         detail: `Critical page module(s) failed to load:\n${failedDetails}`,
         context: {
           criticalFailures,
@@ -425,10 +486,25 @@ export class RenderPipeline {
           // one that compiled and threw at module scope is an application
           // error the project's own error page should present.
           buildFailure: criticalFailures.some((f) => f.buildFailure),
+          // Only explicit compiler/source classifications may affect
+          // observability severity. Infrastructure can fail in the same phase.
+          //
+          // `every` rather than `some`: today `criticalFailures` holds at most
+          // one entry (collectModulesToLoad pushes exactly one `type: "page"`,
+          // and only pages reach here), so the two are equivalent. If that ever
+          // changes, one tenant mistake must not downgrade a framework fault
+          // that failed alongside it. The array is non-empty inside this branch,
+          // so `every` cannot vacuously return true.
+          tenantBuildFailure: criticalFailures.every((f) => f.tenantBuildFailure),
           loadedCount: loaded.length,
           totalModules: modules.length,
         },
       });
+
+      // Carry the adapter's own marker across the re-raise so that one notion of
+      // "absent project source" holds on both sides of this boundary, rather
+      // than the slug alone standing in for it here.
+      throw missingSource ? Object.assign(failure, { code: "ENOENT" }) : failure;
     }
 
     return loaded;
@@ -515,6 +591,8 @@ export class RenderPipeline {
       return { params, pageProps, layoutProps };
     }
 
+    const dataWorkerIdentity = await this.resolveDataWorkerIdentity(options);
+
     const dataResults = await profilePhase(
       "render.fetch_data",
       () =>
@@ -529,6 +607,7 @@ export class RenderPipeline {
                     const fetchOptions: FetchDataOptions = {
                       modulePath: jobPath,
                       projectDir: this.config.projectDir,
+                      ...dataWorkerIdentity,
                     };
                     const result = await this.dataFetcher
                       .fetchData(
@@ -550,9 +629,55 @@ export class RenderPipeline {
         ),
     );
 
-    this.applyFetchedDataResults(slug, dataResults, pageProps, layoutProps);
+    const responseMetadata = this.applyFetchedDataResults(
+      slug,
+      dataResults,
+      pageProps,
+      layoutProps,
+    );
 
-    return { params, pageProps, layoutProps };
+    return { params, pageProps, layoutProps, ...responseMetadata };
+  }
+
+  /**
+   * Build a host-owned worker generation for raw local data modules.
+   *
+   * A mutable source may only reuse a Worker when its filesystem adapter
+   * supplies an exact snapshot generation. Otherwise the data fetcher selects
+   * a single-use Worker so an imported module graph cannot survive a source
+   * change. Production releases are immutable and may use the release id.
+   */
+  private async resolveDataWorkerIdentity(
+    options: RenderOptions | undefined,
+  ): Promise<DataWorkerIdentity> {
+    const isLocalProject = this.config.isLocalProject === true;
+    const allowHostProjectCodeExecution = isLocalProject ||
+      this.config.allowHostProjectCodeExecution === true;
+    if (!isLocalProject) {
+      return { isLocalProject, allowHostProjectCodeExecution };
+    }
+
+    const sourceSnapshotVersion = await this.config.adapter.fs
+      .getSourceSnapshotVersion?.();
+    const releaseId = options?.releaseId;
+    if (!releaseId && sourceSnapshotVersion === undefined) {
+      return { isLocalProject, allowHostProjectCodeExecution };
+    }
+
+    const workerScope = this.config.projectId ?? this.config.projectDir;
+    const sourceGeneration = JSON.stringify({
+      releaseId: releaseId ?? null,
+      sourceSnapshotVersion: sourceSnapshotVersion ?? null,
+      contentSourceId: options?.contentSourceId ?? this.config.contentSourceId ?? null,
+      environment: options?.environment ?? null,
+      dependencyPinningCacheKey: options?.dependencyPinningCacheKey ?? null,
+    });
+    return {
+      isLocalProject,
+      allowHostProjectCodeExecution,
+      workerScope,
+      sourceGeneration,
+    };
   }
 
   private applyFetchedDataResults(
@@ -560,23 +685,45 @@ export class RenderPipeline {
     dataResults: FetchedDataResult[],
     pageProps: Record<string, unknown>,
     layoutProps: Map<string, Record<string, unknown>>,
-  ): void {
+  ): DataResponseMetadata {
+    // Layouts are collected outermost to innermost. Apply them in that order,
+    // then the page, so the closest owner wins a duplicate custom header.
+    // Cookies remain distinct and preserve the same outer-to-inner-to-page order.
+    const responseMetadata = mergeDataResponseMetadata(
+      [
+        ...dataResults.filter(({ type }) => type === "layout"),
+        ...dataResults.filter(({ type }) => type === "page"),
+      ]
+        .flatMap(({ result }) => result ? [result] : []),
+    );
+
     for (const { type, id, result, error } of dataResults) {
-      if (error) throw error;
+      if (error) {
+        if (responseMetadata.headers || responseMetadata.cookies) {
+          throw wrapDataResponseMetadataError(error, responseMetadata);
+        }
+        throw error;
+      }
       if (!result) continue;
 
       if (result.notFound) {
-        throw FILE_NOT_FOUND.create({
-          detail: "Page/Layout returned notFound",
-          context: { slug, component: id },
-        });
+        throw attachDataResponseMetadata(
+          FILE_NOT_FOUND.create({
+            detail: "Page/Layout returned notFound",
+            context: { slug, component: id },
+          }),
+          responseMetadata,
+        );
       }
 
       if (result.redirect) {
-        throw RENDER_ERROR.create({
-          detail: `Redirect to ${result.redirect.destination}`,
-          context: { slug, redirect: result.redirect },
-        });
+        throw attachDataResponseMetadata(
+          RENDER_ERROR.create({
+            detail: `Redirect to ${result.redirect.destination}`,
+            context: { slug, redirect: result.redirect },
+          }),
+          responseMetadata,
+        );
       }
 
       if (!result.props) continue;
@@ -587,6 +734,8 @@ export class RenderPipeline {
         layoutProps.set(id, result.props as Record<string, unknown>);
       }
     }
+
+    return responseMetadata;
   }
 
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
@@ -617,7 +766,7 @@ export class RenderPipeline {
 
     if (shouldCache && !options?.skipCacheCheck) {
       const cacheCheckStart = performance.now();
-      cacheResult = await this.config.cacheCoordinator.checkCache(slug, cacheKey);
+      cacheResult = await this.config.cacheCoordinator.checkCache(slug, cacheKey, options?.nonce);
       timing.cacheCheck = Math.round(performance.now() - cacheCheckStart);
 
       if (cacheResult?.cachedResult) {
@@ -643,7 +792,10 @@ export class RenderPipeline {
               () =>
                 withSpan(
                   "render.resolve_page",
-                  () => this.config.pageResolver.resolvePage(slug),
+                  () =>
+                    this.config.pageResolver.resolvePage(slug, {
+                      signal: options?.abortSignal,
+                    }),
                   { "render.slug": slug },
                 ),
             );
@@ -653,6 +805,8 @@ export class RenderPipeline {
               pageInfo.entity.path,
               this.config.projectDir,
             );
+            let responseHeaders: Record<string, string> | undefined;
+            let responseCookies: ResponseCookie[] | undefined;
 
             try {
               const skipLayouts = isDotPath({
@@ -680,6 +834,8 @@ export class RenderPipeline {
                   options?.dependencyPinningDependencies,
                   options?.dependencyPinningSource,
                   options?.url?.origin,
+                  options?.abortSignal,
+                  options?.environment,
                 )
                 : Promise.resolve();
 
@@ -702,6 +858,8 @@ export class RenderPipeline {
                   ? internalPreResolvedData.pageProps
                   : undefined;
                 layoutDataMap = internalPreResolvedData.layoutProps;
+                responseHeaders = internalPreResolvedData.headers;
+                responseCookies = internalPreResolvedData.cookies;
               } else if (options?.url && (options.request || options.staticDataOnly)) {
                 await profilePhase(
                   "render.data_fetching",
@@ -721,6 +879,8 @@ export class RenderPipeline {
                             ? dataResolution.pageProps
                             : undefined;
                           layoutDataMap = dataResolution.layoutProps;
+                          responseHeaders = dataResolution.headers;
+                          responseCookies = dataResolution.cookies;
                         } catch (error) {
                           if (error instanceof VeryfrontError) throw error;
 
@@ -766,7 +926,23 @@ export class RenderPipeline {
               );
               timing.bundlePrep = Math.round(performance.now() - bundlePrepStart);
 
-              if (pageBundleResult.scriptResult) return pageBundleResult.scriptResult;
+              if (pageBundleResult.scriptResult) {
+                const scriptResponseMetadata = mergeDataResponseMetadata([
+                  {
+                    ...(pageBundleResult.scriptResult.headers
+                      ? { headers: pageBundleResult.scriptResult.headers }
+                      : {}),
+                    ...(pageBundleResult.scriptResult.cookies
+                      ? { cookies: pageBundleResult.scriptResult.cookies }
+                      : {}),
+                  },
+                  {
+                    ...(responseHeaders ? { headers: responseHeaders } : {}),
+                    ...(responseCookies ? { cookies: responseCookies } : {}),
+                  },
+                ]);
+                return { ...pageBundleResult.scriptResult, ...scriptResponseMetadata };
+              }
 
               if (!pageBundleResult.pageElement || !pageBundleResult.pageBundle) {
                 throw RENDER_ERROR.create({
@@ -830,6 +1006,8 @@ export class RenderPipeline {
                         options?.dependencyPinningCacheKey,
                         options?.dependencyPinningDependencies,
                         options?.dependencyPinningSource,
+                        options?.abortSignal,
+                        options?.environment,
                       ),
                     {
                       "render.slug": slug,
@@ -892,6 +1070,9 @@ export class RenderPipeline {
                 skipCachePersist: options?.skipCachePersist,
                 cacheCoordinator: this.config.cacheCoordinator,
                 logger: renderPipelineLog,
+                nonce: renderOptions.nonce,
+                headers: responseHeaders,
+                cookies: responseCookies,
               });
 
               timing.total = Math.round(performance.now() - pipelineStartTime);
@@ -900,7 +1081,20 @@ export class RenderPipeline {
               return result;
             } catch (error) {
               if (error instanceof Error) {
-                (error as Error & { sourceFile?: string }).sourceFile = sourceFile;
+                const classifiedError = unwrapDataResponseMetadataError(error);
+                const sourceError = classifiedError instanceof Error ? classifiedError : error;
+                (sourceError as Error & { sourceFile?: string }).sourceFile = sourceFile;
+              }
+              if (responseHeaders || responseCookies) {
+                throw wrapDataResponseMetadataError(
+                  error,
+                  mergeDataResponseMetadata([
+                    {
+                      ...(responseHeaders ? { headers: responseHeaders } : {}),
+                      ...(responseCookies ? { cookies: responseCookies } : {}),
+                    },
+                  ]),
+                );
               }
               throw error;
             }
@@ -968,7 +1162,10 @@ export class RenderPipeline {
 
     const pageInfo = await profilePhase(
       "page_data.resolve_page",
-      () => this.config.pageResolver.resolvePage(slug),
+      () =>
+        this.config.pageResolver.resolvePage(slug, {
+          signal: options?.abortSignal,
+        }),
     );
 
     const skipLayouts = isDotPath({
@@ -1304,9 +1501,11 @@ export class RenderPipeline {
       ...(this.config.renderCacheKeyComposition ?? {}),
       colorScheme: options?.colorScheme,
     };
+    const environment = options?.environment === "preview" ? "preview" : "production";
     if (options?.cacheKey) {
+      const cacheKey = `${options.cacheKey}:environment-${environment}`;
       return buildDependencyPinnedRenderCacheKey(
-        options.cacheKey,
+        cacheKey,
         dependencyPinningCacheKey,
         options.url?.origin,
         composition,
@@ -1317,7 +1516,9 @@ export class RenderPipeline {
       if (requestHasCacheSensitiveState(req)) return null;
     }
 
-    const baseKey = buildQueryAwareCacheKey(slug, options?.url, this.config.queryParamOptions);
+    const baseKey = `${
+      buildQueryAwareCacheKey(slug, options?.url, this.config.queryParamOptions)
+    }:environment-${environment}`;
     return buildDependencyPinnedRenderCacheKey(
       baseKey,
       dependencyPinningCacheKey,

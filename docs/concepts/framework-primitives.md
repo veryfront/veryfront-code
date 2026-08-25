@@ -18,7 +18,7 @@ that explains the work clearly.
 | [App](./app.md)                         | User-facing routes, APIs, data, and rendering.  |
 | [Agent](./agent.md)                     | Model reasoning, messages, tools, and output.   |
 | [Tool](./tool.md)                       | One callable capability.                        |
-| [Skill](./skill.md)                     | Reusable agent instructions and tool policy.    |
+| [Skill](./skill.md)                     | Reusable agent instructions and resources.      |
 | [Prompt](./prompt.md)                   | Reusable instruction templates.                 |
 | [Resource](./resource.md)               | Readable project data for MCP.                  |
 | [Eval](./eval.md)                       | Repeatable quality checks for agents.           |
@@ -41,7 +41,7 @@ response. A task can run slow background work. An agent can reason about a
 user-facing decision. A skill can give the agent task-specific instructions.
 
 This keeps the project understandable. The app owns entry points. Agents own
-model decisions. Tools own deterministic actions. Tasks own background targets.
+model decisions. Tools own callable actions. Tasks own background targets.
 Evals own quality measurement. Workflows own automation logic. Runs own
 durable execution. Extensions own replaceable runtime infrastructure.
 

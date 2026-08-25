@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../../release-assets/constants.ts";
@@ -14,7 +15,11 @@ import {
 import type { ImportSpecifierInfo, RewriteContext } from "../types.ts";
 import { rewriteSSRImportsCompatAsync } from "../ssr-adapter.ts";
 import { rewriteImports } from "../unified-rewriter.ts";
+import { TAILWIND_VERSION } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import { bareStrategy } from "./bare-strategy.ts";
+
+const TAILWIND_PINNED_URL =
+  `https://esm.sh/tailwindcss@${TAILWIND_VERSION}?external=react,react-dom&target=es2022`;
 
 function makeCtx(overrides: Partial<RewriteContext> = {}): RewriteContext {
   return {
@@ -112,7 +117,23 @@ describe("BareStrategy", () => {
         makeInfo("tailwindcss"),
         makeCtx({ target: "browser" }),
       );
-      assertEquals(result.specifier?.includes("tailwindcss@"), true);
+      assertEquals(
+        result.specifier,
+        TAILWIND_PINNED_URL,
+        "tailwindcss must resolve to the framework-pinned version that the config hash is built from",
+      );
+    });
+
+    it("overrides an author-supplied tailwindcss version with the framework pin", () => {
+      const result = bareStrategy.rewrite(
+        makeInfo("tailwindcss@3.4.0"),
+        makeCtx({ target: "browser" }),
+      );
+      assertEquals(
+        result.specifier,
+        TAILWIND_PINNED_URL,
+        "an inline tailwindcss version must be replaced by the framework pin",
+      );
     });
 
     it("should preserve versioned specifiers", () => {
@@ -139,6 +160,75 @@ describe("BareStrategy", () => {
         makeCtx({ target: "browser" }),
       );
       assertEquals(result.specifier, null);
+    });
+
+    it("rejects configured server external packages in browser modules", () => {
+      const ctx = makeCtx({
+        filePath: "/redacted-project-root/pages/index.tsx",
+        projectDir: "/redacted-project-root",
+        target: "browser",
+        serverExternalPackages: ["knex", "@prisma/client"],
+      });
+
+      for (
+        const specifier of [
+          "knex",
+          "npm:knex@3.1.0",
+          "@prisma/client/runtime/library",
+        ]
+      ) {
+        const error = assertThrows(() => bareStrategy.rewrite(makeInfo(specifier), ctx));
+
+        assertEquals(error instanceof VeryfrontError, true);
+        assertEquals((error as VeryfrontError).slug, "server-only-in-client");
+        assertEquals(
+          (error as VeryfrontError).message.includes("build.serverExternalPackages"),
+          true,
+        );
+        assertEquals((error as VeryfrontError).message.includes(specifier), true);
+        assertEquals((error as VeryfrontError).message.includes("pages/index.tsx"), true);
+        assertEquals((error as VeryfrontError).message.includes(ctx.projectDir), false);
+        assertEquals((error as VeryfrontError).instance, "pages/index.tsx");
+      }
+    });
+
+    it("keeps configured server external packages external for SSR", () => {
+      const ctx = makeCtx({
+        target: "ssr",
+        serverExternalPackages: ["knex", "@prisma/client"],
+      });
+
+      assertEquals(bareStrategy.rewrite(makeInfo("knex"), ctx).specifier, null);
+      assertEquals(bareStrategy.rewrite(makeInfo("npm:knex@3.1.0"), ctx).specifier, null);
+      assertEquals(
+        bareStrategy.rewrite(makeInfo("@prisma/client/runtime/library"), ctx).specifier,
+        null,
+      );
+    });
+
+    it("redacts a browser importer outside the project root", () => {
+      const ctx = makeCtx({
+        filePath: "/redacted-external-root/generated/page.tsx",
+        projectDir: "/redacted-project-root",
+        serverExternalPackages: ["knex"],
+      });
+      const error = assertThrows(() => bareStrategy.rewrite(makeInfo("knex"), ctx));
+
+      assertEquals((error as VeryfrontError).message.includes(ctx.filePath), false);
+      assertEquals((error as VeryfrontError).message.includes("generated/page.tsx"), false);
+      assertEquals((error as VeryfrontError).instance, undefined);
+    });
+
+    it("still rewrites an undeclared package when server externals are configured", () => {
+      const result = bareStrategy.rewrite(
+        makeInfo("sequelize"),
+        makeCtx({ target: "browser", serverExternalPackages: ["knex"] }),
+      );
+
+      assertEquals(
+        result.specifier,
+        "https://esm.sh/sequelize?external=react,react-dom&target=es2022",
+      );
     });
 
     // The `npm:` scheme alone does not mean server-only. A browser-safe package
@@ -206,7 +296,11 @@ describe("BareStrategy", () => {
 
     it("still pins tailwindcss regardless of the flag", () => {
       const result = bareStrategy.rewrite(makeInfo("tailwindcss"), makeCtx({ target: "browser" }));
-      assertEquals(result.specifier?.includes("tailwindcss@"), true);
+      assertEquals(
+        result.specifier,
+        TAILWIND_PINNED_URL,
+        "tailwindcss must keep the framework pin when the pinning flag is off",
+      );
     });
 
     it("preserves inline-versioned specifiers unchanged", () => {
@@ -294,8 +388,8 @@ describe("BareStrategy", () => {
     it("falls back to unversioned URL when both caches are cold", async () => {
       // No package.json cache, no npm registry cache — must behave like flag-off.
       const result = bareStrategy.rewrite(makeInfo("lodash"), makeCtx({ target: "browser" }));
-      // Yield one tick so the background fetch microtask settles and clears its timer.
-      await new Promise<void>((r) => setTimeout(r, 1));
+      // Drain the background registry resolution before the sanitizer runs.
+      await _pendingResolutions();
       assertEquals(
         result.specifier,
         "https://esm.sh/lodash?external=react,react-dom&target=es2022",
@@ -411,7 +505,11 @@ describe("BareStrategy", () => {
 
     it("still uses tailwindcss pinned version regardless of npm cache", () => {
       const result = bareStrategy.rewrite(makeInfo("tailwindcss"), makeCtx({ target: "browser" }));
-      assertEquals(result.specifier?.includes("tailwindcss@"), true);
+      assertEquals(
+        result.specifier,
+        TAILWIND_PINNED_URL,
+        "tailwindcss must keep the framework pin regardless of the npm version cache",
+      );
     });
 
     it("SSR target is not affected by the pin flag", () => {

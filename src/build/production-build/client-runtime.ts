@@ -16,6 +16,7 @@ import type { OnResolveArgs, Plugin } from "veryfront/extensions/bundler";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createError, toError } from "#veryfront/errors";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { VERSION } from "#veryfront/utils/version-constant.ts";
 
 // Try to import pre-bundled client scripts (available in npm builds)
 let CLIENT_ROUTER_BUNDLE: string | undefined;
@@ -66,6 +67,13 @@ const unresolvedInternalAlias = /(?:^|["'])#veryfront\//;
 const clientAliasPaths = new Map([
   ["#veryfront/config", "src/rendering/client/browser-stubs/config.ts"],
   ["#veryfront/errors/error-registry.ts", "src/rendering/client/browser-stubs/error-registry.ts"],
+  // Client code reaches SECURITY_VIOLATION through the leaf category module so
+  // that other bundlers do not retain the whole registry; the stub has to cover
+  // that spelling too or the definitions come back in through the side door.
+  [
+    "#veryfront/errors/error-registry/general.ts",
+    "src/rendering/client/browser-stubs/error-registry.ts",
+  ],
   ["#veryfront/routing", "src/routing/client/index.ts"],
 ]);
 
@@ -75,30 +83,22 @@ const clientAliasPaths = new Map([
 export function generateAppModule(): string {
   return `
 // Veryfront App Module
-(() => {
-  console.log('[Veryfront] App module loaded');
+import { boot } from './router.js';
 
-  // Export for ES modules
-  if (typeof window !== 'undefined') {
-    window.__veryfront = window.__veryfront || {};
-    window.__veryfront.version = '2.0.0';
-    window.__veryfront.initialized = true;
-  }
+export const version = ${JSON.stringify(VERSION)};
 
-  // Basic hydration support
-  window.hydrate = async function(slug, options = {}) {
-    console.log('[Veryfront] Hydrating page:', slug, options);
+// Async so callers keep the Promise-based contract of the previous runtime
+// (window.hydrate(...).then(...)) while resolving to the router from boot().
+export async function hydrate(slug, options = {}) {
+  return boot({ ...options, slug });
+}
 
-    // Mark as hydrated
-    const root = document.getElementById('root');
-    if (root) {
-      root.setAttribute('data-hydrated', 'true');
-    }
-  };
-})();
-
-export const version = '2.0.0';
-export const hydrate = window.hydrate;
+if (typeof window !== 'undefined') {
+  window.__veryfront = window.__veryfront || {};
+  window.__veryfront.version = version;
+  window.__veryfront.initialized = true;
+  window.hydrate = hydrate;
+}
 `;
 }
 

@@ -11,6 +11,7 @@ import {
 } from "./http-cache-wrapper.ts";
 import { CACHE_DIR_TOKEN } from "./http-cache-invariants.ts";
 import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
+import { VERSION } from "#veryfront/utils/version.ts";
 import type { CacheBackend } from "#veryfront/cache/types.ts";
 import { fingerprintImportMap } from "./http-cache-helpers.ts";
 
@@ -146,6 +147,7 @@ describe("transforms/esm/http-cache-wrapper", () => {
             url,
             importMap,
             importMapFingerprint,
+            serverExternalPackages: ["knex"],
           });
         }
 
@@ -158,6 +160,12 @@ describe("transforms/esm/http-cache-wrapper", () => {
           identityValues.every((value) => value.importMapFingerprint === importMapFingerprint),
           true,
         );
+        assertEquals(
+          identityValues.every((value) =>
+            JSON.stringify(value.serverExternalPackages) === JSON.stringify(["knex"])
+          ),
+          true,
+        );
 
         const importMapEntries = [...backend.entries]
           .filter(([key]) => key.includes(":import-map:"));
@@ -166,9 +174,54 @@ describe("transforms/esm/http-cache-wrapper", () => {
         assertEquals(await httpBundleCache.getIdentityMetadata("bundle-a"), {
           url: "https://modules.example.com/a.js",
           reactVersion: undefined,
+          serverExternalPackages: ["knex"],
           importMap,
           importMapFingerprint,
         });
+      } finally {
+        __setDistributedCacheAccessorForTests(null);
+      }
+    });
+
+    it("rejects an identity whose shared import map no longer matches its fingerprint", async () => {
+      const backend = new RecordingCacheBackend();
+      __setDistributedCacheAccessorForTests(async () => backend);
+      const importMap = { imports: { pkg: "https://modules.example.com/pkg.js" } };
+      const importMapFingerprint = await fingerprintImportMap(importMap);
+
+      try {
+        await httpBundleCache.setCode(
+          "bundle-a",
+          "export {};" as never,
+          "https://modules.example.com/a.js",
+          60,
+          {
+            url: "https://modules.example.com/a.js",
+            importMap,
+            importMapFingerprint,
+          },
+        );
+        const importMapKey = [...backend.entries.keys()].find((key) =>
+          key.includes(":import-map:")
+        );
+        assertExists(importMapKey);
+
+        backend.entries.set(
+          importMapKey,
+          JSON.stringify({ imports: { pkg: "https://modules.example.com/other.js" } }),
+        );
+        assertEquals(
+          await httpBundleCache.getIdentityMetadata("bundle-a"),
+          null,
+          "an import-map blob that no longer hashes to its key must not reproduce a bundle",
+        );
+
+        backend.entries.delete(importMapKey);
+        assertEquals(
+          await httpBundleCache.getIdentityMetadata("bundle-a"),
+          null,
+          "a missing shared import map must not yield partial identity metadata",
+        );
       } finally {
         __setDistributedCacheAccessorForTests(null);
       }
@@ -208,6 +261,120 @@ describe("transforms/esm/http-cache-wrapper", () => {
           reactVersion: "19.0.0",
           importMap: { imports: importMap.imports, scopes: undefined },
         });
+      } finally {
+        __setDistributedCacheAccessorForTests(null);
+      }
+    });
+  });
+
+  describe("setCode", () => {
+    it("tokenizes local cache paths before they reach the shared cache", async () => {
+      const backend = new RecordingCacheBackend();
+      __setDistributedCacheAccessorForTests(async () => backend);
+      const cacheDir = getCacheBaseDir().replace(/\/$/, "");
+
+      try {
+        await httpBundleCache.setCode(
+          "bundle-tokenized",
+          `import foo from "file://${cacheDir}/veryfront-http-bundle/http-1.mjs";` as never,
+          "https://modules.example.com/a.js",
+          60,
+        );
+
+        const stored = backend.entries.get(`${VERSION}:code:bundle-tokenized`);
+        assertExists(stored);
+        assertEquals(
+          stored.includes(CACHE_DIR_TOKEN),
+          true,
+          "stored code must carry the portable cache-dir token",
+        );
+        assertEquals(
+          stored.includes(cacheDir),
+          false,
+          "machine-local absolute cache paths must never reach the shared cache",
+        );
+      } finally {
+        __setDistributedCacheAccessorForTests(null);
+      }
+    });
+  });
+
+  describe("getCodeByHash", () => {
+    it("detokenizes cached code before it leaves the gateway", async () => {
+      const backend = new RecordingCacheBackend();
+      __setDistributedCacheAccessorForTests(async () => backend);
+      const cacheDir = getCacheBaseDir().replace(/\/$/, "");
+      backend.entries.set(
+        `${VERSION}:code:aaa`,
+        `import foo from "file://${CACHE_DIR_TOKEN}/veryfront-http-bundle/http-1.mjs";`,
+      );
+
+      try {
+        const result = await httpBundleCache.getCodeByHash("aaa");
+        assertExists(result.code);
+        const code = result.code as unknown as string;
+        assertEquals(
+          code,
+          `import foo from "file://${cacheDir}/veryfront-http-bundle/http-1.mjs";`,
+          "cached code is rewritten to this machine's cache directory",
+        );
+        assertEquals(
+          code.includes(CACHE_DIR_TOKEN),
+          false,
+          "code must be detokenized before it leaves the gateway",
+        );
+      } finally {
+        __setDistributedCacheAccessorForTests(null);
+      }
+    });
+
+    it("refuses cached HTML error pages instead of serving them as JavaScript", async () => {
+      const backend = new RecordingCacheBackend();
+      __setDistributedCacheAccessorForTests(async () => backend);
+      backend.entries.set(
+        `${VERSION}:code:bbb`,
+        "<!DOCTYPE html><html><title>ESM</title></html>",
+      );
+
+      try {
+        const result = await httpBundleCache.getCodeByHash("bbb");
+        assertEquals(result.code, null, "an HTML error page must never be returned as code");
+        assertEquals(
+          result.failReason,
+          "html_content",
+          "an HTML error page is reported as html_content",
+        );
+      } finally {
+        __setDistributedCacheAccessorForTests(null);
+      }
+    });
+
+    it("refuses cached content whose gzip payload cannot be decoded", async () => {
+      const backend = new RecordingCacheBackend();
+      __setDistributedCacheAccessorForTests(async () => backend);
+      backend.entries.set(`${VERSION}:code:ccc`, "gz:!!!not-base64!!!");
+
+      try {
+        const result = await httpBundleCache.getCodeByHash("ccc");
+        assertEquals(result.code, null, "undecodable gzip content must not be returned as code");
+        assertEquals(
+          result.failReason,
+          "gzip_decode_failed",
+          "undecodable gzip content is reported as gzip_decode_failed",
+        );
+      } finally {
+        __setDistributedCacheAccessorForTests(null);
+      }
+    });
+
+    it("reports an unseeded hash as not found", async () => {
+      const backend = new RecordingCacheBackend();
+      __setDistributedCacheAccessorForTests(async () => backend);
+
+      try {
+        const result = await httpBundleCache.getCodeByHash("ddd");
+        assertEquals(result.code, null, "an absent bundle has no code");
+        assertEquals(result.failReason, "not_found", "an absent bundle is reported as not_found");
       } finally {
         __setDistributedCacheAccessorForTests(null);
       }

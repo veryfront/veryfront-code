@@ -78,6 +78,20 @@ describe("rendering/rsc/server-renderer/component-detector", () => {
       assertEquals(getComponentId(comp), "MyDisplay");
     });
 
+    it("treats an empty displayName as absent", () => {
+      function NamedComponent() {
+        return null;
+      }
+      const comp = Object.assign(NamedComponent, { displayName: "" }) as unknown as RSCComponent;
+
+      const id = getComponentId(comp);
+      assertEquals(id, "NamedComponent");
+
+      const refs = new Map<string, string>();
+      registerClientRef(id, comp, new Map(), refs);
+      assertEquals(refs.get("NamedComponent"), "/_veryfront/client/NamedComponent.js");
+    });
+
     it("should fallback to function name", () => {
       function MyNamedComponent() {
         return null;
@@ -85,9 +99,34 @@ describe("rendering/rsc/server-renderer/component-detector", () => {
       assertEquals(getComponentId(MyNamedComponent as unknown as RSCComponent), "MyNamedComponent");
     });
 
-    it("should return Unknown for anonymous component", () => {
+    it("returns Unknown for a component object with no name, such as memo/forwardRef results", () => {
       const comp = Object.assign(Object.create(null), {}) as unknown as RSCComponent;
-      assertEquals(getComponentId(comp), "Unknown");
+      assertEquals(
+        getComponentId(comp),
+        "Unknown",
+        "a component object without a name must fall back to the Unknown id",
+      );
+    });
+
+    it("returns Unknown for a function whose name is empty", () => {
+      const anonymous = Object.defineProperty(
+        function () {
+          return null;
+        },
+        "name",
+        { value: "" },
+      ) as unknown as RSCComponent;
+
+      const id = getComponentId(anonymous);
+      assertEquals(id, "Unknown", "an empty function name must not become the component id");
+
+      const refs = new Map<string, string>();
+      registerClientRef(id, anonymous, new Map(), refs);
+      assertEquals(
+        refs.get("Unknown"),
+        "/_veryfront/client/Unknown.js",
+        "an unnamed client component must not collide on an empty manifest key",
+      );
     });
   });
 

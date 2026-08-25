@@ -3,12 +3,15 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ClaudeCodeMode } from "./types.ts";
 
+const TEST_CWD = "/veryfront-test/workspace";
+const TEST_WRITE_PATH = "/veryfront-test/workspace/a.ts";
+
 /**
  * Mock the Claude Agent SDK import to capture the permissionMode
  * passed to query() — this lets us test the real resolvePermissionMode
  * logic inside executeAgent without requiring the actual SDK.
  */
-function createMockSDK(): {
+function createMockSDK(messages?: unknown[]): {
   capturedOptions: Record<string, unknown> | null;
   install: () => void;
   uninstall: () => void;
@@ -25,16 +28,18 @@ function createMockSDK(): {
       (globalThis as Record<string, unknown>).__vfMockClaudeSDK = {
         query(args: { prompt: string; options: Record<string, unknown> }) {
           capturedOptions = args.options;
-          // Return an async iterable that immediately yields a result
+          // Return an async iterable that immediately yields the scripted
+          // conversation, defaulting to a single successful result message.
+          const scripted = messages ?? [{
+            type: "result",
+            subtype: "success",
+            result: "mocked",
+            num_turns: 0,
+            total_cost_usd: 0,
+            duration_ms: 0,
+          }];
           return (async function* () {
-            yield {
-              type: "result",
-              subtype: "success",
-              result: "mocked",
-              num_turns: 0,
-              total_cost_usd: 0,
-              duration_ms: 0,
-            };
+            for (const message of scripted) yield message;
           })();
         },
       };
@@ -61,7 +66,7 @@ async function capturePermissionMode(
   mock.install();
   try {
     const { executeAgent } = await import("./agent.ts");
-    await executeAgent("test task", { ...config, cwd: "/tmp" });
+    await executeAgent("test task", { ...config, cwd: TEST_CWD });
     return mock.capturedOptions?.permissionMode as string;
   } finally {
     mock.uninstall();
@@ -75,7 +80,7 @@ const sdkMockAvailable = await (async () => {
   mock.install();
   try {
     const { executeAgent } = await import("./agent.ts");
-    await executeAgent("probe", { cwd: "/tmp" });
+    await executeAgent("probe", { cwd: TEST_CWD });
     return mock.capturedOptions !== null;
   } catch {
     return false;
@@ -162,6 +167,64 @@ describe("resolvePermissionMode (via executeAgent)", () => {
   });
 });
 
+describe("executeAgent result mapping", () => {
+  it("reports a non-success subtype as a failure and tracks its tool use", async () => {
+    const mock = createMockSDK([
+      {
+        type: "assistant",
+        message: {
+          content: [
+            { type: "text", text: "done" },
+            { type: "tool_use", name: "Bash", input: { command: "deno test" } },
+            { type: "tool_use", name: "Write", input: { file_path: TEST_WRITE_PATH } },
+          ],
+        },
+      },
+      {
+        type: "result",
+        subtype: "error_max_turns",
+        errors: ["max turns reached"],
+        num_turns: 1,
+        total_cost_usd: 0,
+        duration_ms: 0,
+      },
+    ]);
+    mock.install();
+    try {
+      const { executeAgent } = await import("./agent.ts");
+      const result = await executeAgent("test task", { cwd: TEST_CWD });
+
+      assertEquals(
+        result.success,
+        false,
+        "a non-success SDK subtype must not be reported as success",
+      );
+      assertEquals(result.response, undefined, "a failed run must not report a response");
+      assertEquals(result.error, "max turns reached", "the SDK errors must be surfaced");
+      assertEquals(result.commandsExecuted, ["deno test"], "Bash commands must be tracked");
+      assertEquals(result.filesModified, [TEST_WRITE_PATH], "written files must be tracked");
+      assertEquals(result.iterations, 1, "the SDK turn count must be reported");
+    } finally {
+      mock.uninstall();
+    }
+  });
+
+  it("reports a success subtype with its response", async () => {
+    const mock = createMockSDK();
+    mock.install();
+    try {
+      const { executeAgent } = await import("./agent.ts");
+      const result = await executeAgent("test task", { cwd: TEST_CWD });
+
+      assertEquals(result.success, true, "a success SDK subtype must be reported as success");
+      assertEquals(result.response, "mocked", "the SDK result text must be surfaced");
+      assertEquals(result.error, undefined, "a successful run must not report an error");
+    } finally {
+      mock.uninstall();
+    }
+  });
+});
+
 describe("tool input schema", () => {
   it("does not accept 'full' as a valid mode value", async () => {
     const { claudeCodeTool } = await import("./tool.ts");
@@ -173,6 +236,34 @@ describe("tool input schema", () => {
     });
 
     assertEquals(result.success, false, "'full' mode must be rejected by the input schema");
+  });
+
+  it("never lets tool input reach bypassPermissions", async () => {
+    const mock = createMockSDK();
+    mock.install();
+    try {
+      const { claudeCodeTool } = await import("./tool.ts");
+      await claudeCodeTool.execute(
+        { task: "t", mode: "analysis", bypassPermissions: true } as never,
+        {} as never,
+      );
+      assertEquals(
+        mock.capturedOptions?.permissionMode,
+        "plan",
+        "tool input must not be able to request bypassPermissions",
+      );
+
+      const parsed = claudeCodeTool.inputSchema.safeParse({ task: "t", bypassPermissions: true });
+      assertEquals(parsed.success, true, "an unknown flag must not break parsing");
+      const parsedData = (parsed as { data?: Record<string, unknown> }).data;
+      assertEquals(
+        parsedData?.bypassPermissions,
+        undefined,
+        "the input schema strips the server-side-only flag",
+      );
+    } finally {
+      mock.uninstall();
+    }
   });
 
   it("accepts valid mode values", async () => {

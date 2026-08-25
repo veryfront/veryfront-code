@@ -101,6 +101,12 @@ import {
   resolveDependencyPinningSnapshot,
   resolveDependencyWritebackTarget,
 } from "#veryfront/transforms/esm/package-registry.ts";
+import { bindHtmlNonceFromCache, sealHtmlNonceForCache } from "#veryfront/html/nonce-injection.ts";
+import {
+  getAttachedDataResponseMetadata,
+  unwrapDataResponseMetadataError,
+} from "#veryfront/data/response-metadata.ts";
+import { resolveSSRControlOutcome } from "./ssr-outcome.ts";
 
 const logger = rendererLogger.component("renderer");
 
@@ -152,10 +158,18 @@ export interface RendererOptions {
  */
 interface CachedRenderData {
   html: string;
+  htmlNoncePlaceholder?: string;
   frontmatter: RenderResult["frontmatter"];
   headings?: RenderResult["headings"];
   ssrHash?: string;
   pageModule?: RenderResult["pageModule"];
+  headers?: RenderResult["headers"];
+  cookies?: RenderResult["cookies"];
+}
+
+function createCacheRenderNonce(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
 }
 
 function getBoundedEnvNumber(
@@ -354,7 +368,13 @@ export class Renderer {
         };
         const cacheKey = this.buildCacheKey(slug, effectiveCtx, effectiveOptions);
         const cacheResult = cacheKey !== null
-          ? await this.cache.checkCache(slug, effectiveCtx, effectiveOptions?.colorScheme, cacheKey)
+          ? await this.cache.checkCache(
+            slug,
+            effectiveCtx,
+            effectiveOptions?.colorScheme,
+            cacheKey,
+            effectiveOptions?.nonce,
+          )
           : { hit: false, cacheKey: "", status: "miss" as const, lookupDurationMs: 0 };
         if (cacheResult.hit && cacheResult.cachedResult) {
           logger.debug("Cache hit", {
@@ -415,6 +435,7 @@ export class Renderer {
         ctx.projectId,
         ctx.environment,
         releaseKey,
+        ctx.mode,
         releaseManifest.manifestVersion,
       ),
     };
@@ -593,6 +614,10 @@ export class Renderer {
       dependencyPinningDependencies: options?.dependencyPinningDependencies,
       noHmr: options?.noHmr,
       forceProductionScripts: options?.forceProductionScripts,
+      // Background HTML still needs nonce slots so a later request can bind
+      // them to its own CSP. This value is never sent in a response and is
+      // sealed into the cache representation immediately after rendering.
+      nonce: createCacheRenderNonce(),
       url: canonicalUrl,
     };
   }
@@ -823,6 +848,33 @@ export class Renderer {
           },
         });
       }
+      const attachedCookies = error instanceof Error
+        ? getAttachedDataResponseMetadata(error).cookies
+        : undefined;
+      const unwrappedError = error instanceof Error
+        ? unwrapDataResponseMetadataError(error)
+        : error;
+      const controlCookies = resolveSSRControlOutcome(unwrappedError)?.cookies ??
+        resolveSSRControlOutcome(error)?.cookies;
+      if (
+        isFollower &&
+        ((attachedCookies?.length ?? 0) > 0 || (controlCookies?.length ?? 0) > 0)
+      ) {
+        logger.debug("Rerendering follower after cookie-bearing render failure", {
+          slug,
+          projectId: ctx.projectId,
+        });
+        return await this.doRenderPage(
+          slug,
+          ctx,
+          options,
+          startTime,
+          null,
+          callerSignal,
+          admission,
+          false,
+        );
+      }
       if (
         retryBackgroundOverload &&
         admission === "foreground" &&
@@ -847,6 +899,23 @@ export class Renderer {
       throw error;
     }
 
+    if (isFollower && cachedData.cookies?.length) {
+      logger.debug("Rerendering follower after cookie-bearing render", {
+        slug,
+        projectId: ctx.projectId,
+      });
+      return await this.doRenderPage(
+        slug,
+        ctx,
+        options,
+        startTime,
+        null,
+        callerSignal,
+        admission,
+        false,
+      );
+    }
+
     if (isFollower) {
       logger.debug("Render deduplicated (follower)", {
         slug,
@@ -857,11 +926,17 @@ export class Renderer {
     }
 
     return {
-      html: cachedData.html,
+      html: bindHtmlNonceFromCache(
+        cachedData.html,
+        cachedData.htmlNoncePlaceholder,
+        options?.nonce,
+      ),
       frontmatter: cachedData.frontmatter,
       headings: cachedData.headings,
       ssrHash: cachedData.ssrHash,
       pageModule: cachedData.pageModule,
+      ...(cachedData.headers ? { headers: cachedData.headers } : {}),
+      ...(cachedData.cookies ? { cookies: cachedData.cookies } : {}),
       stream: null,
     };
   }
@@ -950,6 +1025,7 @@ export class Renderer {
           projectSlug: ctx.projectSlug,
           environment: ctx.environment,
           contentSourceId: ctx.contentSourceId,
+          releaseId: ctx.releaseId,
           skipCacheCheck: true,
           skipCachePersist: true,
         }),
@@ -962,8 +1038,15 @@ export class Renderer {
         },
       );
 
-      if (cacheKey !== null) {
-        await this.cache.persistResult(result, slug, ctx, options?.colorScheme, cacheKey);
+      if (cacheKey !== null && !result.cookies?.length) {
+        await this.cache.persistResult(
+          result,
+          slug,
+          ctx,
+          options?.colorScheme,
+          cacheKey,
+          options?.nonce,
+        );
       }
 
       logger.debug("Render complete (leader)", {
@@ -973,12 +1056,20 @@ export class Renderer {
         htmlLength: result.html?.length ?? 0,
       });
 
+      const sealedHtml = cacheKey === null
+        ? { html: result.html }
+        : sealHtmlNonceForCache(result.html, options?.nonce);
       return {
-        html: result.html,
+        html: sealedHtml.html,
+        ...(sealedHtml.placeholder === undefined
+          ? {}
+          : { htmlNoncePlaceholder: sealedHtml.placeholder }),
         frontmatter: result.frontmatter,
         headings: result.headings,
         ssrHash: result.ssrHash,
         pageModule: result.pageModule,
+        ...(result.headers ? { headers: result.headers } : {}),
+        ...(result.cookies ? { cookies: result.cookies } : {}),
       };
     } finally {
       if (globalAcquired) renderSemaphore.release();
@@ -1150,11 +1241,13 @@ export class Renderer {
       adapter: ctx.adapter,
       config: ctx.config,
       mode: ctx.mode,
+      environment: ctx.environment,
       moduleServerUrl: ctx.moduleServerUrl,
       layoutCollector,
       layoutCompiler,
       layoutCache: this.layoutComponentCache,
       componentRegistry,
+      isLocalProject: ctx.isLocalProject === true,
     });
 
     const htmlGenerator = new HTMLGenerator({
@@ -1162,6 +1255,7 @@ export class Renderer {
       adapter: ctx.adapter,
       config: ctx.config,
       mode: ctx.mode,
+      environment: ctx.environment,
       isLocalProject: ctx.isLocalProject === true,
     });
 
@@ -1175,8 +1269,8 @@ export class Renderer {
     });
 
     const pipelineCacheCoordinator = {
-      checkCache: async (slug: string, cacheKey?: string) => {
-        const result = await this.cache.checkCache(slug, ctx, colorScheme, cacheKey);
+      checkCache: async (slug: string, cacheKey?: string, nonce?: string) => {
+        const result = await this.cache.checkCache(slug, ctx, colorScheme, cacheKey, nonce);
         return {
           cachedResult: result.cachedResult,
           depAwareSlug: slug,
@@ -1186,8 +1280,13 @@ export class Renderer {
           lookupDurationMs: result.lookupDurationMs,
         };
       },
-      persistResult: async (result: RenderResult, slug: string, cacheKey?: string) => {
-        await this.cache.persistResult(result, slug, ctx, colorScheme, cacheKey);
+      persistResult: async (
+        result: RenderResult,
+        slug: string,
+        cacheKey?: string,
+        nonce?: string,
+      ) => {
+        await this.cache.persistResult(result, slug, ctx, colorScheme, cacheKey, nonce);
       },
       clearAll: () => this.cache.clearAll(),
       clearSlug: (slug: string) => this.cache.clearSlug(slug, ctx),
@@ -1204,6 +1303,7 @@ export class Renderer {
       mode: ctx.mode,
       projectDir: ctx.projectDir,
       isLocalProject: ctx.isLocalProject === true,
+      allowHostProjectCodeExecution: ctx.allowHostProjectCodeExecution,
       projectId: ctx.projectId,
       contentSourceId: ctx.contentSourceId,
       config: ctx.config,

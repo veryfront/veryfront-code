@@ -348,6 +348,127 @@ after another tab deletes the conversation. Use IndexedDB or a durable custom
 store with revisions, compare-and-set writes, and durable tombstones when the
 application must prevent stale overwrites or deletion resurrection.
 
+## Composition hooks
+
+When you compose the chat UI yourself (see [UI + chat](./chat-ui.md)), these
+hooks expose the state behind the components. Context-backed hooks must be used
+inside their matching provider (`<ChatInput>` / `<Message>` / `<Chat>`), while
+`useChatScroll` is standalone and can be used with any scroll container.
+
+### useChatInput
+
+The headless composer. Reads the enclosing `<ChatInput>` context and returns the
+input state plus prop-getters you spread onto your own elements. The getters
+merge your handlers/classes with the internal ones:
+
+```tsx
+"use client";
+
+import { useState } from "react";
+import { ChatInput, useChatInput } from "veryfront/chat";
+
+function Fields() {
+  const input = useChatInput();
+  return (
+    <form {...input.getFormProps()}>
+      <textarea {...input.getFieldProps()} placeholder="Message…" />
+      <button {...input.getSubmitProps()}>Send</button>
+    </form>
+  );
+}
+
+export function CustomComposer({
+  onSend,
+}: {
+  onSend: (message: { text: string }) => void;
+}) {
+  const [value, setValue] = useState("");
+  return (
+    <ChatInput.Root
+      input={value}
+      onChange={(event) => setValue(event.currentTarget.value)}
+      sendMessage={onSend}
+      setInput={setValue}
+    >
+      <Fields />
+    </ChatInput.Root>
+  );
+}
+```
+
+Getters: `getFormProps`, `getFieldProps` (for a textarea), `getSubmitProps`, `getAttachProps`,
+`getVoiceProps`. State: `input`, `canSubmit`, `canAttach`, `isLoading`, `isListening`,
+`canUseVoice`, `attachments`, `model`. Use `canAttach` and `canUseVoice` to omit custom
+controls when their corresponding capability is not configured. Their prop getters also
+return fail-closed `disabled` state so unavailable controls cannot be re-enabled accidentally.
+`mergeProps` is exported for composing several getters onto one element. The preset
+`<Chat>` wires `setInput` automatically; direct `<ChatInput>` or `<ChatInput.Root>`
+providers must receive `setInput` before a headless child calls `input.setInput(...)`.
+
+### useChatScroll
+
+Stick-to-bottom scroll management for a message list. Attach `scrollRef` to the
+viewport and `contentRef` to the growing content; the hook keeps the user pinned
+to the bottom while streaming:
+
+```tsx
+"use client";
+
+import { type ChatMessage, Message, useChatScroll } from "veryfront/chat";
+
+export default function CustomTranscript(
+  { messages }: { messages: ChatMessage[] },
+) {
+  const scroll = useChatScroll<HTMLDivElement>(messages.length);
+
+  return (
+    <div ref={scroll.scrollRef} className="overflow-y-auto">
+      <div ref={scroll.contentRef}>
+        {messages.map((message) => <Message key={message.id} message={message} />)}
+      </div>
+    </div>
+  );
+}
+```
+
+Also: `viewportRef`, `isAtBottom`, `scrollToBottom`/`scrollToEnd`, `scrollToStart`,
+`scrollToMessage(id)`, and `getViewportProps()`.
+
+### useMessageBranches
+
+The regeneration/edit variants of a message (what `BranchPicker` shows). Must be
+used inside a `<Message>`:
+
+```tsx
+"use client";
+
+import { type ChatMessage, Message, useMessageBranches } from "veryfront/chat";
+
+function BranchButtons() {
+  const branches = useMessageBranches();
+  return (
+    <nav aria-label="Message variants">
+      <button disabled={!branches.hasPrevious} onClick={branches.previous}>
+        Previous
+      </button>
+      <span>{branches.index + 1} / {branches.count}</span>
+      <button disabled={!branches.hasNext} onClick={branches.next}>
+        Next
+      </button>
+    </nav>
+  );
+}
+
+export function BranchedMessage({ message }: { message: ChatMessage }) {
+  return (
+    <Message.Root message={message}>
+      <Message.Content />
+      <BranchButtons />
+    </Message.Root>
+  );
+}
+```
+
 ## Inference mode
 
 `useChat` exposes `inferenceMode` so your UI can show whether inference is running through cloud, server-local, or browser runtime.

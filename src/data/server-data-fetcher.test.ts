@@ -1,12 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { ServerDataFetcher } from "./server-data-fetcher.ts";
+import { __resolveDataWorkerIdentityForTests, ServerDataFetcher } from "./server-data-fetcher.ts";
 import type { DataContext, DataResult, PageWithData } from "./types.ts";
 import { notFound, redirect } from "./helpers.ts";
 import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { join } from "node:path";
+import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
+import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
+import { TimeoutError } from "#veryfront/rendering/utils/stream-utils.ts";
+import { FakeTime } from "#std/testing/time";
 
 describe("ServerDataFetcher", () => {
   function createContext(overrides: Partial<DataContext> = {}): DataContext {
@@ -30,6 +34,126 @@ describe("ServerDataFetcher", () => {
   });
 
   describe("fetch", () => {
+    it("rejects remote raw server-data execution before project code runs", async () => {
+      const fetcher = new ServerDataFetcher();
+      let executed = false;
+      const pageModule: PageWithData = {
+        default: () => null,
+        getServerData: () => {
+          executed = true;
+          return { props: {} };
+        },
+      };
+
+      await assertRejects(
+        () =>
+          fetcher.fetch(pageModule, createContext(), {
+            isLocalProject: false,
+            modulePath: "/tenant/page.ts",
+            projectDir: "/tenant",
+          }),
+        Error,
+        "Remote server-data execution requires",
+      );
+      assertEquals(executed, false);
+    });
+
+    it("allows server-data execution in an explicitly capable dedicated runtime", async () => {
+      const fetcher = new ServerDataFetcher();
+      let executed = false;
+      const pageModule: PageWithData = {
+        default: () => null,
+        getServerData: () => {
+          executed = true;
+          return { props: { source: "dedicated" } };
+        },
+      };
+
+      const result = await fetcher.fetch(pageModule, createContext(), {
+        isLocalProject: false,
+        allowHostProjectCodeExecution: true,
+      });
+
+      assertEquals(result.props, { source: "dedicated" });
+      assertEquals(executed, true);
+    });
+
+    it("binds reusable data workers to tenant, source, policy, and project env", async () => {
+      const identity = (
+        workerScope: string,
+        sourceGeneration: string,
+        policy: Parameters<typeof runWithExactSourceIntegrationPolicy>[0],
+        projectEnv: Record<string, string>,
+      ) =>
+        runWithProjectEnv(
+          projectEnv,
+          () =>
+            runWithExactSourceIntegrationPolicy(policy, () =>
+              __resolveDataWorkerIdentityForTests({
+                workerScope,
+                sourceGeneration,
+              })),
+        );
+
+      const unrestricted = { schemaVersion: 1, mode: "unrestricted" } as const;
+      const denyAll = {
+        schemaVersion: 1,
+        mode: "allowlist",
+        integrations: {},
+      } as const;
+      const baseline = await identity("tenant-a", "release-a", unrestricted, {
+        TENANT_SECRET: "one",
+      });
+      const same = await identity("tenant-a", "release-a", unrestricted, {
+        TENANT_SECRET: "one",
+      });
+      const changedTenant = await identity("tenant-b", "release-a", unrestricted, {
+        TENANT_SECRET: "one",
+      });
+      const changedSource = await identity("tenant-a", "release-b", unrestricted, {
+        TENANT_SECRET: "one",
+      });
+      const changedPolicy = await identity("tenant-a", "release-a", denyAll, {
+        TENANT_SECRET: "one",
+      });
+      const changedEnv = await identity("tenant-a", "release-a", unrestricted, {
+        TENANT_SECRET: "two",
+      });
+      const allowStripe = {
+        schemaVersion: 1,
+        mode: "allowlist",
+        integrations: { stripe: { allowedToolIds: null } },
+      } as const;
+      const changedAllowlist = await identity("tenant-a", "release-a", allowStripe, {
+        TENANT_SECRET: "one",
+      });
+
+      assertEquals(baseline.reusable, true);
+      assertEquals(same.workerId, baseline.workerId);
+      assertEquals(changedTenant.workerId === baseline.workerId, false);
+      assertEquals(changedSource.workerId === baseline.workerId, false);
+      assertEquals(changedPolicy.workerId === baseline.workerId, false);
+      assertEquals(changedEnv.workerId === baseline.workerId, false);
+      assertEquals(
+        changedAllowlist.workerId === changedPolicy.workerId,
+        false,
+        "two allowlist policies with different integrations must not share a reusable worker",
+      );
+    });
+
+    it("does not reuse a data worker without a host-owned scope and generation", async () => {
+      const unscoped = await runWithExactSourceIntegrationPolicy(
+        { schemaVersion: 1, mode: "unrestricted" },
+        () => __resolveDataWorkerIdentityForTests({}),
+      );
+
+      assertEquals(
+        unscoped.reusable,
+        false,
+        "an admission without a host-owned scope must stay single-use so its worker is evicted",
+      );
+    });
+
     it("should return empty props when getServerData is not defined", async () => {
       const fetcher = new ServerDataFetcher();
       const pageModule: PageWithData = { default: () => null };
@@ -131,6 +255,52 @@ describe("ServerDataFetcher", () => {
       assertEquals(result.revalidate, 60);
     });
 
+    it("preserves response metadata returned from getServerData", async () => {
+      const fetcher = new ServerDataFetcher();
+      const pageModule: PageWithData = {
+        default: () => null,
+        getServerData: (): DataResult => ({
+          props: { ok: true },
+          headers: { "x-page-state": "fresh" },
+          cookies: [{
+            name: "session",
+            value: "abc",
+            path: "/",
+            httpOnly: true,
+            sameSite: "lax",
+          }],
+        }),
+      };
+
+      const result = await fetcher.fetch(pageModule, createContext());
+
+      assertEquals(result.headers, { "x-page-state": "fresh" });
+      assertEquals(result.cookies, [{
+        name: "session",
+        value: "abc",
+        path: "/",
+        httpOnly: true,
+        sameSite: "lax",
+      }]);
+    });
+
+    it("rejects framework-owned headers from getServerData", async () => {
+      const fetcher = new ServerDataFetcher();
+      const pageModule: PageWithData = {
+        default: () => null,
+        getServerData: () => ({
+          props: {},
+          headers: { "set-cookie": "session=unsafe" },
+        } as DataResult & { headers: Record<string, string> }),
+      };
+
+      await assertRejects(
+        () => fetcher.fetch(pageModule, createContext()),
+        TypeError,
+        'getServerData cannot set framework-owned response header "set-cookie"',
+      );
+    });
+
     it("should handle revalidate: false", async () => {
       const fetcher = new ServerDataFetcher();
       const pageModule: PageWithData = {
@@ -172,6 +342,30 @@ describe("ServerDataFetcher", () => {
         Error,
         "Database connection failed",
       );
+    });
+
+    it("fails a getServerData that never settles after the data fetch timeout", async () => {
+      using time = new FakeTime();
+      const fetcher = new ServerDataFetcher();
+      const pageModule: PageWithData = {
+        default: () => null,
+        getServerData: () => new Promise<never>(() => {}),
+      };
+      // An isolated breaker namespace keeps this deliberate failure from
+      // counting against the shared "default" project breaker.
+      const request = new Request("http://localhost/test", {
+        headers: { "x-project-id": "data-fetch-timeout-test" },
+      });
+
+      const rejected = assertRejects(
+        () => fetcher.fetch(pageModule, createContext({ request })),
+        TimeoutError,
+        "getServerData for /test",
+        "a hung loader must fail after the data fetch timeout instead of hanging the request",
+      );
+
+      await time.tickAsync(DATA_FETCH_TIMEOUT_MS + 1);
+      await rejected;
     });
 
     it("should support synchronous getServerData", async () => {
@@ -268,7 +462,7 @@ describe("ServerDataFetcher", () => {
             { modulePath: "/tmp/test/page.ts", projectDir: "/tmp/test" },
           ),
         Error,
-        "too large",
+        "exceeds size limit",
       );
     });
 
@@ -298,11 +492,48 @@ describe("ServerDataFetcher", () => {
             { modulePath: "/tmp/test/page.ts", projectDir: "/tmp/test" },
           ),
         Error,
-        "too large",
+        "exceeds size limit",
       );
     });
 
-    it("should skip body size guard when request has no body", async () => {
+    it("should bound chunked bodies while streaming and cancel the source", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_DATA", "1");
+      __resetPoolForTests();
+
+      const fetcher = new ServerDataFetcher();
+      const pageModule: PageWithData = {
+        default: () => null,
+        getServerData: () => ({ props: {} }),
+      };
+      const chunk = new Uint8Array(6 * 1024 * 1024);
+      let cancelled = false;
+      const request = new Request("http://localhost/test", {
+        method: "POST",
+        body: new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.enqueue(chunk);
+          },
+          cancel() {
+            cancelled = true;
+          },
+        }),
+      });
+
+      await assertRejects(
+        () =>
+          fetcher.fetch(
+            pageModule,
+            createContext({ request }),
+            { modulePath: "/tmp/test/page.ts", projectDir: "/tmp/test" },
+          ),
+        Error,
+        "exceeds size limit",
+      );
+      assertEquals(cancelled, true);
+    });
+
+    it("requires an exact source integration policy even for a bodyless isolated fetch", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_DATA", "1");
       __resetPoolForTests();
@@ -318,7 +549,7 @@ describe("ServerDataFetcher", () => {
 
       // The worker boundary is strict: isolated project code cannot run without
       // the exact source policy established by request middleware.
-      await assertRejects(
+      const error = (await assertRejects(
         () =>
           fetcher.fetch(
             pageModule,
@@ -327,6 +558,11 @@ describe("ServerDataFetcher", () => {
           ),
         Error,
         "requires an exact source integration policy",
+      )) as Error;
+      assertEquals(
+        error.message.includes("exceeds size limit"),
+        false,
+        "a bodyless request must never engage the worker body size guard",
       );
     });
   });
@@ -364,6 +600,24 @@ describe("ServerDataFetcher", () => {
       assertEquals(result.redirect?.destination, "/login");
       assertEquals(result.redirect?.permanent, true);
       assertEquals(result.notFound, undefined);
+    });
+
+    it("preserves response metadata from a thrown redirect()", async () => {
+      const fetcher = new ServerDataFetcher();
+      const pageModule: PageWithData = {
+        default: () => null,
+        getServerData: () => {
+          throw redirect("/account", false, {
+            headers: { "x-auth-result": "signed-in" },
+            cookies: [{ name: "session", value: "abc", path: "/" }],
+          });
+        },
+      };
+
+      const result = await fetcher.fetch(pageModule, createContext());
+
+      assertEquals(result.headers, { "x-auth-result": "signed-in" });
+      assertEquals(result.cookies, [{ name: "session", value: "abc", path: "/" }]);
     });
 
     it("still propagates a genuine Error", async () => {
@@ -532,6 +786,7 @@ describe("ServerDataFetcher", () => {
       function isolatedFetch(
         modulePath: string,
         dir: string,
+        context: DataContext = createContext(),
       ): Promise<DataResult> {
         const fetcher = new ServerDataFetcher();
         const pageModule: PageWithData = {
@@ -542,9 +797,10 @@ describe("ServerDataFetcher", () => {
         return runWithExactSourceIntegrationPolicy(
           { schemaVersion: 1, mode: "unrestricted" },
           () =>
-            fetcher.fetch(pageModule, createContext(), {
+            fetcher.fetch(pageModule, context, {
               modulePath,
               projectDir: dir,
+              isLocalProject: true,
             }),
         );
       }
@@ -568,7 +824,11 @@ describe("ServerDataFetcher", () => {
       it("treats a thrown redirect() as a redirect result", async () => {
         const { modulePath, projectDir: dir } = await writeIsolatedPage(
           `export function getServerData() {
-             const result = { redirect: { destination: "/login", permanent: true } };
+             const result = {
+               redirect: { destination: "/login", permanent: true },
+               headers: { "x-auth-result": "signed-in" },
+               cookies: [{ name: "session", value: "abc", path: "/" }],
+             };
              ${BRAND_SOURCE}
              throw result;
            }
@@ -580,6 +840,8 @@ describe("ServerDataFetcher", () => {
         assertEquals(result.redirect?.destination, "/login");
         assertEquals(result.redirect?.permanent, true);
         assertEquals(result.notFound, undefined);
+        assertEquals(result.headers, { "x-auth-result": "signed-in" });
+        assertEquals(result.cookies, [{ name: "session", value: "abc", path: "/" }]);
       });
 
       it("still propagates a genuine Error thrown in the worker", async () => {
@@ -595,6 +857,43 @@ describe("ServerDataFetcher", () => {
           Error,
           "intentional test error from isolated getServerData",
         );
+      });
+
+      it("does not expose infrastructure headers to isolated server-data hooks", async () => {
+        const { modulePath, projectDir: dir } = await writeIsolatedPage(
+          `export function getServerData(context) {
+             return {
+               props: {
+                 authorization: context.request.headers.get("authorization"),
+                 projectId: context.request.headers.get("x-project-id"),
+                 token: context.request.headers.get("x-token"),
+                 veryfront: context.request.headers.get("x-veryfront-release-id"),
+               },
+             };
+           }
+           export default function Page() { return null; }`,
+        );
+        const request = new Request("http://localhost/test", {
+          headers: {
+            authorization: "Bearer application-user",
+            "x-project-id": "tenant-42",
+            "x-token": "platform-secret",
+            "x-veryfront-release-id": "release-secret",
+          },
+        });
+
+        const result = await isolatedFetch(
+          modulePath,
+          dir,
+          createContext({ request }),
+        );
+
+        assertEquals(result.props, {
+          authorization: "Bearer application-user",
+          projectId: null,
+          token: null,
+          veryfront: null,
+        });
       });
     });
 

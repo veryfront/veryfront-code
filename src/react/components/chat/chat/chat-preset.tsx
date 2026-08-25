@@ -1,7 +1,7 @@
 /**
  * Batteries-included Chat preset and its compound component surface.
  *
- * @module react/components/chat/chat-preset
+ * @module react/components/chat/chat/chat-preset
  */
 import * as React from "react";
 
@@ -10,12 +10,12 @@ import type { ChatProps } from "./chat-props.ts";
 import { ControlledChat } from "./controlled-chat.tsx";
 import { ConversationBoundChat } from "./app-mode-chat.tsx";
 import { ChatMessagesSkeleton } from "./components/chat-messages-skeleton.tsx";
-import { ChatInput } from "./composition/chat-composer.tsx";
 import { ChatEmpty } from "./composition/chat-empty.tsx";
+import { ErrorBanner } from "./composition/error-banner.tsx";
 import { ChatIf } from "./composition/chat-if.tsx";
+import { ChatInput } from "./composition/chat-composer.tsx";
 import { ChatMessageList } from "./composition/chat-message-list.tsx";
 import { ChatRoot } from "./composition/chat-root.tsx";
-import { ErrorBanner } from "./composition/error-banner.tsx";
 import { Message } from "./composition/message.tsx";
 
 /**

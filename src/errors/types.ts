@@ -1,9 +1,12 @@
 import { buildErrorDocsUrl, sanitizeBoundedDiagnosticText } from "./diagnostic-policy.ts";
 
+const apply = Reflect.apply;
 const freeze = Object.freeze;
 const getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const numberIsFinite = Number.isFinite;
 const VERYFRONT_ERROR_INSTANCES = new WeakSet<object>();
+const weakSetAdd = WeakSet.prototype.add;
+const weakSetHas = WeakSet.prototype.has;
 
 /**
  * Error categories for domain-based grouping and handling
@@ -170,7 +173,7 @@ export class VeryfrontError extends Error {
 
   constructor(message: string, options: VeryfrontErrorOptions) {
     super(message);
-    VERYFRONT_ERROR_INSTANCES.add(this);
+    apply(weakSetAdd, VERYFRONT_ERROR_INSTANCES, [this]);
     this.name = "VeryfrontError";
 
     this.slug = options.slug;
@@ -232,7 +235,7 @@ export class VeryfrontError extends Error {
 export function isVeryfrontErrorInstance(error: unknown): error is VeryfrontError {
   return typeof error === "object" &&
     error !== null &&
-    VERYFRONT_ERROR_INSTANCES.has(error);
+    apply(weakSetHas, VERYFRONT_ERROR_INSTANCES, [error]) === true;
 }
 
 /**

@@ -256,6 +256,11 @@ await loader.prefetch("/about");
 
 ### Client-Side Navigation
 
+Managed document-head state for a fetched page comes from the server-generated
+`managedHeadPayload` in hydration data. Attributes inside application root
+markup are not a trust signal and cannot add scripts, styles, links, or metadata
+to a client navigation.
+
 ```typescript
 import { NavigationHandlers, PageTransition } from "#veryfront/routing";
 

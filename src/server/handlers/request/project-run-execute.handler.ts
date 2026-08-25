@@ -123,6 +123,7 @@ export interface ProjectRunExecuteHandlerDeps {
       adapter: RuntimeAdapter;
       config?: VeryfrontConfig;
       debug?: boolean;
+      allowHostProjectCodeExecution?: boolean;
     },
   ): Promise<DiscoveredWorkflow | null>;
   findEvalById(
@@ -132,6 +133,7 @@ export interface ProjectRunExecuteHandlerDeps {
       adapter: RuntimeAdapter;
       config?: VeryfrontConfig;
       debug?: boolean;
+      allowHostProjectCodeExecution?: boolean;
     },
   ): Promise<DiscoveredEval | null>;
   createWorkflowClient(
@@ -421,6 +423,7 @@ async function executeWorkflowRun(
     adapter: ctx.adapter,
     config: ctx.config,
     debug: ctx.debug,
+    allowHostProjectCodeExecution: ctx.allowHostProjectCodeExecution,
   });
 
   if (!workflow) {
@@ -610,7 +613,10 @@ function createLocalEvalAgentFetch(input: {
   const agent = agentRegistry.get(input.agentId);
   if (!agent) return undefined;
 
-  const handler = createAgUiHandler({ agent });
+  const handler = createAgUiHandler({
+    agent,
+    context: { runIdBindsToolAuthorization: false },
+  });
   return async (requestInput, init) => {
     const request = new Request(requestInput, init);
     if (!isLocalAgUiEndpoint(request.url)) return fetch(request);
@@ -1020,6 +1026,7 @@ async function executeEvalRun(
     adapter: ctx.adapter,
     config: ctx.config,
     debug: ctx.debug,
+    allowHostProjectCodeExecution: ctx.allowHostProjectCodeExecution,
   });
 
   if (!evalItem) {
@@ -1138,6 +1145,7 @@ async function executeReleaseAssetBuildRun(input: {
           ssr: options.ssr,
           studioEmbed: false,
           reactVersion: options.reactVersion,
+          serverExternalPackages: releaseConfig.build?.serverExternalPackages,
           dependencyPinningCacheKey: options.dependencyPinningSnapshot?.cacheKey,
           dependencyPinningDependencies: options.dependencyPinningSnapshot?.dependencies,
           dependencyPinningSource: options.dependencyPinningSource,

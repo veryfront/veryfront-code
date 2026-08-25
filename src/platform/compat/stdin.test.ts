@@ -206,6 +206,27 @@ describe("readStdinLine", () => {
 
     assertEquals(await readStdinLine(reader), "yes");
   });
+
+  it("returns the final unterminated line at EOF", async () => {
+    const chunks = [new TextEncoder().encode("yes")];
+    let released = false;
+    const reader: StdinReader = {
+      read: () => {
+        const value = chunks.shift();
+        return Promise.resolve({ value, done: value === undefined });
+      },
+      releaseLock: () => {
+        released = true;
+      },
+    };
+
+    assertEquals(
+      await readStdinLine(reader),
+      "yes",
+      "input with no trailing newline must be returned at EOF",
+    );
+    assertEquals(released, true, "the reader lock must be released");
+  });
 });
 
 describe("createNodeStdinReader", () => {
@@ -296,6 +317,42 @@ describe("createNodeStdinReader", () => {
     listeners.get("end")?.(new Uint8Array());
 
     assertEquals(await reader.read(), { value: undefined, done: true });
+    reader.releaseLock();
+  });
+
+  it("pauses stdin at the buffer cap and resumes once it drains", async () => {
+    const listeners = new Map<string, (data: Uint8Array) => void>();
+    let pauseCalls = 0;
+    let resumeCalls = 0;
+    const reader = createNodeStdinReader({
+      on: (event, listener) => {
+        listeners.set(event, listener);
+      },
+      off: (event) => {
+        listeners.delete(event);
+      },
+      pause: () => {
+        pauseCalls++;
+      },
+      resume: () => {
+        resumeCalls++;
+      },
+    });
+    const resumesAfterAttach = resumeCalls;
+
+    listeners.get("data")?.(new Uint8Array(1024 * 1024));
+    assertEquals(pauseCalls, 1, "stdin must pause once the unread buffer reaches the 1 MiB cap");
+    listeners.get("data")?.(new Uint8Array(1));
+    assertEquals(pauseCalls, 1, "stdin must not be paused again while already paused");
+
+    const first = await reader.read();
+    assertEquals(first.value?.byteLength, 1024 * 1024, "the buffered chunk is drained first");
+    assertEquals(
+      resumeCalls,
+      resumesAfterAttach + 1,
+      "stdin must resume once the buffer drains below half the cap",
+    );
+
     reader.releaseLock();
   });
 

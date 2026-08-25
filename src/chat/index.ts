@@ -21,7 +21,9 @@
  *   const chat = useChat();
  *   return (
  *     <Chat.Root messages={chat.messages} input={chat.input}>
- *       <Chat.Empty title="Ask me anything" />
+ *       <Chat.If condition={(ctx) => ctx.isEmpty}>
+ *         <Chat.Empty title="Ask me anything" />
+ *       </Chat.If>
  *       <Chat.MessageList messages={chat.messages} />
  *       <Chat.Input input={chat.input} onChange={chat.handleInputChange} onSubmit={chat.handleSubmit} />
  *     </Chat.Root>
@@ -77,15 +79,11 @@ export {
 export {
   ChatContextProvider,
   type ChatContextValue,
-  ComposerContextProvider,
-  type ComposerContextValue,
   MessageContextProvider,
   type MessageContextValue,
   type MessagePartsData,
   useChatContext,
   useChatContextOptional,
-  useComposerContext,
-  useComposerContextOptional,
   useMessageContext,
   useMessageContextOptional,
   useMessageParts,
@@ -115,12 +113,12 @@ export {
   type ChatSidebarEmptyProps,
   type ChatSidebarGroupProps,
   type ChatSidebarItemProps,
+  type ChatSidebarItemTitleProps,
   type ChatSidebarListProps,
   type ChatSidebarNewButtonProps,
   type ChatSidebarProps,
   type ChatSidebarRootProps,
   type ChatTab,
-  type CodeBlockProps,
   ConversationEmptyState,
   type ConversationEmptyStateProps,
   ConversationScrollButton,
@@ -164,7 +162,6 @@ export {
   type QuickAction,
   QuickActions,
   type QuickActionsProps,
-  RichCodeBlock,
   Shimmer,
   SkillBadge,
   type SkillBadgeProps,
@@ -192,18 +189,13 @@ export {
   type UseAttachmentsRequestState,
   type UseAttachmentsResult,
   type UseAttachmentsStorageState,
+  useChatSidebarItem,
   useModelSelector,
   useSources,
   useStepIndicator,
-  useStickToBottom,
-  type UseStickToBottomOptions,
-  type UseStickToBottomResult,
   useUpload,
   type UseUploadOptions,
   type UseUploadResult,
-  useUploadsRegistry,
-  type UseUploadsRegistryOptions,
-  type UseUploadsRegistryResult,
 } from "#veryfront/react/components/chat/chat.tsx";
 
 // Conversation persistence adapters and hooks. localStorage is the convenience
@@ -249,8 +241,30 @@ export {
   type AttachmentPillContextValue,
   type AttachmentPillProps,
   ChatInput,
+  type ChatInputActionProps,
+  ChatInputAttach,
+  type ChatInputAttachProps,
+  ChatInputExport,
   type ChatInputExportProps,
+  ChatInputField,
+  type ChatInputFieldProps,
+  ChatInputModel,
+  type ChatInputModelProps,
   type ChatInputProps,
+  ChatInputRoot,
+  type ChatInputRootProps,
+  ChatInputSend,
+  type ChatInputSendProps,
+  type ChatInputSlottedActionProps,
+  type ChatInputSlottedSubmitProps,
+  ChatInputStop,
+  type ChatInputStopProps,
+  ChatInputSubmit,
+  type ChatInputSubmitProps,
+  ChatInputToolbar,
+  type ChatInputToolbarProps,
+  ChatInputVoice,
+  type ChatInputVoiceProps,
   Reasoning,
   type ReasoningContextValue,
   type ReasoningProps,
@@ -262,6 +276,21 @@ export {
   useAttachmentPill,
   useReasoning,
   useToolCall,
+} from "#veryfront/react/components/chat/chat.tsx";
+// RFC 2980 canonical hook + context surface.
+export {
+  ChatInputContextProvider,
+  type ChatInputContextValue,
+  mergeProps,
+  useChatInput,
+  useChatInputContext,
+  useChatInputContextOptional,
+  type UseChatInputResult,
+  useChatScroll,
+  type UseChatScrollOptions,
+  type UseChatScrollResult,
+  useMessageBranches,
+  type UseMessageBranchesResult,
 } from "#veryfront/react/components/chat/chat.tsx";
 export { Markdown, type MarkdownProps } from "#veryfront/react/components/chat/markdown.tsx";
 
@@ -316,6 +345,7 @@ export {
   type ChatActionsItemProps,
   type ChatActionsProps,
   type ChatActionsSettings,
+  type ChatActionsSlottedTriggerProps,
   type ChatActionsTriggerProps,
   useChatActions,
 } from "#veryfront/react/components/chat/chat-actions.tsx";
@@ -389,9 +419,11 @@ export {
   type AgentMetadataSuggestion,
   type AgentMetadataSuggestions,
   type AgentMetadataTaskSuggestion,
+  getAgentPromptSuggestionItems,
   getAgentPromptSuggestions,
   normalizeAgentMetadata,
   normalizeAgentMetadataResponse,
+  type PromptSuggestion,
   useAgentMetadata,
   type UseAgentMetadataResult,
 } from "#veryfront/agent/react/use-agent-metadata.ts";

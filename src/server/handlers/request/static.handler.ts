@@ -92,6 +92,7 @@ export class StaticHandler extends BaseHandler {
           adapter: ctx.adapter,
           isPreviewMode,
           isLocalProject: isLocal,
+          buildOutDir: ctx.config?.build?.outDir,
         };
 
         const result = await this.staticService.resolveFile(pathname, resolveOptions);
@@ -122,6 +123,9 @@ export class StaticHandler extends BaseHandler {
             );
         }
 
+        // Static HTML is an explicitly source-authored document. Rebind its
+        // inline tags to the per-response nonce so build output remains usable
+        // under the CSP header emitted for this response.
         const responseData = isHtmlResponse(result.contentType)
           ? new TextEncoder().encode(
             addNonceToHtmlTags(new TextDecoder().decode(result.data), builder.nonce),

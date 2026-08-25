@@ -243,7 +243,7 @@ describe("config/env", () => {
   });
 
   describe("getGoogleGenAIEnvConfig", () => {
-    const keys = ["GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"];
+    const keys = ["GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY", "GOOGLE_GEMINI_BASE_URL"];
     afterEach(() => {
       for (const k of keys) {
         try {
@@ -262,6 +262,19 @@ describe("config/env", () => {
       setEnv("GOOGLE_GENERATIVE_AI_API_KEY", "AIza-fallback");
       const config = getGoogleGenAIEnvConfig();
       assertEquals(config.apiKey, "AIza-fallback");
+    });
+
+    it("should return a custom base URL from GOOGLE_GEMINI_BASE_URL", () => {
+      setEnv("GOOGLE_API_KEY", "AIza-test");
+      setEnv("GOOGLE_GEMINI_BASE_URL", "https://gemini.proxy.test/v1beta");
+      const config = getGoogleGenAIEnvConfig();
+      assertEquals(config.baseURL, "https://gemini.proxy.test/v1beta");
+    });
+
+    it("should leave the base URL undefined when unset", () => {
+      setEnv("GOOGLE_API_KEY", "AIza-test");
+      const config = getGoogleGenAIEnvConfig();
+      assertEquals(config.baseURL, undefined);
     });
   });
 

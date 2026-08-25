@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntime } from "#veryfront/provider";
 import { agent, resolveSecurityMiddleware } from "./factory.ts";
@@ -254,12 +254,27 @@ describe("resolveSecurityMiddleware", () => {
 
       await result.toDataStreamResponse().text();
 
-      assertEquals(capturedAbortSignal instanceof AbortSignal, true);
-      assertEquals(capturedAbortSignal?.aborted, false);
-      assertEquals(typeof forwardedOnFinish, "function");
-      assertEquals(finishCalls.length, 1);
-      assertEquals(finishCalls[0]?.text, "stream complete");
-      assertEquals(finishCalls[0]?.status, "completed");
+      assertStrictEquals(
+        capturedAbortSignal,
+        abortController.signal,
+        "agent.stream must forward the caller AbortSignal object unchanged to runtime.stream",
+      );
+      assertEquals(capturedAbortSignal?.aborted, false, "forwarded signal must not start aborted");
+      assertEquals(
+        typeof forwardedOnFinish,
+        "function",
+        "onFinish must be forwarded as a callback",
+      );
+      assertEquals(finishCalls.length, 1, "onFinish must be invoked exactly once");
+      assertEquals(finishCalls[0]?.text, "stream complete", "onFinish receives the final text");
+      assertEquals(finishCalls[0]?.status, "completed", "onFinish receives the final status");
+
+      abortController.abort();
+      assertEquals(
+        capturedAbortSignal?.aborted,
+        true,
+        "aborting the caller controller must abort the signal the runtime received",
+      );
     } finally {
       AgentRuntime.prototype.stream = originalStream;
     }

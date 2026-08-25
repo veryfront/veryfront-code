@@ -44,14 +44,15 @@ export {
 } from "@veryfront/react-upstream";
 
 export const __CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE = (
-  ReactUpstream as unknown as {
+  ReactUpstream as typeof ReactUpstream & {
     __CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE: unknown;
   }
 ).__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
-export const __COMPILER_RUNTIME = (ReactUpstream as unknown as { __COMPILER_RUNTIME: unknown })
-  .__COMPILER_RUNTIME;
+export const __COMPILER_RUNTIME =
+  (ReactUpstream as typeof ReactUpstream & { __COMPILER_RUNTIME: unknown })
+    .__COMPILER_RUNTIME;
 export const unstable_useCacheRefresh =
-  (ReactUpstream as unknown as { unstable_useCacheRefresh: unknown })
+  (ReactUpstream as typeof ReactUpstream & { unstable_useCacheRefresh: unknown })
     .unstable_useCacheRefresh;
 
 export type {

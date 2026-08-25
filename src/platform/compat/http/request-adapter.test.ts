@@ -1,8 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { Readable } from "node:stream";
-import { convertNodeRequestToWebRequest } from "./request-adapter.ts";
+import { buildNodeRequestInit, convertNodeRequestToWebRequest } from "./request-adapter.ts";
 
 /**
  * Build a mock that mirrors a Node `http.IncomingMessage`: a readable stream
@@ -77,6 +78,20 @@ describe("convertNodeRequestToWebRequest", () => {
     assertEquals(await result.text(), '{"jsonrpc":"2.0","method":"initialize"}');
   });
 
+  it("sets duplex: half only when a streaming body is attached", () => {
+    const withBody = buildNodeRequestInit(
+      createMockReq("POST", { "content-length": "3" }, ["abc"]) as never,
+    );
+    assertEquals(
+      withBody.duplex,
+      "half",
+      "streaming bodies must set duplex: half so undici accepts them",
+    );
+
+    const bodyless = buildNodeRequestInit(createMockReq("GET", {}) as never);
+    assertEquals(bodyless.duplex, undefined, "bodyless requests must not set duplex");
+  });
+
   it("should not attach a body stream for bodyless POST requests", () => {
     const result = convertNodeRequestToWebRequest(
       createMockReq("POST", {}) as never,
@@ -104,6 +119,33 @@ describe("convertNodeRequestToWebRequest", () => {
 
     assertExists(result.body);
     assertEquals(await result.text(), "chunk");
+  });
+
+  it("pauses the Node request when the stream queue fills and resumes on pull", async () => {
+    const req = createMockReq("POST", { "transfer-encoding": "chunked" }, ["a", "b"]);
+    let pauseCalls = 0;
+    let resumeCalls = 0;
+    const origPause = req.pause.bind(req);
+    const origResume = req.resume.bind(req);
+    req.pause = () => {
+      pauseCalls++;
+      return origPause();
+    };
+    req.resume = () => {
+      resumeCalls++;
+      return origResume();
+    };
+
+    // No reader is attached yet, so the first enqueue fills the default
+    // one-chunk queue and must pause the Node request.
+    const result = convertNodeRequestToWebRequest(req as never, "http://localhost/mcp");
+    await waitFor(() => pauseCalls > 0, {
+      message: "a full stream queue must pause the Node request",
+    });
+    assertEquals(pauseCalls > 0, true, "a full stream queue must pause the Node request");
+
+    assertEquals(await result.text(), "ab", "the paused body must still drain fully");
+    assertEquals(resumeCalls > 1, true, "the consumer's pull must resume the Node request");
   });
 
   it("should preserve headers", () => {

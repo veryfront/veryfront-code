@@ -1,3 +1,5 @@
+import * as React from "react";
+import * as esbuild from "veryfront/extensions/bundler";
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
 import {
@@ -6,8 +8,7 @@ import {
   assertRejects,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { buildAppRoutes, buildPagesRoutes } from "./static-generation.ts";
+import { afterAll, afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { clearCSSCache, getCSSByHash } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontRenderer } from "#veryfront/rendering/orchestrator/ssr.ts";
@@ -17,12 +18,12 @@ import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { VeryfrontError } from "#veryfront/errors";
-import * as React from "react";
 import {
   __injectReactDOMServerForTests,
   __setServerModuleLoaderForTests,
   resetReactCache,
 } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
+import { buildAppRoutes, buildPagesRoutes } from "./static-generation.ts";
 
 function createMockAdapter(): RuntimeAdapter {
   const files = new Map<string, string>();
@@ -84,11 +85,29 @@ function hasEsmShReactImportMapValue(imports: Record<string, string>): boolean {
   return false;
 }
 
+function stubReactDOMServer(marker = "test") {
+  return {
+    renderToString: () => `<main>${marker}</main>`,
+    renderToStaticMarkup: () => `<main>${marker}</main>`,
+  };
+}
+
 describe(
   "build/production-build/static-generation",
-  { sanitizeOps: false, sanitizeResources: false },
   () => {
     const originalFlag = getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG);
+
+    afterAll(async () => {
+      await esbuild.stop();
+    });
+
+    beforeEach(() => {
+      __setServerModuleLoaderForTests((_url, label) => {
+        if (label === "React") return Promise.resolve({ default: React });
+        throw new Error(`Unexpected module load: ${label}`);
+      });
+      __injectReactDOMServerForTests(stubReactDOMServer());
+    });
 
     afterEach(() => {
       setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, originalFlag ?? "");
@@ -244,6 +263,87 @@ describe(
         assertStringIncludes(adapter.fs.files.get(cssPath!) ?? "", ".h-screen");
       });
 
+      it("includes CSS imported by App Router modules in production output", async () => {
+        const adapter = createMemoryAdapter();
+        adapter.fs.files.set("/tmp/project/globals.css", '@import "tailwindcss";');
+        adapter.fs.files.set(
+          "/tmp/project/app/foo/page.tsx",
+          `import "./foo.css";
+          export default function Page() {
+            return <main className="foo">Hello</main>;
+          }`,
+        );
+        adapter.fs.files.set(
+          "/tmp/project/app/foo/foo.css",
+          ".foo { color: red; }",
+        );
+
+        await buildAppRoutes(
+          [{
+            path: "/foo",
+            pageFile: "/tmp/project/app/foo/page.tsx",
+            segments: ["foo"],
+            segmentDirs: ["/tmp/project/app/foo"],
+          }],
+          {
+            adapter,
+            projectDir: "/tmp/project",
+            outputDir: "/tmp/output",
+            renderer: createMockRenderer(),
+            config: createMockConfig(),
+            enablePrefetch: false,
+            chunkManifest: null,
+          },
+        );
+
+        const cssPath = [...adapter.fs.files.keys()].find((path) =>
+          path.startsWith("/tmp/output/_vf/css/") && path.endsWith(".css")
+        );
+        assertEquals(typeof cssPath, "string");
+        assertStringIncludes(adapter.fs.files.get(cssPath!) ?? "", ".foo");
+      });
+
+      it("merges App Router CSS imports onto the default stylesheet when no global stylesheet exists", async () => {
+        const adapter = createMemoryAdapter();
+        adapter.fs.files.set(
+          "/tmp/project/app/foo/page.tsx",
+          `import "./foo.css";
+          export default function Page() {
+            return <main className="foo px-4">Hello</main>;
+          }`,
+        );
+        adapter.fs.files.set(
+          "/tmp/project/app/foo/foo.css",
+          ".foo { color: red; }",
+        );
+
+        await buildAppRoutes(
+          [{
+            path: "/foo",
+            pageFile: "/tmp/project/app/foo/page.tsx",
+            segments: ["foo"],
+            segmentDirs: ["/tmp/project/app/foo"],
+          }],
+          {
+            adapter,
+            projectDir: "/tmp/project",
+            outputDir: "/tmp/output",
+            renderer: createMockRenderer(),
+            config: createMockConfig(),
+            enablePrefetch: false,
+            chunkManifest: null,
+          },
+        );
+
+        const cssPath = [...adapter.fs.files.keys()].find((path) =>
+          path.startsWith("/tmp/output/_vf/css/") && path.endsWith(".css")
+        );
+        assertEquals(typeof cssPath, "string");
+        const css = adapter.fs.files.get(cssPath!) ?? "";
+        assertStringIncludes(css, ".foo");
+        assertStringIncludes(css, ".px-4");
+      });
+
       it("caches generated App Router CSS by hash for runtime CSS handler lookups", async () => {
         clearCSSCache();
         const adapter = createMemoryAdapter();
@@ -372,6 +472,80 @@ describe(
         );
         assertEquals(stats.pages, 1);
         assertEquals(stats.totalSize > 0, true);
+      });
+
+      it("writes the index slug to the output root", async () => {
+        const adapter = createMemoryAdapter();
+        await buildPagesRoutes(
+          [{ slug: "index", path: "/", file: "pages/index.mdx" }],
+          {
+            adapter,
+            projectDir: "/tmp/project",
+            outputDir: "/tmp/output",
+            renderer: createMockRenderer(),
+            config: createMockConfig(),
+            enablePrefetch: false,
+            chunkManifest: null,
+            dryRun: false,
+          },
+        );
+
+        assertEquals(
+          adapter.fs.files.has("/tmp/output/index.html"),
+          true,
+          "the index slug is written to the output root",
+        );
+        assertEquals(
+          adapter.fs.files.has("/tmp/output/index/index.html"),
+          false,
+          "the index slug must not be nested under an index/ directory",
+        );
+      });
+
+      it("injects preload links for split chunks when prefetch is enabled", async () => {
+        const adapter = createMemoryAdapter();
+        await buildPagesRoutes(
+          [{ slug: "about", path: "/about", file: "pages/about.mdx" }],
+          {
+            adapter,
+            projectDir: "/tmp/project",
+            outputDir: "/tmp/output",
+            renderer: createMockRenderer(),
+            config: createMockConfig(),
+            enablePrefetch: true,
+            chunkManifest: {
+              version: "1",
+              routes: {
+                "/about": {
+                  entry: "about.js",
+                  chunks: ["about.js"],
+                  preload: ["shared.js"],
+                  css: ["about.css"],
+                },
+              },
+              chunks: {},
+              shared: [],
+            },
+            dryRun: false,
+          },
+        );
+
+        const html = adapter.fs.files.get("/tmp/output/about/index.html") ?? "";
+        assertStringIncludes(
+          html,
+          '<link rel="modulepreload" href="/_veryfront/chunks/about.js">',
+          "the route entry chunk is preloaded",
+        );
+        assertStringIncludes(
+          html,
+          '<link rel="modulepreload" href="/_veryfront/chunks/shared.js">',
+          "chunks listed for preload are preloaded",
+        );
+        assertStringIncludes(
+          html,
+          '<link rel="preload" as="style" href="/_veryfront/chunks/about.css">',
+          "route stylesheets are preloaded",
+        );
       });
 
       it("writes transition data with root content instead of the full HTML document", async () => {

@@ -145,7 +145,7 @@ function parseContractMetadata(value: unknown): PackageContractMetadata | undefi
 }
 
 function readActivationMode(
-  metadata: Record<string, unknown>,
+  metadata: unknown,
 ):
   | ExtensionActivationMode
   | typeof MISSING_METADATA_PROPERTY
@@ -171,7 +171,7 @@ function quotedPath(path: string): string {
 export function resolvePackageActivation(
   metadata: PackageMetadata,
 ): ExtensionActivationMode {
-  const activation = readActivationMode(metadata as unknown as Record<string, unknown>);
+  const activation = readActivationMode(metadata);
   return activation === MISSING_METADATA_PROPERTY || activation === "auto" ? "auto" : "explicit";
 }
 

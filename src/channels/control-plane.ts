@@ -1,10 +1,15 @@
 import { SECURITY_VIOLATION } from "#veryfront/errors";
 import type { Agent } from "#veryfront/agent/types.ts";
+import type { DiscoveryResult } from "#veryfront/discovery";
 import type { HandlerContext } from "#veryfront/types/server.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
 import { base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
+import {
+  CONTROL_PLANE_RUN_OPERATION_PATH,
+  CONTROL_PLANE_RUN_PATH,
+} from "#veryfront/channels/control-plane-routes.ts";
 
 const SIGNATURE_SKEW_SECONDS = 5;
 const MAX_SIGNATURE_JWS_CODE_UNITS = 16 * 1024;
@@ -25,6 +30,155 @@ export const CONTROL_PLANE_RUN_STREAM_PATH = "/api/control-plane/runs/:runId/str
 
 const CONTROL_PLANE_RUN_ID_PATH_SEGMENT = "[^/]+";
 const CONTROL_PLANE_RUNS_REGEX_PREFIX = CONTROL_PLANE_RUNS_PATH_PREFIX.replaceAll("/", "\\/");
+
+/** Request header the control plane carries its signed operation envelope in. */
+export const CONTROL_PLANE_JWS_HEADER = "x-veryfront-control-plane-jws";
+
+/** Request header a platform channel dispatch carries its signed envelope in. */
+export const DISPATCH_JWS_HEADER = "x-veryfront-dispatch-jws";
+
+/** The one route that accepts a signed channel dispatch envelope. */
+export const CHANNEL_INVOKE_PATH = "/channels/invoke";
+
+/**
+ * True when a method and path pair addresses a registered control-plane handler.
+ *
+ * The reserved namespace is wider than the set of routes the runtime actually
+ * serves. Only these shapes reach a handler that authenticates a signed
+ * operation envelope through `verifyControlPlaneRequest`:
+ *
+ * - `POST /api/control-plane/agents/list`
+ * - `POST /api/control-plane/runs/{runId}/execute`
+ * - `POST /api/control-plane/runs/{runId}/stream`
+ * - `POST /api/control-plane/runs/{runId}/resume`
+ * - `DELETE /api/control-plane/runs/{runId}`
+ *
+ * Any other path under the prefix falls through to project code, so treating
+ * the prefix as proof of a control-plane request would hand a project's own
+ * routes whatever exemption the caller grants.
+ *
+ * Match this against `URL.pathname`, which resolves dot segments, so a path
+ * cannot be smuggled past the anchored patterns.
+ */
+export function isControlPlaneSurfaceRoute(
+  method: string,
+  pathname: string | undefined,
+): boolean {
+  const normalizedMethod = method.toUpperCase();
+  const requestPath = pathname ?? "";
+
+  if (normalizedMethod === "POST") {
+    return requestPath === CONTROL_PLANE_AGENTS_LIST_PATH ||
+      CONTROL_PLANE_RUN_OPERATION_PATH.test(requestPath);
+  }
+  if (normalizedMethod === "DELETE") {
+    return CONTROL_PLANE_RUN_PATH.test(requestPath);
+  }
+  return false;
+}
+
+/**
+ * True for a request that is a control-plane dispatch rather than a browser one.
+ *
+ * Both conditions must hold. The method and path must address a registered
+ * control-plane handler (see {@link isControlPlaneSurfaceRoute}), and the
+ * request must carry a control-plane signature header. The receiving handler
+ * verifies that envelope against the dispatch signing key, and the signature
+ * covers the request method and path, so an envelope minted for one surface
+ * cannot be replayed against another.
+ *
+ * Callers use this to keep gates that assume a browser client, such as CSRF
+ * double-submit validation, from standing in front of platform dispatch.
+ *
+ * Do not read a true result as evidence that the caller is the platform, and do
+ * not argue the exemption is safe because the header is hard to attach. It is
+ * not hard to attach. A project can configure a permissive `security.cors`, and
+ * on the default path `resolveNormalizedCORSPreflightPolicy` reflects whatever
+ * `Access-Control-Request-Headers` asked for, so the runtime will advertise this
+ * header to a cross-origin caller. The proxy likewise forwards an unverified
+ * `x-veryfront-*-jws` from a public request rather than stripping it. Assume an
+ * attacker can set this header at will.
+ *
+ * The exemption is safe for a narrower reason that does not depend on who can
+ * set the header. Skipping the gate concedes only the browser-credential check;
+ * authority still comes from the signature the receiving handler verifies, which
+ * an attacker cannot forge. And every route this predicate admits is owned by a
+ * handler registered ahead of `ApiHandlerWrapper` and instantiated
+ * unconditionally, so an admitted request always terminates at that verification
+ * and can never fall through to project code. A forged header buys a different
+ * rejection, nothing more. That ordering is the load-bearing part; it is pinned
+ * by `server/runtime-handler/dispatch-exemption-ordering.test.ts`, and the
+ * behaviour it protects by `security/http/dispatch-exemption-matrix.test.ts`.
+ *
+ * A project route that merely sits at a look-alike path is not a registered
+ * surface and does not satisfy this predicate at all.
+ *
+ * This is not authentication. It only reports that authority for the request
+ * comes from a signature the handler checks, never from ambient credentials.
+ */
+export function isSignedControlPlaneDispatch(req: Request): boolean {
+  const signature = req.headers.get(CONTROL_PLANE_JWS_HEADER);
+  if (signature === null || signature.length === 0) return false;
+
+  return isControlPlaneSurfaceRoute(req.method, new SafeURL(req.url).pathname);
+}
+
+/**
+ * True when a method and path pair addresses the channel dispatch handler.
+ *
+ * `POST /channels/invoke` is the one route `ChannelInvokeHandler` registers,
+ * and the only route that verifies a channel dispatch envelope. It is
+ * deliberately not part of {@link isControlPlaneSurfaceRoute}: the control
+ * plane's `channels` surface names a product surface inside a control-plane
+ * envelope, not this HTTP route, and this route carries a different envelope.
+ *
+ * The `/channels/` namespace is reserved but not exclusively routed, so any
+ * sibling or child path is matched exactly rather than by prefix. Match this
+ * against `URL.pathname`, which resolves dot segments.
+ */
+export function isChannelDispatchRoute(
+  method: string,
+  pathname: string | undefined,
+): boolean {
+  return method.toUpperCase() === "POST" && pathname === CHANNEL_INVOKE_PATH;
+}
+
+/**
+ * True for a request that is a platform channel dispatch rather than a browser one.
+ *
+ * Both conditions must hold. The method and path must be the one route the
+ * channel invoke handler owns (see {@link isChannelDispatchRoute}), and the
+ * request must carry a dispatch signature header. The handler then verifies
+ * that envelope with `verifyDispatchJws`, which binds the Ed25519 signature to
+ * the issuer, the project audience, the project id, the dispatch id, the
+ * platform and a SHA-256 hash of the body, with expiry and skew bounds; the
+ * handler additionally rejects an envelope whose claims do not match the
+ * dispatch id, platform and project id in the payload it acts on.
+ *
+ * Callers use this to keep gates that assume a browser client, such as CSRF
+ * double-submit validation, from standing in front of platform dispatch. The
+ * channel dispatcher and the runtime-owner re-dispatch in
+ * `resolveRuntimeOwnerInvokeUrl` hold no `__Host-vf_csrf` cookie to echo and
+ * derive no authority from one.
+ *
+ * As with {@link isSignedControlPlaneDispatch}, assume an attacker can set this
+ * header: a permissive project `security.cors` makes the runtime advertise it on
+ * a preflight, and the proxy forwards an unverified one. The exemption is safe
+ * because it concedes only the browser-credential check (authority still comes
+ * from the envelope `ChannelInvokeHandler` verifies, which an attacker cannot
+ * forge), and because `ChannelInvokeHandler` is registered ahead of
+ * `ApiHandlerWrapper` and instantiated unconditionally, so an admitted request
+ * always terminates at that verification rather than at project code.
+ *
+ * This is not authentication. It only reports that authority for the request
+ * comes from a signature the handler checks, never from ambient credentials.
+ */
+export function isSignedChannelDispatch(req: Request): boolean {
+  const signature = req.headers.get(DISPATCH_JWS_HEADER);
+  if (signature === null || signature.length === 0) return false;
+
+  return isChannelDispatchRoute(req.method, new SafeURL(req.url).pathname);
+}
 
 /**
  * True for control-plane run surfaces that can dispatch without project config.
@@ -219,7 +373,7 @@ export type ControlPlaneClaims = InferSchema<ReturnType<typeof getControlPlaneCl
 
 /** Public API contract for runtime agent discovery deps. */
 export interface RuntimeAgentDiscoveryDeps {
-  ensureProjectDiscovery: (ctx: HandlerContext) => Promise<unknown>;
+  ensureProjectDiscovery: (ctx: HandlerContext) => Promise<DiscoveryResult>;
   getAgent: (id: string) => Agent | undefined;
   getAllAgentIds: () => string[];
 }
@@ -338,7 +492,7 @@ function requireSignedRequestBinding(
   }
 }
 
-function readExpectedRequestBinding(options: object): {
+function readExpectedRequestBinding(options: { requestMethod: string; requestPath: string }): {
   method: string;
   path: string;
 } {
@@ -630,7 +784,7 @@ export function getRuntimeAgentPublicMetadata(
   id: string,
   agent: Agent,
 ): RuntimeAgentPublicMetadata {
-  const rawConfig = agent.config as unknown as Record<string, unknown>;
+  const rawConfig = agent.config;
   const suggestionsParseResult = rawConfig.suggestions === undefined
     ? null
     : RuntimeSuggestionsSchema.safeParse(
@@ -655,7 +809,7 @@ export function getRuntimeAgentPublicMetadata(
 }
 
 function getRuntimeAgentMetadata(id: string, agent: Agent): RuntimeAgent {
-  const rawConfig = agent.config as unknown as Record<string, unknown>;
+  const rawConfig = agent.config as { version?: unknown };
   const publicMetadata = getRuntimeAgentPublicMetadata(id, agent);
 
   return RuntimeAgentSchema.parse({
@@ -748,6 +902,49 @@ export async function verifyControlPlaneJwsSignature(
   );
 }
 
+/**
+ * Verify a control-plane JWS against its request body without depending on the
+ * extension-backed schema registry.
+ *
+ * The split proxy uses this after it has resolved the project audience. It
+ * needs the signed body binding before it may turn target metadata in the body
+ * into trusted downstream headers, while the authoritative request handler
+ * still performs the full schema-backed verification.
+ */
+export async function verifyControlPlaneJwsRequestSignature(
+  jws: string,
+  body: string,
+  options: {
+    audience: string;
+    expectedProjectId?: string;
+    publicKeyPem: string;
+    maxAgeSeconds: number;
+    requestMethod: string;
+    requestPath: string;
+  },
+): Promise<boolean> {
+  let requestBinding: { method: string; path: string };
+  try {
+    requestBinding = readExpectedRequestBinding(options);
+  } catch {
+    return false;
+  }
+
+  return await verifySignedRequestJwsSignature(
+    jws,
+    parseControlPlaneSignatureClaims,
+    {
+      audience: options.audience,
+      expectedProjectId: options.expectedProjectId,
+      maxAgeSeconds: options.maxAgeSeconds,
+      publicKeyPem: options.publicKeyPem,
+      requestBinding,
+      expectedRequestHash: await sha256Base64url(body),
+      requestHashClaimKey: "request_hash",
+    },
+  );
+}
+
 async function verifySignedRequestJwsSignature(
   jws: string,
   parseClaims: (encodedPayload: string) => SignedRequestClaims,
@@ -756,6 +953,8 @@ async function verifySignedRequestJwsSignature(
     expectedProjectId?: string;
     publicKeyPem: string;
     maxAgeSeconds: number;
+    expectedRequestHash?: string;
+    requestHashClaimKey?: string;
     requestBinding?: {
       method: string;
       path: string;
@@ -803,6 +1002,15 @@ async function verifySignedRequestJwsSignature(
         options.requestBinding.method,
         options.requestBinding.path,
       );
+    }
+    if (
+      options.expectedRequestHash !== undefined &&
+      (
+        options.requestHashClaimKey === undefined ||
+        claims[options.requestHashClaimKey] !== options.expectedRequestHash
+      )
+    ) {
+      return false;
     }
     if (
       !Number.isSafeInteger(claims.iat) ||

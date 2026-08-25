@@ -15,9 +15,11 @@ export type AttachmentState =
 
 /** Public API contract for attachment info. */
 export interface AttachmentInfo {
+  /** Stable unique id for the attachment; used to key it and to identify it in `onRemove` / `onRetry`. */
   id: string;
   /** Storage-issued identifier returned by the durable upload endpoint. */
   uploadId?: string;
+  /** File name (including extension); shown as the pill title and used to derive the file type. */
   name: string;
   /** Legacy two-value status; prefer `state` for the full lifecycle. */
   status?: "uploading" | "ready";
@@ -25,8 +27,11 @@ export interface AttachmentInfo {
   state?: AttachmentState;
   /** Upload progress (0–100), shown in the `uploading` label. */
   progress?: number;
+  /** MIME type (e.g. `image/png`); used to detect images and derive the type label. */
   type?: string;
+  /** File size in bytes; rendered as a compact `B` / `KB` / `MB` label. */
   size?: number;
+  /** Local object-URL for an image preview shown before the upload resolves. */
   preview?: string;
   /** Resolved URL once the file has finished uploading. */
   url?: string;
@@ -34,7 +39,9 @@ export interface AttachmentInfo {
 
 /** Props accepted by attachment pill. */
 export interface AttachmentPillProps extends React.HTMLAttributes<HTMLDivElement> {
+  /** The attachment to render; drives the icon, label, and lifecycle treatment. */
   attachment: AttachmentInfo;
+  /** Remove handler that surfaces the remove (x) control and receives the attachment id. */
   onRemove?: (id: string) => void;
   /** Retry handler — surfaces a retry button in the `error` state. */
   onRetry?: (id: string) => void;
@@ -143,8 +150,11 @@ function AlertGlyph(): React.ReactElement {
 
 /** Derived per-pill view state shared with `AttachmentPill.*` sub-parts. */
 export interface AttachmentPillContextValue {
+  /** The attachment being rendered by this pill. */
   attachment: AttachmentInfo;
+  /** Remove handler passed to `Root`, invoked with the attachment id. */
   onRemove?: (id: string) => void;
+  /** Retry handler passed to `Root`, invoked with the attachment id in the `error` state. */
   onRetry?: (id: string) => void;
   /** File extension (from the name, falling back to the media type). */
   ext: string;
@@ -170,11 +180,27 @@ export interface AttachmentPillContextValue {
   boxClass: string;
 }
 
-const [AttachmentPillContext, useAttachmentPill] = createStrictContext<AttachmentPillContextValue>(
+const [AttachmentPillContext, useAttachmentPillContext] = createStrictContext<
+  AttachmentPillContextValue
+>(
   "useAttachmentPill",
-  "a AttachmentPill",
+  "an AttachmentPill",
 );
-export { useAttachmentPill };
+
+/**
+ * Read the derived per-pill state provided by `AttachmentPill.Root`. Use it to
+ * build a custom pill part; throws if called outside an `AttachmentPill`.
+ *
+ * @example
+ * ```tsx
+ * function MyLabel() {
+ *   const { attachment, label } = useAttachmentPill();
+ *   return <span>{attachment.name}: {label}</span>;
+ * }
+ * // <AttachmentPill.Root attachment={file}><MyLabel /></AttachmentPill.Root>
+ * ```
+ */
+export const useAttachmentPill = useAttachmentPillContext;
 
 /**
  * `AttachmentPill.Root` — context provider + the chip wrapper. No children
@@ -285,16 +311,20 @@ AttachmentPillRoot.displayName = "AttachmentPill.Root";
  * only when the attachment resolves to a non-error image with a source.
  */
 function AttachmentPillThumbnail(
-  { className }: { className?: string },
+  { className, ref, ...props }:
+    & React.HTMLAttributes<HTMLDivElement>
+    & { ref?: React.Ref<HTMLDivElement> },
 ): React.JSX.Element | null {
   const { imageSrc, isError, isBusy } = useAttachmentPill();
   if (!imageSrc || isError) return null;
   return (
     <div
+      ref={ref}
       className={cn(
         "relative size-10 shrink-0 overflow-hidden rounded-[var(--radius-sm)] bg-[var(--tertiary)]",
         className,
       )}
+      {...props}
     >
       <img
         alt=""
@@ -316,16 +346,20 @@ AttachmentPillThumbnail.displayName = "AttachmentPill.Thumbnail";
  * there is no image thumbnail.
  */
 function AttachmentPillIcon(
-  { className }: { className?: string },
+  { className, ref, ...props }:
+    & React.HTMLAttributes<HTMLDivElement>
+    & { ref?: React.Ref<HTMLDivElement> },
 ): React.JSX.Element {
   const { boxClass, stateGlyph, ext, legacyUploading } = useAttachmentPill();
   return (
     <div
+      ref={ref}
       className={cn(
         "relative flex size-10 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[10px] font-medium uppercase leading-none",
         boxClass,
         className,
       )}
+      {...props}
     >
       {stateGlyph ?? ext ?? "file"}
       {legacyUploading && (
@@ -340,12 +374,16 @@ AttachmentPillIcon.displayName = "AttachmentPill.Icon";
 
 /** `AttachmentPill.Label` — the name + secondary state-line column. */
 function AttachmentPillLabel(
-  { className }: { className?: string },
+  { className, ref, ...props }:
+    & React.HTMLAttributes<HTMLDivElement>
+    & { ref?: React.Ref<HTMLDivElement> },
 ): React.JSX.Element {
   const { attachment, shimmerTitle, isError, label } = useAttachmentPill();
   return (
     <div
+      ref={ref}
       className={cn("flex min-w-0 flex-1 flex-col gap-0.5", className)}
+      {...props}
     >
       <p className="truncate text-sm font-medium leading-tight">
         {shimmerTitle
@@ -370,12 +408,20 @@ AttachmentPillLabel.displayName = "AttachmentPill.Label";
  * when an `onRetry` handler is provided.
  */
 function AttachmentPillRetry(
-  { className, icon }: { className?: string; icon?: React.ReactNode },
+  { className, children, ref }: {
+    className?: string;
+    /** Replace the default glyph. The canonical path (RFC 2980: a leaf renders its
+     * default icon when childless; pass children to replace it). */
+    children?: React.ReactNode;
+    /** React 19: ref is a regular prop (threaded to the button). */
+    ref?: React.Ref<HTMLButtonElement>;
+  },
 ): React.JSX.Element | null {
   const { attachment, isError, onRetry } = useAttachmentPill();
   if (!isError || !onRetry) return null;
   return (
     <Button
+      ref={ref}
       type="button"
       variant="icon-ghost"
       size="icon-xs"
@@ -384,7 +430,7 @@ function AttachmentPillRetry(
       aria-label={`Retry ${attachment.name}`}
       className={cn("shrink-0", className)}
     >
-      {icon ?? <RefreshCwIcon />}
+      {children ?? <RefreshCwIcon />}
     </Button>
   );
 }
@@ -395,12 +441,20 @@ AttachmentPillRetry.displayName = "AttachmentPill.Retry";
  * `onRemove` handler is provided and the pill isn't a legacy uploading pill.
  */
 function AttachmentPillRemove(
-  { className, icon }: { className?: string; icon?: React.ReactNode },
+  { className, children, ref }: {
+    className?: string;
+    /** Replace the default glyph. The canonical path (RFC 2980: a leaf renders its
+     * default icon when childless; pass children to replace it). */
+    children?: React.ReactNode;
+    /** React 19: ref is a regular prop (threaded to the button). */
+    ref?: React.Ref<HTMLButtonElement>;
+  },
 ): React.JSX.Element | null {
   const { attachment, onRemove, legacyUploading } = useAttachmentPill();
   if (!onRemove || legacyUploading) return null;
   return (
     <Button
+      ref={ref}
       type="button"
       variant="icon-ghost"
       size="icon-xs"
@@ -412,7 +466,7 @@ function AttachmentPillRemove(
         className,
       )}
     >
-      {icon ?? (
+      {children ?? (
         <svg
           viewBox="0 0 24 24"
           fill="none"

@@ -56,6 +56,7 @@ import {
 } from "./loader-helpers.ts";
 import { hasUnresolvedImports } from "./module-fetcher/nested-imports.ts";
 import { resolveDependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
+import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
 
 /** Singleflight for MDX module file writes to prevent race conditions */
 const mdxWriteFlight = new Singleflight<void>();
@@ -65,6 +66,7 @@ export function buildMdxModuleNamespaceKey(
   reactVersion: string,
   dependencyPinningCacheKey?: string,
   moduleServerOrigin?: string,
+  serverExternalPackages?: readonly string[],
 ): Promise<string> {
   const pinIdentity = dependencyPinningCacheKey?.startsWith("on:")
     ? `:pins-${dependencyPinningCacheKey}`
@@ -72,7 +74,15 @@ export function buildMdxModuleNamespaceKey(
   const originIdentity = dependencyPinningCacheKey?.startsWith("on:") && moduleServerOrigin
     ? `:origin-${moduleServerOrigin}`
     : "";
-  return computeHash(`${projectId}:react-${reactVersion}${pinIdentity}${originIdentity}`);
+  const serverExternalPackagesIdentity = buildServerExternalPackagesIdentity(
+    serverExternalPackages,
+  );
+  const externalIdentity = serverExternalPackagesIdentity
+    ? `:server-externals-${serverExternalPackagesIdentity}`
+    : "";
+  return computeHash(
+    `${projectId}:react-${reactVersion}${pinIdentity}${originIdentity}${externalIdentity}`,
+  );
 }
 
 export async function buildMdxModuleCacheIdentity(
@@ -82,6 +92,7 @@ export async function buildMdxModuleCacheIdentity(
   rewrittenCode: string,
   dependencyPinningCacheKey?: string,
   moduleServerOrigin?: string,
+  serverExternalPackages?: readonly string[],
 ): Promise<{
   namespaceKey: string;
   codeHash: string;
@@ -95,6 +106,7 @@ export async function buildMdxModuleCacheIdentity(
     reactVersion,
     dependencyPinningCacheKey,
     moduleServerOrigin,
+    serverExternalPackages,
   );
   const codeHash = hashString(rewrittenCode);
   const namespaceDir = join(esmCacheDir, namespaceKey);
@@ -125,14 +137,51 @@ async function cacheHttpImports(
   code: string,
   importMap: ImportMapConfig,
   reactVersion?: string,
+  serverExternalPackages?: readonly string[],
 ): Promise<string> {
   const result = await cacheHttpImportsToLocal(code, {
     cacheDir: getHttpBundleCacheDir(),
     importMap,
     reactVersion,
+    serverExternalPackages,
   });
   return result.code;
 }
+
+/**
+ * Verify an MDX module cache file, mirroring the SSR loader's handling of the
+ * throwing `verifyCacheFileExists`: a genuinely absent file returns `false`,
+ * while an operational stat failure (EACCES, EIO, ...) drops the stale
+ * in-memory module index entry — so a repaired filesystem cannot keep routing
+ * requests to untrusted metadata — and is rethrown inside the CACHE_ERROR
+ * taxonomy with the original error attached as `cause`.
+ */
+async function verifyMdxCacheFile(
+  localFs: Parameters<typeof verifyCacheFileExists>[0],
+  filePath: string,
+  context: Pick<ESMLoaderContext, "moduleCache">,
+  compositeKey: string,
+): Promise<boolean> {
+  try {
+    return await verifyCacheFileExists(localFs, filePath, "MDX-ESM-LOADER");
+  } catch (error) {
+    try {
+      context.moduleCache.delete(compositeKey);
+    } catch (invalidationError) {
+      logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to invalidate module cache entry`, {
+        compositeKey,
+        error: invalidationError,
+      });
+    }
+    throw CACHE_ERROR.create({
+      detail: "MDX module cache file inspection failed",
+      cause: error,
+    });
+  }
+}
+
+/** Internal test seam for cache verification error handling. */
+export const __moduleWriterInternals = { verifyMdxCacheFile };
 
 export async function doLoadModuleESM(
   compiledProgramCode: string,
@@ -191,6 +240,7 @@ export async function doLoadModuleESM(
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
       dependencyPinningSource,
+      serverExternalPackages: effectiveContext.serverExternalPackages,
     });
     rewritten = await pinSameOriginSSRModuleImports(
       rewritten,
@@ -230,7 +280,13 @@ export async function doLoadModuleESM(
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: cacheHttpImports START`, { projectSlug });
     rewritten = await withSpan(
       SpanNames.MDX_CACHE_HTTP,
-      () => cacheHttpImports(rewritten, importMap, effectiveContext.reactVersion),
+      () =>
+        cacheHttpImports(
+          rewritten,
+          importMap,
+          effectiveContext.reactVersion,
+          effectiveContext.serverExternalPackages,
+        ),
       { "mdx.project_slug": projectSlug },
     );
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: cacheHttpImports DONE`, { projectSlug });
@@ -249,6 +305,7 @@ export async function doLoadModuleESM(
       rewritten,
       dependencySnapshot.cacheKey,
       effectiveContext.moduleServerOrigin,
+      effectiveContext.serverExternalPackages,
     );
     const namespaceKey = cacheIdentity.namespaceKey;
     let codeHash = cacheIdentity.codeHash;
@@ -280,7 +337,7 @@ export async function doLoadModuleESM(
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: mdxWriteFlight START`, { projectSlug, filePath });
     await mdxWriteFlight.do(filePath, async () => {
       // Check if file already exists (written by another request)
-      if (await verifyCacheFileExists(localFs, filePath, "MDX-ESM-LOADER")) {
+      if (await verifyMdxCacheFile(localFs, filePath, effectiveContext, compositeKey)) {
         logger.debug(`${LOG_PREFIX_MDX_LOADER} File exists, skipping write`, {
           projectSlug,
           filePath,
@@ -340,6 +397,7 @@ export async function doLoadModuleESM(
             cacheDir,
             importMap,
             reactVersion: effectiveContext.reactVersion,
+            serverExternalPackages: effectiveContext.serverExternalPackages,
           });
           rewritten = refreshResult.code;
 
@@ -474,7 +532,7 @@ export async function doLoadModuleESM(
     }
 
     // Verify the cache file exists before attempting dynamic import
-    const fileExists = await verifyCacheFileExists(localFs, filePath, "MDX-ESM-LOADER");
+    const fileExists = await verifyMdxCacheFile(localFs, filePath, effectiveContext, compositeKey);
     if (!fileExists) {
       throw CACHE_ERROR.create({
         detail: `MDX module cache file missing before import: ${filePath}`,

@@ -19,12 +19,35 @@ import {
   getProdScripts,
   getStudioScripts,
 } from "./dev-scripts.ts";
+import { getProdScriptsForPath } from "./hydration-script-builder/prod-scripts.ts";
+import { PROJECT_STYLESHEET_IDS } from "./project-stylesheet-ids.ts";
 import { buildReleaseAssetModules } from "#veryfront/release-assets/client-module-map.ts";
 import {
   type ConfiguredRouteDirectories,
   routeForConfiguredPage,
 } from "#veryfront/release-assets/route-path.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+
+function escapeRegExpLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Presence checks are scoped to real stylesheet markup. Bare substrings such
+// as `data-id="..."`, `data-href="..."`, non-stylesheet links, or a CSS URL
+// in ordinary text must not suppress the required injection. The configured
+// ids are regex-escaped before interpolation.
+const PROJECT_STYLESHEET_ID_PATTERNS = PROJECT_STYLESHEET_IDS.map((id) =>
+  new RegExp(
+    `(?:^|\\s)id\\s*=\\s*(["'])${escapeRegExpLiteral(id)}\\1(?=\\s|/?>|$)`,
+    "i",
+  )
+);
+const STYLESHEET_ELEMENT_PATTERN = /<(?:link|style)\b[^>]*>/gi;
+const STYLE_ELEMENT_PATTERN = /^<style\b/i;
+const LINK_REL_ATTRIBUTE_PATTERN = /(?:^|\s)rel\s*=\s*(["'])([^"']*)\1(?=\s|\/?>|$)/i;
+const LINK_HREF_ATTRIBUTE_PATTERN = /(?:^|\s)href\s*=\s*(["'])([^"']*)\1(?=\s|\/?>|$)/i;
+const PREVIEW_PROJECT_STYLESHEET_PATTERN = /\/_vf_styles\/styles\.css(?:\?[^"']*)?$/i;
+const PRODUCTION_PROJECT_STYLESHEET_PATTERN = /\/_vf\/css\/[^"']+\.css$/i;
 
 export interface InjectHTMLContentOptions {
   mode: string;
@@ -67,6 +90,8 @@ export interface InjectHTMLContentOptions {
   dependencyPinningCacheKey?: string;
   /** Ready release asset manifest used to hydrate full HTML client pages */
   releaseAssetManifest?: ReleaseAssetManifest | null;
+  /** Production hydration runtime selected from the rendered artifact set */
+  prodHydrationModulePath?: string;
   /** Configured route directories used to map physical page paths to route keys */
   directories?: ConfiguredRouteDirectories;
 }
@@ -80,9 +105,31 @@ function toProjectRelativePath(absolutePath: string, projectDir?: string): strin
 }
 
 function hasProjectStylesheet(html: string): boolean {
-  return /id=["']vf-tailwind-css["']/i.test(html) ||
-    /href=["'][^"']*\/_vf_styles\/styles\.css(?:\?[^"']*)?["']/i.test(html) ||
-    /href=["'][^"']*\/_vf\/css\/[^"']+\.css["']/i.test(html);
+  for (const match of html.matchAll(STYLESHEET_ELEMENT_PATTERN)) {
+    const element = match[0];
+    const hasProjectId = PROJECT_STYLESHEET_ID_PATTERNS.some((pattern) => pattern.test(element));
+    if (STYLE_ELEMENT_PATTERN.test(element)) {
+      if (hasProjectId) return true;
+      continue;
+    }
+
+    const rel = LINK_REL_ATTRIBUTE_PATTERN.exec(element)?.[2];
+    if (!rel?.split(/\s+/).some((token) => token.toLowerCase() === "stylesheet")) {
+      continue;
+    }
+    if (hasProjectId) return true;
+
+    const href = LINK_HREF_ATTRIBUTE_PATTERN.exec(element)?.[2];
+    if (
+      href &&
+      (PREVIEW_PROJECT_STYLESHEET_PATTERN.test(href) ||
+        PRODUCTION_PROJECT_STYLESHEET_PATTERN.test(href))
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export function injectHTMLContent(
@@ -137,6 +184,7 @@ export function injectHTMLContent(
     html = html.replace(/<\/head>/i, `${getPreviewStylesheetLink()}\n</head>`);
   }
 
+  const hasBodyOpen = /<body\b[^>]*>/i.test(html);
   const hasBodyClose = /<\/body>/i.test(html);
 
   const clientPagePath = options.isClientPage === true ? options.pagePath : undefined;
@@ -147,7 +195,7 @@ export function injectHTMLContent(
   // Client pages need the full hydration payload. Other full documents still
   // need the immutable dependency token before client.js boots so any RSC
   // transport it starts remains on the document's snapshot.
-  if ((clientPagePath || dependencyPinningCacheKey) && hasBodyClose) {
+  if ((clientPagePath || dependencyPinningCacheKey) && hasBodyOpen && hasBodyClose) {
     // Serialize with jsonForInlineScript, not raw JSON.stringify: route params
     // (and slug) are URL-derived and decoded, so a segment like `%3C/script%3E`
     // would otherwise break out of the <script> tag (reflected XSS). This escapes
@@ -176,7 +224,10 @@ export function injectHTMLContent(
     const nonceAttr = buildNonceAttribute(options.nonce);
     const hydrationScript =
       `<script id="veryfront-hydration-data" type="application/json"${nonceAttr}>${hydrationData}</script>`;
-    html = html.replace(/<\/body>/i, `${hydrationScript}</body>`);
+    html = html.replace(
+      /<body\b[^>]*>/i,
+      (openingBody) => `${openingBody}${hydrationScript}`,
+    );
   }
 
   if (options.mode === "development") {
@@ -198,7 +249,9 @@ export function injectHTMLContent(
     html = html.replace(/{{\s*devScripts\s*}}/gi, "");
     html = html.replace(/{{\s*devStyles\s*}}/gi, "");
 
-    const prodScripts = getProdScripts(options.slug, options.nonce);
+    const prodScripts = options.prodHydrationModulePath
+      ? getProdScriptsForPath(options.prodHydrationModulePath, options.nonce)
+      : getProdScripts(options.slug, options.nonce);
     const hasProdScriptsPlaceholder = /{{\s*prodScripts\s*}}/i.test(html);
 
     if (hasProdScriptsPlaceholder) {

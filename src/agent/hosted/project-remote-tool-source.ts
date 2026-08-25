@@ -7,6 +7,7 @@ import {
   type ProjectScopedRemoteToolOptions,
   type RemoteMCPToolSourceConfig,
   type RemoteToolSource,
+  type ToolDefinition,
   type ToolExecutionContext,
 } from "#veryfront/tool";
 import {
@@ -16,10 +17,15 @@ import {
 } from "../service/mcp-server-config.ts";
 import type { AgentMcpToolPolicy } from "../types.ts";
 import { wrapRemoteToolSourceWithMcpPolicy } from "../mcp-tool-policy.ts";
-import { CONFIG_INVALID, PERMISSION_DENIED } from "#veryfront/errors";
+import { CONFIG_INVALID, PERMISSION_DENIED, VeryfrontError } from "#veryfront/errors";
 import { toChildRunToolInputRecord } from "../child-run/execution-support.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
-import { getConfirmedProjectContextSwitchId } from "../project/context.ts";
+import {
+  type ConfirmedAgentProjectContextSwitch,
+  createUnconfirmedProjectContextSwitchResult,
+  getConfirmedProjectContextSwitch,
+  isClaimedSuccessfulProjectContextSwitchResult,
+} from "../project/context.ts";
 import {
   getProjectSteeringMutation,
   isSuccessfulProjectSteeringMutationResult,
@@ -27,6 +33,89 @@ import {
   type ProjectSteeringPaths,
 } from "../project/steering-mutation.ts";
 import { filterVeryfrontApiToolDefinitionsWithAccessProfile } from "./veryfront-api-tool-access.ts";
+import { serverLogger } from "#veryfront/utils";
+
+const logger = serverLogger.component("agent");
+const REMOTE_TOOL_CATALOG_INITIAL_BACKOFF_MS = 1_000;
+const REMOTE_TOOL_CATALOG_MAX_BACKOFF_MS = 30_000;
+
+interface LastSuccessfulRemoteToolCatalog {
+  readonly projectId: string | null;
+  readonly authToken: string | null;
+  readonly definitions: ToolDefinition[];
+}
+
+function getRemoteToolCatalogProjectId(context: ToolExecutionContext | undefined): string | null {
+  const projectId = context?.projectId;
+  return typeof projectId === "string" && projectId.trim().length > 0 ? projectId.trim() : null;
+}
+
+function getRemoteToolCatalogAuthToken(context: ToolExecutionContext | undefined): string | null {
+  const authToken = context?.authToken;
+  return typeof authToken === "string" && authToken.length > 0 ? authToken : null;
+}
+
+function isTransientRemoteToolCatalogError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === "TimeoutError") return true;
+  return error instanceof VeryfrontError && error.slug === "timeout-error";
+}
+
+/** Keep one source's last successful catalog available during transient refresh failures. */
+function createRunResilientRemoteToolSource(source: RemoteToolSource): RemoteToolSource {
+  let lastSuccessfulCatalog: LastSuccessfulRemoteToolCatalog | undefined;
+  let consecutiveFailures = 0;
+  let retryAfter = 0;
+
+  return {
+    id: source.id,
+    async listTools(context) {
+      context?.abortSignal?.throwIfAborted();
+      const projectId = getRemoteToolCatalogProjectId(context);
+      const authToken = getRemoteToolCatalogAuthToken(context);
+      const matchingCatalog = lastSuccessfulCatalog?.projectId === projectId &&
+          lastSuccessfulCatalog.authToken === authToken
+        ? lastSuccessfulCatalog
+        : undefined;
+      if (matchingCatalog && Date.now() < retryAfter) {
+        return [...matchingCatalog.definitions];
+      }
+
+      try {
+        const definitions = await source.listTools(context);
+        context?.abortSignal?.throwIfAborted();
+        lastSuccessfulCatalog = { projectId, authToken, definitions: [...definitions] };
+        consecutiveFailures = 0;
+        retryAfter = 0;
+        return definitions;
+      } catch (error) {
+        context?.abortSignal?.throwIfAborted();
+        if (!isTransientRemoteToolCatalogError(error)) {
+          if (matchingCatalog) {
+            lastSuccessfulCatalog = undefined;
+            consecutiveFailures = 0;
+            retryAfter = 0;
+          }
+          throw error;
+        }
+        if (!matchingCatalog) throw error;
+
+        consecutiveFailures++;
+        const backoffMs = Math.min(
+          REMOTE_TOOL_CATALOG_INITIAL_BACKOFF_MS * 2 ** (consecutiveFailures - 1),
+          REMOTE_TOOL_CATALOG_MAX_BACKOFF_MS,
+        );
+        retryAfter = Date.now() + backoffMs;
+        logger.warn("Remote tool discovery failed; using the last successful catalog", {
+          sourceId: source.id,
+          retryAfterMs: backoffMs,
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
+        return [...matchingCatalog.definitions];
+      }
+    },
+    executeTool: (toolName, args, context) => source.executeTool(toolName, args, context),
+  };
+}
 
 /** Handler for hosted project remote tool source mutation. */
 export type HostedProjectRemoteToolSourceMutationHandler = (
@@ -36,6 +125,7 @@ export type HostedProjectRemoteToolSourceMutationHandler = (
 /** Handler for hosted project remote tool source project switch. */
 export type HostedProjectRemoteToolSourceProjectSwitchHandler = (
   projectId: string,
+  confirmedProject?: Readonly<ConfirmedAgentProjectContextSwitch>,
 ) => Promise<void> | void;
 
 /** Input payload for hosted project remote tool source prepare tool. */
@@ -61,11 +151,19 @@ export type CreateHostedProjectRemoteToolSourceInput = {
   getActiveBranchId?: () => string | null | undefined;
   allowedToolNames?: ReadonlySet<string> | null;
   /**
-   * Live activated remote tool names from the discovery context.
-   * When provided, this Set (passed by reference) is used as the execution
-   * gate for the remote tool catalog instead of `allowedToolNames`. Because
-   * the same Set is mutated by `load_tools`, newly activated tools become
-   * executable without any catalog re-creation.
+   * Narrower execution gate for the remote tool catalog. When set, only tools
+   * in this Set can be listed or executed, overriding `allowedToolNames`. The
+   * Set is held by reference, so growing it exposes tools without re-creating
+   * the catalog.
+   *
+   * `null` is not a fallback: it overrides `allowedToolNames` and disables name
+   * filtering entirely. Omit the property to keep `allowedToolNames` as the
+   * gate.
+   *
+   * @deprecated No framework path supplies this. It is retained because
+   * `CreateHostedProjectRemoteToolSourceInput` is public API, and dropping it
+   * would silently widen the catalog to `allowedToolNames` for any caller that
+   * relies on it as the gate.
    */
   activatedRemoteToolNames?: ReadonlySet<string> | null;
   projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;
@@ -84,18 +182,23 @@ function resolveActiveBranchId(
   return getActiveBranchId?.() ?? null;
 }
 
-/** Create hosted project remote tool source. */
+/**
+ * Create a project-scoped remote tool source. The source retains its last
+ * successful catalog for the active project during transient discovery
+ * failures and retries refreshes with bounded backoff.
+ */
 export function createHostedProjectRemoteToolSource(
   input: CreateHostedProjectRemoteToolSourceInput,
 ): RemoteToolSource {
-  // When `activatedRemoteToolNames` is provided, it acts as the live execution
-  // gate: only tools in this Set (which grows as load_tools activates them)
-  // can be listed or executed. Falls back to `allowedToolNames` when absent.
+  // `activatedRemoteToolNames` is the gate whenever the property is present,
+  // including when it is `null`, which disables name filtering entirely. Only
+  // an omitted property falls back to `allowedToolNames`.
   const catalogAllowedToolNames = input.activatedRemoteToolNames !== undefined
     ? input.activatedRemoteToolNames
     : input.allowedToolNames;
+  const resilientSource = createRunResilientRemoteToolSource(input.source);
   const toolCatalog = createProjectScopedRemoteToolCatalog({
-    source: input.source,
+    source: resilientSource,
     defaultProjectId: input.defaultProjectId,
     allowedToolNames: catalogAllowedToolNames,
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
@@ -212,15 +315,18 @@ export function createHostedProjectRemoteToolSource(
 
       if (isProjectNavigationRemoteTool(toolName, input.projectScopedRemoteToolOptions)) {
         const requestedProjectReference = trustedToolInput.project_reference;
-        const confirmedProjectId = typeof requestedProjectReference === "string"
-          ? getConfirmedProjectContextSwitchId(result, requestedProjectReference)
+        const confirmedProject = typeof requestedProjectReference === "string"
+          ? getConfirmedProjectContextSwitch(result, requestedProjectReference)
           : null;
 
-        if (confirmedProjectId) {
-          await input.onProjectSwitch?.(confirmedProjectId);
+        if (confirmedProject) {
+          await input.onProjectSwitch?.(confirmedProject.projectId, confirmedProject);
+          return result;
         }
 
-        return result;
+        return isClaimedSuccessfulProjectContextSwitchResult(result)
+          ? createUnconfirmedProjectContextSwitchResult()
+          : result;
       }
 
       const mutation = getProjectSteeringMutation({

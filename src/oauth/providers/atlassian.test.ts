@@ -5,7 +5,7 @@ import { bitbucketConfig, confluenceConfig, jiraConfig } from "./atlassian.ts";
 
 async function readConfluenceConnectorScopes(): Promise<string[]> {
   const connector = JSON.parse(
-    await Deno.readTextFile("cli/templates/integrations/confluence/connector.json"),
+    await Deno.readTextFile("templates/integrations/confluence/connector.json"),
   ) as { auth: { scopes: string[] } };
   return connector.auth.scopes;
 }
@@ -21,24 +21,33 @@ describe("Atlassian OAuth provider configs", () => {
   });
 
   it("keeps each scaffold on its generated product callback", async () => {
-    for (const serviceId of ["jira", "confluence"]) {
+    for (const config of [jiraConfig, confluenceConfig]) {
       const connector = JSON.parse(
         await Deno.readTextFile(
-          `cli/templates/integrations/${serviceId}/connector.json`,
+          `templates/integrations/${config.serviceId}/connector.json`,
         ),
       ) as {
         auth: {
           callbackPath?: string;
           tokenAuthMethod?: string;
-          additionalParams?: Record<string, string>;
+          additionalAuthParams?: Record<string, string>;
         };
       };
       assertEquals(
         connector.auth.callbackPath,
-        `/api/auth/${serviceId}/callback`,
+        `/api/auth/${config.serviceId}/callback`,
+        `${config.serviceId} scaffold must use its generated product callback`,
       );
-      assertEquals(connector.auth.tokenAuthMethod, "body");
-      assertEquals(connector.auth.additionalParams, undefined);
+      assertEquals(
+        connector.auth.tokenAuthMethod,
+        "body",
+        `${config.serviceId} scaffold must post its client credentials in the body`,
+      );
+      assertEquals(
+        connector.auth.additionalAuthParams,
+        config.additionalAuthParams,
+        `${config.serviceId} scaffold must carry the runtime additional auth params`,
+      );
     }
   });
 
@@ -46,7 +55,7 @@ describe("Atlassian OAuth provider configs", () => {
     for (const config of [jiraConfig, confluenceConfig, bitbucketConfig]) {
       const connector = JSON.parse(
         await Deno.readTextFile(
-          `cli/templates/integrations/${config.serviceId}/connector.json`,
+          `templates/integrations/${config.serviceId}/connector.json`,
         ),
       ) as { auth: { scopes: string[] } };
       assertEquals(config.defaultScopes, connector.auth.scopes);

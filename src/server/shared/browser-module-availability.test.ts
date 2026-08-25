@@ -128,8 +128,16 @@ describe("server/shared/browser-module-availability", () => {
     });
 
     await load("oversized", "123456789");
-    assertEquals(coordinator.getStatsForTesting().cacheBytes <= 8, true);
-    assertEquals(coordinator.getStatsForTesting().cacheEntries <= 2, true);
+    assertEquals(
+      coordinator.getStatsForTesting(),
+      { cacheEntries: 2, cacheBytes: 8, inFlight: 0, activeGlobal: 0 },
+      "an over budget value must be refused, not admitted and then evicted along with healthy entries",
+    );
+    await load("c");
+    await load("b");
+    assertEquals(builds.get("c"), 1, "c must survive the rejected oversized store");
+    assertEquals(builds.get("b"), 2, "b must survive the rejected oversized store");
+    assertEquals(builds.get("oversized"), 1, "the oversized module must not be cached");
   });
 
   it("rejects immediately when the per-project build limit is saturated", async () => {

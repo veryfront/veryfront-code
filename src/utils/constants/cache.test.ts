@@ -2,6 +2,14 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  DISTRIBUTED_CSS_TTL_PREVIEW_SEC,
+  DISTRIBUTED_CSS_TTL_PRODUCTION_SEC,
+  DISTRIBUTED_FILE_TTL_PREVIEW_SEC,
+  DISTRIBUTED_FILE_TTL_PRODUCTION_SEC,
+  DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC,
+  DISTRIBUTED_SSR_MODULE_TTL_PRODUCTION_SEC,
+  DISTRIBUTED_TRANSFORM_TTL_PREVIEW_SEC,
+  DISTRIBUTED_TRANSFORM_TTL_PRODUCTION_SEC,
   getDistributedCacheTTL,
   MS_PER_HOUR,
   MS_PER_MINUTE,
@@ -48,15 +56,49 @@ describe("constants/cache", () => {
     });
 
     it("should return values for all cache types", () => {
-      for (const type of cacheTypes) {
-        const prodTtl = getDistributedCacheTTL(type, true);
-        const previewTtl = getDistributedCacheTTL(type, false);
+      assertEquals(
+        getDistributedCacheTTL("ssr-module", true),
+        DISTRIBUTED_SSR_MODULE_TTL_PRODUCTION_SEC,
+        "ssr-module production TTL must use the ssr-module constant",
+      );
+      assertEquals(
+        getDistributedCacheTTL("ssr-module", false),
+        DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC,
+        "ssr-module preview TTL must use the ssr-module constant",
+      );
 
-        assertEquals(typeof prodTtl, "number");
-        assertEquals(typeof previewTtl, "number");
-        assertEquals(prodTtl > 0, true);
-        assertEquals(previewTtl > 0, true);
-      }
+      assertEquals(
+        getDistributedCacheTTL("transform", true),
+        DISTRIBUTED_TRANSFORM_TTL_PRODUCTION_SEC,
+        "transform production TTL must use the transform constant",
+      );
+      assertEquals(
+        getDistributedCacheTTL("transform", false),
+        DISTRIBUTED_TRANSFORM_TTL_PREVIEW_SEC,
+        "transform preview TTL must use the transform constant",
+      );
+
+      assertEquals(
+        getDistributedCacheTTL("file", true),
+        DISTRIBUTED_FILE_TTL_PRODUCTION_SEC,
+        "file production TTL must use the file constant",
+      );
+      assertEquals(
+        getDistributedCacheTTL("file", false),
+        DISTRIBUTED_FILE_TTL_PREVIEW_SEC,
+        "file preview TTL must use the file constant",
+      );
+
+      assertEquals(
+        getDistributedCacheTTL("css", true),
+        DISTRIBUTED_CSS_TTL_PRODUCTION_SEC,
+        "css production TTL must use the css constant",
+      );
+      assertEquals(
+        getDistributedCacheTTL("css", false),
+        DISTRIBUTED_CSS_TTL_PREVIEW_SEC,
+        "css preview TTL must use the css constant",
+      );
     });
 
     it("should return production TTL >= preview TTL for all types", () => {

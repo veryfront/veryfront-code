@@ -44,7 +44,7 @@ describe("internal-agents/ag-ui-sse", () => {
   });
 
   it("maps runtime tool and text events to AG-UI wire events", () => {
-    const state = createStreamTransformState();
+    const state = createStreamTransformState({ nowMs: null, epochMs: null });
 
     assertEquals(
       mapRuntimeEventToAgUi(state, { type: "message-start", messageId: "assistant-1" }),
@@ -87,10 +87,17 @@ describe("internal-agents/ag-ui-sse", () => {
         toolCallId: "tool-1",
         errorText: "boom",
       }),
-      [{
-        event: "ToolCallResult",
-        payload: { toolCallId: "tool-1", result: { error: "boom" }, isError: true },
-      }],
+      // `tool-1` opened with `tool-input-start` above and never reached a
+      // terminal input event, so its input is closed here before the result.
+      // This expectation previously omitted `ToolCallEnd`, which left the
+      // client holding an open tool-input lifecycle for the whole run (#3737).
+      [
+        { event: "ToolCallEnd", payload: { toolCallId: "tool-1" } },
+        {
+          event: "ToolCallResult",
+          payload: { toolCallId: "tool-1", result: { error: "boom" }, isError: true },
+        },
+      ],
     );
     assertEquals(
       mapRuntimeEventToAgUi(state, { type: "error", error: "Runtime failed" }),
@@ -99,7 +106,7 @@ describe("internal-agents/ag-ui-sse", () => {
   });
 
   it("covers implicit text start, tool transitions, steps, metadata, and terminal errors", () => {
-    const state = createStreamTransformState();
+    const state = createStreamTransformState({ nowMs: null, epochMs: null });
 
     assertEquals(
       mapRuntimeEventToAgUi(state, { type: "message-start", id: "assistant-2" }),
@@ -175,8 +182,8 @@ describe("internal-agents/ag-ui-sse", () => {
     assertEquals(finalizeRunEvents(state, null), []);
   });
 
-  it("maps browser-facing custom, tool fallback, and tool error events", () => {
-    const state = createStreamTransformState();
+  it("maps consumer-facing custom, tool fallback, and tool error events", () => {
+    const state = createStreamTransformState({ nowMs: null, epochMs: null });
 
     assertEquals(
       mapRuntimeEventToAgUi(state, {
@@ -260,7 +267,7 @@ describe("internal-agents/ag-ui-sse", () => {
   });
 
   it("maps runtime reasoning events to AG-UI reasoning message events", () => {
-    const state = createStreamTransformState();
+    const state = createStreamTransformState({ nowMs: null, epochMs: null });
 
     assertEquals(
       mapRuntimeEventToAgUi(state, { type: "message-start", messageId: "assistant-3" }),
@@ -270,7 +277,7 @@ describe("internal-agents/ag-ui-sse", () => {
       mapRuntimeEventToAgUi(state, { type: "reasoning-start", id: "reasoning-1" }),
       [{
         event: "ReasoningMessageStart",
-        payload: { messageId: "assistant-3:reasoning:reasoning-1", role: "reasoning" },
+        payload: { messageId: "assistant-3:reasoning:0", role: "reasoning" },
       }],
     );
     assertEquals(
@@ -281,20 +288,20 @@ describe("internal-agents/ag-ui-sse", () => {
       }),
       [{
         event: "ReasoningMessageContent",
-        payload: { messageId: "assistant-3:reasoning:reasoning-1", delta: "thinking..." },
+        payload: { messageId: "assistant-3:reasoning:0", delta: "thinking..." },
       }],
     );
     assertEquals(
       mapRuntimeEventToAgUi(state, { type: "reasoning-end", id: "reasoning-1" }),
       [{
         event: "ReasoningMessageEnd",
-        payload: { messageId: "assistant-3:reasoning:reasoning-1" },
+        payload: { messageId: "assistant-3:reasoning:0" },
       }],
     );
   });
 
   it("finalizes open assistant text with usage metadata", () => {
-    const state = createStreamTransformState();
+    const state = createStreamTransformState({ nowMs: null, epochMs: null });
     mapRuntimeEventToAgUi(state, { type: "message-start", messageId: "assistant-1" });
     mapRuntimeEventToAgUi(state, { type: "text-start", id: "text-1" });
 
@@ -334,7 +341,7 @@ describe("internal-agents/ag-ui-sse", () => {
   });
 
   it("fails closed when the runtime completed without assistant-visible output", () => {
-    const state = createStreamTransformState();
+    const state = createStreamTransformState({ nowMs: null, epochMs: null });
 
     assertEquals(
       finalizeRunEvents(state, {
@@ -368,20 +375,92 @@ describe("internal-agents/ag-ui-sse", () => {
       runId: "run_1",
       threadId: "thread-1",
       agentId: "assistant-1",
+      emittedAt: 8,
     });
 
     assertEquals(
       new TextDecoder().decode(payload),
-      'event: RunStarted\ndata: {"runId":"run_1","threadId":"thread-1","agentId":"assistant-1"}\n\n',
+      'event: RunStarted\ndata: {"runId":"run_1","threadId":"thread-1","agentId":"assistant-1","emittedAt":8}\n\n',
+    );
+  });
+
+  it("carries elapsedMs through to the wire without widening the allow-list", () => {
+    // These payload schemas are an allow-list and `parse` returns only what
+    // they declare, so a stamped field missing from a schema is dropped
+    // silently between the encoder and the wire. That is how elapsedMs went
+    // missing through two releases after it was already being stamped, so
+    // both halves are pinned: the field survives, and nothing else does.
+    const stamped = new TextDecoder().decode(
+      formatAgUiEvent("StepStarted", { stepName: "step-1", elapsedMs: 42 }),
+    );
+    assertEquals(
+      stamped.includes('"elapsedMs":42'),
+      true,
+      `elapsedMs must reach the wire, got ${JSON.stringify(stamped)}`,
+    );
+    assertEquals(
+      /"emittedAt":\d+/.test(stamped),
+      true,
+      `every frame must carry an absolute emittedAt even when none is supplied, got ${
+        JSON.stringify(stamped)
+      }`,
+    );
+
+    const sanitized = new TextDecoder().decode(
+      formatAgUiEvent("StepStarted", { stepName: "step-1", emittedAt: -1, elapsedMs: -5 }),
+    );
+    assertEquals(
+      /"emittedAt":[1-9]\d*/.test(sanitized),
+      true,
+      `an invalid emittedAt must be replaced with a real timestamp, got ${
+        JSON.stringify(sanitized)
+      }`,
+    );
+    assertEquals(
+      sanitized.includes("elapsedMs"),
+      false,
+      `a negative elapsedMs must be dropped rather than sent, got ${JSON.stringify(sanitized)}`,
+    );
+
+    const withEmittedAt = new TextDecoder().decode(
+      formatAgUiEvent("StepStarted", { stepName: "step-1", emittedAt: 1_786_000_000_123 }),
+    );
+    assertEquals(
+      withEmittedAt.includes('"emittedAt":1786000000123'),
+      true,
+      `emittedAt must reach the wire, got ${JSON.stringify(withEmittedAt)}`,
+    );
+
+    const leaked = new TextDecoder().decode(
+      formatAgUiEvent("StepStarted", { stepName: "step-1", unexpected: "x" }),
+    );
+    assertEquals(
+      leaked.includes("unexpected"),
+      false,
+      `the allow-list must still drop undeclared fields, got ${JSON.stringify(leaked)}`,
+    );
+  });
+
+  it("stamps elapsedMs end to end from the runtime encoder root", () => {
+    const state = createStreamTransformState();
+    mapRuntimeEventToAgUi(state, { type: "message-start", messageId: "assistant-1" });
+    const events = mapRuntimeEventToAgUi(state, { type: "start-step" });
+    const frame = new TextDecoder().decode(
+      formatAgUiEvent(events[0]!.event, events[0]!.payload),
+    );
+    assertEquals(
+      /"elapsedMs":\d+/.test(frame),
+      true,
+      `the production encoder root must emit elapsedMs, got ${JSON.stringify(frame)}`,
     );
   });
 
   it("accepts extension event tokens without weakening SSE framing", () => {
-    const payload = formatAgUiEvent("Done.custom-v1", { ok: true });
+    const payload = formatAgUiEvent("Done.custom-v1", { ok: true, emittedAt: 8 });
 
     assertEquals(
       new TextDecoder().decode(payload),
-      'event: Done.custom-v1\ndata: {"ok":true}\n\n',
+      'event: Done.custom-v1\ndata: {"ok":true,"emittedAt":8}\n\n',
     );
   });
 
@@ -434,11 +513,12 @@ describe("internal-agents/ag-ui-sse", () => {
         usageCaptureStatus: "complete",
         finishReason: "stop",
       },
+      emittedAt: 8,
     });
 
     assertEquals(
       new TextDecoder().decode(payload),
-      'event: RunFinished\ndata: {"metadata":{"provider":"veryfront-cloud","model":"anthropic/claude-sonnet-4-6","inputTokens":12,"outputTokens":8,"totalTokens":20,"cachedInputTokens":4,"cacheCreationInputTokens":6,"cacheReadInputTokens":4,"reasoningTokens":2,"billableInputTokens":10,"billableOutputTokens":7,"costUsd":0.002,"providerInputCostUsd":0.001,"providerOutputCostUsd":0.0005,"providerCostUsd":0.0015,"veryfrontInputChargeUsd":0.0012,"veryfrontOutputChargeUsd":0.0007,"veryfrontChargeUsd":0.0019,"veryfrontBilledUsd":0.002,"costCredits":2,"costSource":"gateway","billingMode":"deferred","usageCaptureStatus":"complete","finishReason":"stop"}}\n\n',
+      'event: RunFinished\ndata: {"metadata":{"provider":"veryfront-cloud","model":"anthropic/claude-sonnet-4-6","inputTokens":12,"outputTokens":8,"totalTokens":20,"cachedInputTokens":4,"cacheCreationInputTokens":6,"cacheReadInputTokens":4,"reasoningTokens":2,"billableInputTokens":10,"billableOutputTokens":7,"costUsd":0.002,"providerInputCostUsd":0.001,"providerOutputCostUsd":0.0005,"providerCostUsd":0.0015,"veryfrontInputChargeUsd":0.0012,"veryfrontOutputChargeUsd":0.0007,"veryfrontChargeUsd":0.0019,"veryfrontBilledUsd":0.002,"costCredits":2,"costSource":"gateway","billingMode":"deferred","usageCaptureStatus":"complete","finishReason":"stop"},"emittedAt":8}\n\n',
     );
   });
 
@@ -447,16 +527,17 @@ describe("internal-agents/ag-ui-sse", () => {
       messageId: "assistant-1",
       contentId: "block-1",
       delta: "hello",
+      emittedAt: 8,
     });
 
     assertEquals(
       new TextDecoder().decode(payload),
-      'event: TextMessageContent\ndata: {"messageId":"assistant-1","contentId":"block-1","delta":"hello"}\n\n',
+      'event: TextMessageContent\ndata: {"messageId":"assistant-1","contentId":"block-1","delta":"hello","emittedAt":8}\n\n',
     );
   });
 
   it("matches the canonical assistant text and tool trace used across repos", () => {
-    const state = createStreamTransformState();
+    const state = createStreamTransformState({ nowMs: null, epochMs: null });
 
     const mappedEvents = [
       { type: "message-start", messageId: "assistant-msg-1" },

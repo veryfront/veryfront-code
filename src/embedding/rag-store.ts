@@ -1,12 +1,19 @@
 import {
-  isNotFoundError,
+  createFileSystem,
   mkdir,
   readDir,
   readTextFile,
-  stat,
+  remove,
   writeTextFile,
 } from "#veryfront/platform/compat/fs.ts";
-import { dirname, extname, join } from "#veryfront/platform/compat/path/basic-operations.ts";
+import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
+import {
+  basename,
+  dirname,
+  extname,
+  join,
+} from "#veryfront/platform/compat/path/basic-operations.ts";
+import { resolve } from "#veryfront/platform/compat/path/resolution.ts";
 import { serverLogger } from "#veryfront/utils";
 import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
@@ -26,6 +33,7 @@ import type {
   RagStoreData,
 } from "./types.ts";
 import { cosineSimilarity } from "#veryfront/runtime/runtime-bridge.ts";
+import { type LocalJsonStoreLease, withLocalJsonStoreLock } from "./local-json-store-lock.ts";
 
 // Legacy data shapes used only for migrating old upload-store JSON files.
 interface LegacyStoredChunk {
@@ -40,30 +48,43 @@ interface LegacyUploadStoreData {
   uploads: RagDocumentMeta[];
   chunks: LegacyStoredChunk[];
 }
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import {
+  INVALID_ARGUMENT,
+  isVeryfrontError,
+  RAG_STORE_CORRUPT,
+  RAG_STORE_UNAVAILABLE,
+} from "#veryfront/errors";
 
 type ResolvedRagStoreConfig = RagStoreConfig & { model: string };
 
 /** Default number of top results returned by similarity search. */
 const DEFAULT_TOP_K = 5;
-
-interface StoreFileSignature {
-  changeTimeMs: number | null;
-  contentHash: string;
-  mtimeMs: number | null;
-  size: number;
-}
+const MAX_STORED_DOCUMENTS = 100_000;
+const MAX_STORED_CHUNKS = 1_000_000;
+const MAX_STORED_EMBEDDING_VALUES = 16_384;
+const MAX_STORED_BYTES = 64 * 1024 * 1024;
+const MAX_ORPHANED_STORE_TEMPS = 1_024;
+const MAX_EMBEDDING_PERSIST_ATTEMPTS = 2;
+const STORE_TEMP_TOKEN_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 interface StoreDataCache {
-  signature: StoreFileSignature;
+  sourceBytes: Uint8Array;
   data: RagStoreData;
 }
 
-type StoreFileMetadata = Omit<StoreFileSignature, "contentHash">;
+interface LoadedStoreData {
+  data: RagStoreData;
+  sourceBytes: Uint8Array | null;
+}
 
 interface StoreFileSnapshot {
-  signature: StoreFileSignature;
+  bytes: Uint8Array;
   text: string;
+}
+
+class InvalidStoreEncodingError extends Error {
+  override readonly name = "InvalidStoreEncodingError";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -75,7 +96,8 @@ function isFiniteNumber(value: unknown): value is number {
 }
 
 function isNumberArray(value: unknown): value is number[] {
-  return Array.isArray(value) && value.every(isFiniteNumber);
+  return Array.isArray(value) && value.length <= MAX_STORED_EMBEDDING_VALUES &&
+    value.every(isFiniteNumber);
 }
 
 function isNonNegativeInteger(value: unknown): value is number {
@@ -103,10 +125,37 @@ function isRagChunk(value: unknown): value is RagChunk {
 
 function isRagStoreData(value: unknown): value is RagStoreData {
   if (!isRecord(value)) return false;
-  return Array.isArray(value.documents) &&
-    value.documents.every(isRagDocumentMeta) &&
-    Array.isArray(value.chunks) &&
-    value.chunks.every(isRagChunk);
+  if (
+    !Array.isArray(value.documents) || value.documents.length > MAX_STORED_DOCUMENTS ||
+    !Array.isArray(value.chunks) || value.chunks.length > MAX_STORED_CHUNKS
+  ) {
+    return false;
+  }
+
+  const documentIds = new Set<string>();
+  for (const document of value.documents) {
+    if (!isRagDocumentMeta(document) || document.id.length === 0 || documentIds.has(document.id)) {
+      return false;
+    }
+    documentIds.add(document.id);
+  }
+
+  const chunkIds = new Set<string>();
+  const indexesByDocument = new Map<string, Set<number>>();
+  for (const chunk of value.chunks) {
+    if (
+      !isRagChunk(chunk) || chunk.id.length === 0 || chunk.documentId.length === 0 ||
+      chunkIds.has(chunk.id) || !documentIds.has(chunk.documentId)
+    ) {
+      return false;
+    }
+    chunkIds.add(chunk.id);
+    const indexes = indexesByDocument.get(chunk.documentId) ?? new Set<number>();
+    if (indexes.has(chunk.index)) return false;
+    indexes.add(chunk.index);
+    indexesByDocument.set(chunk.documentId, indexes);
+  }
+  return true;
 }
 
 function cloneRagStoreData(data: RagStoreData): RagStoreData {
@@ -119,23 +168,12 @@ function cloneRagStoreData(data: RagStoreData): RagStoreData {
   };
 }
 
-function hashStoreText(text: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < text.length; i++) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
+function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.byteLength !== right.byteLength) return false;
+  for (let index = 0; index < left.byteLength; index++) {
+    if (left[index] !== right[index]) return false;
   }
-  return hash.toString(16).padStart(8, "0");
-}
-
-function sameStoreFileSignature(
-  left: StoreFileSignature,
-  right: StoreFileSignature,
-): boolean {
-  return left.contentHash === right.contentHash &&
-    left.changeTimeMs === right.changeTimeMs &&
-    left.mtimeMs === right.mtimeMs &&
-    left.size === right.size;
+  return true;
 }
 
 function isLegacyStoredChunk(value: unknown): value is LegacyStoredChunk {
@@ -257,7 +295,8 @@ function resolveRagStoreBackend(config: RagStoreConfig): Exclude<RagStoreBackend
 }
 
 function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
-  const storagePath = config.storagePath ?? "data/index.json";
+  const storagePath = resolve(config.storagePath ?? "data/index.json");
+  const persistenceFs = createFileSystem();
   const contentDir = config.contentDir;
   const contentExtensions = new Set(config.contentExtensions ?? [".md", ".mdx", ".txt"]);
   const chunkOptions = config.chunkOptions;
@@ -265,19 +304,76 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
 
   const MAX_TEXT_LENGTH = 5 * 1024 * 1024; // 5 MB text limit per document
 
-  // Serialize all load→modify→save operations to prevent concurrent overwrites.
-  // NOTE: This is a single-process, single-instance mutex. In multi-instance
-  // deployments, concurrent stores targeting the same file will race.
-  let mutex: Promise<void> = Promise.resolve();
-  function withLock<T>(fn: () => Promise<T>): Promise<T> {
-    const result = mutex.then(fn);
-    mutex = result.then(
-      () => {},
-      (err) => {
-        serverLogger.error("[rag-store] Lock operation failed:", err);
-      },
-    );
-    return result;
+  function withLock<T>(fn: (lease: LocalJsonStoreLease) => Promise<T>): Promise<T> {
+    return withLocalJsonStoreLock(storagePath, async (lease) => {
+      await validateStoragePath();
+      await cleanupOrphanedTempFiles();
+      return await fn(lease);
+    }).catch((error) => {
+      if (isVeryfrontError(error)) throw error;
+      throw unavailableStoreError(error);
+    });
+  }
+
+  async function validateStoragePath(): Promise<void> {
+    const lstat = persistenceFs.lstat?.bind(persistenceFs);
+    if (!lstat) {
+      throw RAG_STORE_UNAVAILABLE.create({
+        detail: "The filesystem cannot safely inspect the configured RAG store path.",
+        context: { storagePath },
+      });
+    }
+    try {
+      const info = await lstat(storagePath);
+      if (!info.isFile || info.isSymlink) {
+        throw RAG_STORE_UNAVAILABLE.create({
+          detail: "The configured RAG store path must be a regular file or be absent.",
+          context: { storagePath },
+        });
+      }
+    } catch (error) {
+      if (isCanonicalNotFoundError(error)) return;
+      if (isVeryfrontError(error)) throw error;
+      throw unavailableStoreError(error);
+    }
+  }
+
+  async function cleanupOrphanedTempFiles(): Promise<void> {
+    const storageDirectory = dirname(storagePath);
+    const storageName = basename(storagePath);
+    const uniqueTempPrefix = `${storageName}.tmp.`;
+    let matchingTemps = 0;
+    try {
+      for await (const entry of readDir(storageDirectory)) {
+        const isLegacyTemp = entry.name === `${storageName}.tmp`;
+        const token = entry.name.startsWith(uniqueTempPrefix)
+          ? entry.name.slice(uniqueTempPrefix.length)
+          : null;
+        if (!isLegacyTemp && (token === null || !STORE_TEMP_TOKEN_PATTERN.test(token))) continue;
+        matchingTemps++;
+        if (matchingTemps > MAX_ORPHANED_STORE_TEMPS) {
+          throw RAG_STORE_UNAVAILABLE.create({
+            detail: "Too many orphaned RAG store temporary files require cleanup.",
+            context: { storagePath },
+          });
+        }
+        if (!entry.isFile || entry.isSymlink) {
+          throw RAG_STORE_UNAVAILABLE.create({
+            detail: "A RAG store temporary path is not a regular file.",
+            context: { storagePath },
+          });
+        }
+        try {
+          await remove(join(storageDirectory, entry.name));
+        } catch (error) {
+          if (!isCanonicalNotFoundError(error)) throw unavailableStoreError(error);
+        }
+      }
+    } catch (error) {
+      if (isCanonicalNotFoundError(error)) return;
+      if (isVeryfrontError(error)) throw error;
+      throw unavailableStoreError(error);
+    }
   }
 
   function createEmbedder() {
@@ -292,9 +388,9 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
   function isLegacyUploadStoreData(value: unknown): value is LegacyUploadStoreData {
     if (!value || typeof value !== "object") return false;
     const data = value as { uploads?: unknown; chunks?: unknown };
-    return Array.isArray(data.uploads) &&
+    return Array.isArray(data.uploads) && data.uploads.length <= MAX_STORED_DOCUMENTS &&
       data.uploads.every(isRagDocumentMeta) &&
-      Array.isArray(data.chunks) &&
+      Array.isArray(data.chunks) && data.chunks.length <= MAX_STORED_CHUNKS &&
       data.chunks.every(isLegacyStoredChunk);
   }
 
@@ -311,128 +407,180 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
     };
   }
 
-  async function getStoreFileMetadata(): Promise<StoreFileMetadata | null> {
-    try {
-      if (typeof Deno !== "undefined") {
-        const info = await Deno.stat(storagePath);
-        const changeTime = (info as { ctime?: Date | null }).ctime;
-        return {
-          changeTimeMs: changeTime?.getTime() ?? null,
-          mtimeMs: info.mtime?.getTime() ?? null,
-          size: info.size,
-        };
-      }
-
-      const info = await stat(storagePath);
-      let changeTimeMs: number | null = null;
-      try {
-        const nodeFs = await import("node:fs/promises");
-        const nodeInfo = await nodeFs.stat(storagePath);
-        changeTimeMs = nodeInfo.ctime.getTime();
-      } catch {
-        // expected: not every runtime exposes a file change time
-      }
-
-      return {
-        changeTimeMs,
-        mtimeMs: info.mtime?.getTime() ?? null,
-        size: info.size,
-      };
-    } catch (err) {
-      if (isNotFoundError(err)) return null;
-      throw err;
-    }
-  }
-
   async function readStoreFileSnapshot(): Promise<StoreFileSnapshot | null> {
-    const metadata = await getStoreFileMetadata();
-    if (metadata === null) return null;
-
-    const text = await readTextFile(storagePath);
-    return {
-      signature: {
-        ...metadata,
-        contentHash: hashStoreText(text),
-      },
-      text,
-    };
-  }
-
-  async function updateStoreDataCache(data: RagStoreData, payload: string): Promise<void> {
-    const metadata = await getStoreFileMetadata();
-    storeDataCache = metadata === null ? null : {
-      signature: {
-        ...metadata,
-        contentHash: hashStoreText(payload),
-      },
-      data: cloneRagStoreData(data),
-    };
-  }
-
-  async function load(): Promise<RagStoreData> {
+    const readSnapshot = persistenceFs.readFileSnapshotWithinLimit?.bind(persistenceFs);
+    if (!readSnapshot) {
+      throw new Error("The native filesystem cannot safely read the RAG store");
+    }
+    let bytes: Uint8Array;
     try {
-      const snapshot = await readStoreFileSnapshot();
-      if (snapshot === null) {
-        storeDataCache = null;
-        return { documents: [], chunks: [] };
-      }
-
-      if (
-        storeDataCache !== null &&
-        sameStoreFileSignature(storeDataCache.signature, snapshot.signature)
-      ) {
-        return cloneRagStoreData(storeDataCache.data);
-      }
-
-      const parsed = JSON.parse(snapshot.text);
-      if (isLegacyUploadStoreData(parsed)) {
-        const migrated = migrateLegacyUploadStoreData(parsed);
-        storeDataCache = {
-          signature: snapshot.signature,
-          data: cloneRagStoreData(migrated),
-        };
-        return cloneRagStoreData(migrated);
-      }
-      if (!isRagStoreData(parsed)) {
-        serverLogger.warn("[rag-store] Corrupted store file, resetting", { storagePath });
-        storeDataCache = null;
-        return { documents: [], chunks: [] };
-      }
-      storeDataCache = { signature: snapshot.signature, data: cloneRagStoreData(parsed) };
-      return cloneRagStoreData(parsed);
-    } catch (err) {
-      // File not found is expected on first run; anything else is worth logging
-      if (isNotFoundError(err)) {
-        storeDataCache = null;
-        return { documents: [], chunks: [] };
-      }
-      serverLogger.warn("[rag-store] Failed to load store, resetting", err);
-      storeDataCache = null;
-      return { documents: [], chunks: [] };
+      bytes = await readSnapshot(storagePath, dirname(storagePath), MAX_STORED_BYTES);
+    } catch (error) {
+      if (isCanonicalNotFoundError(error)) return null;
+      throw error;
+    }
+    try {
+      return { bytes, text: new TextDecoder("utf-8", { fatal: true }).decode(bytes) };
+    } catch (cause) {
+      throw new InvalidStoreEncodingError("RAG store is not valid UTF-8", { cause });
     }
   }
 
-  async function save(data: RagStoreData): Promise<void> {
+  function updateStoreDataCache(data: RagStoreData, payloadBytes: Uint8Array): void {
+    try {
+      storeDataCache = {
+        sourceBytes: payloadBytes,
+        data: cloneRagStoreData(data),
+      };
+    } catch (error) {
+      storeDataCache = null;
+      serverLogger.warn("[rag-store] Persisted the store but could not refresh its cache", error);
+    }
+  }
+
+  function corruptStoreError(detail: string, cause?: unknown): Error {
+    return RAG_STORE_CORRUPT.create({
+      detail: `RAG store file is corrupt (${detail}). ` +
+        "It was preserved as-is and no data was overwritten.",
+      cause,
+      context: { storagePath },
+    });
+  }
+
+  function unavailableStoreError(cause: unknown): Error {
+    return RAG_STORE_UNAVAILABLE.create({
+      detail: "RAG store operation could not be completed safely. Check storage and retry.",
+      cause,
+      context: { storagePath },
+    });
+  }
+
+  async function load(): Promise<LoadedStoreData> {
+    let snapshot: StoreFileSnapshot | null;
+    try {
+      snapshot = await readStoreFileSnapshot();
+    } catch (err) {
+      storeDataCache = null;
+      if (err instanceof RangeError) throw corruptStoreError("file exceeds size limit", err);
+      if (err instanceof InvalidStoreEncodingError) {
+        throw corruptStoreError("file is not valid UTF-8", err);
+      }
+      throw unavailableStoreError(err);
+    }
+
+    if (snapshot === null) {
+      storeDataCache = null;
+      return { data: { documents: [], chunks: [] }, sourceBytes: null };
+    }
+
+    if (
+      storeDataCache !== null &&
+      sameBytes(storeDataCache.sourceBytes, snapshot.bytes)
+    ) {
+      return {
+        data: cloneRagStoreData(storeDataCache.data),
+        sourceBytes: snapshot.bytes,
+      };
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(snapshot.text);
+    } catch (cause) {
+      storeDataCache = null;
+      throw corruptStoreError("malformed JSON", cause);
+    }
+
+    if (isLegacyUploadStoreData(parsed)) {
+      const migrated = migrateLegacyUploadStoreData(parsed);
+      if (!isRagStoreData(migrated)) {
+        storeDataCache = null;
+        throw corruptStoreError("legacy document or chunk relationships failed validation");
+      }
+      storeDataCache = {
+        sourceBytes: snapshot.bytes,
+        data: cloneRagStoreData(migrated),
+      };
+      return { data: cloneRagStoreData(migrated), sourceBytes: snapshot.bytes };
+    }
+    if (!isRagStoreData(parsed)) {
+      storeDataCache = null;
+      throw corruptStoreError("document or chunk entries failed validation");
+    }
+    storeDataCache = {
+      sourceBytes: snapshot.bytes,
+      data: cloneRagStoreData(parsed),
+    };
+    return { data: cloneRagStoreData(parsed), sourceBytes: snapshot.bytes };
+  }
+
+  async function save(
+    data: RagStoreData,
+    expectedSourceBytes: Uint8Array | null,
+    lease: LocalJsonStoreLease,
+  ): Promise<void> {
+    if (!isRagStoreData(data)) {
+      throw RAG_STORE_UNAVAILABLE.create({
+        detail: "The RAG store update violated persisted-data limits or relationships.",
+        context: { storagePath },
+      });
+    }
     const dir = dirname(storagePath);
     if (dir && dir !== ".") {
       await mkdir(dir, { recursive: true });
     }
     const payload = JSON.stringify(data);
-    // Atomic write: write to temp file then rename to prevent corruption on crash
-    const tmpPath = storagePath + ".tmp";
-    await writeTextFile(tmpPath, payload);
-    try {
-      if (typeof Deno !== "undefined") {
-        await Deno.rename(tmpPath, storagePath);
-      } else {
-        const fs = await import("node:fs/promises");
-        await fs.rename(tmpPath, storagePath);
-      }
-    } catch (_) {
-      // expected: rename not available in all environments, fall back to direct write
-      await writeTextFile(storagePath, payload);
+    const payloadBytes = new TextEncoder().encode(payload);
+    if (payloadBytes.byteLength > MAX_STORED_BYTES) {
+      throw RAG_STORE_UNAVAILABLE.create({
+        detail: "The RAG store update exceeds the persisted byte limit.",
+        context: { storagePath },
+      });
     }
-    await updateStoreDataCache(data, payload);
+    const tmpPath = lease.temporaryPath;
+    try {
+      await writeTextFile(tmpPath, payload);
+      await lease.assertOwned();
+
+      let currentSnapshot: StoreFileSnapshot | null;
+      try {
+        currentSnapshot = await readStoreFileSnapshot();
+      } catch (error) {
+        throw unavailableStoreError(error);
+      }
+      if (
+        expectedSourceBytes === null
+          ? currentSnapshot !== null
+          : currentSnapshot === null || !sameBytes(expectedSourceBytes, currentSnapshot.bytes)
+      ) {
+        throw RAG_STORE_UNAVAILABLE.create({
+          detail:
+            "RAG store file changed while an update was in progress. No data was overwritten.",
+          context: { storagePath },
+        });
+      }
+
+      await lease.assertOwned();
+      const rename = persistenceFs.rename?.bind(persistenceFs);
+      if (!rename) {
+        throw RAG_STORE_UNAVAILABLE.create({
+          detail: "The filesystem cannot atomically replace the RAG store file.",
+          context: { storagePath },
+        });
+      }
+      await rename(tmpPath, storagePath);
+    } catch (error) {
+      try {
+        await remove(tmpPath);
+      } catch (cleanupError) {
+        if (!isCanonicalNotFoundError(cleanupError)) {
+          serverLogger.warn("[rag-store] Failed to clean up temporary store file", cleanupError);
+        }
+      }
+      if (isVeryfrontError(error)) throw error;
+      throw unavailableStoreError(error);
+    }
+    updateStoreDataCache(data, payloadBytes);
   }
 
   async function ensureEmbeddings(data: RagStoreData): Promise<boolean> {
@@ -445,6 +593,41 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
       unembedded[i]!.embedding = embeddings[i]!;
     }
     return true;
+  }
+
+  function sameStoreSource(
+    expected: Uint8Array | null,
+    actual: Uint8Array | null,
+  ): boolean {
+    if (expected === null) return actual === null;
+    return actual !== null && sameBytes(expected, actual);
+  }
+
+  async function loadSearchDataWithEmbeddings(): Promise<RagStoreData | null> {
+    let loaded = await withLock(async () => await load());
+    for (let attempt = 0; attempt < MAX_EMBEDDING_PERSIST_ATTEMPTS; attempt++) {
+      if (loaded.data.chunks.length === 0) return null;
+
+      const updated = await ensureEmbeddings(loaded.data);
+      if (!updated) return loaded.data;
+
+      const embeddedData = loaded.data;
+      const persisted = await withLock(async (lease) => {
+        const current = await load();
+        if (!sameStoreSource(loaded.sourceBytes, current.sourceBytes)) {
+          return { saved: false as const, loaded: current };
+        }
+        await save(embeddedData, loaded.sourceBytes, lease);
+        return { saved: true as const, data: embeddedData };
+      });
+
+      if (persisted.saved) return persisted.data;
+      loaded = persisted.loaded;
+    }
+    throw RAG_STORE_UNAVAILABLE.create({
+      detail: "The RAG store changed repeatedly while embeddings were persisted.",
+      context: { storagePath },
+    });
   }
 
   async function listContentFiles(dir: string): Promise<string[]> {
@@ -470,8 +653,9 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
       text: string,
       meta?: { source?: string; type?: string },
     ): Promise<string> {
-      return withLock(async () => {
-        const data = await load();
+      return withLock(async (lease) => {
+        const loaded = await load();
+        const data = loaded.data;
         const documentId = crypto.randomUUID();
 
         if (text.length > MAX_TEXT_LENGTH) {
@@ -503,7 +687,7 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
 
         data.documents.push(doc);
         data.chunks.push(...chunkRecords);
-        await save(data);
+        await save(data, loaded.sourceBytes, lease);
 
         return documentId;
       });
@@ -514,8 +698,9 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
       text: string,
       meta?: RagRefreshOptions,
     ): Promise<void> {
-      return withLock(async () => {
-        const data = await load();
+      return withLock(async (lease) => {
+        const loaded = await load();
+        const data = loaded.data;
         const document = data.documents.find((doc) => doc.id === id);
         if (!document) {
           throw INVALID_ARGUMENT.create({ detail: `RAG document not found: ${id}` });
@@ -545,7 +730,7 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
             index,
           })),
         );
-        await save(data);
+        await save(data, loaded.sourceBytes, lease);
       });
     },
 
@@ -554,63 +739,59 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
       options?: RagSearchOptions,
     ): Promise<RagSearchResult[]> {
       if (!query.trim()) return [];
-      return withLock(async () => {
-        const data = await load();
-        if (data.chunks.length === 0) return [];
+      const data = await loadSearchDataWithEmbeddings();
+      if (data === null) return [];
+      const embedder = createEmbedder();
+      const queryEmbedding = await embedder.embed(query);
+      const topK = options?.topK ?? DEFAULT_TOP_K;
+      const threshold = options?.threshold;
 
-        const updated = await ensureEmbeddings(data);
-        if (updated) await save(data);
+      const docMap = new Map(data.documents.map((d) => [d.id, d]));
 
-        const embedder = createEmbedder();
-        const queryEmbedding = await embedder.embed(query);
-        const topK = options?.topK ?? DEFAULT_TOP_K;
-        const threshold = options?.threshold;
-
-        const docMap = new Map(data.documents.map((d) => [d.id, d]));
-
-        const scored = data.chunks.map((c) => {
-          const doc = docMap.get(c.documentId);
-          return {
-            text: c.text,
-            score: cosineSimilarity(queryEmbedding, c.embedding),
-            documentId: c.documentId,
-            title: doc?.title ?? "Unknown",
-            source: doc?.source ?? "",
-            type: doc?.type ?? "",
-          };
-        });
-
-        scored.sort((a, b) => b.score - a.score);
-
-        let results = scored.slice(0, topK);
-        if (threshold !== undefined) {
-          results = results.filter((r) => r.score >= threshold);
-        }
-        return results;
+      const scored = data.chunks.map((c) => {
+        const doc = docMap.get(c.documentId);
+        return {
+          text: c.text,
+          score: cosineSimilarity(queryEmbedding, c.embedding),
+          documentId: c.documentId,
+          title: doc?.title ?? "Unknown",
+          source: doc?.source ?? "",
+          type: doc?.type ?? "",
+        };
       });
+
+      scored.sort((a, b) => b.score - a.score);
+
+      let results = scored.slice(0, topK);
+      if (threshold !== undefined) {
+        results = results.filter((r) => r.score >= threshold);
+      }
+      return results;
     },
 
     async listDocuments(): Promise<RagDocumentMeta[]> {
       return withLock(async () => {
-        const data = await load();
+        const { data } = await load();
         return data.documents;
       });
     },
 
     async removeDocument(id: string): Promise<void> {
-      return withLock(async () => {
-        const data = await load();
+      return withLock(async (lease) => {
+        const loaded = await load();
+        const data = loaded.data;
         data.documents = data.documents.filter((d) => d.id !== id);
         data.chunks = data.chunks.filter((c) => c.documentId !== id);
-        await save(data);
+        await save(data, loaded.sourceBytes, lease);
       });
     },
 
     async indexContentDir(): Promise<void> {
       if (!contentDir) return;
 
-      return withLock(async () => {
-        const data = await load();
+      return withLock(async (lease) => {
+        const loaded = await load();
+        const data = loaded.data;
         const indexedSources = new Set(data.documents.map((d) => d.source));
 
         const files = await listContentFiles(contentDir);
@@ -657,7 +838,7 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
           );
         }
 
-        await save(data);
+        await save(data, loaded.sourceBytes, lease);
       });
     },
   };

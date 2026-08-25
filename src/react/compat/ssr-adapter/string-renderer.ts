@@ -2,9 +2,14 @@ import * as React from "react";
 import { isCompiledBinary, rendererLogger as logger } from "#veryfront/utils";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { getReactDOMServer } from "./server-loader.ts";
-import { getSSRAdapterTimeoutMs, getSSRBufferLimitBytes } from "./timeout.ts";
+import { getProjectReact, getReactDOMServer } from "./server-loader.ts";
+import {
+  getSSRAdapterDeadlineRuntime,
+  getSSRAdapterTimeoutMs,
+  getSSRBufferLimitBytes,
+} from "./timeout.ts";
 import type { SSROptions } from "./types.ts";
+import { wrapWithServerRenderContext } from "../../server-render-context.ts";
 
 const STREAM_YIELD_INTERVAL_BYTES = 256 * 1024;
 
@@ -18,9 +23,10 @@ interface RenderDeadline {
 }
 
 function createRenderDeadline(timeoutMs: number): RenderDeadline {
+  const runtime = getSSRAdapterDeadlineRuntime();
   const controller = new AbortController();
   const error = new Error(`SSR timeout: buffered React render exceeded ${timeoutMs}ms`);
-  const expiresAt = performance.now() + timeoutMs;
+  const expiresAt = runtime.now() + timeoutMs;
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   let expired = false;
   let rejectTimeout!: (error: Error) => void;
@@ -35,7 +41,7 @@ function createRenderDeadline(timeoutMs: number): RenderDeadline {
     }
     rejectTimeout(error);
   };
-  timeoutId = setTimeout(expire, timeoutMs);
+  timeoutId = runtime.setTimer(expire, timeoutMs);
 
   return {
     error,
@@ -43,12 +49,12 @@ function createRenderDeadline(timeoutMs: number): RenderDeadline {
     promise,
     signal: controller.signal,
     throwIfExpired() {
-      if (!expired && performance.now() < expiresAt) return;
+      if (!expired && runtime.now() < expiresAt) return;
       expire();
       throw error;
     },
     dispose() {
-      if (timeoutId !== undefined) clearTimeout(timeoutId);
+      if (timeoutId !== undefined) runtime.clearTimer(timeoutId);
       timeoutId = undefined;
     },
   };
@@ -143,7 +149,13 @@ export async function renderToStringAdapter(
   options: SSROptions = {},
 ): Promise<string> {
   const maxBufferedBytes = getSSRBufferLimitBytes(options.maxBufferedBytes);
-  const server = await getReactDOMServer(options.reactVersion);
+  const [server, projectReact] = await Promise.all([
+    getReactDOMServer(options.reactVersion),
+    options.renderContext ? getProjectReact(options.reactVersion) : Promise.resolve(null),
+  ]);
+  const renderElement = projectReact
+    ? wrapWithServerRenderContext(element, options.renderContext, projectReact)
+    : element;
   const canUseReadableStream = server.renderToReadableStream && !isCompiledBinary();
 
   if (canUseReadableStream) {
@@ -154,7 +166,7 @@ export async function renderToStringAdapter(
       const setupPromise = withSpan(
         SpanNames.SSR_REACT_RENDER_TO_STREAM,
         () =>
-          server.renderToReadableStream!(element, {
+          server.renderToReadableStream!(renderElement, {
             bootstrapModules: options.bootstrapModules,
             bootstrapScripts: options.bootstrapScripts,
             identifierPrefix: options.identifierPrefix,
@@ -211,7 +223,7 @@ export async function renderToStringAdapter(
       SpanNames.SSR_REACT_RENDER_TO_STRING,
       () =>
         Promise.resolve(
-          server.renderToString(element, {
+          server.renderToString(renderElement, {
             identifierPrefix: options.identifierPrefix,
           }),
         ),
@@ -231,10 +243,16 @@ export async function renderToStaticMarkupAdapter(
   options: SSROptions = {},
 ): Promise<string> {
   const maxBufferedBytes = getSSRBufferLimitBytes(options.maxBufferedBytes);
-  const { renderToStaticMarkup } = await getReactDOMServer(options.reactVersion);
+  const [{ renderToStaticMarkup }, projectReact] = await Promise.all([
+    getReactDOMServer(options.reactVersion),
+    options.renderContext ? getProjectReact(options.reactVersion) : Promise.resolve(null),
+  ]);
+  const renderElement = projectReact
+    ? wrapWithServerRenderContext(element, options.renderContext, projectReact)
+    : element;
 
   try {
-    const html = renderToStaticMarkup(element, {
+    const html = renderToStaticMarkup(renderElement, {
       identifierPrefix: options.identifierPrefix,
     });
     assertBufferedOutputWithinLimit(html, maxBufferedBytes);

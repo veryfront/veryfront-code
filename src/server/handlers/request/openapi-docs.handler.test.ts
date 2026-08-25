@@ -12,7 +12,6 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
       env: { get: () => undefined },
     },
     securityConfig: {},
-    cspUserHeader: null,
     isLocalProject: false,
     config: {
       openapi: {
@@ -33,14 +32,31 @@ describe("server/handlers/request/openapi-docs.handler", () => {
     const response = result.response!;
     const body = await response.text();
 
-    const csp = response.headers.get("content-security-policy") ?? "";
+    // Either header carries the policy: the floor is served report-only
+    // until a project opts in, and this asserts nonce alignment either way.
+    const csp = // Reported first: the enforced header carries only the directives that
+      // bind, and the nonce lives in the reported `script-src`.
+      response.headers.get("content-security-policy-report-only") ??
+        response.headers.get("content-security-policy") ?? "";
     const nonceMatch = csp.match(/nonce-([^' ;]+)/);
 
     assertEquals(Boolean(nonceMatch), true);
     const nonce = nonceMatch![1]!;
 
     assertEquals(body.includes(`<style nonce="${nonce}">`), true);
-    assertEquals(body.includes(`nonce="${nonce}"`), true);
+    const configStart = body.indexOf('id="api-reference"');
+    assertEquals(configStart > -1, true, "the inline Scalar config script must be emitted");
+    const configBlock = body.slice(configStart, body.indexOf("></script>", configStart));
+    assertEquals(
+      configBlock.includes(`nonce="${nonce}"`),
+      true,
+      "the inline Scalar config script must carry the response nonce",
+    );
+    assertEquals(
+      body.match(/nonce="/g)?.length,
+      3,
+      "every nonce-bearing element must be rebound",
+    );
     assertEquals(
       body.includes(
         `<script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference" nonce="${nonce}"></script>`,

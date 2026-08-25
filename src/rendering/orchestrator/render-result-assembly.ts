@@ -1,7 +1,13 @@
 import type { PageBundle, RenderResult } from "#veryfront/types";
+import type { ResponseCookie } from "#veryfront/data/types.ts";
 
 interface RenderResultAssemblyCache {
-  persistResult(result: RenderResult, slug: string, cacheKey?: string): Promise<void>;
+  persistResult(
+    result: RenderResult,
+    slug: string,
+    cacheKey?: string,
+    nonce?: string,
+  ): Promise<void>;
 }
 
 interface RenderResultAssemblyLogger {
@@ -25,6 +31,9 @@ export interface AssembleRenderResultOptions {
   skipCachePersist?: boolean;
   cacheCoordinator?: RenderResultAssemblyCache;
   logger?: RenderResultAssemblyLogger;
+  nonce?: string;
+  headers?: Record<string, string>;
+  cookies?: ResponseCookie[];
 }
 
 export function assembleRenderResult(options: AssembleRenderResultOptions): RenderResult {
@@ -43,14 +52,17 @@ export function assembleRenderResult(options: AssembleRenderResultOptions): Rend
     nodeMap: options.pageBundle.nodeMap,
     stream: options.ssrResult.finalStream,
     ssrHash: options.ssrResult.ssrHash,
+    ...(options.headers ? { headers: options.headers } : {}),
+    ...(options.cookies ? { cookies: options.cookies } : {}),
     ...(pageModule ? { pageModule } : {}),
   };
 
-  if (options.shouldCache && !options.skipCachePersist) {
+  if (options.shouldCache && !options.skipCachePersist && !options.cookies?.length) {
     void options.cacheCoordinator?.persistResult(
       result,
       options.slug,
       options.cacheKey ?? undefined,
+      options.nonce,
     ).catch(
       (error) => {
         options.logger?.error("Cache persist failed", {
