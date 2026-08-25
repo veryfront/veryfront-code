@@ -2,6 +2,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  createSnapshot,
+  resetMetrics,
+} from "#veryfront/observability/simple-metrics/metrics-state.ts";
+import {
   endRequestMetrics,
   getContentMetricsSnapshot,
   logContentMetric,
@@ -41,12 +45,22 @@ describe("platform/adapters/fs/veryfront/content-metrics", () => {
       assertEquals(snapshot.requestsTracked, 1);
     });
 
-    it("should not throw when endRequestMetrics called without context", () => {
-      resetContentMetrics();
-      // endRequestMetrics is a no-op when there is no active metrics store
-      // Note: enterWith from previous tests may persist in the same async context,
-      // so we just verify it does not throw
-      endRequestMetrics({ requestId: "no-start" });
+    it("should not throw when endRequestMetrics called without context", async () => {
+      const isolatedMetrics = await import("./content-metrics.ts?without-context");
+      isolatedMetrics.resetContentMetrics();
+      // endRequestMetrics is a no-op when there is no active metrics store.
+      isolatedMetrics.endRequestMetrics({ requestId: "no-start" });
+      const snapshot = isolatedMetrics.getContentMetricsSnapshot();
+      assertEquals(
+        snapshot.requestsTracked,
+        0,
+        "an endRequestMetrics without a live store must not count a request",
+      );
+      assertEquals(
+        snapshot.avgNetworkMsPerRequest,
+        0,
+        "an orphan end must not skew the network average",
+      );
     });
 
     it("should handle endRequestMetrics with no context", () => {
@@ -121,10 +135,44 @@ describe("platform/adapters/fs/veryfront/content-metrics", () => {
 
     it("should track isPreviewMode", () => {
       resetContentMetrics();
+      resetMetrics();
       startRequestMetrics();
       logContentMetric("REQUEST_SCOPED_HIT", { path: "test.ts", isPreviewMode: true });
       endRequestMetrics();
-      // No assertion on preview mode directly, but it should not throw
+
+      const snapshot = createSnapshot();
+      assertEquals(
+        snapshot.contentPreviewRequests,
+        1,
+        "a request flagged isPreviewMode must be attributed to preview traffic",
+      );
+      assertEquals(
+        snapshot.contentProductionRequests,
+        0,
+        "a preview request must not be counted as production",
+      );
+      resetMetrics();
+    });
+
+    it("should attribute an unflagged request to production traffic", () => {
+      resetContentMetrics();
+      resetMetrics();
+      startRequestMetrics();
+      logContentMetric("REQUEST_SCOPED_HIT", { path: "test.ts" });
+      endRequestMetrics();
+
+      const snapshot = createSnapshot();
+      assertEquals(
+        snapshot.contentProductionRequests,
+        1,
+        "a request without an isPreviewMode flag must be attributed to production traffic",
+      );
+      assertEquals(
+        snapshot.contentPreviewRequests,
+        0,
+        "an unflagged request must not be counted as preview",
+      );
+      resetMetrics();
     });
 
     it("should accumulate multiple events in a single request", () => {

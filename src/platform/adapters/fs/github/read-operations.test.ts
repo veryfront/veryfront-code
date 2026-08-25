@@ -1,7 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { buildGitHubBytesCacheKey } from "#veryfront/cache";
 import { GitHubReadOperations } from "./read-operations.ts";
+import { buildGitHubCacheRef } from "./cache-scope.ts";
 import { FileCache } from "../cache/file-cache.ts";
 
 describe("GitHubReadOperations", () => {
@@ -232,6 +234,62 @@ describe("GitHubReadOperations", () => {
       assertEquals(result instanceof Uint8Array, true);
       // Should encode "plain text" as UTF-8 bytes
       assertEquals(new TextDecoder().decode(result), "plain text");
+    });
+  });
+
+  describe("readFileBytesWithinLimit", () => {
+    function seedExactCache(cache: FileCache, sha: string, bytes: Uint8Array): void {
+      cache.set(
+        `${buildGitHubBytesCacheKey(buildGitHubCacheRef(mockConfig), "README.md")}:exact:${sha}`,
+        bytes,
+      );
+    }
+
+    it("rejects a cached entry whose length disagrees with the tree entry", async () => {
+      const cache = new FileCache();
+      seedExactCache(cache, "sha-1", new Uint8Array(5));
+      const ops = new GitHubReadOperations(
+        mockConfig,
+        createMockClient() as any,
+        cache as any,
+        createMockStatOps({
+          getFileEntry: () => ({ sha: "sha-1", size: 11, type: "blob" }),
+        }) as any,
+      );
+
+      await assertRejects(
+        () => ops.readFileBytesWithinLimit("README.md", 11),
+        TypeError,
+        "does not match its tree entry",
+      );
+    });
+
+    it("returns a cached entry whose length matches without refetching", async () => {
+      const cache = new FileCache();
+      const content = new TextEncoder().encode("hello world");
+      seedExactCache(cache, "sha-1", content);
+      let blobFetches = 0;
+      const ops = new GitHubReadOperations(
+        mockConfig,
+        createMockClient({
+          getBlobBytesWithinLimit: () => {
+            blobFetches++;
+            throw new Error("the cached entry must answer the read");
+          },
+        }) as any,
+        cache as any,
+        createMockStatOps({
+          getFileEntry: () => ({ sha: "sha-1", size: content.byteLength, type: "blob" }),
+        }) as any,
+      );
+
+      const bytes = await ops.readFileBytesWithinLimit("README.md", content.byteLength);
+      assertEquals(
+        new TextDecoder().decode(bytes),
+        "hello world",
+        "a size-matching cached entry is served verbatim",
+      );
+      assertEquals(blobFetches, 0, "a size-matching cached entry is served without a blob fetch");
     });
   });
 

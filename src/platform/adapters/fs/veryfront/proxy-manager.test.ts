@@ -9,6 +9,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { API_CLIENT_ERROR } from "#veryfront/errors";
 import {
   __registerLogRecordEmitter,
@@ -32,6 +33,24 @@ function createManager(
   options: Partial<ConstructorParameters<typeof ProxyFSAdapterManager>[0]> = {},
 ): ProxyFSAdapterManager {
   return new ProxyFSAdapterManager({ baseConfig, ...options });
+}
+
+/**
+ * Adapter factory whose adapters skip network initialization and record every
+ * dispose() call, so cache lifecycle assertions can observe adapter teardown.
+ */
+function createRecordingAdapterFactory(disposedSlugs: string[]) {
+  return (config: ConstructorParameters<typeof VeryfrontFSAdapter>[0]): VeryfrontFSAdapter => {
+    const projectSlug = config.veryfront?.projectSlug ?? "";
+    const adapter = new VeryfrontFSAdapter(config);
+    adapter.initialize = () => Promise.resolve();
+    const disposeAdapter = adapter.dispose.bind(adapter);
+    adapter.dispose = (): void => {
+      disposedSlugs.push(projectSlug);
+      disposeAdapter();
+    };
+    return adapter;
+  };
 }
 
 async function assertGetAdapterRejects(
@@ -456,6 +475,63 @@ describe("ProxyFSAdapterManager", () => {
     });
   });
 
+  describe("idle cleanup", () => {
+    it("disposes idle adapters and keeps adapters inside their idle window", async () => {
+      const idleDisposedSlugs: string[] = [];
+      const retainedDisposedSlugs: string[] = [];
+      const idleManager = createManager({
+        cleanupIntervalMs: 5,
+        maxIdleMs: 0,
+        adapterFactory: createRecordingAdapterFactory(idleDisposedSlugs),
+      });
+      const retainingManager = createManager({
+        cleanupIntervalMs: 5,
+        maxIdleMs: 60_000,
+        adapterFactory: createRecordingAdapterFactory(retainedDisposedSlugs),
+      });
+
+      try {
+        await idleManager.getAdapter("idle-project", "token", undefined, false, null, null, "main");
+        await retainingManager.getAdapter(
+          "fresh-project",
+          "token",
+          undefined,
+          false,
+          null,
+          null,
+          "main",
+        );
+        assertEquals(idleManager.getStats().adapters, 1, "the idle adapter starts cached");
+        assertEquals(retainingManager.getStats().adapters, 1, "the fresh adapter starts cached");
+
+        await waitFor(() => idleManager.getStats().adapters === 0, {
+          message: "an idle adapter must be removed by the cleanup timer",
+        });
+        assertEquals(
+          idleDisposedSlugs,
+          ["idle-project"],
+          "an idle adapter must be disposed, not just dropped",
+        );
+
+        // Both managers share a cleanup interval, so the eviction above proves
+        // the timer has ticked for the retaining manager too.
+        assertEquals(
+          retainingManager.getStats().adapters,
+          1,
+          "an adapter inside its idle window must survive the same cleanup ticks",
+        );
+        assertEquals(
+          retainedDisposedSlugs,
+          [],
+          "an adapter inside its idle window must not be disposed",
+        );
+      } finally {
+        idleManager.dispose();
+        retainingManager.dispose();
+      }
+    });
+  });
+
   describe("methods", () => {
     it("should have getAdapter method", () => {
       const manager = createManager();
@@ -489,21 +565,67 @@ describe("ProxyFSAdapterManager", () => {
       manager.dispose();
     });
 
-    it("should differentiate adapters by branch in preview mode", () => {
-      const manager = createManager();
-      assertEquals(manager.hasAdapter("project", false, null, "main"), false);
-      assertEquals(manager.hasAdapter("project", false, null, "feature-x"), false);
-      assertEquals(manager.hasAdapter("project", false, null, null), false);
-      manager.dispose();
+    it("should differentiate adapters by branch in preview mode", async () => {
+      const manager = createManager({
+        adapterFactory: createRecordingAdapterFactory([]),
+      });
+      try {
+        await manager.getAdapter("project", "token", undefined, false, null, null, "main");
+        await manager.getAdapter("project", "token", undefined, false, null, null, "feature-x");
+
+        assertEquals(
+          manager.hasAdapter("project", false, null, "main"),
+          true,
+          "the main-branch adapter must be selectable",
+        );
+        assertEquals(
+          manager.hasAdapter("project", false, null, "feature-x"),
+          true,
+          "the feature-branch adapter must be selectable",
+        );
+        assertEquals(
+          manager.hasAdapter("project", false, null, "other"),
+          false,
+          "branch must be part of preview adapter selection",
+        );
+      } finally {
+        manager.dispose();
+      }
     });
 
-    it("should treat null branch as main branch", () => {
-      const manager = createManager();
-      assertEquals(
-        manager.hasAdapter("project", false, null, null),
-        manager.hasAdapter("project", false, null, "main"),
-      );
-      manager.dispose();
+    it("should treat null branch as main branch", async () => {
+      const manager = createManager({
+        adapterFactory: createRecordingAdapterFactory([]),
+      });
+      try {
+        await manager.getAdapter("my-project", "test-token", undefined, false, null, null, "main");
+
+        assertEquals(
+          manager.hasAdapter("my-project", false, null, null),
+          true,
+          "null branch resolves to the cached main-branch adapter",
+        );
+        assertEquals(
+          manager.hasAdapter("my-project", false, null, "main"),
+          true,
+          "the cached adapter is still selectable by its explicit branch",
+        );
+        assertEquals(
+          manager.hasAdapter("my-project", false, null, "feature-x"),
+          false,
+          "another branch must not resolve to the main-branch adapter",
+        );
+
+        manager.evictAdapter("my-project", false, null, null);
+
+        assertEquals(
+          manager.hasAdapter("my-project", false, null, "main"),
+          false,
+          "eviction by null branch must remove the main-branch adapter",
+        );
+      } finally {
+        manager.dispose();
+      }
     });
 
     it("should ignore branch for production mode", () => {
@@ -623,11 +745,23 @@ describe("ProxyFSAdapterManager", () => {
       manager.dispose();
     });
 
-    it("should clear all adapters on dispose", () => {
-      const manager = createManager();
-      assertEquals(manager.getStats().adapters, 0);
+    it("should clear all adapters on dispose", async () => {
+      const disposedSlugs: string[] = [];
+      const manager = createManager({
+        adapterFactory: createRecordingAdapterFactory(disposedSlugs),
+      });
+
+      await manager.getAdapter("test-project", "test-token", undefined, false, null, null, "main");
+      assertEquals(manager.getStats().adapters, 1, "a cached adapter is tracked before dispose");
+
       manager.dispose();
-      assertEquals(manager.getStats().adapters, 0);
+
+      assertEquals(manager.getStats().adapters, 0, "dispose must clear the adapter map");
+      assertEquals(
+        disposedSlugs,
+        ["test-project"],
+        "dispose must dispose each cached adapter's timers and socket",
+      );
     });
   });
 
@@ -672,11 +806,24 @@ describe("ProxyFSAdapterManager", () => {
       manager.dispose();
     });
 
-    it("should remove all adapters on dispose", () => {
-      const manager = createManager();
-      assertEquals(manager.getStats().adapters, 0);
+    it("should remove all adapters on dispose", async () => {
+      const disposedSlugs: string[] = [];
+      const manager = createManager({
+        adapterFactory: createRecordingAdapterFactory(disposedSlugs),
+      });
+
+      await manager.getAdapter("project-one", "test-token", undefined, false, null, null, "main");
+      await manager.getAdapter("project-two", "test-token", undefined, false, null, null, "main");
+      assertEquals(manager.getStats().adapters, 2, "both cached adapters are tracked");
+
       manager.dispose();
-      assertEquals(manager.getStats().adapters, 0);
+
+      assertEquals(manager.getStats().adapters, 0, "dispose must clear every cached adapter");
+      assertEquals(
+        disposedSlugs.slice().sort(),
+        ["project-one", "project-two"],
+        "dispose must dispose every cached adapter, not just the first",
+      );
     });
   });
 
@@ -926,6 +1073,50 @@ describe("ProxyFSAdapterManager", () => {
       } finally {
         initializationGate.resolve();
         await firstRequest?.catch(() => {});
+        manager.dispose();
+      }
+    });
+
+    it("evicts the least recently used adapter, not the most recent", async () => {
+      const disposedSlugs: string[] = [];
+      // ProxyFSAdapterManager stamps lastAccessed with Date.now(), so a pinned
+      // clock is what makes the three admissions strictly ordered instead of
+      // sharing a millisecond.
+      const originalNow = Date.now;
+      let clock = 1_000_000;
+      Date.now = (): number => clock;
+      const manager = createManager({
+        maxAdapters: 2,
+        adapterFactory: createRecordingAdapterFactory(disposedSlugs),
+      });
+
+      try {
+        await manager.getAdapter("tenant-a", "credential", undefined, false, null, null, "main");
+        clock += 1_000;
+        await manager.getAdapter("tenant-b", "credential", undefined, false, null, null, "main");
+        clock += 1_000;
+        // Refreshing A makes B the least recently used entry.
+        await manager.getAdapter("tenant-a", "credential", undefined, false, null, null, "main");
+        clock += 1_000;
+        await manager.getAdapter("tenant-c", "credential", undefined, false, null, null, "main");
+
+        assertEquals(
+          manager.hasAdapter("tenant-a", false, null, "main"),
+          true,
+          "the most recently used adapter must survive admission",
+        );
+        assertEquals(
+          manager.hasAdapter("tenant-b", false, null, "main"),
+          false,
+          "the least recently used adapter must be the one evicted",
+        );
+        assertEquals(
+          disposedSlugs,
+          ["tenant-b"],
+          "eviction must dispose only the least recently used adapter",
+        );
+      } finally {
+        Date.now = originalNow;
         manager.dispose();
       }
     });
