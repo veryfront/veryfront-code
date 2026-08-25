@@ -63,10 +63,12 @@ const getPrototypeOf = Object.getPrototypeOf;
 const NativeError = Error;
 const NativeString = String;
 const NativeUint32Array = Uint32Array;
+const NativeURL = URL;
 const stringCharCodeAt = String.prototype.charCodeAt;
 const stringSlice = String.prototype.slice;
 const stringToLowerCase = String.prototype.toLowerCase;
 const stringToUpperCase = String.prototype.toUpperCase;
+const URL_HOSTNAME_GETTER = getOwnPropertyDescriptor(NativeURL.prototype, "hostname")?.get;
 const NATIVE_ERROR_STACK_GETTER = getOwnPropertyDescriptor(new NativeError(), "stack")?.get;
 const ERROR_CATEGORIES: ReadonlySet<ErrorCategory> = new Set([
   "CONFIG",
@@ -399,6 +401,29 @@ function isAsciiLetterCodeUnit(codeUnit: number): boolean {
   return (codeUnit >= 65 && codeUnit <= 90) || (codeUnit >= 97 && codeUnit <= 122);
 }
 
+function trimUrlIgnoredAsciiWhitespace(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && charCodeAtString(value, start) <= 0x20) start++;
+  while (end > start && charCodeAtString(value, end - 1) <= 0x20) end--;
+  return start === 0 && end === value.length ? value : sliceString(value, start, end);
+}
+
+function fileUrlNormalizationSource(path: string): string {
+  const trimmed = trimUrlIgnoredAsciiWhitespace(path);
+  return lowercaseString(sliceString(trimmed, 0, 5)) === "file:" ? trimmed : path;
+}
+
+export function isAbsoluteFilesystemPathForDiagnostic(path: string): boolean {
+  const candidate = fileUrlNormalizationSource(path);
+  if (lowercaseString(sliceString(candidate, 0, 5)) === "file:") return true;
+  if (isPathSeparatorCodeUnit(charCodeAtString(candidate, 0))) return true;
+  return candidate.length >= 3 &&
+    isAsciiLetterCodeUnit(charCodeAtString(candidate, 0)) &&
+    charCodeAtString(candidate, 1) === COLON_CODE_UNIT &&
+    isPathSeparatorCodeUnit(charCodeAtString(candidate, 2));
+}
+
 function isWindowsFilesystemPath(path: string): boolean {
   if (path.length >= 2) {
     const first = charCodeAtString(path, 0);
@@ -536,6 +561,18 @@ function normalizeFilesystemPathForDiagnostic(path: string): string {
     : normalized;
 }
 
+function normalizePosixDoubleSeparatorPathForDiagnostic(path: string): string | undefined {
+  if (
+    charCodeAtString(path, 0) !== FORWARD_SLASH_CODE_UNIT ||
+    charCodeAtString(path, 1) !== FORWARD_SLASH_CODE_UNIT
+  ) {
+    return undefined;
+  }
+  let cursor = 2;
+  while (charCodeAtString(path, cursor) === FORWARD_SLASH_CODE_UNIT) cursor++;
+  return normalizeFilesystemPathForDiagnostic(`/${sliceString(path, cursor)}`);
+}
+
 function minimumAbsolutePathPrefixLength(path: string): number {
   let index = 0;
   if (
@@ -660,8 +697,18 @@ function platformPathFromNormalizedFileUrl(normalizedPath: string): string | und
   } catch {
     return undefined;
   }
-  if (decodedAuthority && lowercaseString(decodedAuthority) !== "localhost") {
-    return `//${decodedAuthority}/${decodedBody}`;
+  let canonicalAuthority: string | undefined;
+  if (URL_HOSTNAME_GETTER) {
+    try {
+      const hostname = apply(URL_HOSTNAME_GETTER, new NativeURL(normalizedPath), []);
+      if (typeof hostname === "string") canonicalAuthority = hostname;
+    } catch {
+      // Fall back to the safely decoded source authority for malformed URLs.
+    }
+  }
+  const platformAuthority = canonicalAuthority ?? decodedAuthority;
+  if (platformAuthority && lowercaseString(platformAuthority) !== "localhost") {
+    return `//${platformAuthority}/${decodedBody}`;
   }
   // The WHATWG file URL parser also accepts the legacy vertical-bar drive
   // spelling ("file:///C|/nope"), which the host resolves to "C:\nope", so
@@ -687,21 +734,41 @@ export function snapshotThrowableDiagnosticRedactingPath(
   replacement: string,
 ): string {
   const diagnostic = readThrowableDiagnostic(error);
-  const normalizedPath = normalizeFilesystemPathForDiagnostic(path);
+  const normalizationSource = fileUrlNormalizationSource(path);
+  const normalizedPath = normalizeFilesystemPathForDiagnostic(normalizationSource);
+  const posixDoubleSeparatorPath = normalizePosixDoubleSeparatorPathForDiagnostic(
+    normalizationSource,
+  );
   const rawPlatformPath = platformPathFromNormalizedFileUrl(normalizedPath);
-  const platformPath = rawPlatformPath === path || rawPlatformPath === normalizedPath
+  const platformPath = rawPlatformPath === path || rawPlatformPath === normalizationSource ||
+      rawPlatformPath === normalizedPath
     ? undefined
     : rawPlatformPath;
   let redacted = redactPathFromText(diagnostic, path, replacement);
-  if (normalizedPath !== path) {
+  if (normalizationSource !== path) {
+    redacted = redactPathFromText(redacted, normalizationSource, replacement);
+  }
+  if (normalizedPath !== path && normalizedPath !== normalizationSource) {
     redacted = redactPathFromText(redacted, normalizedPath, replacement);
+  }
+  if (
+    posixDoubleSeparatorPath !== undefined &&
+    posixDoubleSeparatorPath !== path &&
+    posixDoubleSeparatorPath !== normalizedPath
+  ) {
+    redacted = redactPathFromText(redacted, posixDoubleSeparatorPath, replacement);
   }
   if (platformPath !== undefined) {
     redacted = redactPathFromText(redacted, platformPath, replacement);
   }
   if (
     containsTruncatedFilesystemPathPrefix(redacted, path) ||
-    (normalizedPath !== path && containsTruncatedFilesystemPathPrefix(redacted, normalizedPath)) ||
+    (normalizationSource !== path &&
+      containsTruncatedFilesystemPathPrefix(redacted, normalizationSource)) ||
+    (normalizedPath !== path && normalizedPath !== normalizationSource &&
+      containsTruncatedFilesystemPathPrefix(redacted, normalizedPath)) ||
+    (posixDoubleSeparatorPath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, posixDoubleSeparatorPath)) ||
     (platformPath !== undefined && containsTruncatedFilesystemPathPrefix(redacted, platformPath))
   ) {
     return `${FILESYSTEM_DIAGNOSTIC_FALLBACK} for ${replacement}`;

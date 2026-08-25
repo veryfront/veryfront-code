@@ -262,4 +262,28 @@ describe("safe-diagnostics", () => {
       );
     }
   });
+
+  it("should redact the POSIX interpretation of an ambiguous double-separator path", () => {
+    assertEquals(
+      snapshotThrowableDiagnosticRedactingPath(
+        new Error("ENOENT: no such file or directory, open '/private-source-marker'"),
+        "//audit-root/../private-source-marker",
+        "<absolute-path>",
+      ),
+      "ENOENT: no such file or directory, open '<absolute-path>'",
+    );
+  });
+
+  it("should redact the canonical authority spelling produced by the file URL parser", () => {
+    assertEquals(
+      snapshotThrowableDiagnosticRedactingPath(
+        new Error(
+          "ENOENT: no such file or directory, open '\\\\127.0.0.1\\share\\private-source-marker'",
+        ),
+        "file://0177.0.0.1/share/private-source-marker",
+        "<absolute-path>",
+      ),
+      "ENOENT: no such file or directory, open '<absolute-path>'",
+    );
+  });
 });

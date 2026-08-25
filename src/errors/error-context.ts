@@ -6,6 +6,7 @@
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { redactForSerialization } from "#veryfront/utils/logger/redact.ts";
 import {
+  isAbsoluteFilesystemPathForDiagnostic,
   sanitizeDiagnosticText,
   sanitizeStackDiagnosticText,
   snapshotErrorForBoundary,
@@ -13,12 +14,11 @@ import {
 } from "./safe-diagnostics.ts";
 
 const arrayIsArray = Array.isArray;
-const ABSOLUTE_FILESYSTEM_PATH = /^(?:[\\/]|[A-Za-z]:[\\/]|file:)/i;
 const ABSOLUTE_PATH_REDACTION = "<absolute-path>";
 
 function sanitizeFilesystemContextPath(path: string): string {
   const sanitized = sanitizeDiagnosticText(path);
-  return ABSOLUTE_FILESYSTEM_PATH.test(sanitized) ? ABSOLUTE_PATH_REDACTION : sanitized;
+  return isAbsoluteFilesystemPathForDiagnostic(sanitized) ? ABSOLUTE_PATH_REDACTION : sanitized;
 }
 
 export interface ErrorContext {
@@ -44,7 +44,8 @@ function snapshotDiagnostic(error: unknown, filesystemPath?: string): {
   readonly stack?: string;
 } {
   const snapshot = snapshotErrorForBoundary(error);
-  const message = filesystemPath !== undefined && ABSOLUTE_FILESYSTEM_PATH.test(filesystemPath)
+  const message = filesystemPath !== undefined &&
+      isAbsoluteFilesystemPathForDiagnostic(filesystemPath)
     ? snapshotThrowableDiagnosticRedactingPath(
       error,
       filesystemPath,
@@ -89,7 +90,11 @@ function logErrorBestEffort(
   filesystemPath?: string,
 ): void {
   try {
-    const safeContext = snapshotContext(context);
+    const safeContext = snapshotContext(
+      filesystemPath === undefined
+        ? context
+        : { ...context, path: sanitizeFilesystemContextPath(filesystemPath) },
+    );
     const diagnostic = snapshotDiagnostic(error, filesystemPath);
     const message = sanitizeDiagnosticText(diagnostic.message);
     const logData: Record<string, unknown> = {
@@ -131,7 +136,7 @@ async function withFilesystemErrorContext<T>(
   } catch (error) {
     logErrorBestEffort(
       error,
-      { operation: operationName, path: sanitizeFilesystemContextPath(path) },
+      { operation: operationName, path },
       "debug",
       false,
       path,
@@ -209,7 +214,7 @@ export async function safeReadDir<T>(
   } catch (error) {
     logErrorBestEffort(
       error,
-      { operation, path: sanitizeFilesystemContextPath(path) },
+      { operation, path },
       "debug",
       false,
       path,

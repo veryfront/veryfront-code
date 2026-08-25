@@ -448,6 +448,89 @@ describe("error-context", () => {
       assertEquals(String(diagnostic.data.errorMessage).includes("<absolute-path>"), true);
     });
 
+    it("redacts whitespace-prefixed file URLs and their native path diagnostics", async () => {
+      const captured: { message: string; data: Record<string, unknown> }[] = [];
+      const originalLogDebug = serverLogger.debug;
+      serverLogger.debug = ((message: string, data: Record<string, unknown>) => {
+        captured.push({ message, data });
+      }) as typeof serverLogger.debug;
+
+      const requestedPath = " \tfile:///private-source-marker/nope\r\n";
+      const nativePath = "/private-source-marker/nope";
+      let result: string | null;
+      try {
+        result = await safeFileRead(
+          {
+            fs: {
+              readFile: () =>
+                Promise.reject(
+                  new Error(`read failed for ${requestedPath} as ${nativePath}`),
+                ),
+            },
+          },
+          requestedPath,
+          "read-file",
+        );
+      } finally {
+        serverLogger.debug = originalLogDebug;
+      }
+
+      assertEquals(result, null);
+      const diagnostic = captured[0];
+      assertExists(diagnostic);
+      assertEquals(diagnostic.data.path, "<absolute-path>");
+      assertEquals(JSON.stringify(diagnostic).includes(requestedPath), false);
+      assertEquals(JSON.stringify(diagnostic).includes(nativePath), false);
+      assertEquals(String(diagnostic.data.errorMessage).includes("<absolute-path>"), true);
+    });
+
+    it("preserves filesystem fallbacks when absolute-path classification is poisoned", async () => {
+      const originalRegExpTest = RegExp.prototype.test;
+      let readResult: string | null;
+      let statResult: { isFile: boolean; isDirectory: boolean } | null;
+      let directoryResult: string[];
+      try {
+        RegExp.prototype.test = () => {
+          throw new Error("poisoned RegExp.prototype.test");
+        };
+        readResult = await safeFileRead(
+          {
+            fs: {
+              readFile: () => Promise.reject(new Error("read failed")),
+            },
+          },
+          "/private/read-secret.txt",
+          "read-file",
+        );
+        statResult = await safeFileStat(
+          {
+            fs: {
+              stat: () => Promise.reject(new Error("stat failed")),
+            },
+          },
+          "/private/stat-secret.txt",
+          "stat-file",
+        );
+        directoryResult = await safeReadDir<string>(
+          {
+            fs: {
+              readDir(): AsyncIterable<string> {
+                throw new Error("directory read failed");
+              },
+            },
+          },
+          "/private/directory",
+          "read-directory",
+        );
+      } finally {
+        RegExp.prototype.test = originalRegExpTest;
+      }
+
+      assertEquals(readResult, null);
+      assertEquals(statResult, null);
+      assertEquals(directoryResult, []);
+    });
+
     it("redacts canonical file paths after relevant live intrinsics are poisoned", async () => {
       const captured: { message: string; data: Record<string, unknown> }[] = [];
       const originalLogDebug = serverLogger.debug;
