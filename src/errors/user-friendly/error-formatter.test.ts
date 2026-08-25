@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { cyan, dim } from "#veryfront/compat/console";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { formatErrorBox, formatUserError } from "./error-formatter.ts";
 import { CONFIG_NOT_FOUND } from "../error-registry.ts";
@@ -35,6 +36,12 @@ describe("formatErrorBox", () => {
 
     assert(result.includes("Server-only code used in Client Component"));
     assert(result.includes("How to fix:"));
+    assert(result.includes("Example:"), "solution example section is rendered");
+    assert(
+      result.includes("import { db } from './database'"),
+      "example snippet body is rendered",
+    );
+    assert(result.includes(dim("Example:")), "formatErrorBox uses the dim example label");
     assert(result.includes("Learn more:"));
     assert(result.includes("client-boundary-violation"));
   });
@@ -89,11 +96,6 @@ describe("formatUserError", () => {
     assert(result.includes("Error"));
   });
 
-  it("should include stack trace for unknown errors", () => {
-    const result = formatUserError(new Error("unknown error xyz_unique_test"));
-    assert(result.includes("Stack trace") || result.includes("veryfront doctor"));
-  });
-
   it("should include doctor hint for unknown errors", () => {
     const result = formatUserError(new Error("completely unknown error abcdef"));
     assert(result.includes("veryfront doctor"));
@@ -107,6 +109,16 @@ describe("formatUserError", () => {
     assert(result.includes("veryfront.config.js"));
     assert(result.includes("veryfront.config.ts"));
     assert(result.includes("veryfront.config.mjs"));
+  });
+
+  it("should label the example section with the cyan default", () => {
+    const result = formatUserError(new Error("Client boundary violation in component"));
+
+    assert(result.includes(cyan("Example:")), "formatUserError uses the cyan example label");
+    assert(
+      result.includes("import { db } from './database'"),
+      "the example snippet body is rendered in plain output",
+    );
   });
 
   it("should format registered errors through their canonical slug", () => {
@@ -142,6 +154,21 @@ describe("formatUserError", () => {
     for (const forbidden of ["\x1b]2;owned", "\x1b[2J", "\x07", "\nFAKE SUCCESS"]) {
       assertEquals(output.includes(forbidden), false);
     }
+  });
+
+  it("should never expose UNC or custom-frame source locations", () => {
+    const error = new Error("unknown error unc_custom_frames");
+    error.stack = [
+      "Error: unknown error unc_custom_frames",
+      "    at \\\\build-server\\share\\app.ts:1:1",
+      "    handler@file:///home/user/app.ts:2:2",
+      "    @\\\\build-server\\share\\lib.ts:3:3",
+    ].join("\n");
+
+    const output = formatUserError(error);
+
+    assertEquals(output.includes("build-server"), false);
+    assertEquals(output.includes("file:///home/user"), false);
   });
 
   it("should not invoke proxy traps in plain output", () => {

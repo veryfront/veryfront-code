@@ -438,13 +438,29 @@ describe("veryfront-error", () => {
     });
 
     it("should enforce the snapshot entry limit across nested containers", () => {
-      const context = {
-        type: "render",
-        message: "failed",
-        context: Array.from({ length: 101 }, () => new Array(100)),
-      };
+      const entry = { specifier: "a", fromFile: "b", reason: "c" };
 
-      assertEquals(fromError(errorWithContext(context)), null);
+      assertEquals(
+        fromError(errorWithContext({
+          type: "build",
+          message: "failed",
+          context: { missing: Array.from({ length: 2_600 }, () => ({ ...entry })) },
+        })),
+        null,
+        "snapshot traversal must stop once MAX_SNAPSHOT_ENTRIES is exceeded",
+      );
+
+      const extracted = fromError(errorWithContext({
+        type: "build",
+        message: "failed",
+        context: { missing: Array.from({ length: 2_000 }, () => ({ ...entry })) },
+      }));
+      assert(extracted?.type === "build");
+      assertEquals(
+        extracted.context?.missing?.length,
+        2_000,
+        "a context comfortably under MAX_SNAPSHOT_ENTRIES must still be extracted",
+      );
     });
   });
 

@@ -13,7 +13,11 @@ import {
   sanitizeBoundedStackText,
   sanitizeBoundedTerminalText,
 } from "./diagnostic-policy.ts";
-import { type RedactedValue, redactForSerialization } from "#veryfront/utils/logger/redact.ts";
+import {
+  type RedactedValue,
+  redactForSerialization,
+  redactPathFromText,
+} from "#veryfront/utils/logger/redact.ts";
 import {
   isNativeErrorWithoutHooks,
   isProxyWithoutHooks,
@@ -37,6 +41,10 @@ export {
 } from "./diagnostic-policy.ts";
 
 const freeze = Object.freeze;
+const arrayJoin = Array.prototype.join;
+const arrayPop = Array.prototype.pop;
+const arrayPush = Array.prototype.push;
+const nativeDecodeURIComponent = decodeURIComponent;
 const jsonStringify = JSON.stringify;
 const numberIsFinite = Number.isFinite;
 const numberIsInteger = Number.isInteger;
@@ -54,6 +62,11 @@ const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const getPrototypeOf = Object.getPrototypeOf;
 const NativeError = Error;
 const NativeString = String;
+const NativeUint32Array = Uint32Array;
+const stringCharCodeAt = String.prototype.charCodeAt;
+const stringSlice = String.prototype.slice;
+const stringToLowerCase = String.prototype.toLowerCase;
+const stringToUpperCase = String.prototype.toUpperCase;
 const NATIVE_ERROR_STACK_GETTER = getOwnPropertyDescriptor(new NativeError(), "stack")?.get;
 const ERROR_CATEGORIES: ReadonlySet<ErrorCategory> = new Set([
   "CONFIG",
@@ -69,6 +82,13 @@ const ERROR_CATEGORIES: ReadonlySet<ErrorCategory> = new Set([
   "GENERAL",
 ]);
 const MISSING_DATA_FIELD = Symbol("missing-data-field");
+const FORWARD_SLASH_CODE_UNIT = 47;
+const BACKSLASH_CODE_UNIT = 92;
+const COLON_CODE_UNIT = 58;
+const ASCII_UPPERCASE_A_CODE_UNIT = 65;
+const ASCII_UPPERCASE_Z_CODE_UNIT = 90;
+const ASCII_LOWERCASE_OFFSET = 32;
+const FILESYSTEM_DIAGNOSTIC_FALLBACK = "Filesystem operation failed";
 const DOM_EXCEPTION_MESSAGE_GETTER = typeof DOMException === "function"
   ? getOwnPropertyDescriptor(DOMException.prototype, "message")?.get
   : undefined;
@@ -305,47 +325,376 @@ export function detachThrowableForBoundary(error: unknown): Error {
  * functions are intentionally opaque because `String(value)` can execute
  * project-owned `Symbol.toPrimitive`, `toString`, or proxy hooks.
  */
-export function snapshotThrowableDiagnostic(error: unknown): string {
+function readThrowableDiagnostic(error: unknown): string {
   if (isNativeErrorWithoutHooks(error)) {
     try {
       const message = getOwnPropertyDescriptor(error, "message");
       if (message) {
-        return sanitizeDiagnosticText(
-          "value" in message && typeof message.value === "string" ? message.value : "Unknown error",
-        );
+        return "value" in message && typeof message.value === "string"
+          ? message.value
+          : "Unknown error";
       }
 
       if (DOM_EXCEPTION_MESSAGE_GETTER) {
         try {
           const domMessage = apply(DOM_EXCEPTION_MESSAGE_GETTER, error, []);
           if (typeof domMessage === "string") {
-            return sanitizeDiagnosticText(domMessage);
+            return domMessage;
           }
         } catch {
           // Ordinary Error objects do not carry DOMException internal slots.
         }
       }
 
-      return sanitizeDiagnosticText("");
+      return "";
     } catch {
-      return sanitizeDiagnosticText("Unknown error");
+      return "Unknown error";
     }
   }
 
-  if (error === null) return sanitizeDiagnosticText("null");
+  if (error === null) return "null";
 
   switch (typeof error) {
     case "string":
-      return sanitizeDiagnosticText(error);
+      return error;
     case "number":
     case "bigint":
     case "boolean":
     case "symbol":
     case "undefined":
-      return sanitizeDiagnosticText(NativeString(error));
+      return NativeString(error);
     default:
-      return sanitizeDiagnosticText("Unknown error");
+      return "Unknown error";
   }
+}
+
+export function snapshotThrowableDiagnostic(error: unknown): string {
+  return sanitizeDiagnosticText(readThrowableDiagnostic(error));
+}
+
+function isPathSeparatorCodeUnit(codeUnit: number): boolean {
+  return codeUnit === FORWARD_SLASH_CODE_UNIT || codeUnit === BACKSLASH_CODE_UNIT;
+}
+
+function charCodeAtString(value: string, index: number): number {
+  return apply(stringCharCodeAt, value, [index]) as number;
+}
+
+function sliceString(value: string, start: number, end?: number): string {
+  return end === undefined
+    ? apply(stringSlice, value, [start]) as string
+    : apply(stringSlice, value, [start, end]) as string;
+}
+
+function lowercaseString(value: string): string {
+  return apply(stringToLowerCase, value, []) as string;
+}
+
+function uppercaseString(value: string): string {
+  return apply(stringToUpperCase, value, []) as string;
+}
+
+function isAsciiLetterCodeUnit(codeUnit: number): boolean {
+  return (codeUnit >= 65 && codeUnit <= 90) || (codeUnit >= 97 && codeUnit <= 122);
+}
+
+function isWindowsFilesystemPath(path: string): boolean {
+  if (path.length >= 2) {
+    const first = charCodeAtString(path, 0);
+    const second = charCodeAtString(path, 1);
+    if (isPathSeparatorCodeUnit(first) && isPathSeparatorCodeUnit(second)) return true;
+  }
+  return path.length >= 3 &&
+    isAsciiLetterCodeUnit(charCodeAtString(path, 0)) &&
+    charCodeAtString(path, 1) === COLON_CODE_UNIT &&
+    isPathSeparatorCodeUnit(charCodeAtString(path, 2));
+}
+
+function normalizeFilesystemPathCodeUnit(codeUnit: number, foldAsciiCase: boolean): number {
+  if (isPathSeparatorCodeUnit(codeUnit)) return FORWARD_SLASH_CODE_UNIT;
+  return foldAsciiCase &&
+      codeUnit >= ASCII_UPPERCASE_A_CODE_UNIT &&
+      codeUnit <= ASCII_UPPERCASE_Z_CODE_UNIT
+    ? codeUnit + ASCII_LOWERCASE_OFFSET
+    : codeUnit;
+}
+
+/** Identify literal or percent-encoded dot segments in a file URL path. */
+function fileUrlDotSegmentLength(segment: string): number {
+  let dots = 0;
+  for (let cursor = 0; cursor < segment.length;) {
+    const codeUnit = charCodeAtString(segment, cursor);
+    if (codeUnit === 46) {
+      dots++;
+      cursor++;
+    } else if (
+      codeUnit === 37 &&
+      charCodeAtString(segment, cursor + 1) === 50 &&
+      (charCodeAtString(segment, cursor + 2) === 69 ||
+        charCodeAtString(segment, cursor + 2) === 101)
+    ) {
+      dots++;
+      cursor += 3;
+    } else {
+      return 0;
+    }
+    if (dots > 2) return 0;
+  }
+  return dots;
+}
+
+/** Identify the local file authority without treating malformed encodings as local. */
+function isLocalhostFileAuthority(authority: string): boolean {
+  try {
+    return lowercaseString(nativeDecodeURIComponent(authority)) === "localhost";
+  } catch {
+    return false;
+  }
+}
+
+/** Normalize lexical `.` and `..` segments without resolving the filesystem. */
+function normalizeFilesystemPathForDiagnostic(path: string): string {
+  const windowsPath = isWindowsFilesystemPath(path);
+  const hasFileScheme = lowercaseString(sliceString(path, 0, 5)) === "file:";
+  const hasDrive = path.length >= 3 &&
+    isAsciiLetterCodeUnit(charCodeAtString(path, 0)) &&
+    charCodeAtString(path, 1) === COLON_CODE_UNIT &&
+    isPathSeparatorCodeUnit(charCodeAtString(path, 2));
+  const hasUncRoot = !hasDrive && path.length >= 2 &&
+    isPathSeparatorCodeUnit(charCodeAtString(path, 0)) &&
+    isPathSeparatorCodeUnit(charCodeAtString(path, 1));
+  const leadingSeparator = !hasDrive && !hasUncRoot && isPathSeparatorCodeUnit(
+    charCodeAtString(path, 0),
+  );
+  let prefix: string;
+  let start: number;
+  let protectedSegments: number;
+  if (hasFileScheme) {
+    let cursor = 5;
+    if (
+      isPathSeparatorCodeUnit(charCodeAtString(path, cursor)) &&
+      isPathSeparatorCodeUnit(charCodeAtString(path, cursor + 1))
+    ) {
+      cursor += 2;
+      const authorityStart = cursor;
+      while (cursor < path.length && !isPathSeparatorCodeUnit(charCodeAtString(path, cursor))) {
+        cursor++;
+      }
+      const authority = sliceString(path, authorityStart, cursor);
+      while (cursor < path.length && isPathSeparatorCodeUnit(charCodeAtString(path, cursor))) {
+        cursor++;
+      }
+      prefix = `file://${isLocalhostFileAuthority(authority) ? "" : authority}/`;
+      start = cursor;
+    } else {
+      while (cursor < path.length && isPathSeparatorCodeUnit(charCodeAtString(path, cursor))) {
+        cursor++;
+      }
+      prefix = "file:/";
+      start = cursor;
+    }
+    protectedSegments = 0;
+  } else {
+    prefix = hasDrive
+      ? `${sliceString(path, 0, 2)}/`
+      : hasUncRoot
+      ? "//"
+      : leadingSeparator
+      ? "/"
+      : "";
+    start = hasDrive ? 3 : hasUncRoot ? 2 : leadingSeparator ? 1 : 0;
+    protectedSegments = hasUncRoot ? 2 : 0;
+  }
+  const segments: string[] = [];
+  for (let segmentStart = start; segmentStart < path.length;) {
+    let cursor = segmentStart;
+    while (cursor < path.length && !isPathSeparatorCodeUnit(charCodeAtString(path, cursor))) {
+      cursor++;
+    }
+    const segment = sliceString(path, segmentStart, cursor);
+    const dotSegmentLength = hasFileScheme
+      ? fileUrlDotSegmentLength(segment)
+      : segment === "."
+      ? 1
+      : segment === ".."
+      ? 2
+      : 0;
+    if (dotSegmentLength === 2) {
+      if (segments.length > protectedSegments) apply(arrayPop, segments, []);
+    } else if (segment && dotSegmentLength !== 1) {
+      apply(arrayPush, segments, [segment]);
+    }
+    while (cursor < path.length && isPathSeparatorCodeUnit(charCodeAtString(path, cursor))) {
+      cursor++;
+    }
+    segmentStart = cursor;
+  }
+  const normalized = `${prefix}${apply(arrayJoin, segments, ["/"])}`;
+  return windowsPath && normalized.length >= 1
+    ? uppercaseString(normalized[0]!) + sliceString(normalized, 1)
+    : normalized;
+}
+
+function minimumAbsolutePathPrefixLength(path: string): number {
+  let index = 0;
+  if (
+    path.length >= 3 && isAsciiLetterCodeUnit(charCodeAtString(path, 0)) &&
+    charCodeAtString(path, 1) === COLON_CODE_UNIT &&
+    isPathSeparatorCodeUnit(charCodeAtString(path, 2))
+  ) {
+    index = 3;
+  } else {
+    while (index < path.length && isPathSeparatorCodeUnit(charCodeAtString(path, index))) index++;
+  }
+  while (index < path.length && !isPathSeparatorCodeUnit(charCodeAtString(path, index))) index++;
+  return index;
+}
+
+function isPathContinuationCodeUnit(codeUnit: number): boolean {
+  return isAsciiLetterCodeUnit(codeUnit) ||
+    (codeUnit >= 48 && codeUnit <= 57) ||
+    codeUnit === 45 ||
+    codeUnit === 46 ||
+    codeUnit === 58 ||
+    codeUnit === 95 ||
+    isPathSeparatorCodeUnit(codeUnit);
+}
+
+/** Detect a shortened trusted absolute path that cannot be safely redacted as a whole. */
+function containsTruncatedFilesystemPathPrefix(input: string, path: string): boolean {
+  const minimumPrefixLength = minimumAbsolutePathPrefixLength(path);
+  if (minimumPrefixLength === 0 || minimumPrefixLength >= path.length) return false;
+
+  const foldAsciiCase = isWindowsFilesystemPath(path);
+  const prefixTable = new NativeUint32Array(path.length);
+  for (let index = 1, prefixLength = 0; index < path.length;) {
+    if (
+      normalizeFilesystemPathCodeUnit(charCodeAtString(path, index), foldAsciiCase) ===
+        normalizeFilesystemPathCodeUnit(charCodeAtString(path, prefixLength), foldAsciiCase)
+    ) {
+      prefixTable[index] = ++prefixLength;
+      index++;
+    } else if (prefixLength > 0) {
+      prefixLength = prefixTable[prefixLength - 1]!;
+    } else {
+      prefixTable[index] = 0;
+      index++;
+    }
+  }
+
+  let matched = 0;
+  for (let index = 0; index < input.length; index++) {
+    const inputCodeUnit = normalizeFilesystemPathCodeUnit(
+      charCodeAtString(input, index),
+      foldAsciiCase,
+    );
+    while (
+      matched > 0 &&
+      inputCodeUnit !==
+        normalizeFilesystemPathCodeUnit(charCodeAtString(path, matched), foldAsciiCase)
+    ) {
+      matched = prefixTable[matched - 1]!;
+    }
+    if (
+      inputCodeUnit ===
+        normalizeFilesystemPathCodeUnit(charCodeAtString(path, matched), foldAsciiCase)
+    ) {
+      matched++;
+    }
+
+    if (matched === path.length) {
+      matched = prefixTable[matched - 1]!;
+      continue;
+    }
+    if (
+      matched >= minimumPrefixLength &&
+      (index + 1 === input.length ||
+        !isPathContinuationCodeUnit(charCodeAtString(input, index + 1)))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Derive the native filesystem spelling of a normalized file URL.
+ *
+ * Host APIs report the decoded platform path (e.g. Node's
+ * `open '/private/nope'` for `file:///private/nope`), which matches neither
+ * the requested URL nor its normalized form, so that spelling must be
+ * redacted as an additional alias. Returns undefined for non-file paths and
+ * for malformed percent encodings the platform would reject before reaching
+ * the host API.
+ */
+function platformPathFromNormalizedFileUrl(normalizedPath: string): string | undefined {
+  if (lowercaseString(sliceString(normalizedPath, 0, 5)) !== "file:") return undefined;
+  let cursor = 5;
+  let authority = "";
+  if (
+    isPathSeparatorCodeUnit(charCodeAtString(normalizedPath, cursor)) &&
+    isPathSeparatorCodeUnit(charCodeAtString(normalizedPath, cursor + 1))
+  ) {
+    cursor += 2;
+    const authorityStart = cursor;
+    while (
+      cursor < normalizedPath.length &&
+      !isPathSeparatorCodeUnit(charCodeAtString(normalizedPath, cursor))
+    ) {
+      cursor++;
+    }
+    authority = sliceString(normalizedPath, authorityStart, cursor);
+  }
+  while (
+    cursor < normalizedPath.length &&
+    isPathSeparatorCodeUnit(charCodeAtString(normalizedPath, cursor))
+  ) {
+    cursor++;
+  }
+  let decodedAuthority: string;
+  let decodedBody: string;
+  try {
+    decodedAuthority = nativeDecodeURIComponent(authority);
+    decodedBody = nativeDecodeURIComponent(sliceString(normalizedPath, cursor));
+  } catch {
+    return undefined;
+  }
+  if (decodedAuthority && lowercaseString(decodedAuthority) !== "localhost") {
+    return `//${decodedAuthority}/${decodedBody}`;
+  }
+  const hasDrive = decodedBody.length >= 2 &&
+    isAsciiLetterCodeUnit(charCodeAtString(decodedBody, 0)) &&
+    charCodeAtString(decodedBody, 1) === COLON_CODE_UNIT;
+  return hasDrive ? decodedBody : `/${decodedBody}`;
+}
+
+/** Snapshot a diagnostic after removing a trusted filesystem path, before bounding it. */
+export function snapshotThrowableDiagnosticRedactingPath(
+  error: unknown,
+  path: string,
+  replacement: string,
+): string {
+  const diagnostic = readThrowableDiagnostic(error);
+  const normalizedPath = normalizeFilesystemPathForDiagnostic(path);
+  const rawPlatformPath = platformPathFromNormalizedFileUrl(normalizedPath);
+  const platformPath = rawPlatformPath === path || rawPlatformPath === normalizedPath
+    ? undefined
+    : rawPlatformPath;
+  let redacted = redactPathFromText(diagnostic, path, replacement);
+  if (normalizedPath !== path) {
+    redacted = redactPathFromText(redacted, normalizedPath, replacement);
+  }
+  if (platformPath !== undefined) {
+    redacted = redactPathFromText(redacted, platformPath, replacement);
+  }
+  if (
+    containsTruncatedFilesystemPathPrefix(redacted, path) ||
+    (normalizedPath !== path && containsTruncatedFilesystemPathPrefix(redacted, normalizedPath)) ||
+    (platformPath !== undefined && containsTruncatedFilesystemPathPrefix(redacted, platformPath))
+  ) {
+    return `${FILESYSTEM_DIAGNOSTIC_FALLBACK} for ${replacement}`;
+  }
+  return sanitizeDiagnosticText(redacted);
 }
 
 /**

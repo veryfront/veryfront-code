@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { buildErrorDocsUrl } from "../diagnostic-policy.ts";
 import { RSC_ERROR_CATALOG } from "./rsc-errors.ts";
 
 describe("errors/catalog/rsc-errors", () => {
@@ -25,7 +26,11 @@ describe("errors/catalog/rsc-errors", () => {
         assertEquals(solution.slug, slug, `slug mismatch for ${slug}`);
         assertEquals(typeof solution.title, "string", `title should be string for ${slug}`);
         assertEquals(typeof solution.message, "string", `message should be string for ${slug}`);
-        assertEquals(typeof solution.docs, "string", `docs should be string for ${slug}`);
+        assertEquals(
+          solution.docs,
+          buildErrorDocsUrl(slug),
+          `docs URL must be the canonical errors anchor for ${slug}`,
+        );
         assertEquals(Array.isArray(solution.steps), true, `steps should be array for ${slug}`);
         assertEquals(
           (solution.steps?.length ?? 0) > 0,
@@ -33,6 +38,14 @@ describe("errors/catalog/rsc-errors", () => {
           `steps should not be empty for ${slug}`,
         );
       }
+    });
+
+    it("should expose an immutable catalog fragment", () => {
+      assertEquals(
+        Object.isFrozen(RSC_ERROR_CATALOG),
+        true,
+        "RSC_ERROR_CATALOG must be frozen so published entries cannot be mutated",
+      );
     });
 
     it("should have 6 entries", () => {
@@ -60,7 +73,17 @@ describe("errors/catalog/rsc-errors", () => {
     it("invalid-use-client should have an example", () => {
       const solution = RSC_ERROR_CATALOG["invalid-use-client"]!;
       assertEquals(typeof solution.example, "string");
-      assertEquals(solution.example?.includes("use client") ?? false, true);
+      const example = solution.example!;
+      assertEquals(
+        example.trimStart().startsWith("'use client'"),
+        true,
+        "the example must open with the directive, matching the entry's own very top of file step",
+      );
+      assertEquals(
+        example.indexOf("'use client'") < example.indexOf("import"),
+        true,
+        "the directive must precede every import in the example",
+      );
     });
   });
 });

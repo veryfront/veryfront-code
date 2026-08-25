@@ -1,9 +1,35 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { identifyError } from "./error-identifier.ts";
-import { CONFIG_NOT_FOUND, DEPENDENCY_MISSING } from "../error-registry.ts";
+import { CONFIG_NOT_FOUND, DEPENDENCY_MISSING, INVALID_IMPORT } from "../error-registry.ts";
 import { VeryfrontError } from "../types.ts";
+import { ERROR_SOLUTIONS } from "./error-catalog.ts";
+
+/**
+ * Independent copy of the registry-slug bridge. Every entry must resolve to a
+ * key the legacy solution catalog actually publishes, otherwise the user drops
+ * to the bare doctor hint instead of the mapped solution.
+ */
+const BRIDGED_REGISTRY_SLUGS: ReadonlyArray<readonly [string, string]> = [
+  ["config-not-found", "missing-config"],
+  ["config-invalid", "invalid-config"],
+  ["config-parse-error", "invalid-config"],
+  ["config-validation-error", "invalid-config"],
+  ["config-validation-failed", "invalid-config"],
+  ["config-type-error", "invalid-config"],
+  ["invalid-route-file", "invalid-route"],
+  ["route-handler-invalid", "invalid-route"],
+  ["client-boundary-violation", "client-boundary"],
+  ["server-only-in-client", "client-boundary"],
+  ["client-only-in-server", "client-boundary"],
+  ["module-not-found", "import-not-found"],
+  ["import-resolution-error", "import-not-found"],
+  ["port-in-use", "port-in-use"],
+  ["build-failed", "build-failed"],
+  ["dependency-missing", "missing-deps"],
+];
 
 function testIdentifyError(name: string, message: string, expected: string): void {
   it(name, () => {
@@ -116,6 +142,39 @@ describe("error-identifier", () => {
 
       it("should bridge canonical dependency slugs to the legacy solution catalog", () => {
         expect(identifyError(DEPENDENCY_MISSING.create())).toBe("missing-deps");
+      });
+
+      it("should bridge every registered slug to a published solution", () => {
+        for (const [slug, expected] of BRIDGED_REGISTRY_SLUGS) {
+          const error = new VeryfrontError("unrecognized failure", {
+            slug,
+            category: "GENERAL",
+            status: 500,
+            title: "Unrecognized failure",
+          });
+
+          assertEquals(identifyError(error), expected, `slug ${slug} must bridge to ${expected}`);
+          assertEquals(
+            Object.hasOwn(ERROR_SOLUTIONS, expected),
+            true,
+            `the solution catalog must publish ${expected}`,
+          );
+        }
+      });
+
+      it("should classify registered errors whose slug has no bridge entry by message", () => {
+        assertEquals(identifyError(INVALID_IMPORT.create()), "import-not-found");
+      });
+
+      it("should classify an unbridged VeryfrontError by its message", () => {
+        const error = new VeryfrontError("Port 3000 is already in use", {
+          slug: "dev-server-error",
+          category: "DEV",
+          status: 500,
+          title: "Dev server error",
+        });
+
+        assertEquals(identifyError(error), "port-in-use");
       });
 
       it("should not treat inherited object property names as registered solutions", () => {

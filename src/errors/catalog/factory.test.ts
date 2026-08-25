@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { expect } from "#std/expect.ts";
 import { createErrorSolution, createSimpleError } from "./factory.ts";
 import type { ErrorSlug } from "../error-registry.ts";
@@ -39,21 +40,26 @@ describe("factory", () => {
     it("should detach and freeze mutable configuration arrays", () => {
       const steps = ["Original step"];
       const tips = ["Original tip"];
+      const relatedErrors: ErrorSlug[] = ["bundle-error"];
       const solution = createErrorSolution("build-failed", {
         title: "Build failed",
         message: "The build process encountered errors",
         steps,
         tips,
+        relatedErrors,
       });
 
       steps[0] = "Mutated step";
       tips[0] = "Mutated tip";
+      relatedErrors[0] = "typescript-error";
 
-      expect(solution.steps).toEqual(["Original step"]);
-      expect(solution.tips).toEqual(["Original tip"]);
-      expect(Object.isFrozen(solution)).toBe(true);
-      expect(Object.isFrozen(solution.steps)).toBe(true);
-      expect(Object.isFrozen(solution.tips)).toBe(true);
+      assertEquals(solution.steps, ["Original step"]);
+      assertEquals(solution.tips, ["Original tip"]);
+      assertEquals(solution.relatedErrors, ["bundle-error"]);
+      assert(Object.isFrozen(solution));
+      assert(Object.isFrozen(solution.steps));
+      assert(Object.isFrozen(solution.tips));
+      assert(Object.isFrozen(solution.relatedErrors));
     });
 
     it("should create error solution with example", () => {
@@ -370,16 +376,24 @@ describe("factory", () => {
     });
 
     it("should createSimpleError use createErrorSolution internally", () => {
+      const steps = ["Check import path"];
       const simple = createSimpleError(
         "module-not-found",
         "Module not found",
         "Cannot find module",
-        ["Check import path"],
+        steps,
       );
 
       for (const key of ["slug", "title", "message", "steps", "docs"] as const) {
         expect(simple).toHaveProperty(key);
       }
+
+      steps[0] = "Mutated";
+
+      assertEquals(simple.steps, ["Check import path"]);
+      assert(Object.isFrozen(simple));
+      assert(Object.isFrozen(simple.steps));
+      expect(simple.docs).toBe("https://veryfront.com/docs/code/guides/errors#module-not-found");
     });
 
     it("should both functions generate correct docs URLs", () => {

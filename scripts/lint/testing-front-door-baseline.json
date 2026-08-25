@@ -312,7 +312,6 @@
     "src/build/production-build/local-release-assets.test.ts": 1,
     "src/cache/backends/disk.test.ts": 18,
     "src/config/cicd-stable-release.test.ts": 1,
-    "src/config/loader.test.ts": 11,
     "src/data/server-data-fetcher.test.ts": 1,
     "src/discovery/agent-scoped-capabilities.test.ts": 8,
     "src/discovery/auto-discovery.integration.test.ts": 13,

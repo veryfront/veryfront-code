@@ -11,6 +11,7 @@ import {
   sanitizeStackDiagnosticText,
   sanitizeTerminalDiagnosticText,
   snapshotErrorForBoundary,
+  snapshotThrowableDiagnosticRedactingPath,
 } from "./safe-diagnostics.ts";
 import { VeryfrontError } from "./types.ts";
 
@@ -113,6 +114,28 @@ describe("safe-diagnostics", () => {
     assert(sanitized.endsWith("...[truncated]"));
   });
 
+  it("should keep conversion hooks from running on a non-string stack or terminal field", () => {
+    let coercions = 0;
+    const hostile = {
+      [Symbol.toPrimitive]() {
+        coercions += 1;
+        throw new Error("blocked");
+      },
+    };
+
+    for (const sanitize of [sanitizeStackDiagnosticText, sanitizeTerminalDiagnosticText]) {
+      for (const value of [hostile, Symbol("s"), undefined, 42]) {
+        assertEquals(
+          sanitize(value),
+          "[REDACTED]",
+          "non-string diagnostic input must be opaque",
+        );
+      }
+    }
+
+    assertEquals(coercions, 0, "project-owned conversion hooks must never run");
+  });
+
   it("should neutralize an escape sequence cut by the terminal field bound", () => {
     const prefix = "x".repeat(ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS - 20);
     const sanitized = sanitizeTerminalDiagnosticText(
@@ -131,5 +154,104 @@ describe("safe-diagnostics", () => {
 
     assertEquals(stack.length, ERROR_STACK_MAX_LENGTH_CHARS);
     assert(stack.endsWith("...[truncated]"));
+  });
+
+  it("should redact file URLs normalized through encoded dots and case variants", () => {
+    for (
+      const [requestedPath, diagnosticPath] of [
+        [
+          "file:///audit-root/project/%2e%2e/private-source-marker",
+          "file:///audit-root/private-source-marker",
+        ],
+        [
+          "file:///audit-root/project/%2E%2e/private-source-marker",
+          "file:///audit-root/private-source-marker",
+        ],
+        [
+          "file:///C:/audit-root/project/../private-source-marker",
+          "file:///c:/audit-root/private-source-marker",
+        ],
+        [
+          "file://SERVER/audit-root/project/../private-source-marker",
+          "file://server/audit-root/private-source-marker",
+        ],
+      ]
+    ) {
+      assertEquals(
+        snapshotThrowableDiagnosticRedactingPath(
+          new Error(`failure ${diagnosticPath}`),
+          requestedPath,
+          "<absolute-path>",
+        ),
+        "failure <absolute-path>",
+      );
+    }
+  });
+
+  it("should redact the platform filesystem spelling decoded from file URLs", () => {
+    for (
+      const [requestedPath, diagnostic] of [
+        [
+          "file:///definitely-private-marker/nope",
+          "ENOENT: no such file or directory, open '/definitely-private-marker/nope'",
+        ],
+        [
+          "file:///audit-root/my%20dir/../private-source-marker",
+          "ENOENT: no such file or directory, open '/audit-root/private-source-marker'",
+        ],
+        [
+          "file://localhost/definitely-private-marker/nope",
+          "ENOENT: no such file or directory, open '/definitely-private-marker/nope'",
+        ],
+        [
+          "file:///C:/definitely-private-marker/nope",
+          "ENOENT: no such file or directory, open 'C:\\definitely-private-marker\\nope'",
+        ],
+        [
+          "file://server/definitely-private-marker/nope",
+          "ENOENT: no such file or directory, open '\\\\server\\definitely-private-marker\\nope'",
+        ],
+      ] as const
+    ) {
+      assertEquals(
+        snapshotThrowableDiagnosticRedactingPath(
+          new Error(diagnostic),
+          requestedPath,
+          "<absolute-path>",
+        ),
+        "ENOENT: no such file or directory, open '<absolute-path>'",
+      );
+    }
+  });
+
+  it("should fall back when a diagnostic truncates the platform spelling of a file URL", () => {
+    assertEquals(
+      snapshotThrowableDiagnosticRedactingPath(
+        new Error("ENOENT: no such file or directory, open '/definitely-private-marker/no"),
+        "file:///definitely-private-marker/nope",
+        "<absolute-path>",
+      ),
+      "Filesystem operation failed for <absolute-path>",
+    );
+  });
+
+  it("should normalize localhost file authorities before redacting canonical diagnostics", () => {
+    for (
+      const requestedPath of [
+        "file://localhost/audit-root/project/../private-source-marker",
+        "file://LOCALHOST/audit-root/project/%2E%2e/private-source-marker",
+        "file://%6cocalhost/audit-root/project/../private-source-marker",
+        "file://%4cocalhost/audit-root/project/%2E%2e/private-source-marker",
+      ]
+    ) {
+      assertEquals(
+        snapshotThrowableDiagnosticRedactingPath(
+          new Error("failure file:///audit-root/private-source-marker"),
+          requestedPath,
+          "<absolute-path>",
+        ),
+        "failure <absolute-path>",
+      );
+    }
   });
 });

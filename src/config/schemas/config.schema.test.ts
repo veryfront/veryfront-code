@@ -867,15 +867,36 @@ describe("configSchema", () => {
       const render of [
         { type: "memory", endpoint: "https://cache.invalid" },
         { type: "memory", keyPrefix: "vf:cache:tenant-render:" },
-        { type: "filesystem", kvPath: "/tmp/cache.sqlite" },
         { type: "kv", keyPrefix: "vf:cache:tenant-render:" },
         { type: "memory", typoMaxEntry: 100 },
+      ]
+    ) {
+      const error = assertThrows(
+        () => validateVeryfrontConfig({ cache: { render } }),
+        Error,
+        "Invalid veryfront.config at cache.render",
+      ) as Error;
+
+      assertStringIncludes(
+        error.message,
+        "Unrecognized key:",
+        "unknown render cache keys must be rejected by the strict key check",
+      );
+    }
+
+    for (
+      const render of [
+        { type: "filesystem", kvPath: "/tmp/cache.sqlite" },
+        { type: "kv", maxEntries: 100 },
+        { type: "kv", redisUrl: "redis://host" },
+        { type: "redis", maxEntries: 5 },
+        { type: "redis", kvPath: "/tmp/cache.sqlite" },
       ]
     ) {
       assertThrows(
         () => validateVeryfrontConfig({ cache: { render } }),
         Error,
-        "Invalid veryfront.config at cache.render",
+        "Render cache options must belong to the selected backend type",
       );
     }
 
@@ -888,6 +909,13 @@ describe("configSchema", () => {
       validateVeryfrontConfig({ cache: { render: { type: "kv", kvPath: "/cache.sqlite" } } })
         .cache?.render?.type,
       "kv",
+    );
+    assertEquals(
+      validateVeryfrontConfig({
+        cache: { render: { type: "redis", redisUrl: "redis://host", redisKeyPrefix: "vf:" } },
+      }).cache?.render?.type,
+      "redis",
+      "redis backend must accept its own options",
     );
   });
 

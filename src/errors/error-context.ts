@@ -9,9 +9,17 @@ import {
   sanitizeDiagnosticText,
   sanitizeStackDiagnosticText,
   snapshotErrorForBoundary,
+  snapshotThrowableDiagnosticRedactingPath,
 } from "./safe-diagnostics.ts";
 
 const arrayIsArray = Array.isArray;
+const ABSOLUTE_FILESYSTEM_PATH = /^(?:[\\/]|[A-Za-z]:[\\/]|file:)/i;
+const ABSOLUTE_PATH_REDACTION = "<absolute-path>";
+
+function sanitizeFilesystemContextPath(path: string): string {
+  const sanitized = sanitizeDiagnosticText(path);
+  return ABSOLUTE_FILESYSTEM_PATH.test(sanitized) ? ABSOLUTE_PATH_REDACTION : sanitized;
+}
 
 export interface ErrorContext {
   operation: string;
@@ -31,12 +39,18 @@ export interface ErrorHandlingOptions<T> {
   includeStack?: boolean;
 }
 
-function snapshotDiagnostic(error: unknown): {
+function snapshotDiagnostic(error: unknown, filesystemPath?: string): {
   readonly message: string;
   readonly stack?: string;
 } {
   const snapshot = snapshotErrorForBoundary(error);
-  const message = snapshot.slug === "unknown-error"
+  const message = filesystemPath !== undefined && ABSOLUTE_FILESYSTEM_PATH.test(filesystemPath)
+    ? snapshotThrowableDiagnosticRedactingPath(
+      error,
+      filesystemPath,
+      ABSOLUTE_PATH_REDACTION,
+    )
+    : snapshot.slug === "unknown-error"
     ? snapshot.detail ?? snapshot.message
     : snapshot.message;
 
@@ -72,10 +86,11 @@ function logErrorBestEffort(
   context: ErrorContext,
   logLevel: LogLevel = "debug",
   includeStack = false,
+  filesystemPath?: string,
 ): void {
   try {
     const safeContext = snapshotContext(context);
-    const diagnostic = snapshotDiagnostic(error);
+    const diagnostic = snapshotDiagnostic(error, filesystemPath);
     const message = sanitizeDiagnosticText(diagnostic.message);
     const logData: Record<string, unknown> = {
       ...sanitizedDetails(safeContext.details),
@@ -102,6 +117,26 @@ function logErrorBestEffort(
     }
   } catch {
     // Logging is diagnostic only and must never replace the configured fallback.
+  }
+}
+
+async function withFilesystemErrorContext<T>(
+  operation: () => Promise<T>,
+  path: string,
+  operationName: string,
+  fallback: T,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    logErrorBestEffort(
+      error,
+      { operation: operationName, path: sanitizeFilesystemContextPath(path) },
+      "debug",
+      false,
+      path,
+    );
+    return fallback;
   }
 }
 
@@ -139,10 +174,11 @@ export function safeFileStat(
   path: string,
   operation: string,
 ): Promise<{ isFile: boolean; isDirectory: boolean } | null> {
-  return withErrorContext(
+  return withFilesystemErrorContext(
     () => adapter.fs.stat(path),
-    { operation, path },
-    { fallback: null, logLevel: "debug" },
+    path,
+    operation,
+    null,
   );
 }
 
@@ -152,10 +188,11 @@ export function safeFileRead(
   path: string,
   operation: string,
 ): Promise<string | null> {
-  return withErrorContext(
+  return withFilesystemErrorContext(
     () => adapter.fs.readFile(path),
-    { operation, path },
-    { fallback: null, logLevel: "debug" },
+    path,
+    operation,
+    null,
   );
 }
 
@@ -170,7 +207,13 @@ export async function safeReadDir<T>(
     for await (const entry of adapter.fs.readDir(path)) results.push(entry);
     return results;
   } catch (error) {
-    logErrorBestEffort(error, { operation, path }, "debug");
+    logErrorBestEffort(
+      error,
+      { operation, path: sanitizeFilesystemContextPath(path) },
+      "debug",
+      false,
+      path,
+    );
     return [];
   }
 }

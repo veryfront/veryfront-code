@@ -174,10 +174,40 @@ function isWindowsPath(path: string): boolean {
     const second = stringCodeUnitAt(path, 1);
     if (isPathSeparatorCodeUnit(first) && isPathSeparatorCodeUnit(second)) return true;
   }
-  return path.length >= 3 &&
+  if (
+    path.length >= 3 &&
     isAsciiLetterCodeUnit(stringCodeUnitAt(path, 0)) &&
     stringCodeUnitAt(path, 1) === COLON_CODE_UNIT &&
-    isPathSeparatorCodeUnit(stringCodeUnitAt(path, 2));
+    isPathSeparatorCodeUnit(stringCodeUnitAt(path, 2))
+  ) {
+    return true;
+  }
+
+  const hasFileScheme = path.length >= 5 &&
+    (stringCodeUnitAt(path, 0) | ASCII_LOWERCASE_OFFSET) === 102 &&
+    (stringCodeUnitAt(path, 1) | ASCII_LOWERCASE_OFFSET) === 105 &&
+    (stringCodeUnitAt(path, 2) | ASCII_LOWERCASE_OFFSET) === 108 &&
+    (stringCodeUnitAt(path, 3) | ASCII_LOWERCASE_OFFSET) === 101 &&
+    stringCodeUnitAt(path, 4) === COLON_CODE_UNIT;
+  if (!hasFileScheme) return false;
+
+  let cursor = 5;
+  if (
+    isPathSeparatorCodeUnit(stringCodeUnitAt(path, cursor)) &&
+    isPathSeparatorCodeUnit(stringCodeUnitAt(path, cursor + 1))
+  ) {
+    cursor += 2;
+    const authorityStart = cursor;
+    while (cursor < path.length && !isPathSeparatorCodeUnit(stringCodeUnitAt(path, cursor))) {
+      cursor++;
+    }
+    if (cursor > authorityStart) return true;
+  }
+  while (cursor < path.length && isPathSeparatorCodeUnit(stringCodeUnitAt(path, cursor))) cursor++;
+  return cursor + 2 < path.length &&
+    isAsciiLetterCodeUnit(stringCodeUnitAt(path, cursor)) &&
+    stringCodeUnitAt(path, cursor + 1) === COLON_CODE_UNIT &&
+    isPathSeparatorCodeUnit(stringCodeUnitAt(path, cursor + 2));
 }
 
 function normalizePathCodeUnit(codeUnit: number, foldAsciiCase: boolean): number {
@@ -193,9 +223,10 @@ function normalizePathCodeUnit(codeUnit: number, foldAsciiCase: boolean): number
  * Replace every non-overlapping occurrence of a trusted path in untrusted text.
  *
  * Comparison treats slash and backslash as equivalent. Windows drive and UNC
- * paths additionally use ASCII-only case folding, matching Windows path
- * identity without locale-sensitive conversion. The linear-time matcher keeps
- * the path literal: regex syntax in either input cannot change what matches.
+ * paths, including their `file:` URL forms, additionally use ASCII-only case
+ * folding, matching Windows path identity without locale-sensitive conversion.
+ * The linear-time matcher keeps the path literal: regex syntax in either input
+ * cannot change what matches.
  */
 export function redactPathFromText(
   input: string,
