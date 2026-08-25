@@ -927,8 +927,9 @@ describe("automated review workflow", () => {
     for (
       const condition of [
         "github.event.issue.pull_request",
+        "github.event.workflow_run.name == 'Automated review wakeup'",
         "github.event.workflow_run.event == 'pull_request_review'",
-        "github.event.workflow_run.pull_requests[0]",
+        "github.event.workflow_run.conclusion == 'success'",
       ]
     ) {
       assert(
@@ -942,6 +943,10 @@ describe("automated review workflow", () => {
     assertEquals(
       record(targetJob.outputs, "target outputs").key,
       "${{ steps.resolve.outputs.result }}",
+    );
+    assertEquals(
+      record(targetJob.outputs, "target outputs").pull_number,
+      "${{ steps.resolve.outputs.pull-number }}",
     );
     const targetSteps = targetJob.steps;
     assert(Array.isArray(targetSteps));
@@ -957,8 +962,11 @@ describe("automated review workflow", () => {
         "context.payload.sha",
         "context.payload.pull_request?.number",
         "context.payload.issue?.pull_request",
-        "context.payload.workflow_run?.pull_requests",
+        "workflowRun?.display_title",
+        "automated-review-wakeup-pr-",
         'context.eventName === "workflow_run"',
+        "Number.isSafeInteger",
+        'core.setOutput("pull-number"',
         "github.rest.pulls.get",
         "Could not resolve a valid review target commit",
       ]
@@ -970,6 +978,10 @@ describe("automated review workflow", () => {
     assert(
       !targetScript.includes("workflow_run?.head_sha"),
       "a review wakeup merge SHA must not be mistaken for the pull request head",
+    );
+    assert(
+      !targetScript.includes("workflow_run?.pull_requests"),
+      "fork wakeups must not depend on workflow_run.pull_requests, which GitHub can leave empty",
     );
 
     const job = record(jobs.review, "review job");
@@ -991,13 +1003,10 @@ describe("automated review workflow", () => {
       !String(job.if).includes("CodeRabbit"),
       "CodeRabbit must not be able to enter Codex review reconciliation",
     );
-    assert(
-      String(job.if).includes("github.event.issue.pull_request"),
-      "deleted issue comments must still be guarded by the issue PR marker",
-    );
-    assert(
-      String(job.if).includes("github.event.workflow_run.pull_requests[0]"),
-      "a completed review wakeup must reconcile through the privileged default-branch workflow",
+    assertEquals(
+      job.if,
+      undefined,
+      "publisher eligibility must be inherited from the resolver job",
     );
     const steps = job.steps;
     assert(Array.isArray(steps));
@@ -1012,9 +1021,15 @@ describe("automated review workflow", () => {
       record(gate.env, "gate environment").TARGET_SHA,
       "${{ needs.target.outputs.key }}",
     );
+    assertEquals(
+      record(gate.env, "gate environment").PULL_NUMBER,
+      "${{ needs.target.outputs.pull_number }}",
+    );
     assert(script.includes("publishAutomatedReviewStatus"));
     assert(script.includes("github.rest.pulls.get"));
     assert(script.includes("process.env.TARGET_SHA"));
+    assert(script.includes("process.env.PULL_NUMBER"));
+    assert(script.includes("Number.isSafeInteger"));
     assert(script.includes("pullRequest.head.sha !== headSha"));
     assert(
       !script.includes("const headSha = pullRequest.head.sha"),
@@ -1105,6 +1120,10 @@ describe("automated review workflow", () => {
       "wakeup workflow",
     );
     assertEquals(workflow.name, "Automated review wakeup");
+    assertEquals(
+      workflow["run-name"],
+      "automated-review-wakeup-pr-${{ github.event.pull_request.number }}",
+    );
     assertEquals(record(workflow.permissions, "wakeup permissions"), {});
     assertEquals(
       record(

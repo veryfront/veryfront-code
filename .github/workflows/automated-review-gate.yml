@@ -22,15 +22,16 @@ jobs:
       github.event_name != 'merge_group' &&
       (github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
       (github.event_name != 'workflow_run' ||
-       (github.event.workflow_run.event == 'pull_request_review' &&
-        github.event.workflow_run.pull_requests[0] &&
-        !github.event.workflow_run.pull_requests[1]))
+       (github.event.workflow_run.name == 'Automated review wakeup' &&
+        github.event.workflow_run.event == 'pull_request_review' &&
+        github.event.workflow_run.conclusion == 'success'))
     permissions:
       pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 2
     outputs:
       key: ${{ steps.resolve.outputs.result }}
+      pull_number: ${{ steps.resolve.outputs.pull-number }}
     steps:
       - name: Resolve the current head commit
         id: resolve
@@ -39,11 +40,30 @@ jobs:
           retries: 3
           result-encoding: string
           script: |
-            const workflowPulls = context.payload.workflow_run?.pull_requests;
-            const workflowPull = Array.isArray(workflowPulls) &&
-                workflowPulls.length === 1
-              ? workflowPulls[0]
-              : undefined;
+            const workflowRun = context.payload.workflow_run;
+            let workflowPullNumber;
+            if (context.eventName === "workflow_run") {
+              const runIsTrusted =
+                workflowRun?.name === "Automated review wakeup" &&
+                workflowRun?.event === "pull_request_review" &&
+                workflowRun?.conclusion === "success" &&
+                Number.isSafeInteger(workflowRun?.id) &&
+                workflowRun.id > 0;
+              const titleMatch =
+                /^automated-review-wakeup-pr-([1-9][0-9]*)$/.exec(
+                  workflowRun?.display_title ?? "",
+                );
+              workflowPullNumber = titleMatch
+                ? Number(titleMatch[1])
+                : undefined;
+              if (
+                !runIsTrusted ||
+                !Number.isSafeInteger(workflowPullNumber)
+              ) {
+                core.setFailed("Could not validate the review wakeup run");
+                return `run-${context.runId}`;
+              }
+            }
             // pull_request_review workflows use a synthetic merge SHA. For a
             // workflow_run wakeup, resolve the current source head from the
             // pull request instead of treating that merge SHA as review proof.
@@ -53,7 +73,12 @@ jobs:
             const pullNumber = context.payload.pull_request?.number ??
               (context.payload.issue?.pull_request
                 ? context.payload.issue.number
-                : workflowPull?.number);
+                : workflowPullNumber);
+            if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
+              core.setFailed("Could not resolve a valid pull request number");
+              return `run-${context.runId}`;
+            }
+            core.setOutput("pull-number", String(pullNumber));
             if (!headSha && pullNumber) {
               const response = await github.rest.pulls.get({
                 owner: context.repo.owner,
@@ -61,11 +86,6 @@ jobs:
                 pull_number: pullNumber,
               });
               headSha = response.data.head.sha;
-            }
-            // Non-PR issue comments never reach a publisher job, but still
-            // need a harmless key so this resolver succeeds for the trigger.
-            if (!headSha && context.eventName === "issue_comment") {
-              return `issue-${context.payload.issue.number}`;
             }
             if (!/^[0-9a-f]{40}$/i.test(headSha ?? "")) {
               core.setFailed("Could not resolve a valid review target commit");
@@ -86,15 +106,9 @@ jobs:
     # issue_comment fires for issues too, so keep only pull request comments.
     # Fork pull_request_review events have read-only tokens. The unprivileged
     # wakeup workflow observes them, then workflow_run invokes this trusted
-    # default-branch reconciler with write permission. This job never reads
-    # wakeup artifacts or executes pull request code.
-    if: >-
-      github.event_name != 'merge_group' &&
-      (github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
-      (github.event_name != 'workflow_run' ||
-       (github.event.workflow_run.event == 'pull_request_review' &&
-        github.event.workflow_run.pull_requests[0] &&
-        !github.event.workflow_run.pull_requests[1]))
+    # default-branch reconciler with write permission. Eligibility comes from
+    # the resolver dependency above. This job never reads wakeup artifacts or
+    # executes pull request code.
     needs: target
     concurrency:
       # Every pull request event for one head must serialize on the same key so
@@ -117,6 +131,7 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           TARGET_SHA: ${{ needs.target.outputs.key }}
+          PULL_NUMBER: ${{ needs.target.outputs.pull_number }}
         with:
           retries: 3
           result-encoding: string
@@ -125,10 +140,11 @@ jobs:
             const gateUrl = pathToFileURL(
               `${process.env.GITHUB_WORKSPACE}/scripts/ci/automated-review-gate.mjs`,
             ).href;
-            const pullNumber = context.payload.pull_request?.number ??
-              (context.payload.issue?.pull_request
-                ? context.payload.issue.number
-                : context.payload.workflow_run.pull_requests[0].number);
+            const pullNumber = Number(process.env.PULL_NUMBER);
+            if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
+              core.setFailed("The resolved pull request number is invalid");
+              return "failure";
+            }
             const response = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
