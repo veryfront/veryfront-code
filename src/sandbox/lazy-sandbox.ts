@@ -3,6 +3,7 @@ import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { logger, sleep } from "#veryfront/utils";
 import { resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
 import { readSandboxFileContent, sandboxSessionRoute } from "./proxy-routes.ts";
+import { readExecStreamEvents } from "./exec-stream.ts";
 import {
   type BackgroundCommand,
   type BackgroundCommandOutput,
@@ -214,39 +215,7 @@ export class LazySandbox {
       throw new Error("Exec response has no body");
     }
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let completed = false;
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          completed = true;
-          break;
-        }
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          yield JSON.parse(line) as ExecStreamEvent;
-        }
-      }
-
-      buffer += decoder.decode();
-      if (buffer.trim()) {
-        yield JSON.parse(buffer) as ExecStreamEvent;
-      }
-    } finally {
-      if (!completed) {
-        await reader.cancel().catch(() => {});
-      }
-      reader.releaseLock();
-    }
+    yield* readExecStreamEvents(res.body);
   }
 
   async readFile(path: string): Promise<string> {
