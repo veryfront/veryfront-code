@@ -7,6 +7,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { ProjectWorker } from "./project-worker.ts";
 import { buildWorkerPermissions } from "./worker-permissions.ts";
@@ -1338,7 +1339,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
   });
 
   it("passes immutable application identity per App and Pages route request without reuse bleed", async () => {
-    const projectDir = await Deno.makeTempDir();
+    const projectDir = await makeTempDir();
     const appModulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
     const pagesModulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
     const poisonModulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });

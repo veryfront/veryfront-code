@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
 import type { HandlerContext, HandlerResult } from "../../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -380,7 +381,7 @@ describe("server/handlers/request/module/data-endpoint-handler", () => {
   });
 
   it("passes only application headers into project data rendering", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-data-headers-" });
+    const projectDir = await makeTempDir({ prefix: "vf-data-headers-" });
     const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
     let observedRequest: Request | undefined;
 

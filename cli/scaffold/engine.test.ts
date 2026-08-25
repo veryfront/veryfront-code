@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { join, relative, resolve } from "#std/path.ts";
 import { filenameToId } from "#veryfront/discovery/discovery-utils.ts";
 import {
@@ -767,8 +768,8 @@ describe("scaffold engine", () => {
   });
 
   it("plans identical auth content in two clean project directories", async () => {
-    const firstDir = await Deno.makeTempDir({ prefix: "vf-auth-plan-first-" });
-    const secondDir = await Deno.makeTempDir({ prefix: "vf-auth-plan-second-" });
+    const firstDir = await makeTempDir({ prefix: "vf-auth-plan-first-" });
+    const secondDir = await makeTempDir({ prefix: "vf-auth-plan-second-" });
     try {
       const first = await planAuthScaffold({ projectDir: firstDir, preset: "oidc" });
       const second = await planAuthScaffold({ projectDir: secondDir, preset: "oidc" });

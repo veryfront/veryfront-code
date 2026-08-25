@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { join } from "veryfront/platform/path";
 import { StandaloneMCPServer } from "../../../../cli/mcp/standalone.ts";
 
@@ -24,7 +25,7 @@ interface ToolPayload {
 
 describe("standalone MCP auth scaffold integration", () => {
   it("creates auth files and reports conflicts like the development MCP server", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-standalone-auth-" });
+    const projectDir = await makeTempDir({ prefix: "vf-standalone-auth-" });
     try {
       const server = new StandaloneMCPServer();
       const first = parseToolPayload(
@@ -63,7 +64,7 @@ describe("standalone MCP auth scaffold integration", () => {
 
   it("accepts a relative auth projectPath", async () => {
     const originalCwd = Deno.cwd();
-    const parentDir = await Deno.makeTempDir({ prefix: "vf-standalone-relative-" });
+    const parentDir = await makeTempDir({ prefix: "vf-standalone-relative-" });
     try {
       await Deno.mkdir(join(parentDir, "project"));
       Deno.chdir(parentDir);
@@ -93,7 +94,7 @@ describe("standalone MCP auth scaffold integration", () => {
   });
 
   it("reports non-auth scaffold paths without absolute machine paths", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-standalone-component-" });
+    const projectDir = await makeTempDir({ prefix: "vf-standalone-component-" });
     try {
       const payload = parseToolPayload(
         await dispatch(
@@ -116,7 +117,7 @@ describe("standalone MCP auth scaffold integration", () => {
 
   it("accepts a relative non-auth projectPath", async () => {
     const originalCwd = Deno.cwd();
-    const parentDir = await Deno.makeTempDir({ prefix: "vf-standalone-relative-component-" });
+    const parentDir = await makeTempDir({ prefix: "vf-standalone-relative-component-" });
     try {
       await Deno.mkdir(join(parentDir, "project"));
       Deno.chdir(parentDir);
@@ -144,7 +145,7 @@ describe("standalone MCP auth scaffold integration", () => {
   });
 
   it("accepts an empty methods array and uses the default API method", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-standalone-empty-methods-" });
+    const projectDir = await makeTempDir({ prefix: "vf-standalone-empty-methods-" });
     try {
       const payload = parseToolPayload(
         await dispatch(
