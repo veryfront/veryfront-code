@@ -310,10 +310,21 @@ describe("platform/compat/dns loopback names", () => {
         DnsPermissionError,
         "net access to the DNS resolver is not permitted",
       );
+      // The classification survives on the cause chain, but the runtime's raw
+      // message — which names the checked nameserver — must not: a resolver
+      // address is an internal infrastructure detail that would otherwise ride
+      // cause-walking logs.
+      const cause = (error as Error & { cause?: unknown }).cause;
+      assertEquals(cause instanceof Error, true, "the cause chain must carry a classification");
       assertEquals(
-        (error as Error & { cause?: unknown }).cause instanceof Deno.errors.NotCapable,
+        (cause as Error).message.includes("NotCapable"),
         true,
-        "the original NotCapable must be preserved as the cause",
+        "the cause must preserve the permission-error classification",
+      );
+      assertEquals(
+        (cause as Error).message.includes("8.8.8.8"),
+        false,
+        "the resolver address from the runtime error must not survive on the cause chain",
       );
     } finally {
       Object.defineProperty(Deno, "resolveDns", {

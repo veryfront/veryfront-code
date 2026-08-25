@@ -250,10 +250,14 @@ async function resolveHostAddressesUncached(
         // the network instead of the flags (veryfront-issue-inbox#744). The
         // caller stays fail-closed either way; only the diagnosis changes.
         if (isPermissionError(error)) {
+          // The runtime's message names the nameserver it checked — an
+          // internal infrastructure detail that must not ride the cause chain
+          // into logs (AGENTS.md, secret and internal-detail safety). Retain
+          // only the error's classification, never the raw message.
           throw new DnsPermissionError(
             `net access to the DNS resolver is not permitted while resolving "${hostname}"; ` +
               `this usually means --allow-net is narrowed (Deno checks permission against the nameserver, not the queried host)`,
-            { cause: error },
+            { cause: new Error(`${error.name} raised by the DNS resolver (resolver address redacted)`) },
           );
         }
         // A host may legitimately have only one address family.
