@@ -250,7 +250,7 @@ describe("agentAsTool", () => {
     );
   });
 
-  it("publishes child stream events against the parent invoke_agent tool call", async () => {
+  it("does not publish child stream events from generic invoke_agent calls", async () => {
     const childResponse: AgentResponse = {
       text: "streamed child result",
       messages: [],
@@ -291,26 +291,7 @@ describe("agentAsTool", () => {
       },
     );
 
-    assertEquals(events, [
-      {
-        type: "veryfront.invoke_agent.stream",
-        name: "veryfront.invoke_agent.stream",
-        value: {
-          toolCallId: "parent-tool-call",
-          agentId: "case-ingest",
-          event: { type: "message-start", messageId: "child-message" },
-        },
-      },
-      {
-        type: "veryfront.invoke_agent.stream",
-        name: "veryfront.invoke_agent.stream",
-        value: {
-          toolCallId: "parent-tool-call",
-          agentId: "case-ingest",
-          event: { type: "text-delta", id: "child-text", delta: "Fetching cases" },
-        },
-      },
-    ]);
+    assertEquals(events, []);
   });
 
   it("attaches the child agent's name and avatar to every published event", async () => {
