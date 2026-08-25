@@ -109,15 +109,25 @@ function freshStatefulPattern(pattern: RegExp): RegExp {
 
 function redactBlockedPattern(input: string, pattern: RegExp): string {
   const matcher = freshStatefulPattern(pattern);
-  if (!matcher.sticky || matcher.global) return input.replace(matcher, "[REDACTED]");
+  if (!matcher.sticky) return input.replace(matcher, "[REDACTED]");
 
-  // Bun does not currently honor lastIndex for non-global sticky replacements.
-  // Use exec and splice the match so every supported runtime starts at the
-  // caller-configured position without mutating the caller-owned pattern.
-  const match = matcher.exec(input);
-  if (!match) return input;
+  // replace() resets global sticky regexes to index 0, and Bun does not
+  // currently honor lastIndex for non-global sticky replacements. Use exec and
+  // splice matches so every supported runtime starts at the caller-configured
+  // position without mutating the caller-owned pattern.
+  let redacted = "";
+  let cursor = 0;
+  let matched = false;
 
-  return `${input.slice(0, match.index)}[REDACTED]${input.slice(match.index + match[0].length)}`;
+  for (let match = matcher.exec(input); match; match = matcher.exec(input)) {
+    redacted += `${input.slice(cursor, match.index)}[REDACTED]`;
+    cursor = match.index + match[0].length;
+    matched = true;
+    if (!matcher.global) break;
+    if (match[0].length === 0) matcher.lastIndex = cursor + 1;
+  }
+
+  return matched ? redacted + input.slice(cursor) : input;
 }
 
 /**
