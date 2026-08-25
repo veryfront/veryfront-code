@@ -142,27 +142,31 @@ export class ApiHandlerWrapper extends BaseHandler {
     return withSpan(
       "api.handleWithContext",
       async () => {
+        if (req.signal.aborted) throw req.signal.reason;
+
+        if (mustDenyProjectExecution) {
+          // A shared runtime without an explicit execution grant cannot serve
+          // any project-owned route. Reject before refreshing or classifying
+          // tenant source that no downstream handler is allowed to execute.
+          return this.projectExecutionUnavailable(req, ctx, pathname);
+        }
+
+        const canResolveAsPage = pathname !== "/api" &&
+          !pathname.startsWith("/api/") &&
+          (req.method === "GET" || req.method === "HEAD");
+
+        // A document path can change ownership between App Router page and
+        // route.ts without changing the branch identity. Establish strict
+        // freshness before classifying it, then let SSR reuse that snapshot.
+        // This must stay outside the API-discovery catch: downstream document
+        // handlers must never serve an older snapshot after freshness fails.
+        if (canResolveAsPage) {
+          await preparePreviewDocumentSourceSnapshot(ctx);
+        } else {
+          await ensurePreviewSourceSnapshotFresh(ctx);
+        }
+
         try {
-          if (
-            mustDenyProjectExecution &&
-            (pathname === "/api" || pathname.startsWith("/api/"))
-          ) {
-            return this.projectExecutionUnavailable(req, ctx, pathname);
-          }
-
-          const canResolveAsPage = pathname !== "/api" &&
-            !pathname.startsWith("/api/") &&
-            (req.method === "GET" || req.method === "HEAD");
-
-          // A document path can change ownership between App Router page and
-          // route.ts without changing the branch identity. Establish strict
-          // freshness before classifying it, then let SSR reuse that snapshot.
-          if (canResolveAsPage) {
-            await preparePreviewDocumentSourceSnapshot(ctx);
-          } else {
-            await ensurePreviewSourceSnapshotFresh(ctx);
-          }
-
           let isPageRequest = false;
           if (canResolveAsPage) {
             isPageRequest = await this.isPageRequest(pathname, ctx, req.signal);
@@ -170,10 +174,6 @@ export class ApiHandlerWrapper extends BaseHandler {
 
           if (isPageRequest) {
             return this.continue();
-          }
-
-          if (mustDenyProjectExecution) {
-            return this.projectExecutionUnavailable(req, ctx, pathname);
           }
 
           // Lazy per-project primitive discovery (agents, tools) on first access.

@@ -3,6 +3,7 @@ import {
   tryGetCacheKeyContext,
 } from "#veryfront/cache/cache-key-builder.ts";
 import { SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE } from "#veryfront/errors";
+import { readOwnDataProperty } from "#veryfront/security/project-locality.ts";
 import type { HandlerContext } from "../types.ts";
 
 function hasMutablePreviewSource(ctx: HandlerContext): boolean {
@@ -79,10 +80,14 @@ export async function ensurePreviewSourceSnapshotFresh(
 ): Promise<void> {
   if (!hasMutablePreviewSource(ctx)) return;
   const fs = ctx.adapter.fs;
+  const supportsFreshnessOptions = readOwnDataProperty(
+    fs,
+    "sourceSnapshotFreshnessOptionsVersion",
+  ) === 1;
   if (
     reasons.maxAgeMs !== undefined && reasons.maxAgeMs <= 0 &&
     fs.ensureSourceSnapshotFresh &&
-    fs.sourceSnapshotFreshnessOptionsVersion !== 1
+    !supportsFreshnessOptions
   ) {
     // Legacy custom adapters implemented the original one-argument method and
     // silently ignore freshness options. A document render cannot reuse that

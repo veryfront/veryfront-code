@@ -66,6 +66,33 @@ describe("ApiHandlerWrapper", () => {
     );
   });
 
+  it("propagates strict source freshness failures before downstream handlers run", async () => {
+    const ctx = createCtx({});
+    ctx.allowHostProjectCodeExecution = true;
+    ctx.requestContext!.mode = "preview";
+    ctx.releaseId = undefined;
+    const fs = ctx.adapter.fs as unknown as {
+      runWithContext: (
+        slug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+      ) => Promise<unknown>;
+      refreshSourceSnapshot: (reason?: string) => Promise<void>;
+    };
+    fs.runWithContext = async (_slug, _token, fn) => await fn();
+    fs.refreshSourceSnapshot = () => Promise.reject(new Error("snapshot refresh failed"));
+
+    await assertRejects(
+      () =>
+        new ApiHandlerWrapper("/tmp/project", ctx.adapter).handle(
+          new Request("http://localhost/notes.md"),
+          ctx,
+        ),
+      Error,
+      "snapshot refresh failed",
+    );
+  });
+
   it("routes known pages without remote stat misses or full API discovery", async () => {
     let enteredProjectContext = false;
     let remoteStatMisses = 0;
@@ -74,6 +101,7 @@ describe("ApiHandlerWrapper", () => {
     let sourceSnapshotRefreshes = 0;
     let pageReads = 0;
     const ctx = createCtx({});
+    ctx.allowHostProjectCodeExecution = true;
     const fs = ctx.adapter.fs as unknown as {
       runWithContext: (
         slug: string,
@@ -162,6 +190,7 @@ describe("ApiHandlerWrapper", () => {
   it("checks preview source freshness before resolving page ownership", async () => {
     const events: string[] = [];
     const ctx = createCtx({});
+    ctx.allowHostProjectCodeExecution = true;
     ctx.requestContext!.mode = "preview";
     ctx.releaseId = undefined;
     ctx.config = { router: "pages" };
@@ -227,6 +256,7 @@ describe("ApiHandlerWrapper", () => {
 
   it("refreshes page ownership before SSR can shed for memory pressure", async () => {
     const ctx = createCtx({});
+    ctx.allowHostProjectCodeExecution = true;
     ctx.requestContext!.mode = "preview";
     ctx.releaseId = undefined;
     ctx.config = { router: "pages" };
@@ -293,13 +323,14 @@ describe("ApiHandlerWrapper", () => {
     }
   });
 
-  it("still classifies and serves an API-owned path under critical memory pressure", async () => {
+  it("still refreshes an API candidate under critical memory pressure", async () => {
     // An extensionless GET path can be owned by an API route
     // (app/webhook/route.ts). SSR's shed response only ever covers pages, so
     // deferring such a request to SSR would turn renderer overload into an
     // outage for API routes that never render anything.
     let refreshes = 0;
     const ctx = createCtx({});
+    ctx.allowHostProjectCodeExecution = true;
     ctx.projectSlug = "pressured-api-project";
     ctx.config = { router: "pages" };
     ctx.requestContext!.mode = "preview";
@@ -333,17 +364,12 @@ describe("ApiHandlerWrapper", () => {
         ctx,
       );
 
-      // The wrapper must keep ownership of the request instead of deferring
-      // to SSR's shed response: this shared runtime answers with its own
-      // typed execution guard, proving the API flow ran.
-      assertEquals(result.response?.status, 503);
-      assertEquals(result.response?.headers.get("content-type"), "application/problem+json");
-      const problem = await result.response!.json();
+      assertEquals(result, { continue: true });
       assertEquals(
-        problem.type,
-        "https://veryfront.com/docs/code/guides/errors#project-execution-unavailable",
+        refreshes,
+        1,
+        "an executable API candidate keeps its leased freshness under pressure",
       );
-      assertEquals(refreshes, 1, "an API-owned path keeps its leased freshness under pressure");
     } finally {
       injectMemoryPressureDeps(null);
     }
@@ -353,6 +379,7 @@ describe("ApiHandlerWrapper", () => {
     const events: string[] = [];
     let routeIsCurrent = false;
     const ctx = createCtx({});
+    ctx.allowHostProjectCodeExecution = true;
     ctx.projectSlug = "pressured-route-transition";
     ctx.config = { router: "pages" };
     ctx.requestContext!.mode = "preview";
@@ -410,8 +437,7 @@ describe("ApiHandlerWrapper", () => {
         ctx,
       );
 
-      assertEquals(result.response?.status, 503);
-      assertEquals(result.response?.headers.get("content-type"), "application/problem+json");
+      assertEquals(result, { continue: true });
       assertEquals(events.slice(0, 2), ["refresh", "classify:route"]);
     } finally {
       injectMemoryPressureDeps(null);
@@ -423,6 +449,7 @@ describe("ApiHandlerWrapper", () => {
     // it even during overload, so the SSR shedding shortcut must not leave it
     // without a current source snapshot.
     const ctx = createCtx({});
+    ctx.allowHostProjectCodeExecution = true;
     ctx.requestContext!.mode = "preview";
     ctx.releaseId = undefined;
     let refreshes = 0;
@@ -459,6 +486,7 @@ describe("ApiHandlerWrapper", () => {
   it("preserves fresh API discovery when no page owns a non-API path", async () => {
     let sourceSnapshotRefreshes = 0;
     const ctx = createCtx({});
+    ctx.allowHostProjectCodeExecution = true;
     ctx.projectSlug = "unmatched-preview-project";
     ctx.config = { router: "pages" };
     ctx.requestContext!.mode = "preview";
@@ -488,8 +516,7 @@ describe("ApiHandlerWrapper", () => {
 
     const result = await handler.handle(new Request("http://localhost/new-webhook"), ctx);
 
-    assertEquals(result.response?.status, 503);
-    assertEquals(result.response?.headers.get("content-type"), "application/problem+json");
+    assertEquals(result, { continue: true });
     assertEquals(sourceSnapshotRefreshes, 1);
   });
 
@@ -525,6 +552,44 @@ describe("ApiHandlerWrapper", () => {
 
     assertEquals(result.response?.status, 503);
     assertEquals(sourceSnapshotRefreshes, 0);
+  });
+
+  it("denies shared extensionless requests before source refresh or ownership reads", async () => {
+    let projectContextEntries = 0;
+    let filesystemReads = 0;
+    const ctx = createCtx({});
+    ctx.requestContext!.mode = "preview";
+    ctx.releaseId = undefined;
+    const fs = ctx.adapter.fs as unknown as {
+      runWithContext: (
+        slug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+      ) => Promise<unknown>;
+      resolveFile: (path: string) => Promise<string | null>;
+      refreshSourceSnapshot: (reason?: string) => Promise<void>;
+    };
+    fs.runWithContext = async (_slug, _token, fn) => {
+      projectContextEntries++;
+      return await fn();
+    };
+    fs.resolveFile = () => {
+      filesystemReads++;
+      return Promise.resolve(null);
+    };
+    fs.refreshSourceSnapshot = () => {
+      filesystemReads++;
+      return Promise.resolve();
+    };
+
+    const result = await new ApiHandlerWrapper("/tmp/project", ctx.adapter).handle(
+      new Request("http://localhost/review"),
+      ctx,
+    );
+
+    assertEquals(result.response?.status, 503);
+    assertEquals(projectContextEntries, 1);
+    assertEquals(filesystemReads, 0);
   });
 
   it("never starts shared-runtime API discovery or a same-process Worker", async () => {

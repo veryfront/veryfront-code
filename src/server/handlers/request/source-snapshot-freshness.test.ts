@@ -56,6 +56,61 @@ it("rejects an unversioned ensure-only adapter for a negative age budget", async
   assertEquals(ensureCalls, 0, "a legacy lease cannot satisfy a negative age budget");
 });
 
+it("does not trust an inherited freshness options marker on a direct adapter", async () => {
+  let ensureCalls = 0;
+  let refreshes = 0;
+  const adapter = createMockAdapter();
+  const fs = Object.assign(
+    Object.create({ sourceSnapshotFreshnessOptionsVersion: 1 }),
+    adapter.fs,
+    {
+      ensureSourceSnapshotFresh: (_reason?: string) => {
+        ensureCalls++;
+        return Promise.resolve();
+      },
+      refreshSourceSnapshot: () => {
+        refreshes++;
+        return Promise.resolve();
+      },
+    },
+  ) as typeof adapter.fs;
+  adapter.fs = fs;
+
+  await preparePreviewDocumentSourceSnapshot(makePreviewCtx(adapter));
+
+  assertEquals(ensureCalls, 0, "an inherited marker must not authorize the options contract");
+  assertEquals(refreshes, 1, "strict freshness must use the unconditional fallback");
+});
+
+it("does not invoke an accessor freshness options marker on a direct adapter", async () => {
+  let getterCalls = 0;
+  let ensureCalls = 0;
+  const adapter = createMockAdapter();
+  const fs = {
+    ...adapter.fs,
+    ensureSourceSnapshotFresh: (_reason?: string) => {
+      ensureCalls++;
+      return Promise.resolve();
+    },
+  };
+  Object.defineProperty(fs, "sourceSnapshotFreshnessOptionsVersion", {
+    get() {
+      getterCalls++;
+      return 1;
+    },
+  });
+  adapter.fs = fs;
+
+  const rejection = await assertRejects(() =>
+    preparePreviewDocumentSourceSnapshot(makePreviewCtx(adapter))
+  );
+
+  assertInstanceOf(rejection, VeryfrontError);
+  assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
+  assertEquals(getterCalls, 0, "capability discovery must not execute adapter accessors");
+  assertEquals(ensureCalls, 0, "an accessor marker must not authorize the options contract");
+});
+
 it("prefers a versioned zero-age ensure contract over unconditional refresh", async () => {
   const ensureCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
   let refreshes = 0;
