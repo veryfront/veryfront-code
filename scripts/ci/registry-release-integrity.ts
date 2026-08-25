@@ -265,21 +265,25 @@ async function main(args: string[]): Promise<void> {
   );
 }
 
+export function formatRegistryReleaseFailure(error: unknown): string {
+  if (error instanceof RegistryReleaseError) {
+    switch (error.classification) {
+      case "missing-version":
+      case "wrong-version":
+      case "provenance":
+      case "timeout":
+      case "lookup":
+        return `REGISTRY RELEASE FAIL [${error.classification}].`;
+    }
+  }
+  return "REGISTRY RELEASE FAIL [configuration].";
+}
+
 if (import.meta.main) {
   try {
     await main(Deno.args);
   } catch (error) {
-    if (error instanceof RegistryReleaseError) {
-      console.error(
-        `REGISTRY RELEASE FAIL [${error.classification}]: ${error.message}`,
-      );
-    } else {
-      console.error(
-        `REGISTRY RELEASE FAIL [configuration]: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
+    console.error(formatRegistryReleaseFailure(error));
     Deno.exit(1);
   }
 }

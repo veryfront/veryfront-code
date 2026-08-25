@@ -4,8 +4,13 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { withTempDir } from "#veryfront/testing/deno-compat.ts";
+import {
+  makeTempDirWithOptions,
+  remove,
+  withTempDir,
+} from "#veryfront/testing/deno-compat.ts";
 import { join } from "#std/path/join";
+import { relative } from "#std/path/relative";
 import {
   createNpmCompatibilityArtifact,
   loadNpmCompatibilityArtifact,
@@ -38,6 +43,29 @@ function withTempDirs<T>(
 }
 
 describe("npm compatibility artifact", () => {
+  it("packs into a destination relative to the caller working directory", async () => {
+    await withTempDir(async (root) => {
+      const absoluteDestination = await makeTempDirWithOptions({
+        prefix: "vf-npm-artifact-output-",
+        dir: Deno.cwd(),
+      });
+      try {
+        await writePackage(root, { name: "veryfront", version: "1.2.3" });
+        const destination = relative(Deno.cwd(), absoluteDestination);
+
+        const manifest = await createNpmCompatibilityArtifact(
+          root,
+          destination,
+        );
+
+        assertEquals(manifest.packages.length, 1);
+        await Deno.stat(join(absoluteDestination, manifest.packages[0].file));
+      } finally {
+        await remove(absoluteDestination, { recursive: true });
+      }
+    }, { prefix: "vf-npm-artifact-source-" });
+  });
+
   it("records package versions and SHA-256 digests for one packed package set", async () => {
     await withTempDirs([
       "vf-npm-artifact-source-",

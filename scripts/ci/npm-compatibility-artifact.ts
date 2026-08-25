@@ -124,7 +124,8 @@ export async function createNpmCompatibilityArtifact(
   npmDirectory: string,
   destination: string,
 ): Promise<NpmCompatibilityManifest> {
-  await Deno.mkdir(destination, { recursive: true });
+  const resolvedDestination = resolve(destination);
+  await Deno.mkdir(resolvedDestination, { recursive: true });
   const packageSources = await Promise.all(
     (await packageDirectories(npmDirectory)).map(async (directory) => ({
       directory,
@@ -155,12 +156,12 @@ export async function createNpmCompatibilityArtifact(
 
   const packages: NpmCompatibilityPackage[] = [];
   for (const source of packageSources) {
-    const file = await packPackage(source.directory, destination);
+    const file = await packPackage(source.directory, resolvedDestination);
     packages.push({
       name: source.manifest.name,
       version: source.manifest.version,
       file,
-      sha256: await sha256File(join(destination, file)),
+      sha256: await sha256File(join(resolvedDestination, file)),
     });
   }
 
@@ -171,7 +172,7 @@ export async function createNpmCompatibilityArtifact(
     packages,
   };
   await Deno.writeTextFile(
-    join(destination, MANIFEST_FILE),
+    join(resolvedDestination, MANIFEST_FILE),
     `${JSON.stringify(manifest, null, 2)}\n`,
   );
   return manifest;

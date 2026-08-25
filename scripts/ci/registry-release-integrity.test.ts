@@ -5,6 +5,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  formatRegistryReleaseFailure,
   pollRegistryPackage,
   RegistryReleaseError,
 } from "./registry-release-integrity.ts";
@@ -195,6 +196,29 @@ describe("registry release integrity polling", () => {
     assertEquals(error.classification, "provenance");
     assertEquals(attempts, 1);
     assertStringIncludes(error.message, "wrong gitHead");
+  });
+
+  it("does not include registry-controlled metadata in failure logs", async () => {
+    const injectedGitHead = "wrong-commit\n::error::injected";
+    const error = await captureError(() =>
+      pollRegistryPackage({
+        packageName: PACKAGE_NAME,
+        version: VERSION,
+        expectedGitHead: GIT_HEAD,
+        maxAttempts: 1,
+        retryDelayMs: 0,
+        requestTimeoutMs: 100,
+        fetcher: () =>
+          Promise.resolve(
+            Response.json(publishedPackage({ gitHead: injectedGitHead })),
+          ),
+        delay: () => Promise.resolve(),
+      })
+    );
+
+    const output = formatRegistryReleaseFailure(error);
+    assertEquals(output, "REGISTRY RELEASE FAIL [provenance].");
+    assertEquals(output.includes(injectedGitHead), false);
   });
 
   it("rejects a package without npm SLSA provenance", async () => {
