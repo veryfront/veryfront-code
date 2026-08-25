@@ -2506,6 +2506,43 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(await result.response.json(), { error: "Invalid internal agent stream request" });
   });
 
+  it("rejects a stream URL whose run id differs from the signed payload runId", async () => {
+    let discoveryCalls = 0;
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls++;
+        return createEmptyDiscoveryResult();
+      },
+      getAgent: () => createAgent("assistant-1"),
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+    });
+
+    const body = createAgentStreamRequestBody();
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_2/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 400, "a stream URL must match the signed runId");
+    assertEquals(await result.response.json(), { error: "CONTROL_PLANE_RUN_ID_MISMATCH" });
+    assertEquals(
+      discoveryCalls,
+      0,
+      "a run-id mismatch must be rejected before any project discovery side effect",
+    );
+  });
+
   it("returns 400 when the runtime input exceeds the message limit", async () => {
     const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),

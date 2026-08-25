@@ -44,7 +44,19 @@ describe("server/handlers/request/openapi-docs.handler", () => {
     const nonce = nonceMatch![1]!;
 
     assertEquals(body.includes(`<style nonce="${nonce}">`), true);
-    assertEquals(body.includes(`nonce="${nonce}"`), true);
+    const configStart = body.indexOf('id="api-reference"');
+    assertEquals(configStart > -1, true, "the inline Scalar config script must be emitted");
+    const configBlock = body.slice(configStart, body.indexOf("></script>", configStart));
+    assertEquals(
+      configBlock.includes(`nonce="${nonce}"`),
+      true,
+      "the inline Scalar config script must carry the response nonce",
+    );
+    assertEquals(
+      body.match(/nonce="/g)?.length,
+      3,
+      "every nonce-bearing element must be rebound",
+    );
     assertEquals(
       body.includes(
         `<script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference" nonce="${nonce}"></script>`,

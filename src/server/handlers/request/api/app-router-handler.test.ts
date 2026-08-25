@@ -64,5 +64,10 @@ describe("server API app-router compatibility handler", () => {
       503,
       "a granted shared executor must not return project-execution-unavailable",
     );
+    assertEquals(
+      filesystemCalls > 0,
+      true,
+      "a granted shared executor must reach route discovery",
+    );
   });
 });

@@ -262,20 +262,72 @@ describe("server/handlers/request/module/module.handler", () => {
       // did before veryfront-issue-inbox#366, passes that test and fails this
       // one. Without the pair, the two are indistinguishable.
       const handler = new ModuleHandler();
+      setRendererInitializer(createInitializer({
+        renderPage: () =>
+          Promise.resolve({
+            html: "",
+            frontmatter: {},
+            pageModule: { slug: "page", code: "export default {};", type: "component" },
+          } as unknown as Awaited<ReturnType<Renderer["renderPage"]>>),
+        resolvePageData: () =>
+          Promise.resolve({
+            slug: "page",
+            frontmatter: {},
+            props: {},
+            params: {},
+            layoutProps: {},
+            buildVersion: { framework: "test", serverStart: 1 },
+          } as unknown as Awaited<ReturnType<Renderer["resolvePageData"]>>),
+      }));
+      const grantedCtx = () =>
+        makeCtx({
+          isLocalProject: false,
+          allowHostProjectCodeExecution: true,
+        } as Partial<HandlerContext>);
+
+      // The page module endpoint proves an actually served outcome, not just
+      // the absence of one particular refusal.
+      const page = await handler.handle(
+        new Request("https://tenant.example/_veryfront/pages/page.js"),
+        grantedCtx(),
+      );
+      assertEquals(page.continue, false);
+      assertEquals(page.response?.status, 200, "a granted host must be served the page module");
+      assertEquals(
+        await page.response!.text(),
+        "export default {};",
+        "the served body must be the rendered page module",
+      );
+
       for (
-        const pathname of [
-          "/_veryfront/modules/runtime.js",
-          "/_veryfront/pages/page.js",
-          "/_veryfront/data/page.json",
-          "/_veryfront/page-data/page.json",
+        const { pathname, expectedStatus, expectedBody } of [
+          {
+            pathname: "/_veryfront/modules/runtime.js",
+            expectedStatus: 404,
+            expectedBody: "Virtual module not found",
+          },
+          {
+            pathname: "/_veryfront/data/page.json",
+            expectedStatus: 200,
+            expectedBody: JSON.stringify({ slug: "page", frontmatter: {}, html: "" }),
+          },
+          {
+            pathname: "/_veryfront/page-data/page.json",
+            expectedStatus: 200,
+            expectedBody: JSON.stringify({
+              slug: "page",
+              frontmatter: {},
+              props: {},
+              params: {},
+              layoutProps: {},
+              buildVersion: { framework: "test", serverStart: 1 },
+            }),
+          },
         ]
       ) {
         const result = await handler.handle(
           new Request(`https://tenant.example${pathname}`),
-          makeCtx({
-            isLocalProject: false,
-            allowHostProjectCodeExecution: true,
-          } as Partial<HandlerContext>),
+          grantedCtx(),
         );
         // `continue: false` matters as much as the absent 503. Without it a
         // handler that fell through entirely, emitting no response at all,
@@ -295,6 +347,21 @@ describe("server/handlers/request/module/module.handler", () => {
           type === "https://veryfront.com/docs/code/guides/errors#project-execution-unavailable",
           false,
           `${pathname} denied execution to a granted host`,
+        );
+        assertEquals(
+          result.response instanceof Response,
+          true,
+          `${pathname} did not return a response for a granted host`,
+        );
+        assertEquals(
+          result.response!.status,
+          expectedStatus,
+          `${pathname} returned the wrong status for a granted host`,
+        );
+        assertEquals(
+          await result.response!.text(),
+          expectedBody,
+          `${pathname} returned the wrong body for a granted host`,
         );
       }
     });

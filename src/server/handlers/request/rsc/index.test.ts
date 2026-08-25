@@ -94,8 +94,14 @@ describe("server/handlers/request/rsc", () => {
     assertEquals(await response.text(), "Missing rel query parameter");
   });
 
-  it("serves app router client module requests inside the multi-project filesystem context", async () => {
-    const handler = new RSCHandler();
+  /**
+   * Multi-project adapter that only serves reads while runWithContext is
+   * active, and records the arguments it was warmed with.
+   */
+  function createMultiProjectAdapter(): {
+    adapter: RuntimeAdapter;
+    runWithContextArgs: () => unknown[] | undefined;
+  } {
     let contextActive = false;
     let runWithContextArgs: unknown[] | undefined;
     const adapter = createMockAdapter();
@@ -130,35 +136,107 @@ describe("server/handlers/request/rsc", () => {
       },
     } as RuntimeAdapter["fs"];
 
+    return { adapter, runWithContextArgs: () => runWithContextArgs };
+  }
+
+  function multiProjectCtx(
+    adapter: RuntimeAdapter,
+    overrides: Partial<HandlerContext> = {},
+  ): HandlerContext {
+    return makeCtx({
+      adapter,
+      projectSlug: "customer-operations-agent",
+      projectId: "proj-123",
+      proxyToken: "proxy-token",
+      releaseId: "rel-123",
+      environmentName: "Preview",
+      resolvedEnvironment: "preview",
+      requestContext: {
+        slug: "customer-operations-agent",
+        branch: "main",
+        mode: "preview",
+        token: "proxy-token",
+      },
+      ...overrides,
+    });
+  }
+
+  const MODULE_REQUEST_URL = "http://localhost/_veryfront/rsc/module?rel=app%2Fpage.tsx";
+
+  it("serves app router client module requests inside the multi-project filesystem context", async () => {
+    const handler = new RSCHandler();
+    const { adapter, runWithContextArgs } = createMultiProjectAdapter();
+
     const result = await handler.handle(
-      new Request("http://localhost/_veryfront/rsc/module?rel=app%2Fpage.tsx"),
-      makeCtx({
-        adapter,
-        projectSlug: "customer-operations-agent",
-        projectId: "proj-123",
-        proxyToken: "proxy-token",
-        releaseId: "rel-123",
-        environmentName: "Preview",
-        resolvedEnvironment: "preview",
-        requestContext: {
-          slug: "customer-operations-agent",
-          branch: "main",
-          mode: "preview",
-          token: "proxy-token",
-        },
-      }),
+      new Request(MODULE_REQUEST_URL),
+      multiProjectCtx(adapter),
     );
 
     const response = result.response!;
     assertEquals(response.status, 404);
-    assertEquals(runWithContextArgs?.[0], "customer-operations-agent");
-    assertEquals(runWithContextArgs?.[1], "proxy-token");
-    assertEquals(runWithContextArgs?.[2], "proj-123");
-    assertEquals(runWithContextArgs?.[3], {
+    assertEquals(runWithContextArgs()?.[0], "customer-operations-agent");
+    assertEquals(runWithContextArgs()?.[1], "proxy-token");
+    assertEquals(runWithContextArgs()?.[2], "proj-123");
+    assertEquals(runWithContextArgs()?.[3], {
       productionMode: false,
       releaseId: "rel-123",
       branch: "main",
       environmentName: "Preview",
     });
+  });
+
+  it("warms the multi-project context in production mode for a production environment", async () => {
+    const handler = new RSCHandler();
+    const { adapter, runWithContextArgs } = createMultiProjectAdapter();
+
+    await handler.handle(
+      new Request(MODULE_REQUEST_URL),
+      multiProjectCtx(adapter, {
+        resolvedEnvironment: "production",
+        requestContext: {
+          slug: "customer-operations-agent",
+          branch: "main",
+          mode: "production",
+          token: "proxy-token",
+        },
+      }),
+    );
+
+    assertEquals(
+      runWithContextArgs()?.[3],
+      {
+        productionMode: true,
+        releaseId: "rel-123",
+        branch: "main",
+        environmentName: "Preview",
+      },
+      "a production environment must warm the context in production mode",
+    );
+  });
+
+  it("warms the multi-project context in production mode when the filesystem config forces it", async () => {
+    const handler = new RSCHandler();
+    const { adapter, runWithContextArgs } = createMultiProjectAdapter();
+
+    await handler.handle(
+      new Request(MODULE_REQUEST_URL),
+      multiProjectCtx(adapter, {
+        config: {
+          experimental: { rsc: true },
+          fs: { veryfront: { productionMode: true } },
+        } as unknown as HandlerContext["config"],
+      }),
+    );
+
+    assertEquals(
+      runWithContextArgs()?.[3],
+      {
+        productionMode: true,
+        releaseId: "rel-123",
+        branch: "main",
+        environmentName: "Preview",
+      },
+      "config.fs.veryfront.productionMode must force production mode over a preview environment",
+    );
   });
 });

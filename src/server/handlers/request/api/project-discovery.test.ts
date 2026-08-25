@@ -18,6 +18,7 @@ import { skillRegistry } from "#veryfront/skill/registry.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import {
   __registerLogRecordEmitter,
+  __resetLoggerConfigForTests,
   __resetLogRecordEmitterForTests,
   type LogEntry,
 } from "#veryfront/utils/logger/logger.ts";
@@ -43,6 +44,33 @@ function createHandlerContext(
     securityConfig: null,
     isLocalProject: true,
   } as HandlerContext;
+}
+
+/**
+ * Capture structured log records at debug level. The empty-discovery message is
+ * emitted at debug level, which the logger filters before reaching the emitter
+ * unless LOG_LEVEL allows it.
+ */
+async function captureDebugLogEntries(run: () => Promise<void>): Promise<LogEntry[]> {
+  const logEntries: LogEntry[] = [];
+  const originalLogLevel = Deno.env.get("LOG_LEVEL");
+  Deno.env.set("LOG_LEVEL", "DEBUG");
+  __resetLoggerConfigForTests();
+  __registerLogRecordEmitter((entry) => logEntries.push(entry));
+
+  try {
+    await run();
+  } finally {
+    __resetLogRecordEmitterForTests();
+    if (originalLogLevel === undefined) {
+      Deno.env.delete("LOG_LEVEL");
+    } else {
+      Deno.env.set("LOG_LEVEL", originalLogLevel);
+    }
+    __resetLoggerConfigForTests();
+  }
+
+  return logEntries;
 }
 
 function assertConfiguredSkillInfrastructure(
@@ -96,7 +124,6 @@ async function writeSkillFile(
 
 describe(
   "server/handlers/request/api/project-discovery",
-  { sanitizeOps: false, sanitizeResources: false },
   () => {
     it("fails closed for remote discovery before reading or evaluating project modules", async () => {
       const ctx = createHandlerContext("/project", "remote", "preview");
@@ -1003,23 +1030,41 @@ describe(
         },
       } as HandlerContext["config"];
 
-      const originalWarn = console.warn;
-      const warnings: string[] = [];
-      console.warn = (message?: unknown, ...args: unknown[]) => {
-        warnings.push([message, ...args].map(String).join(" "));
-      };
-
-      try {
+      const logEntries = await captureDebugLogEntries(async () => {
         await ensureProjectDiscovery(ctx);
-      } finally {
-        console.warn = originalWarn;
-      }
+      });
 
       assertEquals(
-        warnings.some((warning) =>
-          warning.includes("Primitive discovery found 0 agents and 0 tools")
+        logEntries.some((entry) =>
+          entry.message === "Primitive discovery found 0 agents and 0 tools"
         ),
         false,
+        "disabled AI discovery must not report zero primitives",
+      );
+    });
+
+    it("reports zero agents and tools when AI primitive discovery is enabled but empty", async () => {
+      agentRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+      skillRegistryInternal.clearAll();
+
+      const ctx = createHandlerContext(
+        "/empty-ai-discovery-project",
+        "empty-ai-discovery-project",
+        "preview",
+      );
+
+      const logEntries = await captureDebugLogEntries(async () => {
+        await ensureProjectDiscovery(ctx);
+      });
+
+      assertEquals(
+        logEntries.some((entry) =>
+          entry.message === "Primitive discovery found 0 agents and 0 tools" &&
+          entry.level === "debug"
+        ),
+        true,
+        "enabled discovery with no primitives must still report the empty result",
       );
     });
 

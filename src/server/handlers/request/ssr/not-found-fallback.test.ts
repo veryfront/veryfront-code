@@ -270,6 +270,67 @@ describe(
         });
       });
 
+      it("falls back to the component's JSX text when the not-found render throws", async () => {
+        const adapter = await getAdapter();
+
+        await withTestContext("not-found-fallback-render-failure", async (context) => {
+          const segDir = join(context.projectDir, "app", "a", "b");
+          await mkdir(segDir, { recursive: true });
+          // The JSX text stays in the source so extractNotFoundText can recover it.
+          await writeTextFile(
+            join(segDir, "not-found.tsx"),
+            `export default function NotFound(){ throw new Error("boom"); return <p>Missing Text</p>; }`,
+          );
+
+          const ctx = makeCtx({
+            projectDir: context.projectDir,
+            adapter,
+            isLocalProject: false,
+            resolvedEnvironment: "preview",
+          });
+          const req = new Request("http://localhost/a/b/missing");
+          const builder = new ResponseBuilder();
+
+          const result = await tryNotFoundFallback(req, "a/b/missing", ctx, builder);
+          assertExists(result, "a failed not-found render must still produce a response");
+          assertEquals(result.status, 404, "a failed not-found render must still answer 404");
+          const html = await result.text();
+          assertStringIncludes(
+            html,
+            "<p>Missing Text</p>",
+            "the text fallback must survive an SSR render failure",
+          );
+        });
+      });
+
+      it("uses the last-resort text when the failing not-found component has no JSX text", async () => {
+        const adapter = await getAdapter();
+
+        await withTestContext("not-found-fallback-render-failure-bare", async (context) => {
+          const segDir = join(context.projectDir, "app", "a", "b");
+          await mkdir(segDir, { recursive: true });
+          await writeTextFile(
+            join(segDir, "not-found.tsx"),
+            `export default function NotFound(){ throw new Error("boom"); }`,
+          );
+
+          const ctx = makeCtx({
+            projectDir: context.projectDir,
+            adapter,
+            isLocalProject: false,
+            resolvedEnvironment: "preview",
+          });
+          const req = new Request("http://localhost/a/b/missing");
+          const builder = new ResponseBuilder();
+
+          const result = await tryNotFoundFallback(req, "a/b/missing", ctx, builder);
+          assertExists(result, "a failed not-found render must still produce a response");
+          assertEquals(result.status, 404, "a failed not-found render must still answer 404");
+          const html = await result.text();
+          assertStringIncludes(html, "<p>Not Found</p>", "the last-resort text must be served");
+        });
+      });
+
       it("renders with the React version configured for the project", async () => {
         const adapter = await getAdapter();
         const loadedVersions: string[] = [];

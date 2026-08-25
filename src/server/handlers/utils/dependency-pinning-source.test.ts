@@ -166,6 +166,32 @@ describe("server/handlers/utils/dependency-pinning-source", () => {
       }),
     );
     const unproven = createHandlerDependencyPinningSource(makeCtx());
+    const resolvedProduction = createHandlerDependencyPinningSource(
+      makeCtx({
+        isLocalProject: false,
+        resolvedEnvironment: "production",
+        proxyToken: "request-scoped-token",
+        requestContext: {
+          token: "",
+          slug: "project",
+          branch: "feature",
+          mode: "preview",
+        },
+      }),
+    );
+    const resolvedPreview = createHandlerDependencyPinningSource(
+      makeCtx({
+        isLocalProject: false,
+        resolvedEnvironment: "preview",
+        proxyToken: "request-scoped-token",
+        requestContext: {
+          token: "",
+          slug: "project",
+          branch: "feature",
+          mode: "production",
+        },
+      }),
+    );
 
     assertEquals(feature.dependencyWritebackTarget, {
       kind: "branch",
@@ -176,5 +202,20 @@ describe("server/handlers/utils/dependency-pinning-source", () => {
     assertEquals(localPreview.dependencyWritebackTarget, undefined);
     assertEquals(nonCanonicalBranch.dependencyWritebackTarget, undefined);
     assertEquals(unproven.dependencyWritebackTarget, undefined);
+    assertEquals(
+      resolvedProduction.dependencyWritebackTarget,
+      undefined,
+      "resolvedEnvironment must override requestContext.mode",
+    );
+    assertEquals(
+      resolvedProduction.dependencyWritebackToken,
+      undefined,
+      "a production-resolved context must not hand out the request-scoped token",
+    );
+    assertEquals(
+      resolvedPreview.dependencyWritebackTarget,
+      { kind: "branch", branch: "feature" },
+      "a preview-resolved context targets its branch even when requestContext.mode says production",
+    );
   });
 });

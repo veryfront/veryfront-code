@@ -750,6 +750,12 @@ describe("server/handlers/dev/styles-css.handler", () => {
       ],
       { sourceType: "branch", projectSlug: PROJECT_SLUG, branch: "main" },
     );
+    // A passthrough rule that survives compilation, so the served stylesheet
+    // can be checked for exactly one copy of the configured stylesheet.
+    adapter.fs.files.set(
+      "/project/globals.css",
+      `${TEST_STYLESHEET}\n.vf-dup-probe { color: #123456; }`,
+    );
     const ctx = makeCtx(adapter);
     const req = new Request("http://localhost/_vf_styles/styles.css");
 
@@ -764,7 +770,16 @@ describe("server/handlers/dev/styles-css.handler", () => {
       const body = await result.response!.text();
 
       assertEquals(result.response!.status, 200);
-      assertEquals(body.length > 0, true);
+      assertEquals(
+        body.includes("STYLESHEET COULD NOT BE BUILT"),
+        false,
+        "the served CSS must be a real stylesheet, not the failure diagnostic",
+      );
+      assertEquals(
+        (body.match(/vf-dup-probe/g) ?? []).length,
+        1,
+        "the configured stylesheet must be emitted exactly once",
+      );
     } finally {
       fetchMock.restore();
       clearCSSCache();

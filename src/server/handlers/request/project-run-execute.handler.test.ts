@@ -1453,6 +1453,60 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(destroyed, true);
   });
 
+  it("times out a workflow run that never reaches a terminal status", async () => {
+    // Mirrors DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS in the handler (15 minutes).
+    const workflowStatusTimeoutMs = 15 * 60 * 1_000;
+    let sleepCalls = 0;
+    let getRunCalls = 0;
+    let clock = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      // Each poll sleep advances the fake clock past the status deadline, and
+      // a loop that keeps polling anyway is cut short instead of hanging.
+      sleep: async () => {
+        sleepCalls++;
+        clock += workflowStatusTimeoutMs + 1;
+        if (sleepCalls > 3) throw new Error("poll loop kept running past the deadline");
+      },
+      now: () => clock,
+      createWorkflowClient: () => ({
+        register: () => {},
+        start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
+          runId: options?.runId ?? "workflow-run",
+        }),
+        getRun: async () => {
+          getRunCalls++;
+          return { status: "running" };
+        },
+        destroy: async () => {},
+      }),
+    }));
+    const body = {
+      runId: "run_workflow_stuck_1",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      input: { release: "v1" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_stuck_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const payload = await result.response.json();
+    assertEquals(
+      payload.success,
+      false,
+      "a workflow that never reaches a terminal status must time out",
+    );
+    assertStringIncludes(payload.error, "timed out");
+    assertEquals(sleepCalls > 0, true, "the poll loop must sleep between getRun calls");
+    assertEquals(getRunCalls > 1, true, "the poll loop must re-check the run after sleeping");
+  });
+
   it("does not report waiting workflow runs as successful without durable workflow state", async () => {
     let destroyed = false;
     const handler = new ProjectRunExecuteHandler(createDeps({

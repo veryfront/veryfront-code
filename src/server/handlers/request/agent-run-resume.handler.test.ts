@@ -332,4 +332,72 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
       restore();
     }
   });
+
+  it("returns 401 when the control-plane signature is missing", async () => {
+    let submitCalls = 0;
+    const handler = new AgentRunResumeHandler({
+      submitToolResult() {
+        submitCalls++;
+        return { accepted: true };
+      },
+    } as unknown as AgentRunSessionManager);
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/resume", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          type: "tool_result",
+          toolCallId: "tool_1",
+          result: { ok: true },
+        }),
+      }),
+      createCtx("-----BEGIN PUBLIC KEY-----\nZmFrZQ==\n-----END PUBLIC KEY-----"),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 401, "an unsigned resume must be rejected");
+    assertEquals(await result.response.json(), { error: "Missing control-plane signature" });
+    assertEquals(submitCalls, 0, "an unsigned resume must not inject a tool result");
+  });
+
+  it("refuses a signature minted for a different run", async () => {
+    let submitCalls = 0;
+    const handler = new AgentRunResumeHandler({
+      submitToolResult() {
+        submitCalls++;
+        return { accepted: true };
+      },
+    } as unknown as AgentRunSessionManager);
+    const body = JSON.stringify({
+      type: "tool_result",
+      toolCallId: "tool_1",
+      result: { ok: true },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_2",
+    });
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/resume", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 401, "a signature for another run must be rejected");
+    assertEquals(
+      submitCalls,
+      0,
+      "a replayed signature must not inject a tool result into another run",
+    );
+  });
 });

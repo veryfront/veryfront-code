@@ -57,6 +57,76 @@ describe("server/handlers/request/static.handler", () => {
     assertEquals(await result.response.text(), "export const page = true;");
   });
 
+  it("answers a matching If-None-Match with 304 and serves a stale validator in full", async () => {
+    const handler = new StaticHandler();
+    (handler as any).staticService = {
+      resolveFile: async () => ({
+        path: "/tmp/test-project/dist/_veryfront/chunks/index.js",
+        data: new TextEncoder().encode("export const page = true;"),
+        etag: '"asset-etag"',
+        contentType: "application/javascript; charset=utf-8",
+        cacheStrategy: "immutable",
+        source: "dist",
+      }),
+      isAssetRequest: () => true,
+    };
+    const url = "http://localhost/_veryfront/chunks/index.js";
+
+    const first = await handler.handle(new Request(url), makeCtx());
+    assertExists(first.response);
+    const etag = first.response.headers.get("etag");
+    assertExists(etag, "a served static asset must carry a validator");
+    await first.response.text();
+
+    const revalidated = await handler.handle(
+      new Request(url, { headers: { "if-none-match": etag } }),
+      makeCtx(),
+    );
+    assertExists(revalidated.response);
+    assertEquals(revalidated.response.status, 304, "a matching validator must answer 304");
+    assertEquals(await revalidated.response.text(), "", "a 304 must not carry a body");
+
+    const stale = await handler.handle(
+      new Request(url, { headers: { "if-none-match": '"other"' } }),
+      makeCtx(),
+    );
+    assertExists(stale.response);
+    assertEquals(stale.response.status, 200, "a foreign validator must not be treated as a match");
+    assertEquals(
+      await stale.response.text(),
+      "export const page = true;",
+      "a stale validator must receive the full asset",
+    );
+  });
+
+  it("suppresses the body for HEAD requests while keeping the headers", async () => {
+    const handler = new StaticHandler();
+    (handler as any).staticService = {
+      resolveFile: async () => ({
+        path: "/tmp/test-project/dist/_veryfront/chunks/index.js",
+        data: new TextEncoder().encode("export const page = true;"),
+        etag: '"asset-etag"',
+        contentType: "application/javascript; charset=utf-8",
+        cacheStrategy: "immutable",
+        source: "dist",
+      }),
+      isAssetRequest: () => true,
+    };
+
+    const result = await handler.handle(
+      new Request("http://localhost/_veryfront/chunks/index.js", { method: "HEAD" }),
+      makeCtx(),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(
+      result.response.headers.get("content-type"),
+      "application/javascript; charset=utf-8",
+    );
+    assertEquals(await result.response.text(), "", "HEAD responses must not carry a body");
+  });
+
   it("forwards the configured build output directory to static resolution", async () => {
     const handler = new StaticHandler();
     let resolvedBuildOutDir: string | undefined;

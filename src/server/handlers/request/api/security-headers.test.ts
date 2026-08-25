@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { applySecurityHeaders, buildCSP, getSecurityHeader } from "./security-headers.ts";
 import type { HandlerContext } from "../../types.ts";
@@ -35,9 +35,11 @@ describe("server/handlers/request/api/security-headers", () => {
       const prodCtx = makeCtx({ isLocalProject: false });
       const devCsp = buildCSP(devCtx);
       const prodCsp = buildCSP(prodCtx);
-      // Both should be strings (may or may not differ depending on implementation)
-      assertEquals(typeof devCsp, "string");
-      assertEquals(typeof prodCsp, "string");
+      assertStringIncludes(prodCsp, "default-src 'self'", "the production floor must be served");
+      assertStringIncludes(prodCsp, "frame-ancestors 'none'", "production must not be framable");
+      assertStringIncludes(prodCsp, "nonce-", "production must carry a script nonce");
+      assertEquals(devCsp, "", "dev must serve no policy so HMR is never blocked");
+      assertNotEquals(devCsp, prodCsp, "dev and production policies must differ");
     });
   });
 
@@ -62,6 +64,28 @@ describe("server/handlers/request/api/security-headers", () => {
       applySecurityHeaders(headers, ctx);
       // Should have at least one security header
       assertEquals(headers.has("x-content-type-options"), true);
+      assertStringIncludes(
+        headers.get("strict-transport-security") ?? "",
+        "max-age=",
+        "production must serve HSTS",
+      );
+      assertEquals(headers.get("x-frame-options"), "DENY", "production must deny framing");
+      assertStringIncludes(
+        headers.get("content-security-policy-report-only") ?? "",
+        "frame-ancestors 'none'",
+        "a customer app must not be framable",
+      );
+    });
+
+    it("should allow the Studio frame-ancestors allowlist for embeddable domains", () => {
+      const ctx = makeCtx({ parsedDomain: { allowIframeEmbed: true } } as never);
+      const headers = new Headers();
+      applySecurityHeaders(headers, ctx);
+      assertStringIncludes(
+        headers.get("content-security-policy-report-only") ?? "",
+        "frame-ancestors 'self' https://veryfront.com",
+        "a veryfront-managed domain must get the Studio allowlist",
+      );
     });
 
     it("should work with local project context", () => {
@@ -72,11 +96,23 @@ describe("server/handlers/request/api/security-headers", () => {
     });
 
     it("should accept optional request for CSRF cookie", () => {
-      const ctx = makeCtx();
+      const ctx = makeCtx({ securityConfig: { csrf: true } } as never);
       const headers = new Headers();
-      const req = new Request("http://localhost/test");
-      // Should not throw
+      const req = new Request("http://localhost/page", { headers: { accept: "text/html" } });
       applySecurityHeaders(headers, ctx, req);
+      assertEquals(
+        headers.get("set-cookie")?.includes("__Host-vf_csrf=") ?? false,
+        true,
+        "an HTML GET must be issued a CSRF cookie",
+      );
+    });
+
+    it("should not issue a CSRF cookie without csrf config", () => {
+      const ctx = makeCtx({ securityConfig: {} } as never);
+      const headers = new Headers();
+      const req = new Request("http://localhost/page", { headers: { accept: "text/html" } });
+      applySecurityHeaders(headers, ctx, req);
+      assertEquals(headers.get("set-cookie"), null, "no CSRF cookie without csrf config");
     });
   });
 });
