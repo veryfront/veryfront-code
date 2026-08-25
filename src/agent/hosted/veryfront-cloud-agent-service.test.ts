@@ -26,7 +26,8 @@ import {
 } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { __resetLogRecordEmitterForTests, agentLogger } from "#veryfront/utils/logger/index.ts";
+import { agentLogger } from "#veryfront/utils/logger/index.ts";
+import { __resetLogRecordEmitterForTests } from "#veryfront/utils/logger/logger.ts";
 import {
   createExecuteSkillScriptTool,
   createLoadSkillReferenceTool,

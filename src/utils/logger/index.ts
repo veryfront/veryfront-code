@@ -5,10 +5,8 @@
  */
 
 export {
-  __registerRequestContextGetter,
   __registerTraceContextGetter,
   __resetLoggerConfigForTests,
-  __resetLogRecordEmitterForTests,
   __resetTraceContextGetterForTests,
   agentLogger,
   bundlerLogger,

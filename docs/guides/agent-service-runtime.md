@@ -261,7 +261,6 @@ preparation, or custom infrastructure.
 | -------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | `defineAgentService()`                             | Normalize one or more agents into a service registry contract.                       |
 | `startNodeAgentService()`                          | Start a Node service around a request-native runtime.                                |
-| `createNodeAgentServiceRuntimeInfrastructure()`    | Create Node config, logging, tracing, and telemetry infrastructure.                  |
 | `prepareVeryfrontCloudAgentServiceChatExecution()` | Prepare Veryfront Cloud chat execution with model, steering, and durable-run wiring. |
 | `createAgentServiceProjectSteering()`              | Bind markdown agent definitions to project steering and skill refresh.               |
 

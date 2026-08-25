@@ -199,9 +199,9 @@ Utils Logger
 
 ```ts
 import {
-  __registerRequestContextGetter,
   __registerTraceContextGetter,
-  __resetLogRecordEmitterForTests,
+  __resetTraceContextGetterForTests,
+  colorize,
 } from "veryfront/utils/logger";
 ```
 
@@ -220,9 +220,7 @@ import {
 
 | Name                                | Description                                                                                                                                                                                                                                                                                                 | Source                                                                                                  |
 | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `__registerRequestContextGetter`    | Register the request context getter. Called by request-context.ts during module initialization.                                                                                                                                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L785)         |
 | `__registerTraceContextGetter`      | Register the trace context getter. Called by trace-bridge.ts after OTLP initialization.                                                                                                                                                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L803)         |
-| `__resetLogRecordEmitterForTests`   | Reset the process-level structured log emitter. Only intended for tests.                                                                                                                                                                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L265)         |
 | `__resetTraceContextGetterForTests` | Reset the trace context getter. Only intended for testing purposes.                                                                                                                                                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L814)         |
 | `colorize`                          | Apply ANSI color codes to text if enabled.                                                                                                                                                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/core.ts#L136)           |
 | `createRequestLogger`               | Create a logger for a specific request context. Useful for binding request-specific metadata to all logs.                                                                                                                                                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1109)        |

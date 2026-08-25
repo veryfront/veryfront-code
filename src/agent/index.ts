@@ -489,9 +489,7 @@ export {
   type ResolveNodeHostedAgentServiceTelemetryConfigOptions,
 } from "./service/node-telemetry.ts";
 export {
-  createNodeAgentServiceRuntimeInfrastructure,
   type CreateNodeAgentServiceRuntimeInfrastructureOptions,
-  createNodeHostedAgentServiceRuntimeInfrastructure,
   type CreateNodeHostedAgentServiceRuntimeInfrastructureOptions,
   type NodeAgentServiceRuntimeInfrastructure,
   type NodeHostedAgentServiceRuntimeInfrastructure,
