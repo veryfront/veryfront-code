@@ -1,5 +1,5 @@
 import { renderToString } from "react-dom/server";
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
+import { assert, assertStringIncludes, assertThrows } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import type { AgentMessage, ToolCall } from "#veryfront/agent";
 import { AgentCard, useAgentCard } from "./agent-card.tsx";
@@ -71,6 +71,43 @@ describe("AgentCard — composability contract", () => {
     assertStringIncludes(html, "check_release");
   });
 
+  it("maps status to the header Status label, colour and pulse", () => {
+    const errored = renderToString(<AgentCard name="X" status="error" />);
+    assertStringIncludes(errored, "Error", "error status renders the Error label");
+    assertStringIncludes(
+      errored,
+      "bg-[var(--status-error)]",
+      "error status uses the red dot",
+    );
+    assert(!errored.includes("animate-pulse"), "error status does not pulse");
+
+    const running = renderToString(<AgentCard name="X" status="tool_execution" />);
+    assertStringIncludes(running, "Running tools", "tool_execution renders its label");
+    assertStringIncludes(running, "animate-pulse", "tool_execution pulses");
+    assert(!running.includes("Completed"), "tool_execution must not read as Completed");
+  });
+
+  it("renders Reasoning only when thinking text is present", () => {
+    const withThinking = renderToString(
+      <AgentCard name="X" status="thinking" thinking="Weighing the options" />,
+    );
+    assertStringIncludes(
+      withThinking,
+      "Thought process",
+      "thinking text renders the Reasoning disclosure",
+    );
+
+    const composed = renderToString(
+      <AgentCard.Root name="X" status="completed">
+        <AgentCard.Reasoning className="vf-reasoning-marker" />
+      </AgentCard.Root>,
+    );
+    assert(
+      !composed.includes("Thought process") && !composed.includes("vf-reasoning-marker"),
+      "Reasoning renders nothing without thinking text",
+    );
+  });
+
   it("lets a compound child replace the tool list", () => {
     function CustomTools() {
       const { toolCalls: calls } = useAgentCard();
@@ -101,12 +138,11 @@ describe("AgentCard — composability contract", () => {
       useAgentCard();
       return null;
     }
-    let threw = false;
-    try {
-      renderToString(<Orphan />);
-    } catch {
-      threw = true;
-    }
-    assertEquals(threw, true);
+    assertThrows(
+      () => renderToString(<Orphan />),
+      Error,
+      "useAgentCard must be used within an AgentCard",
+      "orphan hook names the hook and the required provider",
+    );
   });
 });

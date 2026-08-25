@@ -208,6 +208,78 @@ describe("MessageActionBar", () => {
     }
   });
 
+  it("lets an onCopy wrapper intercept the click and skip the built-in copy", async () => {
+    const dom = installDom();
+    let root: Root | undefined;
+    const writes: string[] = [];
+    let intercepted = 0;
+    Object.defineProperty(dom.window.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: (value: string) => Promise.resolve(writes.push(value)) },
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: () => true,
+    });
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "root element exists");
+      const createdRoot = createRoot(rootElement);
+      root = createdRoot;
+      flushSync(() => {
+        createdRoot.render(
+          <MessageActionBar
+            content="Answer"
+            onCopy={(_event, _next) => {
+              intercepted += 1;
+            }}
+          />,
+        );
+      });
+
+      const copy = rootElement.querySelector<HTMLButtonElement>(
+        '[aria-label="Copy to clipboard"]',
+      );
+      assert(copy, "copy action renders");
+      flushSync(() => copy.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+      await settle();
+
+      assertEquals(intercepted, 1, "onCopy wrapper receives the click");
+      assertEquals(writes, [], "built-in copy is skipped when next() is not called");
+    } finally {
+      if (root) await unmountReactRoot(root);
+      dom.restore();
+    }
+  });
+
+  it("passes the message content to onEdit when Edit is clicked", async () => {
+    const dom = installDom();
+    let root: Root | undefined;
+    const edited: string[] = [];
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "root element exists");
+      const createdRoot = createRoot(rootElement);
+      root = createdRoot;
+      flushSync(() => {
+        createdRoot.render(
+          <MessageActionBar content="Answer" onEdit={(content) => edited.push(content)} />,
+        );
+      });
+
+      const edit = rootElement.querySelector<HTMLButtonElement>('[aria-label="Edit message"]');
+      assert(edit, "edit action renders");
+      flushSync(() => edit.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+
+      assertEquals(edited, ["Answer"], "Edit passes the message content to onEdit");
+    } finally {
+      if (root) await unmountReactRoot(root);
+      dom.restore();
+    }
+  });
+
   it("exposes every compound action", () => {
     for (const part of ["Root", "Copy", "Copied", "Regenerate", "Edit"]) {
       assertEquals(

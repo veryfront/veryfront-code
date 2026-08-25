@@ -167,12 +167,27 @@ describe("Message.Content — composability contract", () => {
     };
     const html = renderToString(
       <Message.Root message={withSources}>
-        <Message.Sources>
+        <Message.Sources onSourceClick={() => {}}>
           {(source, index) => <Message.Source key={index} source={source} index={index} />}
         </Message.Sources>
       </Message.Root>,
     );
     assertStringIncludes(html, "Runs guide");
+    assertStringIncludes(
+      html,
+      "cursor-pointer",
+      "Message.Source inherits the row onSourceClick and renders clickable",
+    );
+
+    const inert = renderToString(
+      <Message.Root message={withSources}>
+        <Message.Sources>
+          {(source, index) => <Message.Source key={index} source={source} index={index} />}
+        </Message.Sources>
+      </Message.Root>,
+    );
+    assertStringIncludes(inert, "cursor-default", "without a row handler the pill is inert");
+    assert(!inert.includes("cursor-pointer"), "an inert pill must not render as clickable");
   });
 
   it("does not auto-append sources when the body is composed", () => {
@@ -242,7 +257,11 @@ describe("useMessageParts — headless parts data", () => {
       </Message.Root>,
     );
     assertStringIncludes(html, "Answer body.");
-    assertStringIncludes(html, "data-count=");
+    assertStringIncludes(
+      html,
+      'data-count="2"',
+      "text and tool parts group into two entries via Message.Root",
+    );
   });
 
   it("fails fast when used outside a Message", () => {

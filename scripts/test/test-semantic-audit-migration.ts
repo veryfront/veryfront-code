@@ -4784,19 +4784,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "removalPr": "PR 4n",
     }),
     entry(
-      "src/react/components/chat/chat/components/inline-citation.test.tsx",
-      ["process"],
-      {
-        "disposition": "replaceable-fake",
-        "owner": "core-runtime",
-        "rationale":
-          "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
-        "replacement":
-          "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
-        "removalPr": "PR 4n",
-      },
-    ),
-    entry(
       "src/react/components/chat/chat/components/message-actions.test.tsx",
       ["process"],
       {

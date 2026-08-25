@@ -3,7 +3,7 @@
  */
 import * as React from "react";
 import { renderToString } from "react-dom/server";
-import { assert } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ChatInput } from "./chat-composer.tsx";
 
@@ -23,6 +23,11 @@ describe("ChatInput action leaves — children override", () => {
       </ChatInput.Send>,
     );
     assert(html.includes("kids-send"), "children render inside Send");
+    assert(
+      !html.includes('points="5 12 12 5 19 12"'),
+      "the default ArrowUp glyph must not render alongside children",
+    );
+    assertEquals(html.split("<svg").length - 1, 1, "exactly one svg renders inside Send");
   });
 
   it("children replace the default Stop glyph", () => {
@@ -34,5 +39,10 @@ describe("ChatInput action leaves — children override", () => {
       </ChatInput.Root>,
     );
     assert(html.includes("kids-stop"), "children take precedence");
+    assert(
+      !html.includes('<rect x="3" y="3"'),
+      "the default Stop glyph must not render alongside children",
+    );
+    assertEquals(html.split("<svg").length - 1, 1, "exactly one svg renders inside Stop");
   });
 });

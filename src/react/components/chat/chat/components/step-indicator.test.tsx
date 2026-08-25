@@ -11,6 +11,8 @@ describe("StepIndicator", () => {
     assertStringIncludes(html, "Step");
     assertStringIncludes(html, ">1<");
     assertStringIncludes(html, "flex-1 h-px bg-[var(--edge)]");
+    assertStringIncludes(html, "text-[var(--success)]", "completed step renders the check glyph");
+    assert(!html.includes("animate-pulse"), "completed step must not render the pending pulse");
   });
 
   it("labels the step from the zero-based index", () => {
@@ -18,6 +20,11 @@ describe("StepIndicator", () => {
       <StepIndicator stepIndex={2} isComplete={false} />,
     );
     assertStringIncludes(html, ">3<");
+    assertStringIncludes(html, "animate-pulse", "pending step renders the pulsing dot");
+    assert(
+      !html.includes("text-[var(--success)]"),
+      "pending step must not render the check glyph",
+    );
   });
 });
 

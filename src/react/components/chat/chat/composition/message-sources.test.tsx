@@ -4,12 +4,28 @@ import { describe, it } from "#veryfront/testing/bdd";
 import type { ChatMessage } from "#veryfront/agent/react";
 import { Message } from "./message.tsx";
 import { MessageSources } from "./message-sources.tsx";
+import { ChatContextProvider, type ChatContextValue } from "../contexts/chat-context.tsx";
 
 const baseMessage: ChatMessage = {
   id: "m-1",
   role: "assistant",
   parts: [{ type: "text", text: "See sources." }],
   metadata: {},
+};
+
+const chatContext: ChatContextValue = {
+  messages: [],
+  isLoading: false,
+  error: null,
+  input: "",
+  setInput: () => {},
+  onSubmit: () => {},
+  models: [],
+  attachments: [],
+  isEmpty: false,
+  isAtBottom: true,
+  scrollToBottom: () => {},
+  theme: {},
 };
 
 function withDocs(documents: Array<Record<string, unknown>>): ChatMessage {
@@ -46,6 +62,32 @@ describe("Message.Sources (MessageSources)", () => {
       </Message.Root>,
     );
     assertStringIncludes(html, "Runs guide");
+  });
+
+  it("inherits the chat-level onSourceClick when composed under a chat context", () => {
+    const message = withDocs([{ title: "Runs guide", url: "/runs" }]);
+    const clickable = renderToString(
+      <ChatContextProvider value={{ ...chatContext, onSourceClick: () => {} }}>
+        <Message.Root message={message}>
+          <MessageSources />
+        </Message.Root>
+      </ChatContextProvider>,
+    );
+    assertStringIncludes(
+      clickable,
+      "cursor-pointer",
+      "composed Message.Sources inherits the chat-level onSourceClick",
+    );
+
+    const inert = renderToString(
+      <ChatContextProvider value={chatContext}>
+        <Message.Root message={message}>
+          <MessageSources />
+        </Message.Root>
+      </ChatContextProvider>,
+    );
+    assertStringIncludes(inert, "cursor-default", "no handler anywhere leaves the pill inert");
+    assert(!inert.includes("cursor-pointer"), "no handler anywhere must not read as clickable");
   });
 
   it("renders native URL and document citations", () => {

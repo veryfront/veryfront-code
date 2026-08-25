@@ -62,7 +62,17 @@ describe("getAgentPromptSuggestionItems", () => {
   });
 
   it("returns [] for a null agent or missing suggestions", () => {
-    assertEquals(getAgentPromptSuggestionItems(null), []);
+    assertEquals(getAgentPromptSuggestionItems(null), [], "null agent yields []");
+    const bare: AgentMetadata = { id: "a", name: "A", description: null, avatarUrl: null };
+    assertEquals(getAgentPromptSuggestionItems(bare), [], "agent without suggestions yields []");
+    assertEquals(
+      getAgentPromptSuggestionItems({
+        ...bare,
+        suggestions: { suggestions: undefined } as unknown as AgentMetadata["suggestions"],
+      }),
+      [],
+      "agent with an empty suggestions container yields []",
+    );
   });
 });
 
@@ -97,7 +107,7 @@ describe("ChatEmpty suggestions", () => {
     }
   });
 
-  it("keeps the prompt-only suggestion handler path out of the surface", async () => {
+  it("normalizes a plain string suggestion to { label, prompt }", async () => {
     const restoreDom = installDom();
     const clicked: PromptSuggestion[] = [];
     try {
@@ -105,20 +115,20 @@ describe("ChatEmpty suggestions", () => {
       flushSync(() => {
         root.render(
           <ChatEmpty
-            suggestions={[{ label: "Triage login", prompt: "Triage the login incident." }]}
+            suggestions={["Ask anything"]}
             onSuggestionSelect={(value) => clicked.push(value)}
           />,
         );
       });
 
       const button = Array.from(document.querySelectorAll("button")).find((candidate) =>
-        candidate.textContent?.includes("Triage login")
+        candidate.textContent?.includes("Ask anything")
       );
-      assert(button, "renders the legacy suggestion chip");
+      assert(button, "renders the string suggestion chip");
       flushSync(() => button.click());
       assertEquals(clicked, [
-        { label: "Triage login", prompt: "Triage the login incident." },
-      ]);
+        { label: "Ask anything", prompt: "Ask anything" },
+      ], "a string suggestion becomes both label and prompt");
       await unmountReactRoot(root);
     } finally {
       restoreDom();
