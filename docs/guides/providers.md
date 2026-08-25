@@ -191,6 +191,17 @@ npm install @veryfront/ext-llm-onnx @huggingface/transformers
 The Transformers and ONNX packages add approximately 500 MB before model
 weights.
 
+Register the explicitly activated extension in `veryfront.config.ts`:
+
+```ts
+import extOnnx from "@veryfront/ext-llm-onnx";
+import { defineConfig } from "veryfront";
+
+export default defineConfig({
+  extensions: [extOnnx()],
+});
+```
+
 The ONNX extension is not available from compiled standalone binaries.
 Use a package-manager installation of Veryfront for this inference path.
 
