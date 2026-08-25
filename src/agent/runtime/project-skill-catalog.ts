@@ -710,7 +710,7 @@ export async function getRuntimeProjectSkillCatalog(
       .filter((file) => isImmediateDirectorySkillPath(file.path, prefixWithSlash))
       .map((file) => file.path);
 
-    const candidates = [...dirPaths.sort(compareStrings), ...flatPaths.sort(compareStrings)]
+    const candidates = [...dirPaths.toSorted(compareStrings), ...flatPaths.toSorted(compareStrings)]
       .flatMap((path) => {
         const isFlat = path.endsWith(".md") && !path.endsWith("/SKILL.md");
         const id = getProjectSkillId(path, isFlat);

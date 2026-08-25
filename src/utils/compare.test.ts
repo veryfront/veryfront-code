@@ -20,6 +20,9 @@ describe("compareStrings", () => {
   it("does not reorder by locale the way localeCompare does", () => {
     // Guards the reason this helper exists: localeCompare collates by locale, so
     // swapping it in here would silently reorder cache keys and hashed manifests.
+    // The contrast side pins "en-US" on purpose. Leaving the locale to the host
+    // would make this test depend on the runner's default -- under sv-SE, "a"
+    // sorts after "z" -- which is the very non-determinism being guarded against.
     const toolNames = ["Tool", "tool"];
     assertEquals(toolNames.toSorted(compareStrings), ["Tool", "tool"]);
     assertEquals(

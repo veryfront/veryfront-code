@@ -153,7 +153,7 @@ function throwUnknownConfiguredToolsError(
   availableLocalToolNames: Iterable<string>,
   availableRemoteToolNames: Iterable<string>,
 ): never {
-  const unknownList = unknownToolNames.sort(compareStrings).join(", ");
+  const unknownList = unknownToolNames.toSorted(compareStrings).join(", ");
   const availableNames = formatAvailableToolNames([
     ...availableLocalToolNames,
     ...availableRemoteToolNames,

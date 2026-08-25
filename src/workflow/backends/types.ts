@@ -50,7 +50,7 @@ export function assertWorkflowRunUpdate(patch: WorkflowRunUpdate): void {
   if (immutableFields.length > 0) {
     throw INVALID_ARGUMENT.create({
       detail: `Workflow run fields are immutable after creation: ${
-        immutableFields.sort(compareStrings).join(", ")
+        immutableFields.toSorted(compareStrings).join(", ")
       }`,
     });
   }
