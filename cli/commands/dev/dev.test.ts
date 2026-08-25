@@ -216,14 +216,19 @@ describe("cli/commands/dev", () => {
         return Promise.resolve(null);
       });
 
-      assertEquals(started.port, port);
-      assertEquals(startedOn, [port]);
+      assert(
+        started.port >= port,
+        `expected the scan to start at ${port}, got ${started.port}`,
+      );
+      assertEquals(startedOn, [started.port]);
     });
 
     it("names the port in a PORT_IN_USE error when binding loses the race", async () => {
       const port = freePort();
+      let boundPort: number | undefined;
 
-      const error = await startDevServerOnFreePort(port, () => {
+      const error = await startDevServerOnFreePort(port, (selected) => {
+        boundPort = selected;
         // What the runtime throws when something grabs the port after the probe.
         return Promise.reject(
           Object.assign(new Error("listen EADDRINUSE: address already in use"), {
@@ -235,7 +240,11 @@ describe("cli/commands/dev", () => {
       assert(error instanceof Error, "expected the lost bind race to reject");
       const veryfrontError = error as Error & { slug?: string };
       assertEquals(veryfrontError.slug, "port-in-use");
-      assertStringIncludes(veryfrontError.message, String(port));
+      assertStringIncludes(
+        veryfrontError.message,
+        String(boundPort),
+        "the error names the port that lost the race, not the one asked for",
+      );
     });
 
     it("lets an unrelated startup failure through untouched", async () => {

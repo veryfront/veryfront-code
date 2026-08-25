@@ -1,8 +1,8 @@
-import type { PendingApproval } from "../types.ts";
+import type { PersistedPendingApproval } from "./types.ts";
 import { MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES } from "../limits.ts";
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
 
-function isDecided(approval: PendingApproval): boolean {
+function isDecided(approval: PersistedPendingApproval): boolean {
   return approval.status !== "pending";
 }
 
@@ -20,8 +20,8 @@ function isDecided(approval: PendingApproval): boolean {
  * instead of silently dropping a decidable approval.
  */
 export function appendRetainedPendingApproval(
-  approvals: PendingApproval[],
-  approval: PendingApproval,
+  approvals: PersistedPendingApproval[],
+  approval: PersistedPendingApproval,
 ): void {
   const snapshot = structuredClone(approval);
   const evictionsRequired = approvals.length - MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES + 1;

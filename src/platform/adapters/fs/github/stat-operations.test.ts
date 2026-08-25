@@ -79,6 +79,84 @@ describe("GitHubStatOperations", () => {
     });
   });
 
+  describe("resolveFile", () => {
+    function createOpsWithTree(): GitHubStatOperations {
+      const client = {
+        getTree: () =>
+          Promise.resolve({
+            tree: [
+              { path: "pages/about.tsx", type: "blob", sha: "a", size: 1 },
+              { path: "lib/utils.ts", type: "blob", sha: "b", size: 1 },
+            ],
+            truncated: false,
+          }),
+        repoId: "test-owner/test-repo",
+      } as any;
+      return new GitHubStatOperations(mockConfig, client, new FileCache());
+    }
+
+    it("should resolve a bare page name through the pages prefix", async () => {
+      const ops = createOpsWithTree();
+      await ops.buildIndex();
+      assertEquals(
+        await ops.resolveFile("about"),
+        "pages/about.tsx",
+        "resolves a bare page name through the pages prefix",
+      );
+    });
+
+    it("should suppress the pages fallback when allowPagesPrefix is false", async () => {
+      const ops = createOpsWithTree();
+      await ops.buildIndex();
+      assertEquals(
+        await ops.resolveFile("about", { allowPagesPrefix: false }),
+        null,
+        "allowPagesPrefix:false suppresses the pages fallback",
+      );
+    });
+
+    it("should still resolve a direct hit when the pages fallback is disabled", async () => {
+      const ops = createOpsWithTree();
+      await ops.buildIndex();
+      assertEquals(
+        await ops.resolveFile("lib/utils", { allowPagesPrefix: false }),
+        "lib/utils.ts",
+        "the opt-out still resolves a direct hit",
+      );
+    });
+
+    it("should not serve a cached pages-prefix hit to a later opt-out", async () => {
+      // One instance, one cache: the resolve cache must key on the option too.
+      const ops = createOpsWithTree();
+      await ops.buildIndex();
+      assertEquals(
+        await ops.resolveFile("about"),
+        "pages/about.tsx",
+        "the default lookup resolves through the pages prefix and caches it",
+      );
+      assertEquals(
+        await ops.resolveFile("about", { allowPagesPrefix: false }),
+        null,
+        "a cached pages-prefix resolution must not survive the opt-out on the same cache",
+      );
+    });
+
+    it("should not serve a cached opt-out miss to a later default lookup", async () => {
+      const ops = createOpsWithTree();
+      await ops.buildIndex();
+      assertEquals(
+        await ops.resolveFile("about", { allowPagesPrefix: false }),
+        null,
+        "the opt-out lookup misses and caches the miss",
+      );
+      assertEquals(
+        await ops.resolveFile("about"),
+        "pages/about.tsx",
+        "a cached opt-out miss must not suppress the default pages fallback",
+      );
+    });
+  });
+
   describe("initial state", () => {
     it("should return undefined for getFileEntry before index is built", () => {
       assertEquals(createOps().getFileEntry("test.ts"), undefined);
