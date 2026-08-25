@@ -49259,7 +49259,8 @@ export const connectors: IntegrationConfig[] = [
     "name": "servicenow",
     "displayName": "ServiceNow",
     "icon": "servicenow.svg",
-    "description": "IT Service Management - incidents, changes, and service requests",
+    "description":
+      "IT Service Management - incidents, interactions, service requests, and knowledge",
     "auth": {
       "type": "api-key",
       "requiredApis": [{
@@ -49276,7 +49277,8 @@ export const connectors: IntegrationConfig[] = [
     },
     "envVars": [{
       "name": "SERVICENOW_INSTANCE",
-      "description": "ServiceNow instance URL (e.g. your-instance.service-now.com)",
+      "description":
+        "ServiceNow instance host or HTTPS URL (e.g. your-instance.service-now.com or https://your-instance.service-now.com)",
       "required": true,
     }, {
       "name": "SERVICENOW_ACCESS_TOKEN",

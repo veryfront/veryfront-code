@@ -909,6 +909,101 @@ describe("createLocalIntegrationToolSource", () => {
     }
   });
 
+  it("admits ServiceNow tools and binds execution to the configured instance origin", async () => {
+    const configuredValues = [
+      "example.service-now.com",
+      "https://example.service-now.com",
+      "https://example.service-now.com/",
+    ];
+
+    for (const configured of configuredValues) {
+      const requests: string[] = [];
+      const transport: LocalIntegrationEndpointTransport = (request) => {
+        requests.push(request.url.href);
+        assertEquals(request.url.origin, "https://example.service-now.com");
+        assertEquals(
+          headerValue(request.init, "authorization"),
+          `Bearer ${TEST_CREDENTIAL}`,
+        );
+        return Promise.resolve(Response.json({ result: [{ sys_id: "incident-1" }] }));
+      };
+      const source = _createLocalIntegrationToolSourceForTesting(
+        {
+          tools: ["servicenow__list_incidents"],
+          credentialProvider: (name) =>
+            name === "SERVICENOW_INSTANCE" ? configured : TEST_CREDENTIAL,
+        },
+        transport,
+      );
+
+      assertEquals((await source.listTools()).map((definition) => definition.name), [
+        "servicenow__list_incidents",
+      ]);
+      assertEquals(await source.executeTool("servicenow__list_incidents", {}), [
+        { sys_id: "incident-1" },
+      ]);
+      assertEquals(requests.length, 1);
+      assert(
+        requests[0]?.startsWith("https://example.service-now.com/api/now/v1/table/incident?"),
+        requests[0],
+      );
+    }
+  });
+
+  it("rejects a malformed ServiceNow instance configuration before any request", async () => {
+    const invalidValues = [
+      "http://example.service-now.com",
+      "https://example.service-now.com/api",
+      "example.service-now.com/api",
+      "https://user@example.service-now.com",
+      "https://example.service-now.com:8443",
+      "https://example.service-now.com?a=b",
+      "https://example.service-now.com#fragment",
+    ];
+
+    for (const configured of invalidValues) {
+      let transportCalls = 0;
+      const source = _createLocalIntegrationToolSourceForTesting(
+        {
+          tools: ["servicenow__list_incidents"],
+          credentialProvider: (name) =>
+            name === "SERVICENOW_INSTANCE" ? configured : TEST_CREDENTIAL,
+        },
+        () => {
+          transportCalls += 1;
+          return Promise.resolve(Response.json({ result: [] }));
+        },
+      );
+
+      await assertConfigurationError(
+        () => source.executeTool("servicenow__list_incidents", {}),
+        "requires SERVICENOW_INSTANCE to be an HTTPS instance host or origin",
+      );
+      assertEquals(transportCalls, 0);
+    }
+  });
+
+  it("reports a missing ServiceNow instance as a missing credential", async () => {
+    let transportCalls = 0;
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["servicenow__list_incidents"],
+        credentialProvider: (name) =>
+          name === "SERVICENOW_ACCESS_TOKEN" ? TEST_CREDENTIAL : undefined,
+      },
+      () => {
+        transportCalls += 1;
+        return Promise.resolve(Response.json({ result: [] }));
+      },
+    );
+
+    const error = await assertRejects(() => source.listTools(), VeryfrontError);
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "local-integration-credentials-missing");
+    assert(error.message.includes("SERVICENOW_INSTANCE"), error.message);
+    assertEquals(transportCalls, 0);
+  });
+
   it("keeps source integration policy narrowing over materialized local tools", async () => {
     let transportCalls = 0;
     const source = _createLocalIntegrationToolSourceForTesting(

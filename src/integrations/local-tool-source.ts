@@ -69,6 +69,14 @@ export interface LocalIntegrationToolSourceOptions {
 
 type IntegrationEndpoint = NonNullable<IntegrationToolMeta["endpoint"]>;
 
+/**
+ * Catalog URL template that ServiceNow endpoints must start with. The
+ * `{{env.SERVICENOW_INSTANCE}}` host is substituted at execution with the
+ * HTTPS origin normalized from the trusted instance configuration.
+ */
+const SERVICENOW_INSTANCE_URL_PREFIX = "https://{{env.SERVICENOW_INSTANCE}}/";
+const SERVICENOW_INSTANCE_URL_TEMPLATE = "https://{{env.SERVICENOW_INSTANCE}}";
+
 interface AdmittedLocalIntegrationTool {
   readonly authPlan: LocalCredentialAuthPlan;
   readonly connector: LocalCatalogConnector;
@@ -368,6 +376,14 @@ function assertSupportedEndpoint(
       configurationError(`Local Salesforce tool "${toolId}" has an unsupported endpoint template`);
     }
     return undefined;
+  } else if (connector.name === "servicenow") {
+    // ServiceNow endpoints bind their host from the trusted SERVICENOW_INSTANCE
+    // configuration; the origin is resolved and HTTPS-validated at execution,
+    // mirroring the Salesforce instance-origin binding above.
+    if (!stringBoolean(stringStartsWith, endpoint.url, SERVICENOW_INSTANCE_URL_PREFIX)) {
+      configurationError(`Local ServiceNow tool "${toolId}" has an unsupported endpoint template`);
+    }
+    return undefined;
   } else {
     return assertHttpsCatalogUrl(
       endpoint.url,
@@ -551,6 +567,18 @@ function createLocalIntegrationToolSourceInternal(
           ...endpoint,
           url: apply(stringReplace, endpoint.url, [
             "{{oauth.raw.instance_url}}",
+            auth.instanceOrigin,
+          ]) as string,
+        });
+        allowedOrigin = auth.instanceOrigin;
+      } else if (tool.connector.name === "servicenow") {
+        if (!auth.instanceOrigin) {
+          configurationError("Local ServiceNow execution requires a validated instance origin");
+        }
+        endpoint = freeze({
+          ...endpoint,
+          url: apply(stringReplace, endpoint.url, [
+            SERVICENOW_INSTANCE_URL_TEMPLATE,
             auth.instanceOrigin,
           ]) as string,
         });

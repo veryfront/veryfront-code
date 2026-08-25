@@ -399,6 +399,12 @@ describe("integration endpoint specs", () => {
     assertEquals(servicenowToolIds.includes("query_table"), false);
     assertEquals(servicenowToolIds.includes("create_table_record"), false);
     assertEquals(servicenowToolIds.includes("update_table_record"), false);
+    // With the generic table tools removed there is no change_request tooling,
+    // so the public description must not advertise change management.
+    assertEquals(
+      servicenow.description,
+      "IT Service Management - incidents, interactions, service requests, and knowledge",
+    );
     assertEquals(getTool("servicenow", "create_incident").requiresWrite, true);
     assertEquals(getTool("servicenow", "update_incident").endpoint?.method, "PATCH");
 

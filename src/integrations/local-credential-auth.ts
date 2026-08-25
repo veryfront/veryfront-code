@@ -57,6 +57,8 @@ interface LocalApiKeyAuthPlan extends LocalCredentialAuthPlanBase {
   readonly headerName: string;
   readonly headerPrefix?: string;
   readonly additionalHeaders: Readonly<Record<string, string>>;
+  /** Environment variable naming the trusted instance host for host-bound endpoints. */
+  readonly instanceVariableName?: string;
 }
 
 interface LocalBasicAuthPlan extends LocalCredentialAuthPlanBase {
@@ -94,6 +96,7 @@ export interface ResolvedLocalHeaderAuth {
   readonly kind: "headers";
   readonly connectorName: string;
   readonly headers: Readonly<Record<string, string>>;
+  readonly instanceOrigin?: string;
 }
 
 export interface ResolvedLocalTokenRequest {
@@ -333,6 +336,15 @@ export function createLocalCredentialAuthPlan(
         assertCanonicalCredentialName(additionalNames[index]!, connector.name),
       );
     }
+    // ServiceNow endpoints bind their host from the trusted instance
+    // configuration instead of a caller-controlled argument, so the instance
+    // variable is a required credential resolved alongside the token.
+    const instanceVariableName = connector.name === "servicenow"
+      ? "SERVICENOW_INSTANCE"
+      : undefined;
+    if (instanceVariableName !== undefined) {
+      append(required, assertCanonicalCredentialName(instanceVariableName, connector.name));
+    }
     return freeze({
       kind: "api-key",
       connectorName: connector.name,
@@ -340,6 +352,7 @@ export function createLocalCredentialAuthPlan(
       headerName: auth.headerName ?? "Authorization",
       headerPrefix: auth.headerPrefix,
       additionalHeaders,
+      instanceVariableName,
       requiredEnvironmentVariables: freeze(required),
     });
   }
@@ -528,6 +541,34 @@ async function readCredentials(
   return values;
 }
 
+/**
+ * Normalize a trusted configured instance value to an HTTPS origin. Accepts a
+ * bare host ("example.service-now.com") or a full HTTPS origin URL
+ * ("https://example.service-now.com", with or without a trailing slash), the
+ * two shapes existing configurations already use.
+ */
+function parseConfiguredInstanceOrigin(value: string): string | undefined {
+  const candidate = stringIncludesValue(value, "://") ? value : `https://${value}`;
+  let parsed: URL;
+  try {
+    parsed = new URLConstructor(candidate);
+  } catch {
+    return undefined;
+  }
+  const hostname = urlValue(urlHostname, parsed);
+  const pathname = urlValue(urlPathname, parsed);
+  if (
+    urlValue(urlProtocol, parsed) !== "https:" || urlValue(urlPort, parsed) !== "" ||
+    urlValue(urlUsername, parsed) !== "" || urlValue(urlPassword, parsed) !== "" ||
+    urlValue(urlSearch, parsed) !== "" || urlValue(urlHash, parsed) !== "" ||
+    (pathname !== "" && pathname !== "/") || hostname === "" ||
+    stringIncludesValue(hostname, "{") || stringIncludesValue(hostname, "}")
+  ) {
+    return undefined;
+  }
+  return `https://${stringCall(stringToLowerCase, hostname)}`;
+}
+
 function parseSalesforceOrigin(value: string): string | undefined {
   let parsed: URL;
   try {
@@ -618,7 +659,22 @@ export async function resolveLocalCredentialAuth(
       const [headerName, environmentName] = additionalEntries[index]!;
       headers[headerName] = values[environmentName]!;
     }
-    return freeze({ kind: "headers", connectorName: plan.connectorName, headers: freeze(headers) });
+    let instanceOrigin: string | undefined;
+    if (plan.instanceVariableName !== undefined) {
+      instanceOrigin = parseConfiguredInstanceOrigin(values[plan.instanceVariableName]!);
+      if (instanceOrigin === undefined) {
+        localIntegrationConfigurationError(
+          `Local integration "${plan.connectorName}" requires ${plan.instanceVariableName} ` +
+            "to be an HTTPS instance host or origin",
+        );
+      }
+    }
+    return freeze({
+      kind: "headers",
+      connectorName: plan.connectorName,
+      headers: freeze(headers),
+      instanceOrigin,
+    });
   }
 
   if (plan.kind === "basic") {
@@ -697,7 +753,7 @@ export async function mintLocalCredentialAuth(
   transport?: LocalIntegrationEndpointTransport,
 ): Promise<ResolvedLocalExecutionAuth> {
   if (resolved.kind === "headers") {
-    return freeze({ headers: resolved.headers });
+    return freeze({ headers: resolved.headers, instanceOrigin: resolved.instanceOrigin });
   }
 
   const tokenUrl = parseUrl(resolved.url, "Local integration token URL");
