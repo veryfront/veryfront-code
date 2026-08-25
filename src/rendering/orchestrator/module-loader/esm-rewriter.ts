@@ -259,6 +259,16 @@ async function fetchEsmModuleWithin(
 
     const inFlight = graph.inFlight.get(url);
     if (inFlight) {
+      // Two sibling materializations that import each other each find the other
+      // in flight, and neither has reached `graph.artifacts` yet, so the wait
+      // edges recorded above are the only evidence that awaiting here would
+      // leave both frames blocked on each other forever. Break such a cycle the
+      // way a caller-stack cycle is broken: point at the owner's predicted
+      // path, which is fixed by `esmTempFilePath`, and let `fetchEsmModule`
+      // validate once the root settles that the owner really wrote it.
+      if (waiter !== undefined && transitivelyWaitsFor(url, waiter, graph)) {
+        return await esmTempFilePath(url, tmpDir);
+      }
       await inFlight;
       return await fetchEsmModuleWithin(
         url,
@@ -359,8 +369,16 @@ async function materializeEsmModuleWithin(
       if (!url || !result) continue;
       if (result.status === "fulfilled") {
         replacementMap.set(url, `file://${result.value}`);
-        if (nested.has(url)) unwritten.add(url);
-        else for (const dep of graph.unwritten.get(url) ?? []) unwritten.add(dep);
+        // A dependency that resolved to a predicted path — an ancestor still
+        // unwinding up this stack, or a sibling cycle broken in
+        // `fetchEsmModuleWithin` — owns neither a graph artifact nor a cache
+        // entry yet, so this module's emitted code points at a file nobody has
+        // written. Record it so the artifact stays provisional until it is.
+        if (nested.has(url) || (!graph.artifacts.has(url) && !esmCache.has(url))) {
+          unwritten.add(url);
+        } else {
+          for (const dep of graph.unwritten.get(url) ?? []) unwritten.add(dep);
+        }
         if (graph.provisional.has(url) || graph.poisoned.has(url)) poisonedByDependency = true;
         continue;
       }

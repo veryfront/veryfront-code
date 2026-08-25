@@ -790,6 +790,144 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       }
     });
 
+    it("breaks a cycle between two siblings that are both still in flight", async () => {
+      // The root pulls `a` and `b` concurrently and they statically import each
+      // other. Each sibling finds the other in `graph.inFlight` before either
+      // has produced an artifact, so neither the caller-stack `pending` set nor
+      // `graph.artifacts` shows the cycle: only the recorded wait edges do.
+      const esmCache = new Map<string, string>();
+      globalThis.fetch = ((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "https://esm.sh/root") {
+          return Promise.resolve(jsonResponse(
+            `import { a } from "https://esm.sh/a";\n` +
+              `import { b } from "https://esm.sh/b";\n` +
+              `export const root = a + b;`,
+          ));
+        }
+        if (url === "https://esm.sh/a") {
+          return Promise.resolve(jsonResponse(
+            `import { b } from "https://esm.sh/b";\nexport const a = b;`,
+          ));
+        }
+        if (url === "https://esm.sh/b") {
+          return Promise.resolve(jsonResponse(
+            `import { a } from "https://esm.sh/a";\nexport const b = a;`,
+          ));
+        }
+        return Promise.resolve(new Response("not found", { status: 404 }));
+      }) as typeof fetch;
+
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadlocked = new Promise<"deadlocked">((resolve) => {
+        timer = setTimeout(() => resolve("deadlocked"), 2000);
+      });
+      try {
+        const outcome = await Promise.race([
+          fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache),
+          deadlocked,
+        ]);
+
+        assertEquals(
+          outcome === "deadlocked",
+          false,
+          "two in-flight siblings that import each other must not wait on each other forever",
+        );
+        assertEquals(
+          files.has(outcome),
+          true,
+          "the root artifact must be written once the sibling cycle is broken",
+        );
+        for (const member of ["https://esm.sh/a", "https://esm.sh/b"]) {
+          assertEquals(
+            esmCache.has(member),
+            true,
+            `${member} must be published once the whole graph materializes`,
+          );
+        }
+        const bContent = files.get(esmCache.get("https://esm.sh/b") ?? "") ?? "";
+        assertMatch(bContent, /file:\/\//);
+        assertEquals(
+          /esm\.sh\/a/.test(bContent),
+          false,
+          "the sibling that broke the cycle must still point at its owner's local path",
+        );
+        assertEquals(
+          files.has((esmCache.get("https://esm.sh/a") ?? "").replace("file://", "")),
+          true,
+          "the predicted path the cycle-breaking sibling emitted must actually be written",
+        );
+      } finally {
+        clearTimeout(timer);
+      }
+    });
+
+    it("breaks a sibling cycle that closes through a third module", async () => {
+      // `a` and `b` start concurrently, `b` reaches `c`, and `c` imports `a`.
+      // No single frame's `pending` set contains `a` when `c` asks for it, so
+      // the cycle is only visible by following `a` -> `b` -> `c` through the
+      // recorded wait edges.
+      const esmCache = new Map<string, string>();
+      globalThis.fetch = ((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "https://esm.sh/root") {
+          return Promise.resolve(jsonResponse(
+            `import { a } from "https://esm.sh/a";\n` +
+              `import { b } from "https://esm.sh/b";\n` +
+              `export const root = a + b;`,
+          ));
+        }
+        if (url === "https://esm.sh/a") {
+          return Promise.resolve(jsonResponse(
+            `import { b } from "https://esm.sh/b";\nexport const a = b;`,
+          ));
+        }
+        if (url === "https://esm.sh/b") {
+          return Promise.resolve(jsonResponse(
+            `import { c } from "https://esm.sh/c";\nexport const b = c;`,
+          ));
+        }
+        if (url === "https://esm.sh/c") {
+          return Promise.resolve(jsonResponse(
+            `import { a } from "https://esm.sh/a";\nexport const c = a;`,
+          ));
+        }
+        return Promise.resolve(new Response("not found", { status: 404 }));
+      }) as typeof fetch;
+
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadlocked = new Promise<"deadlocked">((resolve) => {
+        timer = setTimeout(() => resolve("deadlocked"), 2000);
+      });
+      try {
+        const outcome = await Promise.race([
+          fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache),
+          deadlocked,
+        ]);
+
+        assertEquals(
+          outcome === "deadlocked",
+          false,
+          "a transitive sibling cycle must be broken rather than awaited",
+        );
+        for (const member of ["https://esm.sh/a", "https://esm.sh/b", "https://esm.sh/c"]) {
+          assertEquals(
+            esmCache.has(member),
+            true,
+            `${member} must be published once the transitive sibling cycle materializes`,
+          );
+        }
+        const cContent = files.get(esmCache.get("https://esm.sh/c") ?? "") ?? "";
+        assertEquals(
+          /esm\.sh\/a/.test(cContent),
+          false,
+          "the module that closed the cycle must point at a local path for its owner",
+        );
+      } finally {
+        clearTimeout(timer);
+      }
+    });
+
     it("still throws when a nested URL is imported statically", async () => {
       // The emitted module's own import graph must be local before the runtime
       // loader is handed it. Leaving a static dependency remote would change
