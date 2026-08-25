@@ -95,22 +95,26 @@ export class SSROrchestrator {
     let errorBoundaryPath: string | undefined;
 
     try {
-      const rendered = await runWithHeadCollector(() =>
-        withSpan(
-          SpanNames.SSR_ORCHESTRATOR_RENDER,
-          () =>
-            this.config.ssrRenderer.renderToHTML(validatedElement, {
-              mode: this.config.mode,
-              wantsStream,
-              debugMode: this.config.debugMode,
-              dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
-              dependencyPinningDependencies: options?.dependencyPinningDependencies,
-            }),
-          {
-            "ssr.wants_stream": wantsStream,
-            "ssr.mode": this.config.mode,
-          },
-        )
+      const rendered = await runWithHeadCollector(
+        (renderContext) =>
+          withSpan(
+            SpanNames.SSR_ORCHESTRATOR_RENDER,
+            () =>
+              this.config.ssrRenderer.renderToHTML(validatedElement, {
+                mode: this.config.mode,
+                wantsStream,
+                nonce: options?.nonce,
+                renderContext,
+                debugMode: this.config.debugMode,
+                dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
+                dependencyPinningDependencies: options?.dependencyPinningDependencies,
+              }),
+            {
+              "ssr.wants_stream": wantsStream,
+              "ssr.mode": this.config.mode,
+            },
+          ),
+        { nonce: options?.nonce },
       );
       renderResult = rendered.result;
       collectedHead = rendered.head;
@@ -245,17 +249,23 @@ export class SSROrchestrator {
         renderOptions?.dependencyPinningCacheKey,
         renderOptions?.dependencyPinningDependencies,
         renderOptions?.dependencyPinningSource,
+        renderOptions?.abortSignal,
+        renderOptions?.environment,
       )
       : errorInfo.element;
 
-    const rendered = await runWithHeadCollector(() =>
-      this.config.ssrRenderer.renderToHTML(fallbackElement as React.ReactElement, {
-        mode: this.config.mode,
-        wantsStream: false,
-        debugMode: this.config.debugMode,
-        dependencyPinningCacheKey: renderOptions?.dependencyPinningCacheKey,
-        dependencyPinningDependencies: renderOptions?.dependencyPinningDependencies,
-      })
+    const rendered = await runWithHeadCollector(
+      (renderContext) =>
+        this.config.ssrRenderer.renderToHTML(fallbackElement as React.ReactElement, {
+          mode: this.config.mode,
+          wantsStream: false,
+          nonce: renderOptions?.nonce,
+          renderContext,
+          debugMode: this.config.debugMode,
+          dependencyPinningCacheKey: renderOptions?.dependencyPinningCacheKey,
+          dependencyPinningDependencies: renderOptions?.dependencyPinningDependencies,
+        }),
+      { nonce: renderOptions?.nonce },
     );
     logger.debug("Rendered app-router error.tsx for a page throw", {
       errorPath: errorInfo.path,

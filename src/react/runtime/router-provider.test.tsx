@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { waitFor } from "#veryfront/testing/deno-compat.ts";
@@ -159,7 +160,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
       assertStringIncludes(rootElement.textContent ?? "", "thread:b");
       assertEquals(router.navigateCount, 1);
 
-      root.unmount();
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -196,7 +197,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
 
       assertStringIncludes(rootElement.textContent ?? "", "tab:b");
 
-      root.unmount();
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -231,7 +232,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
 
       assertStringIncludes(rootElement.textContent ?? "", "/|x");
 
-      root.unmount();
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -268,13 +269,13 @@ describe("react/runtime/RouterProvider (reactive)", () => {
       // Router changed → page context's query tracked it; frontmatter unchanged.
       assertStringIncludes(rootElement.textContent ?? "", "match:true|v:2|fm:kept");
 
-      root.unmount();
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
   });
 
-  it("derives a clean query when the URL carries a hash fragment", () => {
+  it("derives a clean query when the URL carries a hash fragment", async () => {
     const restore = installDom("https://example.com/docs?tab=api#install");
     installFakeRouter();
     try {
@@ -297,7 +298,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
       // The hash must not leak into the query — only `tab` is present.
       assertStringIncludes(rootElement.textContent ?? "", "/docs|tab:api|keys:tab");
 
-      root.unmount();
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -332,7 +333,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
 
       assertStringIncludes(rootElement.textContent ?? "", "42|comments|Hello");
 
-      root.unmount();
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -373,7 +374,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
       // query/params.
       assertStringIncludes(rootElement.textContent ?? "", "data:from-server");
 
-      root.unmount();
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -408,7 +409,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
     assertStringIncludes(html, "type:object keys:0");
   });
 
-  it("wrapForHydration seeds the provider from location + params (no React passed in)", () => {
+  it("wrapForHydration seeds the provider from location + params (no React passed in)", async () => {
     // The hydration path wraps a child by calling this export on the app's own
     // React — nothing is threaded across the module boundary. It seeds params
     // and frontmatter and derives pathname/query from the live URL.
@@ -434,7 +435,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
 
       assertStringIncludes(rootElement.textContent ?? "", "/posts/7:7:x:Hi");
 
-      root.unmount();
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -475,7 +476,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
         { interval: 10, message: "RouterProvider did not finish its client mount" },
       );
       assertStringIncludes(rootElement.textContent ?? "", "m:true");
-      root.unmount();
+      await unmountReactRoot(root);
     } finally {
       restoreClient();
     }
@@ -515,7 +516,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
 
       assertStringIncludes(rootElement.textContent ?? "", "tab:b");
 
-      root.unmount();
+      await unmountReactRoot(root);
     } finally {
       restore();
     }

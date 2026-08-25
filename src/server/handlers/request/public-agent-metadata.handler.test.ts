@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { createEmptyDiscoveryResult } from "#veryfront/discovery";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { PublicAgentMetadataHandler } from "./public-agent-metadata.handler.ts";
@@ -10,6 +11,7 @@ describe("server/handlers/request/public-agent-metadata.handler", () => {
     const handler = new PublicAgentMetadataHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
       },
       getAgent: (id) =>
         id === "support-agent"
@@ -62,7 +64,7 @@ describe("server/handlers/request/public-agent-metadata.handler", () => {
 
   it("returns 404 when the source-defined agent does not exist", async () => {
     const handler = new PublicAgentMetadataHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: () => undefined,
       getAllAgentIds: () => [],
     });

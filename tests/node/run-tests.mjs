@@ -2,9 +2,11 @@
 
 import { spawn } from "node:child_process";
 import os from "node:os";
-import { readFileSync } from "node:fs";
-import { filterTestFiles, listTestFiles, splitIntoShards } from "../test-file-utils.mjs";
+import process from "node:process";
+import { splitIntoShards } from "../test-file-utils.mjs";
 import { ensureNpmNodeModulesLinks } from "../ensure-npm-links.mjs";
+import { loadSuitePlan } from "../load-suite-plan.mjs";
+import { buildRuntimeTestProcessEnv } from "../../scripts/test/runtime-env.mjs";
 
 function resolveConcurrency(envKeys) {
   for (const key of envKeys) {
@@ -33,9 +35,17 @@ function resolveShardCount(envKeys) {
   return null;
 }
 
-const patterns = process.argv.slice(2);
-ensureNpmNodeModulesLinks();
-const concurrency = resolveConcurrency(["VF_TEST_CONCURRENCY", "NODE_TEST_CONCURRENCY"]);
+const rawArgs = process.argv.slice(2);
+const suiteArg = rawArgs.find((arg) => arg.startsWith("--suite="));
+const suite = suiteArg?.slice("--suite=".length);
+if (suite && suite !== "runtime:node") {
+  throw new Error(`Unsupported Node suite profile: ${suite}`);
+}
+const patterns = rawArgs.filter((arg) => arg !== suiteArg);
+const concurrency = resolveConcurrency([
+  "VF_TEST_CONCURRENCY",
+  "NODE_TEST_CONCURRENCY",
+]);
 const shardOverride = resolveShardCount(["VF_TEST_SHARDS", "NODE_TEST_SHARDS"]);
 const autoShards = concurrency >= 4 ? Math.min(4, Math.floor(concurrency / 2)) : 1;
 const shardCount = shardOverride ?? autoShards;
@@ -43,36 +53,25 @@ const includePatterns = (process.env.NODE_TEST_INCLUDE || process.env.VF_TEST_IN
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
-// Exclude Deno-specific test files that use Deno.test directly
-const denoOnlyTests = ["src/issues/**", "src/cache/backend.test.ts"];
-const runtimeIncompatibleTests = [
-  "src/proxy/handler.test.ts",
-  "src/proxy/oauth-client.test.ts",
-  "src/proxy/token-priority.test.ts",
-  "src/server/project-env/fetcher.test.ts",
-];
 const envExcludePatterns = (process.env.NODE_TEST_EXCLUDE || process.env.VF_TEST_EXCLUDE || "")
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
-const excludePatterns = [...denoOnlyTests, ...runtimeIncompatibleTests, ...envExcludePatterns];
-const hasFilters = includePatterns.length > 0 || envExcludePatterns.length > 0;
 
-function isDenoDependentTest(file) {
-  try {
-    const source = readFileSync(file, "utf-8");
-    return /\bDeno\./.test(source) ||
-      /\bDeno\.test\s*\(/.test(source) ||
-      /tests\/_helpers\/utils\.ts/.test(source) ||
-      /\bcreateMockServer\s*\(/.test(source);
-  } catch {
-    return false;
+function selectedTestFiles() {
+  const files = loadSuitePlan({
+    suite: suite ?? "runtime:node",
+    patterns,
+    include: includePatterns,
+    exclude: envExcludePatterns,
+  });
+  if (files.length === 0) {
+    console.error(
+      "Node test runner selected no test files for the active filters.",
+    );
+    process.exit(1);
   }
-}
-
-function removeDenoDependentTests(files) {
-  const filtered = files.filter((file) => !isDenoDependentTest(file));
-  return filtered;
+  return files;
 }
 
 function buildNodeArgs(files, perShardConcurrency) {
@@ -86,42 +85,25 @@ function buildNodeArgs(files, perShardConcurrency) {
   ];
 }
 
-const env = { ...process.env };
-if (!env.VF_DISABLE_LRU_INTERVAL) env.VF_DISABLE_LRU_INTERVAL = "1";
-if (!env.NODE_ENV) env.NODE_ENV = "production";
-if (!env.LOG_FORMAT) env.LOG_FORMAT = "text";
-// Don't scale time by default - many tests have timing-sensitive operations
-if (!env.VF_TEST_TIME_SCALE) env.VF_TEST_TIME_SCALE = "1";
-for (
-  const key of [
-    "OPENAI_API_KEY",
-    "OPENAI_BASE_URL",
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_BASE_URL",
-    "GOOGLE_API_KEY",
-    "GOOGLE_GENERATIVE_AI_API_KEY",
-  ]
-) {
-  delete env[key];
-}
+const env = buildRuntimeTestProcessEnv(process.env);
 
 async function runShardedTests() {
-  const filePatterns = patterns.length > 0 ? patterns : ["src/**/*.test.ts"];
-  let files = listTestFiles(filePatterns);
-  // Always filter to exclude Deno-only tests
-  files = filterTestFiles(files, { include: includePatterns, exclude: excludePatterns });
-  files = removeDenoDependentTests(files);
-  if (files.length === 0) {
-    return hasFilters ? true : null;
-  }
+  const files = selectedTestFiles();
+  ensureNpmNodeModulesLinks();
 
   const shards = splitIntoShards(files, shardCount);
-  const perShardConcurrency = Math.max(1, Math.floor(concurrency / shards.length));
+  const perShardConcurrency = Math.max(
+    1,
+    Math.floor(concurrency / shards.length),
+  );
 
   const runs = shards.map((shardFiles) =>
     new Promise((resolvePromise) => {
       const nodeArgs = buildNodeArgs(shardFiles, perShardConcurrency);
-      const child = spawn(process.execPath, nodeArgs, { stdio: "inherit", env });
+      const child = spawn(process.execPath, nodeArgs, {
+        stdio: "inherit",
+        env,
+      });
       child.on("error", (error) => {
         console.error("Failed to start node tests:", error);
         resolvePromise(1);
@@ -139,24 +121,15 @@ async function runShardedTests() {
 if (shardCount > 1) {
   runShardedTests()
     .then((ok) => {
-      if (ok === null) {
-        process.exit(0);
-        return;
-      }
       process.exit(ok ? 0 : 1);
     })
-    .catch(() => process.exit(1));
+    .catch((error) => {
+      console.error("Node test runner failed:", error);
+      process.exit(1);
+    });
 } else {
-  // Always filter to exclude Deno-only tests
-  const basePatterns = patterns.length > 0 ? patterns : ["src/**/*.test.ts"];
-  const files = filterTestFiles(listTestFiles(basePatterns), {
-    include: includePatterns,
-    exclude: excludePatterns,
-  });
-  const runtimeFiles = removeDenoDependentTests(files);
-  if (runtimeFiles.length === 0) {
-    process.exit(0);
-  }
+  const runtimeFiles = selectedTestFiles();
+  ensureNpmNodeModulesLinks();
   const nodeArgs = buildNodeArgs(runtimeFiles, concurrency);
   const child = spawn(process.execPath, nodeArgs, { stdio: "inherit", env });
   child.on("error", (error) => {

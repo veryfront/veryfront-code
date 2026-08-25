@@ -143,6 +143,26 @@ describe("json-output", () => {
       });
       assertEquals(envelope.error.context, undefined);
     });
+
+    it("carries the registry slug alongside the stable slug when provided", () => {
+      const envelope = createErrorEnvelope("schedule", {
+        code: "USAGE_ERROR",
+        slug: "invalid-arguments",
+        registrySlug: "invalid-argument",
+        message: "Invalid arguments",
+      });
+      assertEquals(envelope.error.slug, "invalid-arguments");
+      assertEquals(envelope.error.registrySlug, "invalid-argument");
+    });
+
+    it("omits the registry slug when not provided", () => {
+      const envelope = createErrorEnvelope("build", {
+        code: "BUILD_ERROR",
+        slug: "build-failed",
+        message: "Build failed",
+      });
+      assertEquals(envelope.error.registrySlug, undefined);
+    });
   });
 
   describe("formatJsonOutput", () => {

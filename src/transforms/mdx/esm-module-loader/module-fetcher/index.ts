@@ -15,6 +15,7 @@
 import { type Logger, rendererLogger as globalLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
+import { defineError, VeryfrontError } from "#veryfront/errors";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import type { ModuleFetcherContext } from "../types.ts";
 import { getModulePathCache } from "../cache/index.ts";
@@ -28,6 +29,7 @@ import { normalizePath } from "./module-cache.ts";
 import { readValidCachedModulePath } from "./path-cache-lookup.ts";
 import { persistResolvedModule } from "./persistence.ts";
 import { transformResolvedModuleSource } from "./source-transform.ts";
+import { extractDependencyPinningPathKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import {
   MAX_MDX_MODULE_CODE_BYTES,
   MAX_MDX_MODULE_GRAPH_ENTRIES,
@@ -60,6 +62,22 @@ export {
  */
 const TRANSFORM_TREE_TIMEOUT_MS = 30_000;
 
+const MALFORMED_DEPENDENCY_PIN = defineError({
+  slug: "dependency-pin-malformed",
+  category: "MODULE",
+  status: 400,
+  title: "Dependency snapshot module path is malformed",
+  suggestion: "Use a valid dependency snapshot module path",
+});
+
+const DEPENDENCY_PIN_MISMATCH = defineError({
+  slug: "dependency-pin-mismatch",
+  category: "MODULE",
+  status: 400,
+  title: "Dependency snapshot module path does not match the request",
+  suggestion: "Use the dependency snapshot path for the active request",
+});
+
 /**
  * Error thrown when transform tree exceeds the timeout.
  */
@@ -90,12 +108,47 @@ function getLog(context?: { logger?: Logger }): Logger {
 
 function isFatalModuleFetchError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
+  if (
+    error instanceof VeryfrontError &&
+    (error.slug === "dependency-pin-malformed" || error.slug === "dependency-pin-mismatch")
+  ) {
+    return true;
+  }
   return error.name === "MissingModuleError" ||
     error instanceof TransformTreeTimeoutError ||
     error instanceof CircularModuleDependencyError ||
     error instanceof ModuleGraphLimitError ||
     error instanceof ModuleImportLimitError ||
     error instanceof ModuleSourceLimitError;
+}
+
+function unwrapDependencyPinningPath(
+  modulePath: string,
+  expectedCacheKey?: string,
+): string {
+  const separatorIndex = modulePath.search(/[?#]/);
+  const pathname = separatorIndex === -1 ? modulePath : modulePath.slice(0, separatorIndex);
+  const extracted = extractDependencyPinningPathKey(
+    pathname.startsWith("/") ? pathname : `/${pathname}`,
+  );
+
+  if (extracted.malformed) {
+    throw MALFORMED_DEPENDENCY_PIN.create({
+      detail: "Malformed dependency snapshot module path",
+    });
+  }
+  if (!extracted.found) return modulePath;
+  if (extracted.cacheKey !== expectedCacheKey) {
+    throw DEPENDENCY_PIN_MISMATCH.create({
+      detail: "Dependency snapshot module path does not match the request snapshot",
+    });
+  }
+
+  // Deliberately asymmetric with the unpinned branch above: a pinned path's
+  // query/fragment (`?ssr=true`, hashes) is dropped because this loader
+  // implies SSR and the cache variant comes from the context's snapshot key,
+  // not from the URL. An unpinned path keeps its query untouched.
+  return extracted.pathname;
 }
 
 /**
@@ -109,7 +162,11 @@ export async function fetchAndCacheModule(
   lineage: Set<string> = new Set(),
 ): Promise<string | null> {
   const log = getLog(context);
-  const normalizedPath = normalizePath(modulePath, parentModulePath);
+  const expectedCacheKey = context.dependencyPinningCacheKey;
+  const normalizedPath = normalizePath(
+    unwrapDependencyPinningPath(modulePath, expectedCacheKey),
+    parentModulePath ? unwrapDependencyPinningPath(parentModulePath, expectedCacheKey) : undefined,
+  );
   const projectSlug = context.projectSlug || "unknown";
   const moduleGraph = context.moduleGraph ??= new Set<string>();
   if (!moduleGraph.has(normalizedPath)) {
@@ -217,6 +274,7 @@ async function doFetchAndCacheModule(
   const log = getLog(context);
   const { esmCacheDir, adapter, projectDir, projectId, contentSourceId } = context;
   const effectiveReactVersion = context.reactVersion ?? REACT_DEFAULT_VERSION;
+  const dev = context.dev === true;
   const dependencyPinningCacheKey = context.dependencyPinningCacheKey ?? "off";
   const moduleServerOrigin = dependencyPinningCacheKey.startsWith("on:")
     ? context.moduleServerOrigin
@@ -228,6 +286,8 @@ async function doFetchAndCacheModule(
     effectiveReactVersion,
     dependencyPinningCacheKey,
     moduleServerOrigin,
+    context.serverExternalPackages,
+    dev,
   );
   const cachedPath = await readValidCachedModulePath({
     normalizedPath,
@@ -260,6 +320,8 @@ async function doFetchAndCacheModule(
         reactVersion: effectiveReactVersion,
         dependencyPinningCacheKey,
         moduleServerOrigin,
+        serverExternalPackages: context.serverExternalPackages,
+        dev,
         parentModulePath,
       });
     }
@@ -284,6 +346,8 @@ async function doFetchAndCacheModule(
         contentHash,
         dependencyPinningCacheKey,
         moduleServerOrigin,
+        context.serverExternalPackages,
+        dev,
       )
       : null;
 
@@ -303,6 +367,7 @@ async function doFetchAndCacheModule(
         projectDir,
         effectiveReactVersion,
         log,
+        context.serverExternalPackages,
       )
       : null;
     if (distResult?.code) {
@@ -318,12 +383,14 @@ async function doFetchAndCacheModule(
         normalizedPath,
         projectSlug,
         reactVersion: context.reactVersion,
+        serverExternalPackages: context.serverExternalPackages,
         moduleServerOrigin,
         dependencyPinningCacheKey,
         dependencyPinningDependencies: context.dependencyPinningDependencies,
         dependencyPinningSource: context.dependencyPinningSource,
         adapter,
         log,
+        dev,
       });
 
       // Mark for distributed cache write AFTER nested imports are resolved.
@@ -352,6 +419,8 @@ async function doFetchAndCacheModule(
       reactVersion: effectiveReactVersion,
       dependencyPinningCacheKey,
       moduleServerOrigin,
+      serverExternalPackages: context.serverExternalPackages,
+      dev,
       distributedCacheWrite:
         needsDistributedCacheWrite && distResult?.distributedCache && transformCacheKey &&
           contentSourceId
@@ -384,11 +453,14 @@ export function createModuleFetcherContext(
     contentSourceId?: string;
     isLocalProject?: boolean;
     projectSlug?: string;
+    /** Compile fetched modules in development mode. Defaults to false. */
+    dev?: boolean;
     reactVersion?: string;
     moduleServerOrigin?: string;
     dependencyPinningCacheKey?: string;
     dependencyPinningDependencies?: Readonly<Record<string, string>>;
     dependencyPinningSource?: ModuleFetcherContext["dependencyPinningSource"];
+    serverExternalPackages?: readonly string[];
     logger?: Logger;
     strictMissingModules?: boolean;
   },

@@ -63,13 +63,16 @@ describe("proxy release asset handler", () => {
 
   it("serves a JS asset with immutable + nosniff headers (happy path)", async () => {
     const source = "export const x = 1;";
-    const fetchImpl = makeFetch(() =>
-      new Response(source, {
+    let requestedUrl = "";
+    const fetchImpl = makeFetch((url) => {
+      requestedUrl = url;
+      return new Response(source, {
         status: 200,
         headers: { "Content-Type": "text/javascript" },
-      })
-    );
-    const url = await assetUrl(source, "js");
+      });
+    });
+    const hash = await computeHashBytes(textEncoder.encode(source));
+    const url = new URL(`https://site.example/_vf/assets/${hash}.js`);
 
     const res = await handle(url, { apiBaseUrl: API_BASE, fetchImpl });
 
@@ -81,6 +84,56 @@ describe("proxy release asset handler", () => {
     );
     assertEquals(res?.headers.get("X-Content-Type-Options"), "nosniff");
     assertEquals(await res?.text(), "export const x = 1;");
+    assertEquals(
+      requestedUrl,
+      `https://api.example.com/release-assets/${hash}`,
+      "a cold asset load must hit the public release-assets endpoint",
+    );
+  });
+
+  it("keeps the path prefix of a based asset API URL", async () => {
+    const source = "export const based = 1;";
+    let requestedUrl = "";
+    const fetchImpl = makeFetch((url) => {
+      requestedUrl = url;
+      return new Response(source, {
+        status: 200,
+        headers: { "Content-Type": "text/javascript" },
+      });
+    });
+    const hash = await computeHashBytes(textEncoder.encode(source));
+    const url = new URL(`https://site.example/_vf/assets/${hash}.js`);
+
+    const res = await handle(url, { apiBaseUrl: "https://api.example.com/v1", fetchImpl });
+
+    assertEquals(res?.status, 200);
+    assertEquals(
+      requestedUrl,
+      `https://api.example.com/v1/release-assets/${hash}`,
+      "a based API URL must keep its path prefix",
+    );
+  });
+
+  it("fails closed on an unsafe asset API base URL", async () => {
+    for (
+      const apiBaseUrl of [
+        "https://user:pass@api.example.com",
+        "https://user@api.example.com",
+        "file:///etc",
+      ]
+    ) {
+      let fetches = 0;
+      const fetchImpl = makeFetch(() => {
+        fetches++;
+        return new Response("never");
+      });
+      const url = new URL(`https://site.example/_vf/assets/${HASH}.js`);
+
+      const res = await handle(url, { apiBaseUrl, fetchImpl });
+
+      assertEquals(res?.status, 502, `${apiBaseUrl} must fail closed with 502`);
+      assertEquals(fetches, 0, `${apiBaseUrl} must not reach the asset origin`);
+    }
   });
 
   it("serves a CSS asset with the css content type", async () => {
@@ -585,7 +638,7 @@ describe("proxy release asset handler", () => {
     );
   });
 
-  it("bounds aggregate cold loads, queued work, and aborts queued callers", async () => {
+  it("queues cold loads past the concurrency bound instead of shedding them", async () => {
     const gate = Promise.withResolvers<void>();
     const sources = Array.from(
       { length: 51 },
@@ -633,35 +686,35 @@ describe("proxy release asset handler", () => {
     gate.resolve();
     const responses = await Promise.all(pending);
     assertEquals((await replacement)?.status, 200);
+    // Every caller that stayed connected is served. Demand past the permit
+    // count waits its turn; it is never shed, because a shed asset is a dead
+    // page — browser `import()` does not retry.
     assertEquals(
       responses.filter((response) => response?.status === 200).length,
-      19,
+      49,
     );
     assertEquals(
       responses.filter((response) => response?.status === 503).length,
-      30,
+      0,
     );
     assertEquals(
       responses.filter((response) => response?.status === 499).length,
       1,
     );
-    assertEquals(
-      responses
-        .filter((response) => response?.status === 503)
-        .every((response) => response?.headers.get("Retry-After") === "1"),
-      true,
-    );
+    // Queueing must not widen the one bound that guards real memory.
     assertEquals(maxActive, 4);
-    assertEquals(calls, 20);
+    // One upstream load per distinct hash, minus the caller that disconnected
+    // while queued, plus the replacement.
+    assertEquals(calls, 50);
 
     assertEquals(
       (await handle(urls[49]!, { apiBaseUrl: API_BASE, fetchImpl }))?.status,
       200,
     );
-    assertEquals(calls, 21);
+    assertEquals(calls, 50);
   });
 
-  it("bounds same-hash followers while retaining one upstream load", async () => {
+  it("serves every same-hash follower from one upstream load", async () => {
     const source = "export const boundedFollowers = true;";
     const gate = Promise.withResolvers<void>();
     let calls = 0;
@@ -682,13 +735,16 @@ describe("proxy release asset handler", () => {
 
     gate.resolve();
     const responses = await Promise.all(pending);
+    // Followers of a load that already succeeded hold no resource of their
+    // own: the bytes are in memory and identical for all of them. Rejecting
+    // any of them would protect nothing.
     assertEquals(
       responses.filter((response) => response?.status === 200).length,
-      64,
+      80,
     );
     assertEquals(
       responses.filter((response) => response?.status === 503).length,
-      16,
+      0,
     );
     assertEquals(calls, 1);
   });

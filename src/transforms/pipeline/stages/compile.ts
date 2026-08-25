@@ -3,10 +3,53 @@ import { rendererLogger } from "#veryfront/utils";
 import { COMPILATION_ERROR } from "#veryfront/errors";
 import { getErrorCollector } from "#veryfront/observability";
 import { upgradeImportAssertions } from "../../esm/import-attributes.ts";
-import { ESBUILD_SUPPORTED_FEATURES, getLoaderFromPath } from "../../esm/transform-utils.ts";
+import {
+  ESBUILD_SUPPORTED_FEATURES,
+  getLoaderFromPath,
+  isGeneratedContentOutput,
+} from "../../esm/transform-utils.ts";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
 const logger = rendererLogger.component("esm-transform");
+const ESBUILD_SOURCE_DIAGNOSTIC = Symbol.for(
+  "veryfront.bundler.esbuild-source-diagnostic",
+);
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+const ReflectApply = Reflect.apply;
+const ReflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+const SOURCE_MAP_SUFFIX =
+  /(^|\r?\n)[\t ]*\/\/[#@][\t ]*sourceMappingURL=[^"'`\s]+[\t ]*(?:\r?\n)?$/;
+
+function appendBeforeSourceMap(code: string, addition: string): string {
+  const match = SOURCE_MAP_SUFFIX.exec(code);
+  if (match?.index === undefined) return code + addition;
+  return code.slice(0, match.index) + addition + match[0].slice((match[1] ?? "").length);
+}
+
+function readOwnDataProperty(value: unknown, key: PropertyKey): unknown {
+  if (
+    value === null ||
+    (typeof value !== "object" && typeof value !== "function")
+  ) {
+    return undefined;
+  }
+  try {
+    const descriptor = ReflectGetOwnPropertyDescriptor(value, key);
+    if (
+      descriptor !== undefined &&
+      ReflectApply(ObjectPrototypeHasOwnProperty, descriptor, ["value"]) === true
+    ) {
+      return descriptor.value;
+    }
+  } catch {
+    // A hostile proxy cannot provide trusted source-diagnostic evidence.
+  }
+  return undefined;
+}
+
+function isEsbuildSourceDiagnostic(error: unknown): boolean {
+  return readOwnDataProperty(error, ESBUILD_SOURCE_DIAGNOSTIC) === true;
+}
 
 export const compilePlugin: TransformPlugin = {
   name: "esbuild-compile",
@@ -35,14 +78,14 @@ export const compilePlugin: TransformPlugin = {
       // TypeScript, so the output is plain JavaScript the module lexer can
       // anchor to. CSS output is not a module and is left alone.
       let code = loader === "css" ? result.code : await upgradeImportAssertions(result.code);
-
       const isMdx = ctx.filePath.endsWith(".mdx");
       if (
         isMdx &&
         /\bconst\s+MDXLayout\b/.test(code) &&
         !/export\s+\{[^}]*MDXLayout/.test(code)
       ) {
-        code += "\nexport { MDXLayout };\n";
+        // Keep esbuild's directive last.
+        code = appendBeforeSourceMap(code, "\nexport { MDXLayout };\n");
       }
 
       return code;
@@ -70,6 +113,10 @@ export const compilePlugin: TransformPlugin = {
       throw COMPILATION_ERROR.create({
         detail: `ESM transform failed for ${ctx.filePath} (loader: ${loader}): ${errorMsg}`,
         cause: err,
+        context: {
+          tenantBuildFailure: !isGeneratedContentOutput(ctx.filePath) &&
+            isEsbuildSourceDiagnostic(err),
+        },
       });
     }
   },

@@ -1,5 +1,5 @@
 import { red } from "#veryfront/compat/console";
-import { exit } from "#veryfront/platform/compat/process.ts";
+import { exit } from "#veryfront/platform/compat/process/lifecycle.ts";
 import { cliLogger } from "#veryfront/utils/logger/logger.ts";
 import { formatUserError } from "./error-formatter.ts";
 import {

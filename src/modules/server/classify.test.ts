@@ -99,6 +99,19 @@ describe("classifyModuleRequest", () => {
       }
     });
 
+    it("normalizes encoded caret version operators before the source marker", () => {
+      for (const encodedCaret of ["%5e", "%5E"]) {
+        const result = classifyModuleRequest(
+          url(`/_vf_modules/_cross/demo@${encodedCaret}1.0.0/@/lib/utils.js`),
+        );
+        assertEquals(result.kind, "cross-project-versioned");
+        if (result.kind === "cross-project-versioned") {
+          assertEquals(result.version, "^1.0.0");
+          assertEquals(result.path, "lib/utils.js");
+        }
+      }
+    });
+
     it("handles x-range version like 1.x", () => {
       const result = classifyModuleRequest(
         url("/_vf_modules/_cross/demo@1.x/@/lib/utils.js"),
@@ -145,6 +158,34 @@ describe("classifyModuleRequest", () => {
           kind: "invalid-module",
           namespace: "cross-project",
         });
+      }
+    });
+
+    it("rejects percent-encoded cross-project paths as ambiguous", () => {
+      for (
+        const path of [
+          "app%2factions%2fsecret.js",
+          "app%2Factions%2Fsecret.js",
+          "app%5cactions%5csecret.js",
+          "app%5Cactions%5Csecret.js",
+          "app%252factions%252fsecret.js",
+          "app%252Factions%252Fsecret.js",
+          "app%255cactions%255csecret.js",
+          "app%255Cactions%255Csecret.js",
+          "components/encoded%20name.js",
+          "components/incomplete%.js",
+        ]
+      ) {
+        assertEquals(
+          classifyModuleRequest(url(`/_vf_modules/_cross/demo/@/${path}`)),
+          { kind: "invalid-module", namespace: "cross-project" },
+          path,
+        );
+        assertEquals(
+          classifyModuleRequest(url(`/_vf_modules/_cross/demo@^1.0.0/@/${path}`)),
+          { kind: "invalid-module", namespace: "cross-project" },
+          path,
+        );
       }
     });
   });

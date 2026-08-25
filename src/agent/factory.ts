@@ -1,9 +1,13 @@
 import type {
   Agent,
   AgentConfig,
+  AgentGenerateInput,
   AgentMiddleware,
+  AgentOutputSchema,
   AgentResponse,
   AgentStreamResult,
+  AgentSystem,
+  InferAgentOutputSchema,
   Message,
   ResolvedAgentConfig,
 } from "./types.ts";
@@ -14,9 +18,14 @@ import {
   validatePlatformCompatibility,
 } from "#veryfront/platform/core-platform.ts";
 import { registerTool } from "#veryfront/mcp";
-import { assertLocalToolId, toolRegistry } from "#veryfront/tool/registry.ts";
-import { skillRegistry } from "#veryfront/skill/registry.ts";
+import { assertLocalToolId, toolRegistry, toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
+import {
+  resolveSkillToolDisposition,
+  type SkillToolDisposition,
+} from "./skill-tool-disposition.ts";
 import type { Skill } from "#veryfront/skill/types.ts";
+import type { ResolvedSkillSelectorSnapshot } from "#veryfront/skill/selector.ts";
 import {
   createExecuteSkillScriptTool,
   createLoadSkillReferenceTool,
@@ -27,8 +36,16 @@ import { agentLogger } from "#veryfront/utils";
 import { createError, INVALID_ARGUMENT, toError } from "#veryfront/errors";
 import { COMMON_BLOCKED_PATTERNS, securityMiddleware } from "./middleware/security/validator.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { resolveConfiguredAgentModel } from "./runtime/model-resolution.ts";
-import { setEffectiveAgentSystem } from "./runtime/effective-agent-system.ts";
+import {
+  resolveConfiguredAgentModel,
+  resolveModelProviderOptionKey,
+  resolveRuntimeModel,
+} from "./runtime/model-resolution.ts";
+import {
+  createProviderAwareAgentSystemResolver,
+  type ResolveAgentSystemFromResolvedBaseOptions,
+  setEffectiveAgentSystem,
+} from "./runtime/effective-agent-system.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { getMessageSchema } from "./schemas/agent.schema.ts";
 import {
@@ -37,11 +54,17 @@ import {
 } from "#veryfront/security/input-validation/limits.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-schema-validator.ts";
-import { buildAgentDelegateTools } from "./runtime/agent-delegation.ts";
+import {
+  buildAgentDelegateTools,
+  createInvokeAgentTool,
+  INVOKE_AGENT_TOOL_ID,
+} from "./runtime/agent-delegation.ts";
 import { normalizeAgentDelegateIds } from "./runtime/agent-delegation-names.ts";
-import { buildAgentCallContext } from "./runtime/call-context.ts";
+import {
+  buildAgentCallContext,
+  buildAgentCallContextPreservingRuntimeMarker,
+} from "./runtime/call-context.ts";
 import type { RuntimeSkillDefinition } from "./runtime/skill-metadata.ts";
-import { flattenSystemInstructions } from "./runtime/tool-inventory.ts";
 
 const STREAMING_HEADERS: Record<string, string> = {
   "Content-Type": "text/event-stream",
@@ -86,10 +109,6 @@ const SKILL_TOOL_REGISTRATIONS = [
   { id: "execute_skill_script", create: createExecuteSkillScriptTool },
 ] as const;
 
-function isExplicitNoneSkillSelector(skills: AgentConfig["skills"]): boolean {
-  return skills === false || (Array.isArray(skills) && skills.length === 0);
-}
-
 /**
  * Projects a registered skill onto the runtime skill shape the shared skills
  * renderer consumes. Instructions stay empty: the call context advertises
@@ -129,198 +148,60 @@ function createAgentStreamResult(stream: ReadableStream<Uint8Array>): AgentStrea
   };
 }
 
-/** Agent helper. */
-export function agent(config: AgentConfig): Agent {
-  if (typeof config.id === "string" && config.id.trim().length === 0) {
-    throw toError(
-      createError({
-        type: "agent",
-        message: "Agent id cannot be empty.",
-      }),
-    );
-  }
+/** Everything the public surface closes over, named so the closure is visible. */
+interface AgentInstanceDeps {
+  id: string;
+  publicConfig: ResolvedAgentConfig;
+  toolsConfig: AgentConfig["tools"];
+  runtime: AgentRuntime;
+  resolveSkillSnapshot: () => Pick<ResolvedSkillSelectorSnapshot<Skill>, "allowedSkillIds">;
+  shouldAttachAllowedSkillIds: boolean;
+}
 
-  const id = config.id ?? generateAgentId();
-  const delegates = normalizeAgentDelegateIds(id, config.delegates);
-  const skillsConfig = config.skills === false ? [] : config.skills;
-  const shouldAttachAllowedSkillIds = skillsConfig !== undefined;
+/**
+ * Build the public agent surface over a constructed runtime.
+ *
+ * Separated from `agent()` so the three request paths can be read without the
+ * construction that precedes them. Each resolves the skill snapshot per call
+ * rather than capturing it, so registry changes during a long-lived process are
+ * picked up on the next invocation instead of being frozen at creation.
+ */
+function createAgentInstance(deps: AgentInstanceDeps): Agent {
+  const { id, publicConfig, toolsConfig, runtime, shouldAttachAllowedSkillIds } = deps;
+  const resolveSkillSnapshot = deps.resolveSkillSnapshot;
+  const generate = ((input: AgentGenerateInput): Promise<AgentResponse> =>
+    withSpan(
+      "agent.factory.generate",
+      () => {
+        const skillSnapshot = resolveSkillSnapshot();
+        return runtime.generate(
+          input.input,
+          withAllowedSkillIdsContext(
+            input.context,
+            skillSnapshot.allowedSkillIds,
+            shouldAttachAllowedSkillIds,
+          ),
+          input.model,
+          input.maxOutputTokens,
+          input.abortSignal,
+          {
+            toolReplacements: input.tools,
+            retainSkillLoaderTools: input.retainSkillLoaderTools,
+            outputSchema: input.outputSchema,
+          },
+        );
+      },
+      { "agent.id": id },
+    )) as Agent["generate"];
 
-  const resolveSkillSnapshot = () =>
-    skillRegistry.resolveSelectorForAgent(skillsConfig, { agentId: id });
-
-  if (Array.isArray(skillsConfig) && skillsConfig.length > 0) {
-    resolveSkillSnapshot();
-  }
-
-  const publicConfig: ResolvedAgentConfig = {
-    ...config,
-    ...(delegates === undefined ? {} : { delegates }),
-    model: resolveConfiguredAgentModel(config.model),
-  };
-
-  if (config.tools && config.tools !== true) {
-    for (const [name, entry] of Object.entries(config.tools)) {
-      if (!entry || typeof entry !== "object") continue;
-      assertLocalToolId(name);
-      assertLocalToolId(entry.id);
-      if (isRuntimeLocalTool(entry)) continue;
-
-      const normalizedTool = entry.id === name ? entry : { ...entry, id: name };
-      registerTool(normalizedTool.id, normalizedTool);
-      config.tools[name] = normalizedTool;
-    }
-  }
-
-  // Skill tools are framework infrastructure shared by skill-enabled agents.
-  // Project skills remain project-scoped and owner-aware at resolution time.
-  let mergedToolsConfig = config.tools;
-  const shouldExposeSkillTools = !isExplicitNoneSkillSelector(config.skills);
-
-  ensureBuiltinSchemaValidator();
-  for (const registration of SKILL_TOOL_REGISTRATIONS) {
-    if (!toolRegistry.has(registration.id)) {
-      toolRegistry.registerShared(registration.id, registration.create());
-    }
-  }
-
-  if (config.tools !== true) {
-    const configuredTools = { ...(config.tools ?? {}) };
-    for (const registration of SKILL_TOOL_REGISTRATIONS) {
-      if (!shouldExposeSkillTools) {
-        delete configuredTools[registration.id];
-        continue;
-      }
-
-      const configuredTool = configuredTools[registration.id];
-      if (typeof configuredTool === "object" && configuredTool !== null) {
-        continue;
-      }
-
-      configuredTools[registration.id] = registration.create({
-        resolveAllowedSkillIds: () => resolveSkillSnapshot().allowedSkillIds,
-      });
-    }
-    const hasConfiguredTools = Object.keys(configuredTools).length > 0;
-    mergedToolsConfig = hasConfiguredTools || config.tools !== undefined
-      ? configuredTools
-      : undefined;
-  }
-
-  if (delegates?.length) {
-    if (mergedToolsConfig === true) {
-      throw INVALID_ARGUMENT.create({
-        detail: `Agent "${id}" cannot combine delegates with tools: true. ` +
-          "Declare the required tools by name so delegate capabilities remain explicit.",
-      });
-    }
-    mergedToolsConfig = {
-      ...(mergedToolsConfig ?? {}),
-      ...buildAgentDelegateTools({ delegates, selfId: id }),
-    };
-  }
-
-  // Call context assembled at invocation time so registry-backed skills pick up
-  // HMR changes and host-supplied project/environment facts stay current.
-  const originalSystem = config.system;
-  const configuredToolNames = mergedToolsConfig === true
-    ? [
-      "form_input",
-      ...(shouldExposeSkillTools ? ["load_skill"] : []),
-      "tool_search",
-      ...(config.providerTools ?? []),
-    ].sort()
-    : mergedToolsConfig === undefined
-    ? undefined
-    : Object.entries(mergedToolsConfig)
-      .filter(([, entry]) => entry !== false)
-      .map(([name]) => name)
-      .sort();
-
-  const augmentedSystem = async () => {
-    // Owner-aware: omitted selectors advertise every skill visible to this
-    // agent (unowned project skills plus its own). Explicit lists, including
-    // an empty list, retain their authored catalog selection.
-    const snapshot = resolveSkillSnapshot();
-    const basePrompt =
-      (typeof originalSystem === "function" ? await originalSystem() : originalSystem) ??
-        "You are a helpful assistant.";
-
-    return flattenSystemInstructions(buildAgentCallContext({
-      instructions: basePrompt,
-      skills: snapshot.definitions.map(toRuntimeSkillDefinition),
-      includeSkillToolUsage: true,
-      ...(configuredToolNames === undefined ? {} : { availableToolNames: configuredToolNames }),
-      ...(config.projectContext ? { projectContext: config.projectContext } : {}),
-      ...(config.environmentContext ? { environmentContext: config.environmentContext } : {}),
-    }));
-  };
-
-  const resolvedMiddleware = resolveSecurityMiddleware(config);
-
-  const platform = detectPlatform();
-  const compatibility = validatePlatformCompatibility(
-    {
-      maxSteps: config.maxSteps,
-      streaming: config.streaming,
-      requiresFileSystem: false,
-      requiresMCP: false,
-    },
-    platform,
-  );
-
-  if (!compatibility.compatible) {
-    throw toError(
-      createError({
-        type: "agent",
-        message: `Agent "${id}" is not compatible with current platform:\n${
-          compatibility.errors.join("\n")
-        }`,
-      }),
-    );
-  }
-
-  if (compatibility.warnings.length) {
-    agentLogger.warn(`Agent "${id}" warnings:\n${compatibility.warnings.join("\n")}`);
-  }
-
-  const runtime = new AgentRuntime(id, {
-    ...publicConfig,
-    tools: mergedToolsConfig,
-    system: augmentedSystem,
-    middleware: resolvedMiddleware,
-  });
-
-  const agentInstance: Agent = {
+  return {
     id,
     config: {
       ...publicConfig,
-      tools: mergedToolsConfig,
+      tools: toolsConfig,
     },
 
-    generate(input): Promise<AgentResponse> {
-      return withSpan(
-        "agent.factory.generate",
-        () => {
-          const skillSnapshot = resolveSkillSnapshot();
-          return runtime.generate(
-            input.input,
-            withAllowedSkillIdsContext(
-              input.context,
-              skillSnapshot.allowedSkillIds,
-              shouldAttachAllowedSkillIds,
-            ),
-            input.model,
-            input.maxOutputTokens,
-            input.abortSignal,
-            {
-              toolReplacements: input.tools,
-              retainSkillLoaderTools: input.retainSkillLoaderTools,
-            },
-          );
-        },
-        { "agent.id": id },
-      );
-    },
+    generate,
 
     stream(input): Promise<AgentStreamResult> {
       return withSpan(
@@ -352,6 +233,7 @@ export function agent(config: AgentConfig): Agent {
             input.model,
             input.maxOutputTokens,
             input.abortSignal,
+            { outputSchema: input.outputSchema },
           );
 
           return createAgentStreamResult(stream);
@@ -414,9 +296,251 @@ export function agent(config: AgentConfig): Agent {
       return runtime.clearMemory();
     },
   };
+}
+
+/**
+ * Merge skill tooling and delegate tooling into the authored tool selection.
+ *
+ * Skill tools are framework infrastructure shared by every skill-enabled agent,
+ * so they are registered once in the shared registry and then added to this
+ * agent's selection. Project skills stay project-scoped and owner-aware, which
+ * is why the allowed ids are resolved per call rather than captured here.
+ *
+ * `tools: true` is left as-is: it authorizes the whole catalog, so there is
+ * nothing to merge into. That is also why it cannot be combined with delegates,
+ * whose capabilities have to stay individually declared.
+ */
+function resolveToolsConfiguration(input: {
+  config: AgentConfig;
+  id: string;
+  delegates: string[] | undefined;
+  skillTools: SkillToolDisposition;
+  resolveSkillSnapshot: () => Pick<
+    ResolvedSkillSelectorSnapshot<Skill>,
+    "allowedSkillIds" | "definitions"
+  >;
+}): AgentConfig["tools"] {
+  const { config, id, delegates, skillTools, resolveSkillSnapshot } = input;
+  let merged = config.tools;
+
+  ensureBuiltinSchemaValidator();
+  for (const registration of SKILL_TOOL_REGISTRATIONS) {
+    if (!toolRegistry.has(registration.id)) {
+      toolRegistryInternal.registerShared(registration.id, registration.create());
+    }
+  }
+
+  if (config.tools !== true) {
+    const configuredTools = { ...(config.tools ?? {}) };
+    if (delegates !== undefined) {
+      delete configuredTools[INVOKE_AGENT_TOOL_ID];
+    } else if (configuredTools[INVOKE_AGENT_TOOL_ID] === true) {
+      configuredTools[INVOKE_AGENT_TOOL_ID] = createInvokeAgentTool({ selfId: id });
+    }
+    for (const registration of SKILL_TOOL_REGISTRATIONS) {
+      if (skillTools === "disable") {
+        delete configuredTools[registration.id];
+        continue;
+      }
+
+      if (skillTools === "omit") {
+        delete configuredTools[registration.id];
+        continue;
+      }
+
+      const configuredTool = configuredTools[registration.id];
+      if (typeof configuredTool === "object" && configuredTool !== null) {
+        continue;
+      }
+
+      configuredTools[registration.id] = registration.create({
+        resolveAllowedSkillIds: () => resolveSkillSnapshot().allowedSkillIds,
+      });
+    }
+    const hasConfiguredTools = Object.keys(configuredTools).length > 0;
+    merged = hasConfiguredTools || config.tools !== undefined ? configuredTools : undefined;
+  }
+
+  if (delegates !== undefined) {
+    if (merged === true) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Agent "${id}" cannot combine delegates with tools: true. ` +
+          "Declare the required tools by name so delegate capabilities remain explicit.",
+      });
+    }
+    if (delegates.length > 0) {
+      merged = {
+        ...(merged ?? {}),
+        ...buildAgentDelegateTools({ delegates, selfId: id }),
+      };
+    }
+  }
+
+  return merged;
+}
+
+/**
+ * Build the system prompt lazily, per invocation.
+ *
+ * Assembled at call time rather than construction time so registry-backed
+ * skills pick up HMR changes and host-supplied project and environment facts
+ * stay current across a long-lived process.
+ */
+function createAugmentedSystem(input: {
+  config: AgentConfig;
+  resolveSkillSnapshot: () => Pick<ResolvedSkillSelectorSnapshot<Skill>, "definitions">;
+}): () => Promise<AgentSystem> {
+  const { config, resolveSkillSnapshot } = input;
+  const originalSystem = config.system;
+
+  const augmentSystem = (
+    resolvedBase: AgentSystem,
+    providerOptionKey: string | undefined,
+    options?: ResolveAgentSystemFromResolvedBaseOptions,
+  ): AgentSystem => {
+    // Owner-aware: omitted selectors advertise every skill visible to this
+    // agent (unowned project skills plus its own). Explicit lists, including
+    // an empty list, retain their authored catalog selection.
+    const snapshot = resolveSkillSnapshot();
+    const basePrompt = resolvedBase ?? "You are a helpful assistant.";
+    const preassembledSkillContext = (config as AgentConfig & {
+      __vfPreassembledSkillContext?: boolean;
+    }).__vfPreassembledSkillContext === true;
+    const anthropicProviderAlias = providerOptionKey ??
+      resolveModelProviderOptionKey(resolveRuntimeModel(config.model));
+
+    const contextInput = {
+      ...(preassembledSkillContext
+        ? {}
+        : { skills: snapshot.definitions.map(toRuntimeSkillDefinition) }),
+      ...(config.projectContext ? { projectContext: config.projectContext } : {}),
+      ...(config.environmentContext ? { environmentContext: config.environmentContext } : {}),
+    };
+
+    const buildCallContext = options?.preserveRuntimeContextMarker
+      ? buildAgentCallContextPreservingRuntimeMarker
+      : buildAgentCallContext;
+    return buildCallContext({
+      instructions: basePrompt,
+      ...(anthropicProviderAlias ? { anthropicProviderAlias } : {}),
+      ...contextInput,
+    });
+  };
+
+  return createProviderAwareAgentSystemResolver(
+    async (providerOptionKey) =>
+      augmentSystem(
+        typeof originalSystem === "function" ? await originalSystem() : originalSystem,
+        providerOptionKey,
+      ),
+    (resolvedBase, providerOptionKey, options) =>
+      Promise.resolve(augmentSystem(resolvedBase, providerOptionKey, options)),
+  );
+}
+
+/**
+ * Agent helper.
+ *
+ * `TOutput` is inferred from `config.outputSchema`, so `response.object` is
+ * typed without an annotation. Agents without one keep no `object`.
+ */
+export function agent<TOutputSchema extends AgentOutputSchema>(
+  config: AgentConfig<InferAgentOutputSchema<TOutputSchema>> & { outputSchema: TOutputSchema },
+): Agent<InferAgentOutputSchema<TOutputSchema>>;
+export function agent<TOutput = never>(config: AgentConfig<TOutput>): Agent<TOutput>;
+export function agent<TOutput = never>(config: AgentConfig<TOutput>): Agent<TOutput> {
+  return createAgent(config, { register: true });
+}
+
+/**
+ * Build an agent runtime without adding it to the project registry.
+ *
+ * Framework facades use this when they need the agent runtime pipeline for a
+ * single call, but must not expose a reusable agent in registry-backed
+ * listings.
+ */
+export function createEphemeralAgent<TOutputSchema extends AgentOutputSchema>(
+  config: AgentConfig<InferAgentOutputSchema<TOutputSchema>> & { outputSchema: TOutputSchema },
+): Agent<InferAgentOutputSchema<TOutputSchema>>;
+export function createEphemeralAgent<TOutput = never>(
+  config: AgentConfig<TOutput>,
+): Agent<TOutput>;
+export function createEphemeralAgent<TOutput = never>(
+  config: AgentConfig<TOutput>,
+): Agent<TOutput> {
+  return createAgent(config, { register: false });
+}
+
+function createAgent<TOutput = never>(
+  config: AgentConfig<TOutput>,
+  options: { register: boolean },
+): Agent<TOutput> {
+  if (typeof config.id === "string" && config.id.trim().length === 0) {
+    throw toError(
+      createError({
+        type: "agent",
+        message: "Agent id cannot be empty.",
+      }),
+    );
+  }
+
+  const id = config.id ?? generateAgentId();
+  const delegates = normalizeAgentDelegateIds(id, config.delegates);
+  const skillsConfig = config.skills === false ? [] : config.skills;
+  const shouldAttachAllowedSkillIds = skillsConfig !== undefined;
+
+  const resolveSkillSnapshot = () =>
+    skillRegistryInternal.resolveSelectorForAgent(skillsConfig, { agentId: id });
+
+  if (Array.isArray(skillsConfig) && skillsConfig.length > 0) {
+    resolveSkillSnapshot();
+  }
+
+  const publicConfig: ResolvedAgentConfig = {
+    ...config,
+    ...(delegates === undefined ? {} : { delegates }),
+    model: resolveConfiguredAgentModel(config.model),
+  };
+
+  registerConfiguredLocalTools(config);
+
+  const mergedToolsConfig = resolveToolsConfiguration({
+    config,
+    id,
+    delegates,
+    skillTools: resolveSkillToolDisposition(config, id),
+    resolveSkillSnapshot,
+  });
+
+  const augmentedSystem = createAugmentedSystem({
+    config,
+    resolveSkillSnapshot,
+  });
+
+  const resolvedMiddleware = resolveSecurityMiddleware(config);
+
+  assertPlatformCompatible(config, id);
+
+  const runtime = new AgentRuntime(id, {
+    ...publicConfig,
+    tools: mergedToolsConfig,
+    system: augmentedSystem,
+    middleware: resolvedMiddleware,
+  });
+
+  const agentInstance = createAgentInstance({
+    id,
+    publicConfig,
+    toolsConfig: mergedToolsConfig,
+    runtime,
+    resolveSkillSnapshot,
+    shouldAttachAllowedSkillIds,
+  });
 
   setEffectiveAgentSystem(agentInstance, augmentedSystem);
-  agentRegistry.register(id, agentInstance);
+  if (options.register) {
+    agentRegistry.register(id, agentInstance);
+  }
 
   return agentInstance;
 }
@@ -460,6 +584,69 @@ export function resolveSecurityMiddleware(
 }
 
 let agentIdCounter = 0;
+
+/**
+ * Names advertised to the model in the system-prompt tool inventory.
+ *
+ * `tools: true` authorizes the whole catalog but sends only the tools that make
+ * the deferred catalog reachable: `tool_search` finds schemas, `load_skill`
+ * loads instructions, and `form_input` asks the user. Project tools are
+ * deferred and are named by the runtime inventory instead.
+ *
+ * An explicit map advertises exactly what it authorizes, minus entries switched
+ * off with `false`. `undefined` advertises nothing, which is distinct from an
+ * empty list: the caller renders no inventory at all.
+ */
+
+/** Reject a platform that cannot run this configuration, and warn about the rest. */
+function assertPlatformCompatible(config: AgentConfig, id: string): void {
+  const compatibility = validatePlatformCompatibility(
+    {
+      maxSteps: config.maxSteps,
+      streaming: config.streaming,
+      requiresFileSystem: false,
+      requiresMCP: false,
+    },
+    detectPlatform(),
+  );
+
+  if (!compatibility.compatible) {
+    throw toError(
+      createError({
+        type: "agent",
+        message: `Agent "${id}" is not compatible with current platform:\n${
+          compatibility.errors.join("\n")
+        }`,
+      }),
+    );
+  }
+
+  if (compatibility.warnings.length) {
+    agentLogger.warn(`Agent "${id}" warnings:\n${compatibility.warnings.join("\n")}`);
+  }
+}
+
+/**
+ * Register inline tool objects so the runtime can resolve them by id later.
+ *
+ * Authored entries are normalized in place: an entry whose `id` disagrees with
+ * its key is rewritten to match the key, because the key is what the model
+ * calls.
+ */
+function registerConfiguredLocalTools(config: AgentConfig): void {
+  if (!config.tools || config.tools === true) return;
+
+  for (const [name, entry] of Object.entries(config.tools)) {
+    if (!entry || typeof entry !== "object") continue;
+    assertLocalToolId(name);
+    assertLocalToolId(entry.id);
+    if (isRuntimeLocalTool(entry)) continue;
+
+    const normalizedTool = entry.id === name ? entry : { ...entry, id: name };
+    registerTool(normalizedTool.id, normalizedTool);
+    config.tools[name] = normalizedTool;
+  }
+}
 
 function generateAgentId(): string {
   return `agent_${Date.now()}_${agentIdCounter++}`;

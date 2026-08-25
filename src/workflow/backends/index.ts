@@ -2,8 +2,15 @@
  * Workflow Backend Exports
  */
 
-export type { BackendConfig, Lock, WorkflowBackend, WorkflowRunUpdate } from "./types.ts";
-export { hasEventSupport, hasLockSupport, hasQueueSupport } from "./types.ts";
+export type {
+  BackendConfig,
+  Lock,
+  WorkflowBackend,
+  WorkflowRunObservation,
+  WorkflowRunObservedState,
+  WorkflowRunUpdate,
+} from "./types.ts";
+export { hasLockSupport, hasQueueSupport, hasRunObservationSupport } from "./types.ts";
 
 export { MemoryBackend } from "./memory.ts";
 

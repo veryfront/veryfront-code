@@ -15,6 +15,10 @@ import {
   type ProxyContext,
 } from "./handler.ts";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
+import {
+  decodeIdentityHeaderValue,
+  encodeIdentityHeaderValue,
+} from "#veryfront/utils/header-identity.ts";
 
 function extractProxyHeaders(req: Request): Record<string, string | null> {
   return {
@@ -22,6 +26,7 @@ function extractProxyHeaders(req: Request): Record<string, string | null> {
     "x-project-slug": req.headers.get("x-project-slug"),
     "x-environment": req.headers.get("x-environment"),
     "x-environment-id": req.headers.get("x-environment-id"),
+    "x-environment-name": req.headers.get("x-environment-name"),
     "x-content-source-id": req.headers.get("x-content-source-id"),
     "x-forwarded-host": req.headers.get("x-forwarded-host"),
     "x-project-path": req.headers.get("x-project-path"),
@@ -29,6 +34,7 @@ function extractProxyHeaders(req: Request): Record<string, string | null> {
     "x-release-id": req.headers.get("x-release-id"),
     "x-branch-id": req.headers.get("x-branch-id"),
     "x-branch-name": req.headers.get("x-branch-name"),
+    "x-default-branch-name": req.headers.get("x-default-branch-name"),
   };
 }
 
@@ -108,7 +114,7 @@ describe("Proxy-Renderer Mode Parity", () => {
         environment: "preview",
         contentSourceId: "local-main",
         localPath: "/Users/dev/projects/local-project",
-        host: "local-project.lvh.me:8080",
+        host: "local-project.localhost:8080",
         parsedDomain: {
           slug: "local-project",
           isVeryfrontDomain: true,
@@ -121,7 +127,7 @@ describe("Proxy-Renderer Mode Parity", () => {
       };
 
       const injected = injectContextHeaders(
-        new Request("http://local-project.lvh.me:8080/page"),
+        new Request("http://local-project.localhost:8080/page"),
         ctx,
       );
 
@@ -206,6 +212,7 @@ describe("Proxy-Renderer Mode Parity", () => {
           "x-project-path": "/tmp/attacker",
           "x-token": "attacker-token",
           "x-environment": "production",
+          "x-default-branch-name": "attacker-default",
         },
       });
 
@@ -214,6 +221,7 @@ describe("Proxy-Renderer Mode Parity", () => {
       assertEquals(injected.headers.get("x-project-path"), null);
       assertEquals(injected.headers.get("x-token"), null);
       assertEquals(injected.headers.get("x-environment"), "preview");
+      assertEquals(injected.headers.get("x-default-branch-name"), null);
     });
 
     it("replaces every internal proxy header with proxy-derived values", () => {
@@ -225,6 +233,7 @@ describe("Proxy-Renderer Mode Parity", () => {
         branchId: "branch-id",
         branchName: "feature-branch",
         environmentId: "env-id",
+        environmentName: "production",
         environment: "production",
         contentSourceId: "release-rel-id",
         host: "proj.production.veryfront.com",
@@ -257,6 +266,7 @@ describe("Proxy-Renderer Mode Parity", () => {
       assertEquals(headers["x-project-slug"], "proj");
       assertEquals(headers["x-environment"], "production");
       assertEquals(headers["x-environment-id"], "env-id");
+      assertEquals(headers["x-environment-name"], "production");
       assertEquals(headers["x-content-source-id"], "release-rel-id");
       assertEquals(headers["x-forwarded-host"], "proj.production.veryfront.com");
       assertEquals(headers["x-project-path"], null);
@@ -264,7 +274,119 @@ describe("Proxy-Renderer Mode Parity", () => {
       assertEquals(headers["x-release-id"], "rel-id");
       assertEquals(headers["x-branch-id"], "branch-id");
       assertEquals(headers["x-branch-name"], "feature-branch");
+      assertEquals(headers["x-default-branch-name"], null);
       assertEquals(injected.headers.get("accept"), "text/html");
+    });
+
+    it("identity-encodes a non Latin-1 branch name", () => {
+      const ctx: ProxyContext = {
+        projectSlug: "proj",
+        projectId: "proj-id",
+        branchId: "branch-id",
+        branchName: "\u529f\u80fd/\u65b0",
+        environment: "preview",
+        contentSourceId: "preview-branch-id",
+        host: "proj.preview.veryfront.com",
+        parsedDomain: {
+          slug: "proj",
+          isVeryfrontDomain: true,
+          environment: "preview",
+          branch: null,
+          isDraft: true,
+          allowIframeEmbed: true,
+        },
+        isLocalProject: false,
+      };
+
+      const injected = injectContextHeaders(
+        new Request("http://proj.preview.veryfront.com/page"),
+        ctx,
+      );
+
+      assertEquals(
+        injected.headers.get("x-branch-name"),
+        encodeIdentityHeaderValue("\u529f\u80fd/\u65b0"),
+        "a non Latin-1 branch name must be identity-encoded",
+      );
+      assertEquals(
+        injected.headers.get("x-branch-name")?.startsWith("vf-utf8:"),
+        true,
+        "the encoded branch name must carry the vf-utf8 prefix",
+      );
+      assertEquals(
+        decodeIdentityHeaderValue(injected.headers.get("x-branch-name")),
+        "\u529f\u80fd/\u65b0",
+        "the renderer must decode back to the original branch name",
+      );
+    });
+
+    it("identity-encodes a non Latin-1 default branch name", () => {
+      const ctx: ProxyContext = {
+        projectSlug: "proj",
+        projectId: "proj-id",
+        defaultBranchName: "\u529f\u80fd/\u65b0",
+        environment: "preview",
+        contentSourceId: "preview-default",
+        host: "proj.preview.veryfront.com",
+        parsedDomain: {
+          slug: "proj",
+          isVeryfrontDomain: true,
+          environment: "preview",
+          branch: null,
+          isDraft: true,
+          allowIframeEmbed: true,
+        },
+        isLocalProject: false,
+      };
+
+      const injected = injectContextHeaders(
+        new Request("http://proj.preview.veryfront.com/page"),
+        ctx,
+      );
+
+      assertEquals(
+        injected.headers.get("x-default-branch-name"),
+        encodeIdentityHeaderValue("\u529f\u80fd/\u65b0"),
+        "a non Latin-1 default branch name must be identity-encoded",
+      );
+      assertEquals(
+        injected.headers.get("x-default-branch-name")?.startsWith("vf-utf8:"),
+        true,
+        "the encoded default branch name must carry the vf-utf8 prefix",
+      );
+      assertEquals(
+        decodeIdentityHeaderValue(injected.headers.get("x-default-branch-name")),
+        "\u529f\u80fd/\u65b0",
+        "the renderer must decode back to the original default branch name",
+      );
+    });
+
+    it("injects a trusted non-main default branch without preview identity", () => {
+      const ctx: ProxyContext = {
+        projectSlug: "proj",
+        projectId: "proj-id",
+        defaultBranchName: "trunk",
+        environment: "preview",
+        contentSourceId: "preview-trunk",
+        host: "proj.preview.veryfront.com",
+        parsedDomain: {
+          slug: "proj",
+          isVeryfrontDomain: true,
+          environment: "preview",
+          branch: null,
+          isDraft: true,
+          allowIframeEmbed: true,
+        },
+        isLocalProject: false,
+      };
+      const injected = injectContextHeaders(
+        new Request("http://proj.preview.veryfront.com/page"),
+        ctx,
+      );
+
+      assertEquals(injected.headers.get("x-default-branch-name"), "trunk");
+      assertEquals(injected.headers.get("x-branch-id"), null);
+      assertEquals(injected.headers.get("x-branch-name"), null);
     });
 
     it("preserves request cancellation in the injected request", () => {
@@ -410,8 +532,8 @@ describe("Proxy-Renderer Mode Parity", () => {
           },
         });
 
-        const req = new Request("http://test-project.preview.veryfront.com/blog", {
-          headers: { host: "test-project.preview.veryfront.com" },
+        const req = new Request("http://test-project.preview.veryfront.com:8443/blog", {
+          headers: { host: "test-project.preview.veryfront.com:8443" },
         });
 
         const ctx = await handler.processRequest(req);
@@ -420,8 +542,17 @@ describe("Proxy-Renderer Mode Parity", () => {
 
         assertEquals(headers["x-project-slug"], "test-project");
         assertEquals(headers["x-environment"], "preview");
-        assertEquals(typeof headers["x-content-source-id"], "string");
-        assertEquals(headers["x-forwarded-host"], "test-project.preview.veryfront.com");
+        assertEquals(
+          headers["x-token"],
+          "shared-token",
+          "the end-to-end path must forward the token minted by /auth/token",
+        );
+        assertEquals(
+          headers["x-content-source-id"],
+          "preview-main",
+          "preview requests must carry the preview-derived content source",
+        );
+        assertEquals(headers["x-forwarded-host"], "test-project.preview.veryfront.com:8443");
 
         assertEquals(ctx.projectSlug, "test-project");
         assertEquals(ctx.environment, "preview");

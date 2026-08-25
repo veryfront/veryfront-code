@@ -9,6 +9,21 @@ import {
   validateKvListLimit,
 } from "./internal.ts";
 
+const textEncoder = new TextEncoder();
+
+function compareBytes(left: Uint8Array, right: Uint8Array): number {
+  const length = Math.min(left.length, right.length);
+  for (let i = 0; i < length; i++) {
+    const difference = left[i]! - right[i]!;
+    if (difference !== 0) return difference;
+  }
+  return left.length - right.length;
+}
+
+function compareSerializedKeys(left: string, right: string): number {
+  return compareBytes(textEncoder.encode(left), textEncoder.encode(right));
+}
+
 export class MemoryKv implements Kv {
   private store = new Map<string, { value: string; versionstamp: string }>();
 
@@ -43,19 +58,22 @@ export class MemoryKv implements Kv {
       entries = entries.filter(([key]) => isKvKeyPrefix(prefix, deserializeKvKey(key)));
     }
 
+    // SQLite orders TEXT values by their encoded bytes under the binary
+    // collation. Compare the serialized keys the same way so MemoryKv and
+    // SqliteKv agree for non-ASCII keys and for start/end bounds.
     entries.sort((a, b) => {
-      const result = a[0].localeCompare(b[0]);
+      const result = compareSerializedKeys(a[0], b[0]);
       return options?.reverse ? -result : result;
     });
 
     if (options?.start) {
       const startStr = serializeKvKey(options.start);
-      entries = entries.filter(([key]) => key >= startStr);
+      entries = entries.filter(([key]) => compareSerializedKeys(key, startStr) >= 0);
     }
 
     if (options?.end) {
       const endStr = serializeKvKey(options.end);
-      entries = entries.filter(([key]) => key < endStr);
+      entries = entries.filter(([key]) => compareSerializedKeys(key, endStr) < 0);
     }
 
     if (limit !== undefined) {

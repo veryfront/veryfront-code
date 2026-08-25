@@ -3,7 +3,13 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RenderPipelineConfig } from "./pipeline.ts";
 import { isDotPath, isHiddenSegment } from "./path-helpers.ts";
-import { getPageCssCacheKey } from "./css-cache.ts";
+import {
+  __pageCssCacheForTests,
+  cachePageCss,
+  getCachedPageCss,
+  getPageCssCacheKey,
+  PAGE_CSS_CACHE_MAX_SIZE,
+} from "./css-cache.ts";
 import { collectModulesToLoad, hasDataFetchingFunction } from "./module-collection.ts";
 import {
   extractRenderedCssHash,
@@ -12,20 +18,12 @@ import {
   serializeLayouts,
 } from "./pipeline-helpers.ts";
 
-const PAGE_CSS_CACHE_MAX_SIZE = 200;
-const pageCssCache = new Map<string, string>();
+/** Keys a type still declares as non-optional. */
+type RequiredKeys<T> = {
+  [K in keyof T]-?: Record<never, never> extends Pick<T, K> ? never : K;
+}[keyof T];
 
-function getCachedPageCss(cacheKey: string): string | undefined {
-  return pageCssCache.get(cacheKey);
-}
-
-function cachePageCss(cacheKey: string, css: string): void {
-  if (pageCssCache.size >= PAGE_CSS_CACHE_MAX_SIZE && !pageCssCache.has(cacheKey)) {
-    const firstKey = pageCssCache.keys().next().value as string | undefined;
-    if (firstKey) pageCssCache.delete(firstKey);
-  }
-  pageCssCache.set(cacheKey, css);
-}
+type RequiredConfigField = RequiredKeys<RenderPipelineConfig>;
 
 describe("RenderPipeline helpers", () => {
   describe("pipeline-helpers", () => {
@@ -152,36 +150,78 @@ describe("RenderPipeline helpers", () => {
 
   describe("pageCssCache (LRU eviction)", () => {
     it("should store and retrieve cached CSS", () => {
-      pageCssCache.clear();
+      __pageCssCacheForTests.clear();
       cachePageCss("key1", ".body { color: red; }");
-      assertEquals(getCachedPageCss("key1"), ".body { color: red; }");
+      assertEquals(
+        getCachedPageCss("key1"),
+        ".body { color: red; }",
+        "cached page CSS is served back verbatim",
+      );
     });
 
     it("should return undefined for missing keys", () => {
-      pageCssCache.clear();
-      assertEquals(getCachedPageCss("nonexistent"), undefined);
+      __pageCssCacheForTests.clear();
+      assertEquals(
+        getCachedPageCss("nonexistent"),
+        undefined,
+        "an uncached key must report a miss",
+      );
     });
 
     it("should update existing keys without eviction", () => {
-      pageCssCache.clear();
+      __pageCssCacheForTests.clear();
       cachePageCss("key1", "old-css");
       cachePageCss("key1", "new-css");
-      assertEquals(getCachedPageCss("key1"), "new-css");
-      assertEquals(pageCssCache.size, 1);
+      assertEquals(getCachedPageCss("key1"), "new-css", "re-caching a key overwrites its CSS");
+      assertEquals(
+        __pageCssCacheForTests.size,
+        1,
+        "overwriting a key must not add a second entry",
+      );
     });
 
-    it("should evict oldest entry when at max capacity", () => {
-      pageCssCache.clear();
+    it("should evict least-recently-used entry when at max capacity", () => {
+      __pageCssCacheForTests.clear();
 
       for (let i = 0; i < PAGE_CSS_CACHE_MAX_SIZE; i++) {
         cachePageCss(`fill-${i}`, `css-${i}`);
       }
-      assertEquals(pageCssCache.size, PAGE_CSS_CACHE_MAX_SIZE);
+      assertEquals(
+        __pageCssCacheForTests.size,
+        PAGE_CSS_CACHE_MAX_SIZE,
+        "the page CSS cache holds exactly its configured capacity",
+      );
+
+      // Reading fill-0 promotes it, so fill-1 becomes the least-recently-used entry.
+      assertEquals(
+        getCachedPageCss("fill-0"),
+        "css-0",
+        "a filled entry is readable before eviction",
+      );
 
       cachePageCss("overflow-key", "overflow-css");
-      assertEquals(pageCssCache.size, PAGE_CSS_CACHE_MAX_SIZE);
-      assertEquals(getCachedPageCss("fill-0"), undefined);
-      assertEquals(getCachedPageCss("overflow-key"), "overflow-css");
+      assertEquals(
+        __pageCssCacheForTests.size,
+        PAGE_CSS_CACHE_MAX_SIZE,
+        "an insert past capacity must not grow the cache",
+      );
+      assertEquals(
+        getCachedPageCss("fill-0"),
+        "css-0",
+        "a recently read entry must survive eviction",
+      );
+      assertEquals(
+        getCachedPageCss("fill-1"),
+        undefined,
+        "the least-recently-used entry must be evicted",
+      );
+      assertEquals(
+        getCachedPageCss("overflow-key"),
+        "overflow-css",
+        "the newly inserted entry must be present",
+      );
+
+      __pageCssCacheForTests.clear();
     });
   });
 
@@ -275,7 +315,11 @@ describe("RenderPipeline helpers", () => {
 
   describe("RenderPipelineConfig type", () => {
     it("should require all configuration fields", () => {
-      const requiredFields = [
+      // RenderPipelineConfig itself is the oracle: RequiredConfigField only
+      // contains keys the interface still declares as non-optional, so making
+      // any listed field optional (or removing it) fails the test typecheck
+      // instead of silently leaving the literal below untouched.
+      const requiredFields: RequiredConfigField[] = [
         "pageResolver",
         "cacheCoordinator",
         "pageRenderer",
@@ -284,8 +328,13 @@ describe("RenderPipeline helpers", () => {
         "adapter",
         "mode",
         "projectDir",
+        "isLocalProject",
       ];
-      assertEquals(requiredFields.length, 8);
+      assertEquals(
+        requiredFields.length,
+        9,
+        "every pipeline collaborator and render-mode field stays required",
+      );
     });
 
     it("should accept development mode", () => {

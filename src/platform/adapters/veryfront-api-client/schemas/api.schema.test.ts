@@ -45,8 +45,23 @@ describe("schemas", () => {
     });
 
     it("should reject missing required fields", () => {
-      const result = getProjectSchema().safeParse({ id: "not-a-uuid" });
-      assertEquals(result.success, false);
+      const id = "550e8400-e29b-41d4-a716-446655440000";
+
+      assertEquals(
+        getProjectSchema().safeParse({ id }).success,
+        false,
+        "a project payload without name and slug must be rejected",
+      );
+      assertEquals(
+        getProjectSchema().safeParse({ id, slug: "test" }).success,
+        false,
+        "name must stay required on a project payload",
+      );
+      assertEquals(
+        getProjectSchema().safeParse({ id, name: "Test" }).success,
+        false,
+        "slug must stay required on a project payload",
+      );
     });
 
     it("should reject invalid UUID", () => {

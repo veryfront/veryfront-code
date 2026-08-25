@@ -87,7 +87,6 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
     projectDir: "/tmp/test-project",
     adapter: createMockAdapter(),
     securityConfig: null,
-    cspUserHeader: null,
     ...overrides,
   } as unknown as HandlerContext;
 }
@@ -238,7 +237,7 @@ describe("server/handlers/preview/hmr.handler", () => {
       assertEquals(result.continue, false);
     });
 
-    it("proceeds when x-environment=preview query param is set", async () => {
+    it("does not let x-environment=preview query param unlock HMR", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://example.com/_ws?x-environment=preview");
       const ctx = makeCtx({
@@ -246,10 +245,10 @@ describe("server/handlers/preview/hmr.handler", () => {
         adapter: createMockAdapter({ upgradeWebSocket: undefined }),
       });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, false);
+      assertEquals(result.continue, true);
     });
 
-    it("proceeds when host header is localhost", async () => {
+    it("does not treat a client-controlled localhost Host as local-project proof", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://example.com/_ws", {
         headers: { host: "localhost:3000" },
@@ -259,16 +258,15 @@ describe("server/handlers/preview/hmr.handler", () => {
         adapter: createMockAdapter({ upgradeWebSocket: undefined }),
       });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, false);
+      assertEquals(result.continue, true);
     });
 
-    it("proceeds when x-forwarded-host is a local preview host AND request is proxy-trusted", async () => {
+    it("does not infer preview authorization from forwarded host inside the handler", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://example.com/_ws", {
         headers: {
           host: "internal.proxy:3000",
-          "x-forwarded-host": "preview.veryfront.me:3000",
-          "x-veryfront-dispatch-jws": await mintTrustedDispatchJws(),
+          "x-forwarded-host": "preview.localhost:3000",
         },
       });
       const ctx = makeCtx({
@@ -276,7 +274,7 @@ describe("server/handlers/preview/hmr.handler", () => {
         adapter: createMockAdapter({ upgradeWebSocket: undefined }),
       });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, false);
+      assertEquals(result.continue, true);
     });
 
     it("continues when x-forwarded-host is external even if host header is localhost", async () => {
@@ -285,7 +283,6 @@ describe("server/handlers/preview/hmr.handler", () => {
         headers: {
           host: "localhost:3000",
           "x-forwarded-host": "evil.example.com",
-          "x-veryfront-dispatch-jws": await mintTrustedDispatchJws(),
         },
       });
       const ctx = makeCtx({
@@ -331,7 +328,7 @@ describe("server/handlers/preview/hmr.handler", () => {
       assertEquals(result.continue, true);
     });
 
-    it("HONOURS x-forwarded-host: localhost when request IS proxy-trusted", async () => {
+    it("does not let a valid dispatch JWS promote forwarded-host trust", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://internal.proxy/_ws", {
         headers: {
@@ -342,11 +339,10 @@ describe("server/handlers/preview/hmr.handler", () => {
       });
       const ctx = makeCtx({
         isLocalProject: false,
-        adapter: createMockAdapter({ upgradeWebSocket: undefined }),
+        requestContext: { mode: "production" } as any,
       });
       const result = await handler.handle(req, ctx);
-      // Handler path entered — not short-circuited.
-      assertEquals(result.continue, false);
+      assertEquals(result.continue, true);
     });
 
     it(
@@ -375,7 +371,7 @@ describe("server/handlers/preview/hmr.handler", () => {
       },
     );
 
-    it("HONOURS raw Host: localhost even without proxy trust (bare-metal local dev)", async () => {
+    it("does not let raw Host localhost replace local-project resolution", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://localhost:3000/_ws", {
         headers: { host: "localhost:3000" },
@@ -385,7 +381,7 @@ describe("server/handlers/preview/hmr.handler", () => {
         adapter: createMockAdapter({ upgradeWebSocket: undefined }),
       });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, false);
+      assertEquals(result.continue, true);
     });
 
     it('treats "localhost.evil.com" as non-local (must not match by prefix)', async () => {
@@ -440,12 +436,57 @@ describe("server/handlers/preview/hmr.handler", () => {
         }),
       });
 
+      const before = HMRHandler.getClientCount();
       const result = await handler.handle(req, ctx);
 
       assertEquals(result.continue, false);
       assertEquals(Object.is(result.response, upgradeResponse), true);
       assertEquals(result.response instanceof Response, false);
       assertEquals(result.response!.status, 101);
+      assertEquals(
+        HMRHandler.getClientCount(),
+        before + 1,
+        "an upgraded socket must register a client",
+      );
+
+      mock.emit("close", {});
+      assertEquals(
+        HMRHandler.getClientCount(),
+        before,
+        "closing a socket must unregister the client",
+      );
+    });
+
+    it("unregisters the client when the socket errors", async () => {
+      const handler = new HMRHandler();
+      const mock = createMockSocket();
+      const req = new Request("http://localhost/_ws", {
+        headers: { upgrade: "websocket" },
+      });
+      const ctx = makeCtx({
+        isLocalProject: true,
+        adapter: createMockAdapter({
+          upgradeWebSocket: () => ({
+            socket: mock.socket,
+            response: createWebSocketUpgradeResponse(),
+          }),
+        }),
+      });
+
+      const before = HMRHandler.getClientCount();
+      await handler.handle(req, ctx);
+      assertEquals(
+        HMRHandler.getClientCount(),
+        before + 1,
+        "an upgraded socket must register a client",
+      );
+
+      mock.emit("error", {});
+      assertEquals(
+        HMRHandler.getClientCount(),
+        before,
+        "a socket error must unregister the client",
+      );
     });
 
     it("disables runtime idle timeout for upstream HMR WebSocket upgrades", async () => {
@@ -548,6 +589,92 @@ describe("server/handlers/preview/hmr.handler", () => {
       });
       const result = await handler.handle(req, ctx);
       assertEquals(result.response!.status, 501);
+    });
+  });
+
+  describe("ensureAdapterInitialized", () => {
+    it("warms the adapter for the named environment, not the mode", async () => {
+      let observed: Record<string, unknown> | undefined;
+      const handler = new HMRHandler();
+      const ctx = {
+        projectSlug: "demo-project",
+        proxyToken: "test-token",
+        projectId: "proj_123",
+        resolvedEnvironment: "preview",
+        environmentName: "Development",
+        requestContext: { branch: "feature-x" },
+        adapter: {
+          fs: {
+            isVeryfrontAdapter: () => true,
+            getUnderlyingAdapter: () => undefined,
+            isMultiProjectMode: () => true,
+            runWithContext: (
+              _slug: string,
+              _token: string,
+              run: () => Promise<void>,
+              _projectId: string,
+              options: Record<string, unknown>,
+            ) => {
+              observed = options;
+              return run();
+            },
+            exists: () => Promise.resolve(true),
+          },
+        },
+      } as unknown as HandlerContext;
+
+      await (handler as unknown as {
+        ensureAdapterInitialized(ctx: HandlerContext): Promise<void>;
+      }).ensureAdapterInitialized(ctx);
+
+      assertEquals(observed?.environmentName, "Development");
+      assertEquals(
+        observed?.branch,
+        "feature-x",
+        "HMR must warm the adapter for the request's branch, not the default",
+      );
+      assertEquals(
+        observed?.productionMode,
+        false,
+        "preview HMR must warm a non-production adapter",
+      );
+    });
+
+    it("falls back to the main branch when the request carries no branch", async () => {
+      let observed: Record<string, unknown> | undefined;
+      const handler = new HMRHandler();
+      const ctx = {
+        projectSlug: "demo-project",
+        proxyToken: "test-token",
+        projectId: "proj_123",
+        resolvedEnvironment: "preview",
+        environmentName: "Development",
+        requestContext: undefined,
+        adapter: {
+          fs: {
+            isVeryfrontAdapter: () => true,
+            getUnderlyingAdapter: () => undefined,
+            isMultiProjectMode: () => true,
+            runWithContext: (
+              _slug: string,
+              _token: string,
+              run: () => Promise<void>,
+              _projectId: string,
+              options: Record<string, unknown>,
+            ) => {
+              observed = options;
+              return run();
+            },
+            exists: () => Promise.resolve(true),
+          },
+        },
+      } as unknown as HandlerContext;
+
+      await (handler as unknown as {
+        ensureAdapterInitialized(ctx: HandlerContext): Promise<void>;
+      }).ensureAdapterInitialized(ctx);
+
+      assertEquals(observed?.branch, "main", "a request without a branch must warm main");
     });
   });
 });

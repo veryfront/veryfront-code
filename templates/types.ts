@@ -1,0 +1,71 @@
+import type {
+  EnvVarConfig,
+  IntegrationConfig,
+  IntegrationName,
+} from "../src/integrations/schema.ts";
+
+export type {
+  EnvVarConfig,
+  IntegrationConfig,
+  IntegrationName,
+  IntegrationPrompt,
+  IntegrationToolMeta,
+  OAuthConfig,
+  OAuthField,
+} from "../src/integrations/schema.ts";
+
+export interface TemplateFile {
+  path: string;
+  content: string;
+}
+
+export interface TemplateConfig {
+  envVars?: EnvVarConfig[];
+  npmDependencies?: Record<string, string>;
+  firstPartyExtensions?: string[];
+}
+
+export type TemplateName =
+  | "ai-agent"
+  | "docs-agent"
+  | "multi-agent-system"
+  | "agentic-workflow"
+  | "coding-agent"
+  | "saas-starter"
+  | "minimal"
+  | "pages-router"
+  | "app-router";
+
+export const STARTER_TEMPLATE_NAMES = [
+  "minimal",
+  "ai-agent",
+  "docs-agent",
+  "agentic-workflow",
+  "multi-agent-system",
+  "coding-agent",
+  "saas-starter",
+] as const satisfies readonly TemplateName[];
+
+export interface ResolvedIntegration {
+  config: IntegrationConfig;
+  files: TemplateFile[];
+}
+
+export type UseCaseName =
+  | "productivity"
+  | "developer"
+  | "support"
+  | "social"
+  | "custom";
+
+export type ChatUIStyle = "full-page" | "sidebar" | "widget" | "cards";
+
+export interface UseCaseConfig {
+  name: UseCaseName;
+  displayName: string;
+  description: string;
+  integrations: IntegrationName[];
+  defaultPrompts: string[];
+  chatUI: ChatUIStyle;
+  icon?: string;
+}

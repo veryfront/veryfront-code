@@ -1,17 +1,34 @@
 import "#veryfront/schemas/_test-setup.ts";
-import type { AgentMessage } from "#veryfront/agent";
+import { INVALID_ARGUMENT, NETWORK_ERROR, SERVICE_OVERLOADED } from "#veryfront/errors";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+  refreshLoggerConfig,
+} from "#veryfront/utils/logger/index.ts";
+import { createEmptyDiscoveryResult } from "#veryfront/discovery";
+import type { Agent, AgentMessage } from "#veryfront/agent";
+import type { AgentSystem } from "#veryfront/agent/types.ts";
+import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
 import type { RuntimeRemoteToolConfig } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import { getRuntimeSourceIntegrationPolicy } from "#veryfront/agent/runtime/runtime-tool-config.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  installMockFetch,
+  observeFetchRequestInit,
+  restoreMockFetch,
+  withMockFetch,
+} from "#veryfront/testing/mock-fetch.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { getVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-credential-context.ts";
 import { AgentRunResumeHandler } from "./agent-run-resume.handler.ts";
-import { AgentStreamHandler } from "./agent-stream.handler.ts";
+import { AgentStreamHandler, type AgentStreamHandlerDeps } from "./agent-stream.handler.ts";
 import type { HandlerContext } from "../types.ts";
 import {
+  type CapturedApplicationError,
   createAgent,
   createAgentWithConfig,
   createControlPlaneSignature,
@@ -20,6 +37,7 @@ import {
   encodeDataStreamEvent,
   readRemainingText,
   readUntil,
+  stubApplicationErrorReporter,
 } from "./internal-agent-run.test-helpers.ts";
 import {
   createAgentStreamRequestBody,
@@ -33,6 +51,21 @@ import {
   getCurrentRequestContext,
   runWithRequestContext,
 } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { EnvironmentVariableCache } from "../../project-env/cache.ts";
+import { flattenSystemInstructions } from "#veryfront/agent/runtime/tool-inventory.ts";
+import { resolveAgentSystem } from "#veryfront/agent/runtime/effective-agent-system.ts";
+
+// Literal public addresses exercise guarded egress deterministically without
+// depending on external DNS answers for production or reserved test hosts.
+const TEST_PUBLIC_API_ORIGIN = "https://93.184.216.34";
+const TEST_PUBLIC_STUDIO_MCP_URL = "https://93.184.216.35/studio-mcp";
+
+function createTestAgentStreamHandler(deps: AgentStreamHandlerDeps): AgentStreamHandler {
+  return new AgentStreamHandler({
+    loadAgentSourceEnvironment: () => Promise.resolve({}),
+    ...deps,
+  });
+}
 
 function createRuntimeAgentRunInvocationBody() {
   return JSON.stringify({
@@ -77,12 +110,113 @@ function createRuntimeAgentRunInvocationBody() {
 }
 
 describe("server/handlers/request/agent-stream.handler", () => {
+  it("rejects a preview source whose signed branch ID differs from the trusted target", async () => {
+    let discoveryCalls = 0;
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
+      },
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+    });
+    const body = createAgentStreamRequestBody({
+      project: {
+        runtimeTargetKind: "preview_branch",
+        runtimeTargetBranchId: "10000000-1000-4000-8000-100000000006",
+      },
+      agentSource: { type: "branch", branch: "main" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+    });
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      {
+        ...createCtx(publicKeyPem),
+        branchId: "20000000-2000-4000-8000-200000000006",
+      },
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 403);
+    assertEquals(result.response.headers.get("content-type"), "application/problem+json");
+    assertEquals(discoveryCalls, 0);
+  });
+
+  it("accepts a non-main default branch only when it matches trusted proxy metadata", async () => {
+    let discoveryCalls = 0;
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
+      },
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+    });
+    const body = createAgentStreamRequestBody({
+      project: {
+        runtimeTargetKind: "main_branch",
+        runtimeTargetBranchId: null,
+      },
+      agentSource: { type: "branch", branch: "trunk" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+    });
+    const ctx = createCtx(publicKeyPem);
+    ctx.defaultBranchName = "trunk";
+
+    const accepted = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      ctx,
+    );
+    assertExists(accepted.response);
+    assertEquals(accepted.response.status, 404);
+    assertEquals(discoveryCalls, 1);
+
+    discoveryCalls = 0;
+    ctx.defaultBranchName = "main";
+    const rejected = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      ctx,
+    );
+    assertExists(rejected.response);
+    assertEquals(rejected.response.status, 403);
+    assertEquals(discoveryCalls, 0);
+  });
+
   it("streams AG-UI events for a valid signed request", async () => {
     let discoveryCalls = 0;
     let streamContext: Record<string, unknown> | undefined;
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
       },
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -196,9 +330,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let streamContext: Record<string, unknown> | undefined;
     let runtimeSystem: unknown;
     let runtimeMessages: AgentMessage[] | undefined;
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
       },
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -278,7 +413,15 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(discoveryCalls, 1);
     assertEquals(streamContext?.runId, "run_1");
     assertEquals(streamContext?.threadId, "10000000-1000-4000-8000-100000000001");
-    assertEquals(typeof runtimeSystem, "string");
+    const resolvedRuntimeSystem = await resolveAgentSystem(
+      runtimeSystem as Agent["config"]["system"],
+      undefined,
+    );
+    assertEquals(Array.isArray(resolvedRuntimeSystem), true);
+    assertStringIncludes(
+      flattenSystemInstructions(resolvedRuntimeSystem as ChatSystemMessage[]),
+      "You are helpful.",
+    );
     assertEquals(
       runtimeMessages?.[0]?.parts as unknown,
       [
@@ -302,7 +445,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         },
       ],
     );
-    const prompt = runtimeSystem as string;
+    const prompt = flattenSystemInstructions(resolvedRuntimeSystem as ChatSystemMessage[]);
     assertStringIncludes(
       prompt,
       'branch_id: "10000000-1000-4000-8000-100000000006"',
@@ -316,8 +459,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
   });
 
   it("accepts the public control-plane stream route", async () => {
-    const handler = new AgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
@@ -374,8 +517,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let runtimeAgentId: string | undefined;
     let runtimeToolNames: string[] | undefined;
 
-    const handler = new AgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => agents.get(id),
       getAllAgentIds: () => [...agents.keys()],
       getLocalTools: (agentId) => {
@@ -449,9 +592,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("rejects the removed internal AG-UI request shape on the public stream route", async () => {
     let discoveryCalls = 0;
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls++;
+        return createEmptyDiscoveryResult();
       },
       getAgent: () => undefined,
       getAllAgentIds: () => [],
@@ -514,8 +658,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
       required: ["query"],
     };
 
-    const handler = new AgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "incident-responder" ? createAgent("incident-responder") : undefined,
       getAllAgentIds: () => ["incident-responder"],
       sessionManager: new AgentRunSessionManager(),
@@ -603,6 +747,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
       },
     });
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    const ctx = createCtx(publicKeyPem);
+    ctx.branchId = "50000000-5000-4000-8000-500000000001";
 
     const result = await handler.handle(
       new Request("https://example.com/api/control-plane/runs/run_1/stream", {
@@ -613,7 +759,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         },
         body,
       }),
-      createCtx(publicKeyPem),
+      ctx,
     );
 
     assertExists(result.response);
@@ -638,58 +784,59 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let capturedTools: unknown;
     let capturedAllowedRemoteTools: string[] | undefined;
     let platformMcpFetchCalls = 0;
-    const originalFetch = globalThis.fetch;
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
 
-    Deno.env.set("VERYFRONT_API_URL", "https://api.veryfront.org");
+    Deno.env.set("VERYFRONT_API_URL", TEST_PUBLIC_API_ORIGIN);
     Deno.env.delete("VERYFRONT_API_BASE_URL");
-    globalThis.fetch = ((url, init) => {
-      if (String(url) === "https://api.veryfront.org/mcp") {
-        platformMcpFetchCalls += 1;
-        assertEquals(
-          new Headers(init?.headers).get("authorization"),
-          "Bearer request-scoped-user-token",
-        );
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              id: "veryfront-platform-mcp:tools:list",
-              result: {
-                tools: [
-                  {
-                    name: "search_knowledge",
-                    description: "Search project knowledge",
-                    inputSchema: { type: "object", properties: {} },
-                  },
-                  {
-                    name: "get_file",
-                    description: "Read a project file",
-                    inputSchema: { type: "object", properties: {} },
-                  },
-                ],
-              },
+    installMockFetch(
+      ((url, init) => {
+        if (String(url) === `${TEST_PUBLIC_API_ORIGIN}/mcp`) {
+          platformMcpFetchCalls += 1;
+          assertEquals(
+            new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+            "Bearer request-scoped-user-token",
+          );
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: "veryfront-platform-mcp:tools:list",
+                result: {
+                  tools: [
+                    {
+                      name: "search_knowledge",
+                      description: "Search project knowledge",
+                      inputSchema: { type: "object", properties: {} },
+                    },
+                    {
+                      name: "get_file",
+                      description: "Read a project file",
+                      inputSchema: { type: "object", properties: {} },
+                    },
+                  ],
+                },
+              }),
+              { headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
+
+        if (String(url) === `${TEST_PUBLIC_API_ORIGIN}/projects/demo-project/environments`) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ data: [] }), {
+              headers: { "content-type": "application/json" },
             }),
-            { headers: { "content-type": "application/json" } },
-          ),
-        );
-      }
+          );
+        }
 
-      if (String(url) === "https://api.veryfront.org/projects/demo-project/environments") {
-        return Promise.resolve(
-          new Response(JSON.stringify({ data: [] }), {
-            headers: { "content-type": "application/json" },
-          }),
-        );
-      }
-
-      return Promise.reject(new Error(`unexpected fetch: ${url}`));
-    }) as typeof fetch;
+        return Promise.reject(new Error(`unexpected fetch: ${url}`));
+      }) as typeof fetch,
+    );
 
     try {
-      const handler = new AgentStreamHandler({
-        ensureProjectDiscovery: async () => {},
+      const handler = createTestAgentStreamHandler({
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
         getAllAgentIds: () => ["assistant-1"],
         sessionManager: new AgentRunSessionManager(),
@@ -756,16 +903,21 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertExists(result.response);
       assertEquals(result.response.status, 200);
       const resolvedSystem = typeof capturedSystem === "function"
-        ? await (capturedSystem as () => Promise<string>)()
-        : capturedSystem;
-      assertStringIncludes(String(resolvedSystem), "Use project-scoped instructions.");
+        ? await (capturedSystem as () => Promise<AgentSystem>)()
+        : capturedSystem as AgentSystem;
+      assertStringIncludes(
+        typeof resolvedSystem === "string"
+          ? resolvedSystem
+          : flattenSystemInstructions(resolvedSystem),
+        "Use project-scoped instructions.",
+      );
       assertEquals(capturedSkills, []);
       assertEquals((capturedTools as Record<string, unknown>).search_knowledge, true);
       assertEquals((capturedTools as Record<string, unknown>).get_file, true);
       assertEquals(capturedAllowedRemoteTools, ["get_file", "search_knowledge"]);
       assertEquals(platformMcpFetchCalls, 1);
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
       if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
       else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
       if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
@@ -776,8 +928,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("does not pass undeclared forwarded remote tool allowlists into the runtime agent config", async () => {
     let capturedAllowedTools: string[] | undefined;
 
-    const handler = new AgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
@@ -838,14 +990,17 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("loads and applies integration restrictions from the exact requested source", async () => {
     let capturedSourcePolicy: ReturnType<typeof getRuntimeSourceIntegrationPolicy>;
     let discoveryConfig: HandlerContext["config"];
+    const fetchUrls: string[] = [];
 
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async (ctx) => {
         discoveryConfig = ctx.config;
+        return createEmptyDiscoveryResult();
       },
       getAgent: (id) =>
         id === "assistant-1"
           ? createAgentWithConfig("assistant-1", {
+            mcpServers: [],
             tools: {
               gmail__list_emails: true,
               gmail__delete_email: true,
@@ -911,31 +1066,45 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
 
     const body = createAgentStreamRequestBody({
+      project: {
+        runtimeTargetKind: "preview_branch",
+        runtimeTargetBranchId: "50000000-5000-4000-8000-500000000002",
+      },
       agentSource: { type: "branch", branch: "restrict-gmail" },
       credentials: { authToken: "request-scoped-user-token" },
     });
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
     const ctx = createCtx(publicKeyPem);
+    ctx.branchId = "50000000-5000-4000-8000-500000000002";
+    ctx.branchName = "restrict-gmail";
     ctx.adapter = {
       ...ctx.adapter,
       env: createNoopEnvAdapter(publicKeyPem),
       fs,
     };
 
-    const result = await handler.handle(
-      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-veryfront-control-plane-jws": jws,
-        },
-        body,
-      }),
-      ctx,
+    const result = await withMockFetch(
+      (input) => {
+        fetchUrls.push(String(input));
+        return Promise.reject(new Error(`unexpected fetch: ${input}`));
+      },
+      () =>
+        handler.handle(
+          new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-veryfront-control-plane-jws": jws,
+            },
+            body,
+          }),
+          ctx,
+        ),
     );
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
+    assertEquals(fetchUrls, []);
     assertEquals(contextCalls, ["restrict-gmail"]);
     assertEquals(configReads, ["restrict-gmail"]);
     assertEquals(sourceEvents.slice(0, 2), ["source-fresh", "config-read"]);
@@ -951,9 +1120,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("fails closed before discovery when the runtime cannot select the signed source", async () => {
     let discoveryCalls = 0;
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
       },
       getAgent: () => undefined,
       getAllAgentIds: () => [],
@@ -974,15 +1144,16 @@ describe("server/handlers/request/agent-stream.handler", () => {
       createSingleProjectCtx(publicKeyPem),
     );
 
-    assertEquals(result.response?.status, 500);
+    assertEquals(result.response?.status, 400);
     assertEquals(discoveryCalls, 0);
   });
 
   it("rejects a missing source before discovery", async () => {
     let discoveryCalls = 0;
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
       },
       getAgent: () => undefined,
       getAllAgentIds: () => [],
@@ -1009,9 +1180,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("does not use an outer config when the exact source config cannot load", async () => {
     let discoveryCalls = 0;
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
       },
       getAgent: () => undefined,
       getAllAgentIds: () => [],
@@ -1040,15 +1212,15 @@ describe("server/handlers/request/agent-stream.handler", () => {
       ctx,
     );
 
-    assertEquals(result.response?.status, 500);
+    assertEquals(result.response?.status, 400);
     assertEquals(discoveryCalls, 0);
   });
 
   it("drops undeclared Studio runtime tool allowlists for untrusted clients", async () => {
     let capturedAllowedTools: string[] | undefined;
 
-    const handler = new AgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
@@ -1110,45 +1282,46 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("auto-exposes Studio MCP tools for trusted Studio project-agent requests", async () => {
     let capturedAllowedRemoteTools: string[] | undefined;
     let capturedRemoteToolNames: string[] = [];
-    const originalFetch = globalThis.fetch;
     const originalStudioMcpUrl = Deno.env.get("VERYFRONT_STUDIO_MCP_URL");
 
-    Deno.env.set("VERYFRONT_STUDIO_MCP_URL", "https://studio.veryfront.org/mcp");
-    globalThis.fetch = ((url, init) => {
-      assertEquals(String(url), "https://studio.veryfront.org/mcp");
-      const headers = new Headers(init?.headers);
-      assertEquals(headers.get("authorization"), "Bearer request-scoped-user-token");
-      assertEquals(headers.get("x-project-id"), "proj-1");
-      assertEquals(headers.get("x-conversation-id"), "10000000-1000-4000-8000-100000000001");
+    Deno.env.set("VERYFRONT_STUDIO_MCP_URL", TEST_PUBLIC_STUDIO_MCP_URL);
+    installMockFetch(
+      ((url, init) => {
+        assertEquals(String(url), TEST_PUBLIC_STUDIO_MCP_URL);
+        const headers = new Headers(observeFetchRequestInit(init).headers);
+        assertEquals(headers.get("authorization"), "Bearer request-scoped-user-token");
+        assertEquals(headers.get("x-project-id"), "proj-1");
+        assertEquals(headers.get("x-conversation-id"), "10000000-1000-4000-8000-100000000001");
 
-      return Promise.resolve(
-        new Response(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: "studio-mcp:tools:list",
-            result: {
-              tools: [
-                {
-                  name: "studio_todo_write",
-                  description: "Write the assistant task list",
-                  inputSchema: { type: "object", properties: {} },
-                },
-                {
-                  name: "studio_panel_control",
-                  description: "Control Studio panels",
-                  inputSchema: { type: "object", properties: {} },
-                },
-              ],
-            },
-          }),
-          { headers: { "content-type": "application/json" } },
-        ),
-      );
-    }) as typeof fetch;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: "studio-mcp:tools:list",
+              result: {
+                tools: [
+                  {
+                    name: "studio_todo_write",
+                    description: "Write the assistant task list",
+                    inputSchema: { type: "object", properties: {} },
+                  },
+                  {
+                    name: "studio_panel_control",
+                    description: "Control Studio panels",
+                    inputSchema: { type: "object", properties: {} },
+                  },
+                ],
+              },
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        );
+      }) as typeof fetch,
+    );
 
     try {
-      const handler = new AgentStreamHandler({
-        ensureProjectDiscovery: async () => {},
+      const handler = createTestAgentStreamHandler({
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
         getAllAgentIds: () => ["assistant-1"],
         sessionManager: new AgentRunSessionManager(),
@@ -1217,7 +1390,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertEquals(capturedAllowedRemoteTools, ["studio_todo_write"]);
       assertEquals(capturedRemoteToolNames, ["studio_todo_write", "studio_panel_control"]);
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
       if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
       else Deno.env.set("VERYFRONT_STUDIO_MCP_URL", originalStudioMcpUrl);
     }
@@ -1227,20 +1400,21 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let studioMcpFetchCalls = 0;
     let capturedAllowedRemoteTools: string[] | undefined;
     let capturedRemoteSourceCount = -1;
-    const originalFetch = globalThis.fetch;
     const originalStudioMcpUrl = Deno.env.get("VERYFRONT_STUDIO_MCP_URL");
 
-    Deno.env.set("VERYFRONT_STUDIO_MCP_URL", "https://studio.veryfront.org/mcp");
-    globalThis.fetch = ((url) => {
-      if (String(url) === "https://studio.veryfront.org/mcp") {
-        studioMcpFetchCalls += 1;
-      }
-      return Promise.resolve(new Response(null, { status: 503 }));
-    }) as typeof fetch;
+    Deno.env.set("VERYFRONT_STUDIO_MCP_URL", TEST_PUBLIC_STUDIO_MCP_URL);
+    installMockFetch(
+      ((url) => {
+        if (String(url) === TEST_PUBLIC_STUDIO_MCP_URL) {
+          studioMcpFetchCalls += 1;
+        }
+        return Promise.resolve(new Response(null, { status: 503 }));
+      }) as typeof fetch,
+    );
 
     try {
-      const handler = new AgentStreamHandler({
-        ensureProjectDiscovery: async () => {},
+      const handler = createTestAgentStreamHandler({
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) =>
           id === "assistant-1"
             ? createAgentWithConfig("assistant-1", {
@@ -1318,7 +1492,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertEquals(capturedAllowedRemoteTools, ["studio_todo_write"]);
       assertEquals(capturedRemoteSourceCount, 0);
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
       if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
       else Deno.env.set("VERYFRONT_STUDIO_MCP_URL", originalStudioMcpUrl);
     }
@@ -1327,8 +1501,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("fails closed for malformed runtime integration tool allowlists from forwarded props", async () => {
     let capturedAllowedTools: string[] | undefined;
 
-    const handler = new AgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
@@ -1388,18 +1562,17 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("does not probe platform MCP for boolean tools already supplied by the run", async () => {
     let fetchCalls = 0;
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = async () => {
+    installMockFetch(async () => {
       fetchCalls += 1;
       return new Response(JSON.stringify({ tools: [] }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
-    };
+    });
 
     try {
-      const handler = new AgentStreamHandler({
-        ensureProjectDiscovery: async () => {},
+      const handler = createTestAgentStreamHandler({
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) =>
           id === "assistant-1"
             ? createAgentWithConfig("assistant-1", {
@@ -1452,13 +1625,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertEquals(result.response.status, 200);
       assertEquals(fetchCalls, 0);
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
     }
   });
 
   it("fails closed when platform MCP is opted out or discovery fails", async () => {
-    const originalFetch = globalThis.fetch;
-
     try {
       for (
         const testCase of [
@@ -1479,16 +1650,18 @@ describe("server/handlers/request/agent-stream.handler", () => {
         let mcpFetchCalls = 0;
         let capturedAllowedRemoteTools: string[] | undefined;
         let capturedRemoteSourceCount = -1;
-        globalThis.fetch = ((url) => {
-          if (String(url).endsWith("/mcp")) {
-            mcpFetchCalls += 1;
-            return Promise.reject(new Error(`${testCase.name} discovery unavailable`));
-          }
-          return Promise.resolve(new Response(null, { status: 503 }));
-        }) as typeof fetch;
+        installMockFetch(
+          ((url) => {
+            if (String(url).endsWith("/mcp")) {
+              mcpFetchCalls += 1;
+              return Promise.reject(new Error(`${testCase.name} discovery unavailable`));
+            }
+            return Promise.resolve(new Response(null, { status: 503 }));
+          }) as typeof fetch,
+        );
 
-        const handler = new AgentStreamHandler({
-          ensureProjectDiscovery: async () => {},
+        const handler = createTestAgentStreamHandler({
+          ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
           getAgent: (id) =>
             id === "assistant-1"
               ? createAgentWithConfig("assistant-1", {
@@ -1559,7 +1732,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         assertEquals(capturedRemoteSourceCount, 0);
       }
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
     }
   });
 
@@ -1567,67 +1740,68 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let capturedAllowedRemoteTools: string[] | undefined;
     let capturedRemoteToolNames: string[] = [];
     let capturedToolArguments: Record<string, unknown> | undefined;
-    const originalFetch = globalThis.fetch;
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
 
-    Deno.env.set("VERYFRONT_API_URL", "https://api.veryfront.org");
+    Deno.env.set("VERYFRONT_API_URL", TEST_PUBLIC_API_ORIGIN);
     Deno.env.delete("VERYFRONT_API_BASE_URL");
-    globalThis.fetch = ((url, init) => {
-      assertEquals(String(url), "https://api.veryfront.org/mcp");
-      assertEquals(
-        new Headers(init?.headers).get("authorization"),
-        "Bearer request-scoped-user-token",
-      );
-      const request = JSON.parse(String(init?.body)) as {
-        id: string;
-        method: string;
-        params?: { arguments?: Record<string, unknown> };
-      };
-      if (request.method === "tools/call") {
-        capturedToolArguments = request.params?.arguments;
+    installMockFetch(
+      ((url, init) => {
+        assertEquals(String(url), `${TEST_PUBLIC_API_ORIGIN}/mcp`);
+        assertEquals(
+          new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+          "Bearer request-scoped-user-token",
+        );
+        const request = JSON.parse(String(observeFetchRequestInit(init).body)) as {
+          id: string;
+          method: string;
+          params?: { arguments?: Record<string, unknown> };
+        };
+        if (request.method === "tools/call") {
+          capturedToolArguments = request.params?.arguments;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { content: [] } }),
+              { headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
         return Promise.resolve(
           new Response(
-            JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { content: [] } }),
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: request.id,
+              result: {
+                tools: [
+                  {
+                    name: "list_uploads",
+                    description: "List uploads",
+                    inputSchema: {
+                      type: "object",
+                      properties: {
+                        project_reference: { type: "string" },
+                        limit: { type: "number" },
+                      },
+                      required: ["project_reference"],
+                    },
+                  },
+                  {
+                    name: "delete_upload",
+                    description: "Delete upload",
+                    inputSchema: { type: "object", properties: {} },
+                  },
+                ],
+              },
+            }),
             { headers: { "content-type": "application/json" } },
           ),
         );
-      }
-      return Promise.resolve(
-        new Response(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: request.id,
-            result: {
-              tools: [
-                {
-                  name: "list_uploads",
-                  description: "List uploads",
-                  inputSchema: {
-                    type: "object",
-                    properties: {
-                      project_reference: { type: "string" },
-                      limit: { type: "number" },
-                    },
-                    required: ["project_reference"],
-                  },
-                },
-                {
-                  name: "delete_upload",
-                  description: "Delete upload",
-                  inputSchema: { type: "object", properties: {} },
-                },
-              ],
-            },
-          }),
-          { headers: { "content-type": "application/json" } },
-        ),
-      );
-    }) as typeof fetch;
+      }) as typeof fetch,
+    );
 
     try {
-      const handler = new AgentStreamHandler({
-        ensureProjectDiscovery: async () => {},
+      const handler = createTestAgentStreamHandler({
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
         getAgent: (id) =>
           id === "assistant-1"
             ? createAgentWithConfig("assistant-1", {
@@ -1711,7 +1885,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         limit: 10,
       });
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
       if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
       else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
       if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
@@ -1732,7 +1906,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
 
     const handler = new AgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? agent : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
@@ -1746,9 +1920,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
             OTEL_EXPORTER_OTLP_ENDPOINT: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT"),
             OTEL_RESOURCE_ATTRIBUTES: getEnv("OTEL_RESOURCE_ATTRIBUTES"),
           };
-          capturedSystem = typeof runtimeAgent.config.system === "function"
+          const resolvedSystem = typeof runtimeAgent.config.system === "function"
             ? await runtimeAgent.config.system()
             : runtimeAgent.config.system;
+          capturedSystem = typeof resolvedSystem === "string"
+            ? resolvedSystem
+            : flattenSystemInstructions(resolvedSystem);
           const runtimeConfig = runtimeAgent.config as
             & typeof runtimeAgent.config
             & RuntimeRemoteToolConfig;
@@ -1778,6 +1955,15 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
 
     const body = createAgentStreamRequestBody({
+      project: {
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: "10000000-1000-4000-8000-100000000097",
+      },
+      agentSource: {
+        type: "environment",
+        environmentName: "production",
+        releaseId: "release-production",
+      },
       credentials: { authToken: "request-scoped-user-token" },
     });
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
@@ -1789,87 +1975,98 @@ describe("server/handlers/request/agent-stream.handler", () => {
       proxyToken: "run-scoped-token",
       projectSlug: "support-agent-fork",
     };
-    const originalFetch = globalThis.fetch;
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
     const fetchUrls: string[] = [];
-    Deno.env.set("VERYFRONT_API_URL", "https://api.veryfront.org");
+    Deno.env.set("VERYFRONT_API_URL", TEST_PUBLIC_API_ORIGIN);
     Deno.env.delete("VERYFRONT_API_BASE_URL");
-    globalThis.fetch = ((url, init) => {
-      fetchUrls.push(String(url));
-      assertEquals(
-        new Headers(init?.headers).get("authorization"),
-        "Bearer request-scoped-user-token",
-      );
-
-      if (String(url).endsWith("/projects/support-agent-fork/environments")) {
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              data: [
-                { id: "env-staging", name: "staging", protected: true },
-                { id: "env-production", name: "production", protected: false },
-              ],
-            }),
-            { headers: { "content-type": "application/json" } },
-          ),
+    installMockFetch(
+      ((url, init) => {
+        fetchUrls.push(String(url));
+        assertEquals(
+          new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+          "Bearer request-scoped-user-token",
         );
-      }
 
-      if (String(url).includes("/projects/support-agent-fork/environment-variables?")) {
-        assertEquals(String(url).includes("environment_id=env-production"), true);
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              data: [
-                { key: "CUSTOM_PROJECT_ENV", value: "project-value" },
-                { key: "VERYFRONT_API_TOKEN", value: "unsafe-project-token" },
-                { key: "VERYFRONT_API_URL", value: "https://evil.example" },
-                { key: "VERYFRONT_PROJECT_SLUG", value: "wrong-project" },
-                {
-                  key: "OTEL_EXPORTER_OTLP_ENDPOINT",
-                  value: "https://tenant-collector.example/otlp",
-                },
-                { key: "OTEL_RESOURCE_ATTRIBUTES", value: "tenant.secret=do-not-export" },
-              ],
-            }),
-            { headers: { "content-type": "application/json" } },
-          ),
-        );
-      }
-
-      if (String(url) === "https://api.veryfront.org/mcp") {
-        capturedMcpRequest = {
-          url: String(url),
-          authorization: new Headers(init?.headers).get("authorization"),
-        };
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              id: "veryfront-platform-mcp:tools:list",
-              result: {
-                tools: [
+        if (String(url).endsWith("/projects/support-agent-fork/environments")) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                data: [
+                  { id: "env-staging", name: "staging", protected: true },
                   {
-                    name: "search_knowledge",
-                    description: "Search knowledge",
-                    inputSchema: { type: "object", properties: {} },
-                  },
-                  {
-                    name: "list_projects",
-                    description: "List projects",
-                    inputSchema: { type: "object", properties: {} },
+                    id: "10000000-1000-4000-8000-100000000097",
+                    name: "production",
+                    protected: false,
+                    active_release_id: "release-production",
                   },
                 ],
-              },
-            }),
-            { headers: { "content-type": "application/json" } },
-          ),
-        );
-      }
+              }),
+              { headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
 
-      return Promise.reject(new Error(`unexpected fetch: ${url}`));
-    }) as typeof fetch;
+        if (String(url).includes("/projects/support-agent-fork/environment-variables?")) {
+          assertEquals(
+            String(url).includes(
+              "environment_id=10000000-1000-4000-8000-100000000097",
+            ),
+            true,
+          );
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                data: [
+                  { key: "CUSTOM_PROJECT_ENV", value: "project-value" },
+                  { key: "VERYFRONT_API_TOKEN", value: "unsafe-project-token" },
+                  { key: "VERYFRONT_API_URL", value: "https://evil.example" },
+                  { key: "VERYFRONT_PROJECT_SLUG", value: "wrong-project" },
+                  {
+                    key: "OTEL_EXPORTER_OTLP_ENDPOINT",
+                    value: "https://tenant-collector.example/otlp",
+                  },
+                  { key: "OTEL_RESOURCE_ATTRIBUTES", value: "tenant.secret=do-not-export" },
+                ],
+              }),
+              { headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
+
+        if (String(url) === `${TEST_PUBLIC_API_ORIGIN}/mcp`) {
+          capturedMcpRequest = {
+            url: String(url),
+            authorization: new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+          };
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: "veryfront-platform-mcp:tools:list",
+                result: {
+                  tools: [
+                    {
+                      name: "search_knowledge",
+                      description: "Search knowledge",
+                      inputSchema: { type: "object", properties: {} },
+                    },
+                    {
+                      name: "list_projects",
+                      description: "List projects",
+                      inputSchema: { type: "object", properties: {} },
+                    },
+                  ],
+                },
+              }),
+              { headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
+
+        return Promise.reject(new Error(`unexpected fetch: ${url}`));
+      }) as typeof fetch,
+    );
 
     let result;
     try {
@@ -1885,7 +2082,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         ctx,
       );
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
       if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
       else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
       if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
@@ -1896,7 +2093,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(result.response.status, 200);
     assertEquals(capturedEnv, {
       VERYFRONT_API_TOKEN: "request-scoped-user-token",
-      VERYFRONT_API_URL: "https://api.veryfront.org",
+      VERYFRONT_API_URL: TEST_PUBLIC_API_ORIGIN,
       VERYFRONT_PROJECT_SLUG: "support-agent-fork",
       CUSTOM_PROJECT_ENV: "project-value",
       OTEL_EXPORTER_OTLP_ENDPOINT: undefined,
@@ -1905,7 +2102,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertStringIncludes(capturedSystem ?? "", "project_reference=support-agent-fork");
     assertStringIncludes(capturedSystem ?? "", '<project_context>\nproject_reference: "proj-1"');
     assertEquals(capturedMcpRequest, {
-      url: "https://api.veryfront.org/mcp",
+      url: `${TEST_PUBLIC_API_ORIGIN}/mcp`,
       authorization: "Bearer request-scoped-user-token",
     });
     assertEquals(capturedAllowedRemoteTools, ["list_projects", "search_knowledge"]);
@@ -1913,14 +2110,135 @@ describe("server/handlers/request/agent-stream.handler", () => {
     // The environment is resolved before the source config is evaluated, so
     // both the config and the MCP tool headers see the same variables.
     assertEquals(fetchUrls, [
-      "https://api.veryfront.org/projects/support-agent-fork/environments",
-      "https://api.veryfront.org/projects/support-agent-fork/environment-variables?environment_id=env-production&limit=100",
-      "https://api.veryfront.org/mcp",
+      `${TEST_PUBLIC_API_ORIGIN}/projects/support-agent-fork/environments`,
+      `${TEST_PUBLIC_API_ORIGIN}/projects/support-agent-fork/environment-variables?environment_id=10000000-1000-4000-8000-100000000097&limit=100`,
+      `${TEST_PUBLIC_API_ORIGIN}/mcp`,
+    ]);
+  });
+
+  it("uses the validated runtime target environment without production discovery", async () => {
+    const targetEnvironmentId = "10000000-1000-4000-8000-100000000088";
+    let capturedProjectEnv: string | undefined;
+    const fetchUrls: string[] = [];
+    const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+    const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+
+    Deno.env.set("VERYFRONT_API_URL", "https://api.veryfront.org");
+    Deno.env.delete("VERYFRONT_API_BASE_URL");
+    installMockFetch(
+      ((url, init) => {
+        const urlString = String(url);
+        fetchUrls.push(urlString);
+        assertEquals(
+          new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+          "Bearer request-scoped-user-token",
+        );
+        if (urlString === "https://api.veryfront.org/projects/demo-project/environments") {
+          return Promise.resolve(Response.json({
+            data: [{
+              id: targetEnvironmentId,
+              name: "staging",
+              active_release_id: "release-staging",
+            }],
+          }));
+        }
+        assertEquals(
+          urlString,
+          `https://api.veryfront.org/projects/demo-project/environment-variables?environment_id=${targetEnvironmentId}&limit=100`,
+        );
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ data: [{ key: "TARGET_ENV_VALUE", value: "staging-value" }] }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        );
+      }) as typeof fetch,
+    );
+
+    const agent = createAgentWithConfig("assistant-1", {
+      system: () => `target=${getEnv("TARGET_ENV_VALUE")}`,
+    });
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+      getAgent: (id) => id === "assistant-1" ? agent : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: (runtimeAgent) => ({
+        stream: async (_messages, _context, callbacks) => {
+          const resolvedSystem = typeof runtimeAgent.config.system === "function"
+            ? await runtimeAgent.config.system()
+            : runtimeAgent.config.system;
+          capturedProjectEnv = typeof resolvedSystem === "string"
+            ? resolvedSystem
+            : flattenSystemInstructions(resolvedSystem);
+          callbacks?.onFinish?.({
+            text: "ok",
+            messages: [],
+            toolCalls: [],
+            status: "completed",
+            usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+          });
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          });
+        },
+      }),
+    });
+
+    const body = createAgentStreamRequestBody({
+      project: {
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: targetEnvironmentId,
+      },
+      agentSource: {
+        type: "environment",
+        environmentName: "staging",
+        releaseId: "release-staging",
+      },
+      credentials: { authToken: "request-scoped-user-token" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+    });
+
+    let result;
+    try {
+      result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        {
+          ...createCtx(publicKeyPem),
+          environmentId: "20000000-2000-4000-8000-200000000099",
+        },
+      );
+    } finally {
+      restoreMockFetch();
+      if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
+      else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
+      if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+      else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+    }
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertStringIncludes(capturedProjectEnv ?? "", "target=staging-value");
+    assertEquals(fetchUrls, [
+      "https://api.veryfront.org/projects/demo-project/environments",
+      `https://api.veryfront.org/projects/demo-project/environment-variables?environment_id=${targetEnvironmentId}&limit=100`,
     ]);
   });
 
   it("prefers VERYFRONT_API_BASE_URL over VERYFRONT_API_URL", async () => {
-    const apiBaseUrl = "http://veryfront-api.veryfront-staging.svc.cluster.local:80";
+    const apiBaseUrl = "http://93.184.216.34:8080";
+    const canonicalApiOrigin = new URL(apiBaseUrl).origin;
     let capturedEnv: Record<string, string | undefined> | null = null;
     let capturedSystem: string | null = null;
 
@@ -1930,7 +2248,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
 
     const handler = new AgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? agent : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
@@ -1942,9 +2260,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
             VERYFRONT_PROJECT_SLUG: getEnv("VERYFRONT_PROJECT_SLUG"),
             CUSTOM_PROJECT_ENV: getEnv("CUSTOM_PROJECT_ENV"),
           };
-          capturedSystem = typeof runtimeAgent.config.system === "function"
+          const resolvedSystem = typeof runtimeAgent.config.system === "function"
             ? await runtimeAgent.config.system()
             : runtimeAgent.config.system;
+          capturedSystem = typeof resolvedSystem === "string"
+            ? resolvedSystem
+            : flattenSystemInstructions(resolvedSystem);
           callbacks?.onFinish?.({
             text: "ok",
             messages: [],
@@ -1967,6 +2288,15 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
 
     const body = createAgentStreamRequestBody({
+      project: {
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: "10000000-1000-4000-8000-100000000096",
+      },
+      agentSource: {
+        type: "environment",
+        environmentName: "production",
+        releaseId: "release-production",
+      },
       credentials: { authToken: "request-scoped-user-token" },
     });
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
@@ -1978,69 +2308,80 @@ describe("server/handlers/request/agent-stream.handler", () => {
       proxyToken: "run-scoped-token",
       projectSlug: "base-url-agent-fork",
     };
-    const originalFetch = globalThis.fetch;
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
     const fetchUrls: string[] = [];
-    Deno.env.set("VERYFRONT_API_URL", "https://wrong-api.example.test");
+    Deno.env.set("VERYFRONT_API_URL", "https://1.1.1.1/unused-fallback");
     Deno.env.set("VERYFRONT_API_BASE_URL", apiBaseUrl);
-    globalThis.fetch = ((url, init) => {
-      fetchUrls.push(String(url));
-      assertEquals(
-        new Headers(init?.headers).get("authorization"),
-        "Bearer request-scoped-user-token",
-      );
+    installMockFetch(
+      ((url, init) => {
+        fetchUrls.push(String(url));
+        assertEquals(
+          new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+          "Bearer request-scoped-user-token",
+        );
 
-      if (String(url) === `${apiBaseUrl}/mcp`) {
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              id: "veryfront-platform-mcp:tools:list",
-              result: {
-                tools: [
+        if (String(url) === `${canonicalApiOrigin}/mcp`) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: "veryfront-platform-mcp:tools:list",
+                result: {
+                  tools: [
+                    {
+                      name: "list_projects",
+                      description: "List projects",
+                      inputSchema: { type: "object", properties: {} },
+                    },
+                  ],
+                },
+              }),
+              { headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
+
+        if (String(url) === `${canonicalApiOrigin}/projects/base-url-agent-fork/environments`) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                data: [
                   {
-                    name: "list_projects",
-                    description: "List projects",
-                    inputSchema: { type: "object", properties: {} },
+                    id: "10000000-1000-4000-8000-100000000096",
+                    name: "production",
+                    protected: false,
+                    active_release_id: "release-production",
                   },
                 ],
-              },
-            }),
-            { headers: { "content-type": "application/json" } },
-          ),
-        );
-      }
+              }),
+              { headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
 
-      if (String(url) === `${apiBaseUrl}/projects/base-url-agent-fork/environments`) {
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              data: [
-                { id: "env-production-base-url", name: "production", protected: false },
-              ],
-            }),
-            { headers: { "content-type": "application/json" } },
-          ),
-        );
-      }
+        if (
+          String(url).includes(`${apiBaseUrl}/projects/base-url-agent-fork/environment-variables?`)
+        ) {
+          assertEquals(
+            String(url).includes(
+              "environment_id=10000000-1000-4000-8000-100000000096",
+            ),
+            true,
+          );
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                data: [{ key: "CUSTOM_PROJECT_ENV", value: "project-value-from-base-url" }],
+              }),
+              { headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
 
-      if (
-        String(url).includes(`${apiBaseUrl}/projects/base-url-agent-fork/environment-variables?`)
-      ) {
-        assertEquals(String(url).includes("environment_id=env-production-base-url"), true);
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              data: [{ key: "CUSTOM_PROJECT_ENV", value: "project-value-from-base-url" }],
-            }),
-            { headers: { "content-type": "application/json" } },
-          ),
-        );
-      }
-
-      return Promise.reject(new Error(`unexpected fetch: ${url}`));
-    }) as typeof fetch;
+        return Promise.reject(new Error(`unexpected fetch: ${url}`));
+      }) as typeof fetch,
+    );
 
     let result;
     try {
@@ -2056,7 +2397,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         ctx,
       );
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
       if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
       else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
       if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
@@ -2073,15 +2414,15 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
     assertStringIncludes(capturedSystem ?? "", `api=${apiBaseUrl}`);
     assertEquals(fetchUrls, [
-      `${apiBaseUrl}/projects/base-url-agent-fork/environments`,
-      `${apiBaseUrl}/projects/base-url-agent-fork/environment-variables?environment_id=env-production-base-url&limit=100`,
-      `${new URL(apiBaseUrl).origin}/mcp`,
+      `${canonicalApiOrigin}/projects/base-url-agent-fork/environments`,
+      `${apiBaseUrl}/projects/base-url-agent-fork/environment-variables?environment_id=10000000-1000-4000-8000-100000000096&limit=100`,
+      `${canonicalApiOrigin}/mcp`,
     ]);
   });
 
   it("rejects oversized internal agent stream payloads before parsing", async () => {
-    const handler = new AgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: () => createAgent("assistant-1"),
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
@@ -2110,8 +2451,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
   });
 
   it("returns 404 when the requested agent is not available", async () => {
-    const handler = new AgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: () => undefined,
       getAllAgentIds: () => [],
       sessionManager: new AgentRunSessionManager(),
@@ -2138,8 +2479,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
   });
 
   it("returns 400 for malformed internal agent stream payloads", async () => {
-    const handler = new AgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: () => createAgent("assistant-1"),
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
@@ -2165,9 +2506,46 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(await result.response.json(), { error: "Invalid internal agent stream request" });
   });
 
+  it("rejects a stream URL whose run id differs from the signed payload runId", async () => {
+    let discoveryCalls = 0;
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls++;
+        return createEmptyDiscoveryResult();
+      },
+      getAgent: () => createAgent("assistant-1"),
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+    });
+
+    const body = createAgentStreamRequestBody();
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_2/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 400, "a stream URL must match the signed runId");
+    assertEquals(await result.response.json(), { error: "CONTROL_PLANE_RUN_ID_MISMATCH" });
+    assertEquals(
+      discoveryCalls,
+      0,
+      "a run-id mismatch must be rejected before any project discovery side effect",
+    );
+  });
+
   it("returns 400 when the runtime input exceeds the message limit", async () => {
-    const handler = new AgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: () => createAgent("assistant-1"),
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
@@ -2200,8 +2578,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
   });
 
   it("accepts generic control-plane tool names like invoke_agent", async () => {
-    const handler = new AgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
@@ -2280,10 +2658,26 @@ describe("server/handlers/request/agent-stream.handler", () => {
       branch?: string | null;
       environmentName?: string | null;
     }> = [];
+    let observedEnvironmentTarget:
+      | {
+        environmentName: string;
+        environmentId: string | null;
+        token: string;
+      }
+      | undefined;
 
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
+      loadAgentSourceEnvironment: (_ctx, source, target, token) => {
+        observedEnvironmentTarget = {
+          environmentName: source.type === "environment" ? source.environmentName : source.type,
+          environmentId: target.runtimeTargetEnvironmentId ?? null,
+          token,
+        };
+        return Promise.resolve({});
+      },
       ensureProjectDiscovery: async () => {
         observedCacheCredential = getVerifiedCacheApiCredential();
+        return createEmptyDiscoveryResult();
       },
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -2327,6 +2721,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
 
     const body = createAgentStreamRequestBody({
+      project: {
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: "10000000-1000-4000-8000-100000000098",
+      },
       agentSource: {
         type: "environment",
         environmentName: "staging",
@@ -2374,6 +2772,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(runWithContextCalls[0]?.environmentName, "staging");
     assertEquals(runWithContextCalls[0]?.releaseId, "10000000-1000-4000-8000-100000000099");
     assertEquals(runWithContextCalls[0]?.productionMode, true);
+    assertEquals(observedEnvironmentTarget, {
+      environmentName: "staging",
+      environmentId: "10000000-1000-4000-8000-100000000098",
+      token: "request-scoped-user-token",
+    });
     assertEquals(observedCacheCredential, {
       token: "request-scoped-user-token",
       projectId: "proj-1",
@@ -2386,9 +2789,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let observedCacheCredential:
       | ReturnType<typeof getVerifiedCacheApiCredential>
       | undefined;
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         observedCacheCredential = getVerifiedCacheApiCredential();
+        return createEmptyDiscoveryResult();
       },
       getAgent: () => undefined,
       getAllAgentIds: () => [],
@@ -2431,10 +2835,85 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(getVerifiedCacheApiCredential(), undefined);
   });
 
+  it("does not fall back to the host token for a signed exact environment source", async () => {
+    let environmentLoadCalls = 0;
+    const runWithContextCalls: Array<{
+      token?: string;
+      productionMode?: boolean;
+      releaseId?: string | null;
+      branch?: string | null;
+      environmentName?: string | null;
+    }> = [];
+
+    const handler = createTestAgentStreamHandler({
+      loadAgentSourceEnvironment: () => {
+        environmentLoadCalls += 1;
+        return Promise.resolve({});
+      },
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: () => {
+        throw new Error("runtime should not be created before env lookup");
+      },
+    });
+
+    const body = createAgentStreamRequestBody({
+      project: {
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: "10000000-1000-4000-8000-100000000098",
+      },
+      agentSource: {
+        type: "environment",
+        environmentName: "staging",
+        releaseId: "10000000-1000-4000-8000-100000000099",
+      },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    const ctx = createCtx(publicKeyPem);
+    ctx.proxyToken = undefined;
+    ctx.adapter = {
+      ...ctx.adapter,
+      env: createNoopEnvAdapter(publicKeyPem),
+      fs: createNoopFsAdapter(runWithContextCalls),
+    };
+
+    const originalHostToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    const signingKeyEnv = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
+    const originalSigningKey = Deno.env.get(signingKeyEnv);
+    Deno.env.set("VERYFRONT_API_TOKEN", "host-only-token");
+    Deno.env.set(signingKeyEnv, publicKeyPem);
+    let result;
+    try {
+      result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        ctx,
+      );
+    } finally {
+      if (originalHostToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+      else Deno.env.set("VERYFRONT_API_TOKEN", originalHostToken);
+      if (originalSigningKey === undefined) Deno.env.delete(signingKeyEnv);
+      else Deno.env.set(signingKeyEnv, originalSigningKey);
+    }
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 401);
+    assertEquals(runWithContextCalls.length, 0);
+    assertEquals(environmentLoadCalls, 0);
+  });
+
   it("returns 409 when the same run is started twice", async () => {
     const sessionManager = new AgentRunSessionManager();
-    const handler = new AgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager,
@@ -2477,8 +2956,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("returns 500 when runtime execution setup fails unexpectedly", async () => {
     const sessionManager = new AgentRunSessionManager();
-    const handler = new AgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager,
@@ -2508,10 +2987,183 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(sessionManager.getRunStatus("run_1"), null);
   });
 
+  it("fails closed with typed authorization semantics when named env lookup is denied", async () => {
+    let discoveryCalls = 0;
+    let redirect: RequestRedirect | undefined;
+    installMockFetch(
+      ((_input, init) => {
+        redirect = observeFetchRequestInit(init).redirect;
+        return Promise.resolve(new Response(null, { status: 403 }));
+      }) as typeof fetch,
+    );
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
+      },
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+    });
+    const body = createAgentStreamRequestBody({
+      project: {
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: "10000000-1000-4000-8000-100000000098",
+      },
+      agentSource: {
+        type: "environment",
+        environmentName: "staging",
+        releaseId: "10000000-1000-4000-8000-100000000099",
+      },
+      credentials: { authToken: "denied-project-token" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+    });
+
+    try {
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 403);
+      assertEquals(result.response.headers.get("content-type"), "application/problem+json");
+      assertEquals(
+        (await result.response.json()).type,
+        "https://veryfront.com/docs/code/guides/errors#permission-denied",
+      );
+      assertEquals(discoveryCalls, 0);
+      assertEquals(redirect, "error");
+    } finally {
+      restoreMockFetch();
+    }
+  });
+
+  it("rejects a stale named environment source before loading project secrets", async () => {
+    let discoveryCalls = 0;
+    let environmentVariableCalls = 0;
+    installMockFetch(
+      ((input) => {
+        const url = String(input);
+        if (url.endsWith("/projects/support-agent-fork/environments")) {
+          return Promise.resolve(Response.json({
+            data: [{
+              id: "10000000-1000-4000-8000-100000000098",
+              name: "staging",
+              active_release_id: "release-new",
+            }],
+          }));
+        }
+        if (url.includes("/environment-variables?")) {
+          environmentVariableCalls += 1;
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${url}`));
+      }) as typeof fetch,
+    );
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
+      },
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+    });
+    const body = createAgentStreamRequestBody({
+      project: {
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: "10000000-1000-4000-8000-100000000098",
+      },
+      agentSource: {
+        type: "environment",
+        environmentName: "staging",
+        releaseId: "release-old",
+      },
+      credentials: { authToken: "project-token" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      audience: "support-agent-fork",
+      requestId: "run_1",
+    });
+
+    try {
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        { ...createCtx(publicKeyPem), projectSlug: "support-agent-fork" },
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 403);
+      assertEquals(result.response.headers.get("content-type"), "application/problem+json");
+      assertEquals(environmentVariableCalls, 0);
+      assertEquals(discoveryCalls, 0);
+    } finally {
+      restoreMockFetch();
+    }
+  });
+
+  it("does not discover or inject production secrets for a branch source", async () => {
+    let fetchCalls = 0;
+    installMockFetch(
+      (() => {
+        fetchCalls += 1;
+        return Promise.reject(new Error("branch source must not fetch an environment"));
+      }) as typeof fetch,
+    );
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+    });
+    const body = createAgentStreamRequestBody({
+      credentials: { authToken: "branch-project-token" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+    });
+
+    try {
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 404);
+      assertEquals(fetchCalls, 0);
+    } finally {
+      restoreMockFetch();
+    }
+  });
+
   it("emits a cancellation error instead of finishing after an abort during a pending read", async () => {
     const sessionManager = new TrackingSessionManager();
-    const handler = new AgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager,
@@ -2559,8 +3211,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("keeps a waiting run resumable after the client disconnects", async () => {
     const sessionManager = new TrackingSessionManager();
-    const handler = new AgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager,
@@ -2648,8 +3300,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("accepts an early resume before the runtime registers the tool wait", async () => {
     const sessionManager = new TrackingSessionManager();
     const resumeHandler = new AgentRunResumeHandler(sessionManager);
-    const handler = new AgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager,
@@ -2784,9 +3436,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("rejects new agent stream requests with 503 while the runtime is shutting down", async () => {
     let discoveryCalls = 0;
     let resolveOwnerCalls = 0;
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
       },
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -2838,5 +3491,292 @@ describe("server/handlers/request/agent-stream.handler", () => {
     } finally {
       __resetServerShuttingDownForTests();
     }
+  });
+});
+
+describe("agent stream handler 5xx logging", () => {
+  it("logs slug, category, detail and cause for a 5xx VeryfrontError", async () => {
+    const entries: LogEntry[] = [];
+    const previousLogLevel = Deno.env.get("LOG_LEVEL");
+    const detail = "Agent service context has not been initialized.";
+    const thrown = SERVICE_OVERLOADED.create({ detail, cause: "adapter boot failed" });
+
+    try {
+      Deno.env.set("LOG_LEVEL", "DEBUG");
+      refreshLoggerConfig();
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+
+      const handler = createTestAgentStreamHandler({
+        ensureProjectDiscovery: () => {
+          throw thrown;
+        },
+        getAgent: () => undefined,
+        getAllAgentIds: () => [],
+        sessionManager: new AgentRunSessionManager(),
+      });
+
+      const body = createAgentStreamRequestBody({
+        agentSource: { type: "branch", branch: "main" },
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        requestId: "run_1",
+      });
+
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status >= 500, true, `got ${result.response.status}`);
+
+      // The caller still must not see the detail.
+      const payload = await result.response.json();
+      assertEquals(payload.detail, undefined);
+
+      const logged = entries.find(
+        (entry) => entry.message === "Internal agent stream request failed",
+      );
+      assertExists(
+        logged,
+        `handler did not log; saw: ${entries.map((e) => e.message).join(" | ")}`,
+      );
+      const serialized = JSON.stringify(logged);
+      assertStringIncludes(serialized, detail);
+      // cause is typed `unknown` and is frequently a string, not an Error.
+      assertStringIncludes(serialized, "adapter boot failed");
+      assertStringIncludes(serialized, thrown.slug);
+      assertStringIncludes(serialized, thrown.category);
+    } finally {
+      __resetLogRecordEmitterForTests();
+      if (previousLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
+      else Deno.env.set("LOG_LEVEL", previousLogLevel);
+      refreshLoggerConfig();
+    }
+  });
+});
+
+describe("agent stream handler application-error reporting", () => {
+  async function handleWithStubbedReporter(
+    thrown: unknown,
+    runIdSegment = "run_1",
+  ): Promise<{ captures: CapturedApplicationError[]; response: Response }> {
+    const { captures, restore } = stubApplicationErrorReporter();
+
+    try {
+      const handler = createTestAgentStreamHandler({
+        ensureProjectDiscovery: () => {
+          throw thrown;
+        },
+        getAgent: () => undefined,
+        getAllAgentIds: () => [],
+        sessionManager: new AgentRunSessionManager(),
+      });
+
+      const body = createAgentStreamRequestBody({
+        agentSource: { type: "branch", branch: "main" },
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        requestId: "run_1",
+      });
+
+      const result = await handler.handle(
+        new Request(`https://example.com/api/control-plane/runs/${runIdSegment}/stream`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+
+      assertExists(result.response);
+      return { captures, response: result.response };
+    } finally {
+      restore();
+    }
+  }
+
+  it("reports a 5xx VeryfrontError with context that is actionable without a log dive", async () => {
+    const detail = "Remote executable discovery requires an isolated project runtime";
+    const thrown = SERVICE_OVERLOADED.create({ detail, cause: "adapter boot failed" });
+
+    const { captures, response } = await handleWithStubbedReporter(thrown);
+    await response.body?.cancel();
+
+    assertEquals(response.status, 503);
+    // The two branches are mutually exclusive, so a rethrow that
+    // double-reports turns this red.
+    assertEquals(captures.length, 1);
+
+    const captured = captures[0];
+    assertExists(captured);
+    assertEquals(captured.error, thrown);
+    assertEquals(captured.context.boundary, "agent.stream.request");
+    assertEquals(captured.context.method, "POST");
+    assertEquals(captured.context.requestId, "run_1");
+
+    const attributes = captured.context.attributes;
+    assertExists(attributes);
+    assertEquals(attributes["error.slug"], "service-overloaded");
+    assertEquals(attributes["error.category"], "SERVER");
+    assertEquals(attributes["error.detail"], detail);
+    assertEquals(attributes["error.cause"], "adapter boot failed");
+    assertEquals(attributes["http.status"], 503);
+    assertEquals(attributes["project.id"], "proj-1");
+    assertEquals(attributes["project.slug"], "demo-project");
+  });
+
+  it("reports and logs a shared environment failure only once across joiners and replays", async () => {
+    const entries: LogEntry[] = [];
+    const previousLogLevel = Deno.env.get("LOG_LEVEL");
+    const failure = NETWORK_ERROR.create({
+      detail: "Internal project environment request failed",
+    });
+    let fetchCount = 0;
+    const cache = new EnvironmentVariableCache(
+      async () => {
+        fetchCount += 1;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        throw failure;
+      },
+      60_000,
+      100,
+      { markFailureReplays: true },
+    );
+    const { captures, restore } = stubApplicationErrorReporter();
+
+    try {
+      Deno.env.set("LOG_LEVEL", "DEBUG");
+      refreshLoggerConfig();
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+
+      const handler = createTestAgentStreamHandler({
+        loadAgentSourceEnvironment: () =>
+          cache.get({
+            projectSlug: "test-project",
+            projectId: "10000000-1000-4000-8000-100000000005",
+            environmentId: "10000000-1000-4000-8000-100000000098",
+            token: "test-token",
+          }),
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+        getAgent: () => undefined,
+        getAllAgentIds: () => [],
+        sessionManager: new AgentRunSessionManager(),
+      });
+      const body = createAgentStreamRequestBody({
+        project: {
+          runtimeTargetKind: "environment",
+          runtimeTargetEnvironmentId: "10000000-1000-4000-8000-100000000098",
+        },
+        agentSource: {
+          type: "environment",
+          environmentName: "staging",
+          releaseId: "10000000-1000-4000-8000-100000000099",
+        },
+        credentials: { authToken: "request-scoped-user-token" },
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        requestId: "run_1",
+      });
+
+      const handleRequest = async (): Promise<Response> => {
+        const result = await handler.handle(
+          new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-veryfront-control-plane-jws": jws,
+            },
+            body,
+          }),
+          createCtx(publicKeyPem),
+        );
+        assertExists(result.response);
+        return result.response;
+      };
+
+      const responses = [
+        ...await Promise.all([handleRequest(), handleRequest()]),
+        await handleRequest(),
+      ];
+
+      assertEquals(fetchCount, 1);
+      const firstResponse = responses[0];
+      const joinedResponse = responses[1];
+      const cachedResponse = responses[2];
+      assertExists(firstResponse);
+      assertExists(joinedResponse);
+      assertExists(cachedResponse);
+      assertEquals(
+        [firstResponse.status, joinedResponse.status, cachedResponse.status],
+        [502, 502, 502],
+      );
+      assertEquals(
+        await firstResponse.clone().json(),
+        await joinedResponse.clone().json(),
+      );
+      assertEquals(
+        await firstResponse.clone().json(),
+        await cachedResponse.clone().json(),
+      );
+      assertEquals(captures.length, 1);
+      assertEquals(
+        entries.filter((entry) => entry.message === "Internal agent stream request failed").length,
+        1,
+      );
+      await Promise.all(responses.map((response) => response.body?.cancel()));
+    } finally {
+      restore();
+      __resetLogRecordEmitterForTests();
+      if (previousLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
+      else Deno.env.set("LOG_LEVEL", previousLogLevel);
+      refreshLoggerConfig();
+    }
+  });
+
+  // A malformed percent escape makes the run-id decode throw. Reporting runs
+  // inside the catch, so an unguarded decode would throw past it and destroy
+  // the 500 instead of describing it.
+  it("still reports and still answers 500 when the run id cannot be decoded", async () => {
+    const { captures, response } = await handleWithStubbedReporter(
+      new TypeError("unused: the malformed path throws first"),
+      "run_%ZZ",
+    );
+    await response.body?.cancel();
+
+    assertEquals(response.status, 500);
+    assertEquals(captures.length, 1);
+
+    const captured = captures[0];
+    assertExists(captured);
+    assertEquals(captured.context.boundary, "agent.stream.handler");
+    assertEquals(captured.context.requestId, undefined);
+
+    const attributes = captured.context.attributes;
+    assertExists(attributes);
+    assertEquals(attributes["http.status"], 500);
+    assertEquals(attributes["project.id"], "proj-1");
+  });
+
+  it("stays silent for a 4xx VeryfrontError so Sentry is not flooded", async () => {
+    const thrown = INVALID_ARGUMENT.create({
+      detail: "Agent source branch is not a known branch",
+    });
+
+    const { captures, response } = await handleWithStubbedReporter(thrown);
+    await response.body?.cancel();
+
+    assertEquals(response.status, 400);
+    assertEquals(captures.length, 0);
   });
 });

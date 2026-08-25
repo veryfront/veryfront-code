@@ -12,8 +12,50 @@ export interface ProxyAccessControlLogger {
 }
 
 export interface ProtectedProxyEnvironment {
+  id?: string;
   name: string;
   protected?: boolean;
+}
+
+/** Who a verified token speaks for at the gate, and what it is bound to. */
+export interface ProxyPrincipal {
+  userId: string;
+  /** Present for an environment access token: the one target it may open. */
+  environmentAccess?: { projectId: string; environmentId: string };
+}
+
+const ENVIRONMENT_ACCESS_TOKEN_USE = "environment_access";
+const ENVIRONMENT_GATE_AUDIENCE = "environment-gate";
+
+function hasGateAudience(payload: unknown): boolean {
+  if (typeof payload !== "object" || payload === null) return false;
+  if (!Object.hasOwn(payload, "aud")) return false;
+  const aud = (payload as Record<string, unknown>).aud;
+  if (typeof aud === "string") return aud === ENVIRONMENT_GATE_AUDIENCE;
+  return Array.isArray(aud) && aud.includes(ENVIRONMENT_GATE_AUDIENCE);
+}
+
+/**
+ * Reads the principal off a verified payload.
+ *
+ * A plain user token speaks for its user. An environment access token has to
+ * say so twice, by audience and by use, and name both the project and the
+ * environment it is bound to; anything that claims only part of that is not a
+ * credential this gate issued for and is refused outright.
+ */
+export function toProxyPrincipal(payload: unknown): ProxyPrincipal | undefined {
+  const userId = readOwnString(payload, "userId", 512);
+  if (!userId) return undefined;
+
+  const tokenUse = readOwnString(payload, "tokenUse", 64);
+  const gateAudience = hasGateAudience(payload);
+  if (tokenUse === undefined && !gateAudience) return { userId };
+  if (tokenUse !== ENVIRONMENT_ACCESS_TOKEN_USE || !gateAudience) return undefined;
+
+  const projectId = readOwnString(payload, "projectId", 512);
+  const environmentId = readOwnString(payload, "environmentId", 512);
+  if (!projectId || !environmentId) return undefined;
+  return { userId, environmentAccess: { projectId, environmentId } };
 }
 
 export interface ProtectedProxyProjectUser {
@@ -106,6 +148,14 @@ export async function extractUserIdFromToken(
   apiBaseUrl: string,
   log?: ProxyAccessControlLogger,
 ): Promise<string | undefined> {
+  return (await extractProxyPrincipal(token, apiBaseUrl, log))?.userId;
+}
+
+export async function extractProxyPrincipal(
+  token: string,
+  apiBaseUrl: string,
+  log?: ProxyAccessControlLogger,
+): Promise<ProxyPrincipal | undefined> {
   const auth = getAuthProvider();
 
   let header: unknown;
@@ -132,7 +182,7 @@ export async function extractUserIdFromToken(
       const payload = await auth.verifyWithJwks(token, jwksUrl, {
         algorithms: ["RS256"],
       });
-      return readOwnString(payload, "userId", 512);
+      return toProxyPrincipal(payload);
     } catch (error) {
       log?.debug("RS256 JWT verification failed", {
         error: safeErrorMessage(error),
@@ -158,13 +208,45 @@ export async function extractUserIdFromToken(
     // passed to the extension factory; the explicit env check above is kept
     // so callers can warn once before attempting verification.
     const payload = await auth.verify(token, { algorithms: ["HS256"] });
-    return readOwnString(payload, "userId", 512);
+    return toProxyPrincipal(payload);
   } catch (error) {
     log?.debug("JWT verification failed", {
       error: safeErrorMessage(error),
     });
     return undefined;
   }
+}
+
+/**
+ * Apex domains that may host the sign-in page, most specific first.
+ *
+ * The result is always one of these constants, never a value taken from the
+ * request, so a forged Host header cannot redirect a user off-platform.
+ */
+const SIGN_IN_APEX_DOMAINS = ["veryfront.org", "veryfront.com"] as const;
+const DEFAULT_SIGN_IN_APEX = "veryfront.com";
+
+/**
+ * Pick the sign-in host matching the environment the request arrived on.
+ *
+ * This used to be hardcoded to production. A staging visitor was therefore sent
+ * to veryfront.com to sign in, received a cookie scoped to that domain, and
+ * returned to a veryfront.org host that never receives it, so the redirect loop
+ * could not close and staging previews were unreachable while signed in.
+ */
+function resolveSignInApex(hostname: string, isHostedProductionDeployment: boolean): string {
+  // Production-mode deployments keep the default apex. `*.production.veryfront.org`
+  // has signed in at veryfront.com since #1827, and which environment owns that
+  // hostname is not derivable from the code, so it is left alone rather than
+  // changed on an assumption. Only preview hosts, which the cluster shows split
+  // cleanly (production serves *.preview.veryfront.com, staging serves
+  // *.preview.veryfront.org), are routed by apex here.
+  if (isHostedProductionDeployment) return DEFAULT_SIGN_IN_APEX;
+
+  for (const apex of SIGN_IN_APEX_DOMAINS) {
+    if (hostname === apex || hostname.endsWith(`.${apex}`)) return apex;
+  }
+  return DEFAULT_SIGN_IN_APEX;
 }
 
 export function buildProxyAuthRedirectUrl(url: URL): string {
@@ -182,7 +264,8 @@ export function buildProxyAuthRedirectUrl(url: URL): string {
     ? `https://${url.hostname}${returnPath}`
     : returnPath;
 
-  return `https://veryfront.com/sign-in?from=${encodeURIComponent(returnTarget)}`;
+  const signInApex = resolveSignInApex(url.hostname, isHostedProductionDeployment);
+  return `https://${signInApex}/sign-in?from=${encodeURIComponent(returnTarget)}`;
 }
 
 export function isProjectMember(
@@ -196,17 +279,19 @@ export function isProjectMember(
 export async function checkProtectedProxyAccess(input: {
   url: URL;
   matchingEnv: ProtectedProxyEnvironment | undefined;
+  /** The project the matching environment belongs to, for bound tokens. */
+  projectId?: string;
   userToken: string | undefined;
   users: ProtectedProxyProjectUser[] | undefined;
   apiBaseUrl: string;
   logger?: ProxyAccessControlLogger;
   logContext?: Record<string, unknown>;
   isSignedInternalControlPlaneRequest: boolean;
-  extractUserIdFromToken?: (
+  extractPrincipal?: (
     token: string,
     apiBaseUrl: string,
     log?: ProxyAccessControlLogger,
-  ) => Promise<string | undefined>;
+  ) => Promise<ProxyPrincipal | undefined>;
 }): Promise<ProxyAccessError | null> {
   const {
     apiBaseUrl,
@@ -242,13 +327,13 @@ export async function checkProtectedProxyAccess(input: {
     return { status: 302, message: "Authentication required", redirectUrl };
   }
 
-  const resolveUserId = input.extractUserIdFromToken ?? extractUserIdFromToken;
-  const userId = await resolveUserId(
+  const resolvePrincipal = input.extractPrincipal ?? extractProxyPrincipal;
+  const principal = await resolvePrincipal(
     userToken,
     apiBaseUrl,
     logger,
   );
-  if (!userId) {
+  if (!principal) {
     const redirectUrl = buildProxyAuthRedirectUrl(url);
     logger?.info("Could not extract userId from token", {
       ...logContext,
@@ -256,6 +341,23 @@ export async function checkProtectedProxyAccess(input: {
       redirectUrl,
     });
     return { status: 302, message: "Authentication required", redirectUrl };
+  }
+  const { userId, environmentAccess } = principal;
+  if (environmentAccess) {
+    // A bound token opens the one environment it names, nothing else. An
+    // environment the proxy cannot identify fails closed.
+    const boundElsewhere = input.projectId === undefined ||
+      environmentAccess.projectId !== input.projectId ||
+      matchingEnv.id === undefined ||
+      environmentAccess.environmentId !== matchingEnv.id;
+    if (boundElsewhere) {
+      logger?.info("Environment access token is bound to another target", {
+        ...logContext,
+        environmentName: matchingEnv.name,
+        userId,
+      });
+      return { status: 403, message: "Access denied" };
+    }
   }
   if (!isProjectMember(users, userId)) {
     logger?.info("User is not a member of the project", {

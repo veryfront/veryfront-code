@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { usePageContext, useRouter } from "../../react/runtime/core.ts";
+import type { ClientRuntimeHydrationData } from "./client-module-strategy.ts";
 import { wrapWithRouterProvider } from "./hydration-router.ts";
 
 function docWithImportMap(imports: Record<string, string>): Document {
@@ -76,6 +77,39 @@ describe("rendering/rsc/wrapWithRouterProvider", () => {
     // The full catch-all path survives — not just the first segment.
     const html = renderToStaticMarkup(wrapped as React.ReactElement);
     assertStringIncludes(html, "slug:guides/intro");
+  });
+
+  it("wraps the child even when the page has no hydration data", async () => {
+    const doc = docWithImportMap({ "veryfront/router": "https://example.com/router.js" });
+
+    const Consumer = (): React.ReactElement => {
+      const r = useRouter();
+      const p = usePageContext();
+      return <i>p:{String(r.params.id)}|f:{String(p.frontmatter.t)}</i>;
+    };
+    const child = React.createElement(Consumer);
+
+    const cases: Array<[string, ClientRuntimeHydrationData | null]> = [
+      ["null hydration data", null],
+      ["a payload without params", { frontmatter: {} }],
+    ];
+
+    for (const [label, hydrationData] of cases) {
+      const wrapped = await wrapWithRouterProvider(child, hydrationData, doc);
+
+      // Without this the swallowed throw is indistinguishable from the
+      // documented import-map fallback below.
+      assertEquals(
+        wrapped === child,
+        false,
+        `a router-owning import map must still wrap with ${label}`,
+      );
+      assertStringIncludes(
+        renderToStaticMarkup(wrapped as React.ReactElement),
+        "p:undefined|f:undefined",
+        `the router provider must render with ${label}`,
+      );
+    }
   });
 
   it("falls back to the bare child when the import map does not own veryfront/router", async () => {

@@ -27,6 +27,7 @@ import {
   SKILL_SUBDIR_MAX_ENTRIES,
 } from "./limits.ts";
 import { hasControlCharacters, isWellFormedUtf16 } from "./string-safety.ts";
+import { isCanonicalAdapterRelativeSkillRoot } from "./types.ts";
 import type { SkillOperationBudget } from "./operation-budget.ts";
 const SAFE_SKILL_PATH_SEGMENT_REGEX = /^[A-Za-z0-9._-]+$/;
 const apply = Reflect.apply;
@@ -45,7 +46,7 @@ const stringReplaceAll = String.prototype.replaceAll;
 const stringSplit = String.prototype.split;
 const stringStartsWith = String.prototype.startsWith;
 
-function hasOwn(value: object, key: PropertyKey): boolean {
+function hasOwn(value: PropertyDescriptor, key: PropertyKey): boolean {
   return apply(objectHasOwnProperty, value, [key]) as boolean;
 }
 
@@ -221,8 +222,11 @@ async function hasSymlinkInPath(
   fsAdapter?: FileSystemAdapter,
   maxDirectoryEntries = SKILL_SUBDIR_MAX_ENTRIES,
 ): Promise<boolean> {
-  const resolvedRoot = resolve(skillRoot);
-  const resolvedTarget = resolve(canonicalPath);
+  // Adapter paths belong to the adapter's namespace. Resolving an
+  // adapter-relative path against the host cwd would both change its meaning
+  // and send a path the adapter never advertised back into the adapter.
+  const resolvedRoot = fsAdapter ? skillRoot : resolve(skillRoot);
+  const resolvedTarget = fsAdapter ? canonicalPath : resolve(canonicalPath);
   const rel = apply(
     stringReplaceAll,
     relative(resolvedRoot, resolvedTarget),
@@ -314,6 +318,23 @@ function requireBoundedPath(
     throw new TypeError(`Skill ${label} must be an absolute path`);
   }
   return value;
+}
+
+function requireBoundedSkillRoot(
+  value: unknown,
+  fsAdapter: FileSystemAdapter | undefined,
+): string {
+  const root = requireBoundedPath(
+    value,
+    "root",
+    SKILL_ROOT_PATH_MAX_LENGTH,
+    fsAdapter === undefined,
+  );
+  if (!fsAdapter || isAbsolute(root)) return root;
+  if (!isCanonicalAdapterRelativeSkillRoot(root)) {
+    throw new TypeError("Skill adapter-relative root must be a canonical relative path");
+  }
+  return root;
 }
 
 function normalizeAllowedSubdirs(
@@ -466,13 +487,45 @@ async function assertSafeSkillDirectory(
   );
 }
 
+async function assertSafeSkillFile(
+  skillRoot: string,
+  filePath: string,
+  displayPath: string,
+  fsAdapter?: FileSystemAdapter,
+  maxDirectoryEntries = SKILL_SUBDIR_MAX_ENTRIES,
+): Promise<void> {
+  await assertIsFile(filePath, fsAdapter);
+  if (
+    await hasSymlinkInPath(
+      skillRoot,
+      filePath,
+      fsAdapter,
+      maxDirectoryEntries,
+    )
+  ) {
+    throw toError(
+      createError({
+        type: "agent",
+        message: `Skill path contains a symlink and is not allowed: "${displayPath}"`,
+      }),
+    );
+  }
+  await assertRealPathContained(
+    skillRoot,
+    filePath,
+    displayPath,
+    "path",
+    fsAdapter,
+  );
+}
+
 /**
  * Validate a requested path with the public compatibility resource policy.
  * Relative paths may contain up to 4096 characters and filesystem directory
  * enumeration is not entry-capped. {@link validateStrictSkillPath} applies
  * the runtime filesystem ceilings.
  *
- * @param skillRoot - Absolute path to the skill directory
+ * @param skillRoot - Absolute local path, or an adapter-relative path when an fsAdapter is supplied
  * @param requestedPath - Relative path requested (e.g. "references/CLAUSES.md")
  * @param allowedSubdirs - Allowed top-level subdirectories (e.g. ["references", "assets"])
  * @param fsAdapter - Optional file system adapter for VFS/cloud-backed projects
@@ -539,12 +592,7 @@ async function validateSkillPathWithLimits(
   allowedSubdirMaxEntries: number,
   directoryMaxEntries: number,
 ): Promise<string> {
-  const boundedRoot = requireBoundedPath(
-    skillRoot,
-    "root",
-    SKILL_ROOT_PATH_MAX_LENGTH,
-    true,
-  );
+  const boundedRoot = requireBoundedSkillRoot(skillRoot, fsAdapter);
   const boundedRequestedPath = requireBoundedPath(
     requestedPath,
     "relative path",
@@ -593,31 +641,12 @@ async function validateSkillPathWithLimits(
       }),
     );
   }
-  await assertIsFile(canonicalPath, fsAdapter);
-
-  // Enforce strict no-symlink policy for skill files.
-  if (
-    await hasSymlinkInPath(
-      boundedRoot,
-      canonicalPath,
-      fsAdapter,
-      directoryMaxEntries,
-    )
-  ) {
-    throw toError(
-      createError({
-        type: "agent",
-        message: `Skill path contains a symlink and is not allowed: "${boundedRequestedPath}"`,
-      }),
-    );
-  }
-
-  await assertRealPathContained(
+  await assertSafeSkillFile(
     boundedRoot,
     canonicalPath,
     boundedRequestedPath,
-    "path",
     fsAdapter,
+    directoryMaxEntries,
   );
 
   return canonicalPath;
@@ -629,7 +658,7 @@ async function validateSkillPathWithLimits(
  * iteration order. {@link listStrictSkillSubdir} applies the runtime
  * filesystem ceilings and deterministic ordering.
  *
- * @param skillRoot - Absolute path to the skill directory
+ * @param skillRoot - Absolute local path, or an adapter-relative path when an fsAdapter is supplied
  * @param subdir - Subdirectory name (e.g. "references", "scripts")
  * @param fsAdapter - Optional file system adapter for VFS/cloud-backed projects
  * @returns Array of relative paths like "references/filename.md"
@@ -670,6 +699,121 @@ export async function listStrictSkillSubdir(
   );
 }
 
+/**
+ * Recursively list a strict skill subdirectory in deterministic path order.
+ *
+ * The shared 1000-entry ceiling covers files and directories across the whole
+ * tree, not each directory independently. Every traversed directory and file
+ * is revalidated for type, root containment, and no-symlink semantics.
+ */
+export async function listStrictSkillTree(
+  skillRoot: string,
+  subdir: string,
+  fsAdapter?: FileSystemAdapter,
+  options: SkillPathOperationOptions = {},
+): Promise<string[]> {
+  assertStrictSymlinkCapabilities(fsAdapter);
+  if (options.budget) {
+    return await options.budget.run(() => listStrictSkillTree(skillRoot, subdir, fsAdapter));
+  }
+  return await listStrictSkillTreeWithLimits(
+    skillRoot,
+    subdir,
+    fsAdapter,
+    SKILL_SUBDIR_MAX_ENTRIES,
+  );
+}
+
+async function listStrictSkillTreeWithLimits(
+  skillRoot: string,
+  subdir: string,
+  fsAdapter: FileSystemAdapter | undefined,
+  maxTreeEntries: number,
+): Promise<string[]> {
+  const boundedRoot = requireBoundedSkillRoot(skillRoot, fsAdapter);
+  assertSafePathSegment(subdir, "subdirectory");
+  const rootDirPath = join(boundedRoot, subdir);
+
+  let rootExists: boolean;
+  try {
+    rootExists = fsAdapter ? await fsAdapter.exists(rootDirPath) : await exists(rootDirPath);
+  } catch (error) {
+    if (isFileNotFoundError(error)) return [];
+    throw error;
+  }
+  if (!rootExists) return [];
+
+  const pendingDirectories: string[] = [];
+  const files: string[] = [];
+  appendOwnArrayElement(pendingDirectories, subdir);
+  let pendingIndex = 0;
+  let treeEntryCount = 0;
+
+  while (pendingIndex < pendingDirectories.length) {
+    const relativeDirectory = pendingDirectories[pendingIndex++]!;
+    const directoryPath = join(boundedRoot, relativeDirectory);
+    await assertSafeSkillDirectory(
+      boundedRoot,
+      directoryPath,
+      relativeDirectory,
+      fsAdapter,
+      maxTreeEntries,
+    );
+
+    const names = new Set<string>();
+    const entries = fsAdapter ? fsAdapter.readDir(directoryPath) : readDir(directoryPath);
+    for await (const rawEntry of entries) {
+      treeEntryCount += 1;
+      if (treeEntryCount > maxTreeEntries) {
+        throw new RangeError(
+          `Skill subdirectory tree may contain at most ${maxTreeEntries} entries`,
+        );
+      }
+      const entry = captureDirectoryEntry(rawEntry);
+      assertSafeDirectoryEntryName(entry.name);
+      if (apply(setHas, names, [entry.name]) as boolean) {
+        throw new TypeError("Skill subdirectory contains a duplicate entry name");
+      }
+      apply(setAdd, names, [entry.name]);
+      const relativePath = `${relativeDirectory}/${entry.name}`;
+      if (relativePath.length > SKILL_RELATIVE_PATH_MAX_LENGTH) {
+        throw new RangeError(
+          `Skill relative paths may contain at most ${SKILL_RELATIVE_PATH_MAX_LENGTH} characters`,
+        );
+      }
+      if (entry.isSymlink) {
+        throw toError(
+          createError({
+            type: "agent",
+            message: `Skill directory entry is a symlink and is not allowed: "${relativePath}"`,
+          }),
+        );
+      }
+      if (entry.isFile === entry.isDirectory) {
+        throw new TypeError("Skill directory entry must identify exactly one file or directory");
+      }
+
+      const canonicalPath = join(boundedRoot, relativePath);
+      if (entry.isDirectory) {
+        appendOwnArrayElement(pendingDirectories, relativePath);
+        continue;
+      }
+      await assertSafeSkillFile(
+        boundedRoot,
+        canonicalPath,
+        relativePath,
+        fsAdapter,
+        maxTreeEntries,
+      );
+      appendOwnArrayElement(files, relativePath);
+    }
+  }
+
+  return apply(arraySort, files, [
+    (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0,
+  ]) as string[];
+}
+
 async function listSkillSubdirWithLimits(
   skillRoot: string,
   subdir: string,
@@ -677,12 +821,7 @@ async function listSkillSubdirWithLimits(
   maxDirectoryEntries: number,
   sortDeterministically: boolean,
 ): Promise<string[]> {
-  const boundedRoot = requireBoundedPath(
-    skillRoot,
-    "root",
-    SKILL_ROOT_PATH_MAX_LENGTH,
-    true,
-  );
+  const boundedRoot = requireBoundedSkillRoot(skillRoot, fsAdapter);
   assertSafePathSegment(subdir, "subdirectory");
   const dirPath = join(boundedRoot, subdir);
 
@@ -709,6 +848,7 @@ async function listSkillSubdirWithLimits(
   );
 
   const files: string[] = [];
+  const names = new Set<string>();
   const entries = fsAdapter ? fsAdapter.readDir(dirPath) : readDir(dirPath);
   let entryCount = 0;
 
@@ -721,6 +861,10 @@ async function listSkillSubdirWithLimits(
     }
     const entry = captureDirectoryEntry(rawEntry);
     assertSafeDirectoryEntryName(entry.name);
+    if (apply(setHas, names, [entry.name]) as boolean) {
+      throw new TypeError("Skill subdirectory contains a duplicate entry name");
+    }
+    apply(setAdd, names, [entry.name]);
     if (entry.isSymlink) {
       throw toError(
         createError({

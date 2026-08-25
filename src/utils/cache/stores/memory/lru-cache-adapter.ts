@@ -56,7 +56,7 @@ function defaultSizeEstimator(value: unknown): number {
 export class LRUCacheAdapter implements CacheAdapter {
   private readonly store = new Map<string, LRUNode<unknown>>();
   private readonly tagIndex = new Map<string, Set<string>>();
-  private readonly listManager = new LRUListManager<unknown>();
+  private readonly listManager: LRUListManager<unknown>;
   private readonly evictionManager: EvictionManager<LRUEntry<unknown>>;
   private readonly entryManager: EntryManager;
   private currentSize = 0;
@@ -64,12 +64,15 @@ export class LRUCacheAdapter implements CacheAdapter {
   private readonly maxSizeBytes: number;
   private readonly defaultTtlMs?: number;
   private readonly onEvict?: (key: string, value: unknown) => void;
+  private readonly now: () => number;
 
   constructor(options: LRUCacheOptions = {}) {
     this.maxEntries = options.maxEntries || 1000;
     this.maxSizeBytes = options.maxSizeBytes || 50 * 1024 * 1024;
     this.defaultTtlMs = options.ttlMs;
     this.onEvict = options.onEvict;
+    this.now = options.now ?? Date.now;
+    this.listManager = new LRUListManager(this.now);
 
     const estimateSizeOf = options.estimateSizeOf ?? defaultSizeEstimator;
 
@@ -77,14 +80,23 @@ export class LRUCacheAdapter implements CacheAdapter {
       onEvict: this.onEvict,
       loggerContext: "MemoryCache",
     });
-    this.entryManager = new EntryManager(estimateSizeOf);
+    this.entryManager = new EntryManager(estimateSizeOf, this.now);
+  }
+
+  /**
+   * Entries expire exactly at their expiry timestamp. Delegates to
+   * EvictionManager.isExpired so the boundary semantics have one source of
+   * truth across the cache subsystem.
+   */
+  private isExpired(entry: LRUEntry<unknown>, now: number): boolean {
+    return this.evictionManager.isExpired(entry, undefined, now);
   }
 
   get<T>(key: string): T | undefined {
     const node = this.store.get(key);
     if (!node) return undefined;
 
-    if (this.evictionManager.isExpired(node.entry)) {
+    if (this.isExpired(node.entry, this.now())) {
       this.delete(key);
       return undefined;
     }
@@ -94,6 +106,9 @@ export class LRUCacheAdapter implements CacheAdapter {
   }
 
   set<T>(key: string, value: T, ttlMs?: number, tags?: string[]): void {
+    // Snapshot tags so a caller mutating the array after set() cannot desync
+    // the tag index from the tags retained on the entry.
+    const storedTags = tags ? [...tags] : undefined;
     const existingNode = this.store.get(key);
 
     if (existingNode) {
@@ -101,7 +116,7 @@ export class LRUCacheAdapter implements CacheAdapter {
         existingNode,
         value,
         ttlMs,
-        tags,
+        storedTags,
         this.defaultTtlMs,
         this.listManager,
         this.tagIndex,
@@ -112,7 +127,7 @@ export class LRUCacheAdapter implements CacheAdapter {
         key,
         value,
         ttlMs,
-        tags,
+        storedTags,
         this.defaultTtlMs,
         this.listManager,
         this.store,
@@ -120,7 +135,7 @@ export class LRUCacheAdapter implements CacheAdapter {
       this.currentSize += size;
     }
 
-    if (tags?.length) this.entryManager.updateTagIndex(tags, key, this.tagIndex);
+    if (storedTags?.length) this.entryManager.updateTagIndex(storedTags, key, this.tagIndex);
 
     this.currentSize = this.evictionManager.enforceMemoryLimits(
       this.listManager,
@@ -169,7 +184,16 @@ export class LRUCacheAdapter implements CacheAdapter {
   clear(): void {
     if (this.onEvict) {
       for (const [key, node] of this.store) {
-        this.onEvict(key, node.entry.value);
+        try {
+          this.onEvict(key, node.entry.value);
+        } catch (error) {
+          // A throwing observer must not abort clear() and leave the cache
+          // populated; every entry is still notified and then removed.
+          logger.warn("onEvict callback threw during clear", {
+            key,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
     }
 
@@ -180,21 +204,39 @@ export class LRUCacheAdapter implements CacheAdapter {
   }
 
   getStats(): LRUCacheStats {
+    // Pure expiry view: a stats read must not delete entries or fire onEvict
+    // observers. Expired entries are excluded from every reported figure
+    // (matching keys()/entries()); reclamation stays with cleanupExpired()
+    // and the mutating paths.
+    const now = this.now();
+    let entries = 0;
+    let sizeBytes = 0;
+    const liveTags = new Set<string>();
+
+    for (const node of this.store.values()) {
+      if (this.isExpired(node.entry, now)) continue;
+      entries++;
+      sizeBytes += node.entry.size;
+      if (node.entry.tags) {
+        for (const tag of node.entry.tags) liveTags.add(tag);
+      }
+    }
+
     return {
-      entries: this.store.size,
-      sizeBytes: this.currentSize,
+      entries,
+      sizeBytes,
       maxEntries: this.maxEntries,
       maxSizeBytes: this.maxSizeBytes,
-      tags: this.tagIndex.size,
+      tags: liveTags.size,
     };
   }
 
   cleanupExpired(): number {
-    const now = Date.now();
+    const now = this.now();
     let cleaned = 0;
 
     for (const [key, node] of this.store) {
-      if (typeof node.entry.expiry !== "number" || now <= node.entry.expiry) continue;
+      if (!this.isExpired(node.entry, now)) continue;
       this.delete(key);
       cleaned++;
     }
@@ -202,19 +244,34 @@ export class LRUCacheAdapter implements CacheAdapter {
     return cleaned;
   }
 
-  keys(): IterableIterator<string> {
-    return this.store.keys();
+  *keys(): IterableIterator<string> {
+    const now = this.now();
+    for (const [key, node] of this.store) {
+      if (!this.isExpired(node.entry, now)) yield key;
+    }
   }
 
   *entries<T>(): IterableIterator<[string, T]> {
+    const now = this.now();
     for (const [key, node] of this.store) {
-      if (!this.evictionManager.isExpired(node.entry)) {
+      if (!this.isExpired(node.entry, now)) {
         yield [key, node.entry.value as T];
       }
     }
   }
 
   has(key: string): boolean {
-    return this.get(key) !== undefined;
+    const node = this.store.get(key);
+    if (!node) return false;
+
+    if (this.isExpired(node.entry, this.now())) {
+      this.delete(key);
+      return false;
+    }
+
+    // A stored `undefined` value is still a present entry; membership must
+    // not be derived from get()'s undefined sentinel.
+    this.listManager.moveToFront(node);
+    return true;
   }
 }

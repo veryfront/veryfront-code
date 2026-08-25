@@ -15,6 +15,7 @@ import { createStrictContext } from "../create-strict-context.ts";
 import { cx as cn } from "./cva.ts";
 import { SearchIcon, XIcon } from "./icons/index.ts";
 import { Dialog, DialogContent, DialogTitle } from "./dialog.tsx";
+import { composeRefs } from "./slot.tsx";
 
 const useIsomorphicLayoutEffect = typeof document === "undefined"
   ? React.useEffect
@@ -348,6 +349,8 @@ export function CommandDialog({
 export interface CommandInputProps
   extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "value"> {
   icon?: React.ReactNode;
+  /** Consumer ref for the search input. */
+  ref?: React.Ref<HTMLInputElement>;
 }
 
 /** Search input row — bound to the command's filter query. */
@@ -361,11 +364,16 @@ export function CommandInput({
   "aria-labelledby": ariaLabelledBy,
   "aria-controls": ariaControls,
   "aria-expanded": ariaExpanded,
+  ref,
   ...inputProps
 }: CommandInputProps): React.ReactElement {
   const ctx = useCommand();
   const hasValue = ctx.search.length > 0;
   const inputRef = React.useRef<HTMLInputElement>(null);
+  const composedInputRef = React.useMemo(
+    () => composeRefs<HTMLInputElement>(inputRef, ref),
+    [ref],
+  );
   const controlledListId = ariaControls ?? ctx.primaryListId;
   const isExpanded = ariaExpanded === undefined
     ? Boolean(controlledListId)
@@ -378,7 +386,7 @@ export function CommandInput({
       </span>
       <input
         {...inputProps}
-        ref={inputRef}
+        ref={composedInputRef}
         role="combobox"
         aria-autocomplete="list"
         aria-controls={controlledListId}
@@ -418,10 +426,13 @@ export function CommandList({
   variant = "default",
   id: suppliedId,
   children,
+  ref,
   "aria-label": ariaLabel,
   "aria-labelledby": ariaLabelledBy,
   ...listProps
-}: React.HTMLAttributes<HTMLDivElement> & { variant?: "default" | "flush" }): React.ReactElement {
+}:
+  & React.HTMLAttributes<HTMLDivElement>
+  & { variant?: "default" | "flush"; ref?: React.Ref<HTMLDivElement> }): React.ReactElement {
   const ctx = useCommand();
   const generatedId = React.useId();
   const id = suppliedId ?? generatedId;
@@ -436,6 +447,7 @@ export function CommandList({
     <CommandListIdContext.Provider value={id}>
       <div
         {...listProps}
+        ref={ref}
         id={id}
         role="listbox"
         aria-label={ariaLabelledBy ? ariaLabel : ariaLabel ?? "Command results"}
@@ -531,6 +543,8 @@ export interface CommandItemProps extends Omit<React.HTMLAttributes<HTMLDivEleme
   align?: "center" | "start";
   disabled?: boolean;
   onSelect?: (value?: string) => void;
+  /** Consumer ref for the rendered command item. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** A selectable, filterable result row nested within {@link CommandList}. */
@@ -544,6 +558,7 @@ export function CommandItem({
   id: suppliedId,
   onClick,
   onMouseMove,
+  ref,
   ...itemProps
 }: CommandItemProps): React.ReactElement {
   const ctx = useCommand();
@@ -555,6 +570,10 @@ export function CommandItem({
   const id = suppliedId ?? generatedId;
   const text = value ?? "";
   const elementRef = React.useRef<HTMLDivElement>(null);
+  const composedItemRef = React.useMemo(
+    () => composeRefs<HTMLDivElement>(elementRef, ref),
+    [ref],
+  );
   const selectionRef = React.useRef({ disabled, onSelect, value });
   useIsomorphicLayoutEffect(() => {
     selectionRef.current = { disabled, onSelect, value };
@@ -591,7 +610,7 @@ export function CommandItem({
   return (
     <div
       {...itemProps}
-      ref={elementRef}
+      ref={composedItemRef}
       id={id}
       data-command-item=""
       data-selected={active || undefined}

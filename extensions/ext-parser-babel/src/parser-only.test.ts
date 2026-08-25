@@ -10,18 +10,64 @@ describe("BabelParseOnlyParser", () => {
       code: "export const view: JSX.Element = <main />;",
       filePath: "view.tsx",
     });
-    const commonJs = await parser.parse({
-      code: "if (module.parent) return; module.exports = true;",
-      filePath: "entry.cjs",
-    });
+    const commonJs = await Promise.all(
+      ["entry.cjs", "entry.js"].map((filePath) =>
+        parser.parse({
+          code: "if (module.parent) return; module.exports = true;",
+          filePath,
+        })
+      ),
+    );
     const decorated = await parser.parse({
       code: "class Store { @logged accessor value = 1; }",
       filePath: "store.ts",
     });
 
     assertEquals(typedJsx.type, "File");
-    assertEquals(commonJs.type, "File");
+    assertEquals(commonJs.map((ast) => ast.type), ["File", "File"]);
     assertEquals(decorated.type, "File");
+  });
+
+  it("parses compiled JSX under a Markdown or MDX path", async () => {
+    // Markdown and MDX reach the parser as compiled JSX. Choosing the Babel
+    // plugins from the authored extension would leave JSX off and the markup
+    // would parse as a regular expression.
+    const compiled = "export default function MDXContent() { return <h1>Title</h1>; }";
+
+    const parsed = await Promise.all(
+      ["page.mdx", "page.md", "page.MDX"].map((filePath) =>
+        parser.parse({ code: compiled, filePath })
+      ),
+    );
+
+    assertEquals(parsed.map((ast) => ast.type), ["File", "File", "File"]);
+  });
+
+  it("keeps `<T>x` a type assertion for a `.ts` path", async () => {
+    const asserted = await parser.parse({
+      code: "const value = <string> input;",
+      filePath: "module.ts",
+    });
+
+    assertEquals(asserted.type, "File");
+  });
+
+  it("parses legacy TypeScript parameter decorators", async () => {
+    const ast = await parser.parse({
+      code: "class Store { load(@inject dep: Dependency) { return dep; } }",
+      filePath: "store.ts",
+    });
+
+    assertEquals(ast.type, "File");
+  });
+
+  it("parses legacy TypeScript decorator type arguments", async () => {
+    const ast = await parser.parse({
+      code: "@logged<string> export class Store {}",
+      filePath: "store.ts",
+    });
+
+    assertEquals(ast.type, "File");
   });
 
   it("preserves Babel syntax-error identity and location metadata", async () => {

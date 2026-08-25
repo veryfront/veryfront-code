@@ -28,6 +28,26 @@ import { withTestContext } from "../../_helpers/context.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 import { invalidateProjectMiddlewareCache } from "../../../src/server/runtime-handler/project-middleware.ts";
 import { registerTailwindExtension } from "../../../src/html/styles-builder/__tests__/css-processor-setup.ts";
+import { deleteEnv, getHostEnv, setEnv } from "../../../src/platform/compat/process.ts";
+
+/**
+ * Read the served policy from whichever header carries it. The platform floor
+ * is served `-Report-Only` by default; a `security.csp` declaration,
+ * `VERYFRONT_CSP`, or `VERYFRONT_CSP_ENFORCE` selects enforced delivery
+ * instead. These fixtures declare none of those; the assertions below are about
+ * policy content and nonce alignment, not delivery mode.
+ */
+/**
+ * The complete policy, whichever header carries it.
+ *
+ * Both are served: the reported header carries the whole policy, and the
+ * enforced one carries only the directives that bind. Callers here assert on
+ * policy content, so the reported header is the one they want.
+ */
+function readCsp(headers: Headers): string | null {
+  return headers.get("content-security-policy-report-only") ??
+    headers.get("content-security-policy");
+}
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -221,7 +241,7 @@ describe(
             const html = await response.text();
 
             assertEquals(response.status, 200, "Should serve built App Router HTML");
-            const csp = response.headers.get("content-security-policy") ?? "";
+            const csp = readCsp(response.headers) ?? "";
             const nonceMatch = csp.match(/nonce-([^' ;]+)/);
             assertExists(nonceMatch, "CSP should include a nonce");
             const nonce = nonceMatch[1]!;
@@ -283,7 +303,7 @@ describe(
 
             const res = await fetch(`http://127.0.0.1:${server.port}/`);
             assertEquals(res.status, 200, "Should serve the page");
-            const csp = res.headers.get("content-security-policy");
+            const csp = readCsp(res.headers);
             assert(csp !== null, "CSP should be set by default in production");
             assert(
               csp!.includes("default-src 'self'"),
@@ -328,7 +348,7 @@ describe(
               "DENY",
               "Should prevent framing by default",
             );
-            const csp = response.headers.get("content-security-policy");
+            const csp = readCsp(response.headers);
             assert(csp !== null, "Default CSP should be set in production");
             assert(
               csp!.includes("default-src 'self'"),
@@ -416,7 +436,7 @@ describe(
             const html = await response.text();
 
             assertEquals(response.status, 200, "Should serve built Pages Router HTML");
-            const csp = response.headers.get("content-security-policy") ?? "";
+            const csp = readCsp(response.headers) ?? "";
             const nonceMatch = csp.match(/nonce-([^' ;]+)/);
             assertExists(nonceMatch, "CSP should include a nonce");
             const nonce = nonceMatch[1]!;
@@ -497,7 +517,9 @@ describe(
           }
         });
 
-        it("loads shared proxy middleware after trusted request context is resolved", async () => {
+        it("refuses shared proxy middleware after trusted request context is resolved", async () => {
+          const trustEnvName = "VERYFRONT_TRUST_FORWARDED_HEADERS";
+          const originalProxyTrust = getHostEnv(trustEnvName);
           const projectSlug = "shared-middleware-project";
           const projectId = "shared-middleware-project-id";
           const releaseId = "shared-middleware-release";
@@ -507,8 +529,12 @@ describe(
               headers: { "x-shared-middleware": "applied" },
             });
           }`;
+          let middlewareSourceReads = 0;
           const readMiddlewareSource = (path: string) => {
-            if (path === "/app/middleware.ts") return middlewareSource;
+            if (path === "/app/middleware.ts") {
+              middlewareSourceReads++;
+              return middlewareSource;
+            }
             throw new Deno.errors.NotFound(path);
           };
           const projectFs = {
@@ -516,7 +542,9 @@ describe(
             readFile: (path: string) => Promise.resolve(readMiddlewareSource(path)),
             readTextFile: (path: string) => Promise.resolve(readMiddlewareSource(path)),
             readOptionalTextFile: (path: string) =>
-              Promise.resolve(path === "/app/middleware.ts" ? middlewareSource : undefined),
+              Promise.resolve(
+                path === "/app/middleware.ts" ? readMiddlewareSource(path) : undefined,
+              ),
           };
           const resolvedContexts: Array<{
             projectSlug: string;
@@ -570,6 +598,7 @@ describe(
           };
 
           let server: Awaited<ReturnType<typeof startProductionServer>> | undefined;
+          setEnv(trustEnvName, "1");
           try {
             server = await startProductionServer({
               projectDir: "/app",
@@ -606,9 +635,12 @@ describe(
               }),
             );
 
-            assertEquals(response.status, 418);
-            assertEquals(await response.text(), "shared middleware");
-            assertEquals(response.headers.get("x-shared-middleware"), "applied");
+            assertEquals(response.status, 503);
+            assertEquals(response.headers.get("cache-control"), "no-store");
+            assertEquals(response.headers.get("content-type"), "application/problem+json");
+            const problem = await response.json();
+            assertEquals(problem.title, "Project execution unavailable");
+            assertEquals(middlewareSourceReads, 0);
             assert(
               resolvedContexts.length >= 1 &&
                 resolvedContexts.every((context) =>
@@ -624,6 +656,8 @@ describe(
               "Middleware loading must use production release context",
             );
           } finally {
+            if (originalProxyTrust === undefined) deleteEnv(trustEnvName);
+            else setEnv(trustEnvName, originalProxyTrust);
             invalidateProjectMiddlewareCache(projectSlug, projectId);
             await server?.stop();
             (multiProjectFs as any).manager = originalManager;

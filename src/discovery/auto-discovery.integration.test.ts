@@ -11,13 +11,23 @@ import { promptRegistry } from "#veryfront/prompt";
 import { resourceRegistry } from "#veryfront/resource";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { createMockAdapter } from "#veryfront/platform";
-import { discoverSchedules } from "#veryfront/schedule";
-import { discoverWebhooks } from "#veryfront/webhook";
+import { discoverSchedules as discoverSchedulesRaw } from "#veryfront/schedule";
+import { discoverWebhooks as discoverWebhooksRaw } from "#veryfront/webhook";
 import { join, resolve } from "#veryfront/compat/path";
 import { cwd } from "#veryfront/compat/process.ts";
 import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
-import { discoverAll } from "./index.ts";
+import { discoverAll as discoverAllRaw } from "./index.ts";
+import type { DiscoveryConfig } from "./types.ts";
+
+function discoverAll(config: DiscoveryConfig) {
+  return discoverAllRaw({ ...config, allowHostProjectCodeExecution: true });
+}
+
+const discoverSchedules: typeof discoverSchedulesRaw = (options) =>
+  discoverSchedulesRaw({ ...options, allowHostProjectCodeExecution: true });
+const discoverWebhooks: typeof discoverWebhooksRaw = (options) =>
+  discoverWebhooksRaw({ ...options, allowHostProjectCodeExecution: true });
 
 function getFixturePath(): string {
   return resolve(join(cwd(), "src", "discovery", "__fixtures__", "autodiscovery"));
@@ -49,7 +59,11 @@ describe(
       });
 
       assertEquals(result.tools.size >= 2, true);
-      assertExists(result.tools.get("greet") ?? result.tools.get("searchWeb"));
+      assertEquals(
+        Array.from(result.tools.keys()).sort(),
+        ["greet", "searchWeb"],
+        "kebab-cased tool filenames must derive camelCase ids",
+      );
     });
 
     it("should discover project-authored tools with raw JSON schemas", async () => {
@@ -125,6 +139,15 @@ describe(
       });
 
       assertEquals(result.resources.size >= 1, true);
+      assertEquals(
+        result.resources.get("profile")?.pattern,
+        "/users/:userId/profile",
+        "dynamic [param] segments must become :param in the derived resource pattern",
+      );
+      assertExists(
+        resourceRegistry.get("profile"),
+        "a discovered resource must be registered in the MCP resource registry",
+      );
     });
 
     it("should discover prompts from prompts/ directory", async () => {
@@ -152,8 +175,9 @@ describe(
         verbose: false,
       });
 
-      assertExists(result);
-      assertExists(result.errors);
+      assertEquals(result.errors, [], "a missing baseDir is not a discovery error");
+      assertEquals(result.tools.size, 0, "a missing baseDir must yield an empty tool map");
+      assertEquals(result.agents.size, 0, "a missing baseDir must yield an empty agent map");
     });
 
     it("discovers source-defined schedules and webhooks", async () => {
@@ -284,10 +308,15 @@ describe(
 
       const result = await discoverWebhooks({ projectDir: "/project", adapter });
 
-      assertEquals(result.items.map((item) => item.id), ["ticket-created"]);
-      assertEquals(result.errors.length, 1);
-      assertEquals(result.errors[0]?.code, "duplicate_source_id");
-      assertEquals(result.errors[0]?.sourceId, "ticket-created");
+      assertEquals(result.items, []);
+      assertEquals(result.errors.length, 2);
+      assertEquals(
+        result.errors.map((error) => [error.code, error.sourceId]),
+        [
+          ["duplicate_source_id", "ticket-created"],
+          ["duplicate_source_id", "ticket-created"],
+        ],
+      );
     });
 
     it("should discover all valid named exports from a single tool file", async () => {
@@ -310,6 +339,35 @@ describe(
 
         assertEquals(Array.from(result.tools.keys()).sort(), ["alpha", "beta"]);
         assertEquals(toolRegistry.getAllIds().sort(), ["alpha", "beta"]);
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
+    it("does not inspect named exports after registering a valid default", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-default-precedence-" });
+
+      try {
+        await Deno.mkdir(`${tempDir}/tools`, { recursive: true });
+        await Deno.writeTextFile(
+          `${tempDir}/tools/preferred.ts`,
+          [
+            "const hostileNamed = {};",
+            "Object.defineProperty(hostileNamed, 'execute', {",
+            '  get() { throw new Error("named export inspected"); },',
+            "});",
+            "export { hostileNamed };",
+            'export default { execute: async () => "default" };',
+          ].join("\n"),
+        );
+
+        const result = await discoverAll({
+          baseDir: tempDir,
+          verbose: false,
+        });
+
+        assertEquals(Array.from(result.tools.keys()), ["preferred"]);
+        assertEquals(result.errors, []);
       } finally {
         await Deno.remove(tempDir, { recursive: true });
       }

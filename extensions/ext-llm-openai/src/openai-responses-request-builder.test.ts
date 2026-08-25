@@ -268,6 +268,45 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
     ]);
   });
 
+  it("keeps Responses function-call arguments object-encoded and string outputs unquoted", () => {
+    const body = buildOpenAIResponsesRequest(
+      "gpt-4o-mini",
+      "openai",
+      {
+        prompt: [{
+          role: "assistant",
+          content: [{
+            type: "tool-call",
+            toolCallId: "call_1",
+            toolName: "lookup",
+            input: { id: "one" },
+          }],
+        }, {
+          role: "tool",
+          content: [{
+            type: "tool-result",
+            toolCallId: "call_1",
+            toolName: "lookup",
+            output: { type: "json", value: "plain output" },
+          }],
+        }],
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.input, [{
+      type: "function_call",
+      call_id: "call_1",
+      name: "lookup",
+      arguments: '{"id":"one"}',
+    }, {
+      type: "function_call_output",
+      call_id: "call_1",
+      output: "plain output",
+    }]);
+  });
+
   it("keeps explicit reasoning summaries for direct OpenAI requests", () => {
     const warnings = createWarningCollector();
 

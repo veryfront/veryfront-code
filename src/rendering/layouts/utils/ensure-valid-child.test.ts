@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ensureValidChild } from "./ensure-valid-child.ts";
 import * as React from "react";
@@ -41,14 +41,22 @@ describe("rendering/layouts/utils/ensure-valid-child", () => {
 
     it("should return valid React elements as-is", () => {
       const el = React.createElement("div", null, "test");
-      const result = ensureValidChild(el);
-      assertEquals(React.isValidElement(result), true);
+      assertStrictEquals(
+        ensureValidChild(el),
+        el,
+        "a valid element must be returned unchanged, not cloned",
+      );
     });
 
     it("should return React elements with props", () => {
       const el = React.createElement("span", { className: "foo" });
       const result = ensureValidChild(el);
-      assertEquals(React.isValidElement(result), true);
+      assertStrictEquals(result, el, "element identity must survive");
+      assertEquals(
+        (result as React.ReactElement<{ className: string }>).props.className,
+        "foo",
+        "props must be preserved",
+      );
     });
 
     it("should return null for non-element objects without React symbol", () => {

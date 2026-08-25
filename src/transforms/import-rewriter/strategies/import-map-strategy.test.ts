@@ -2,12 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { importMapStrategy, resolveImportWithMap } from "./import-map-strategy.ts";
-import type {
-  ImportMapConfig,
-  ImportSpecifier,
-  ImportSpecifierInfo,
-  RewriteContext,
-} from "../types.ts";
+import type { ImportMapConfig, ImportSpecifierInfo, RewriteContext } from "../types.ts";
 
 function makeCtx(overrides: Partial<RewriteContext> = {}): RewriteContext {
   return {
@@ -38,7 +33,7 @@ function makeInfo(specifier: string): ImportSpecifierInfo {
       se: specifier.length,
       d: -1,
       a: -1,
-    } as ImportSpecifier,
+    } as ImportSpecifierInfo["raw"],
   };
 }
 
@@ -119,6 +114,35 @@ describe("transforms/import-rewriter/strategies/import-map-strategy", () => {
     it("resolves esm.sh URL to local mapping", () => {
       const map: ImportMapConfig = { imports: { lodash: "/local/lodash.js" } };
       assertEquals(resolveImportWithMap("https://esm.sh/lodash@4", map), "/local/lodash.js");
+    });
+
+    it("appends the esm.sh subpath to a URL mapping", () => {
+      const map: ImportMapConfig = { imports: { lodash: "https://cdn.example/lodash" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/lodash@4/fp", map),
+        "https://cdn.example/lodash/fp",
+        "a URL mapping keeps the subpath so the /fp entry point is resolved, not the package root",
+      );
+    });
+
+    it("prefers an exact package+subpath mapping over the package mapping", () => {
+      const map: ImportMapConfig = {
+        imports: { lodash: "https://cdn.example/lodash", "lodash/fp": "/local/fp.js" },
+      };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/lodash@4/fp", map),
+        "/local/fp.js",
+        "the package+subpath key wins over the bare package key",
+      );
+    });
+
+    it("drops the esm.sh subpath for a file-path mapping", () => {
+      const map: ImportMapConfig = { imports: { lodash: "/local/lodash.js" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/lodash@4/fp", map),
+        "/local/lodash.js",
+        "a file-path mapping already points at a single module, so the subpath is not appended",
+      );
     });
 
     it("returns null for empty imports", () => {

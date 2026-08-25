@@ -1,6 +1,7 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { type ChatStreamEvent } from "#veryfront/chat/protocol.ts";
+import type { AgentRunEventTimingOptions } from "../../runtime/model-call-context.ts";
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
 
 /** Shared conversation run event types value. */
@@ -44,6 +45,52 @@ function serializeToolInput(input: unknown): string {
   }
 }
 
+/** Serialize tool output while preserving strings that would otherwise decode as JSON. */
+export function serializeConversationToolResultContent(value: unknown): {
+  content: string;
+  contentEncoding?: "text";
+} {
+  if (typeof value === "string") {
+    try {
+      JSON.parse(value);
+      return { content: value, contentEncoding: "text" };
+    } catch {
+      return { content: value };
+    }
+  }
+
+  try {
+    const encoded = JSON.stringify(value ?? null);
+    // `JSON.stringify` returns `undefined`, not a string, for a top-level
+    // function or symbol. Storing that would drop the result's content
+    // entirely, so fall through to the textual rendering below.
+    if (typeof encoded === "string") return { content: encoded };
+  } catch {
+    // A value that cannot be encoded at all falls through the same way.
+  }
+
+  // `String(value)` is a lossy rendering, not a JSON encoding: a bigint
+  // renders as bare digits that a reader would decode back into a number it
+  // cannot represent. Mark it text so replay returns the stored characters.
+  return { content: String(value), contentEncoding: "text" };
+}
+
+/**
+ * Carry a chunk's provider-execution marker into the durable record.
+ *
+ * The version 1 reader replays a stored result as a provider tool result only
+ * when the durable call records that it was provider-executed; a call that
+ * dropped the marker replays as an opaque legacy custom event instead. The
+ * marker is written on both the call start and the call end because producers
+ * do not agree on which one carries it: the live lifecycle adapter synthesizes
+ * an unmarked `tool-input-start` and marks only `tool-input-available`.
+ */
+function providerExecutionMarker(
+  chunk: { providerExecuted?: boolean },
+): { providerExecuted?: true } {
+  return chunk.providerExecuted === true ? { providerExecuted: true } : {};
+}
+
 function encodeCustomDataEvent(
   chunk: Extract<ChatStreamEvent, { type: `data-${string}` }>,
 ): ConversationRunEvent[] {
@@ -60,6 +107,23 @@ function encodeCustomDataEvent(
 }
 
 /** Implement conversation run event encoder. */
+/** Options accepted by the conversation run event encoder. */
+export interface ConversationRunEventEncoderOptions {
+  /**
+   * Monotonic time source, in milliseconds. Supply one to stamp every encoded
+   * record with `elapsedMs`, measured from this encoder's creation.
+   *
+   * A persisted event otherwise carries only the time it was stored, which
+   * tracks the writer rather than the run, so durations built from it do not
+   * describe what the agent did. This stamp is taken at the point the event is
+   * produced, which is the only place that observes it. Omit the clock and
+   * nothing is stamped.
+   */
+  nowMs?: () => number;
+  epochMs?: () => number;
+  startedMs?: number;
+}
+
 export class ConversationRunEventEncoder {
   private readonly streamedToolInputs = new Set<string>();
   private readonly toolInputs = new Map<string, unknown>();
@@ -68,6 +132,30 @@ export class ConversationRunEventEncoder {
   private textContentIndex = 0;
   private activeStepName: string | null = null;
   private stepCount = 0;
+  private readonly nowMs?: () => number;
+  private readonly startedMs?: number;
+  private readonly epochMs?: () => number;
+
+  // One encoder spans a whole run: it carries stepCount and the active message
+  // across every step, so elapsed measured from here is run-relative and needs no
+  // per-attempt anchor. Add it to the run's start time to get wall clock.
+  constructor(options: ConversationRunEventEncoderOptions = {}) {
+    if (options.nowMs) {
+      this.nowMs = options.nowMs;
+      this.startedMs = options.startedMs ?? options.nowMs();
+    }
+    this.epochMs = options.epochMs;
+  }
+
+  /** Return the run timing anchor owned by this encoder, when it has one. */
+  getTimingAnchor(): AgentRunEventTimingOptions | undefined {
+    if (!this.nowMs && !this.epochMs) return undefined;
+    return {
+      ...(this.nowMs ? { nowMs: this.nowMs } : {}),
+      ...(this.epochMs ? { epochMs: this.epochMs } : {}),
+      ...(this.startedMs !== undefined ? { startedMs: this.startedMs } : {}),
+    };
+  }
 
   private nextStepName(): string {
     this.stepCount += 1;
@@ -115,19 +203,47 @@ export class ConversationRunEventEncoder {
     this.streamedToolInputs.delete(toolCallId);
   }
 
-  private serializeToolResultContent(value: unknown): string {
-    if (typeof value === "string") {
-      return value;
-    }
-
-    try {
-      return JSON.stringify(value ?? null);
-    } catch {
-      return String(value);
-    }
+  encode(chunk: ChatStreamEvent): ConversationRunEvent[] {
+    return this.stampElapsed(this.encodeChunk(chunk));
   }
 
-  encode(chunk: ChatStreamEvent): ConversationRunEvent[] {
+  // Stamped on the way out rather than in each case arm, so every emitted record
+  // is treated alike -- including the ones this encoder synthesises, such as the
+  // terminal result for a provider-executed call the provider never resolved.
+  private stampElapsed(events: ConversationRunEvent[]): ConversationRunEvent[] {
+    if (events.length === 0) {
+      return events;
+    }
+
+    for (const event of events) {
+      if (Object.hasOwn(event, "elapsedMs")) assertValidElapsedMs(event.elapsedMs);
+      if (Object.hasOwn(event, "emittedAt")) assertValidEmittedAt(event.emittedAt);
+    }
+
+    const needsElapsedMs = events.some((event) => !Object.hasOwn(event, "elapsedMs"));
+    const needsEmittedAt = events.some((event) => !Object.hasOwn(event, "emittedAt"));
+    const elapsedMs = needsElapsedMs && this.nowMs && this.startedMs !== undefined
+      ? Math.max(0, Math.round(this.nowMs() - this.startedMs))
+      : undefined;
+    const emittedAt = needsEmittedAt && this.epochMs ? Math.round(this.epochMs()) : undefined;
+    if (elapsedMs !== undefined) assertValidElapsedMs(elapsedMs);
+    if (emittedAt !== undefined) assertValidEmittedAt(emittedAt);
+    if (elapsedMs === undefined && emittedAt === undefined) {
+      return events;
+    }
+    return events.map((event) => ({
+      ...event,
+      ...(elapsedMs !== undefined && !Object.hasOwn(event, "elapsedMs") ? { elapsedMs } : {}),
+      ...(emittedAt !== undefined && !Object.hasOwn(event, "emittedAt") ? { emittedAt } : {}),
+    }));
+  }
+
+  /** Stamp externally-created checkpoints against this encoder's run anchor. */
+  stamp(events: ConversationRunEvent[]): ConversationRunEvent[] {
+    return this.stampElapsed(events);
+  }
+
+  private encodeChunk(chunk: ChatStreamEvent): ConversationRunEvent[] {
     switch (chunk.type) {
       case "start":
         this.activeMessageId = chunk.messageId ?? null;
@@ -175,6 +291,7 @@ export class ConversationRunEventEncoder {
           type: conversationRunEventTypes.toolCallStart,
           toolCallId: chunk.toolCallId,
           toolCallName: chunk.toolName,
+          ...providerExecutionMarker(chunk),
         }];
 
       case "tool-input-delta":
@@ -195,7 +312,11 @@ export class ConversationRunEventEncoder {
             delta: serializeToolInput(chunk.input),
           });
         }
-        events.push({ type: conversationRunEventTypes.toolCallEnd, toolCallId: chunk.toolCallId });
+        events.push({
+          type: conversationRunEventTypes.toolCallEnd,
+          toolCallId: chunk.toolCallId,
+          ...providerExecutionMarker(chunk),
+        });
         return events;
       }
 
@@ -209,12 +330,16 @@ export class ConversationRunEventEncoder {
             delta: serializeToolInput(chunk.input),
           });
         }
-        events.push({ type: conversationRunEventTypes.toolCallEnd, toolCallId: chunk.toolCallId });
+        events.push({
+          type: conversationRunEventTypes.toolCallEnd,
+          toolCallId: chunk.toolCallId,
+          ...providerExecutionMarker(chunk),
+        });
         events.push({
           type: conversationRunEventTypes.toolCallResult,
           messageId: this.getToolResultMessageId(chunk.toolCallId),
           toolCallId: chunk.toolCallId,
-          content: this.serializeToolResultContent(chunk.errorText),
+          ...serializeConversationToolResultContent(chunk.errorText),
           role: "tool",
           ...(this.toolInputs.has(chunk.toolCallId)
             ? { input: this.toolInputs.get(chunk.toolCallId) }
@@ -226,11 +351,12 @@ export class ConversationRunEventEncoder {
       }
 
       case "tool-output-available": {
+        if (chunk.preliminary === true) return [];
         const events: ConversationRunEvent[] = [{
           type: conversationRunEventTypes.toolCallResult,
           messageId: this.getToolResultMessageId(chunk.toolCallId),
           toolCallId: chunk.toolCallId,
-          content: this.serializeToolResultContent(chunk.output),
+          ...serializeConversationToolResultContent(chunk.output),
           role: "tool",
           ...(this.toolInputs.has(chunk.toolCallId)
             ? { input: this.toolInputs.get(chunk.toolCallId) }
@@ -245,7 +371,7 @@ export class ConversationRunEventEncoder {
           type: conversationRunEventTypes.toolCallResult,
           messageId: this.getToolResultMessageId(chunk.toolCallId),
           toolCallId: chunk.toolCallId,
-          content: this.serializeToolResultContent(chunk.errorText),
+          ...serializeConversationToolResultContent(chunk.errorText),
           role: "tool",
           ...(this.toolInputs.has(chunk.toolCallId)
             ? { input: this.toolInputs.get(chunk.toolCallId) }
@@ -303,6 +429,18 @@ export class ConversationRunEventEncoder {
       default:
         return chunk.type.startsWith("data-") ? encodeCustomDataEvent(chunk) : [];
     }
+  }
+}
+
+function assertValidElapsedMs(value: unknown): asserts value is number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new TypeError("elapsedMs must be a finite non-negative number");
+  }
+}
+
+function assertValidEmittedAt(value: unknown): asserts value is number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new TypeError("emittedAt must be a non-negative integer");
   }
 }
 

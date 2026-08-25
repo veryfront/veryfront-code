@@ -37,6 +37,16 @@ describe("optimized image utilities", () => {
         TypeError,
         "Image height must be a positive finite number",
       );
+      assertThrows(
+        () => generateBlurDataURL(10, value),
+        TypeError,
+        "Blur image height must be a positive finite number",
+      );
+      assertThrows(
+        () => getAspectRatioPadding(value, 10),
+        TypeError,
+        "Image width must be a positive finite number",
+      );
     }
   });
 

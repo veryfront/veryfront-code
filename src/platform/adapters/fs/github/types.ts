@@ -1,4 +1,4 @@
-import { createError, toError } from "#veryfront/errors";
+import { CONFIG_INVALID } from "#veryfront/errors";
 
 export type { DirectoryEntry } from "../shared-types.ts";
 
@@ -57,7 +57,7 @@ export interface FileInfo {
 export interface FileIndexEntry {
   path: string;
   sha: string;
-  size: number;
+  size?: number;
   type: "blob" | "tree";
 }
 
@@ -68,25 +68,23 @@ const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
 const DEFAULT_MAX_RETRY_DELAY_MS = 10_000;
 
+function isBlankConfigValue(value: unknown): boolean {
+  return typeof value !== "string" || value.trim().length === 0;
+}
+
 export function createGitHubConfig(config: GitHubConfig): ResolvedGitHubConfig {
-  if (!config.token) {
-    throw toError(
-      createError({
-        type: "config",
-        message:
-          "GitHub adapter requires a token. Set GITHUB_TOKEN environment variable or provide token in config.",
-      }),
-    );
+  if (isBlankConfigValue(config.token)) {
+    throw CONFIG_INVALID.create({
+      detail:
+        "GitHub adapter requires a token. Set GITHUB_TOKEN environment variable or provide token in config.",
+    });
   }
 
-  if (!config.owner || !config.repo) {
-    throw toError(
-      createError({
-        type: "config",
-        message:
-          "GitHub adapter requires owner and repo. Provide them in config or via GITHUB_OWNER and GITHUB_REPO environment variables.",
-      }),
-    );
+  if (isBlankConfigValue(config.owner) || isBlankConfigValue(config.repo)) {
+    throw CONFIG_INVALID.create({
+      detail:
+        "GitHub adapter requires owner and repo. Provide them in config or via GITHUB_OWNER and GITHUB_REPO environment variables.",
+    });
   }
 
   return {

@@ -3,7 +3,8 @@ import "#veryfront/schemas/_test-setup.ts";
  * Tests for generate command handler
  */
 
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "veryfront/errors";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleGenerateCommand, parseGenerateArgs } from "./handler.ts";
 import type { ParsedArgs } from "#cli/shared/types";
@@ -105,5 +106,15 @@ describe("commands/generate/handler", () => {
       };
       assertEquals(args._[2], "blog/posts/[id]");
     });
+  });
+});
+
+describe("commands/generate/handler usage errors", () => {
+  it("rejects missing arguments as a registered usage error", async () => {
+    const error = await assertRejects(() => handleGenerateCommand({ _: [] }));
+
+    assertEquals(error instanceof VeryfrontError, true);
+    assertEquals((error as VeryfrontError).slug, "invalid-argument");
+    assertEquals((error as VeryfrontError).exitCode, 2);
   });
 });

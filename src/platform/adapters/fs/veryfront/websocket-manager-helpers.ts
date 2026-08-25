@@ -81,7 +81,7 @@ export function parsePokeWebSocketMessage(data: string): PokeWebSocketMessage | 
     raw = JSON.parse(data);
   } catch {
     logger.warn("parsePokeWebSocketMessage: malformed JSON in WebSocket message", {
-      preview: data.slice(0, 200),
+      payloadLength: data.length,
     });
     return null;
   }

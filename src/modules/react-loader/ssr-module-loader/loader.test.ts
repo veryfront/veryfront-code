@@ -1,32 +1,60 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../../transforms/plugins/__tests__/code-parser-setup.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  assert,
+  assertEquals,
+  assertNotEquals,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { BUILD_FAILED, VeryfrontError } from "#veryfront/errors";
 import { FakeTime } from "#std/testing/time";
 import { join } from "#veryfront/compat/path";
+import { stop as stopEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import { clearSSRModuleCache, clearSSRModuleCacheForProject, SSRModuleLoader } from "./index.ts";
 import { __ssrModuleLoaderInternals } from "./loader.ts";
-import { globalInProgress, globalModuleCache } from "./cache/memory.ts";
 import {
+  acquireTransformSlot,
+  failedComponents,
+  globalCrossProjectCache,
+  globalInProgress,
+  globalModuleCache,
+  releaseTransformSlot,
+} from "./cache/memory.ts";
+import {
+  getTransformAcquireTimeoutMs,
+  TRANSFORM_ACQUIRE_TIMEOUT_DEV_MS,
+  TRANSFORM_ACQUIRE_TIMEOUT_MS,
   TRANSFORM_IN_PROGRESS_STALE_EVICTION_MS,
   TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS,
 } from "./constants.ts";
 import { verifiedHttpBundlePaths } from "./http-bundle-helpers.ts";
-import { buildSSRModuleCacheKey } from "../../../cache/keys.ts";
+import { buildSSRModuleCacheKey, isKeyForProject } from "../../../cache/keys.ts";
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 import { computeConfigHashSync } from "../../../cache/config-hash.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
-import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
+import {
+  deleteEnv,
+  getEnv,
+  makeTempDir,
+  mkdir,
+  remove,
+  setEnv,
+  writeTextFile,
+} from "#veryfront/testing/deno-compat.ts";
 import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-positions.ts";
-import type { CacheBackend } from "#veryfront/cache/types.ts";
+import { MockCacheBackend } from "#veryfront/cache/testing/index.ts";
 import { __injectCachesForTests } from "#veryfront/transforms/esm/transform-cache.ts";
 import { tokenizeAllVeryFrontPaths } from "#veryfront/cache";
 import {
   buildMdxEsmModuleRecoveryCacheKey,
   buildMdxEsmPathCacheKey,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import { MDX_MODULE_DEV_COMPILE_VARIANT } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/cache-keys.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { ModuleCacheEntry } from "./types.ts";
 import {
   clearModulePathCache,
@@ -44,25 +72,6 @@ function hashAsLoader(source: string, filePath: string, projectDir: string): str
     ? filePath.slice(projectDir.length).replace(/^\/+/, "")
     : filePath;
   return hashCodeHex(injectNodePositions(source, { filePath: rel }));
-}
-
-class FakeDistributedCache implements CacheBackend {
-  readonly type = "redis" as const;
-  private values = new Map<string, string>();
-
-  get(key: string): Promise<string | null> {
-    return Promise.resolve(this.values.get(key) ?? null);
-  }
-
-  set(key: string, value: string): Promise<void> {
-    this.values.set(key, value);
-    return Promise.resolve();
-  }
-
-  del(key: string): Promise<void> {
-    this.values.delete(key);
-    return Promise.resolve();
-  }
 }
 
 function createProxyProjectAdapter(files: Record<string, string>): RuntimeAdapter {
@@ -113,7 +122,102 @@ function createProxyProjectAdapter(files: Record<string, string>): RuntimeAdapte
   };
 }
 
+/**
+ * Downstream proof for the SSR dev-mode gate (issue 555). Every branch these
+ * cases cover used to take the dev path on the hosted runtime because the
+ * render mode was discarded before it reached SSRModuleLoader.
+ */
+const PRODUCTION_GATE_CONTENT_SOURCE_ID = "local-main";
+const PRODUCTION_GATE_JSX_SOURCE =
+  'export default function Widget() { return <div id="w">hi</div>; }';
+
+function productionGateCacheKey(
+  projectId: string,
+  filePath: string,
+  contentHash: string,
+  dev: boolean,
+  mode?: "preview",
+): string {
+  // Mirrors SSRCacheManager.getConfigHash, which suffixes ":preview" so a
+  // preview compile never shares a cache entry with production.
+  const configHash = `${computeConfigHashSync({ dev })}${mode === "preview" ? ":preview" : ""}`;
+  return buildSSRModuleCacheKey(
+    RUNTIME_VERSION,
+    projectId,
+    `${PRODUCTION_GATE_CONTENT_SOURCE_ID}:default:${configHash}:${filePath}:${contentHash}`,
+  );
+}
+
+function productionGateRelativePath(filePath: string, projectDir: string): string {
+  return filePath.startsWith(projectDir)
+    ? filePath.slice(projectDir.length).replace(/^\/+/, "")
+    : filePath;
+}
+
+// Sanitizers stay off for one verified reason: the terminal cross-project fetch
+// case deliberately abandons an in-flight registry fetch, so http-cache.ts is
+// still holding a retryWithBackoff timer, an op_fetch_send and its
+// fetchCancelHandle when the suite ends. Per-case overrides do not help because
+// Deno reports the leak against the whole describe. The shared esbuild service
+// used to leak here too; afterAll(stopEsbuild) closes that one, so do not widen
+// this override any further.
 describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, () => {
+  afterAll(async () => {
+    await stopEsbuild();
+  });
+
+  it("does not count request cancellation as a component failure", async () => {
+    clearSSRModuleCache();
+    const controller = new AbortController();
+    const reason = new DOMException("render cancelled", "AbortError");
+    controller.abort(reason);
+    const loader = new SSRModuleLoader({
+      projectDir: "/project",
+      projectId: "cancelled-project",
+      contentSourceId: "local-main",
+      adapter: denoAdapter,
+      dev: true,
+      signal: controller.signal,
+    });
+
+    await assertRejects(
+      () => loader.loadRawModule("/project/Page.tsx", "export default () => null"),
+      Error,
+      "render cancelled",
+    );
+    assertEquals(failedComponents.size, 0);
+  });
+
+  it("normalizes an aborted host signal without a reason", async () => {
+    clearSSRModuleCache();
+    const signal = {
+      aborted: true,
+      reason: undefined,
+      throwIfAborted: () => {
+        throw undefined;
+      },
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    } as unknown as AbortSignal;
+    const loader = new SSRModuleLoader({
+      projectDir: "/project",
+      projectId: "cancelled-host-project",
+      contentSourceId: "local-main",
+      adapter: denoAdapter,
+      dev: true,
+      signal,
+    });
+
+    const error = await assertRejects(
+      () => loader.loadRawModule("/project/Page.tsx", "export default () => null"),
+      DOMException,
+      "The operation was aborted",
+    );
+    assert(error instanceof DOMException);
+    assertEquals(error.name, "AbortError");
+    assertEquals(failedComponents.size, 0);
+  });
+
   it("isolates cache by projectId", async () => {
     clearSSRModuleCache();
 
@@ -159,10 +263,12 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     const originA = __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
       dependencyPinningCacheKey: CANONICAL_PIN_KEY,
       moduleServerOrigin: "https://a.example",
+      dev: false,
     });
     const originB = __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
       dependencyPinningCacheKey: CANONICAL_PIN_KEY,
       moduleServerOrigin: "https://b.example",
+      dev: false,
     });
 
     assert(originA?.startsWith(`${CANONICAL_PIN_KEY}:origin:`));
@@ -172,8 +278,26 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
         dependencyPinningCacheKey: "off",
         moduleServerOrigin: "https://a.example",
+        dev: false,
       }),
       undefined,
+    );
+    const externalA = __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
+      serverExternalPackages: ["knex", "@prisma/client"],
+      dev: false,
+    });
+    const externalB = __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
+      serverExternalPackages: ["@prisma/client", "knex"],
+      dev: false,
+    });
+    assertEquals(externalB, externalA);
+    assert(externalA?.startsWith("on:server-externals-"));
+    assertEquals(
+      __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
+        serverExternalPackages: ["knex", "@prisma/client"],
+        dev: true,
+      }),
+      `${externalA}:${MDX_MODULE_DEV_COMPILE_VARIANT}`,
     );
   });
 
@@ -378,6 +502,130 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     }
   });
 
+  it("invalidates stale cache indexes when cached output cannot be inspected", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-loader-unreadable-output-" });
+    const filePath = join(projectDir, "UnreadableCachedOutput.tsx");
+    const projectId = "project-unreadable-cached-output-test";
+    const contentSourceId = "preview-main";
+    const source = "export default function UnreadableCachedOutput() { return null; }";
+    const contentHash = hashAsLoader(source, filePath, projectDir);
+    const configHash = computeConfigHashSync({ dev: true });
+    const reactVersion = "default";
+    const filePathCacheKey = buildSSRModuleCacheKey(
+      RUNTIME_VERSION,
+      projectId,
+      `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
+    );
+    const contentCacheKey = buildSSRModuleCacheKey(
+      RUNTIME_VERSION,
+      projectId,
+      `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
+    );
+    const staleEntry = {
+      tempPath: join(projectDir, "unreadable-cache-output.mjs"),
+      contentHash,
+    };
+    globalModuleCache.set(contentCacheKey, staleEntry);
+    globalModuleCache.set(filePathCacheKey, staleEntry);
+    verifiedHttpBundlePaths.set(`${staleEntry.tempPath}:${contentHash}`, true);
+
+    const loader = new SSRModuleLoader({
+      projectDir,
+      projectId,
+      contentSourceId,
+      adapter: denoAdapter,
+      dev: true,
+    });
+    const cacheManager = (loader as unknown as {
+      cache: { fs: FileSystem; getFs(): FileSystem };
+    }).cache;
+    const originalFs = cacheManager.getFs();
+    cacheManager.fs = {
+      stat: () => Promise.reject(Object.assign(new Error("permission denied"), { code: "EACCES" })),
+    } as unknown as FileSystem;
+
+    try {
+      await assertRejects(
+        () => loader.loadModule(filePath, source),
+        Error,
+        "permission denied",
+      );
+      assertEquals(globalModuleCache.get(contentCacheKey), undefined);
+      assertEquals(globalModuleCache.get(filePathCacheKey), undefined);
+      assertEquals(verifiedHttpBundlePaths.get(`${staleEntry.tempPath}:${contentHash}`), undefined);
+    } finally {
+      cacheManager.fs = originalFs;
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("preserves an operational cache error when MDX invalidation also fails", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-loader-invalidation-failure-" });
+    const filePath = join(projectDir, "InvalidationFailure.tsx");
+    const projectId = "project-invalidation-failure-test";
+    const contentSourceId = "preview-main";
+    const source = "export default function InvalidationFailure() { return null; }";
+    const contentHash = hashAsLoader(source, filePath, projectDir);
+    const configHash = computeConfigHashSync({ dev: true });
+    const reactVersion = "default";
+    const filePathCacheKey = buildSSRModuleCacheKey(
+      RUNTIME_VERSION,
+      projectId,
+      `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
+    );
+    const contentCacheKey = buildSSRModuleCacheKey(
+      RUNTIME_VERSION,
+      projectId,
+      `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
+    );
+    const staleEntry = {
+      tempPath: join(projectDir, "unreadable-cache-output.mjs"),
+      contentHash,
+    };
+    globalModuleCache.set(contentCacheKey, staleEntry);
+    globalModuleCache.set(filePathCacheKey, staleEntry);
+    verifiedHttpBundlePaths.set(`${staleEntry.tempPath}:${contentHash}`, true);
+
+    const loader = new SSRModuleLoader({
+      projectDir,
+      projectId,
+      contentSourceId,
+      adapter: denoAdapter,
+      dev: true,
+    });
+    const mutableLoader = loader as unknown as {
+      cache: { fs: FileSystem; getFs(): FileSystem };
+      invalidateMdxEsmCacheEntry(
+        filePath: string,
+        cacheEntry: ModuleCacheEntry,
+      ): Promise<void>;
+    };
+    const originalFs = mutableLoader.cache.getFs();
+    mutableLoader.cache.fs = {
+      stat: () => Promise.reject(Object.assign(new Error("permission denied"), { code: "EACCES" })),
+    } as unknown as FileSystem;
+    mutableLoader.invalidateMdxEsmCacheEntry = () =>
+      Promise.reject(new Error("invalidation failed"));
+
+    try {
+      await assertRejects(
+        () => loader.loadModule(filePath, source),
+        Error,
+        "permission denied",
+      );
+      assertEquals(globalModuleCache.get(filePathCacheKey), undefined);
+      assertEquals(globalModuleCache.get(contentCacheKey), undefined);
+      assertEquals(verifiedHttpBundlePaths.get(`${staleEntry.tempPath}:${contentHash}`), undefined);
+    } finally {
+      mutableLoader.cache.fs = originalFs;
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
   it("clears verified MDX-ESM path cache before retrying stale local dependencies", async () => {
     clearSSRModuleCache();
     clearModulePathCache();
@@ -428,6 +676,8 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
 
       const mdxPathCacheKey = buildMdxEsmPathCacheKey(
         "_vf_modules/components/VerifiedMdxStaleCache.js",
+        undefined,
+        MDX_MODULE_DEV_COMPILE_VARIANT,
       );
       const mdxPathCache = await getModulePathCache(mdxCacheDir);
       mdxPathCache.set(mdxPathCacheKey, staleTempPath);
@@ -512,6 +762,8 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
 
       const mdxPathCacheKey = buildMdxEsmPathCacheKey(
         "_vf_modules/components/ColdMdxStaleCache.js",
+        undefined,
+        MDX_MODULE_DEV_COMPILE_VARIANT,
       );
       await writeTextFile(
         join(mdxCacheDir, "_index.json"),
@@ -603,6 +855,8 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
 
       const mdxPathCacheKey = buildMdxEsmPathCacheKey(
         "_vf_modules/components/BranchMdxStaleCache.js",
+        undefined,
+        MDX_MODULE_DEV_COMPILE_VARIANT,
       );
       await writeTextFile(
         join(mdxCacheDir, "_index.json"),
@@ -652,7 +906,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     const filePath = join(componentsDir, "RecoveredViaCache.tsx");
     const projectId = "project-recover-vfmod";
     const contentSourceId = "preview-main";
-    const distributedCache = new FakeDistributedCache();
+    const distributedCache = new MockCacheBackend({ type: "redis", ignoreTtl: true });
 
     try {
       __injectCachesForTests({ cacheBackend: distributedCache });
@@ -798,10 +1052,26 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const source = "export default function Good() { return null; }";
       await writeTextFile(filePath, source);
 
+      const projectId = "project-retain-test";
+      const contentSourceId = "local-main";
+      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const configHash = computeConfigHashSync({ dev: true });
+      const reactVersion = "default";
+      const filePathCacheKey = buildSSRModuleCacheKey(
+        RUNTIME_VERSION,
+        projectId,
+        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
+      );
+      const contentCacheKey = buildSSRModuleCacheKey(
+        RUNTIME_VERSION,
+        projectId,
+        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
+      );
+
       const loader = new SSRModuleLoader({
         projectDir,
-        projectId: "project-retain-test",
-        contentSourceId: "local-main",
+        projectId,
+        contentSourceId,
         adapter: denoAdapter,
         dev: true,
       });
@@ -809,12 +1079,15 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const component = await loader.loadModule(filePath, source);
       assertEquals(component.name, "Good");
 
-      const matchingKeys = [...globalModuleCache.keys()].filter((k) =>
-        k.includes("project-retain-test")
+      assertEquals(
+        globalModuleCache.has(contentCacheKey),
+        true,
+        "content-hash entry must be published after a successful import",
       );
-      assert(
-        matchingKeys.length > 0,
-        "Expected cache entries to be retained after successful import",
+      assertEquals(
+        globalModuleCache.has(filePathCacheKey),
+        true,
+        "file-path index must be published so dev invalidation and HMR can find the entry",
       );
     } finally {
       await remove(projectDir, { recursive: true });
@@ -1071,6 +1344,149 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     }
   });
 
+  it("returns a dependency error to followers already waiting on its leader", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-loader-retained-follower-" });
+    const componentsDir = join(projectDir, "components");
+    const filePath = join(componentsDir, "RetainedFollower.tsx");
+    const projectId = "project-retained-follower";
+    const contentSourceId = "local-main";
+    const source = "export default function RetainedFollower() { return null; }";
+    const dependencyError = new Error("dependency failed");
+    let finishTransform!: () => void;
+    let rejectLeader!: (error: Error) => void;
+    let retained: Promise<ModuleCacheEntry> | null = null;
+    let follower: Promise<React.ComponentType<Record<string, unknown>>> | undefined;
+    let contentCacheKey = "";
+
+    try {
+      await mkdir(componentsDir, { recursive: true });
+      await writeTextFile(filePath, source);
+
+      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const leader = new Promise<ModuleCacheEntry>((_, reject) => {
+        rejectLeader = reject;
+      });
+      leader.catch(() => {});
+      const transformSettlement = new Promise<void>((resolve) => {
+        finishTransform = resolve;
+      });
+
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId,
+        contentSourceId,
+        adapter: denoAdapter,
+        dev: true,
+      });
+      contentCacheKey = (loader as unknown as {
+        cache: { getCacheKey(value: string): string };
+      }).cache.getCacheKey(`${filePath}:${contentHash}`);
+      globalInProgress.set(contentCacheKey, leader);
+      __ssrModuleLoaderInternals.registerInProgressTransformObservers(contentCacheKey, leader);
+
+      follower = loader.loadModule(filePath, source);
+      let attempts = 0;
+      while (
+        __ssrModuleLoaderInternals.inProgressTransformObserverCount(leader) === 0 &&
+        attempts++ < 100
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assertEquals(__ssrModuleLoaderInternals.inProgressTransformObserverCount(leader), 1);
+
+      retained = __ssrModuleLoaderInternals.retainInProgressTransformUntilSettled(
+        contentCacheKey,
+        leader,
+        transformSettlement,
+        dependencyError,
+      );
+      assert(retained);
+      rejectLeader(dependencyError);
+
+      let followerError: unknown;
+      void follower.catch((error) => followerError = error);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertStrictEquals(followerError, dependencyError);
+      assertStrictEquals(globalInProgress.get(contentCacheKey), retained);
+    } finally {
+      rejectLeader?.(dependencyError);
+      finishTransform?.();
+      await retained?.catch(() => {});
+      await follower?.catch(() => {});
+      if (contentCacheKey) globalInProgress.delete(contentCacheKey);
+      clearSSRModuleCache();
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("returns a dependency error to followers after retained work already settled", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-loader-settled-follower-" });
+    const componentsDir = join(projectDir, "components");
+    const filePath = join(componentsDir, "SettledFollower.tsx");
+    const projectId = "project-settled-follower";
+    const contentSourceId = "local-main";
+    const source = "export default function SettledFollower() { return null; }";
+    const dependencyError = new Error("dependency failed");
+    let rejectLeader!: (error: Error) => void;
+    let follower: Promise<React.ComponentType<Record<string, unknown>>> | undefined;
+    let contentCacheKey = "";
+
+    try {
+      await mkdir(componentsDir, { recursive: true });
+      await writeTextFile(filePath, source);
+
+      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const leader = new Promise<ModuleCacheEntry>((_, reject) => {
+        rejectLeader = reject;
+      });
+      leader.catch(() => {});
+
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId,
+        contentSourceId,
+        adapter: denoAdapter,
+        dev: true,
+      });
+      contentCacheKey = (loader as unknown as {
+        cache: { getCacheKey(value: string): string };
+      }).cache.getCacheKey(`${filePath}:${contentHash}`);
+      globalInProgress.set(contentCacheKey, leader);
+      __ssrModuleLoaderInternals.registerInProgressTransformObservers(contentCacheKey, leader);
+
+      follower = loader.loadModule(filePath, source);
+      let attempts = 0;
+      while (
+        __ssrModuleLoaderInternals.inProgressTransformObserverCount(leader) === 0 &&
+        attempts++ < 100
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assertEquals(__ssrModuleLoaderInternals.inProgressTransformObserverCount(leader), 1);
+
+      __ssrModuleLoaderInternals.retainInProgressTransformUntilSettled(
+        contentCacheKey,
+        leader,
+        Promise.resolve(),
+        dependencyError,
+      );
+      rejectLeader(dependencyError);
+
+      const error = await assertRejects(() => follower!, Error, "dependency failed");
+      assertStrictEquals(error, dependencyError);
+    } finally {
+      rejectLeader?.(dependencyError);
+      await follower?.catch(() => {});
+      if (contentCacheKey) globalInProgress.delete(contentCacheKey);
+      clearSSRModuleCache();
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
   it("allows one rejected shared transform retry per caller", () => {
     assertEquals(
       __ssrModuleLoaderInternals.shouldRetryRejectedInProgressTransform(1),
@@ -1080,6 +1496,109 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       __ssrModuleLoaderInternals.shouldRetryRejectedInProgressTransform(2),
       false,
     );
+  });
+
+  it("starts a module transform before recursive dependencies settle", async () => {
+    const events: string[] = [];
+    let finishTransform!: (value: string) => void;
+
+    const result = await __ssrModuleLoaderInternals.runTransformAndDependencies(
+      async () => {
+        events.push("transform:start");
+        return await new Promise<string>((resolve) => {
+          finishTransform = resolve;
+        });
+      },
+      async () => {
+        events.push("dependencies:start");
+        assertEquals(events, ["transform:start", "dependencies:start"]);
+        finishTransform("compiled");
+        return await Promise.resolve("resolved");
+      },
+    );
+
+    assertEquals(result, { transformed: "compiled", dependencies: "resolved" });
+  });
+
+  it("returns a dependency error without draining a stalled transform", async () => {
+    const dependencyError = new Error("dependency failed");
+    let finishTransform!: () => void;
+    let failedTransformSettlement: Promise<void> | undefined;
+    let observedDependencyError: unknown;
+    let resultSettled = false;
+
+    const result = __ssrModuleLoaderInternals.runTransformAndDependencies(
+      () =>
+        new Promise<void>((resolve) => {
+          finishTransform = resolve;
+        }),
+      () => Promise.reject(dependencyError),
+      (error, transformSettlement) => {
+        observedDependencyError = error;
+        failedTransformSettlement = transformSettlement;
+      },
+    );
+    void result.then(
+      () => resultSettled = true,
+      () => resultSettled = true,
+    );
+    const rejected = assertRejects(
+      () => result,
+      Error,
+      "dependency failed",
+    );
+
+    try {
+      await Promise.resolve();
+      await Promise.resolve();
+      assertEquals(resultSettled, true);
+      const error = await rejected;
+      assertStrictEquals(error, dependencyError);
+      assertStrictEquals(observedDependencyError, dependencyError);
+      assert(failedTransformSettlement);
+    } finally {
+      finishTransform();
+    }
+    await failedTransformSettlement;
+  });
+
+  it("retains a failed leader until its abandoned transform releases capacity", async () => {
+    const key = "test:retained-failed-transform";
+    const dependencyError = new Error("dependency failed");
+    const leader = new Promise<ModuleCacheEntry>(() => {});
+    let finishTransform!: () => void;
+    const transformSettlement = new Promise<void>((resolve) => {
+      finishTransform = resolve;
+    });
+    globalInProgress.set(key, leader);
+
+    const retained = __ssrModuleLoaderInternals.retainInProgressTransformUntilSettled(
+      key,
+      leader,
+      transformSettlement,
+      dependencyError,
+    );
+
+    try {
+      assert(retained);
+      assertStrictEquals(globalInProgress.get(key), retained);
+      let retainedSettled = false;
+      void retained.catch(() => retainedSettled = true);
+      await Promise.resolve();
+      assertEquals(retainedSettled, false);
+
+      finishTransform();
+      const error = await assertRejects(
+        () => retained,
+        Error,
+        "dependency failed",
+      );
+      assertStrictEquals(error, dependencyError);
+      assertEquals(globalInProgress.has(key), false);
+    } finally {
+      globalInProgress.delete(key);
+      finishTransform();
+    }
   });
 
   it("bounds a caller wait without evicting the shared transform", async () => {
@@ -1101,6 +1620,43 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       await time.tickAsync(TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS);
       await waitRejected;
       assertEquals(globalInProgress.get(key), pending);
+    } finally {
+      globalInProgress.delete(key);
+    }
+  });
+
+  it("cancels an in-progress transform only after its final observer detaches", async () => {
+    const key = "test:observed-shared-transform";
+    const pending = new Promise<ModuleCacheEntry>(() => {});
+    globalInProgress.set(key, pending);
+    const sharedSignal = __ssrModuleLoaderInternals.registerInProgressTransformObservers(
+      key,
+      pending,
+    );
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+
+    try {
+      const first = __ssrModuleLoaderInternals.waitForInProgressTransform(
+        pending,
+        "/app/SharedLayout.tsx",
+        firstController.signal,
+      );
+      const second = __ssrModuleLoaderInternals.waitForInProgressTransform(
+        pending,
+        "/app/SharedLayout.tsx",
+        secondController.signal,
+      );
+
+      firstController.abort(new DOMException("first render cancelled", "AbortError"));
+      await assertRejects(() => first, Error, "first render cancelled");
+      assertEquals(sharedSignal.aborted, false);
+      assertEquals(globalInProgress.get(key), pending);
+
+      secondController.abort(new DOMException("second render cancelled", "AbortError"));
+      await assertRejects(() => second, Error, "second render cancelled");
+      assertEquals(sharedSignal.aborted, true);
+      assertEquals(globalInProgress.has(key), false);
     } finally {
       globalInProgress.delete(key);
     }
@@ -1186,6 +1742,362 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       globalInProgress.delete(inProgressKey);
       globalModuleCache.delete(contentCacheKey);
       globalModuleCache.delete(filePathCacheKey);
+    }
+  });
+
+  it("preserves a terminal cross-project fetch failure on a cold load", async () => {
+    clearSSRModuleCache();
+    globalCrossProjectCache.clear();
+
+    const projectDir = "/app";
+    const filePath = "/app/app/page.tsx";
+    const projectId = "project-cold-cross-project-terminal";
+    const specifier = "acme-ui@1.2.3/@/components/Button.tsx";
+    const source = [
+      `import Button from "${specifier}";`,
+      `export default function Page() {`,
+      `  return Button;`,
+      `}`,
+    ].join("\n");
+
+    // The failure `http-cache.ts` raises once its retries are exhausted. In
+    // production it originates deeper — inside `transformToESM` on the fetched
+    // cross-project source — but that call is not injectable from here, so it
+    // is injected synthetically at the registry fetch, the nearest stubbable
+    // boundary. What matters for this test is that a terminal failure escapes
+    // `transformCrossProjectImportFlow`, which rethrows untouched either way.
+    const fetchError = BUILD_FAILED.create({
+      detail: "Failed to fetch https://esm.sh/marked: AbortError",
+      context: { phase: "http-module-fetch" },
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes("acme-ui@1.2.3")) return Promise.reject(fetchError);
+      return originalFetch(input, init);
+    }) as typeof fetch;
+
+    const loader = new SSRModuleLoader({
+      projectDir,
+      projectId,
+      contentSourceId: "release-1",
+      adapter: createProxyProjectAdapter({ "app/page.tsx": source }),
+      apiBaseUrl: "https://registry.example.test/api",
+      dev: true,
+    });
+
+    try {
+      const error = await assertRejects(
+        () => loader.loadRawModule(filePath, source),
+        VeryfrontError,
+        "Failed to fetch https://esm.sh/marked: AbortError",
+      );
+
+      assertStrictEquals(error, fetchError);
+      // The cold path used to swallow this into `missingDependencies`, finish
+      // the transform, and publish a module whose cross-project specifier was
+      // never rewritten. Nothing may reach the cache when the fetch is terminal.
+      // Scoped to this project's keys rather than asserting on total cache size,
+      // so a late write from an earlier test cannot turn this into a flake.
+      assertEquals(
+        [...globalModuleCache.keys()].filter((key) => isKeyForProject(key, projectId)),
+        [],
+      );
+      assertEquals(
+        [...globalCrossProjectCache.keys()].filter((key) => key.includes(projectId)),
+        [],
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      clearSSRModuleCache();
+      globalCrossProjectCache.clear();
+    }
+  });
+
+  it("uses the 5s acquire deadline in production and the 30s deadline in dev", () => {
+    assertEquals(getTransformAcquireTimeoutMs(false), TRANSFORM_ACQUIRE_TIMEOUT_MS);
+    assertEquals(getTransformAcquireTimeoutMs(false), 5_000);
+    assertEquals(getTransformAcquireTimeoutMs(true), TRANSFORM_ACQUIRE_TIMEOUT_DEV_MS);
+    assertEquals(getTransformAcquireTimeoutMs(true), 30_000);
+  });
+
+  it("skips node position injection for production tsx transforms", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-prod-gate-" });
+    const componentsDir = join(projectDir, "components");
+    const filePath = join(componentsDir, "Widget.tsx");
+    const projectId = "prod-gate-positions";
+
+    try {
+      await mkdir(componentsDir, { recursive: true });
+      await writeTextFile(filePath, PRODUCTION_GATE_JSX_SOURCE);
+
+      const rel = productionGateRelativePath(filePath, projectDir);
+      const injected = injectNodePositions(PRODUCTION_GATE_JSX_SOURCE, { filePath: rel });
+      assertNotEquals(
+        injected,
+        PRODUCTION_GATE_JSX_SOURCE,
+        "the parser extension must be active for this assertion to mean anything",
+      );
+
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId,
+        contentSourceId: PRODUCTION_GATE_CONTENT_SOURCE_ID,
+        adapter: denoAdapter,
+        dev: false,
+      });
+      await loader.loadRawModule(filePath, PRODUCTION_GATE_JSX_SOURCE);
+
+      const rawKey = productionGateCacheKey(
+        projectId,
+        filePath,
+        hashCodeHex(PRODUCTION_GATE_JSX_SOURCE),
+        false,
+      );
+      const injectedKey = productionGateCacheKey(projectId, filePath, hashCodeHex(injected), false);
+
+      assertEquals(
+        globalModuleCache.has(rawKey),
+        true,
+        "production must transform the untouched source",
+      );
+      assertEquals(
+        globalModuleCache.has(injectedKey),
+        false,
+        "production must not run injectNodePositions on tsx",
+      );
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("compiles _vf_modules imports for production without an inline sourcemap", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-vfmod-gate-" });
+    const componentsDir = join(projectDir, "components");
+    const filePath = join(componentsDir, "Widget.tsx");
+    const projectId = "prod-gate-vf-modules";
+    const mdxCacheDir = getMdxEsmSsrCacheDir(projectId, PRODUCTION_GATE_CONTENT_SOURCE_ID);
+    const source = [
+      `import { used } from "/_vf_modules/util.js";`,
+      `export default function Widget() { return used(); }`,
+    ].join("\n");
+
+    try {
+      await mkdir(componentsDir, { recursive: true });
+      await writeTextFile(filePath, source);
+      await writeTextFile(
+        join(projectDir, "util.ts"),
+        ["function unusedHelper() { return 2; }", "export const used = () => 1;"].join("\n"),
+      );
+
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId,
+        contentSourceId: PRODUCTION_GATE_CONTENT_SOURCE_ID,
+        adapter: denoAdapter,
+        dev: false,
+      });
+      await loader.loadRawModule(filePath, source);
+
+      const pathCache = await getModulePathCache(mdxCacheDir);
+      const artifactPath = pathCache.get(buildMdxEsmPathCacheKey("_vf_modules/util.js"));
+      assert(artifactPath !== undefined, "expected the _vf_modules artifact to be cached");
+
+      const artifact = await Deno.readTextFile(artifactPath);
+      assertEquals(
+        artifact.includes("sourceMappingURL=data:"),
+        false,
+        "production must not ship an inline sourcemap for _vf_modules imports",
+      );
+      assertEquals(artifact.includes("unusedHelper"), false, "production must tree-shake");
+    } finally {
+      await waitForDiskCleanup();
+      clearModulePathCache();
+      await remove(mdxCacheDir, { recursive: true }).catch(() => {});
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("injects node positions for dev tsx transforms", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-dev-gate-" });
+    const componentsDir = join(projectDir, "components");
+    const filePath = join(componentsDir, "Widget.tsx");
+    const projectId = "dev-gate-positions";
+
+    try {
+      await mkdir(componentsDir, { recursive: true });
+      await writeTextFile(filePath, PRODUCTION_GATE_JSX_SOURCE);
+
+      const rel = productionGateRelativePath(filePath, projectDir);
+      const injected = injectNodePositions(PRODUCTION_GATE_JSX_SOURCE, { filePath: rel });
+
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId,
+        contentSourceId: PRODUCTION_GATE_CONTENT_SOURCE_ID,
+        adapter: denoAdapter,
+        dev: true,
+      });
+      await loader.loadRawModule(filePath, PRODUCTION_GATE_JSX_SOURCE);
+
+      const injectedKey = productionGateCacheKey(projectId, filePath, hashCodeHex(injected), true);
+      assertEquals(
+        globalModuleCache.has(injectedKey),
+        true,
+        "dev must keep injecting node positions for Studio Navigator",
+      );
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("injects node positions for preview tsx transforms", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-preview-gate-" });
+    const componentsDir = join(projectDir, "components");
+    const filePath = join(componentsDir, "Widget.tsx");
+    const projectId = "preview-gate-positions";
+
+    try {
+      await mkdir(componentsDir, { recursive: true });
+      await writeTextFile(filePath, PRODUCTION_GATE_JSX_SOURCE);
+
+      const rel = productionGateRelativePath(filePath, projectDir);
+      const injected = injectNodePositions(PRODUCTION_GATE_JSX_SOURCE, { filePath: rel });
+
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId,
+        contentSourceId: PRODUCTION_GATE_CONTENT_SOURCE_ID,
+        adapter: denoAdapter,
+        dev: false,
+        mode: "preview",
+      });
+      await loader.loadRawModule(filePath, PRODUCTION_GATE_JSX_SOURCE);
+
+      assertEquals(
+        globalModuleCache.has(
+          productionGateCacheKey(projectId, filePath, hashCodeHex(injected), false, "preview"),
+        ),
+        true,
+        "preview must keep injecting node positions for Studio Navigator",
+      );
+      assertEquals(
+        globalModuleCache.has(
+          productionGateCacheKey(
+            projectId,
+            filePath,
+            hashCodeHex(PRODUCTION_GATE_JSX_SOURCE),
+            false,
+            "preview",
+          ),
+        ),
+        false,
+        "preview must not cache the uninjected source under the same identity",
+      );
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("applies the per-project transform cap in production and bypasses it in dev", async () => {
+    const previousLimit = getEnv("SSR_TRANSFORM_PER_PROJECT_LIMIT");
+    setEnv("SSR_TRANSFORM_PER_PROJECT_LIMIT", "1");
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-cap-gate-" });
+    const componentsDir = join(projectDir, "components");
+    const filePath = join(componentsDir, "Capped.tsx");
+    const source = "export default function Capped() { return null; }";
+    const projectId = "prod-gate-capacity";
+    let held = false;
+
+    try {
+      await mkdir(componentsDir, { recursive: true });
+      await writeTextFile(filePath, source);
+
+      // Occupy the only per-project slot for this project.
+      held = acquireTransformSlot(projectId);
+      assertEquals(held, true);
+
+      const devLoader = new SSRModuleLoader({
+        projectDir,
+        projectId,
+        contentSourceId: PRODUCTION_GATE_CONTENT_SOURCE_ID,
+        adapter: denoAdapter,
+        dev: true,
+      });
+      // Dev bypasses the per-project cap, so this completes while the slot is held.
+      const devModule = await devLoader.loadRawModule(filePath, source);
+      assert(typeof devModule.default === "function");
+
+      const prodLoader = new SSRModuleLoader({
+        projectDir,
+        projectId,
+        contentSourceId: PRODUCTION_GATE_CONTENT_SOURCE_ID,
+        adapter: denoAdapter,
+        dev: false,
+      });
+
+      // The deadline is a timer, so drive it with fake time instead of burning
+      // 5s of wall clock and asserting on a Date.now() delta. Ticking to one
+      // millisecond short of the production deadline and only then over it
+      // pins the exact value: a shorter deadline settles early, and the 30s dev
+      // deadline never settles at all.
+      using time = new FakeTime();
+      let settled = false;
+      const rejection = prodLoader.loadRawModule(filePath, source).then(
+        () => undefined,
+        (error: unknown) => error,
+      ).finally(() => {
+        settled = true;
+      });
+
+      // Let the loader reach the capacity wait without advancing the clock.
+      for (let i = 0; i < 50 && !settled; i++) await time.tickAsync(0);
+      assertEquals(settled, false, "production must not fail before the deadline");
+
+      await time.tickAsync(TRANSFORM_ACQUIRE_TIMEOUT_MS - 1);
+      assertEquals(
+        settled,
+        false,
+        `production must wait the full ${TRANSFORM_ACQUIRE_TIMEOUT_MS}ms deadline`,
+      );
+
+      await time.tickAsync(1);
+      // Crossing the deadline fires the timer; the rejection still has to walk
+      // the promise chain. Flush it without advancing the clock, so the 30s dev
+      // deadline would still read as unsettled here.
+      for (let i = 0; i < 10 && !settled; i++) await time.tickAsync(0);
+      assertEquals(
+        settled,
+        true,
+        `production must reject at the ${TRANSFORM_ACQUIRE_TIMEOUT_MS}ms deadline, not the ` +
+          `${TRANSFORM_ACQUIRE_TIMEOUT_DEV_MS}ms dev deadline`,
+      );
+
+      const error = await rejection;
+      assert(error instanceof Error, `expected a rejection, got ${String(error)}`);
+      assert(
+        (error as Error).message.includes("at transform capacity"),
+        `unexpected rejection: ${(error as Error).message}`,
+      );
+    } finally {
+      if (held) releaseTransformSlot(projectId);
+      if (previousLimit === undefined) {
+        deleteEnv("SSR_TRANSFORM_PER_PROJECT_LIMIT");
+      } else {
+        setEnv("SSR_TRANSFORM_PER_PROJECT_LIMIT", previousLimit);
+      }
+      clearSSRModuleCache();
+      await remove(projectDir, { recursive: true });
     }
   });
 });

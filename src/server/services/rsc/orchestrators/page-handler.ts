@@ -75,10 +75,10 @@ export class PageHandler {
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Veryfront RSC</title>
-  <script id="${HYDRATION_DATA_ID}" type="application/json"${nonceAttr}>${hydrationData}</script>
   <script${nonceAttr}>window.__VERYFRONT_DEV__ = ${this.isDevelopment};</script>
 </head>
 <body>
+  <script id="${HYDRATION_DATA_ID}" type="application/json"${nonceAttr}>${hydrationData}</script>
   <div id="rsc-root"></div>
   <script type="module"${nonceAttr}>
     const DEPENDENCY_SNAPSHOT_RECOVERY_RESULT = Object.freeze({

@@ -1,9 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { readTextFile } from "veryfront/platform";
 import { saveToken } from "../../auth/token-store.ts";
 import {
+  createGlobalErrorLogContext,
+  hasProxyCredentials,
   hydrateStartRuntimeAuth,
   selectStartProject,
   shouldSkipProjectDirectory,
@@ -48,6 +49,22 @@ describe("commands/start/command", () => {
 
     it("accepts a single StartOptions parameter", () => {
       assertEquals(startCommand.length, 1);
+    });
+  });
+
+  describe("global error logging", () => {
+    it("withholds stacks from user-facing start output", () => {
+      const error = new Error("render failed");
+      error.stack = "Error: render failed\n    at <PROJECT_ROOT>/app.ts:1:1";
+
+      assertEquals(
+        createGlobalErrorLogContext(error, "unhandledRejection", false),
+        {
+          message: "render failed",
+          type: "unhandledRejection",
+          fatal: false,
+        },
+      );
     });
   });
 
@@ -205,7 +222,7 @@ describe("commands/start/command", () => {
 
   describe("production MCP boundary", () => {
     it("does not start the CLI MCP server from production start", async () => {
-      const source = await readTextFile("cli/commands/start/command.ts");
+      const source = await Deno.readTextFile(new URL("./command.ts", import.meta.url));
 
       assertEquals(source.includes("../../mcp"), false);
       assertEquals(source.includes("createMCPServer"), false);
@@ -217,6 +234,60 @@ describe("commands/start/command", () => {
 
       assertEquals(optionText.includes("mcp-port"), false);
       assertEquals(helpText.includes("9999"), false);
+    });
+  });
+
+  describe("proxy engagement", () => {
+    const read = (values: Record<string, string>) => (name: string) => values[name];
+
+    it("stays off when nothing is configured", () => {
+      assertEquals(hasProxyCredentials(read({})), false);
+    });
+
+    it("stays off for blank credentials", () => {
+      assertEquals(
+        hasProxyCredentials(read({
+          VERYFRONT_PROXY_API_CLIENT_ID: "  ",
+          VERYFRONT_PROXY_API_CLIENT_SECRET: "",
+        })),
+        false,
+      );
+    });
+
+    it("stays off for a plain login token, so being logged in does not force proxy mode", () => {
+      assertEquals(hasProxyCredentials(read({ VERYFRONT_API_TOKEN: "vf_login_token" })), false);
+    });
+
+    it("stays off with only half of a client credential pair", () => {
+      assertEquals(
+        hasProxyCredentials(read({ VERYFRONT_PROXY_API_CLIENT_ID: "id" })),
+        false,
+      );
+      assertEquals(
+        hasProxyCredentials(read({ VERYFRONT_PROXY_API_CLIENT_SECRET: "secret" })),
+        false,
+      );
+    });
+
+    it("engages for a complete client credential pair", () => {
+      assertEquals(
+        hasProxyCredentials(read({
+          VERYFRONT_PROXY_API_CLIENT_ID: "id",
+          VERYFRONT_PROXY_API_CLIENT_SECRET: "secret",
+        })),
+        true,
+      );
+    });
+
+    it("engages for a credential pair even alongside a login token", () => {
+      assertEquals(
+        hasProxyCredentials(read({
+          VERYFRONT_PROXY_API_CLIENT_ID: "id",
+          VERYFRONT_PROXY_API_CLIENT_SECRET: "secret",
+          VERYFRONT_API_TOKEN: "vf_login_token",
+        })),
+        true,
+      );
     });
   });
 });

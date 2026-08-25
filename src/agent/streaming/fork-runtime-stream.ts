@@ -28,6 +28,7 @@ import { AgentRuntime } from "../runtime/index.ts";
 import type { AgentResponse, Message as AgentMessage } from "../schemas/index.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { RuntimeReasoningOption } from "../types.ts";
+import type { AgentSystem } from "#veryfront/agent/types.ts";
 import {
   commitForkRuntimeStep,
   createForkRuntimeProgress,
@@ -84,13 +85,13 @@ export const DEFAULT_FORK_RESPONSE_PROMISE_TIMEOUT_MS = 1_000;
 
 type ForkRuntimeStepPreparationInput = {
   messages: AgentMessage[];
-  buildInstructions: () => string;
+  buildInstructions: () => AgentSystem;
   forkToolNames: readonly string[];
 };
 
 type ForkRuntimeStepPreparation = {
   messages: AgentMessage[];
-  system: string;
+  system: AgentSystem;
   /**
    * When present (returned by a step preparer that reads from the live
    * activated-tool context), this overrides `input.forkToolNames` for the
@@ -130,7 +131,7 @@ export type StartAgentRuntimeForkInput = {
   sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
   providerOptions?: Record<string, unknown>;
   reasoning?: RuntimeReasoningOption;
-  buildInstructions: () => string;
+  buildInstructions: () => AgentSystem;
   onBeforeStop?: ForkRuntimeContinuationPromptResolver;
   initialMessages?: readonly AgentMessage[];
   responseTimeoutMs?: number;
@@ -239,7 +240,7 @@ function createForkRuntimeDeferred<T>(): {
 async function prepareForkRuntimeStep(input: {
   prepareStep?: ForkRuntimeStepPreparer;
   messages: AgentMessage[];
-  buildInstructions: () => string;
+  buildInstructions: () => AgentSystem;
   forkToolNames: string[];
 }): Promise<ForkRuntimeStepPreparation> {
   if (input.prepareStep) {
@@ -264,7 +265,7 @@ export type RunAgentRuntimeForkStepInput = {
   model: string;
   temperature?: number;
   messages: AgentMessage[];
-  system: string;
+  system: AgentSystem;
   abortSignal?: AbortSignal;
   forkToolNames: string[];
   providerToolNames?: string[];

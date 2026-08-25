@@ -9,6 +9,8 @@ import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 import { joinPath } from "#veryfront/utils/path-utils.ts";
+import { hasMatchingEtag } from "../utils/etag.ts";
+import { hashCSS } from "#veryfront/html/styles-builder/css-identity.ts";
 import {
   acquireCSSGenerationSession,
   type CSSGenerationSession,
@@ -37,6 +39,7 @@ import type {
   VeryfrontApiClient,
 } from "#veryfront/platform/adapters/veryfront-api-client/index.ts";
 import { extractProjectCandidates } from "./styles-candidate-scanner.ts";
+import { findStylesheetFromFiles } from "#veryfront/html/styles-builder/css-pregeneration.ts";
 import { extractProjectCssImports } from "./styles-css-import-scanner.ts";
 import { mergeImportedCSS } from "#veryfront/rendering/orchestrator/html-imported-css.ts";
 import { profilePhase } from "#veryfront/observability";
@@ -46,6 +49,78 @@ const logger = serverLogger.component("styles-css-handler");
 type GeneratedStylesResult = Awaited<ReturnType<typeof getProjectCSS>>;
 type StyleArtifactSelectorContext = Omit<ResolveStyleArtifactInput, "styleProfileHash">;
 
+/** Longest diagnostic text embedded in a served stylesheet. */
+const MAX_DIAGNOSTIC_LENGTH = 2_000;
+const SUCCESSFUL_CSS_CACHE = { maxAge: 0, mustRevalidate: true } as const;
+
+/**
+ * Neutralize the only sequence that can terminate a CSS comment (a star
+ * followed by a slash). Diagnostic text is derived from project-controlled
+ * input (a stylesheet's `@plugin` name reaches the message verbatim), so
+ * leaving that sequence intact would close the banner early and let the rest
+ * of the message be parsed as CSS rules.
+ */
+function forCSSComment(value: string): string {
+  return value.replaceAll("*/", "* /");
+}
+
+/**
+ * Escape text for a double-quoted CSS string. Backslash must be escaped first
+ * or it would re-escape the quotes added afterwards, and newlines terminate a
+ * CSS string literal outright.
+ */
+function forCSSString(value: string): string {
+  return value
+    .replaceAll("\\", "\\\\")
+    .replaceAll('"', '\\"')
+    // deno-lint-ignore no-control-regex -- raw control characters terminate a CSS string.
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ");
+}
+
+function clampDiagnostic(value: string): string {
+  const text = typeof value === "string" ? value : String(value);
+  return text.length > MAX_DIAGNOSTIC_LENGTH ? `${text.slice(0, MAX_DIAGNOSTIC_LENGTH)}…` : text;
+}
+
+/**
+ * Render a stylesheet that both explains the failure in the source and shows
+ * it in the page. Every error path serves this: a stylesheet that failed to
+ * build must never be mistaken for a project that simply has no styles.
+ *
+ * Exported for direct testing. The escaping contract cannot be fully driven
+ * through the handler: a `"` inside `@plugin "..."` closes the CSS string
+ * before it ever reaches a diagnostic, so the string-literal escape path has
+ * no end-to-end route and must be exercised here.
+ */
+export function renderCSSDiagnostic(
+  heading: string,
+  detail: { title: string; message: string; suggestion: string },
+): string {
+  const summary = clampDiagnostic(
+    `${detail.title}: ${detail.message}\nSuggestion: ${detail.suggestion}`,
+  );
+  return `/*
+  ${forCSSComment(heading)}
+  ${forCSSComment(summary).replaceAll("\n", "\n  ")}
+*/
+
+body::before {
+  content: "CSS Error: ${forCSSString(summary.replaceAll("\n", " "))}";
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 16px;
+  background: #dc2626;
+  color: white;
+  font-family: monospace;
+  font-size: 14px;
+  z-index: 99999;
+  white-space: pre-wrap;
+}
+`;
+}
+
 export class StylesCSSHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "StylesCSSHandler",
@@ -54,12 +129,34 @@ export class StylesCSSHandler extends BaseHandler {
     enabled: () => true,
   };
 
+  /**
+   * Serve a generated stylesheet with a validator.
+   *
+   * The route is `Cache-Control: no-cache`, so the browser revalidates before
+   * every use. Without an ETag that revalidation is a full download; with one it
+   * is a 304. This is the only place a CSS body becomes a response, so the
+   * validator is attached here rather than at each call site.
+   */
+  private respondCSS(
+    builder: ReturnType<BaseHandler["createResponseBuilder"]>,
+    req: Request,
+    css: string,
+  ): HandlerResult {
+    const etag = `"${hashCSS(css)}"`;
+    if (hasMatchingEtag(req, etag)) {
+      return this.respond(builder.notModified(etag));
+    }
+    return this.respond(
+      builder.withETag(etag).withContentType("text/css; charset=utf-8", css, HTTP_OK),
+    );
+  }
+
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     if (!this.shouldHandle(req, ctx)) return this.continue();
 
     try {
       return await this.withProxyContext(ctx, async () => {
-        const responseBuilder = this.createResponseBuilder(ctx).withCache("no-cache");
+        const responseBuilder = this.createResponseBuilder(ctx).withCache(SUCCESSFUL_CSS_CACHE);
         const projectScope = ctx.projectSlug ?? ctx.projectDir;
         const styleProfile = createStyleScopeProfile(ctx.config);
         const contentContext = this.getContentContext(ctx);
@@ -137,9 +234,7 @@ export class StylesCSSHandler extends BaseHandler {
               cssHash: prepared.hash,
             });
 
-            return this.respond(
-              responseBuilder.withContentType("text/css; charset=utf-8", prepared.css, HTTP_OK),
-            );
+            return this.respondCSS(responseBuilder, req, prepared.css);
           }
         }
 
@@ -161,9 +256,7 @@ export class StylesCSSHandler extends BaseHandler {
             cssHash: remotePrepared.hash,
           });
 
-          return this.respond(
-            responseBuilder.withContentType("text/css; charset=utf-8", remotePrepared.css, HTTP_OK),
-          );
+          return this.respondCSS(responseBuilder, req, remotePrepared.css);
         }
 
         let result: GeneratedStylesResult;
@@ -179,33 +272,12 @@ export class StylesCSSHandler extends BaseHandler {
             suggestion: formatted.suggestion,
           });
 
-          const errorMessage =
-            `${formatted.title}: ${formatted.message}\nSuggestion: ${formatted.suggestion}`;
-          const errorCSS = `/*
-  ╔══════════════════════════════════════════════════════════════╗
-  ║  TAILWIND CSS COMPILATION ERROR                               ║
-  ╠══════════════════════════════════════════════════════════════╣
-  ║  ${errorMessage.replace(/\n/g, "\n  ║  ")}
-  ╚══════════════════════════════════════════════════════════════╝
-*/
-
-body::before {
-  content: "CSS Error: ${errorMessage.replace(/"/g, '\\"').replace(/\n/g, " ")}";
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  padding: 16px;
-  background: #dc2626;
-  color: white;
-  font-family: monospace;
-  font-size: 14px;
-  z-index: 99999;
-  white-space: pre-wrap;
-}
-`;
           return this.respond(
-            responseBuilder.withContentType("text/css; charset=utf-8", errorCSS, HTTP_OK),
+            responseBuilder.withContentType(
+              "text/css; charset=utf-8",
+              renderCSSDiagnostic("TAILWIND CSS COMPILATION ERROR", formatted),
+              HTTP_OK,
+            ),
           );
         }
 
@@ -243,42 +315,105 @@ body::before {
           );
         }
 
-        return this.respond(
-          responseBuilder.withContentType("text/css; charset=utf-8", result.css, HTTP_OK),
-        );
+        return this.respondCSS(responseBuilder, req, result.css);
       });
     } catch (error) {
-      // Ensure the handler never throws — an uncaught error causes the route registry
+      // Ensure the handler never throws: an uncaught error causes the route registry
       // to skip this handler silently and fall through to the 404 handler.
       logger.error("Unhandled error in CSS handler", {
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
       });
+      // This path used to answer with a bare CSS comment: 200, zero rules, no
+      // visible signal. A stylesheet that failed to build is indistinguishable
+      // from a project that legitimately has no styles, so the page renders
+      // completely unstyled and nothing in the browser says why. Route it
+      // through the same visible diagnostic the compile path uses.
+      //
+      // The message stays generic. The compile path's text comes from the
+      // project's own stylesheet and is the whole point of this route. This
+      // catch instead fires on infrastructure faults (adapter, filesystem,
+      // network) whose messages carry server-side paths and internals, and a
+      // preview URL is shareable. The detail is logged above instead.
       const responseBuilder = this.createResponseBuilder(ctx).withCache("no-cache");
-      const errorCSS = `/* StylesCSSHandler error: ${
-        (error instanceof Error ? error.message : String(error)).replace(/\*\//g, "")
-      } */`;
       return this.respond(
-        responseBuilder.withContentType("text/css; charset=utf-8", errorCSS, HTTP_OK),
+        responseBuilder.withContentType(
+          "text/css; charset=utf-8",
+          renderCSSDiagnostic("STYLESHEET COULD NOT BE BUILT", {
+            title: "CSS Handler Error",
+            message: "The stylesheet could not be built for this request.",
+            suggestion: "Check the server logs for this request's error and stack trace.",
+          }),
+          HTTP_OK,
+        ),
       );
     }
   }
 
+  /**
+   * Resolve the project stylesheet the same way the production pipeline does.
+   *
+   * Production calls `findStylesheetFromFiles` over the loaded source files,
+   * which accepts `globals.css`, `global.css`, `styles/globals.css` and
+   * `app/globals.css`. This route used to read a single hardcoded
+   * `<projectDir>/globals.css` through the filesystem adapter, so a project
+   * whose stylesheet sits anywhere else silently fell back to the provider
+   * default and lost its `@theme` tokens -- every `bg-<token>` utility the
+   * theme defines then fails to generate, and the preview renders unstyled
+   * while production is fine.
+   *
+   * Resolving from the same file list also removes the dependency on a
+   * path-shaped filesystem read, which is not how sources arrive when they are
+   * served from the control plane rather than local disk.
+   */
   private async loadStylesheet(ctx: HandlerContext): Promise<string | undefined> {
     const configuredPath = ctx.config?.tailwind?.stylesheet;
 
-    if (configuredPath) {
-      const filePath = joinPath(ctx.projectDir, configuredPath);
-      return ctx.adapter.fs.readFile(filePath);
+    const files = await this.getSourceFiles(ctx);
+    if (files) {
+      const fromFiles = findStylesheetFromFiles(files, configuredPath);
+      if (fromFiles) return fromFiles;
     }
 
-    const globalsPath = joinPath(ctx.projectDir, "globals.css");
+    // No source list available (or nothing matched): fall back to reading the
+    // configured path, then the conventional locations, directly.
+    const candidatePaths = configuredPath
+      ? [configuredPath]
+      : ["globals.css", "global.css", "styles/globals.css", "app/globals.css"];
+
+    for (const candidate of candidatePaths) {
+      try {
+        const contents = await ctx.adapter.fs.readFile(joinPath(ctx.projectDir, candidate));
+        if (contents) return contents;
+      } catch (_) {
+        /* try the next conventional location */
+      }
+    }
+
+    // Worth a warning rather than a debug line: the page still renders, but
+    // without the project's theme, which looks like a broken site.
+    logger.warn("No project stylesheet found; provider default will be used", {
+      projectDir: ctx.projectDir,
+      configuredPath: configuredPath ?? null,
+    });
+    return undefined;
+  }
+
+  private async getSourceFiles(
+    ctx: HandlerContext,
+  ): Promise<Array<{ path: string; content?: string }> | null> {
+    const wrappedFs = ctx.adapter.fs as { getUnderlyingAdapter?: () => unknown };
+    if (typeof wrappedFs.getUnderlyingAdapter !== "function") return null;
+
+    const fsAdapter = wrappedFs.getUnderlyingAdapter() as {
+      getAllSourceFiles?: () => Promise<Array<{ path: string; content?: string }>>;
+    };
+    if (typeof fsAdapter.getAllSourceFiles !== "function") return null;
+
     try {
-      return await ctx.adapter.fs.readFile(globalsPath);
+      return await fsAdapter.getAllSourceFiles();
     } catch (_) {
-      /* expected: globals.css may not exist */
-      logger.debug("No project stylesheet found; provider default will be used");
-      return undefined;
+      return null;
     }
   }
 

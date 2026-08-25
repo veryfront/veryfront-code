@@ -18,7 +18,6 @@ describe("security/http/studio-origin-policy", () => {
     // studio.* subdomains are not deployed and are no longer trusted origins.
     assertEquals(resolveTrustedStudioOrigin("https://studio.veryfront.com"), null);
     assertEquals(resolveTrustedStudioOrigin("https://studio.veryfront.org"), null);
-    assertEquals(resolveTrustedStudioOrigin("https://studio.veryfront.dev"), null);
     assertEquals(resolveTrustedStudioOrigin("http://studio.veryfront.com"), null);
     assertEquals(resolveTrustedStudioOrigin("https://studio.veryfront.com:8443"), null);
   });
@@ -28,6 +27,21 @@ describe("security/http/studio-origin-policy", () => {
     assertEquals(resolveTrustedStudioOrigin("https://localhost:3443"), "https://localhost:3443");
     assertEquals(resolveTrustedStudioOrigin("ftp://localhost:3000"), null);
     assertEquals(resolveTrustedStudioOrigin("http://127.0.0.1:3000"), null);
+    assertEquals(
+      resolveTrustedStudioOrigin("https://localhost.attacker.com"),
+      null,
+      "a hostname that merely starts with localhost must not be trusted",
+    );
+    assertEquals(
+      resolveTrustedStudioOrigin("https://evil-localhost.com"),
+      null,
+      "a hostname that merely contains localhost must not be trusted",
+    );
+    assertEquals(
+      resolveTrustedStudioOrigin("https://attacker.localhost"),
+      null,
+      "localhost subdomains are not trusted Studio origins",
+    );
   });
 
   it("generates a helper from the exact hosted-origin policy", () => {
@@ -35,7 +49,6 @@ describe("security/http/studio-origin-policy", () => {
     assertEquals(source.includes('"https://veryfront.com"'), true);
     assertEquals(source.includes('"https://studio.veryfront.com"'), false);
     assertEquals(source.includes("endsWith"), false);
-    assertEquals(source.includes(".veryfront.dev"), false);
 
     const resolveTarget = new Function(
       "document",
@@ -51,6 +64,11 @@ describe("security/http/studio-origin-policy", () => {
     assertEquals(
       resolveTarget({ referrer: "https://attacker.preview.veryfront.org/project" }, window),
       window.location.origin,
+    );
+    assertEquals(
+      resolveTarget({ referrer: "https://localhost.attacker.com/project" }, window),
+      window.location.origin,
+      "the generated helper must match the localhost hostname exactly, never by prefix",
     );
   });
 });

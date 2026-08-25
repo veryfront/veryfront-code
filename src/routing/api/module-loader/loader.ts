@@ -1,20 +1,28 @@
-import { serverLogger } from "#veryfront/utils";
-import type { BuildResult, Plugin } from "veryfront/extensions/bundler";
+import { computeHash, isCompiledBinary, serverLogger } from "#veryfront/utils";
+import type {
+  BuildResult,
+  BundleOptions,
+  Bundler,
+  Plugin,
+  TypeScriptDecoratorOptions,
+} from "veryfront/extensions/bundler";
+import { readTypeScriptDecoratorOptions } from "veryfront/extensions/bundler";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { createHTTPPlugin } from "./esbuild-plugin.ts";
 import { validateHTTPImports } from "./http-validator.ts";
 import { loadSecurityConfig } from "./security-config.ts";
-import type { APIRoute, LoadModuleOptions } from "./types.ts";
+import type { APIRoute, LoadHostModuleOptions, LoadModuleOptions } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
+import { tryResolve as tryResolveExtensionContract } from "#veryfront/extensions/contracts.ts";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
-import { createFileSystem, realPath } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
+import { captureBoundedTextReader } from "#veryfront/platform/adapters/bounded-text-reader.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { FILE_EXTENSIONS, getLoaderForFile, validateModulePath } from "./loader-helpers.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { isCompiledBinary } from "#veryfront/utils";
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 import {
@@ -23,6 +31,20 @@ import {
   readProjectDependencies,
   rewriteExternalImports,
 } from "./external-import-rewriter.ts";
+import {
+  MAX_WORKER_MODULE_SOURCE_BYTES,
+  type PreparedWorkerModule,
+} from "#veryfront/security/sandbox/worker-types.ts";
+import { isExplicitHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
+import {
+  isIsolatedApiPreparationSupported,
+  ISOLATED_API_PREPARATION_UNSUPPORTED_REASON,
+} from "#veryfront/security/sandbox/isolation-capability.ts";
+import {
+  createProjectSourceSnapshot,
+  ProjectBoundaryViolationError,
+  type ProjectSourceSnapshot,
+} from "./project-source-snapshot.ts";
 export {
   generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
@@ -37,10 +59,16 @@ export {
 } from "./external-import-rewriter.ts";
 
 const logger = serverLogger.component("api");
+const MAX_TYPESCRIPT_CONFIG_BYTES = 1024 * 1024;
 
 export { toCjsDestructureBindings } from "./loader-helpers.ts";
 
-export function loadHandlerModule(options: LoadModuleOptions): Promise<APIRoute | null> {
+export function loadHandlerModule(options: LoadHostModuleOptions): Promise<APIRoute | null> {
+  if (!isExplicitHostProjectCodeExecutionAllowed(options)) {
+    return Promise.reject(
+      new TypeError("Host API module loading requires explicit trusted-local execution"),
+    );
+  }
   return withSpan(
     "api.loadHandlerModule",
     async () => {
@@ -50,7 +78,14 @@ export function loadHandlerModule(options: LoadModuleOptions): Promise<APIRoute 
       validateModulePath(modulePath, projectDir);
 
       try {
-        const module = await loadModule({ modulePath, projectDir, adapter, fs, config });
+        const module = await loadModule({
+          modulePath,
+          projectDir,
+          adapter,
+          fs,
+          config,
+          allowHostTypeScriptConfigReads: true,
+        });
         return extractAPIRouteHandlers(module);
       } catch (error: unknown) {
         const errorMsg = error instanceof Error ? error.message : String(error);
@@ -67,26 +102,135 @@ export function loadHandlerModule(options: LoadModuleOptions): Promise<APIRoute 
   );
 }
 
+/**
+ * Build an API route without importing or evaluating project code in the host
+ * realm. Shared runtimes pass this immutable source snapshot to the project
+ * worker, which rehashes and evaluates it under tenant-scoped permissions.
+ */
+export function prepareHandlerModule(options: LoadModuleOptions): Promise<PreparedWorkerModule> {
+  return withSpan(
+    "api.prepareHandlerModule",
+    async () => {
+      const { projectDir, modulePath, adapter, config } = options;
+      validateModulePath(modulePath, projectDir);
+
+      // Fail-closed backstop. API ownership reports a typed 503 before this.
+      if (!isIsolatedApiPreparationSupported()) {
+        throw toError(
+          createError({
+            type: "api",
+            message: ISOLATED_API_PREPARATION_UNSUPPORTED_REASON,
+          }),
+        );
+      }
+
+      try {
+        const source = await buildTranspiledModuleSource(
+          modulePath,
+          projectDir,
+          adapter,
+          config,
+        );
+        const bytes = new TextEncoder().encode(source);
+        if (bytes.byteLength > MAX_WORKER_MODULE_SOURCE_BYTES) {
+          throw new TypeError(
+            `Prepared API route exceeds the ${MAX_WORKER_MODULE_SOURCE_BYTES}-byte worker limit`,
+          );
+        }
+        return Object.freeze({
+          source,
+          sha256: await computeHash(source),
+        });
+      } catch (error: unknown) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        logger.error(`Failed to prepare isolated API handler ${modulePath}:`, error);
+        throw toError(
+          createError({
+            type: "api",
+            message: `Failed to prepare isolated API handler: ${errorMsg}`,
+          }),
+        );
+      }
+    },
+    { "api.modulePath": options.modulePath, "api.projectDir": options.projectDir },
+  );
+}
+
 async function loadModule(args: {
   modulePath: string;
   projectDir: string;
   adapter: RuntimeAdapter;
   fs: FileSystem;
   config?: VeryfrontConfig;
+  allowHostTypeScriptConfigReads: boolean;
 }): Promise<APIRoute> {
-  const { modulePath, projectDir, adapter, fs, config } = args;
+  const {
+    modulePath,
+    projectDir,
+    adapter,
+    fs,
+    config,
+    allowHostTypeScriptConfigReads,
+  } = args;
 
-  if (modulePath.endsWith(".js")) return loadJSModule(modulePath);
+  if (modulePath.endsWith(".js")) {
+    const bundler = selectedTypeScriptBundler();
+    if (!bundler) return loadJSModule(modulePath);
+    const decoratorOptions = await readProjectTypeScriptDecoratorOptions(
+      projectDir,
+      await createProjectSourceSnapshot(projectDir, adapter),
+      allowHostTypeScriptConfigReads,
+    );
+    if (!bundlerForcesTypeScript(bundler, decoratorOptions)) {
+      return loadJSModule(modulePath);
+    }
+    return loadAndTranspileModule(
+      modulePath,
+      projectDir,
+      adapter,
+      fs,
+      config,
+      decoratorOptions,
+      allowHostTypeScriptConfigReads,
+    );
+  }
 
   // Always transpile TypeScript in compiled binaries - they can't import raw .ts files
   if (!isDeno || isCompiledBinary()) {
-    return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
+    return loadAndTranspileModule(
+      modulePath,
+      projectDir,
+      adapter,
+      fs,
+      config,
+      undefined,
+      allowHostTypeScriptConfigReads,
+    );
   }
 
   const fileExistsLocally = await fs.exists(modulePath);
   if (fileExistsLocally) {
+    const bundler = selectedTypeScriptBundler();
+    const decoratorOptions = bundler
+      ? await readProjectTypeScriptDecoratorOptions(
+        projectDir,
+        await createProjectSourceSnapshot(projectDir, adapter),
+        allowHostTypeScriptConfigReads,
+      )
+      : undefined;
+    if (decoratorOptions && bundlerForcesTypeScript(bundler, decoratorOptions)) {
+      return loadAndTranspileModule(
+        modulePath,
+        projectDir,
+        adapter,
+        fs,
+        config,
+        decoratorOptions,
+        allowHostTypeScriptConfigReads,
+      );
+    }
     try {
-      return await loadTSModuleDirect(modulePath);
+      return await loadTSModuleDirect(modulePath, await moduleRevision(fs, modulePath));
     } catch (error) {
       // A direct import shares the dev server's runtime context, which is what
       // makes auto-discovery (agentRegistry and friends) work — but it leaves
@@ -99,12 +243,156 @@ async function loadModule(args: {
         modulePath,
         error: error instanceof Error ? error.message : String(error),
       });
-      return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
+      return loadAndTranspileModule(
+        modulePath,
+        projectDir,
+        adapter,
+        fs,
+        config,
+        decoratorOptions,
+        allowHostTypeScriptConfigReads,
+      );
     }
   }
 
   logger.debug(`File not local, using adapter-based loading: ${modulePath}`);
-  return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
+  return loadAndTranspileModule(
+    modulePath,
+    projectDir,
+    adapter,
+    fs,
+    config,
+    undefined,
+    allowHostTypeScriptConfigReads,
+  );
+}
+
+/** @internal Exported for the runtime-selection regression test. */
+export function bundlerForcesTypeScript(
+  bundler: Pick<Bundler, "shouldBundleTypeScript"> | undefined,
+  options: TypeScriptDecoratorOptions,
+): boolean {
+  return bundler?.shouldBundleTypeScript?.(options) === true;
+}
+
+/** @internal Exported for the runtime-selection regression test. */
+export function typeScriptBuildOptions(
+  projectDir: string,
+  options: TypeScriptDecoratorOptions,
+  bundleTypeScript: boolean,
+): Pick<BundleOptions, "typescriptDecoratorOptions"> & { absWorkingDir?: string } {
+  return {
+    typescriptDecoratorOptions: options,
+    ...(bundleTypeScript ? { absWorkingDir: projectDir } : {}),
+  };
+}
+
+function selectedTypeScriptBundler():
+  | Pick<Bundler, "shouldBundleTypeScript">
+  | undefined {
+  const bundler = tryResolveExtensionContract<Bundler>("Bundler");
+  return bundler?.shouldBundleTypeScript ? bundler : undefined;
+}
+
+async function readProjectTypeScriptDecoratorOptions(
+  projectDir: string,
+  sourceSnapshot: ProjectSourceSnapshot,
+  allowHostConfigReads: boolean,
+): Promise<TypeScriptDecoratorOptions> {
+  const projectRoot = pathHelper.resolve(projectDir);
+  return await readTypeScriptDecoratorOptions({
+    configPath: pathHelper.join(projectRoot, "tsconfig.json"),
+    readTextFile: async (path) => {
+      const resolvedPath = pathHelper.resolve(path);
+      if (isWithinDirectory(projectRoot, resolvedPath)) {
+        return await sourceSnapshot.readTextFileWithinLimit(
+          resolvedPath,
+          MAX_TYPESCRIPT_CONFIG_BYTES,
+          "TypeScript configuration",
+        );
+      }
+      if (!allowHostConfigReads) {
+        throw new TypeError(
+          "TypeScript configuration inheritance outside the project directory requires trusted host execution",
+        );
+      }
+      return await readTrustedHostTypeScriptConfig(resolvedPath);
+    },
+    ...(allowHostConfigReads ? {} : {
+      resolveExtends: (specifier: string, fromPath: string) =>
+        resolveIsolatedTypeScriptExtends(specifier, fromPath, projectRoot),
+    }),
+  });
+}
+
+function withTypeScriptConfigExtension(path: string): string {
+  const extension = pathHelper.extname(path).toLowerCase();
+  return extension === ".json" || extension === ".jsonc" ? path : `${path}.json`;
+}
+
+function rejectExternalTypeScriptConfig(): never {
+  throw new TypeError(
+    "TypeScript configuration inheritance outside the project directory requires trusted host execution",
+  );
+}
+
+function resolveIsolatedTypeScriptExtends(
+  specifier: string,
+  fromPath: string,
+  projectRoot: string,
+): Promise<string> {
+  let candidate: string;
+  if (pathHelper.isAbsolute(specifier) || specifier.startsWith(".")) {
+    candidate = withTypeScriptConfigExtension(
+      pathHelper.resolve(pathHelper.dirname(fromPath), specifier),
+    );
+  } else {
+    if (specifier.includes("\\") || specifier.includes(":")) {
+      rejectExternalTypeScriptConfig();
+    }
+    const parts = specifier.split("/");
+    const packagePartCount = specifier.startsWith("@") ? 2 : 1;
+    if (
+      parts.length < packagePartCount ||
+      parts.some((part) => part.length === 0 || part === "." || part === "..")
+    ) {
+      rejectExternalTypeScriptConfig();
+    }
+    const packageRoot = pathHelper.join(
+      projectRoot,
+      "node_modules",
+      ...parts.slice(0, packagePartCount),
+    );
+    const subpath = parts.slice(packagePartCount);
+    candidate = subpath.length === 0
+      ? pathHelper.join(packageRoot, "tsconfig.json")
+      : withTypeScriptConfigExtension(pathHelper.join(packageRoot, ...subpath));
+  }
+
+  if (!isWithinDirectory(projectRoot, candidate)) {
+    rejectExternalTypeScriptConfig();
+  }
+  return Promise.resolve(candidate);
+}
+
+async function readTrustedHostTypeScriptConfig(path: string): Promise<string> {
+  const hostFileSystem = createFileSystem();
+  if (!hostFileSystem.lstat) {
+    throw new TypeError("Trusted TypeScript configuration requires lstat support");
+  }
+  const info = await hostFileSystem.lstat(path);
+  if (!info.isFile || info.isSymlink) {
+    throw new TypeError("Trusted TypeScript configuration must be a regular file");
+  }
+  const reader = captureBoundedTextReader(
+    hostFileSystem,
+    "Trusted TypeScript configuration reader",
+  );
+  return (await reader.readUtf8(
+    path,
+    MAX_TYPESCRIPT_CONFIG_BYTES,
+    "TypeScript configuration",
+  )).content;
 }
 
 /**
@@ -133,8 +421,36 @@ export function isSpecifierResolutionError(error: unknown): boolean {
   return SPECIFIER_RESOLUTION_MESSAGE.test(error.message.trimStart());
 }
 
-function loadTSModuleDirect(modulePath: string): Promise<APIRoute> {
-  const cacheBuster = `?v=${Date.now()}`;
+/**
+ * Cache key for a route module's current contents.
+ *
+ * Every request loads its route through here, so keying on the clock would mint
+ * a new module per request: module-level state (clients, caches, pools) would
+ * reset between requests in dev while persisting in production, with no error
+ * to show for it. Keying on mtime keeps an edit hot-reloading while letting an
+ * untouched route keep the module it already has.
+ *
+ * The content digest is the durable signal. Mtime is included only to keep the
+ * key readable while guarding filesystems whose observable timestamp can
+ * collide for two same-size edits.
+ *
+ * A filesystem that cannot report stat or content falls back to the clock,
+ * which is no worse than reloading every time.
+ */
+async function moduleRevision(fs: FileSystem, modulePath: string): Promise<string> {
+  try {
+    const { mtime } = await fs.stat(modulePath);
+    const source = await fs.readTextFile(modulePath);
+    const digest = await computeHash(source);
+    return `${mtime?.getTime() ?? "unknown"}-${digest}`;
+  } catch {
+    // An unreadable path still has to load; fall through to the clock.
+  }
+  return String(Date.now());
+}
+
+function loadTSModuleDirect(modulePath: string, revision: string): Promise<APIRoute> {
+  const cacheBuster = `?v=${revision}`;
   const url = modulePath.startsWith("file://")
     ? `${modulePath}${cacheBuster}`
     : `file://${modulePath}${cacheBuster}`;
@@ -149,7 +465,7 @@ function loadJSModule(modulePath: string): Promise<APIRoute> {
 
 function createImportMapPlugin(
   projectDir: string,
-  adapter: RuntimeAdapter,
+  sourceSnapshot: ProjectSourceSnapshot,
   config?: VeryfrontConfig,
 ): Plugin {
   const importMap = config?.resolve?.importMap?.imports ?? {};
@@ -221,7 +537,7 @@ function createImportMapPlugin(
       build.onLoad(
         { filter: /.*/, namespace: "import-map" },
         createNamespaceOnLoadHandler({
-          adapter,
+          sourceSnapshot,
           projectDir,
           errorLabel: "file via import map",
         }),
@@ -231,16 +547,16 @@ function createImportMapPlugin(
 }
 
 function createNamespaceOnLoadHandler(options: {
-  adapter: RuntimeAdapter;
+  sourceSnapshot: ProjectSourceSnapshot;
   projectDir: string;
   errorLabel: string;
 }) {
-  const { adapter, projectDir, errorLabel } = options;
+  const { sourceSnapshot, projectDir, errorLabel } = options;
 
   return wrapWithCurrentContext(async (args: { path: string }) => {
     try {
       const { filePath, contents } = await readFileWithExtensions(
-        adapter,
+        sourceSnapshot,
         args.path,
         FILE_EXTENSIONS,
         projectDir,
@@ -261,7 +577,7 @@ function createNamespaceOnLoadHandler(options: {
 
 /** Resolves the framework's built-in @/ project alias through the runtime adapter. */
 function createProjectAliasPlugin(
-  adapter: RuntimeAdapter,
+  sourceSnapshot: ProjectSourceSnapshot,
   projectDir: string,
 ): Plugin {
   const projectRoot = pathHelper.resolve(projectDir);
@@ -284,7 +600,7 @@ function createProjectAliasPlugin(
       build.onLoad(
         { filter: /.*/, namespace: "vf-project-alias" },
         createNamespaceOnLoadHandler({
-          adapter,
+          sourceSnapshot,
           projectDir,
           errorLabel: "via project alias",
         }),
@@ -295,7 +611,7 @@ function createProjectAliasPlugin(
 
 /** Resolves relative imports through the adapter's virtual FS for remote projects. */
 function createAdapterResolvePlugin(
-  adapter: RuntimeAdapter,
+  sourceSnapshot: ProjectSourceSnapshot,
   projectDir: string,
 ): Plugin {
   return {
@@ -334,7 +650,7 @@ function createAdapterResolvePlugin(
       build.onLoad(
         { filter: /.*/, namespace: "vf-adapter" },
         createNamespaceOnLoadHandler({
-          adapter,
+          sourceSnapshot,
           projectDir,
           errorLabel: "via adapter",
         }),
@@ -352,65 +668,82 @@ function createAdapterResolvePlugin(
  * is resolved by esbuild straight to a path above the project root and loaded
  * in the default namespace, where none of those guards ever see it.
  *
- * This runs at load time instead, which is the one point every resolution
- * strategy converges on. Returning `undefined` defers to normal loading, so the
- * plugin only ever subtracts. Package code is exempt: `node_modules` is
- * resolved by esbuild's own node resolution rather than by a project alias, and
- * is legitimately hoisted above the project root in a monorepo.
- *
- * `roots` carries both the project path as configured and its symlink-resolved
- * form, because esbuild reports the real path of a file it loaded. A project
- * reached through a symlink (`/var` -> `/private/var` on macOS, and any deploy
- * layout that symlinks a release directory) would otherwise fail every import.
+ * The source snapshot canonicalizes both roots and resolved files. Dependencies
+ * are admitted only through the project's own canonical `node_modules` root;
+ * an unrelated path is never trusted merely because one segment has that name.
  */
-/**
- * The project path as configured, plus its symlink-resolved form when they
- * differ. `realPath` throws if the directory is missing, in which case the
- * configured path is all there is to compare against.
- */
-async function resolveProjectRoots(projectDir: string): Promise<string[]> {
-  const configured = pathHelper.resolve(projectDir);
-
-  try {
-    const real = await realPath(configured);
-    return real === configured ? [configured] : [configured, real];
-  } catch {
-    return [configured];
-  }
+function projectBoundaryError(path: string): { errors: Array<{ text: string }> } {
+  logger.error(`[API] Resolved import escapes project: ${path}`);
+  return {
+    errors: [{
+      text: `Import escapes the project directory: ${path}. ` +
+        `API routes may only import project files and project-owned dependencies.`,
+    }],
+  };
 }
 
-function createProjectBoundaryPlugin(roots: string[]): Plugin {
+function createProjectBoundaryPlugin(
+  sourceSnapshot: ProjectSourceSnapshot,
+): Plugin {
   return {
     name: "vf-project-boundary",
     setup(build) {
-      build.onLoad({ filter: /.*/ }, (args) => {
-        if (roots.some((root) => isWithinDirectory(root, args.path))) return undefined;
-        if (args.path.split(/[\\/]/).includes("node_modules")) return undefined;
-
-        logger.error(`[API] Resolved import escapes project: ${args.path}`);
-        return {
-          errors: [{
-            text: `Import escapes the project directory: ${args.path}. ` +
-              `API routes may only import files inside the project.`,
-          }],
-        };
+      build.onLoad({ filter: /.*/ }, async (args) => {
+        try {
+          const source = await sourceSnapshot.read(args.path);
+          return {
+            contents: source.contents,
+            loader: getLoaderForFile(source.logicalPath),
+            resolveDir: pathHelper.dirname(source.logicalPath),
+          };
+        } catch (error) {
+          if (error instanceof ProjectBoundaryViolationError) {
+            return projectBoundaryError(args.path);
+          }
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            errors: [{ text: `Failed to read authorized import: ${message}` }],
+          };
+        }
       });
     },
   };
 }
 
-function loadAndTranspileModule(
+async function loadAndTranspileModule(
   modulePath: string,
   projectDir: string,
   adapter: RuntimeAdapter,
   fs: FileSystem,
   config?: VeryfrontConfig,
+  decoratorOptions?: TypeScriptDecoratorOptions,
+  allowHostTypeScriptConfigReads = false,
 ): Promise<APIRoute> {
+  const source = await buildTranspiledModuleSource(
+    modulePath,
+    projectDir,
+    adapter,
+    config,
+    decoratorOptions,
+    allowHostTypeScriptConfigReads,
+  );
+  return await loadModuleFromCode(source, fs, `${projectDir}\u0000${modulePath}`);
+}
+
+function buildTranspiledModuleSource(
+  modulePath: string,
+  projectDir: string,
+  adapter: RuntimeAdapter,
+  config?: VeryfrontConfig,
+  resolvedDecoratorOptions?: TypeScriptDecoratorOptions,
+  allowHostTypeScriptConfigReads = false,
+): Promise<string> {
   return withSpan(
-    "api.loadAndTranspileModule",
+    "api.buildTranspiledModuleSource",
     async () => {
+      const sourceSnapshot = await createProjectSourceSnapshot(projectDir, adapter);
       const { filePath: resolvedPath, contents: source } = await readFileWithExtensions(
-        adapter,
+        sourceSnapshot,
         modulePath,
         FILE_EXTENSIONS,
         projectDir,
@@ -427,13 +760,21 @@ function loadAndTranspileModule(
 
       const loader = getEsbuildLoader(resolvedPath);
 
-      const allowedHosts = await loadSecurityConfig(projectDir, adapter);
+      const allowedHosts = await loadSecurityConfig(projectDir, adapter, config);
       validateHTTPImports(source, allowedHosts);
 
-      const projectSourceReader = {
-        readTextFile: (filePath: string) => adapter.fs.readFile(filePath),
-      };
-      const allDeps = await readProjectDependencies(projectDir, projectSourceReader);
+      const allDeps = await readProjectDependencies(projectDir, sourceSnapshot);
+      const typeScriptBundler = selectedTypeScriptBundler();
+      const typescriptDecoratorOptions = resolvedDecoratorOptions ??
+        (typeScriptBundler
+          ? await readProjectTypeScriptDecoratorOptions(
+            projectDir,
+            sourceSnapshot,
+            allowHostTypeScriptConfigReads,
+          )
+          : undefined);
+      const bundleTypeScript = typescriptDecoratorOptions !== undefined &&
+        bundlerForcesTypeScript(typeScriptBundler, typescriptDecoratorOptions);
 
       // Filter out framework-managed packages from user deps. These are already
       // handled by the framework's own external/rewrite logic and should not be
@@ -503,12 +844,18 @@ function loadAndTranspileModule(
           sourcefile: resolvedPath,
         },
         plugins: [
-          createImportMapPlugin(projectDir, adapter, config),
-          createProjectAliasPlugin(adapter, projectDir),
-          createAdapterResolvePlugin(adapter, projectDir),
+          createImportMapPlugin(projectDir, sourceSnapshot, config),
+          createProjectAliasPlugin(sourceSnapshot, projectDir),
+          createAdapterResolvePlugin(sourceSnapshot, projectDir),
           createHTTPPlugin({ allowedHosts, projectDir }),
-          createProjectBoundaryPlugin(await resolveProjectRoots(projectDir)),
+          createProjectBoundaryPlugin(sourceSnapshot),
         ],
+        // Only the opt-in decorator transform needs a working directory: adding
+        // it unconditionally would change how the default esbuild path reports
+        // paths for every project.
+        ...(typescriptDecoratorOptions
+          ? typeScriptBuildOptions(projectDir, typescriptDecoratorOptions, bundleTypeScript)
+          : {}),
       });
 
       if (result.errors?.length) {
@@ -525,14 +872,14 @@ function loadAndTranspileModule(
       const js = result.outputFiles?.[0]?.text ?? "export {}";
       logger.debug(`transpiled size ${js.length} bytes`);
 
-      return loadModuleFromCode(js, projectDir, fs, userDeps);
+      return await rewriteExternalImports(js, projectDir, sourceSnapshot, userDeps);
     },
     { "api.modulePath": modulePath, "api.projectDir": projectDir },
   );
 }
 
 async function readFileWithExtensions(
-  adapter: RuntimeAdapter,
+  sourceSnapshot: ProjectSourceSnapshot,
   basePath: string,
   extensions: string[],
   projectDir?: string,
@@ -555,9 +902,10 @@ async function readFileWithExtensions(
     }
 
     try {
-      const contents = await adapter.fs.readFile(filePath);
+      const contents = await sourceSnapshot.readTextFile(filePath);
       return { filePath, contents };
-    } catch (_) {
+    } catch (error) {
+      if (error instanceof ProjectBoundaryViolationError) throw error;
       /* expected: trying next file extension candidate */
     }
   }
@@ -585,29 +933,73 @@ export function getUserDependencies(
   return userDeps;
 }
 
-async function loadModuleFromCode(
+/**
+ * Bundled route modules, keyed by owner and generated source.
+ *
+ * The bundling path builds its module from generated source and imports it from
+ * a throwaway temp file, so an unchanged route produced a brand new module on
+ * every request: module-level state (clients, caches, pools) reset between
+ * requests, while the same code under `veryfront serve` kept it. Caching on the
+ * generated source keeps an unchanged route on the module it already has, and
+ * changed source hashes differently and rebuilds.
+ *
+ * The key carries the project and route path as well as the code, so two
+ * projects that happen to bundle byte-identical output never share a module,
+ * and with it module state.
+ */
+const bundledModules = new Map<string, Promise<APIRoute>>();
+
+/** Bundled routes a dev session can hold before the oldest is dropped. */
+const MAX_BUNDLED_MODULES = 64;
+
+async function bundledModuleKey(owner: string, code: string): Promise<string> {
+  return await computeHash(`${owner}\u0000${code}`);
+}
+
+function loadModuleFromCode(
   code: string,
-  projectDir: string,
   fs: FileSystem,
-  userDeps: Map<string, string> = new Map(),
+  owner: string,
+): Promise<APIRoute> {
+  return bundledModuleKey(owner, code).then((key) => {
+    const cached = bundledModules.get(key);
+    if (cached) return cached;
+
+    const loading = importModuleFromCode(code, fs);
+    bundledModules.set(key, loading);
+
+    // A failed build must not be remembered as this route's module.
+    loading.catch(() => bundledModules.delete(key));
+
+    if (bundledModules.size > MAX_BUNDLED_MODULES) {
+      const oldest = bundledModules.keys().next();
+      if (!oldest.done) bundledModules.delete(oldest.value);
+    }
+    return loading;
+  });
+}
+
+async function importModuleFromCode(
+  code: string,
+  fs: FileSystem,
 ): Promise<APIRoute> {
   const tempDir = await fs.makeTempDir({ prefix: "vf-api-" });
   const tempFile = pathHelper.join(tempDir, "handler.mjs");
 
-  const transformedCode = await rewriteExternalImports(code, projectDir, fs, userDeps);
+  const transformedCode = code;
 
   // In compiled Deno binaries, external modules loaded from temp files cannot
   // resolve "veryfront" since the source is embedded in the binary's virtual FS.
   // Write runtime shims: a root shim for `from "veryfront"` and per-subpath shims
   // for `from "veryfront/xxx"` (e.g., middleware, workflow, tool).
   if (isDeno && isCompiledBinary()) {
-    // Ensure agent factory globalThis bridge is registered before loading user code.
-    await import("#veryfront/agent/factory.ts");
-
-    // Write root shim for `from "veryfront"` → "./_vf_runtime.mjs"
+    // Register the real public root module, then generate its shim from the
+    // namespace exports. This keeps compiled-binary routes aligned with the
+    // source barrel as exports are added or removed.
+    await registerVfModules(new Set([""]));
     await fs.writeTextFile(
       pathHelper.join(tempDir, "_vf_runtime.mjs"),
-      VERYFRONT_RUNTIME_SHIM,
+      generateSubpathShim(""),
     );
 
     // Discover which veryfront/* subpaths the user code imports, register the
@@ -697,22 +1089,23 @@ async function registerVfModules(subpaths: Set<string>): Promise<void> {
     | undefined;
 
   for (const subpath of subpaths) {
-    if (modules[subpath]) continue;
+    const moduleKey = subpath || "veryfront";
+    if (modules[moduleKey]) continue;
 
-    const specifier = `veryfront/${subpath}`;
+    const specifier = subpath ? `veryfront/${subpath}` : "veryfront";
 
     const fromDiscovery = discoveryModules?.[specifier];
     if (fromDiscovery) {
-      modules[subpath] = fromDiscovery;
+      modules[moduleKey] = fromDiscovery;
       logger.debug(`[API] Registered module ${specifier} from discovery globals`);
       continue;
     }
 
     try {
-      modules[subpath] = await import(specifier) as Record<string, unknown>;
+      modules[moduleKey] = await import(specifier) as Record<string, unknown>;
       logger.debug(`[API] Registered module ${specifier} on globalThis`);
     } catch (e) {
-      logger.warn(`[API] Failed to register veryfront/${subpath}: ${e}`);
+      logger.warn(`[API] Failed to register ${specifier}: ${e}`);
     }
   }
 
@@ -727,16 +1120,18 @@ function generateSubpathShim(subpath: string): string {
   const modules = (globalThis as Record<string, unknown>).__vfModules as
     | Record<string, Record<string, unknown>>
     | undefined;
-  const mod = modules?.[subpath];
+  const moduleKey = subpath || "veryfront";
+  const specifier = subpath ? `veryfront/${subpath}` : "veryfront";
+  const mod = modules?.[moduleKey];
 
   if (!mod) {
-    return `throw new Error("veryfront/${subpath} runtime not registered in compiled binary context");`;
+    return `throw new Error("${specifier} runtime not registered in compiled binary context");`;
   }
 
   const exportNames = Object.keys(mod).filter((k) => k !== "default" && k !== "__esModule");
   const lines: string[] = [
-    `// Auto-generated shim for veryfront/${subpath}`,
-    `const _mod = globalThis.__vfModules["${subpath}"];`,
+    `// Auto-generated shim for ${specifier}`,
+    `const _mod = globalThis.__vfModules["${moduleKey}"];`,
   ];
 
   for (const name of exportNames) {
@@ -750,75 +1145,3 @@ function generateSubpathShim(subpath: string): string {
 
   return lines.join("\n");
 }
-
-/**
- * Runtime shim for the "veryfront" package when running in a compiled Deno binary.
- *
- * In compiled binaries, source files are embedded and can't be imported from
- * external temp files. This shim provides the public API by delegating to
- * globalThis bridges registered by the server's project-env/storage.ts module.
- */
-const VERYFRONT_RUNTIME_SHIM = `
-// Auto-generated veryfront runtime shim for compiled binary.
-// Delegates to real framework functions registered on globalThis by
-// the server process (composition.ts, factory.ts, storage.ts).
-
-// --- Environment ---
-function getEnv(key) {
-  const getter = globalThis.__vfProjectEnvGetter;
-  if (getter) {
-    const val = getter(key);
-    if (val !== undefined) return val;
-  }
-  const isActive = globalThis.__vfProjectEnvActiveChecker;
-  if (isActive && isActive()) return undefined;
-  if (typeof Deno !== "undefined") return Deno.env.get(key);
-  if (typeof process !== "undefined" && process.env) return process.env[key];
-  return undefined;
-}
-
-// --- Config ---
-function defineConfig(config) { return config; }
-
-// --- HTTP helpers ---
-function json(data, init) { return Response.json(data, init); }
-function notFound(msg) { return new Response(msg || "Not Found", { status: 404 }); }
-function badRequest(msg) { return new Response(msg || "Bad Request", { status: 400 }); }
-function unauthorized(msg) { return new Response(msg || "Unauthorized", { status: 401 }); }
-function forbidden(msg) { return new Response(msg || "Forbidden", { status: 403 }); }
-function serverError(msg) { return new Response(msg || "Internal Server Error", { status: 500 }); }
-function redirect(url, permanent) {
-  return Response.redirect(url, permanent ? 301 : 302);
-}
-function apiNotFound(msg) { return notFound(msg); }
-function apiRedirect(url, permanent) { return redirect(url, permanent); }
-
-// --- Agent module (veryfront/agent) ---
-// Delegates to real implementations registered on globalThis by the server.
-function agent(config) {
-  const factory = globalThis.__vfAgentFactory;
-  if (!factory) throw new Error("Agent runtime not available in this context");
-  return factory(config);
-}
-function getAgent(id) { return globalThis.__vfGetAgent?.(id) ?? undefined; }
-function registerAgent(id, agentInstance) { return globalThis.__vfRegisterAgent?.(id, agentInstance); }
-function getAllAgentIds() { return globalThis.__vfGetAllAgentIds?.() ?? []; }
-
-export {
-  getEnv,
-  defineConfig,
-  json,
-  notFound,
-  badRequest,
-  unauthorized,
-  forbidden,
-  serverError,
-  redirect,
-  apiNotFound,
-  apiRedirect,
-  agent,
-  getAgent,
-  registerAgent,
-  getAllAgentIds,
-};
-`;

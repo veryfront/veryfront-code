@@ -8,8 +8,11 @@ describe("transforms/esm/source-url-embed", () => {
     it("embeds source URL as a preserved comment at the start", () => {
       const code = "export default 42;";
       const result = embedSourceUrl(code, "https://esm.sh/react@18");
-      assertEquals(result.startsWith("/*! @vf-source: https://esm.sh/react@18 */"), true);
-      assertEquals(result.includes("export default 42;"), true);
+      assertEquals(
+        result,
+        "/*! @vf-source: https://esm.sh/react@18 */\nexport default 42;",
+        "embedded code must start on the line after the preserved comment so stack-trace line numbers are unshifted",
+      );
     });
 
     it("does not double-embed if already present", () => {

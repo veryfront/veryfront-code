@@ -228,7 +228,11 @@ function descriptorValue(descriptor: PropertyDescriptor, path: string): unknown 
   return descriptor.value;
 }
 
-function defineDataProperty(target: object, key: PropertyKey, value: JsonValue): void {
+function defineDataProperty(
+  target: JsonValue[] | JsonRecord,
+  key: PropertyKey,
+  value: JsonValue,
+): void {
   const descriptor = ObjectCreate(null) as PropertyDescriptor;
   descriptor.configurable = true;
   descriptor.enumerable = true;
@@ -813,10 +817,10 @@ function validateConversationValue(value: JsonValue): Conversation {
     }
     ids.add(id);
   });
-  return value as unknown as Conversation;
+  return value as JsonRecord & Conversation;
 }
 
-function validateSummaryValue(value: JsonValue, path: string): ConversationSummary {
+function validateSummaryValue(value: JsonValue, path: string): JsonRecord & ConversationSummary {
   if (!isRecord(value)) {
     return fail(path, "conversation summary must be a record");
   }
@@ -841,14 +845,14 @@ function validateSummaryValue(value: JsonValue, path: string): ConversationSumma
       `exceeds ${CONVERSATION_STORAGE_LIMITS.maxMessagesPerConversation}`,
     );
   }
-  return value as unknown as ConversationSummary;
+  return value as JsonRecord & ConversationSummary;
 }
 
 function byNewest(left: ConversationSummary, right: ConversationSummary): number {
   return right.updatedAt - left.updatedAt;
 }
 
-function validateIndexValue(value: JsonValue): ConversationSummary[] {
+function validateIndexValue(value: JsonValue): (JsonRecord & ConversationSummary)[] {
   if (!ArrayIsArray(value)) {
     return fail("$", "conversation index must be an array");
   }
@@ -1067,7 +1071,7 @@ export function encodeConversationRecord(conversation: Conversation): EncodedCon
     snapshot,
     CONVERSATION_STORAGE_LIMITS.maxConversationBytes,
   );
-  const value = rehydrateJsonValue(snapshot) as unknown as Conversation;
+  const value = rehydrateJsonValue(snapshot) as JsonRecord & Conversation;
   return {
     serialized,
     value,
@@ -1089,7 +1093,7 @@ export function decodeConversationRecord(raw: string): DecodedConversationRecord
   );
   validateConversationValue(snapshot);
   return {
-    value: rehydrateJsonValue(snapshot) as unknown as Conversation,
+    value: rehydrateJsonValue(snapshot) as JsonRecord & Conversation,
     legacy: unwrapped.legacy,
   };
 }
@@ -1105,12 +1109,10 @@ export function encodeConversationIndex(
   const canonical = validateIndexValue(snapshot);
   const serialized = serializeEnvelope(
     "index",
-    canonical as unknown as JsonValue,
+    canonical,
     CONVERSATION_STORAGE_LIMITS.maxIndexBytes,
   );
-  const value = rehydrateJsonValue(
-    canonical as unknown as JsonValue,
-  ) as unknown as ConversationSummary[];
+  const value = rehydrateJsonValue(canonical) as (JsonRecord & ConversationSummary)[];
   return {
     serialized,
     value,
@@ -1132,9 +1134,7 @@ export function decodeConversationIndex(raw: string): DecodedConversationIndex {
   );
   const canonical = validateIndexValue(snapshot);
   return {
-    value: rehydrateJsonValue(
-      canonical as unknown as JsonValue,
-    ) as unknown as ConversationSummary[],
+    value: rehydrateJsonValue(canonical) as (JsonRecord & ConversationSummary)[],
     legacy: unwrapped.legacy,
   };
 }

@@ -50,7 +50,7 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
     projectDir: "/tmp/test-project",
     adapter: createMockAdapter(),
     securityConfig: null,
-    cspUserHeader: null,
+    isLocalProject: true,
     ...overrides,
   };
 }
@@ -207,6 +207,180 @@ describe("server/handlers/request/module/module.handler", () => {
 
       assertEquals(result.response?.status, 405);
       assertEquals(result.response?.headers.get("allow"), "GET, HEAD");
+    });
+  });
+
+  describe("remote execution isolation", () => {
+    it("fails closed before resolving the host renderer", async () => {
+      let rendererCalls = 0;
+      setRendererInitializer({
+        initialize: () => {
+          rendererCalls++;
+          throw new Error("remote module endpoint reached the host renderer");
+        },
+        isInitialized: () => false,
+        get: () => {
+          throw new Error("remote module endpoint reached the host renderer");
+        },
+        destroy: () => Promise.resolve(),
+      });
+
+      const handler = new ModuleHandler();
+      for (
+        const pathname of [
+          "/_veryfront/modules/runtime.js",
+          "/_veryfront/pages/page.js",
+          "/_veryfront/data/page.json",
+          "/_veryfront/page-data/page.json",
+        ]
+      ) {
+        const result = await handler.handle(
+          new Request(`https://tenant.example${pathname}`),
+          makeCtx({
+            isLocalProject: false,
+            prepareHostedConfigContext: (() => {
+              throw new Error("shared module endpoint prepared host rendering context");
+            }) as HandlerContext["prepareHostedConfigContext"],
+          }),
+        );
+        assertEquals(result.continue, false);
+        assertEquals(result.response?.status, 503);
+        assertEquals(result.response?.headers.get("cache-control"), "no-store");
+        assertEquals(result.response?.headers.get("content-type"), "application/problem+json");
+        assertEquals(
+          (await result.response?.json() as { type?: string }).type,
+          "https://veryfront.com/docs/code/guides/errors#project-execution-unavailable",
+        );
+      }
+
+      assertEquals(rendererCalls, 0);
+    });
+
+    it("serves the endpoints once the host grants execution", async () => {
+      // The granted counterpart to the fail-closed test above. A handler that
+      // denies every shared runtime unconditionally, which is what this surface
+      // did before veryfront-issue-inbox#366, passes that test and fails this
+      // one. Without the pair, the two are indistinguishable.
+      const handler = new ModuleHandler();
+      setRendererInitializer(createInitializer({
+        renderPage: () =>
+          Promise.resolve({
+            html: "",
+            frontmatter: {},
+            pageModule: { slug: "page", code: "export default {};", type: "component" },
+          } as unknown as Awaited<ReturnType<Renderer["renderPage"]>>),
+        resolvePageData: () =>
+          Promise.resolve({
+            slug: "page",
+            frontmatter: {},
+            props: {},
+            params: {},
+            layoutProps: {},
+            buildVersion: { framework: "test", serverStart: 1 },
+          } as unknown as Awaited<ReturnType<Renderer["resolvePageData"]>>),
+      }));
+      const grantedCtx = () =>
+        makeCtx({
+          isLocalProject: false,
+          allowHostProjectCodeExecution: true,
+        } as Partial<HandlerContext>);
+
+      // The page module endpoint proves an actually served outcome, not just
+      // the absence of one particular refusal.
+      const page = await handler.handle(
+        new Request("https://tenant.example/_veryfront/pages/page.js"),
+        grantedCtx(),
+      );
+      assertEquals(page.continue, false);
+      assertEquals(page.response?.status, 200, "a granted host must be served the page module");
+      assertEquals(
+        await page.response!.text(),
+        "export default {};",
+        "the served body must be the rendered page module",
+      );
+
+      for (
+        const { pathname, expectedStatus, expectedBody } of [
+          {
+            pathname: "/_veryfront/modules/runtime.js",
+            expectedStatus: 404,
+            expectedBody: "Virtual module not found",
+          },
+          {
+            pathname: "/_veryfront/data/page.json",
+            expectedStatus: 200,
+            expectedBody: JSON.stringify({ slug: "page", frontmatter: {}, html: "" }),
+          },
+          {
+            pathname: "/_veryfront/page-data/page.json",
+            expectedStatus: 200,
+            expectedBody: JSON.stringify({
+              slug: "page",
+              frontmatter: {},
+              props: {},
+              params: {},
+              layoutProps: {},
+              buildVersion: { framework: "test", serverStart: 1 },
+            }),
+          },
+        ]
+      ) {
+        const result = await handler.handle(
+          new Request(`https://tenant.example${pathname}`),
+          grantedCtx(),
+        );
+        // `continue: false` matters as much as the absent 503. Without it a
+        // handler that fell through entirely, emitting no response at all,
+        // would satisfy "did not return project-execution-unavailable".
+        assertEquals(
+          result.continue,
+          false,
+          `${pathname} fell through instead of serving a granted host`,
+        );
+        const type = result.response
+          ? await result.response.clone().json().then(
+            (body: { type?: string }) => body.type,
+            () => undefined,
+          )
+          : undefined;
+        assertEquals(
+          type === "https://veryfront.com/docs/code/guides/errors#project-execution-unavailable",
+          false,
+          `${pathname} denied execution to a granted host`,
+        );
+        assertEquals(
+          result.response instanceof Response,
+          true,
+          `${pathname} did not return a response for a granted host`,
+        );
+        assertEquals(
+          result.response!.status,
+          expectedStatus,
+          `${pathname} returned the wrong status for a granted host`,
+        );
+        assertEquals(
+          await result.response!.text(),
+          expectedBody,
+          `${pathname} returned the wrong body for a granted host`,
+        );
+      }
+    });
+
+    it("returns an empty fail-closed response for HEAD", async () => {
+      const result = await new ModuleHandler().handle(
+        new Request("https://tenant.example/_veryfront/page-data/page.json", {
+          method: "HEAD",
+        }),
+        makeCtx({
+          isLocalProject: false,
+          prepareHostedConfigContext: (() => {
+            throw new Error("shared module endpoint prepared host rendering context");
+          }) as HandlerContext["prepareHostedConfigContext"],
+        }),
+      );
+
+      assertEquals(result.response?.status, 503);
+      assertEquals(await result.response?.text(), "");
     });
   });
 

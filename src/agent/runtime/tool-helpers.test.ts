@@ -1,6 +1,8 @@
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import {
   createRemoteMCPToolSource,
@@ -16,6 +18,7 @@ import {
   parseToolArgs,
   resolveConfiguredTool,
 } from "./tool-helpers.ts";
+import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 
 async function withMockRemoteIntegrationTools<T>(
   remoteToolNames: string[],
@@ -37,6 +40,37 @@ async function withMockRemoteIntegrationTools<T>(
     Deno.env.set("VERYFRONT_API_URL", "https://api.test");
     Deno.env.set("VERYFRONT_API_TOKEN", "token");
     return await callback();
+  } finally {
+    if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
+    else Deno.env.set("VERYFRONT_API_URL", originalApiBaseUrl);
+    if (originalApiToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+    else Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
+    globalThis.fetch = originalFetch;
+  }
+}
+
+async function withContextOnlyRemoteIntegrationTools<T>(
+  callback: () => Promise<T>,
+): Promise<{ result: T; authorization: string | null }> {
+  const originalFetch = globalThis.fetch;
+  const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_URL");
+  const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+  let authorization: string | null = null;
+  globalThis.fetch = async (input, init) => {
+    authorization = new Request(input, init).headers.get("authorization");
+    return Response.json({
+      tools: [{
+        name: "gmail__list_emails",
+        description: "List emails",
+        inputSchema: { type: "object", properties: {} },
+      }],
+    });
+  };
+
+  try {
+    Deno.env.set("VERYFRONT_API_URL", "https://api.test");
+    Deno.env.delete("VERYFRONT_API_TOKEN");
+    return { result: await callback(), authorization };
   } finally {
     if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
     else Deno.env.set("VERYFRONT_API_URL", originalApiBaseUrl);
@@ -136,7 +170,7 @@ describe("tool-helpers", () => {
     });
 
     it("falls back to the shared registry when the config entry is true", () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       const sharedTool = tool({
         id: "shared-search",
@@ -154,13 +188,13 @@ describe("tool-helpers", () => {
       );
 
       assertEquals(resolvedTool, sharedTool);
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
     });
   });
 
   describe("executeConfiguredTool", () => {
     it("executes an inline configured tool before consulting the registry", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       const injectedTool = tool({
         id: "studio_invoke_agent",
@@ -182,7 +216,7 @@ describe("tool-helpers", () => {
     });
 
     it("falls back to the registry when no inline tool is configured", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       const sharedTool = tool({
         id: "shared-search",
@@ -200,11 +234,11 @@ describe("tool-helpers", () => {
       );
 
       assertEquals(result, { source: "registry", query: "docs" });
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
     });
 
     it("preserves the missing-tool error when nothing is configured", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       await assertRejects(
         () => executeConfiguredTool("studio_invoke_agent", { prompt: "test" }, undefined),
@@ -214,7 +248,7 @@ describe("tool-helpers", () => {
     });
 
     it("strict configured-tool execution does not fall through to the registry", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       toolRegistry.register(
         "shared-search",
@@ -241,7 +275,7 @@ describe("tool-helpers", () => {
         Error,
         'Tool "shared-search" is not available in request-scoped replacement tools',
       );
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
     });
 
     it("rejects remote integration tools excluded by the runtime allowlist", async () => {
@@ -417,6 +451,7 @@ describe("tool-helpers", () => {
     it("passes runtime run and agent context to remote integration tool execution", async () => {
       const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_URL");
       const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+      let requestUrl: string | undefined;
       let requestBody: Record<string, unknown> | undefined;
 
       try {
@@ -426,6 +461,7 @@ describe("tool-helpers", () => {
         const result = await withMockFetch(
           async (input: string | URL | Request, init?: RequestInit) => {
             const request = input instanceof Request ? input : new Request(input, init);
+            requestUrl = request.url;
             requestBody = await request.json();
             return Response.json({ structuredContent: { ok: true } });
           },
@@ -444,8 +480,11 @@ describe("tool-helpers", () => {
         );
 
         assertEquals(result, { structuredContent: { ok: true } });
+        assertEquals(
+          requestUrl,
+          "https://api.test/integrations/gmail/tools/list_emails/call",
+        );
         assertEquals(requestBody, {
-          name: "gmail__list_emails",
           arguments: { maxResults: 10 },
           run_id: "run-123",
           agent_id: "agent-123",
@@ -461,7 +500,7 @@ describe("tool-helpers", () => {
     it("executes remote MCP tools from configured remote tool sources", async () => {
       const remoteSource = createRemoteMCPToolSource({
         id: "docs",
-        endpoint: "https://mcp.test",
+        endpoint: "https://93.184.216.34",
       });
 
       const requestMethods: string[] = [];
@@ -513,7 +552,7 @@ describe("tool-helpers", () => {
 
   describe("getAvailableTools", () => {
     it("fails loudly when an explicit configured tool name does not match a discovered tool id", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       toolRegistry.register(
         "roll-dice",
@@ -539,7 +578,7 @@ describe("tool-helpers", () => {
     });
 
     it("filters remote integration tool definitions by the runtime allowlist", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
       try {
         const defs = await withMockRemoteIntegrationTools([
           "gmail__list_emails",
@@ -551,7 +590,58 @@ describe("tool-helpers", () => {
 
         assertEquals(defs.map((def) => def.name), ["gmail__get_email"]);
       } finally {
-        toolRegistry.clearAll();
+        toolRegistryInternal.clearAll();
+      }
+    });
+
+    it("uses request-scoped auth when listing integration tools", async () => {
+      const { result, authorization } = await withContextOnlyRemoteIntegrationTools(() =>
+        getAvailableTools(true, {
+          remoteToolContext: {
+            authToken: "context-token",
+            projectId: "project-id",
+          },
+        })
+      );
+
+      assertEquals(result.map((definition) => definition.name), ["gmail__list_emails"]);
+      assertEquals(authorization, "Bearer context-token");
+    });
+
+    it("does not use the mutable public skill-tool set for filtering", async () => {
+      const originalSkillToolIds = [...SKILL_TOOL_IDS];
+      toolRegistryInternal.clearAll();
+      try {
+        toolRegistry.register(
+          "execute_skill_script",
+          tool({
+            id: "execute_skill_script",
+            description: "Execute a skill script",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: async () => null,
+          }),
+        );
+        toolRegistry.register(
+          "ordinary_tool",
+          tool({
+            id: "ordinary_tool",
+            description: "Ordinary tool",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: async () => null,
+          }),
+        );
+        SKILL_TOOL_IDS.delete("execute_skill_script");
+        SKILL_TOOL_IDS.add("ordinary_tool");
+
+        const definitions = await getAvailableTools(true, {
+          includeIntegrationTools: false,
+        });
+
+        assertEquals(definitions.map((definition) => definition.name), ["ordinary_tool"]);
+      } finally {
+        SKILL_TOOL_IDS.clear();
+        for (const toolId of originalSkillToolIds) SKILL_TOOL_IDS.add(toolId);
+        toolRegistryInternal.clearAll();
       }
     });
 
@@ -670,7 +760,7 @@ describe("tool-helpers", () => {
     });
 
     it("enforces source integration policy for tools true and unknown connector versions", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
       try {
         toolRegistry.register(
           "local_search",
@@ -713,12 +803,12 @@ describe("tool-helpers", () => {
           "local_search",
         ]);
       } finally {
-        toolRegistry.clearAll();
+        toolRegistryInternal.clearAll();
       }
     });
 
     it("removes denied explicit integration selectors before resolution diagnostics", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
       try {
         const defs = await withMockRemoteIntegrationTools([], () =>
           getAvailableTools(
@@ -734,12 +824,12 @@ describe("tool-helpers", () => {
 
         assertEquals(defs, []);
       } finally {
-        toolRegistry.clearAll();
+        toolRegistryInternal.clearAll();
       }
     });
 
     it("fails loudly when an explicit remote tool is missing from the discovered allowlist", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       try {
         await assertRejects(
@@ -755,12 +845,12 @@ describe("tool-helpers", () => {
           'Unknown tool reference: gmail__get_email. Tool names must exactly match tool({ id: "..." }). Available tools: gmail__list_emails',
         );
       } finally {
-        toolRegistry.clearAll();
+        toolRegistryInternal.clearAll();
       }
     });
 
     it("fails loudly when an explicit integration tool has no discovered tools", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       try {
         await assertRejects(
@@ -773,7 +863,7 @@ describe("tool-helpers", () => {
           'Unknown tool reference: github__get_pr_diff. Tool names must exactly match tool({ id: "..." }). Available tools: (none)',
         );
       } finally {
-        toolRegistry.clearAll();
+        toolRegistryInternal.clearAll();
       }
     });
 
@@ -793,7 +883,7 @@ describe("tool-helpers", () => {
     });
 
     it("only appends explicitly requested remote definitions for explicit tool maps", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       try {
         const defs = await withMockRemoteIntegrationTools([
@@ -809,12 +899,12 @@ describe("tool-helpers", () => {
 
         assertEquals(defs.map((def) => def.name), ["gmail__get_email"]);
       } finally {
-        toolRegistry.clearAll();
+        toolRegistryInternal.clearAll();
       }
     });
 
     it("resolves explicit integration tools from forwarded definitions when remote fetch is unavailable", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       try {
         // Simulates production: remote integration tool fetch fails (no API token),
@@ -854,7 +944,7 @@ describe("tool-helpers", () => {
           "Get a specific email by ID",
         );
       } finally {
-        toolRegistry.clearAll();
+        toolRegistryInternal.clearAll();
       }
     });
 
@@ -896,7 +986,7 @@ describe("tool-helpers", () => {
     });
 
     it("forwarded definitions are filtered by allowedRemoteToolNames", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       try {
         const defs = await getAvailableTools(true, {
@@ -918,16 +1008,16 @@ describe("tool-helpers", () => {
 
         assertEquals(defs.map((def) => def.name), ["gmail__list_emails"]);
       } finally {
-        toolRegistry.clearAll();
+        toolRegistryInternal.clearAll();
       }
     });
 
     it("merges generic remote MCP tool sources into available tools", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       const remoteSource = createRemoteMCPToolSource({
         id: "docs",
-        endpoint: (context) => `https://mcp.test/${context?.projectId ?? "default"}`,
+        endpoint: (context) => `https://93.184.216.34/${context?.projectId ?? "default"}`,
       });
 
       try {
@@ -954,7 +1044,57 @@ describe("tool-helpers", () => {
 
         assertEquals(defs.map((def) => def.name), ["search_docs"]);
       } finally {
-        toolRegistry.clearAll();
+        toolRegistryInternal.clearAll();
+      }
+    });
+
+    it("drops a remote tool source whose listTools rejects instead of failing the load", async () => {
+      toolRegistryInternal.clearAll();
+      const warnings: LogEntry[] = [];
+      const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+        if (
+          entry.component === "agent" && entry.level === "warn" &&
+          entry.message === "Failed to fetch remote tool definitions from source"
+        ) {
+          warnings.push(entry);
+        }
+      });
+
+      const failing: RemoteToolSource = {
+        id: "down",
+        listTools: () => Promise.reject(new Error("remote MCP unreachable")),
+        executeTool: () => Promise.resolve({}),
+      };
+      const healthy: RemoteToolSource = {
+        id: "docs",
+        listTools: () =>
+          Promise.resolve([{
+            name: "search_docs",
+            description: "Search documentation",
+            parameters: { type: "object", properties: {} },
+          }]),
+        executeTool: () => Promise.resolve({}),
+      };
+
+      try {
+        const defs = await getAvailableTools(true, {
+          includeIntegrationTools: false,
+          remoteToolSources: [failing, healthy],
+        });
+
+        assertEquals(
+          defs.map((def) => def.name),
+          ["search_docs"],
+          "a remote source whose listTools rejects must be dropped, not fail the whole tool load",
+        );
+        assertEquals(
+          warnings.map((entry) => entry.context),
+          [{ sourceId: "down", error: "remote MCP unreachable" }],
+          "the fallback warning must identify the failed source and preserve its error",
+        );
+      } finally {
+        unsubscribe();
+        toolRegistryInternal.clearAll();
       }
     });
   });

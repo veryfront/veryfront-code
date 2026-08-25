@@ -5,6 +5,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { MAX_VERYFRONT_API_RETRIES } from "#veryfront/utils/config-resource-limits.ts";
 import {
   createCanonicalVeryfrontApiTransport,
@@ -12,6 +13,7 @@ import {
   MAX_VERYFRONT_API_SUCCESS_BODY_BYTES,
   type TransportRetryConfig,
 } from "./veryfront-api-transport.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 
 const baseConfig = {
   baseUrl: "https://api.example.com",
@@ -90,7 +92,6 @@ describe("Veryfront API transport retry boundaries", () => {
   });
 
   it("composes caller cancellation with request timeout without retrying", async () => {
-    const originalFetch = globalThis.fetch;
     const controller = new AbortController();
     let attempts = 0;
     let requestStarted: (() => void) | undefined;
@@ -99,24 +100,26 @@ describe("Veryfront API transport retry boundaries", () => {
     });
 
     try {
-      globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
-        attempts += 1;
-        const signal = init?.signal;
-        requestStarted?.();
-        return new Promise<Response>((_resolve, reject) => {
-          if (!signal) {
-            reject(new Error("request did not receive an AbortSignal"));
-            return;
-          }
-          if (signal.aborted) {
-            reject(signal.reason);
-            return;
-          }
-          signal.addEventListener("abort", () => reject(signal.reason), {
-            once: true,
+      installMockFetch(
+        ((_input: RequestInfo | URL, init?: RequestInit) => {
+          attempts += 1;
+          const signal = init?.signal;
+          requestStarted?.();
+          return new Promise<Response>((_resolve, reject) => {
+            if (!signal) {
+              reject(new Error("request did not receive an AbortSignal"));
+              return;
+            }
+            if (signal.aborted) {
+              reject(signal.reason);
+              return;
+            }
+            signal.addEventListener("abort", () => reject(signal.reason), {
+              once: true,
+            });
           });
-        });
-      }) as typeof fetch;
+        }) as typeof fetch,
+      );
 
       const transport = createVeryfrontApiTransport({
         ...baseConfig,
@@ -133,22 +136,23 @@ describe("Veryfront API transport retry boundaries", () => {
       assertEquals(error.name, "AbortError");
       assertEquals(attempts, 1);
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
     }
   });
 
   it("rejects pre-cancelled requests before reading credentials or fetching", async () => {
-    const originalFetch = globalThis.fetch;
     const controller = new AbortController();
     controller.abort(new DOMException("cancelled", "AbortError"));
     let tokenReads = 0;
     let fetchCalls = 0;
 
     try {
-      globalThis.fetch = (() => {
-        fetchCalls += 1;
-        return Promise.resolve(new Response("{}"));
-      }) as typeof fetch;
+      installMockFetch(
+        (() => {
+          fetchCalls += 1;
+          return Promise.resolve(new Response("{}"));
+        }) as typeof fetch,
+      );
       const transport = createVeryfrontApiTransport({
         baseUrl: baseConfig.baseUrl,
         getToken: () => {
@@ -166,22 +170,64 @@ describe("Veryfront API transport retry boundaries", () => {
       assertEquals(tokenReads, 0);
       assertEquals(fetchCalls, 0);
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
+    }
+  });
+
+  it("captures the request token once so retries cannot observe a mid-flight token change", async () => {
+    let tokenReads = 0;
+    const authorizations: Array<string | null> = [];
+
+    try {
+      installMockFetch(
+        ((_input: RequestInfo | URL, init?: RequestInit) => {
+          authorizations.push(new Headers(init?.headers).get("authorization"));
+          return Promise.resolve(
+            authorizations.length === 1
+              ? new Response(null, { status: 500, statusText: "Upstream failure" })
+              : Response.json({ ok: true }),
+          );
+        }) as typeof fetch,
+      );
+      const transport = createVeryfrontApiTransport({
+        baseUrl: baseConfig.baseUrl,
+        getToken: () => `token-${++tokenReads}`,
+        retry: { maxRetries: 2, initialDelay: 0, maxDelay: 0 },
+      });
+
+      assertEquals(
+        await transport.request("/files"),
+        { ok: true },
+        "the retried request must resolve with the successful attempt",
+      );
+      assertEquals(
+        tokenReads,
+        1,
+        "the token provider must be read exactly once per request, not once per attempt",
+      );
+      assertEquals(
+        authorizations,
+        ["Bearer token-1", "Bearer token-1"],
+        "every retry attempt must reuse the token captured for the request",
+      );
+    } finally {
+      restoreMockFetch();
     }
   });
 });
 
 describe("Veryfront API transport authority and response boundaries", () => {
   it("rejects invalid success-body limits before reading credentials or fetching", async () => {
-    const originalFetch = globalThis.fetch;
     let tokenReads = 0;
     let fetchCalls = 0;
 
     try {
-      globalThis.fetch = (() => {
-        fetchCalls += 1;
-        return Promise.resolve(Response.json({ ok: true }));
-      }) as typeof fetch;
+      installMockFetch(
+        (() => {
+          fetchCalls += 1;
+          return Promise.resolve(Response.json({ ok: true }));
+        }) as typeof fetch,
+      );
       const transport = createVeryfrontApiTransport({
         baseUrl: baseConfig.baseUrl,
         getToken: () => {
@@ -209,28 +255,29 @@ describe("Veryfront API transport authority and response boundaries", () => {
       assertEquals(tokenReads, 0);
       assertEquals(fetchCalls, 0);
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
     }
   });
 
   it("bounds and cancels successful response bodies before parsing", async () => {
-    const originalFetch = globalThis.fetch;
     let cancellations = 0;
     let fetchCalls = 0;
 
     try {
-      globalThis.fetch = (() => {
-        fetchCalls += 1;
-        const body = new ReadableStream<Uint8Array>({
-          start(controller) {
-            controller.enqueue(new TextEncoder().encode('{"ok":true}'));
-          },
-          cancel() {
-            cancellations += 1;
-          },
-        });
-        return Promise.resolve(new Response(body));
-      }) as typeof fetch;
+      installMockFetch(
+        (() => {
+          fetchCalls += 1;
+          const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('{"ok":true}'));
+            },
+            cancel() {
+              cancellations += 1;
+            },
+          });
+          return Promise.resolve(new Response(body));
+        }) as typeof fetch,
+      );
       const transport = createVeryfrontApiTransport({
         ...baseConfig,
         retry: { maxRetries: 3, initialDelay: 0, maxDelay: 0 },
@@ -245,14 +292,13 @@ describe("Veryfront API transport authority and response boundaries", () => {
       assertEquals(fetchCalls, 1);
       assertEquals(cancellations, 1);
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
     }
   });
 
   it("accepts a successful JSON body exactly at the configured byte limit", async () => {
-    const originalFetch = globalThis.fetch;
     try {
-      globalThis.fetch = (() => Promise.resolve(new Response("null"))) as typeof fetch;
+      installMockFetch((() => Promise.resolve(new Response("null"))) as typeof fetch);
       const transport = createVeryfrontApiTransport({
         ...baseConfig,
         retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
@@ -263,21 +309,22 @@ describe("Veryfront API transport authority and response boundaries", () => {
         null,
       );
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
     }
   });
 
   it("snapshots the success-body limit before asynchronous fetch work", async () => {
-    const originalFetch = globalThis.fetch;
     let releaseFetch!: () => void;
     const fetchGate = new Promise<void>((resolve) => {
       releaseFetch = resolve;
     });
     try {
-      globalThis.fetch = (async () => {
-        await fetchGate;
-        return new Response('{"ok":true}');
-      }) as typeof fetch;
+      installMockFetch(
+        (async () => {
+          await fetchGate;
+          return new Response('{"ok":true}');
+        }) as typeof fetch,
+      );
       const transport = createVeryfrontApiTransport({
         ...baseConfig,
         retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
@@ -295,21 +342,22 @@ describe("Veryfront API transport authority and response boundaries", () => {
         "successful response exceeded 4 bytes",
       );
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
     }
   });
 
   it("snapshots nested bounded-field options before asynchronous fetch work", async () => {
-    const originalFetch = globalThis.fetch;
     let releaseFetch!: () => void;
     const fetchGate = new Promise<void>((resolve) => {
       releaseFetch = resolve;
     });
     try {
-      globalThis.fetch = (async () => {
-        await fetchGate;
-        return new Response('{"content":"abcdef"}');
-      }) as typeof fetch;
+      installMockFetch(
+        (async () => {
+          await fetchGate;
+          return new Response('{"content":"abcdef"}');
+        }) as typeof fetch,
+      );
       const transport = createVeryfrontApiTransport({
         ...baseConfig,
         retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
@@ -328,18 +376,19 @@ describe("Veryfront API transport authority and response boundaries", () => {
 
       await assertRejects(() => pending, RangeError, "exceeds 5 UTF-8 bytes");
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
     }
   });
 
   it("rejects invalid UTF-8 success bodies without retrying", async () => {
-    const originalFetch = globalThis.fetch;
     let fetchCalls = 0;
     try {
-      globalThis.fetch = (() => {
-        fetchCalls += 1;
-        return Promise.resolve(new Response(new Uint8Array([0xff])));
-      }) as typeof fetch;
+      installMockFetch(
+        (() => {
+          fetchCalls += 1;
+          return Promise.resolve(new Response(new Uint8Array([0xff])));
+        }) as typeof fetch,
+      );
       const transport = createVeryfrontApiTransport({
         ...baseConfig,
         retry: { maxRetries: 3, initialDelay: 0, maxDelay: 0 },
@@ -353,12 +402,11 @@ describe("Veryfront API transport authority and response boundaries", () => {
       );
       assertEquals(fetchCalls, 1);
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
     }
   });
 
   it("rejects and cancels oversized declared success bodies", async () => {
-    const originalFetch = globalThis.fetch;
     let cancelled = false;
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -370,10 +418,12 @@ describe("Veryfront API transport authority and response boundaries", () => {
     });
 
     try {
-      globalThis.fetch = (() =>
-        Promise.resolve(
-          new Response(body, { headers: { "content-length": "100" } }),
-        )) as typeof fetch;
+      installMockFetch(
+        (() =>
+          Promise.resolve(
+            new Response(body, { headers: { "content-length": "100" } }),
+          )) as typeof fetch,
+      );
       const transport = createVeryfrontApiTransport({
         ...baseConfig,
         retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
@@ -388,7 +438,7 @@ describe("Veryfront API transport authority and response boundaries", () => {
       );
       assertEquals(cancelled, true);
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
     }
   });
 
@@ -415,15 +465,16 @@ describe("Veryfront API transport authority and response boundaries", () => {
   });
 
   it("rejects cross-origin absolute requests before reading credentials or fetching", async () => {
-    const originalFetch = globalThis.fetch;
     let tokenReads = 0;
     let fetchCalls = 0;
 
     try {
-      globalThis.fetch = (() => {
-        fetchCalls += 1;
-        return Promise.resolve(new Response("{}"));
-      }) as typeof fetch;
+      installMockFetch(
+        (() => {
+          fetchCalls += 1;
+          return Promise.resolve(new Response("{}"));
+        }) as typeof fetch,
+      );
       const transport = createVeryfrontApiTransport({
         baseUrl: baseConfig.baseUrl,
         getToken: () => {
@@ -441,22 +492,23 @@ describe("Veryfront API transport authority and response boundaries", () => {
       assertEquals(tokenReads, 0);
       assertEquals(fetchCalls, 0);
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
     }
   });
 
   it("allows same-origin absolute requests and normalizes relative base paths", async () => {
-    const originalFetch = globalThis.fetch;
     const requests: Array<{ url: string; authorization: string | null }> = [];
 
     try {
-      globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-        requests.push({
-          url: String(input),
-          authorization: new Headers(init?.headers).get("authorization"),
-        });
-        return Promise.resolve(Response.json({ ok: true }));
-      }) as typeof fetch;
+      installMockFetch(
+        ((input: RequestInfo | URL, init?: RequestInit) => {
+          requests.push({
+            url: String(input),
+            authorization: new Headers(init?.headers).get("authorization"),
+          });
+          return Promise.resolve(Response.json({ ok: true }));
+        }) as typeof fetch,
+      );
       const transport = createVeryfrontApiTransport({
         baseUrl: "https://api.example.com/root/",
         getToken: () => "secret",
@@ -477,12 +529,58 @@ describe("Veryfront API transport authority and response boundaries", () => {
         },
       ]);
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
+    }
+  });
+
+  it("rejects redirects by default for credentialed API requests", async () => {
+    const redirectPolicies: Array<RequestRedirect | undefined> = [];
+
+    try {
+      installMockFetch(
+        ((_input: RequestInfo | URL, init?: RequestInit) => {
+          redirectPolicies.push(init?.redirect);
+          return Promise.resolve(Response.json({ ok: true }));
+        }) as typeof fetch,
+      );
+      const transport = createVeryfrontApiTransport({
+        ...baseConfig,
+        retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+      });
+
+      await transport.request("/files");
+
+      assertEquals(redirectPolicies, ["error"]);
+    } finally {
+      restoreMockFetch();
+    }
+  });
+
+  it("uses explicit redirect policies when callers opt in", async () => {
+    const redirectPolicies: Array<RequestRedirect | undefined> = [];
+
+    try {
+      installMockFetch(
+        ((_input: RequestInfo | URL, init?: RequestInit) => {
+          redirectPolicies.push(init?.redirect);
+          return Promise.resolve(Response.json({ ok: true }));
+        }) as typeof fetch,
+      );
+      const transport = createVeryfrontApiTransport({
+        ...baseConfig,
+        retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+      });
+
+      await transport.request("/explicit-follow", { redirect: "follow" });
+      await transport.request("/explicit-manual", { redirect: "manual" });
+
+      assertEquals(redirectPolicies, ["follow", "manual"]);
+    } finally {
+      restoreMockFetch();
     }
   });
 
   it("bounds and cancels upstream error bodies while redacting diagnostic URLs", async () => {
-    const originalFetch = globalThis.fetch;
     let cancelled = false;
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -494,13 +592,15 @@ describe("Veryfront API transport authority and response boundaries", () => {
     });
 
     try {
-      globalThis.fetch = (() =>
-        Promise.resolve(
-          new Response(body, {
-            status: 500,
-            statusText: "Upstream failure",
-          }),
-        )) as typeof fetch;
+      installMockFetch(
+        (() =>
+          Promise.resolve(
+            new Response(body, {
+              status: 500,
+              statusText: "Upstream failure",
+            }),
+          )) as typeof fetch,
+      );
       const transport = createVeryfrontApiTransport({
         ...baseConfig,
         retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
@@ -531,7 +631,169 @@ describe("Veryfront API transport authority and response boundaries", () => {
       assertEquals(context?.details?.responseTruncated, true);
       assertEquals(cancelled, true);
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
     }
+  });
+
+  it("omits the upstream error body when diagnostics opt out", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("x".repeat(16 * 1024)));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+
+    try {
+      installMockFetch(
+        (() =>
+          Promise.resolve(
+            new Response(body, {
+              status: 500,
+              statusText: "Upstream failure",
+            }),
+          )) as typeof fetch,
+      );
+      const transport = createVeryfrontApiTransport({
+        ...baseConfig,
+        retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+        shouldRetry: () => false,
+        wrapFinalError: (error) => error,
+      });
+
+      const error = await assertRejects(() =>
+        transport.request(
+          "https://api.example.com/files?access_token=secret&cursor=public",
+          { includeErrorBodyInDiagnostics: false },
+        )
+      );
+      assertInstanceOf(error, Error);
+      const context = (error as {
+        context?: {
+          details?: {
+            url?: string;
+            responseText?: string;
+            responseTruncated?: boolean;
+          };
+        };
+      }).context;
+      assertEquals(
+        context?.details?.responseText,
+        undefined,
+        "opting out must keep the upstream body out of the error context",
+      );
+      assertEquals(
+        context?.details?.url,
+        "https://api.example.com/files?access_token=[REDACTED]&cursor=public",
+        "the redacted URL must still be reported",
+      );
+      assertEquals(
+        context?.details?.responseTruncated,
+        true,
+        "truncation must still be reported when the body is withheld",
+      );
+      assertEquals(cancelled, true, "the upstream body stream must still be cancelled");
+    } finally {
+      restoreMockFetch();
+    }
+  });
+
+  it("authorizes every egress hop when an outbound policy is configured", async () => {
+    const authorizedOrigin = "https://93.184.216.34";
+    const retry = { maxRetries: 0, initialDelay: 0, maxDelay: 0 };
+    const outboundPolicy = {
+      authorizeUrl(url: URL) {
+        if (url.origin !== authorizedOrigin) {
+          throw new Error(`blocked: ${url.origin}`);
+        }
+      },
+    };
+
+    const authorized: Request[] = [];
+    await withMockFetch(
+      (input: URL | Request | string, init?: RequestInit) => {
+        authorized.push(new Request(input, init));
+        return Promise.resolve(Response.json({ ok: true }));
+      },
+      async () => {
+        const transport = createVeryfrontApiTransport({
+          baseUrl: authorizedOrigin,
+          getToken: () => "secret",
+          retry,
+          outboundPolicy,
+          wrapFinalError: (error) => error,
+        });
+        assertEquals(
+          await transport.request("/files"),
+          { ok: true },
+          "an authorized origin must complete through the guarded transport",
+        );
+      },
+    );
+    assertEquals(
+      authorized.length,
+      1,
+      "the authorized request must reach the outbound transport exactly once",
+    );
+    assertEquals(
+      authorized[0]?.headers.get("authorization"),
+      "Bearer secret",
+      "the guarded path must forward the bearer credential",
+    );
+
+    await withMockFetch(
+      () =>
+        Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: `${authorizedOrigin}/elsewhere` },
+          }),
+        ),
+      async () => {
+        const transport = createVeryfrontApiTransport({
+          baseUrl: authorizedOrigin,
+          getToken: () => "secret",
+          retry,
+          outboundPolicy,
+          wrapFinalError: (error) => error,
+        });
+        await assertRejects(
+          () => transport.request("/files"),
+          Error,
+          "redirect",
+          "the guarded path must refuse redirects for credentialed requests",
+        );
+      },
+    );
+
+    const blocked: Request[] = [];
+    await withMockFetch(
+      (input: URL | Request | string, init?: RequestInit) => {
+        blocked.push(new Request(input, init));
+        return Promise.resolve(Response.json({ ok: true }));
+      },
+      async () => {
+        const transport = createVeryfrontApiTransport({
+          baseUrl: "https://93.184.216.35",
+          getToken: () => "secret",
+          retry,
+          outboundPolicy,
+          wrapFinalError: (error) => error,
+        });
+        await assertRejects(
+          () => transport.request("/files"),
+          Error,
+          "blocked",
+          "an unauthorized origin must be refused by the outbound policy",
+        );
+      },
+    );
+    assertEquals(
+      blocked.length,
+      0,
+      "the bearer credential must never leave the process for an unauthorized origin",
+    );
   });
 });

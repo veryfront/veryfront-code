@@ -19,6 +19,26 @@ describe("platform/compat/shims/deno-env", () => {
     assertEquals(env.toObject(), { PRESENT: "value" });
   });
 
+  describe("createDenoEnvShim", () => {
+    it("reads, writes and deletes through the backing record", () => {
+      const source: Record<string, string | undefined> = { A: "1" };
+      const env = createDenoEnvShim(source);
+
+      assertEquals(env.get("A"), "1", "get must read the backing record");
+      env.set("B", "2");
+      assertEquals(env.get("B"), "2", "set must write through to the backing record");
+      assertEquals(source.B, "2", "set must mutate the caller's record");
+      assertEquals(env.has("B"), true, "has must report a set key");
+      env.delete("B");
+      assertEquals(env.get("B"), undefined, "delete must remove the key");
+      assertEquals(env.has("B"), false, "has must report a deleted key as absent");
+      assertEquals("B" in source, false, "delete must remove the key from the caller's record");
+      assertEquals(env.toObject(), { A: "1" }, "toObject must reflect set and delete");
+    });
+  });
+
+  // Parity check only: under Deno this block exercises the runtime's own
+  // Deno.env, not the shim, because the shim never replaces an existing global.
   describe("Deno.env.get/set/delete/has/toObject", () => {
     const testKey = "__VF_TEST_DENO_ENV_SHIM__";
 

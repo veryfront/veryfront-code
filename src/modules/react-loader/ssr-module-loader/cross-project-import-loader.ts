@@ -12,6 +12,7 @@ import { globalCrossProjectCache } from "./cache/index.ts";
 import type { SSRModuleLoaderOptions } from "./types.ts";
 import { readLimitedCrossProjectSource } from "#veryfront/modules/server/cross-project-source-limit.ts";
 import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
+import { encodeCacheKeySegment } from "#veryfront/cache/keys/segment-codec.ts";
 import { base64urlEncode } from "#veryfront/utils/base64url.ts";
 
 interface CrossProjectImportCache {
@@ -65,9 +66,10 @@ export function buildCrossProjectImportCacheKey(
   options: CrossProjectImportCacheKeyOptions,
 ): string {
   const reactVersion = options.reactVersion ?? "default";
+  const projectKey = encodeCacheKeySegment(options.projectId);
   const registryKey = base64urlEncode(options.registryBaseUrl);
   const baseKey =
-    `${options.specifier}:${options.projectId}:${reactVersion}:registry:${registryKey}`;
+    `${options.specifier}:${reactVersion}:owner:${projectKey}:registry:${registryKey}`;
   const cacheVariant = buildDependencyPinningCacheVariant(
     options.dependencyPinningCacheKey,
     options.moduleServerOrigin,

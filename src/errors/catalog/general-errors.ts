@@ -58,6 +58,17 @@ export const GENERAL_ERROR_CATALOG: PartialErrorCatalog = Object.freeze({
     ],
   ),
 
+  "already-exists": createSimpleError(
+    "already-exists",
+    "Target already exists",
+    "The command would overwrite a file or directory that is already there.",
+    [
+      "Choose a different name",
+      "Remove the existing file or directory first",
+      "Commands that can overwrite, such as 'veryfront init', accept --force",
+    ],
+  ),
+
   "timeout-error": createSimpleError(
     "timeout-error",
     "Operation timed out",

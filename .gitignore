@@ -49,10 +49,9 @@ veryfront-local
 src/integrations/_data.ts
 
 # Generated template manifest (rebuild with generate-templates-manifest.ts)
-cli/templates/manifest.json
+templates/manifest.json
 
 # Generated build artifacts (rebuild with `deno task generate`)
-src/server/dev-ui/manifest.json
 src/server/handlers/dev/framework-candidates.generated.ts
 src/studio/bridge/bridge-bundle.generated.ts
 
@@ -88,6 +87,7 @@ docs/api/
 # Local working files
 .context/
 docs/plans/
+docs/internal/
 docs/superpowers/
 .local/
 .refactor/
@@ -101,3 +101,6 @@ benchmarks/apps/nextjs/node_modules/
 # Claude Octopus plugin state
 .claude-octopus/
 plan.md
+
+# SDD review tooling scratch workspace (implementation reports, generated review diffs)
+.superpowers/

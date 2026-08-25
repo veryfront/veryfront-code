@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { SSROrchestrator, type SSROrchestratorConfig } from "./ssr-orchestrator.ts";
 import * as React from "react";
@@ -11,6 +11,10 @@ import {
   recordModuleToSession,
   startRenderSession,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/render-sessions.ts";
+import { getHeadCollectorNonce } from "#veryfront/react/head-collector.ts";
+import type { SSRRenderOptions } from "../ssr-renderer.ts";
+import { computeHash } from "../utils/index.ts";
+import { notFound } from "#veryfront/data/helpers.ts";
 
 function createMockConfig(overrides: Partial<SSROrchestratorConfig> = {}): SSROrchestratorConfig {
   return {
@@ -45,6 +49,40 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
   });
 
   describe("performSSRRendering", () => {
+    it("binds the response nonce only while the React render is active", async () => {
+      let observedNonce: string | undefined;
+      let forwardedNonce: string | undefined;
+      const config = createMockConfig({
+        ssrRenderer: {
+          renderToHTML: async (_element: React.ReactElement, options: SSRRenderOptions) => {
+            observedNonce = getHeadCollectorNonce();
+            forwardedNonce = options.nonce;
+            return { html: "<div>rendered</div>", stream: null };
+          },
+        } as unknown as SSROrchestratorConfig["ssrRenderer"],
+      });
+
+      const orchestrator = new SSROrchestrator(config);
+      await orchestrator.performSSRRendering(
+        React.createElement("div"),
+        {
+          meta: { title: "Test", slug: "/test" },
+          pageBundle: {
+            compiledCode: "",
+            frontmatter: {},
+            globals: {},
+            headings: [],
+            nodeMap: new Map(),
+          },
+        } as any,
+        { nonce: "response-nonce" },
+      );
+
+      assertEquals(observedNonce, "response-nonce");
+      assertEquals(forwardedNonce, "response-nonce");
+      assertEquals(getHeadCollectorNonce(), undefined);
+    });
+
     it("should render a simple element to full HTML", async () => {
       const config = createMockConfig();
       const orchestrator = new SSROrchestrator(config);
@@ -132,6 +170,7 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
         },
       });
 
+      let shellInput: unknown;
       const config = createMockConfig({
         ssrRenderer: {
           renderToHTML: async () => ({
@@ -141,7 +180,10 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
         } as unknown as SSROrchestratorConfig["ssrRenderer"],
         htmlGenerator: {
           generateFullHTML: async () => "",
-          generateHTMLStream: async () => new ReadableStream(),
+          generateHTMLStream: async (stream: ReadableStream) => {
+            shellInput = stream;
+            return new ReadableStream();
+          },
         } as unknown as SSROrchestratorConfig["htmlGenerator"],
       });
 
@@ -164,7 +206,16 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       );
 
       assertEquals(result.finalStream instanceof ReadableStream, true);
-      assertEquals(typeof result.ssrHash, "string");
+      assertStrictEquals(
+        shellInput,
+        mockStream,
+        "the shell generator must receive the renderer's own stream",
+      );
+      assertEquals(
+        result.ssrHash,
+        await computeHash("<div>streamed</div>"),
+        "buffered streaming html must produce a content hash",
+      );
     });
 
     it("preserves stream readiness metadata through HTML shell generation", async () => {
@@ -258,6 +309,7 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       let wrappedProjectSlug: string | undefined;
       let wrappedClientPageIsland: unknown;
       let wrappedFrontmatter: Record<string, unknown> | undefined;
+      let wrappedSignal: AbortSignal | undefined;
 
       const config = createMockConfig({
         ssrRenderer: {
@@ -294,6 +346,10 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
             projectSlug: string | undefined,
             clientPageIsland: unknown,
             props: Record<string, unknown> | undefined,
+            _pinKey: unknown,
+            _dependencies: unknown,
+            _source: unknown,
+            abortSignal: AbortSignal | undefined,
           ) => {
             wrappedUrl = url;
             wrappedParams = params;
@@ -301,6 +357,7 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
             wrappedClientPageIsland = clientPageIsland;
             wrappedProps = props;
             wrappedFrontmatter = frontmatter;
+            wrappedSignal = abortSignal;
             return React.createElement("section", null, element as React.ReactNode);
           },
         } as unknown as SSROrchestratorConfig["layoutOrchestrator"],
@@ -309,6 +366,7 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       const orchestrator = new SSROrchestrator(config);
       const url = new URL("http://localhost/blog/hello?draft=1");
       const clientPageIsland = { mode: "client-page" };
+      const controller = new AbortController();
       let signal: (Error & { errorBoundaryHtml?: string }) | undefined;
 
       try {
@@ -340,6 +398,7 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
               props: { preview: true },
               projectSlug: "docs",
               clientPageIsland: clientPageIsland as any,
+              abortSignal: controller.signal,
             },
           } as any,
         );
@@ -357,6 +416,104 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       assertEquals(wrappedClientPageIsland, clientPageIsland);
       assertEquals(wrappedProps, { preview: true });
       assertEquals(wrappedFrontmatter, { section: "blog", title: "Hello" });
+      assertEquals(wrappedSignal, controller.signal);
+    });
+
+    it("rethrows the original render error when the segment has no error boundary", async () => {
+      const pageError = new Error("page failed");
+      const config = createMockConfig({
+        ssrRenderer: {
+          renderToHTML: async () => {
+            throw pageError;
+          },
+        } as unknown as SSROrchestratorConfig["ssrRenderer"],
+        htmlGenerator: {
+          resolveErrorComponent: async () => null,
+          generateFullHTML: async (ctx: { html: string }) =>
+            `<!doctype html><html><body>${ctx.html}</body></html>`,
+          generateHTMLStream: async () => new ReadableStream(),
+        } as unknown as SSROrchestratorConfig["htmlGenerator"],
+      });
+
+      const orchestrator = new SSROrchestrator(config);
+      let caught: unknown;
+
+      try {
+        await orchestrator.performSSRRendering(
+          React.createElement("main"),
+          {
+            meta: { title: "Boom", slug: "/boom" },
+            pageBundle: {
+              compiledCode: "",
+              frontmatter: {},
+              globals: {},
+              headings: [],
+              nodeMap: new Map(),
+            },
+          } as any,
+        );
+      } catch (error) {
+        caught = error;
+      }
+
+      assertStrictEquals(
+        caught,
+        pageError,
+        "the original page error must propagate unchanged to the 500 / dev-overlay path",
+      );
+    });
+
+    it("propagates an SSR control outcome without consulting the error boundary", async () => {
+      const controlOutcome = notFound();
+      let resolveErrorComponentCalls = 0;
+      const config = createMockConfig({
+        ssrRenderer: {
+          renderToHTML: async () => {
+            throw controlOutcome;
+          },
+        } as unknown as SSROrchestratorConfig["ssrRenderer"],
+        htmlGenerator: {
+          resolveErrorComponent: async () => {
+            resolveErrorComponentCalls += 1;
+            return null;
+          },
+          generateFullHTML: async (ctx: { html: string }) =>
+            `<!doctype html><html><body>${ctx.html}</body></html>`,
+          generateHTMLStream: async () => new ReadableStream(),
+        } as unknown as SSROrchestratorConfig["htmlGenerator"],
+      });
+
+      const orchestrator = new SSROrchestrator(config);
+      let caught: unknown;
+
+      try {
+        await orchestrator.performSSRRendering(
+          React.createElement("main"),
+          {
+            meta: { title: "Missing", slug: "/missing" },
+            pageBundle: {
+              compiledCode: "",
+              frontmatter: {},
+              globals: {},
+              headings: [],
+              nodeMap: new Map(),
+            },
+          } as any,
+        );
+      } catch (error) {
+        caught = error;
+      }
+
+      assertStrictEquals(
+        caught,
+        controlOutcome,
+        "a thrown notFound() must reach the SSR error handler as a control outcome, not a render failure",
+      );
+      assertEquals(
+        resolveErrorComponentCalls,
+        0,
+        "a control outcome must not be routed through the app-router error boundary",
+      );
     });
   });
 });

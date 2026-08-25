@@ -1,10 +1,12 @@
 import type * as React from "react";
 import { flushSync } from "react-dom";
-import { createRoot, hydrateRoot, type Root } from "react-dom/client";
+import { createRoot, hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { type ComponentDomOptions, installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import {
   Select,
   SelectContent,
@@ -15,48 +17,17 @@ import {
   SelectValue,
 } from "./select.tsx";
 
-function installDom(dom: JSDOM): () => void {
-  const window = dom.window;
-  const replacements: Record<string, unknown> = {
-    window,
-    document: window.document,
-    navigator: window.navigator,
-    self: window,
-    Node: window.Node,
-    Element: window.Element,
-    HTMLElement: window.HTMLElement,
-    HTMLButtonElement: window.HTMLButtonElement,
-    MouseEvent: window.MouseEvent,
-    KeyboardEvent: window.KeyboardEvent,
-    FocusEvent: window.FocusEvent,
-    innerWidth: window.innerWidth,
-    innerHeight: window.innerHeight,
-    addEventListener: window.addEventListener.bind(window),
-    removeEventListener: window.removeEventListener.bind(window),
-    requestAnimationFrame: window.requestAnimationFrame.bind(window),
-    cancelAnimationFrame: window.cancelAnimationFrame.bind(window),
-  };
-  const previous = new Map<string, PropertyDescriptor | undefined>();
-
-  for (const [key, value] of Object.entries(replacements)) {
-    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
-    Object.defineProperty(globalThis, key, {
-      configurable: true,
-      enumerable: true,
-      value,
-      writable: true,
-    });
-  }
-
-  return () => {
-    for (const key of Object.keys(replacements)) {
-      const descriptor = previous.get(key);
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-      else delete (globalThis as Record<string, unknown>)[key];
-    }
-    dom.window.close();
-  };
-}
+const DOM_OPTIONS: ComponentDomOptions = {
+  windowGlobals: [
+    "self",
+    "HTMLButtonElement",
+    "KeyboardEvent",
+    "FocusEvent",
+    "innerWidth",
+    "innerHeight",
+  ],
+  windowBound: ["addEventListener", "removeEventListener"],
+};
 
 function createDom(): JSDOM {
   return new JSDOM(
@@ -109,22 +80,10 @@ function selectedText(trigger: HTMLElement): string | undefined {
   return activeId ? trigger.ownerDocument.getElementById(activeId)?.textContent?.trim() : undefined;
 }
 
-/**
- * Unmount and drain the scheduler task React leaves behind.
- *
- * React's scheduler holds a `setImmediate` until it next runs. It completes on
- * its own, but the test has to yield once more or Deno's leak sanitizer sees
- * the timer still pending.
- */
-async function unmount(root: Root): Promise<void> {
-  flushSync(() => root.unmount());
-  await new Promise((resolve) => setTimeout(resolve, 0));
-}
-
 describe("Select", () => {
   it("links the combobox and listbox and supports the complete keyboard lifecycle", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const values: string[] = [];
     const openChanges: boolean[] = [];
@@ -192,23 +151,51 @@ describe("Select", () => {
       await waitFor(() => selectedText(trigger) === "Alpha", "first option");
       press(trigger, "End");
       await waitFor(() => selectedText(trigger) === "Gamma", "last option");
+
+      press(trigger, "ArrowUp");
+      await waitFor(
+        () => selectedText(trigger) === "Beta",
+        "ArrowUp moves to the previous enabled option",
+      );
+      press(trigger, "ArrowUp");
+      await waitFor(
+        () => selectedText(trigger) === "Alpha",
+        "ArrowUp skips the disabled option on the way back",
+      );
+
+      const altUp = press(trigger, "ArrowUp", { altKey: true });
+      assertEquals(altUp.defaultPrevented, true, "Alt+ArrowUp is consumed by the combobox");
+      await waitFor(
+        () => trigger.getAttribute("aria-expanded") === "false",
+        "Alt+ArrowUp closes the listbox",
+      );
+      assertEquals(document.activeElement, trigger, "Alt+ArrowUp returns focus to the trigger");
+      assertEquals(values, [], "Alt+ArrowUp closes without committing a value");
+
+      press(trigger, "ArrowDown");
+      await waitFor(
+        () => trigger.getAttribute("aria-expanded") === "true",
+        "the listbox reopens after Alt+ArrowUp",
+      );
+      press(trigger, "End");
+      await waitFor(() => selectedText(trigger) === "Gamma", "last option");
       press(trigger, "Enter");
       await waitFor(() => trigger.getAttribute("aria-expanded") === "false", "selection close");
 
       assertEquals(values, ["gamma"]);
-      assertEquals(openChanges, [true, false]);
+      assertEquals(openChanges, [true, false, true, false]);
       assertEquals(document.activeElement, trigger);
       assertEquals(trigger.hasAttribute("aria-activedescendant"), false);
       assertEquals(trigger.textContent?.includes("Gamma"), true);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
 
   it("composes caller handlers while protecting required semantics", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const calls: string[] = [];
     const triggerRef = { current: null } as React.RefObject<HTMLButtonElement | null>;
@@ -337,14 +324,14 @@ describe("Select", () => {
       assertEquals(calls, ["cancel-trigger", "cancel-key", "cancel-item"]);
       assertEquals(trigger.getAttribute("aria-expanded"), "true");
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
 
   it("retains combobox focus through primary-pointer selection", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const values: string[] = [];
     let mouseDownCalls = 0;
@@ -400,14 +387,14 @@ describe("Select", () => {
       assertEquals(values, ["beta"]);
       assertEquals(document.activeElement, trigger);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
 
   it("skips disabled options and honors composition, typeahead, Escape, and Tab", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const openChanges: boolean[] = [];
     let disabledClicks = 0;
@@ -467,14 +454,14 @@ describe("Select", () => {
       assertEquals(trigger.getAttribute("aria-expanded"), "false");
       assertEquals(openChanges, [true, false, true, false]);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
 
   it("suppresses controlled content and requests closure when root disabled", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const valueChanges: string[] = [];
     const openChanges: boolean[] = [];
@@ -528,14 +515,14 @@ describe("Select", () => {
         "controlled owner re-enables its still-open value",
       );
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
 
   it("commits an uncontrolled close when root transitions to disabled", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const openChanges: boolean[] = [];
     const renderSelect = (disabled: boolean) => (
@@ -576,7 +563,7 @@ describe("Select", () => {
       assertEquals(trigger.getAttribute("aria-expanded"), "false");
       assertEquals(document.getElementById("root-transition-list"), null);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -596,7 +583,7 @@ describe("Select", () => {
     assertEquals(disabledServerMarkup.includes(" disabled"), true);
 
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const openChanges: boolean[] = [];
     const renderSelect = (triggerDisabled: boolean) => (
@@ -645,14 +632,14 @@ describe("Select", () => {
       );
       assertEquals(openChanges, [false, true]);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
 
   it("reconciles keyed DOM reordering and active-option removal", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
 
     const renderItems = (items: Array<{ value: string; disabled?: boolean }>) => (
@@ -702,14 +689,14 @@ describe("Select", () => {
       press(trigger, "Home");
       await waitFor(() => selectedText(trigger) === "Gamma", "reordered first option");
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
 
   it("coalesces 100-item DOM order reconciliation to one sort per commit", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const nodePrototype = dom.window.Node.prototype;
     const compareDocumentPosition = nodePrototype.compareDocumentPosition;
@@ -724,6 +711,7 @@ describe("Select", () => {
       { length: 100 },
       (_, index) => `Item ${String(index).padStart(3, "0")}`,
     );
+    const comparisonBudget = values.length * Math.ceil(Math.log2(values.length));
     const renderItems = (orderedValues: string[]) => (
       <Select defaultOpen>
         <SelectTrigger id="budget-trigger">
@@ -745,8 +733,8 @@ describe("Select", () => {
       );
       await Promise.resolve();
       assert(
-        comparisons <= 250,
-        `Expected at most two coalesced 100-item sorts, received ${comparisons} comparisons`,
+        comparisons <= comparisonBudget,
+        `Expected one O(n log n) 100-item sort, received ${comparisons} comparisons`,
       );
 
       comparisons = 0;
@@ -757,19 +745,19 @@ describe("Select", () => {
       );
       await Promise.resolve();
       assert(
-        comparisons <= 250,
-        `Expected at most two coalesced reorder sorts, received ${comparisons} comparisons`,
+        comparisons <= comparisonBudget,
+        `Expected one O(n log n) reorder sort, received ${comparisons} comparisons`,
       );
     } finally {
       nodePrototype.compareDocumentPosition = compareDocumentPosition;
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
 
   it("keeps controlled state owned by the caller while reporting each request", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const openChanges: boolean[] = [];
     const valueChanges: string[] = [];
@@ -839,14 +827,14 @@ describe("Select", () => {
       assertEquals(document.activeElement, outside);
       outside.remove();
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
 
   it("closes on focus departure without stealing the new focus target", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const rootElement = document.getElementById("root")!;
     const outside = document.createElement("button");
     outside.textContent = "Outside";
@@ -875,7 +863,7 @@ describe("Select", () => {
       await waitFor(() => trigger.getAttribute("aria-expanded") === "false", "blur close");
       assertEquals(document.activeElement, outside);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       outside.remove();
       restore();
     }
@@ -909,7 +897,7 @@ describe("Select", () => {
         url: "https://example.com/",
       },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const recoverableErrors: unknown[] = [];
     let root: ReturnType<typeof hydrateRoot> | undefined;
 
@@ -934,7 +922,7 @@ describe("Select", () => {
       assertEquals(listbox.getAttribute("aria-labelledby"), "hydrated-trigger");
       assertEquals(group.getAttribute("aria-labelledby"), "models-label");
     } finally {
-      if (root) await unmount(root);
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });
@@ -1020,7 +1008,7 @@ describe("Select", () => {
 
   it("fails dynamic closed duplicates without tearing down the root", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const rootElement = document.getElementById("root")!;
     const root = createRoot(rootElement);
     const openChanges: boolean[] = [];
@@ -1058,19 +1046,23 @@ describe("Select", () => {
         () => document.getElementById("dynamic-list") === null,
         "dynamic duplicate content suppression",
       );
+      await waitFor(
+        () => openChanges.length === 2 && openChanges[1] === false,
+        "dynamic duplicate close notification",
+      );
       assertEquals(rootElement.contains(trigger), true);
       assertEquals(trigger.disabled, true);
       assertEquals(trigger.getAttribute("aria-expanded"), "false");
       assertEquals(openChanges, [true, false]);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
 
   it("fails default-open dynamic duplicates before user interaction", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const rootElement = document.getElementById("root")!;
     const root = createRoot(rootElement);
     const openChanges: boolean[] = [];
@@ -1112,11 +1104,17 @@ describe("Select", () => {
         () => document.getElementById("dynamic-default-list") === null,
         "default-open duplicate content suppression",
       );
+      // Suppression is synchronous with the invalid render; the close request
+      // to the owner is an effect that lands afterwards.
+      await waitFor(
+        () => openChanges.length === 1,
+        "default-open close request",
+      );
       assertEquals(rootElement.contains(trigger), true);
       assertEquals(trigger.disabled, true);
       assertEquals(openChanges, [false]);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -1205,7 +1203,7 @@ describe("Select", () => {
 
   it("runs React 19 callback-ref cleanup for trigger and item refs", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const calls: string[] = [];
 
@@ -1253,7 +1251,7 @@ describe("Select", () => {
       );
       assertEquals(calls, ["trigger:attach", "item:attach"]);
 
-      await unmount(root);
+      await unmountReactRoot(root);
       assertEquals(calls, [
         "trigger:attach",
         "item:attach",

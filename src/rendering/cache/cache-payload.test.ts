@@ -30,6 +30,97 @@ function setFrontmatter(payload: CachePayload, value: unknown): void {
 }
 
 describe("rendering/cache/cache-payload", () => {
+  it("round-trips custom response headers through memory and serialized payloads", () => {
+    const payload = payloadWithNodeMap();
+    payload.result.headers = { "x-page-state": "cached" };
+
+    const memory = cloneCachePayload(payload);
+    const serialized = parseSerializedCachePayload(serializeCachePayload(payload));
+
+    assertEquals(memory.result.headers, { "x-page-state": "cached" });
+    assertEquals(serialized?.result.headers, { "x-page-state": "cached" });
+  });
+
+  it("rejects framework-owned and malformed cached response headers", () => {
+    const rejectedHeaders: Array<[string, Record<string, string>]> = [
+      ["set-cookie", { "set-cookie": "a=b" }],
+      ["content-security-policy", { "content-security-policy": "default-src *" }],
+      ["location", { location: "https://evil.example" }],
+      ["a duplicate header name", { "X-Foo": "a", "x-foo": "b" }],
+      ["a CR/LF bearing header value", { "x-foo": "a\r\nset-cookie: a=b" }],
+    ];
+
+    for (const [name, headers] of rejectedHeaders) {
+      const payload = payloadWithNodeMap();
+      payload.result.headers = headers;
+
+      assertEquals(
+        parseCachePayload(payload),
+        undefined,
+        `${name} must not survive a cache read`,
+      );
+      assertThrows(
+        () => cloneCachePayload(payload),
+        TypeError,
+        "result.headers is invalid",
+        `${name} must not survive a memory snapshot`,
+      );
+    }
+  });
+
+  it("lowercases cached response header names", () => {
+    const payload = payloadWithNodeMap();
+    payload.result.headers = { "X-Page-State": "cached" };
+
+    assertEquals(
+      cloneCachePayload(payload).result.headers,
+      { "x-page-state": "cached" },
+      "memory snapshots must normalize cached header names",
+    );
+    assertEquals(
+      parseSerializedCachePayload(serializeCachePayload(payload))?.result.headers,
+      { "x-page-state": "cached" },
+      "the wire format must normalize cached header names",
+    );
+  });
+
+  it("round-trips the HTML nonce placeholder through memory and serialized payloads", () => {
+    const placeholder = `vf-cache-${"a".repeat(48)}`;
+    const payload = payloadWithNodeMap();
+    payload.htmlNoncePlaceholder = placeholder;
+
+    assertEquals(
+      cloneCachePayload(payload).htmlNoncePlaceholder,
+      placeholder,
+      "memory snapshots keep the nonce placeholder",
+    );
+    assertEquals(
+      parseSerializedCachePayload(serializeCachePayload(payload))?.htmlNoncePlaceholder,
+      placeholder,
+      "the wire format keeps the nonce placeholder",
+    );
+  });
+
+  it("rejects a stored nonce placeholder that is not a cache token", () => {
+    const invalidPlaceholders = [
+      "vf-cache-nope",
+      `vf-cache-${"z".repeat(48)}`,
+      "z".repeat(48),
+      `vf-cache-${"a".repeat(47)}`,
+    ];
+
+    for (const invalid of invalidPlaceholders) {
+      const payload = payloadWithNodeMap();
+      payload.htmlNoncePlaceholder = invalid;
+
+      assertEquals(
+        parseCachePayload(payload),
+        undefined,
+        `"${invalid}" must not become the cached nonce splice target`,
+      );
+    }
+  });
+
   it("keeps memory snapshots equivalent to serialized snapshots", () => {
     const memory = cloneCachePayload(payloadWithNodeMap());
     const serialized = parseCachePayload(JSON.parse(serializeCachePayload(payloadWithNodeMap())));
@@ -40,6 +131,76 @@ describe("rendering/cache/cache-payload", () => {
       (serialized?.result.nodeMap?.get(1) as { attrs: { className: string } }).attrs.className,
       "title",
     );
+  });
+
+  it("charges compatibility node-map projections only once", () => {
+    const payload = payloadWithNodeMap();
+    const entries = Array.from(
+      { length: 50_000 },
+      (_, index): [number, unknown] => [index, {}],
+    );
+    payload.nodeMapEntries = entries;
+    payload.result.nodeMap = new Map(entries);
+
+    const serialized = serializeCachePayload(payload);
+    const parsed = parseSerializedCachePayload(serialized);
+
+    assertEquals(parsed?.nodeMapEntries?.length, entries.length);
+    assertEquals(parsed?.result.nodeMap?.size, entries.length);
+  });
+
+  it("still rejects node maps beyond the logical node budget", () => {
+    const payload = payloadWithNodeMap();
+    const entries = Array.from(
+      { length: 100_000 },
+      (_, index): [number, unknown] => [index, {}],
+    );
+    payload.nodeMapEntries = entries;
+    payload.result.nodeMap = new Map(entries);
+
+    assertThrows(() => serializeCachePayload(payload), TypeError, "value is too large");
+  });
+
+  it("rejects oversized node-map arrays before walking their entries", () => {
+    const payload = payloadWithNodeMap();
+    let ordinaryLengthReads = 0;
+    let lengthDescriptorReads = 0;
+    let indexDescriptorReads = 0;
+    const oversized = new Proxy(new Array(100_001), {
+      get(target, key, receiver) {
+        if (key === "length") ordinaryLengthReads++;
+        return Reflect.get(target, key, receiver);
+      },
+      getOwnPropertyDescriptor(target, key) {
+        if (key === "length") lengthDescriptorReads++;
+        if (typeof key === "string" && /^\d+$/.test(key)) {
+          indexDescriptorReads++;
+        }
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+    payload.nodeMapEntries = oversized as Array<[number, unknown]>;
+
+    assertEquals(parseCachePayload(payload), undefined);
+    assertEquals(ordinaryLengthReads, 0);
+    assertEquals(lengthDescriptorReads, 1);
+    assertEquals(indexDescriptorReads, 0);
+  });
+
+  it("reads node-map pair lengths without invoking ordinary property access", () => {
+    const payload = payloadWithNodeMap();
+    let ordinaryLengthReads = 0;
+    const pair = new Proxy<[number, unknown]>([1, { safe: true }], {
+      get(target, key, receiver) {
+        if (key === "length") ordinaryLengthReads++;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    payload.nodeMapEntries = [pair];
+    payload.result.nodeMap = new Map([[1, { safe: true }]]);
+
+    assertEquals(parseCachePayload(payload)?.nodeMapEntries, [[1, { safe: true }]]);
+    assertEquals(ordinaryLengthReads, 0);
   });
 
   it("round-trips detached Date values without changing cached frontmatter", () => {

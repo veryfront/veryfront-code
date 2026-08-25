@@ -1,8 +1,30 @@
 import "#veryfront/schemas/_test-setup.ts";
+import {
+  closeSync,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { isNode } from "#veryfront/platform/compat/runtime.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  __cacheDirInternals,
+  ensureCacheDirIgnored,
+  ensureCacheNodeModules,
   getCacheBaseDir,
   getCacheDirFromContext,
   getHttpBundleCacheDir,
@@ -23,6 +45,23 @@ const originalEnv = new Map<string, string | undefined>(
   MANAGED_ENV_KEYS.map((key) => [key, getEnv(key)]),
 );
 
+const nodeCacheRoots = new Set<string>();
+
+function makeNodeCacheRoot(): string {
+  const root = mkdtempSync(join(tmpdir(), "veryfront-cache-node-modules-"));
+  nodeCacheRoots.add(root);
+  return root;
+}
+
+function assertFrameworkNodeModulesLink(cacheRoot: string): void {
+  const link = join(cacheRoot, "node_modules");
+  const require = createRequire(import.meta.url);
+  const expectedReactDir = realpathSync(dirname(require.resolve("react")));
+
+  assert(lstatSync(link).isSymbolicLink());
+  assertEquals(realpathSync(join(link, "react")), expectedReactDir);
+}
+
 function restoreManagedEnv(): void {
   for (const [key, value] of originalEnv) {
     if (value === undefined) {
@@ -36,11 +75,77 @@ function restoreManagedEnv(): void {
 describe("cache-dir", () => {
   afterEach(() => {
     restoreManagedEnv();
+    __cacheDirInternals.resetNodeModulesLinkState();
+    for (const root of nodeCacheRoots) {
+      rmSync(root, { recursive: true, force: true });
+    }
+    nodeCacheRoots.clear();
   });
 
   describe("getCacheDirFromContext", () => {
     it("should return undefined when not in a context", () => {
       assertEquals(getCacheDirFromContext(), undefined);
+    });
+  });
+
+  describe("resolved React module paths", () => {
+    it("should locate node_modules on POSIX and Windows", () => {
+      assertEquals(
+        __cacheDirInternals.getReactNodeModulesDir(
+          "/repo/node_modules/react/index.js",
+        ),
+        "/repo/node_modules",
+      );
+      assertEquals(
+        __cacheDirInternals.getReactNodeModulesDir(
+          "C:\\repo\\node_modules\\react\\index.js",
+        ),
+        "C:\\repo\\node_modules",
+      );
+      assertEquals(
+        __cacheDirInternals.getReactNodeModulesDir("/repo/vendor/react.js"),
+        undefined,
+      );
+    });
+  });
+
+  describe("link failure diagnostics", () => {
+    it("should describe cache roots without exposing absolute paths", () => {
+      const cacheRoot = "/tmp/veryfront-cache-node-modules/private";
+      const reason = `ENOTDIR: not a directory, mkdir '${cacheRoot}/node_modules'`;
+
+      const context = {
+        cacheRoot: __cacheDirInternals.describeCacheRoot(cacheRoot),
+        reason: __cacheDirInternals.redactCachePathDetails(reason, cacheRoot),
+      };
+
+      assert(context.cacheRoot.startsWith("cache:"));
+      assertEquals(context.cacheRoot.includes(cacheRoot), false);
+      assertEquals(context.reason.includes(cacheRoot), false);
+      assertEquals(context.reason.includes("/tmp/veryfront-cache-node-modules"), false);
+      assertEquals(context.reason.includes("ENOTDIR"), true);
+    });
+
+    it("redacts both quoted symlink operands when POSIX paths contain spaces", () => {
+      const cacheRoot = "/workspace/private person/cache root";
+      const frameworkRoot = "/workspace/private person/framework/node_modules";
+      const reason = `EEXIST: symlink '${frameworkRoot}' -> '${cacheRoot}/node_modules'`;
+
+      const redacted = __cacheDirInternals.redactCachePathDetails(reason, cacheRoot);
+
+      assertEquals(redacted, "EEXIST: symlink '[path]' -> '[path]'");
+      assertEquals(redacted.includes("private person"), false);
+    });
+
+    it("redacts both quoted symlink operands when Windows paths contain spaces", () => {
+      const cacheRoot = "C:\\workspace\\private person\\cache root";
+      const frameworkRoot = "C:\\workspace\\private person\\framework\\node_modules";
+      const reason = `EPERM: symlink '${frameworkRoot}' -> '${cacheRoot}\\node_modules'`;
+
+      const redacted = __cacheDirInternals.redactCachePathDetails(reason, cacheRoot);
+
+      assertEquals(redacted, "EPERM: symlink '[path]' -> '[path]'");
+      assertEquals(redacted.includes("private person"), false);
     });
   });
 
@@ -156,6 +261,174 @@ describe("cache-dir", () => {
       const result = runWithCacheDir("/tmp/test", getHttpBundleCacheDir);
       assert(result.startsWith("/tmp/test"));
       assert(result.endsWith("veryfront-http-bundle"));
+    });
+  });
+
+  describe("ensureCacheDirIgnored", () => {
+    it("creates a self-ignoring .gitignore inside the cache root", async () => {
+      const cacheRoot = makeNodeCacheRoot();
+
+      await runWithCacheDir(cacheRoot, ensureCacheDirIgnored);
+
+      const contents = readFileSync(join(cacheRoot, ".gitignore"), "utf8");
+      assert(contents.split(/\r?\n/).includes("*"));
+    });
+
+    it("never overwrites a .gitignore the user already put there", async () => {
+      const cacheRoot = makeNodeCacheRoot();
+      const ignorePath = join(cacheRoot, ".gitignore");
+      writeFileSync(ignorePath, "!keep-me\n");
+
+      await runWithCacheDir(cacheRoot, ensureCacheDirIgnored);
+
+      assertEquals(readFileSync(ignorePath, "utf8"), "!keep-me\n");
+    });
+
+    it("leaves a .gitignore that appears after the exists() check intact", async () => {
+      const cacheRoot = makeNodeCacheRoot();
+      const ignorePath = join(cacheRoot, ".gitignore");
+      writeFileSync(ignorePath, "!keep-me\n");
+
+      // ensureCacheDirIgnored short-circuits on exists(), so the exclusive
+      // create is driven directly: it is what protects a file written by
+      // another process between that check and the write.
+      await __cacheDirInternals.createIgnoreMarker(createFileSystem(), ignorePath);
+
+      assertEquals(
+        readFileSync(ignorePath, "utf8"),
+        "!keep-me\n",
+        "an ignore marker written between exists() and the create must survive, not be truncated",
+      );
+    });
+  });
+
+  describe({ name: "ensureCacheNodeModules on Node", ignore: !isNode }, () => {
+    it("should link distinct cache roots independently", async () => {
+      const firstRoot = makeNodeCacheRoot();
+      const secondRoot = makeNodeCacheRoot();
+
+      await Promise.all([
+        runWithCacheDir(firstRoot, ensureCacheNodeModules),
+        runWithCacheDir(secondRoot, ensureCacheNodeModules),
+      ]);
+
+      assertFrameworkNodeModulesLink(firstRoot);
+      assertFrameworkNodeModulesLink(secondRoot);
+    });
+
+    it("should deduplicate concurrent callers and revalidate verified roots", async () => {
+      const cacheRoot = makeNodeCacheRoot();
+
+      const results = await runWithCacheDir(
+        cacheRoot,
+        () => Promise.all(Array.from({ length: 20 }, () => ensureCacheNodeModules())),
+      );
+      assertEquals(results, Array.from({ length: 20 }, () => true));
+      assertFrameworkNodeModulesLink(cacheRoot);
+
+      // A remembered root must still be checked: another process can clear a
+      // cache directory after the first successful call.
+      unlinkSync(join(cacheRoot, "node_modules"));
+      assertEquals(await runWithCacheDir(cacheRoot, ensureCacheNodeModules), true);
+      assertFrameworkNodeModulesLink(cacheRoot);
+    });
+
+    it("should report failure when the link cannot be created", async () => {
+      const cacheRoot = makeNodeCacheRoot();
+      const blocker = join(cacheRoot, "blocker");
+      writeFileSync(blocker, "not a directory");
+      const impossibleCacheBase = join(blocker, "nested");
+
+      assertEquals(
+        await runWithCacheDir(impossibleCacheBase, ensureCacheNodeModules),
+        false,
+      );
+
+      // A failed root is not memoized as verified; once the obstruction is
+      // gone the next call self-heals and reports success.
+      unlinkSync(blocker);
+      assertEquals(
+        await runWithCacheDir(impossibleCacheBase, ensureCacheNodeModules),
+        true,
+      );
+      assertFrameworkNodeModulesLink(impossibleCacheBase);
+    });
+
+    it("should replace wrong and dangling symlinks", async () => {
+      const cacheRoot = makeNodeCacheRoot();
+      const wrongTarget = join(cacheRoot, "wrong-node-modules");
+      const link = join(cacheRoot, "node_modules");
+      mkdirSync(wrongTarget);
+      symlinkSync(wrongTarget, link, "dir");
+
+      await runWithCacheDir(cacheRoot, ensureCacheNodeModules);
+      assertFrameworkNodeModulesLink(cacheRoot);
+
+      unlinkSync(link);
+      symlinkSync(join(cacheRoot, "missing-node-modules"), link, "dir");
+
+      await runWithCacheDir(cacheRoot, ensureCacheNodeModules);
+      assertFrameworkNodeModulesLink(cacheRoot);
+    });
+
+    it("should preserve a real node_modules directory", async () => {
+      const cacheRoot = makeNodeCacheRoot();
+      const nodeModulesDir = join(cacheRoot, "node_modules");
+      const marker = join(nodeModulesDir, "keep.txt");
+      mkdirSync(nodeModulesDir);
+      writeFileSync(marker, "keep");
+
+      assertEquals(
+        await runWithCacheDir(cacheRoot, ensureCacheNodeModules),
+        false,
+        "a preserved foreign node_modules directory must be reported as not ensured",
+      );
+
+      assert(lstatSync(nodeModulesDir).isDirectory());
+      assertEquals(lstatSync(nodeModulesDir).isSymbolicLink(), false);
+      assertEquals(readFileSync(marker, "utf8"), "keep");
+    });
+
+    it("should preserve a non-directory node_modules entry", async () => {
+      const cacheRoot = makeNodeCacheRoot();
+      const nodeModulesEntry = join(cacheRoot, "node_modules");
+      writeFileSync(nodeModulesEntry, "keep");
+
+      assertEquals(
+        await runWithCacheDir(cacheRoot, ensureCacheNodeModules),
+        false,
+        "a preserved non-directory node_modules entry must be reported as not ensured",
+      );
+
+      const entry = openSync(nodeModulesEntry, "r");
+      try {
+        assert(fstatSync(entry).isFile());
+        assertEquals(readFileSync(entry, "utf8"), "keep");
+      } finally {
+        closeSync(entry);
+      }
+    });
+
+    it("should accept a real node_modules directory that resolves framework React", async () => {
+      const cacheRoot = makeNodeCacheRoot();
+      const nodeModulesDir = join(cacheRoot, "node_modules");
+      const require = createRequire(import.meta.url);
+      const frameworkReactDir = dirname(require.resolve("react"));
+      mkdirSync(nodeModulesDir);
+      symlinkSync(frameworkReactDir, join(nodeModulesDir, "react"), "dir");
+
+      assertEquals(
+        await runWithCacheDir(cacheRoot, ensureCacheNodeModules),
+        true,
+        "a directory already resolving React to the framework copy is usable as is",
+      );
+
+      assert(lstatSync(nodeModulesDir).isDirectory());
+      assertEquals(
+        lstatSync(nodeModulesDir).isSymbolicLink(),
+        false,
+        "a usable node_modules directory must not be replaced by a symlink",
+      );
     });
   });
 });

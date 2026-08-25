@@ -16,7 +16,7 @@ describe("tool/context7", () => {
 
     const source = createContext7ToolSource({
       apiKey: "c7-test-key",
-      endpoint: "https://mcp.test/mcp",
+      endpoint: "https://93.184.216.34/mcp",
     });
 
     const tools = await withMockFetch(
@@ -76,7 +76,7 @@ describe("tool/context7", () => {
 
     const source = createContext7ToolSource({
       apiKey: "c7-test-key",
-      endpoint: "https://mcp.test/mcp",
+      endpoint: "https://93.184.216.34/mcp",
     });
 
     const result = await withMockFetch(
@@ -119,7 +119,7 @@ describe("tool/context7", () => {
       Deno.env.set("CONTEXT7_API_KEY", "env-fallback-key");
       let capturedHeaders: Headers | undefined;
 
-      const source = createContext7ToolSource({ endpoint: "https://mcp.test/mcp" });
+      const source = createContext7ToolSource({ endpoint: "https://93.184.216.34/mcp" });
 
       await withMockFetch(
         async (input: string | URL | Request, init?: RequestInit) => {

@@ -143,6 +143,66 @@ describe("workflow/claude-code/event-publisher", () => {
     assertEquals(delivered, [event]);
   });
 
+  it("MemoryEventPublisher routes a run-scoped event to that run only", async () => {
+    const publisher = new MemoryEventPublisher();
+    const one: ClaudeCodeEvent[] = [];
+    const two: ClaudeCodeEvent[] = [];
+    const all: ClaudeCodeEvent[] = [];
+    await publisher.subscribe("run-1", (event) => {
+      one.push(event);
+    });
+    await publisher.subscribe("run-2", (event) => {
+      two.push(event);
+    });
+    publisher.subscribeAll((event) => {
+      all.push(event);
+    });
+    const event = { ...createErrorEvent(), runId: "run-1" };
+
+    await publisher.publish(event);
+
+    assertEquals(two, [], "a run-scoped event must not reach another run's subscribers");
+    assertEquals(one, [event], "the owning run's subscriber receives exactly the event");
+    assertEquals(all, [event], "global subscribers receive every event once");
+  });
+
+  it("MemoryEventPublisher stops delivering to unsubscribed handlers", async () => {
+    const delivered: ClaudeCodeEvent[] = [];
+    const publisher = new MemoryEventPublisher();
+    const unsubscribeRun = await publisher.subscribe("run-1", (event) => {
+      delivered.push(event);
+    });
+    const unsubscribeAll = publisher.subscribeAll((event) => {
+      delivered.push(event);
+    });
+    const first = { ...createErrorEvent(), runId: "run-1" };
+
+    await publisher.publish(first);
+    assertEquals(delivered.length, 2, "both handlers receive the first event");
+
+    unsubscribeRun();
+    unsubscribeAll();
+    await publisher.publish({ ...createErrorEvent(), runId: "run-1" });
+
+    assertEquals(delivered, [first, first], "unsubscribed handlers receive nothing further");
+  });
+
+  it("MemoryEventPublisher close detaches every handler", async () => {
+    const delivered: ClaudeCodeEvent[] = [];
+    const publisher = new MemoryEventPublisher();
+    await publisher.subscribe("run-1", (event) => {
+      delivered.push(event);
+    });
+    publisher.subscribeAll((event) => {
+      delivered.push(event);
+    });
+
+    publisher.close();
+    await publisher.publish({ ...createErrorEvent(), runId: "run-1" });
+
+    assertEquals(delivered, [], "close() must clear both handler maps");
+  });
+
   it("SSEEventPublisher keeps its first stream authoritative", async () => {
     const publisher = new SSEEventPublisher();
     const reader = publisher.createStream().getReader();

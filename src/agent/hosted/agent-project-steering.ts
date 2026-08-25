@@ -21,6 +21,7 @@ import type {
 import type { RuntimeProjectSteeringLookup } from "../runtime/project-skill-catalog.ts";
 import type { RuntimeLoadSkillToolContext } from "../runtime/load-skill-tool.ts";
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
+import type { SkillDocumentParserProvider } from "#veryfront/extensions/parser/skill-document-parser.ts";
 
 /** Public API contract for hosted agent project steering options data. */
 export type HostedAgentProjectSteeringOptionsData = {
@@ -58,6 +59,7 @@ export type HostedAgentProjectSteeringOptions = HostedAgentProjectSteeringOption
   logger?: HostedAgentProjectSteeringLogger;
   trace?: RuntimeProjectFilesTrace;
   fetch?: RuntimeProjectFilesFetch;
+  skillDocumentParserProvider?: SkillDocumentParserProvider;
 };
 
 /** Public API contract for hosted agent project steering. */
@@ -130,6 +132,9 @@ export function createHostedAgentProjectSteering(
       logger: options.logger,
       trace: options.trace,
       fetch: options.fetch,
+      ...(options.skillDocumentParserProvider === undefined
+        ? {}
+        : { skillDocumentParserProvider: options.skillDocumentParserProvider }),
     });
 
     return cachedProjectSteeringAdapter;

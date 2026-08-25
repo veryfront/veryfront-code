@@ -35,11 +35,65 @@ describe("middleware/builtin/security/security-headers", () => {
       );
     });
 
+    it("should preserve the upstream status, body, and headers", async () => {
+      const mw = securityHeaders();
+      const res = await mw(
+        makeCtx(),
+        () =>
+          Promise.resolve(
+            new Response("not found", {
+              status: 404,
+              headers: { "content-type": "text/plain", "x-upstream": "origin" },
+            }),
+          ),
+      );
+
+      assertEquals(
+        res?.status,
+        404,
+        "securityHeaders must not rewrite the upstream status",
+      );
+      assertEquals(
+        await res?.text(),
+        "not found",
+        "securityHeaders must not drop the upstream body",
+      );
+      assertEquals(
+        res?.headers.get("x-upstream"),
+        "origin",
+        "upstream headers must survive the rebuild",
+      );
+      assertEquals(
+        res?.headers.get("X-Frame-Options"),
+        "DENY",
+        "the security headers must still be applied to the rebuilt response",
+      );
+    });
+
     it("should allow custom X-Frame-Options", async () => {
       const mw = securityHeaders({ frameOptions: "SAMEORIGIN" });
       const res = await mw(makeCtx(), nextOk);
 
       assertEquals(res?.headers.get("X-Frame-Options"), "SAMEORIGIN");
+    });
+
+    it("should allow custom Referrer-Policy and Permissions-Policy", async () => {
+      const mw = securityHeaders({
+        referrerPolicy: "no-referrer",
+        permissionsPolicy: "camera=(self)",
+      });
+      const res = await mw(makeCtx(), nextOk);
+
+      assertEquals(
+        res?.headers.get("Referrer-Policy"),
+        "no-referrer",
+        "a supplied referrerPolicy must override the default",
+      );
+      assertEquals(
+        res?.headers.get("Permissions-Policy"),
+        "camera=(self)",
+        "a supplied permissionsPolicy must override the default",
+      );
     });
 
     it("should allow disabling nosniff", async () => {

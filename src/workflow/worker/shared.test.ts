@@ -58,6 +58,28 @@ function createLogger() {
   };
 }
 
+function createCapturingLogger() {
+  const errors: string[] = [];
+  const infos: string[] = [];
+  const warnings: string[] = [];
+  return {
+    logger: {
+      error: (message: string) => {
+        errors.push(message);
+      },
+      info: (message: string) => {
+        infos.push(message);
+      },
+      warn: (message: string) => {
+        warnings.push(message);
+      },
+    },
+    errors,
+    infos,
+    warnings,
+  };
+}
+
 function createRun(id: string, status: WorkflowRun["status"], workerId?: string): WorkflowRun {
   return {
     id,
@@ -93,6 +115,8 @@ describe("workflow worker shared helpers", () => {
     Deno.env.set("TENANT_PRODUCTION_MODE", "1");
     Deno.env.set("TENANT_RELEASE_ID", "release-1");
     Deno.env.set("TENANT_BRANCH_ID", "branch-123");
+    Deno.env.set("TENANT_ENVIRONMENT_NAME", "Development");
+    Deno.env.delete("VERYFRONT_ENVIRONMENT_NAME");
 
     assertEquals(getTenantFromEnv(), {
       projectSlug: "acme",
@@ -101,7 +125,30 @@ describe("workflow worker shared helpers", () => {
       productionMode: true,
       releaseId: "release-1",
       branch: "branch-123",
+      environmentName: "Development",
     });
+
+    Deno.env.set("VERYFRONT_ENVIRONMENT_NAME", "Preview");
+    assertEquals(
+      getTenantFromEnv()?.environmentName,
+      "Preview",
+      "VERYFRONT_ENVIRONMENT_NAME must win over TENANT_ENVIRONMENT_NAME",
+    );
+
+    Deno.env.delete("TENANT_TOKEN");
+    assertEquals(
+      getTenantFromEnv(),
+      undefined,
+      "a slug without a token must not produce a tenant",
+    );
+
+    Deno.env.set("TENANT_TOKEN", "secret");
+    Deno.env.delete("TENANT_PROJECT_SLUG");
+    assertEquals(
+      getTenantFromEnv(),
+      undefined,
+      "a token without a slug must not produce a tenant",
+    );
   });
 
   it("prefers the explicit Veryfront branch ref over the tenant branch id", () => {
@@ -132,7 +179,7 @@ describe("workflow worker shared helpers", () => {
     );
   });
 
-  it("maps waiting and unexpected statuses to success exit codes", () => {
+  it("maps a paused waiting run to the success exit code", () => {
     const logger = createLogger();
     const exitCodes = { SUCCESS: 0, WORKFLOW_FAILED: 1 };
 
@@ -140,7 +187,6 @@ describe("workflow worker shared helpers", () => {
       getFinalRunExitCode(logger, exitCodes, "run-1", { status: "waiting" } as never, false),
       0,
     );
-    assertEquals(getFinalRunExitCode(logger, exitCodes, "run-1", null, false), 0);
   });
 
   it("maps failed runs to the failure exit code", () => {
@@ -151,6 +197,107 @@ describe("workflow worker shared helpers", () => {
       getFinalRunExitCode(logger, exitCodes, "run-1", { status: "failed" } as never, false),
       1,
     );
+  });
+
+  it("does not report success for runs that never reached a durable final state", () => {
+    const logger = createLogger();
+    const exitCodes = { SUCCESS: 0, WORKFLOW_FAILED: 1 };
+
+    assertEquals(getFinalRunExitCode(logger, exitCodes, "run-1", null, false), 1);
+    assertEquals(
+      getFinalRunExitCode(logger, exitCodes, "run-1", { status: "cancelled" } as never, false),
+      1,
+    );
+    assertEquals(
+      getFinalRunExitCode(logger, exitCodes, "run-1", { status: "pending" } as never, false),
+      1,
+    );
+    assertEquals(
+      getFinalRunExitCode(logger, exitCodes, "run-1", { status: "running" } as never, false),
+      1,
+    );
+  });
+
+  it("logs sanitized run ids for runs that never reached a durable final state", () => {
+    const { logger, warnings } = createCapturingLogger();
+    const exitCodes = { SUCCESS: 0, WORKFLOW_FAILED: 1 };
+    const runId = "run-\x1b[2Jtoken=secret";
+
+    assertEquals(getFinalRunExitCode(logger, exitCodes, runId, null, false), 1);
+    assertEquals(
+      getFinalRunExitCode(
+        logger,
+        exitCodes,
+        runId,
+        { status: "cancelled" } as never,
+        false,
+      ),
+      1,
+    );
+
+    assertEquals(
+      getFinalRunExitCode(
+        logger,
+        exitCodes,
+        runId,
+        { status: "pending" } as never,
+        false,
+      ),
+      1,
+    );
+    assertEquals(
+      getFinalRunExitCode(
+        logger,
+        exitCodes,
+        runId,
+        { status: "running" } as never,
+        false,
+      ),
+      1,
+    );
+    assertEquals(
+      getFinalRunExitCode(
+        logger,
+        exitCodes,
+        runId,
+        { status: "unexpected" } as never,
+        false,
+      ),
+      1,
+    );
+
+    assertEquals(warnings, [
+      "Workflow run was not found after execution: run-token=secret",
+      "Workflow was cancelled: run-token=secret",
+      "Workflow did not reach a durable final state: pending (runId: run-token=secret)",
+      "Workflow did not reach a durable final state: running (runId: run-token=secret)",
+      "Unexpected final status: unexpected (runId: run-token=secret)",
+    ]);
+  });
+
+  it("logs sanitized run ids for completed, failed, and waiting runs", () => {
+    const { errors, infos, logger } = createCapturingLogger();
+    const exitCodes = { SUCCESS: 0, WORKFLOW_FAILED: 1 };
+    const runId = "run-\x1b[2Jtoken=secret";
+
+    assertEquals(
+      getFinalRunExitCode(logger, exitCodes, runId, { status: "completed" } as never, true),
+      0,
+    );
+    assertEquals(
+      getFinalRunExitCode(logger, exitCodes, runId, { status: "failed" } as never, false),
+      1,
+    );
+    assertEquals(
+      getFinalRunExitCode(logger, exitCodes, runId, { status: "waiting" } as never, true),
+      0,
+    );
+
+    assertEquals(infos, [
+      "Workflow completed successfully: run-token=secret",
+      "Workflow paused (waiting): run-token=secret",
+    ]);
+    assertEquals(errors, ["Workflow failed: run-token=secret"]);
   });
 
   it("persists approvals before an isolated executor returns a waiting run", async () => {

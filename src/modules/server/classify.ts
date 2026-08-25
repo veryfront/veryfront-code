@@ -18,9 +18,30 @@ const CROSS_PROJECT_LATEST_PREFIX =
   /^\/_vf_modules\/_cross\/([a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?)\/\@\/(.+)$/;
 const RESERVED_SNIPPET_NAMESPACE = "/_vf_modules/_snippets";
 const RESERVED_CROSS_PROJECT_NAMESPACE = "/_vf_modules/_cross";
+const CROSS_PROJECT_SOURCE_MARKER = "/@/";
 
 function isInNamespace(pathname: string, namespace: string): boolean {
   return pathname === namespace || pathname.startsWith(`${namespace}/`);
+}
+
+/**
+ * Cross-project source keys use literal URL path segments. The registry route
+ * does not define a percent-decoding contract, so forwarding a percent sign
+ * would make admission depend on how many times an intermediary decodes it.
+ */
+function hasAmbiguousCrossProjectPath(path: string): boolean {
+  return path.includes("%");
+}
+
+function normalizeCrossProjectVersionOperators(pathname: string): string {
+  if (!isInNamespace(pathname, RESERVED_CROSS_PROJECT_NAMESPACE)) return pathname;
+
+  const sourceMarkerIndex = pathname.indexOf(CROSS_PROJECT_SOURCE_MARKER);
+  if (sourceMarkerIndex === -1) return pathname;
+
+  const prefix = pathname.slice(0, sourceMarkerIndex);
+  const sourcePath = pathname.slice(sourceMarkerIndex);
+  return `${prefix.replace(/%5e/gi, "^")}${sourcePath}`;
 }
 
 /** URL does not start with any module prefix — not a module request. */
@@ -83,38 +104,48 @@ export type ModuleRequestKind =
  * @returns A `ModuleRequestKind` discriminated union.
  */
 export function classifyModuleRequest(url: URL): ModuleRequestKind {
-  if (!DEV_MODULE_PREFIX.test(url.pathname)) {
+  const pathname = normalizeCrossProjectVersionOperators(url.pathname);
+
+  if (!DEV_MODULE_PREFIX.test(pathname)) {
     return { kind: "not-module" };
   }
 
-  const snippetMatch = url.pathname.match(SNIPPET_MODULE_PREFIX);
+  const snippetMatch = pathname.match(SNIPPET_MODULE_PREFIX);
   if (snippetMatch) {
     return { kind: "snippet", hash: snippetMatch[1] ?? "" };
   }
 
-  const versionedMatch = url.pathname.match(CROSS_PROJECT_VERSIONED_PREFIX);
+  const versionedMatch = pathname.match(CROSS_PROJECT_VERSIONED_PREFIX);
   if (versionedMatch) {
+    const path = versionedMatch[3] ?? "";
+    if (hasAmbiguousCrossProjectPath(path)) {
+      return { kind: "invalid-module", namespace: "cross-project" };
+    }
     return {
       kind: "cross-project-versioned",
       slug: versionedMatch[1] ?? "",
       version: versionedMatch[2] ?? "",
-      path: versionedMatch[3] ?? "",
+      path,
     };
   }
 
-  const latestMatch = url.pathname.match(CROSS_PROJECT_LATEST_PREFIX);
+  const latestMatch = pathname.match(CROSS_PROJECT_LATEST_PREFIX);
   if (latestMatch) {
+    const path = latestMatch[2] ?? "";
+    if (hasAmbiguousCrossProjectPath(path)) {
+      return { kind: "invalid-module", namespace: "cross-project" };
+    }
     return {
       kind: "cross-project-latest",
       slug: latestMatch[1] ?? "",
-      path: latestMatch[2] ?? "",
+      path,
     };
   }
 
-  if (isInNamespace(url.pathname, RESERVED_SNIPPET_NAMESPACE)) {
+  if (isInNamespace(pathname, RESERVED_SNIPPET_NAMESPACE)) {
     return { kind: "invalid-module", namespace: "snippet" };
   }
-  if (isInNamespace(url.pathname, RESERVED_CROSS_PROJECT_NAMESPACE)) {
+  if (isInNamespace(pathname, RESERVED_CROSS_PROJECT_NAMESPACE)) {
     return { kind: "invalid-module", namespace: "cross-project" };
   }
 

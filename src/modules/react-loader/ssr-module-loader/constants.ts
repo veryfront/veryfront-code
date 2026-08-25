@@ -4,7 +4,10 @@ import {
   DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC,
   DISTRIBUTED_SSR_MODULE_TTL_PRODUCTION_SEC,
   getDistributedCacheTTL,
+  HOURS_PER_DAY,
+  MINUTES_PER_HOUR,
   MS_PER_MINUTE,
+  SECONDS_PER_MINUTE,
 } from "#veryfront/utils/constants/cache.ts";
 
 export const SSR_MODULE_CACHE_MAX_ENTRIES = 2000;
@@ -20,6 +23,17 @@ export function getSSRModuleRedisTTL(isProduction: boolean): number {
 }
 
 export { DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC, DISTRIBUTED_SSR_MODULE_TTL_PRODUCTION_SEC };
+
+/**
+ * How long a local dev server keeps a compiled SSR module on disk.
+ *
+ * The preview TTL is tuned for a shared branch cache and expires long before a
+ * developer returns to the project, so an on-disk local dev cache would go cold
+ * anyway. A working day covers a restart without letting the project cache
+ * directory grow without bound. Run `veryfront clean --cache` to reset it.
+ */
+export const LOCAL_DEV_SSR_MODULE_TTL_SEC = HOURS_PER_DAY * MINUTES_PER_HOUR *
+  SECONDS_PER_MINUTE;
 
 export const CIRCUIT_BREAKER_THRESHOLD = 25;
 export const CIRCUIT_BREAKER_RESET_MS = 5 * 1000;
@@ -61,6 +75,20 @@ export function resetCachedTransformLimits(): void {
 // Queue briefly instead of misclassifying normal backpressure as a missing
 // dependency; this remains well below the module-load and render hard caps.
 export const TRANSFORM_ACQUIRE_TIMEOUT_MS = 5_000;
+
+// The dev server is single tenant, so shedding load protects nobody: a burst of
+// concurrent refreshes on a cold cache must queue and stay slow instead of
+// failing the render. The wait stays below the module-load hard cap so a wedged
+// transform still surfaces as a load failure.
+export const TRANSFORM_ACQUIRE_TIMEOUT_DEV_MS = 30_000;
+
+/**
+ * Time a transform waits for capacity. Dev queues; production sheds load so one
+ * tenant cannot stall the others.
+ */
+export function getTransformAcquireTimeoutMs(dev: boolean): number {
+  return dev ? TRANSFORM_ACQUIRE_TIMEOUT_DEV_MS : TRANSFORM_ACQUIRE_TIMEOUT_MS;
+}
 
 // Bound waits on a shared cold transform leader. If the leader promise never
 // settles, callers should detach and allow later requests to retry cleanly.

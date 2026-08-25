@@ -4,7 +4,8 @@ import { validateTempDirectoryPrefix } from "#veryfront/platform/compat/temp-dir
 import { requireBoundedFileReadLimit } from "#veryfront/platform/adapters/bounded-file-read.ts";
 import type { FileChangeEvent, FileWatcher, RuntimeAdapter, WatchOptions } from "./base.ts";
 import { FileSnapshotChangedError } from "./file-snapshot-error.ts";
-import { isAbsolute, relative, resolve, sep } from "#veryfront/platform/compat/path/index.ts";
+import { resolve } from "#veryfront/platform/compat/path/index.ts";
+import { isPathContainedBy } from "./path-containment.ts";
 
 export interface MockRuntimeAdapter extends RuntimeAdapter {
   fs: RuntimeAdapter["fs"] & {
@@ -40,12 +41,6 @@ function isDescendantPath(candidate: string, path: string): boolean {
   const normalizedPath = normalizeMockPath(path);
   if (normalizedCandidate === normalizedPath) return false;
   return normalizedCandidate.startsWith(descendantPrefix(normalizedPath));
-}
-
-function isContainedPath(path: string, root: string): boolean {
-  const relation = relative(resolve(root), resolve(path));
-  return relation === "" ||
-    (relation !== ".." && !relation.startsWith(`..${sep}`) && !isAbsolute(relation));
 }
 
 function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
@@ -311,7 +306,7 @@ export function createMockAdapter(): MockRuntimeAdapter {
         byteLimit: number,
       ) => {
         const boundedLimit = requireBoundedFileReadLimit(byteLimit);
-        if (!isContainedPath(path, containmentRoot)) {
+        if (!isPathContainedBy(resolve(path), resolve(containmentRoot))) {
           throw new TypeError("Snapshot path must be contained by the requested root");
         }
         const normalizedPath = normalizeMockPath(path);

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   assertBuildProducedOutput,
@@ -45,11 +45,19 @@ describe("build/production-build/build/build-orchestrator", () => {
 
   describe("buildProduction", () => {
     it("should reject when project directory does not exist", async () => {
-      await assertRejects(
+      const error = await assertRejects(
         () =>
           buildProduction({
             projectDir: "/tmp/nonexistent-project-" + Date.now(),
           }),
+        Error,
+        "Invalid project directory",
+      );
+      assertInstanceOf(error, Error);
+      assertEquals(
+        error.name,
+        "VeryfrontError[config]",
+        "a missing project directory is a config error, not a generic build failure",
       );
     });
 

@@ -10,9 +10,9 @@ import {
 import { Head } from "./core.ts";
 
 /**
- * Reads the head payload from committed SSR output. The payload, rather than
- * render-time side effects, is authoritative so abandoned Suspense renders
- * cannot leak stale head entries into the response.
+ * Reads the client transport payload to exercise Head normalization. The HTML
+ * generator separately requires a request-scoped commit registration before
+ * treating any serialized payload as trusted server head state.
  */
 function collectFromHead(node: React.ReactElement) {
   const html = renderToString(node);

@@ -23,6 +23,9 @@ export {
   isApiCacheAvailable,
   isDiskCacheConfigured,
   isDistributedBackend,
+  isLocalDevDiskCacheEnabled,
+  isPersistentLocalCacheEnabled,
+  localDevCodeCacheBackend,
   MemoryCacheBackend,
   RedisCacheBackend,
 } from "./backends/index.ts";

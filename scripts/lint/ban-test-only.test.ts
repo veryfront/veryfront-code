@@ -1,6 +1,9 @@
 import { assertEquals } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
-import { findFocusedTests, isTestFile } from "./ban-test-only.ts";
+import { findFocusedTests } from "./ban-test-only.ts";
+
+const linesOf = (source: string) =>
+  findFocusedTests(source, "a.test.ts").map((finding) => finding.line);
 
 describe("findFocusedTests", () => {
   it("flags it.only / describe.only / test.only / Deno.test.only", () => {
@@ -10,7 +13,7 @@ describe("findFocusedTests", () => {
       'test.only("c", () => {});',
       'Deno.test.only("d", () => {});',
     ].join("\n");
-    assertEquals(findFocusedTests(source), [1, 2, 3, 4]);
+    assertEquals(linesOf(source), [1, 2, 3, 4]);
   });
 
   it("flags the option form: it/describe with only: true", () => {
@@ -18,7 +21,7 @@ describe("findFocusedTests", () => {
       'it({ name: "a", only: true }, () => {});',
       'describe({ name: "b", only: true }, () => {});',
     ].join("\n");
-    assertEquals(findFocusedTests(source), [1, 2]);
+    assertEquals(linesOf(source), [1, 2]);
   });
 
   it("flags only: true on its own line in a multi-line options object", () => {
@@ -28,7 +31,7 @@ describe("findFocusedTests", () => {
       "  only: true,", // 3
       "}, () => {});", // 4
     ].join("\n");
-    assertEquals(findFocusedTests(source), [3]);
+    assertEquals(linesOf(source), [3]);
   });
 
   it("does not flag ordinary it/describe calls or look-alikes", () => {
@@ -40,7 +43,7 @@ describe("findFocusedTests", () => {
       "const opts = { readOnly: true };", // different key
       'it({ name: "c", only: false }, () => {});', // not focused
     ].join("\n");
-    assertEquals(findFocusedTests(source), []);
+    assertEquals(linesOf(source), []);
   });
 
   it("ignores .only inside comments and string literals", () => {
@@ -50,24 +53,18 @@ describe("findFocusedTests", () => {
       'const s = "use it.only( to focus";',
       "const t = `test.only( in a template`;",
     ].join("\n");
-    assertEquals(findFocusedTests(source), []);
+    assertEquals(linesOf(source), []);
   });
 
-  it("reports the correct 1-based line number", () => {
+  it("reports the correct 1-based line number, even after a block comment", () => {
     const source = [
+      "/**",
+      " * header",
+      " */",
       'it("keep", () => {});',
       "",
       'describe.only("focused", () => {});',
     ].join("\n");
-    assertEquals(findFocusedTests(source), [3]);
-  });
-});
-
-describe("isTestFile", () => {
-  it("matches .test.ts and .test.tsx only", () => {
-    assertEquals(isTestFile("src/foo.test.ts"), true);
-    assertEquals(isTestFile("src/foo.test.tsx"), true);
-    assertEquals(isTestFile("src/foo.ts"), false);
-    assertEquals(isTestFile("src/testing/bdd.ts"), false);
+    assertEquals(linesOf(source), [6]);
   });
 });

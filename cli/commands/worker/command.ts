@@ -12,6 +12,10 @@ import type { WorkerArgs } from "./handler.ts";
 
 export interface WorkerOptions extends WorkerArgs {}
 
+export function formatRedisLogTarget(_redisUrl: string): string {
+  return "<configured>";
+}
+
 export async function workerCommand(options: WorkerOptions): Promise<void> {
   showHeader();
 
@@ -26,7 +30,7 @@ export async function workerCommand(options: WorkerOptions): Promise<void> {
   );
 
   cliLogger.info("Starting workflow worker...");
-  cliLogger.info(`  Redis:       ${options.redisUrl}`);
+  cliLogger.info(`  Redis:       ${formatRedisLogTarget(options.redisUrl)}`);
   cliLogger.info(`  Executor:    ${options.executor}`);
   cliLogger.info(`  Concurrency: ${options.concurrency}`);
   cliLogger.info(`  Poll:        ${options.pollInterval}ms`);

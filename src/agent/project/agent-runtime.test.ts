@@ -1,4 +1,6 @@
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
+import "#veryfront/skill/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { resolve } from "node:path";
 import { getMCPRegistry, registerPrompt, registerResource } from "#veryfront/mcp";
@@ -10,7 +12,7 @@ import { agent } from "../factory.ts";
 import {
   createRuntimeAgentDefinitionFromAgent,
   describeProjectAgentRuntimeAgentIdCandidates,
-  discoverProjectAgentRuntime,
+  discoverProjectAgentRuntime as discoverProjectAgentRuntimeRaw,
   doesProjectAgentRuntimeAgentMatchSource,
   getProjectAgentRuntimeAgentIdCandidates,
   resolveSingleProjectAgentRuntimeAgentId,
@@ -23,10 +25,17 @@ import {
   normalizeSourceIntegrationPolicy,
 } from "#veryfront/integrations/source-policy.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
+import { registerSkill } from "#veryfront/skill/registry.ts";
 import { createLoadSkillTool } from "#veryfront/skill/tools.ts";
 import { getEffectiveAgentSystem } from "../runtime/effective-agent-system.ts";
+import { flattenSystemInstructions } from "#veryfront/agent/runtime/tool-inventory.ts";
 import { tool } from "#veryfront/tool";
+
+const discoverProjectAgentRuntime: typeof discoverProjectAgentRuntimeRaw = (input) =>
+  discoverProjectAgentRuntimeRaw({
+    ...input,
+    allowHostProjectCodeExecution: true,
+  });
 
 async function withTempDir(fn: (dir: string) => Promise<void> | void): Promise<void> {
   const dir = Deno.makeTempDirSync();
@@ -87,9 +96,48 @@ Deno.test("project agent runtime resolves code and markdown agent candidates", a
     resolveSingleProjectAgentRuntimeAgentId({ candidates, source: "auto" }),
     null,
   );
+  assertEquals(
+    resolveSingleProjectAgentRuntimeAgentId({
+      candidates: { codeAgentIds: ["coder"], markdownAgentIds: [] },
+      source: "auto",
+    }),
+    "coder",
+    "a project with one code agent resolves it as the default",
+  );
+  assertEquals(
+    resolveSingleProjectAgentRuntimeAgentId({
+      candidates: { codeAgentIds: [], markdownAgentIds: ["writer"] },
+      source: "auto",
+    }),
+    "writer",
+    "a project with one markdown agent resolves it as the default",
+  );
+  assertEquals(
+    resolveSingleProjectAgentRuntimeAgentId({
+      candidates: { codeAgentIds: ["coder"], markdownAgentIds: ["coder"] },
+      source: "auto",
+    }),
+    "coder",
+    "an id present in both candidate lists still counts as a single agent",
+  );
   assertEquals(doesProjectAgentRuntimeAgentMatchSource(codeAgent, "code"), true);
   assertEquals(doesProjectAgentRuntimeAgentMatchSource(codeAgent, "markdown"), false);
   assertEquals(doesProjectAgentRuntimeAgentMatchSource(markdownAgent, "markdown"), true);
+  assertEquals(
+    doesProjectAgentRuntimeAgentMatchSource(markdownAgent, "code"),
+    false,
+    "a markdown agent does not match the code source",
+  );
+  assertEquals(
+    doesProjectAgentRuntimeAgentMatchSource(codeAgent, "auto"),
+    true,
+    "the default auto source matches a code-defined agent",
+  );
+  assertEquals(
+    doesProjectAgentRuntimeAgentMatchSource(markdownAgent, "auto"),
+    true,
+    "the default auto source matches a markdown-defined agent",
+  );
 
   assertEquals(await createRuntimeAgentDefinitionFromAgent(codeAgent), {
     id: "coder",
@@ -100,13 +148,9 @@ Deno.test("project agent runtime resolves code and markdown agent candidates", a
     model: "openai/gpt-5.4",
     maxSteps: 7,
     providerTools: ["web_search"],
-    tools: [
-      "execute_skill_script",
-      "get_active_agent_run",
-      "get_agent_run_events",
-      "load_skill",
-      "load_skill_reference",
-    ],
+    // No skills are registered in this project, so the skill tools are not
+    // attached and do not appear in the serialized candidate.
+    tools: ["get_active_agent_run", "get_agent_run_events"],
   });
   assertEquals(await createRuntimeAgentDefinitionFromAgent(markdownAgent), {
     id: "writer",
@@ -136,15 +180,44 @@ Deno.test("project agent runtime keeps factory skill catalogs out of hosted inst
       ? await effectiveSystem()
       : effectiveSystem;
 
-    assertStringIncludes(localPrompt, "<available_skills>");
+    assertStringIncludes(
+      typeof localPrompt === "string" ? localPrompt : flattenSystemInstructions(localPrompt),
+      "<available_skills>",
+    );
     assertEquals(codeAgent.config.system, "Handle incidents carefully.");
     assertEquals(
       (await createRuntimeAgentDefinitionFromAgent(codeAgent)).instructions,
       "Handle incidents carefully.",
     );
   } finally {
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
   }
+});
+
+Deno.test("project agent runtime preserves structured system metadata for hosted code agents", async () => {
+  const system = [{
+    role: "system" as const,
+    content: "Keep this prefix cached for one hour.",
+    providerOptions: {
+      anthropic: {
+        cacheControl: { type: "ephemeral", ttl: "1h" },
+      },
+    },
+  }, {
+    role: "system" as const,
+    content: "Keep this tail uncached.",
+  }];
+  const codeAgent = agent({
+    id: "structured-hosted-agent",
+    system,
+  });
+
+  const definition = await createRuntimeAgentDefinitionFromAgent(codeAgent);
+  assertEquals(
+    definition.instructions,
+    "Keep this prefix cached for one hour.\n\nKeep this tail uncached.",
+  );
+  assertEquals(definition.system, system);
 });
 
 Deno.test("project agent runtime serializes scoped delegates and first-party MCP presets", async () => {
@@ -174,10 +247,7 @@ Deno.test("project agent runtime serializes scoped delegates and first-party MCP
 
   assertEquals(definition.tools, [
     "agent_specialist",
-    "execute_skill_script",
     "get_file",
-    "load_skill",
-    "load_skill_reference",
     "lookup_job",
   ]);
   assertEquals(definition.delegates, ["specialist"]);

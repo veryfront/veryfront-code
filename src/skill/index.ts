@@ -25,14 +25,24 @@ export type {
   SkillScriptExecutor,
   SkillScriptExecutorInput,
   SkillScriptResult,
+  SkillScriptSnapshot,
+  SkillScriptSnapshotFile,
 } from "./types.ts";
 
 export {
+  isSkillInfrastructureToolId,
+  isValidProviderSafeSkillId,
+  isValidSkillName,
+  isValidStrictSkillName,
   SKILL_ALLOWED_TOOL_PATTERN_REGEX,
   SKILL_ASSETS_DIR,
   SKILL_DESCRIPTION_MAX_LENGTH,
   SKILL_MD_FILENAME,
+  SKILL_METADATA_KEY_MAX_LENGTH,
+  SKILL_METADATA_MAX_ENTRIES,
+  SKILL_METADATA_VALUE_MAX_LENGTH,
   SKILL_NAME_REGEX,
+  SKILL_READABLE_DIRS,
   SKILL_REFERENCES_DIR,
   SKILL_RESOURCES_DIR,
   SKILL_SCRIPTS_DIR,
@@ -50,7 +60,12 @@ export {
 } from "./registry.ts";
 
 // Parser
-export { parseSkillFrontmatter, validateSkillMetadata } from "./parser.ts";
+export {
+  parseSkillFileFrontmatter,
+  parseSkillFrontmatter,
+  validateSkillFileMetadata,
+  validateSkillMetadata,
+} from "./parser.ts";
 
 // Path Safety
 export { listSkillSubdir, validateSkillPath } from "./path-safety.ts";
@@ -65,9 +80,12 @@ export {
 // Executor
 export { getSkillScriptExecutor } from "./executor.ts";
 
-// Allowed-Tools
+// Skill tool availability
 export {
+  filterToolNamesForSkill,
   filterToolsForSkill,
-  isToolAllowedBySkill,
-  validateAllowedToolPatterns,
+  isSkillToolAvailable,
 } from "./allowed-tools.ts";
+
+export type { ParsedSkillContent } from "./document-parser.ts";
+export { parseBoundedSkillDocument } from "./document-parser.ts";

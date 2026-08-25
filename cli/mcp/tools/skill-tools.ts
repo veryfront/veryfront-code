@@ -97,7 +97,7 @@ export const vfGetSkills: MCPTool<GetSkillsInput, GetSkillsResult> = {
   title: "Get Skills",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need to discover available Agent Skills or load a specific skill's procedural knowledge. Returns skill names and descriptions, or full skill content when name is provided. Do not use for skill reference docs — use vf_get_skill_reference instead.",
+    "Use this when you need to discover available Agent Skills or load a specific skill's procedural knowledge. Returns skill names and descriptions, or full skill content when name is provided. Do not use for skill reference docs. Use vf_get_skill_reference instead.",
   inputSchema: getSkillsInput,
   execute: (input) =>
     withSpan(
@@ -178,7 +178,7 @@ export const vfGetSkillReference: MCPTool<GetSkillReferenceInput, GetSkillRefere
   title: "Get Skill Reference",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need to load a specific reference document from a skill. Returns the document content as text. Do not use for skill discovery — use vf_get_skills instead.",
+    "Use this when you need to load a specific reference document from a skill. Returns the document content as text. Do not use for skill discovery. Use vf_get_skills instead.",
   inputSchema: getSkillReferenceInput,
   execute: async (input) => {
     const fs = getFs();

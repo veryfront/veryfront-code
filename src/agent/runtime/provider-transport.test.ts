@@ -1,10 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { clearModelProviders, type ModelRuntime, registerModelProvider } from "#veryfront/provider";
+import { clearModelProviders, registerModelProvider } from "#veryfront/provider";
 import { agent } from "../factory.ts";
-import type { ModelCallContext } from "../../runtime/model-call-context.ts";
+import type { AgentRunModelCallContextEvent } from "../../runtime/model-call-context.ts";
+import { runWithRunEventSink } from "../../runtime/run-event-sink-context.ts";
 import type { ModelTransportRequest } from "../types.ts";
+import { scriptedModel } from "./model-runtime.test-helpers.ts";
 import {
   __registerLogRecordEmitter,
   __resetLoggerConfigForTests,
@@ -22,20 +24,23 @@ function captureLogs(): LogEntry[] {
   return entries;
 }
 
-function createTextStream(
-  parts: Array<
-    | { type: "text-delta"; text: string }
-    | { type: "finish"; finishReason?: string; totalUsage?: Record<string, unknown> }
-  >,
-) {
-  return new ReadableStream<unknown>({
-    start(controller) {
-      for (const part of parts) {
-        controller.enqueue(part);
-      }
-      controller.close();
-    },
-  });
+function normalizeRunRuntimeContext(
+  event: AgentRunModelCallContextEvent,
+): Pick<AgentRunModelCallContextEvent, "type" | "messages"> {
+  return {
+    type: event.type,
+    messages: event.messages.map((message) =>
+      message.role === "system" && typeof message.content === "string"
+        ? {
+          ...message,
+          content: message.content.replace(
+            /<runtime_context>[\s\S]*<\/runtime_context>/,
+            "<runtime_context>\nserver-authored UTC snapshot\n</runtime_context>",
+          ),
+        }
+        : message
+    ),
+  };
 }
 
 describe("agent provider transport hooks", () => {
@@ -48,26 +53,11 @@ describe("agent provider transport hooks", () => {
   });
 
   it("lets hosts override the model runtime and transport options for generate()", async () => {
-    const captured: {
-      request?: ModelTransportRequest;
-      generateOptions?: Record<string, unknown>;
-    } = {};
-
-    const transportModel: ModelRuntime = {
-      provider: "hosted",
+    const captured: { request?: ModelTransportRequest } = {};
+    const transportModel = scriptedModel([{ text: "hooked generate" }], {
       modelId: "hosted/gateway-model",
-      async doGenerate(options: unknown) {
-        captured.generateOptions = options as Record<string, unknown>;
-        return {
-          content: [{ type: "text", text: "hooked generate" }],
-          finishReason: "stop",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
-      },
-      async doStream() {
-        return { stream: createTextStream([{ type: "finish" }]) };
-      },
-    };
+      only: "generate",
+    });
 
     const assistant = agent({
       model: "host/test-model",
@@ -100,59 +90,84 @@ describe("agent provider transport hooks", () => {
       mode: "generate",
     });
 
-    assertExists(captured.generateOptions);
-    assertEquals(captured.generateOptions.temperature, 0);
+    const generateOptions = transportModel.calls[0];
+    assertExists(generateOptions);
+    assertEquals(generateOptions.temperature, 0);
     assertEquals(
-      new Headers(captured.generateOptions.headers as HeadersInit).get("Authorization"),
+      new Headers(generateOptions.headers).get("Authorization"),
       "Bearer vf_test",
     );
-    assertEquals(captured.generateOptions.providerOptions, {
+    assertEquals(generateOptions.providerOptions, {
       veryfront: { projectSlug: "demo-project" },
     });
   });
 
   it("records equivalent context through cloud and server-local runtime paths", async () => {
-    const contexts: ModelCallContext[] = [];
+    const contexts: AgentRunModelCallContextEvent[] = [];
 
     for (const provider of ["cloud", "local"] as const) {
-      let runtimePrompt: unknown;
-      const runtime: ModelRuntime = {
-        provider,
-        modelId: `${provider}/context-parity`,
-        async doGenerate(options: unknown) {
-          const prompt = (options as { prompt: unknown }).prompt;
-          runtimePrompt = prompt;
-          assertEquals(contexts.at(-1)?.messages, prompt);
-          return {
-            content: [{ type: "text", text: "done" }],
-            finishReason: "stop",
-            usage: {},
-          };
+      const runtime = scriptedModel([
+        (options) => {
+          assertEquals<unknown>(contexts.at(-1)?.messages, options.prompt);
+          return { text: "done" };
         },
-        async doStream() {
-          return { stream: createTextStream([{ type: "finish" }]) };
-        },
-      };
+      ], { provider, modelId: `${provider}/context-parity`, only: "generate" });
       const assistant = agent({
         model: `${provider}/context-parity`,
         system: "Follow the same instructions.",
         skills: [],
-        modelCallRecorder: (context) => {
-          contexts.push(context);
-        },
         resolveModelTransport: () => ({ model: runtime }),
       });
 
-      await assistant.generate({ input: "Use the same normalized input." });
+      await runWithRunEventSink(
+        (event) => {
+          contexts.push(event as unknown as AgentRunModelCallContextEvent);
+        },
+        () => assistant.generate({ input: "Use the same normalized input." }),
+      );
 
-      assertEquals(contexts.at(-1)?.messages, runtimePrompt);
+      assertEquals<unknown>(contexts.at(-1)?.messages, runtime.calls[0]?.prompt);
     }
 
     assertEquals(contexts.length, 2);
-    assertEquals(contexts[0], contexts[1]);
-    assertEquals(contexts[0], {
+    const cloudContext = contexts[0];
+    const localContext = contexts[1];
+    assertExists(cloudContext);
+    assertExists(localContext);
+    assertEquals(cloudContext.model, {
+      id: "cloud/context-parity",
+      modelProvider: "cloud",
+    });
+    assertEquals(localContext.model, {
+      id: "local/context-parity",
+      modelProvider: "local",
+    });
+    const expectedRequestControls = {
+      maxOutputTokens: 4096,
+      temperature: 0,
+    };
+    assertEquals(cloudContext.request, expectedRequestControls);
+    assertEquals(localContext.request, expectedRequestControls);
+    assertEquals(
+      normalizeRunRuntimeContext(cloudContext),
+      normalizeRunRuntimeContext(localContext),
+    );
+    assertEquals(normalizeRunRuntimeContext(cloudContext), {
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
       messages: [
-        { role: "system", content: "Follow the same instructions." },
+        {
+          role: "system",
+          content: "Follow the same instructions.",
+          providerOptions: {
+            anthropic: {
+              cacheControl: { type: "ephemeral" },
+            },
+          },
+        },
+        {
+          role: "system",
+          content: "<runtime_context>\nserver-authored UTC snapshot\n</runtime_context>",
+        },
         {
           role: "user",
           content: [{ type: "text", text: "Use the same normalized input." }],
@@ -163,20 +178,11 @@ describe("agent provider transport hooks", () => {
 
   it("logs generate model remap diagnostics at debug level", async () => {
     const entries = captureLogs();
-    registerModelProvider("google", (modelId) => ({
-      provider: "google",
-      modelId: `google/${modelId}`,
-      async doGenerate() {
-        return {
-          content: [{ type: "text", text: "remapped generate" }],
-          finishReason: "stop",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
-      },
-      async doStream() {
-        return { stream: createTextStream([{ type: "finish" }]) };
-      },
-    }));
+    registerModelProvider("google", (modelId) =>
+      scriptedModel([{ text: "remapped generate" }], {
+        provider: "google",
+        modelId: `google/${modelId}`,
+      }));
 
     const assistant = agent({
       model: "google-ai-studio/gemini-3.1-pro-preview",
@@ -193,25 +199,10 @@ describe("agent provider transport hooks", () => {
   });
 
   it("uses the agent-configured temperature for generate()", async () => {
-    const captured: {
-      generateOptions?: Record<string, unknown>;
-    } = {};
-
-    const transportModel: ModelRuntime = {
-      provider: "hosted",
+    const transportModel = scriptedModel([{ text: "custom temperature" }], {
       modelId: "hosted/gateway-model",
-      async doGenerate(options: unknown) {
-        captured.generateOptions = options as Record<string, unknown>;
-        return {
-          content: [{ type: "text", text: "custom temperature" }],
-          finishReason: "stop",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
-      },
-      async doStream() {
-        return { stream: createTextStream([{ type: "finish" }]) };
-      },
-    };
+      only: "generate",
+    });
 
     const assistant = agent({
       model: "host/test-model",
@@ -222,30 +213,16 @@ describe("agent provider transport hooks", () => {
 
     await assistant.generate({ input: "Hello" });
 
-    assertExists(captured.generateOptions);
-    assertEquals(captured.generateOptions.temperature, 0.2);
+    const generateOptions = transportModel.calls[0];
+    assertExists(generateOptions);
+    assertEquals(generateOptions.temperature, 0.2);
   });
 
   it("omits temperature for Claude Opus 4.8 generate requests", async () => {
-    const captured: {
-      generateOptions?: Record<string, unknown>;
-    } = {};
-
-    const transportModel: ModelRuntime = {
-      provider: "hosted",
+    const transportModel = scriptedModel([{ text: "opus generate" }], {
       modelId: "hosted/gateway-model",
-      async doGenerate(options: unknown) {
-        captured.generateOptions = options as Record<string, unknown>;
-        return {
-          content: [{ type: "text", text: "opus generate" }],
-          finishReason: "stop",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
-      },
-      async doStream() {
-        return { stream: createTextStream([{ type: "finish" }]) };
-      },
-    };
+      only: "generate",
+    });
 
     const assistant = agent({
       model: "anthropic/claude-opus-4-8",
@@ -256,35 +233,16 @@ describe("agent provider transport hooks", () => {
 
     await assistant.generate({ input: "Hello" });
 
-    assertExists(captured.generateOptions);
-    assertEquals("temperature" in captured.generateOptions, false);
+    const generateOptions = transportModel.calls[0];
+    assertExists(generateOptions);
+    assertEquals("temperature" in generateOptions, false);
   });
 
   it("omits temperature for Claude Opus 4.8 stream requests", async () => {
-    const captured: {
-      streamOptions?: Record<string, unknown>;
-    } = {};
-
-    const transportModel: ModelRuntime = {
-      provider: "hosted",
+    const transportModel = scriptedModel([{ text: "opus stream" }], {
       modelId: "hosted/gateway-model",
-      async doGenerate() {
-        return {
-          content: [{ type: "text", text: "unused" }],
-          finishReason: "stop",
-          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-        };
-      },
-      async doStream(options: unknown) {
-        captured.streamOptions = options as Record<string, unknown>;
-        return {
-          stream: createTextStream([
-            { type: "text-delta", text: "opus stream" },
-            { type: "finish" },
-          ]),
-        };
-      },
-    };
+      only: "stream",
+    });
 
     const assistant = agent({
       model: "anthropic/claude-opus-4-8",
@@ -297,39 +255,22 @@ describe("agent provider transport hooks", () => {
     const body = await response.text();
 
     assertStringIncludes(body, "opus stream");
-    assertExists(captured.streamOptions);
-    assertEquals("temperature" in captured.streamOptions, false);
+    const streamOptions = transportModel.calls[0];
+    assertExists(streamOptions);
+    assertEquals("temperature" in streamOptions, false);
   });
 
   it("emits accumulated usage on stream message-finish events", async () => {
-    const transportModel: ModelRuntime = {
-      provider: "hosted",
+    const transportModel = scriptedModel([{ text: "usage stream" }], {
       modelId: "hosted/gateway-model",
-      async doGenerate() {
-        return {
-          content: [{ type: "text", text: "unused" }],
-          finishReason: "stop",
-          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-        };
+      only: "stream",
+      usage: {
+        inputTokens: 12,
+        outputTokens: 8,
+        totalTokens: 20,
+        costCredits: 0.25,
       },
-      async doStream() {
-        return {
-          stream: createTextStream([
-            { type: "text-delta", text: "usage stream" },
-            {
-              type: "finish",
-              finishReason: "stop",
-              totalUsage: {
-                inputTokens: 12,
-                outputTokens: 8,
-                totalTokens: 20,
-                costCredits: 0.25,
-              },
-            },
-          ]),
-        };
-      },
-    };
+    });
 
     const assistant = agent({
       model: "host/test-model",
@@ -349,25 +290,10 @@ describe("agent provider transport hooks", () => {
   });
 
   it("omits temperature for Veryfront Cloud Claude Opus 4.8 generate requests", async () => {
-    const captured: {
-      generateOptions?: Record<string, unknown>;
-    } = {};
-
-    const transportModel: ModelRuntime = {
-      provider: "hosted",
+    const transportModel = scriptedModel([{ text: "cloud opus generate" }], {
       modelId: "hosted/gateway-model",
-      async doGenerate(options: unknown) {
-        captured.generateOptions = options as Record<string, unknown>;
-        return {
-          content: [{ type: "text", text: "cloud opus generate" }],
-          finishReason: "stop",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
-      },
-      async doStream() {
-        return { stream: createTextStream([{ type: "finish" }]) };
-      },
-    };
+      only: "generate",
+    });
 
     const assistant = agent({
       model: "veryfront-cloud/anthropic/claude-opus-4-8",
@@ -378,30 +304,16 @@ describe("agent provider transport hooks", () => {
 
     await assistant.generate({ input: "Hello" });
 
-    assertExists(captured.generateOptions);
-    assertEquals("temperature" in captured.generateOptions, false);
+    const generateOptions = transportModel.calls[0];
+    assertExists(generateOptions);
+    assertEquals("temperature" in generateOptions, false);
   });
 
   it("uses fixed temperature for Veryfront Cloud Kimi 2.6 generate requests", async () => {
-    const captured: {
-      generateOptions?: Record<string, unknown>;
-    } = {};
-
-    const transportModel: ModelRuntime = {
-      provider: "hosted",
+    const transportModel = scriptedModel([{ text: "kimi generate" }], {
       modelId: "hosted/gateway-model",
-      async doGenerate(options: unknown) {
-        captured.generateOptions = options as Record<string, unknown>;
-        return {
-          content: [{ type: "text", text: "kimi generate" }],
-          finishReason: "stop",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
-      },
-      async doStream() {
-        return { stream: createTextStream([{ type: "finish" }]) };
-      },
-    };
+      only: "generate",
+    });
 
     const assistant = agent({
       model: "veryfront-cloud/moonshotai/kimi-k2.6",
@@ -412,30 +324,16 @@ describe("agent provider transport hooks", () => {
 
     await assistant.generate({ input: "Hello" });
 
-    assertExists(captured.generateOptions);
-    assertEquals(captured.generateOptions.temperature, 1);
+    const generateOptions = transportModel.calls[0];
+    assertExists(generateOptions);
+    assertEquals(generateOptions.temperature, 1);
   });
 
   it("uses non-thinking fixed temperature for Veryfront Cloud Kimi 2.6 generate requests", async () => {
-    const captured: {
-      generateOptions?: Record<string, unknown>;
-    } = {};
-
-    const transportModel: ModelRuntime = {
-      provider: "hosted",
+    const transportModel = scriptedModel([{ text: "kimi non-thinking generate" }], {
       modelId: "hosted/gateway-model",
-      async doGenerate(options: unknown) {
-        captured.generateOptions = options as Record<string, unknown>;
-        return {
-          content: [{ type: "text", text: "kimi non-thinking generate" }],
-          finishReason: "stop",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
-      },
-      async doStream() {
-        return { stream: createTextStream([{ type: "finish" }]) };
-      },
-    };
+      only: "generate",
+    });
 
     const providerOptions = {
       openai: {
@@ -453,9 +351,10 @@ describe("agent provider transport hooks", () => {
 
     await assistant.generate({ input: "Hello" });
 
-    assertExists(captured.generateOptions);
-    assertEquals(captured.generateOptions.temperature, 0.6);
-    assertEquals(captured.generateOptions.providerOptions, providerOptions);
+    const generateOptions = transportModel.calls[0];
+    assertExists(generateOptions);
+    assertEquals(generateOptions.temperature, 0.6);
+    assertEquals(generateOptions.providerOptions, providerOptions);
   });
 
   it("preserves temperature for other hosted models", async () => {
@@ -466,25 +365,10 @@ describe("agent provider transport hooks", () => {
     ];
 
     for (const testCase of cases) {
-      const captured: {
-        generateOptions?: Record<string, unknown>;
-      } = {};
-
-      const transportModel: ModelRuntime = {
-        provider: "hosted",
+      const transportModel = scriptedModel([{ text: "other model generate" }], {
         modelId: "hosted/gateway-model",
-        async doGenerate(options: unknown) {
-          captured.generateOptions = options as Record<string, unknown>;
-          return {
-            content: [{ type: "text", text: "other model generate" }],
-            finishReason: "stop",
-            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-          };
-        },
-        async doStream() {
-          return { stream: createTextStream([{ type: "finish" }]) };
-        },
-      };
+        only: "generate",
+      });
 
       const assistant = agent({
         model: testCase.model,
@@ -495,37 +379,21 @@ describe("agent provider transport hooks", () => {
 
       await assistant.generate({ input: "Hello" });
 
-      assertExists(captured.generateOptions);
-      assertEquals(captured.generateOptions.temperature, testCase.temperature);
+      const generateOptions = transportModel.calls[0];
+      assertExists(generateOptions);
+      assertEquals(generateOptions.temperature, testCase.temperature);
     }
   });
 
   it("lets hosts attach request-aware transport options while still using the registered provider runtime for stream()", async () => {
-    const captured: {
-      request?: ModelTransportRequest;
-      streamOptions?: Record<string, unknown>;
-    } = {};
-
-    registerModelProvider("transport-stream-test", (_modelId) => ({
+    const captured: { request?: ModelTransportRequest } = {};
+    const providerModel = scriptedModel([{ text: "streamed via provider hook" }], {
       provider: "transport-stream-test",
       modelId: "transport-stream-test/demo",
-      async doGenerate() {
-        return {
-          content: [{ type: "text", text: "unused" }],
-          finishReason: "stop",
-          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-        };
-      },
-      async doStream(options: unknown) {
-        captured.streamOptions = options as Record<string, unknown>;
-        return {
-          stream: createTextStream([
-            { type: "text-delta", text: "streamed via provider hook" },
-            { type: "finish" },
-          ]),
-        };
-      },
-    }));
+      only: "stream",
+    });
+
+    registerModelProvider("transport-stream-test", (_modelId) => providerModel);
 
     const assistant = agent({
       model: "transport-stream-test/demo",
@@ -558,37 +426,25 @@ describe("agent provider transport hooks", () => {
       mode: "stream",
     });
 
-    assertExists(captured.streamOptions);
+    const streamOptions = providerModel.calls[0];
+    assertExists(streamOptions);
     assertEquals(
-      new Headers(captured.streamOptions.headers as HeadersInit).get("x-veryfront-project"),
+      new Headers(streamOptions.headers).get("x-veryfront-project"),
       "demo-project",
     );
-    assertEquals(captured.streamOptions.providerOptions, {
+    assertEquals(streamOptions.providerOptions, {
       gateway: { branchId: "branch_123" },
     });
   });
 
   it("logs stream model remap diagnostics at debug level", async () => {
     const entries = captureLogs();
-    registerModelProvider("google", (modelId) => ({
-      provider: "google",
-      modelId: `google/${modelId}`,
-      async doGenerate() {
-        return {
-          content: [{ type: "text", text: "unused" }],
-          finishReason: "stop",
-          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-        };
-      },
-      async doStream() {
-        return {
-          stream: createTextStream([
-            { type: "text-delta", text: "remapped stream" },
-            { type: "finish" },
-          ]),
-        };
-      },
-    }));
+    registerModelProvider("google", (modelId) =>
+      scriptedModel([{ text: "remapped stream" }], {
+        provider: "google",
+        modelId: `google/${modelId}`,
+        only: "stream",
+      }));
 
     const assistant = agent({
       model: "google-ai-studio/gemini-3.1-pro-preview",

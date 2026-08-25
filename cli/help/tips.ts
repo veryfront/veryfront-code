@@ -17,17 +17,17 @@ export function getBuildTips(): string {
 
 export function getInitTemplates(): string {
   return `${yellow("Available Templates:")}\n` +
-    `  • ${green("ai-agent")}              - AI chatbot with tools and streaming\n` +
-    `  • ${green("docs-agent")}         - Document Q&A with source citations\n` +
+    `  • ${green("ai-agent")}            - AI chatbot with tools and streaming\n` +
+    `  • ${green("docs-agent")}          - Document Q&A with source citations\n` +
     `  • ${green("multi-agent-system")}  - Agents that delegate to each other\n` +
     `  • ${green("agentic-workflow")}    - AI pipeline with approvals\n` +
     `  • ${green("coding-agent")}        - AI code assistant with file tools\n` +
     `  • ${green("saas-starter")}        - AI SaaS with auth + per-user memory\n` +
-    `  • ${green("minimal")}       - Blank canvas\n`;
+    `  • ${green("minimal")}             - Blank canvas\n`;
 }
 
 export function getPostDeployTips(): string {
-  return `\n  ${dim("Open:")} ${cyan("veryfront open")}\n`;
+  return `\n  ${dim("Dashboard:")} ${cyan("veryfront open")}\n`;
 }
 
 const COMMAND_TIPS: Record<string, () => string> = {

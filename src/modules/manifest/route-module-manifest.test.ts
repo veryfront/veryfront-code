@@ -68,6 +68,25 @@ describe("Route Module Manifest", () => {
     );
   });
 
+  it("generateModulePreloadHintsFromManifest escapes hrefs so a path cannot break out of the attribute", () => {
+    clearProjectManifests("escape-project");
+    recordSSRModules("escape-project", "index", [
+      '_vf_modules/evil"><script>alert(1)</script>.js',
+    ]);
+
+    try {
+      const hints = generateModulePreloadHintsFromManifest("escape-project", "index", 10);
+      assertEquals(hints.length, 1);
+      assertEquals(hints[0]?.includes("<script>"), false);
+      assertEquals(
+        hints[0],
+        '<link rel="modulepreload" href="/_vf_modules/evil&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;.js">',
+      );
+    } finally {
+      clearProjectManifests("escape-project");
+    }
+  });
+
   it("collection API works for tracking", () => {
     const sessionId = "test-session-1";
     startModuleCollection(sessionId);
@@ -78,6 +97,16 @@ describe("Route Module Manifest", () => {
     const manifest = getRouteManifest("test-project", "about");
     assertExists(manifest);
     assertEquals(manifest.renderCount, 1);
+    assertEquals(
+      manifest.moduleCount,
+      2,
+      "both the critical and the collected non-critical module must be recorded",
+    );
+    assertEquals(
+      getRouteModulePaths("test-project", "about"),
+      ["pages/about.js", "components/Nav.js"],
+      "critical modules come first in loadOrder, then collected non-critical ones",
+    );
   });
 
   it("getCriticalModulePaths returns critical modules only", () => {
@@ -88,6 +117,12 @@ describe("Route Module Manifest", () => {
     const stats = getManifestStats();
     assertEquals(stats.routeCount, 2);
     assertEquals(stats.routes.length, 2);
+    assertEquals(stats.totalModules, 4, "totalModules must sum moduleCount across tracked routes");
+
+    const about = stats.routes.find((route) => route.route.endsWith("about"));
+    assertExists(about);
+    assertEquals(about.moduleCount, 2, "about route reports its recorded module count");
+    assertEquals(about.renderCount, 1, "about route reports its render count");
   });
 
   it("clearProjectManifests removes project manifests", () => {

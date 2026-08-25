@@ -2,19 +2,21 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  chatRequestContextSchema,
-  chatUiMessageSchema,
-  messageMetadataSchema,
-} from "#veryfront/chat/compat";
-import {
   buildDataFileAnnotation,
+  getChatRequestContextSchema,
+  getChatUiMessageSchema,
+  getMessageMetadataSchema,
   imageFileTypes,
   normalizeInlineAttachmentMediaType,
   textFileExtensions,
 } from "veryfront/chat/types";
 
+const chatRequestContextSchema = getChatRequestContextSchema();
+const chatUiMessageSchema = getChatUiMessageSchema();
+const messageMetadataSchema = getMessageMetadataSchema();
+
 describe("chat/types", () => {
-  it("exports hosted chat schemas through veryfront/chat/compat", () => {
+  it("exports hosted chat schema factories through veryfront/chat/types", () => {
     assertEquals(
       chatRequestContextSchema.parse({
         conversationId: "conversation-1",

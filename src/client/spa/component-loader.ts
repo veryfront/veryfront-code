@@ -198,7 +198,11 @@ export function clearComponentCache(): void {
 
 // Expose component loader globally for hydration scripts
 if (typeof window !== "undefined") {
-  const global = window as unknown as Record<string, unknown>;
+  const global = window as {
+    __VERYFRONT_LOAD_COMPONENT__?: typeof loadComponent;
+    __VERYFRONT_PRELOAD_COMPONENT__?: typeof preloadComponent;
+    __VERYFRONT_GET_CACHED_COMPONENT__?: typeof getCachedComponent;
+  };
   global.__VERYFRONT_LOAD_COMPONENT__ = loadComponent;
   global.__VERYFRONT_PRELOAD_COMPONENT__ = preloadComponent;
   global.__VERYFRONT_GET_CACHED_COMPONENT__ = getCachedComponent;

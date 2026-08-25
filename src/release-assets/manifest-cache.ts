@@ -27,9 +27,11 @@ import { serverLogger } from "#veryfront/utils/logger/index.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
 import { markRequestProfilePhase, profilePhase } from "#veryfront/observability";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG, RELEASE_ASSET_MANIFEST_LIMITS } from "./constants.ts";
 import {
+  describeReadyReleaseAssetManifestRejection,
   parseReadyReleaseAssetManifestResponse,
   type ReleaseAssetManifest,
 } from "./manifest-schema.ts";
@@ -101,7 +103,7 @@ export interface ReleaseAssetManifestFetchResult {
 }
 
 /**
- * Fetcher used to retrieve a manifest for a release. Registered per-releaseId
+ * Fetcher used to retrieve a manifest for a release. Registered per-release ID
  * by the runtime adapter that owns that release, so the correct project-scoped
  * token is always used. Returns null when the manifest is unavailable.
  */
@@ -307,7 +309,7 @@ export function getReadyManifestForRender(
  * falls back to null when the flag is off, no fetcher is registered, the
  * manifest is unavailable, or the fetch fails.
  */
-export async function getReadyManifestForRenderAsync(
+async function getReadyManifestAsync(
   releaseId: string | null | undefined,
   options: ReadyManifestReadOptions = {},
 ): Promise<ReleaseAssetManifest | null> {
@@ -317,10 +319,6 @@ export async function getReadyManifestForRenderAsync(
   }
   if (!isValidReleaseId(releaseId)) {
     markManifestDecision("invalid_release_id");
-    return null;
-  }
-  if (!isReleaseAssetManifestEnabled()) {
-    markManifestDecision("disabled");
     return null;
   }
   const activeFetcher = fetcherRegistry.get(releaseId);
@@ -353,6 +351,33 @@ export async function getReadyManifestForRenderAsync(
   }
 
   return await fetchManifest(releaseId);
+}
+
+/**
+ * Await a ready manifest for rendering when release-manifest consumption is
+ * enabled.
+ */
+export async function getReadyManifestForRenderAsync(
+  releaseId: string | null | undefined,
+  options: ReadyManifestReadOptions = {},
+): Promise<ReleaseAssetManifest | null> {
+  if (!isReleaseAssetManifestEnabled()) {
+    markManifestDecision("disabled");
+    return null;
+  }
+  return await getReadyManifestAsync(releaseId, options);
+}
+
+/**
+ * Resolve the release manifest used as the production browser-module admission
+ * boundary. Unlike rendering optimizations, this security decision is never
+ * controlled by the release-manifest rollout flag.
+ */
+export async function getReadyManifestForBrowserModuleAdmission(
+  releaseId: string | null | undefined,
+  options: ReadyManifestReadOptions = {},
+): Promise<ReleaseAssetManifest | null> {
+  return await getReadyManifestAsync(releaseId, options);
 }
 
 function scheduleFetch(releaseId: string): void {
@@ -404,7 +429,10 @@ function fetchManifest(releaseId: string): Promise<ReleaseAssetManifest | null> 
         : "invalid";
       const manifestState = normalizeManifestState(state);
       const readyResponse = isUsableManifestState(state)
-        ? parseReadyReleaseAssetManifestResponse(result, releaseId)
+        // Runtime reads serve releases published before the v2 move, so they
+        // must accept the v1 body still in storage. Producer-side callers
+        // (build executor, CLI deploy wait) deliberately do not.
+        ? parseReadyReleaseAssetManifestResponse(result, releaseId, { acceptLegacyV1: true })
         : null;
       const manifest = readyResponse?.manifest ?? null;
 
@@ -427,8 +455,31 @@ function fetchManifest(releaseId: string): Promise<ReleaseAssetManifest | null> 
         });
         return manifest;
       } else {
-        if (state === "ready") markManifestDecision("fetch_ready_invalid");
-        else markManifestDecision(`fetch_${manifestState}`);
+        // Classify on what the publisher claimed, not on the derived `state`.
+        // A response that says `ready` with an unusable `manifest_version` is
+        // normalized to "invalid" above, so keying on `state` would route the
+        // envelope-level rejections to debug — silencing exactly the reasons
+        // this diagnostic exists to surface.
+        if (rawState === "ready") {
+          markManifestDecision("fetch_ready_invalid");
+          // A manifest the publisher calls ready but this build cannot read is
+          // an operator problem, not a wait: browser modules are refused for
+          // the whole release until someone acts. Say why. Without this the
+          // only signal is a 503 and a timing mark, which cannot distinguish
+          // framework version skew from a corrupt payload.
+          logger.error("Release manifest is ready upstream but failed validation", {
+            releaseId,
+            // Same acceptance as the parse above, so the reason describes what
+            // this caller actually rejected.
+            reason: describeReadyReleaseAssetManifestRejection(result, releaseId, {
+              acceptLegacyV1: true,
+            }),
+          });
+        } else {
+          markManifestDecision(`fetch_${manifestState}`);
+          // Any other state is the release legitimately not being ready yet.
+          logger.debug("Release manifest is not ready", { releaseId, state: manifestState });
+        }
         markManifestDecision("fetch_not_ready");
         evictReadyManifests(releaseId, active.token);
         cacheNonReadyManifest(releaseId, active.token);
@@ -481,7 +532,7 @@ async function invokeManifestFetcher(
 ): Promise<ReleaseAssetManifestFetchResult | null> {
   if (controller.signal.aborted) {
     const reason = controller.signal.reason;
-    throw reason instanceof Error ? reason : new Error("Release manifest fetch aborted");
+    throw isErrorAcrossRealms(reason) ? reason : new Error("Release manifest fetch aborted");
   }
 
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -489,7 +540,7 @@ async function invokeManifestFetcher(
   const cancellation = new Promise<never>((_resolve, reject) => {
     abortListener = () => {
       const reason = controller.signal.reason;
-      reject(reason instanceof Error ? reason : new Error("Release manifest fetch aborted"));
+      reject(isErrorAcrossRealms(reason) ? reason : new Error("Release manifest fetch aborted"));
     };
     controller.signal.addEventListener("abort", abortListener, { once: true });
     timeoutId = setTimeout(() => {

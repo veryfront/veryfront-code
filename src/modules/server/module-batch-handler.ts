@@ -55,6 +55,8 @@ import {
   resolveRequestedDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
 
 const logger = serverLogger.component("module-batch");
 const DEPENDENCY_PIN_PATTERN = /^on:[A-Za-z0-9._-]+$/;
@@ -93,6 +95,25 @@ const FRAMEWORK_EXTENSIONS = [
   ".js", // Regular sources for dev mode
 ] as const;
 
+/** Identity a batch transform is cached under. */
+export interface BatchCacheProjectIdentity {
+  projectId?: string;
+  projectSlug?: string;
+}
+
+/**
+ * Derives the cache key namespace a project's batch transforms are stored
+ * under. Every key this module writes begins with `<projectKey>:`.
+ *
+ * Both the request path and `clearBatchCache` must derive the namespace here.
+ * They previously disagreed: writes preferred `projectId` while deletion built
+ * its prefix from `projectSlug`, so a project supplying an id stored entries
+ * under that id and the deletion prefix matched nothing.
+ */
+export function buildBatchCacheProjectKey(identity: BatchCacheProjectIdentity): string {
+  return identity.projectId || identity.projectSlug || "default";
+}
+
 export function buildBatchTransformCacheKey(
   projectKey: string,
   modulePath: string,
@@ -101,17 +122,24 @@ export function buildBatchTransformCacheKey(
   contentSourceIdentity: string,
   sourceContentHash: string,
   moduleServerOrigin: string,
+  serverExternalPackages?: readonly string[],
 ): string {
+  const serverExternalPackagesIdentity = buildServerExternalPackagesIdentity(
+    serverExternalPackages,
+  );
+  const scopedProjectKey = serverExternalPackagesIdentity
+    ? `${projectKey}:server-externals:${hashString(serverExternalPackagesIdentity)}`
+    : projectKey;
   const cacheVariant = buildDependencyPinningCacheVariant(
     dependencyPinningCacheKey,
     moduleServerOrigin,
   );
   if (!cacheVariant) {
-    return buildModuleTransformCacheKey(projectKey, modulePath, isSSR);
+    return buildModuleTransformCacheKey(scopedProjectKey, modulePath, isSSR);
   }
 
   return buildModuleTransformCacheKey(
-    `${projectKey}:source:${
+    `${scopedProjectKey}:source:${
       encodeURIComponent(contentSourceIdentity)
     }:pins:${cacheVariant}:content:${sourceContentHash}`,
     modulePath,
@@ -212,7 +240,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
         config,
       } = options;
 
-      const projectKey = projectId || projectSlug || "default";
+      const projectKey = buildBatchCacheProjectKey({ projectId, projectSlug });
       const pinValues = url.searchParams.getAll("pins");
       const requestedPinKey = pinValues[0];
       const hasRequestedPinKey = pinValues.length > 0;
@@ -313,6 +341,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
               contentSourceIdentity,
               sourceContentHash,
               url.origin,
+              config?.build?.serverExternalPackages,
             );
             if (canUseTransformCache) {
               const cachedCode = transformCache.get(cacheKey);
@@ -344,6 +373,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
                 dependencyPinningDependencies: dependencySnapshot.dependencies,
                 dependencyPinningSource: dependencySource,
                 moduleServerOrigin: url.origin,
+                serverExternalPackages: config?.build?.serverExternalPackages,
               },
             );
             const transformDurationMs = performance.now() - moduleStart;
@@ -506,6 +536,7 @@ async function transformModule(
     dependencyPinningDependencies?: Readonly<Record<string, string>>;
     dependencyPinningSource?: DependencyPinningSourceInput;
     moduleServerOrigin: string;
+    serverExternalPackages?: readonly string[];
   },
 ): Promise<string> {
   return transformModuleToServable({
@@ -526,6 +557,7 @@ async function transformModule(
       dependencyPinningCacheKey: options.dependencyPinningCacheKey,
       dependencyPinningDependencies: options.dependencyPinningDependencies,
       dependencyPinningSource: options.dependencyPinningSource,
+      serverExternalPackages: options.serverExternalPackages,
     },
     isSSR: options.ssr,
     ssrRewriteOptions: options.ssr
@@ -641,6 +673,21 @@ function createBatchBundleStream(
 }
 
 /**
+ * Emit an untrusted value as a JavaScript string literal. Module paths come
+ * straight from the request's `paths` parameter and transform error messages
+ * can carry arbitrary text, so raw interpolation would let either close the
+ * literal and execute as same-origin script.
+ */
+function jsStringLiteral(value: string): string {
+  return JSON.stringify(value);
+}
+
+/** Keep an untrusted value inside its `//` comment line. */
+function commentText(value: string): string {
+  return value.replace(/[\r\n\u2028\u2029]+/g, " ");
+}
+
+/**
  * Generate the batch bundle code chunks.
  * Creates a module that exports all loaded modules by path.
  */
@@ -661,7 +708,7 @@ function* generateBatchBundleChunks(
     const { path, code } = item;
     const varName = `__mod_${i}`;
 
-    yield `// Module: ${path}`;
+    yield `// Module: ${commentText(path)}`;
     yield `const ${varName} = await (async () => {`;
     yield "  const exports = {};";
     yield "  const module = { exports };";
@@ -670,13 +717,15 @@ function* generateBatchBundleChunks(
     yield "  // --- Module code end ---";
     yield "  return exports;";
     yield "})();";
-    yield `__vf_batch_modules.set("${path}", ${varName});`;
+    yield `__vf_batch_modules.set(${jsStringLiteral(path)}, ${varName});`;
     yield "";
   }
 
   for (const { path, error } of failures) {
-    yield `// Failed: ${path} - ${error}`;
-    yield `__vf_batch_modules.set("${path}", { __vf_error: "${error}" });`;
+    yield `// Failed: ${commentText(path)} - ${commentText(error)}`;
+    yield `__vf_batch_modules.set(${jsStringLiteral(path)}, { __vf_error: ${
+      jsStringLiteral(error)
+    } });`;
   }
 
   yield "";
@@ -701,21 +750,28 @@ function transformExportsForBundle(code: string): string {
 
 /**
  * Clear the transform cache (on deployment or memory pressure)
+ *
+ * Pass nothing to clear every project. Pass the project's identity to clear
+ * only its entries; supply the same `projectId` and `projectSlug` the request
+ * path was given, since the namespace prefers the id. A bare string is treated
+ * as an already-derived project key.
  */
-export function clearBatchCache(projectSlug?: string): void {
+export function clearBatchCache(project?: string | BatchCacheProjectIdentity): void {
   clearSourceMissCache("module-batch");
 
-  if (!projectSlug) {
+  if (project === undefined) {
     transformCache.clear();
     logger.debug("Cleared all cache");
     return;
   }
 
-  const prefix = `${projectSlug}:`;
+  const projectKey = typeof project === "string" ? project : buildBatchCacheProjectKey(project);
+
+  const prefix = `${projectKey}:`;
   for (const key of [...transformCache.keys()]) {
     if (key.startsWith(prefix)) transformCache.delete(key);
   }
-  logger.debug("Cleared cache for project", { projectSlug });
+  logger.debug("Cleared cache for project", { projectKey });
 }
 
 /**

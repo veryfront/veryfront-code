@@ -78,6 +78,88 @@ describe("platform/compat/path/portable", () => {
     );
   });
 
+  it("keeps path operations stable after post-import prototype poisoning", () => {
+    const includes = Object.getOwnPropertyDescriptor(String.prototype, "includes")!;
+    const replaceAll = Object.getOwnPropertyDescriptor(String.prototype, "replaceAll")!;
+    const replace = Object.getOwnPropertyDescriptor(String.prototype, "replace")!;
+    const startsWith = Object.getOwnPropertyDescriptor(String.prototype, "startsWith")!;
+    const endsWith = Object.getOwnPropertyDescriptor(String.prototype, "endsWith")!;
+    const split = Object.getOwnPropertyDescriptor(String.prototype, "split")!;
+    const slice = Object.getOwnPropertyDescriptor(String.prototype, "slice")!;
+    const lastIndexOf = Object.getOwnPropertyDescriptor(String.prototype, "lastIndexOf")!;
+    const toLowerCase = Object.getOwnPropertyDescriptor(String.prototype, "toLowerCase")!;
+    const push = Object.getOwnPropertyDescriptor(Array.prototype, "push")!;
+    const pop = Object.getOwnPropertyDescriptor(Array.prototype, "pop")!;
+    const join = Object.getOwnPropertyDescriptor(Array.prototype, "join")!;
+    const arraySlice = Object.getOwnPropertyDescriptor(Array.prototype, "slice")!;
+    const iterator = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator)!;
+    const exec = Object.getOwnPropertyDescriptor(RegExp.prototype, "exec")!;
+    const poisoned = () => {
+      throw new Error("poisoned path intrinsic invoked");
+    };
+    let actual: unknown;
+
+    try {
+      Object.defineProperty(String.prototype, "includes", { ...includes, value: poisoned });
+      Object.defineProperty(String.prototype, "replaceAll", { ...replaceAll, value: poisoned });
+      Object.defineProperty(String.prototype, "replace", { ...replace, value: poisoned });
+      Object.defineProperty(String.prototype, "startsWith", { ...startsWith, value: poisoned });
+      Object.defineProperty(String.prototype, "endsWith", { ...endsWith, value: poisoned });
+      Object.defineProperty(String.prototype, "split", { ...split, value: poisoned });
+      Object.defineProperty(String.prototype, "slice", { ...slice, value: poisoned });
+      Object.defineProperty(String.prototype, "lastIndexOf", { ...lastIndexOf, value: poisoned });
+      Object.defineProperty(String.prototype, "toLowerCase", { ...toLowerCase, value: poisoned });
+      Object.defineProperty(Array.prototype, "push", { ...push, value: poisoned });
+      Object.defineProperty(Array.prototype, "pop", { ...pop, value: poisoned });
+      Object.defineProperty(Array.prototype, "join", { ...join, value: poisoned });
+      Object.defineProperty(Array.prototype, "slice", { ...arraySlice, value: poisoned });
+      Object.defineProperty(Array.prototype, Symbol.iterator, { ...iterator, value: poisoned });
+      Object.defineProperty(RegExp.prototype, "exec", { ...exec, value: poisoned });
+
+      actual = {
+        normalized: portableNormalize("D:\\workspace\\src\\..\\test", true),
+        joined: portableJoin(["/workspace", "src", "..", "test"], false),
+        relative: portableRelative("/workspace/src", "/workspace/test", false),
+        resolved: portableResolve(["/workspace/src", "..", "test"], false),
+        basename: portableBasename("D:\\workspace\\file.test.ts", ".ts", true),
+        extname: portableExtname("/workspace/file.test.ts", false),
+        dirname: portableDirname("D:\\file.ts", true),
+        absolute: portableIsAbsolute("//server/share", true),
+        parsed: portableParse("D:\\workspace\\src\\file.ts", true),
+        formatted: portableFormat(portableParse("D:\\workspace\\src\\file.ts", true), true),
+      };
+    } finally {
+      Object.defineProperty(String.prototype, "includes", includes);
+      Object.defineProperty(String.prototype, "replaceAll", replaceAll);
+      Object.defineProperty(String.prototype, "replace", replace);
+      Object.defineProperty(String.prototype, "startsWith", startsWith);
+      Object.defineProperty(String.prototype, "endsWith", endsWith);
+      Object.defineProperty(String.prototype, "split", split);
+      Object.defineProperty(String.prototype, "slice", slice);
+      Object.defineProperty(String.prototype, "lastIndexOf", lastIndexOf);
+      Object.defineProperty(String.prototype, "toLowerCase", toLowerCase);
+      Object.defineProperty(Array.prototype, "push", push);
+      Object.defineProperty(Array.prototype, "pop", pop);
+      Object.defineProperty(Array.prototype, "join", join);
+      Object.defineProperty(Array.prototype, "slice", arraySlice);
+      Object.defineProperty(Array.prototype, Symbol.iterator, iterator);
+      Object.defineProperty(RegExp.prototype, "exec", exec);
+    }
+
+    assertEquals(actual, {
+      normalized: "D:/workspace/test",
+      joined: "/workspace/test",
+      relative: "../test",
+      resolved: "/workspace/test",
+      basename: "file.test",
+      extname: ".ts",
+      dirname: "D:/",
+      absolute: true,
+      parsed: { root: "D:/", dir: "D:/workspace/src", base: "file.ts", ext: ".ts", name: "file" },
+      formatted: "D:/workspace/src/file.ts",
+    }, "every portable path helper must survive poisoned intrinsics");
+  });
+
   it("recognizes portable absolute paths", () => {
     assertEquals(portableIsAbsolute("/workspace", false), true);
     assertEquals(portableIsAbsolute("D:/workspace", true), true);

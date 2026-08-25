@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { LRUListManager } from "./lru-list-manager.ts";
 import { LRUNode } from "./lru-node.ts";
@@ -22,6 +22,12 @@ function createListWithNodes(...keys: string[]): {
   }
 
   return { list, nodes };
+}
+
+function getNode(nodes: Record<string, LRUNode<unknown>>, key: string): LRUNode<unknown> {
+  const node = nodes[key];
+  assertExists(node);
+  return node;
 }
 
 describe("LRUListManager", () => {
@@ -56,7 +62,7 @@ describe("LRUListManager", () => {
     it("should be no-op for head node", () => {
       const { list, nodes } = createListWithNodes("a", "b");
 
-      list.moveToFront(nodes.b);
+      list.moveToFront(getNode(nodes, "b"));
 
       assertEquals(list.getHead()?.key, "b");
       assertEquals(list.getTail()?.key, "a");
@@ -65,7 +71,7 @@ describe("LRUListManager", () => {
     it("should move tail to front", () => {
       const { list, nodes } = createListWithNodes("a", "b", "c");
 
-      list.moveToFront(nodes.a);
+      list.moveToFront(getNode(nodes, "a"));
 
       assertEquals(list.getHead()?.key, "a");
       assertEquals(list.getTail()?.key, "b");
@@ -74,11 +80,16 @@ describe("LRUListManager", () => {
     it("should move middle node to front", () => {
       const { list, nodes } = createListWithNodes("a", "b", "c");
 
-      list.moveToFront(nodes.b);
+      list.moveToFront(getNode(nodes, "b"));
 
       assertEquals(list.getHead()?.key, "b");
       assertEquals(list.getHead()?.next?.key, "c");
       assertEquals(list.getTail()?.key, "a");
+      assertStrictEquals(
+        list.getTail()?.prev,
+        getNode(nodes, "c"),
+        "moveToFront must repair the backward link of the moved node's old successor",
+      );
     });
   });
 
@@ -86,16 +97,21 @@ describe("LRUListManager", () => {
     it("should remove head node", () => {
       const { list, nodes } = createListWithNodes("a", "b");
 
-      list.removeNode(nodes.b);
+      list.removeNode(getNode(nodes, "b"));
 
       assertEquals(list.getHead()?.key, "a");
       assertEquals(list.getTail()?.key, "a");
+      assertStrictEquals(
+        list.getHead()?.prev,
+        null,
+        "the new head must not point back at the removed node",
+      );
     });
 
     it("should remove tail node", () => {
       const { list, nodes } = createListWithNodes("a", "b");
 
-      list.removeNode(nodes.a);
+      list.removeNode(getNode(nodes, "a"));
 
       assertEquals(list.getHead()?.key, "b");
       assertEquals(list.getTail()?.key, "b");
@@ -104,11 +120,21 @@ describe("LRUListManager", () => {
     it("should remove middle node", () => {
       const { list, nodes } = createListWithNodes("a", "b", "c");
 
-      list.removeNode(nodes.b);
+      list.removeNode(getNode(nodes, "b"));
 
       assertEquals(list.getHead()?.key, "c");
       assertEquals(list.getHead()?.next?.key, "a");
       assertEquals(list.getTail()?.key, "a");
+      assertStrictEquals(
+        list.getTail()?.prev,
+        getNode(nodes, "c"),
+        "tail must link back to its new predecessor after the middle node is removed",
+      );
+      assertStrictEquals(
+        list.getHead()?.prev,
+        null,
+        "head prev must stay null",
+      );
     });
   });
 

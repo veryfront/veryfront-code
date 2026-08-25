@@ -52,6 +52,8 @@ export interface VeryfrontMetrics {
   routeManifestLruMisses: number;
   ssrHistogram?: { boundaries: number[]; counts: number[] };
   corsRejections: number;
+  /** SSR answered 404 because a project's published source could not be read. */
+  ssrSourceUnavailable: number;
   securityHeadersApplied: number;
   apiRequests2xx: number;
   apiRequests4xx: number;

@@ -1,4 +1,5 @@
 import { assertEquals, assertRejects, assertThrows } from "@std/assert";
+import { it } from "#veryfront/testing/bdd.ts";
 import type {
   RemoteMCPToolSourceConfig,
   RemoteToolSource,
@@ -15,6 +16,7 @@ import {
 } from "./mcp-server-tool-sources.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { runWithExactRuntimeRemoteToolSources } from "./remote-tool-source-context.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 
 Deno.test("getRequestedUnresolvedBooleanToolNames keeps legacy delegation local", () => {
   assertEquals(
@@ -26,10 +28,37 @@ Deno.test("getRequestedUnresolvedBooleanToolNames keeps legacy delegation local"
   );
 });
 
+it("getRequestedUnresolvedBooleanToolNames does not request tools already available locally", () => {
+  assertEquals(
+    getRequestedUnresolvedBooleanToolNames({
+      tools: { get_file: true, sleep: true },
+      agentId: "a",
+    }),
+    ["get_file", "sleep"],
+    "without availableToolNames every unregistered boolean tool is still requested",
+  );
+  assertEquals(
+    getRequestedUnresolvedBooleanToolNames({
+      tools: { get_file: true, sleep: true },
+      agentId: "a",
+      availableToolNames: ["get_file"],
+    }),
+    ["sleep"],
+    "a tool already provided locally must not be requested from the remote Veryfront MCP server",
+  );
+});
+
 type FetchCall = {
   url: string;
   init: RequestInit;
 };
+
+async function resolveRemoteEndpoint(
+  endpoint: RemoteMCPToolSourceConfig["endpoint"] | undefined,
+): Promise<string | undefined> {
+  if (endpoint === undefined) return undefined;
+  return typeof endpoint === "function" ? await endpoint() : endpoint;
+}
 
 function createMcpFetch(calls: FetchCall[]): typeof fetch {
   return ((url: string | URL | Request, init?: RequestInit) => {
@@ -72,15 +101,14 @@ Deno.test("getRuntimeRemoteToolSources builds MCP sources with bearer auth and a
     tools: { search_docs: true },
     mcpServers: [{
       id: "docs",
-      transport: { type: "http", url: "https://docs.example.com/mcp" },
+      transport: { type: "http", url: "https://93.184.216.34/mcp" },
       auth: { type: "bearer", token: () => "docs-token" },
       toolPolicy: { allow: ["search_docs"] },
-      fetch: createMcpFetch(calls),
     }],
   });
 
   assertEquals(sources?.length, 1);
-  assertEquals(await sources?.[0]?.listTools(), [{
+  assertEquals(await withMockFetch(createMcpFetch(calls), () => sources![0]!.listTools()), [{
     name: "search_docs",
     description: "Search docs",
     parameters: { type: "object", properties: {} },
@@ -97,7 +125,6 @@ Deno.test("getRuntimeRemoteToolSources blocks denied MCP tool execution", async 
       id: "docs",
       transport: { type: "http", url: "https://docs.example.com/mcp" },
       toolPolicy: { deny: ["delete_docs"] },
-      fetch: createMcpFetch(calls),
     }],
   });
 
@@ -171,7 +198,10 @@ Deno.test("getRuntimeRemoteToolSources hydrates a Veryfront API MCP server from 
   );
 
   assertEquals(sources?.length, 1);
-  assertEquals(remoteConfig?.endpoint, "https://api.example/mcp");
+  assertEquals(
+    await resolveRemoteEndpoint(remoteConfig?.endpoint),
+    "https://api.example/projects/server-project/mcp",
+  );
   assertEquals(
     await (remoteConfig?.headers as (context?: ToolExecutionContext) => HeadersInit)?.({
       authToken: "browser-token",
@@ -323,7 +353,10 @@ Deno.test("getRuntimeRemoteToolSources implicitly connects unresolved named tool
     },
   );
 
-  assertEquals(remoteConfig?.endpoint, "https://api.example/mcp");
+  assertEquals(
+    await resolveRemoteEndpoint(remoteConfig?.endpoint),
+    "https://api.example/projects/server-project/mcp",
+  );
   assertEquals((await sources?.[0]?.listTools())?.map((tool) => tool.name), ["get_file"]);
 });
 

@@ -1,5 +1,5 @@
 /** Chat execution preparation and runtime wiring for the cloud agent service. */
-import { createRemoteMCPToolSource, type HostToolSet, sleepTool } from "#veryfront/tool";
+import { type HostToolSet, sleepTool } from "#veryfront/tool";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import {
   buildAgentRunTraceAttributes,
@@ -23,7 +23,7 @@ import { createDefaultHostedProjectSteeringRefresh } from "./default-project-ste
 import type { HostedChatContextBudgetOptions } from "./chat-preparation.ts";
 import { applyAgentProjectContextChange } from "../project/context.ts";
 import { runWithProjectAgentRuntime } from "../project/agent-runtime.ts";
-import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
+import { buildInteractiveVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
 import {
   type AgentServiceRuntimeConfig,
   type CreateAgentServiceRuntimeOptions,
@@ -46,6 +46,7 @@ import { prepareVeryfrontCloudHostedChatExecution } from "./cloud-chat-execution
 import {
   getDefaultAgentId,
   getProjectAgentRuntime,
+  getRemoteToolSourceFactory,
   getResolvedAgentConfig,
   type NodeVeryfrontCloudAgentServiceContext,
   resolveAgentConfig,
@@ -64,6 +65,7 @@ import {
   setFilteredTraceAttributes,
 } from "./cloud-agent-child-tools.ts";
 import { getServerResolvedToolExposureCheckpoint } from "./runtime-request-config.ts";
+import { resolveHostedRequestPreparationSignal } from "../service/request-preparation-context.ts";
 
 const DEFAULT_FORWARDED_CONFIG_NAMESPACE = "veryfront";
 const DEFAULT_PROJECT_NAVIGATION_TOOL_NAMES = ["studio_open_project"];
@@ -106,8 +108,8 @@ export function buildLocalTools(
         }),
       );
     } else {
-      // Agents authored before declarative delegates retain the legacy hosted
-      // child-fork tool. Explicit scoped delegate bindings opt out.
+      // Generic invoke_agent remains the platform tool for dynamic agent
+      // selection. Explicit scoped delegate bindings opt into fixed targets.
       tools.invoke_agent = createInvokeAgentTool(
         context,
         taskContext,
@@ -123,7 +125,7 @@ export function createProjectSteeringRefresh(context: NodeVeryfrontCloudAgentSer
   return createDefaultHostedProjectSteeringRefresh({
     fetchProjectInstructions: (lookup) => getProjectInstructions(context, lookup),
     fetchSkills: (lookup) => getSkillsConfig(context, lookup),
-    buildInstructions: buildVeryfrontCloudRuntimeInstructions,
+    buildInstructions: buildInteractiveVeryfrontCloudRuntimeInstructions,
     projectScopedRemoteToolOptions: {
       projectNavigationToolNames: DEFAULT_PROJECT_NAVIGATION_TOOL_NAMES,
     },
@@ -170,8 +172,8 @@ export function createAgentRuntime(
         await refreshProjectSkillIds(context, taskContext);
       }
     },
-    onStudioProjectSwitch: async ({ projectId, taskContext }) => {
-      if (!applyAgentProjectContextChange(taskContext, projectId)) {
+    onStudioProjectSwitch: async ({ projectId, projectSlug, taskContext }) => {
+      if (!applyAgentProjectContextChange(taskContext, projectId, projectSlug)) {
         return false;
       }
 
@@ -181,7 +183,7 @@ export function createAgentRuntime(
     projectScopedRemoteToolOptions: {
       projectNavigationToolNames: DEFAULT_PROJECT_NAVIGATION_TOOL_NAMES,
     },
-    createRemoteToolSource: createRemoteMCPToolSource,
+    createRemoteToolSource: getRemoteToolSourceFactory(context),
     traceLocalTools: {
       trace: (spanName, operation) => context.infrastructure.tracer.trace(spanName, operation),
       buildAttributes: ({ toolName, toolCallId }) =>
@@ -312,7 +314,7 @@ export async function prepareChatExecutionWithinProjectRuntime(
   const requestedAgentId = req.agentId ?? getDefaultAgentId(context);
   // veryfront-api is the trusted caller for request-scoped project-agent config.
   const agentConfig = req.agentConfig ?? await resolveAgentConfig(context, requestedAgentId);
-  const abortController = new AbortController();
+  const preparationSignal = resolveHostedRequestPreparationSignal();
   const {
     effectiveMessages,
     rootRunContext,
@@ -325,9 +327,14 @@ export async function prepareChatExecutionWithinProjectRuntime(
       req.forwardedProps,
       req.serverEnvelopeVerified === true,
     ),
+    // Sourced from the verified run-event token, never from forwardedProps, so
+    // it is trusted on the durable-chat path without trusting that body.
+    ...(req.serverResolvedIntegrationToolNames?.length
+      ? { serverResolvedIntegrationToolNames: req.serverResolvedIntegrationToolNames }
+      : {}),
     agentConfig,
     apiUrl: config.VERYFRONT_API_URL,
-    abortSignal: abortController.signal,
+    abortSignal: preparationSignal,
     logger: context.infrastructure.logger,
     rootRun: {
       instrumentation: {
@@ -339,19 +346,20 @@ export async function prepareChatExecutionWithinProjectRuntime(
       },
     },
     fetchSteering: (steeringInput) => fetchProjectSteering(context, steeringInput),
-    buildInstructions: buildVeryfrontCloudRuntimeInstructions,
+    buildInstructions: buildInteractiveVeryfrontCloudRuntimeInstructions,
     contextBudget: createHostedChatContextBudgetOptions(
       context,
       req,
       agentConfig,
-      abortController.signal,
+      preparationSignal,
     ),
     createRuntime: (creationOptions) =>
-      context.trace("chat.createRuntime", () =>
-        createAgentRuntime(context, {
+      context.trace("chat.createRuntime", () => {
+        return createAgentRuntime(context, {
           ...creationOptions,
           userId: req.userId,
-        })),
+        });
+      }),
   });
 
   setPrepareChatExecutionResultAttributes(context, {

@@ -1,7 +1,7 @@
 /**
- * Status — ported 1:1 from Veryfront Studio. A coloured status dot with a
+ * Status - ported 1:1 from Veryfront Studio. A coloured status dot with a
  * label (optionally pulsing / responsively hidden). Semantic classes remapped
- * to veryfront's `[var(--token)]` vocabulary — the `--status-*` dot tokens all
+ * to veryfront's `[var(--token)]` vocabulary - the `--status-*` dot tokens all
  * exist in `theme.ts`. Private to the chat module.
  *
  * @module react/components/ui/status
@@ -13,7 +13,7 @@ import { cx as cn } from "./cva.ts";
 export type StatusColor = "gray" | "blue" | "green" | "red" | "yellow";
 
 /** Props accepted by `<Status>`. */
-export interface StatusProps {
+export interface StatusProps extends React.HTMLAttributes<HTMLDivElement> {
   label: string;
   color: StatusColor;
   /** Pulse the dot (e.g. an in-progress run). */
@@ -24,7 +24,8 @@ export interface StatusProps {
   responsive?: boolean;
   /** `'sm'` (14px, default) or `'inherit'` to inherit the parent's size. */
   size?: "sm" | "inherit";
-  className?: string;
+  /** React 19: ref is a regular prop, forwarded to the root node. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 const dotColorMap: Record<StatusColor, string> = {
@@ -44,9 +45,13 @@ export function Status({
   responsive,
   size = "sm",
   className,
+  ref,
+  ...props
 }: StatusProps): React.ReactElement {
   return (
     <div
+      ref={ref}
+      {...props}
       className={cn(
         "flex items-center gap-1.5",
         responsive && "@container",

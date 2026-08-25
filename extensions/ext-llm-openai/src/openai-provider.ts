@@ -39,6 +39,7 @@ import {
 } from "veryfront/provider/shared";
 import {
   buildOpenAIChatRequest,
+  type OpenAIChatRequestCapabilities,
   type OpenAICompatibleLanguageOptions,
 } from "./openai-chat-request-builder.ts";
 import { MAX_OPENAI_STREAM_TOOL_CALLS, streamOpenAICompatibleParts } from "./openai-chat-stream.ts";
@@ -87,6 +88,7 @@ export interface OpenAIRuntimeConfig {
   name?: string;
   /** Provider identity for OpenAI request defaults. Defaults to `name` in low-level factories. */
   providerName?: string;
+  chatRequestCapabilities?: OpenAIChatRequestCapabilities;
   fetch?: typeof globalThis.fetch;
 }
 
@@ -100,12 +102,30 @@ function getOpenAIProviderLabel(config: { name?: string }): string {
   return readNonEmptyString(config.name) ?? "openai";
 }
 
+function normalizeOpenAIProviderName(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "" ? undefined : normalized;
+}
+
 function getRuntimeOpenAIProviderName(config: OpenAIRuntimeConfig): string {
-  return readNonEmptyString(config.providerName) ?? getOpenAIProviderLabel(config);
+  return normalizeOpenAIProviderName(config.providerName) ??
+    normalizeOpenAIProviderName(config.name) ?? "openai";
 }
 
 function getLLMOpenAIProviderName(config: LLMProviderConfig): string {
-  return readNonEmptyString(config.providerName) ?? "openai";
+  return normalizeOpenAIProviderName(config.providerName) ?? "openai";
+}
+
+type OpenAIModelTransport = "auto" | "chat-completions" | "responses";
+
+function getOpenAIModelTransport(config: LLMProviderConfig): OpenAIModelTransport {
+  const transport = config.openAITransport;
+  if (transport === undefined) return "auto";
+  if (transport === "chat-completions" || transport === "responses") {
+    return transport;
+  }
+  throw new TypeError('OpenAI transport must be "chat-completions" or "responses"');
 }
 
 type OpenAICompatibleProviderKind = "openai" | "mistral" | "moonshotai";
@@ -1031,9 +1051,11 @@ export function createOpenAIModelRuntime(
   const responseContext = { providerKind, providerLabel };
   return {
     provider: providerLabel,
+    modelProvider: providerName,
     modelId,
     specificationVersion: "v3",
     supportedUrls: {},
+    runtimeCapabilities: { structuredOutput: true },
     doGenerate(options: OpenAICompatibleLanguageOptions) {
       const url = getOpenAIChatCompletionsUrl(config.baseURL);
       const warnings = createWarningCollector();
@@ -1043,12 +1065,14 @@ export function createOpenAIModelRuntime(
         options,
         false,
         warnings,
+        config.chatRequestCapabilities,
       );
       return requestJson({
         url,
         fetchImpl,
         providerLabel,
         providerKind,
+        modelId,
         init: createOpenAIRequestInit({
           apiKey: config.apiKey,
           extraHeaders: options.headers,
@@ -1072,6 +1096,7 @@ export function createOpenAIModelRuntime(
         options,
         true,
         warnings,
+        config.chatRequestCapabilities,
       );
       const providerAbortScope = createOpenAIProviderAbortScope(options.abortSignal);
       try {
@@ -1080,6 +1105,7 @@ export function createOpenAIModelRuntime(
           fetchImpl,
           providerLabel,
           providerKind,
+          modelId,
           init: createOpenAIRequestInit({
             apiKey: config.apiKey,
             extraHeaders: options.headers,
@@ -1115,9 +1141,11 @@ export function createOpenAIResponsesRuntime(
   const responseContext = { providerKind, providerLabel };
   return {
     provider: providerLabel,
+    modelProvider: providerName,
     modelId,
     specificationVersion: "v3",
     supportedUrls: {},
+    runtimeCapabilities: { structuredOutput: true },
     doGenerate(options: OpenAICompatibleLanguageOptions) {
       const url = getOpenAIResponsesUrl(config.baseURL);
       const warnings = createWarningCollector();
@@ -1134,6 +1162,7 @@ export function createOpenAIResponsesRuntime(
         fetchImpl,
         providerLabel,
         providerKind,
+        modelId,
         init: createOpenAIRequestInit({
           apiKey: config.apiKey,
           extraHeaders: options.headers,
@@ -1170,6 +1199,7 @@ export function createOpenAIResponsesRuntime(
           fetchImpl,
           providerLabel,
           providerKind,
+          modelId,
           init: createOpenAIRequestInit({
             apiKey: config.apiKey,
             extraHeaders: options.headers,
@@ -1207,6 +1237,30 @@ function requestUsesOpenAIHostedTool(optionsForRuntime: OpenAICompatibleLanguage
   return resolveOpenAIWebSearchDescriptor(
     options.tools as OpenAICompatibleLanguageOptions["tools"],
   ) !== undefined;
+}
+
+function createOpenAIChatCompletionsOnlyRuntime(
+  chatRuntime: ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart>,
+): ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart> {
+  function assertHostedToolsSupported(options: OpenAICompatibleLanguageOptions): void {
+    if (requestUsesOpenAIHostedTool(options)) {
+      throw new TypeError(
+        "OpenAI hosted tools require the Responses API and are unavailable with Chat Completions",
+      );
+    }
+  }
+
+  return {
+    ...chatRuntime,
+    async doGenerate(optionsForRuntime: OpenAICompatibleLanguageOptions) {
+      assertHostedToolsSupported(optionsForRuntime);
+      return await chatRuntime.doGenerate(optionsForRuntime);
+    },
+    async doStream(optionsForRuntime: OpenAICompatibleLanguageOptions) {
+      assertHostedToolsSupported(optionsForRuntime);
+      return await chatRuntime.doStream(optionsForRuntime);
+    },
+  };
 }
 
 function createOpenAIAdaptiveModelRuntime(
@@ -1255,6 +1309,7 @@ export function createOpenAIEmbeddingRuntime(
         fetchImpl,
         providerLabel,
         providerKind,
+        modelId,
         init: createOpenAIRequestInit({
           apiKey: config.apiKey,
           body: JSON.stringify({
@@ -1290,18 +1345,31 @@ export class OpenAIProvider implements LLMProvider {
       baseURL: config.baseURL,
       name: providerLabel,
       providerName,
+      chatRequestCapabilities: typeof config.openAIChatReasoningWithFunctionTools === "boolean"
+        ? {
+          reasoningWithFunctionTools: config.openAIChatReasoningWithFunctionTools,
+        }
+        : undefined,
       fetch: config.fetch,
     };
     const responsesRuntime = createOpenAIResponsesRuntime(
       runtimeConfig,
       modelId,
     );
-    if (isOpenAIReasoningModel(modelId, providerName)) {
+    const chatRuntime = createOpenAIModelRuntime(runtimeConfig, modelId);
+    const transport = getOpenAIModelTransport(config);
+    if (
+      transport === "responses" ||
+      (transport === "auto" && isOpenAIReasoningModel(modelId, providerName))
+    ) {
       return responsesRuntime;
+    }
+    if (transport === "chat-completions") {
+      return createOpenAIChatCompletionsOnlyRuntime(chatRuntime);
     }
 
     return createOpenAIAdaptiveModelRuntime(
-      createOpenAIModelRuntime(runtimeConfig, modelId),
+      chatRuntime,
       responsesRuntime,
     );
   }

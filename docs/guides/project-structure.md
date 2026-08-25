@@ -4,16 +4,17 @@ description: "Where to put routes, AI primitives, shared code, and configuration
 order: 8
 ---
 
-A Veryfront project keeps routes in `app/` or `pages/`. Keep AI primitives at
-the project root: `agents/`, `tools/`, `prompts/`, `workflows/`, `resources/`,
-and `skills/`. Veryfront discovers those directories on startup.
+A Veryfront project keeps routes in `app/` or `pages/`. Keep runtime primitives
+at the project root: `agents/`, `tools/`, `prompts/`, `workflows/`,
+`resources/`, `skills/`, `tasks/`, `schedules/`, `webhooks/`, and `evals/`.
+Veryfront discovers those directories on startup.
 
 The examples use the default app router. Set `router: "pages"` in
 `veryfront.config.ts` to use the pages router.
 
 ## Prerequisites
 
-- A project created with `veryfront init` (see [Create project](../getting-started/create-project.md)).
+- A project created with `veryfront init` (see [Create project](../getting-started/create-project.md)), or a blank project with `veryfront` installed (see [Installation](../getting-started/installation.md)). Veryfront discovers these directories by convention either way.
 - Familiarity with how a file path maps to a route in modern React frameworks.
 
 ## Directory layout
@@ -50,6 +51,10 @@ my-app/
         triage.sh
       assets/
         checklist.txt
+  tasks/                # Background task definitions (auto-discovered)
+  schedules/            # Schedule definitions (auto-discovered)
+  webhooks/             # Webhook trigger definitions (auto-discovered)
+  evals/                # Agent and workflow eval definitions (auto-discovered)
   components/           # Shared React components
     Header.tsx
   lib/                  # Shared utilities
@@ -63,6 +68,8 @@ my-app/
     globals.css
   veryfront.config.ts   # Framework configuration (optional)
   package.json
+  .cache/               # Generated bundles (written by the CLI, safe to delete)
+  dist/                 # Build output (written by `veryfront build`)
 ```
 
 ## Routing directories
@@ -102,8 +109,8 @@ dynamic params, and MDX.
 ## Auto-discovered directories
 
 These directories are scanned automatically at startup.
-For TypeScript-based primitives, files with a default export are registered.
-For skills, directories containing `SKILL.md` are registered.
+For TypeScript-based primitives, valid default or named exports are registered.
+For skills, immediate child directories containing `SKILL.md` are registered.
 
 | Directory    | Purpose                           | Import                           |
 | ------------ | --------------------------------- | -------------------------------- |
@@ -113,14 +120,22 @@ For skills, directories containing `SKILL.md` are registered.
 | `workflows/` | Multi-step workflow DAGs          | `veryfront/workflow`             |
 | `resources/` | MCP-exposable resources           | `veryfront/resource`             |
 | `skills/`    | Skill packs advertised to agents  | Loaded with built-in skill tools |
+| `tasks/`     | Background task definitions       | `veryfront/task`                 |
+| `schedules/` | Scheduled trigger definitions     | `veryfront/schedule`             |
+| `webhooks/`  | Webhook trigger definitions       | `veryfront/webhook`              |
+| `evals/`     | Agent and workflow evaluations    | `veryfront/eval`                 |
 
-TypeScript primitives are registered from their exported definitions. Agents can
-use the filename as the ID when no explicit ID is provided.
+TypeScript primitives are registered from their exported definitions. Discovery
+scans `.ts` and `.tsx` files. Agents can use the filename as the ID when no
+explicit ID is provided.
 
 Agent discovery also supports `agents/assistant.md`. Use frontmatter for
 metadata and the markdown body for system instructions.
 
-For skills, the directory name is the skill ID. For example, `skills/incident-response/SKILL.md` registers as `"incident-response"`.
+For skills, the directory name is always the skill ID; a differing legacy or
+display-style frontmatter `name` is treated as presentation metadata and never
+changes lookup. For example, `skills/incident-response/SKILL.md` registers as
+`"incident-response"`.
 
 Verify discovery by starting the dev server after adding an agent, tool, or
 workflow:
@@ -164,6 +179,60 @@ These directories are not auto-discovered. They are common project conventions.
 | `public/`     | Static assets served at root path   |
 | `styles/`     | Global CSS files                    |
 | `middleware/` | Custom middleware functions         |
+
+## Project path aliases
+
+Use `@/` for a project-root-relative import. For example,
+`@/components/Button` resolves to `components/Button` in the project root.
+
+Veryfront temporarily supports legacy imports that add or remove the leading
+`components/` segment during resolution. When this fallback resolves an import,
+Veryfront logs a deprecation warning with the project-root-relative replacement.
+Update the import to the suggested specifier before the fallback is removed.
+
+## Generated directories
+
+These directories hold derived output only, so deleting them is safe: the next
+command regenerates whatever it needs. `dist/` is always written into the
+project root. During development `.cache/` is written there too, but a
+production runtime keeps it outside the project. See "Where the cache root
+lives" below.
+
+| Directory | Written by                         | Contents                                                                                                  |
+| --------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `.cache/` | `veryfront dev`, `veryfront build` | Compiled page modules in `veryfront-mdx-esm/` and bundled remote dependencies in `veryfront-http-bundle/` |
+| `dist/`   | `veryfront build`                  | The build output. `-o/--output` and `build.outDir` change the location                                    |
+
+### Where the cache root lives
+
+The cache root is `.cache/` in the project directory during development. Under
+a production runtime it is not in the project at all: when `NODE_ENV` or
+`VERYFRONT_MODE` is `production` and `HOME` is set, the cache root is
+`.cache/veryfront` inside the home directory instead, so a deployed project
+directory that is read-only still has somewhere to write. Both roots hold the
+same `veryfront-mdx-esm/` and `veryfront-http-bundle/` subdirectories.
+
+Set `VERYFRONT_CACHE_DIR` (or `VF_CACHE_DIR`) to choose the location yourself.
+It wins in both modes, so it is also how you keep generated bundles out of the
+project tree during development:
+
+```bash
+VERYFRONT_CACHE_DIR=/tmp/veryfront-cache veryfront dev
+```
+
+### Keeping the cache out of version control
+
+The cache root keeps itself out of version control. When the file is absent,
+both commands create a `.gitignore` in the cache root containing `*`, which
+ignores the directory's contents and the file itself, so a project that adopted
+Veryfront into an existing tree does not have to edit its own `.gitignore`. A
+marker you wrote yourself (a `.cache/.gitignore` of your own, say) is never
+overwritten in either root, so keep the generated bundles ignored there if you
+replace it. `veryfront init` also lists `.cache/` in the `.gitignore` it
+scaffolds.
+
+Deleting the cache root costs only time. The next run recompiles the pages and
+refetches the remote dependencies it needs.
 
 ## Special files
 

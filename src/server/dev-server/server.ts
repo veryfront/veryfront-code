@@ -13,7 +13,7 @@ import { bootstrapDev } from "../bootstrap.ts";
 import { ReloadNotifier } from "../reload-notifier.ts";
 import { broadcastUpdate } from "../handlers/preview/hmr-message-router.ts";
 import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
-import type { DevServerOptions } from "./types.ts";
+import type { DevServerHandler, DevServerOptions } from "./types.ts";
 import { RequestHandler } from "./request-handler.ts";
 import { setupMiddleware } from "./middleware.ts";
 import { RouteDiscovery } from "./route-discovery.ts";
@@ -27,9 +27,14 @@ import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
 import { initializeDistributedCaches } from "#veryfront/cache/distributed-cache-init.ts";
 import { defaultDistributedCacheInitializers } from "#veryfront/server/distributed-cache-initializers.ts";
-import { isDiskCacheConfigured } from "#veryfront/cache/backend.ts";
+import {
+  recordHandlerRequestPeer,
+  runRequestInterceptor,
+} from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import { isPersistentLocalCacheEnabled } from "#veryfront/cache/backend.ts";
 import { clearTranspileCache, discoverAll } from "#veryfront/discovery";
 import type { DiscoveryConfig } from "#veryfront/discovery";
+import { runWithDevServerCacheDir } from "./cache-context.ts";
 
 const rscLog = logger.component("rsc");
 const fsAdapterLog = logger.component("fs-adapter");
@@ -40,6 +45,19 @@ const hmrLog = logger.component("hmr");
 function normalizeSlug(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized ? normalized : undefined;
+}
+
+/**
+ * Run one teardown callback, isolating a throw so it cannot strand the teardown
+ * steps that follow it. Callers must clear the handle before calling this.
+ */
+function release(callback: (() => void) | undefined, label: string): void {
+  if (!callback) return;
+  try {
+    callback();
+  } catch (error) {
+    devServerLog.debug(`${label} cleanup error (non-critical)`, error);
+  }
 }
 
 function deriveProjectSlug(projectDir: string): string {
@@ -64,7 +82,7 @@ export class DevServer {
   private appConfig: VeryfrontConfig | undefined;
   private _nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider>;
   private requestHandler?: RequestHandler;
-  private _handler?: (req: Request) => Promise<Response>;
+  private _handler?: DevServerHandler;
   readonly ready: Promise<void>;
   private _resolveReady!: () => void;
   private _isReady = false;
@@ -96,6 +114,29 @@ export class DevServer {
   }
 
   async start(): Promise<void> {
+    await runWithDevServerCacheDir(this.options.projectDir, async () => {
+      try {
+        await this.startAndBind();
+      } catch (error) {
+        // File watchers and the ReloadNotifier subscriptions are registered
+        // before the port is bound, but callers only ever receive the instance
+        // *after* start() resolves — startDevServer() awaits start() and returns
+        // the server, so a rejection drops the half-built instance with no handle
+        // and nobody left to call stop(). Release here or those registrations
+        // outlive the process. stop() is null-safe at every step, so it tears
+        // down however far start() got, and stays the single teardown path.
+        //
+        // A cleanup failure must never mask the real reason start() failed —
+        // "port already in use" is what the developer needs to see.
+        await this.stop().catch((cleanupError: unknown) => {
+          devServerLog.debug("Cleanup after failed start errored (non-critical)", cleanupError);
+        });
+        throw error;
+      }
+    });
+  }
+
+  private async startAndBind(): Promise<void> {
     const baseAdapter = await runtime.get();
     logger.debug(`Using ${baseAdapter.name} runtime adapter`);
 
@@ -142,15 +183,15 @@ export class DevServer {
 
     await this.logRSCStatus();
 
-    // Initialize disk cache in dev mode when explicitly configured
-    if (isDiskCacheConfigured()) {
+    // Initialize the on-disk cache so compiled modules survive a restart.
+    if (isPersistentLocalCacheEnabled()) {
       void initializeDistributedCaches(defaultDistributedCacheInitializers).catch(
         (error: unknown) => {
           // Warn (not debug): the cache was explicitly configured, so a failure likely
           // indicates a misconfiguration (wrong Redis host/password). Developers need
           // to see this — a debug log is too easy to miss.
           logger.warn(
-            "[DevServer] Configured cache initialization failed — falling back to in-memory cache. Check your Redis / distributed-cache configuration.",
+            "[DevServer] Cache initialization failed, falling back to the in-memory cache. Restarts will be cold. Ensure the project cache directory is writable, and check your distributed-cache configuration if you set one.",
             { error },
           );
         },
@@ -237,15 +278,22 @@ export class DevServer {
     // the original request to maintain the connection.
     const baseHandler = (req: Request) => this.pipeline.execute(req, this.adapter.env.toObject());
     const interceptor = this.options.requestInterceptor;
-    const handler = interceptor
+    const interceptedHandler = interceptor
       ? async (req: Request) => {
         const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
         if (isWebSocketUpgrade) return baseHandler(req);
 
-        const interceptedReq = await interceptor(req);
+        const interceptedReq = await runRequestInterceptor(req, interceptor);
         return baseHandler(interceptedReq);
       }
       : baseHandler;
+    const handler = async (req: Request, nativeContext?: unknown) => {
+      recordHandlerRequestPeer(req, nativeContext);
+      return await runWithDevServerCacheDir(
+        this.options.projectDir,
+        () => interceptedHandler(req),
+      );
+    };
 
     this._handler = handler;
 
@@ -278,15 +326,19 @@ export class DevServer {
     });
   }
 
-  /** Return the request handler for use with external HTTP servers. */
-  get handler(): (req: Request) => Promise<Response> {
+  /**
+   * Return the request handler for use with external HTTP servers.
+   * Pass the native Deno, Node, or Bun request context as the second argument
+   * so local-control routes can verify the transport peer.
+   */
+  get handler(): DevServerHandler {
     if (!this._handler) {
       throw INITIALIZATION_ERROR.create({ detail: "DevServer not started. Call start() first." });
     }
     return this._handler;
   }
 
-  /** Explicit Node WebSocket implementation captured with this bootstrap generation. */
+  /** Extension-provided Node WebSocket implementation captured with this bootstrap generation. */
   get nodeWebSocketServerProvider(): Readonly<NodeWebSocketServerProvider> | undefined {
     return this._nodeWebSocketServerProvider;
   }
@@ -306,6 +358,7 @@ export class DevServer {
       workflowDirs: ["workflows"],
       fsAdapter: this.adapter.fs,
       verbose: this.isDebug(),
+      allowHostProjectCodeExecution: true,
     };
   }
 
@@ -478,9 +531,22 @@ export class DevServer {
   async stop(): Promise<void> {
     logger.debug("Shutting down dev server");
 
-    this.reloadUnsubscribe?.();
-    this.invalidateUnsubscribe?.();
-    this.releaseExternalBroadcastSource?.();
+    // Every handle is cleared *before* anything is invoked, so stop() is safe to
+    // call twice even if a release throws — a failed start() already tore itself
+    // down, and a caller holding the instance may still call stop(). Releasing
+    // the broadcast source twice is not harmless: it decrements a process-wide
+    // counter, which would suppress HMR broadcasts for an unrelated dev server
+    // in the same process.
+    const reloadUnsubscribe = this.reloadUnsubscribe;
+    const invalidateUnsubscribe = this.invalidateUnsubscribe;
+    const releaseExternalBroadcastSource = this.releaseExternalBroadcastSource;
+    this.reloadUnsubscribe = undefined;
+    this.invalidateUnsubscribe = undefined;
+    this.releaseExternalBroadcastSource = undefined;
+
+    release(reloadUnsubscribe, "ReloadNotifier reload subscription");
+    release(invalidateUnsubscribe, "ReloadNotifier invalidate subscription");
+    release(releaseExternalBroadcastSource, "HMR external broadcast source");
 
     if (this.fileWatchSetup) {
       const metrics = this.fileWatchSetup.getMetrics();

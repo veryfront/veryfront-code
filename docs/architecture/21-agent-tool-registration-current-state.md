@@ -190,9 +190,10 @@ appends forwarded remote definitions, and applies `allowedRemoteToolNames`.
 Provider-native tools are added later during model tool conversion. For
 example, `web_search` is selected from the allowed name list, converted into an
 Anthropic provider tool, and marked as provider-executed in stream handling.
-Runtime skill tools are local platform tools. Local and project runtimes expose
-the three-tool skill surface, filter it by the active skill policy, and execute
-it through Veryfront. Hosted chat exposes its request-scoped `load_skill` tool
+Runtime skill tools are local platform tools. Local and project runtimes always
+expose `load_skill`. They gate `load_skill_reference` and `execute_skill_script`
+by the references and scripts the loaded skill advertises, and execute them
+through Veryfront. Hosted chat exposes its request-scoped `load_skill` tool
 instead.
 
 `executeConfiguredTool` resolves in this order:

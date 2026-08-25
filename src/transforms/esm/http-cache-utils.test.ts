@@ -1,150 +1,145 @@
 import "#veryfront/schemas/_test-setup.ts";
 /** @module transforms/esm/http-cache-utils.test
  *
- * Unit tests for pure-logic helpers in http-cache.ts.
- * Tests are written against local duplicates of non-exported functions
- * to avoid triggering module-level side effects (cache backends, etc.).
+ * Unit tests for the pure-logic helpers behind http-cache.ts. Every case runs
+ * against the exported production implementation, so gutting a helper fails
+ * here instead of silently drifting away from a test-local copy.
  */
 
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { gzipSync } from "node:zlib";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VERSION } from "#veryfront/utils/version.ts";
+import type { CacheBackend } from "#veryfront/cache/types.ts";
+import {
+  ensureAbsoluteDir,
+  hasIncompatibleFilePaths,
+  isCanonicalReactEsmUrl,
+  isExternalScheme,
+  isHttpUrl,
+  isInternalBare,
+  isRelative,
+  normalizeEsmShUrl,
+  normalizeHttpUrl,
+} from "./http-cache-helpers.ts";
+import { __setDistributedCacheAccessorForTests, httpBundleCache } from "./http-cache-wrapper.ts";
 
-// ──────────────────────────────────────────────────────────────
-// Pure-logic duplicates from http-cache.ts for isolated testing
-// ──────────────────────────────────────────────────────────────
+class MemoryCacheBackendStub implements CacheBackend {
+  readonly type = "memory" as const;
+  readonly entries = new Map<string, string>();
 
-function distributedKey(prefix: string, hash: string | number): string {
-  return `${prefix}:${hash}`;
-}
-
-function hasIncompatibleFilePaths(code: string, localCacheDir: string): boolean {
-  const filePathPattern = /file:\/\/([^"'\s]+)/gi;
-
-  let match: RegExpExecArray | null;
-  while ((match = filePathPattern.exec(code)) !== null) {
-    const path = match[1]!;
-    if (!path.includes("veryfront-http-bundle")) continue;
-    if (!path.startsWith(localCacheDir)) return true;
+  get(key: string): Promise<string | null> {
+    return Promise.resolve(this.entries.get(key) ?? null);
   }
 
-  return false;
+  set(key: string, value: string): Promise<void> {
+    this.entries.set(key, value);
+    return Promise.resolve();
+  }
+
+  del(key: string): Promise<void> {
+    this.entries.delete(key);
+    return Promise.resolve();
+  }
 }
 
-function ensureAbsoluteDir(path: string): string {
-  // Simplified: in source uses isAbsolute + join(cwd())
-  return path.startsWith("/") ? path : `/cwd/${path}`;
-}
-
-function isHttpUrl(specifier: string): boolean {
-  return specifier.startsWith("https://") || specifier.startsWith("http://");
-}
-
-function isReactCoreUrl(url: string): boolean {
+async function withBackend(
+  fn: (backend: MemoryCacheBackendStub) => Promise<void>,
+): Promise<void> {
+  const backend = new MemoryCacheBackendStub();
+  __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
   try {
-    const parsed = new URL(url);
-    if (!parsed.hostname.includes("esm.sh")) return false;
-
-    const pathname = parsed.pathname.replace(/^\/(v\d+|stable)\//, "/");
-    return /^\/(react|react-dom)(@[\d.]+)?(?:\/|$|\?)/.test(pathname);
-  } catch {
-    return false;
+    await fn(backend);
+  } finally {
+    __setDistributedCacheAccessorForTests(null);
   }
 }
 
-function isExternalScheme(specifier: string): boolean {
-  return specifier.startsWith("node:") ||
-    specifier.startsWith("data:") ||
-    specifier.startsWith("file:") ||
-    specifier.startsWith("bun:");
+function gzipPayload(prefix: "gz:" | "gzip:", code: string): string {
+  return `${prefix}${btoa(String.fromCharCode(...gzipSync(new TextEncoder().encode(code))))}`;
 }
 
-function isRelative(specifier: string): boolean {
-  return specifier.startsWith("./") || specifier.startsWith("../") || specifier.startsWith("/");
-}
+describe("http-cache utilities", () => {
+  // ── distributed cache keys ──
+  describe("distributed cache keys", () => {
+    it("writes url, code and hash entries under the versioned key format", async () => {
+      await withBackend(async (backend) => {
+        await httpBundleCache.setCode(
+          "abc123",
+          "export const x = 1;" as never,
+          "https://esm.sh/x@1.0.0",
+          60,
+        );
 
-function isInternalBare(specifier: string): boolean {
-  return specifier.startsWith("veryfront/") ||
-    specifier.startsWith("#veryfront/") ||
-    specifier.startsWith("@std/") ||
-    specifier.startsWith("_vf_modules/") ||
-    specifier.startsWith("/_vf_modules/");
-}
-
-function normalizeEsmShUrl(url: URL): void {
-  if (url.hostname !== "esm.sh") return;
-
-  if (url.pathname.includes("/denonext/")) {
-    url.pathname = url.pathname.replace("/denonext/", "/");
-  }
-
-  if (!url.searchParams.has("target")) {
-    url.searchParams.set("target", "es2022");
-  }
-
-  const pathname = url.pathname.replace(/^\/+/, "");
-  if (/^react@[\d.]+(?:\?|$)/.test(pathname)) return;
-
-  const existing = url.searchParams.get("external");
-  const externals = existing ? existing.split(",") : [];
-
-  if (!externals.includes("react")) {
-    externals.push("react");
-    url.searchParams.set("external", externals.join(","));
-  }
-}
-
-function normalizeHttpUrl(raw: string): string {
-  try {
-    const url = new URL(raw);
-    normalizeEsmShUrl(url);
-    url.searchParams.sort();
-    return url.toString();
-  } catch {
-    return raw;
-  }
-}
-
-// ──────────────────────────────────────────────────────────────
-// Tests
-// ──────────────────────────────────────────────────────────────
-
-describe("http-cache utilities", { sanitizeResources: false, sanitizeOps: false }, () => {
-  // ── distributedKey ──
-  describe("distributedKey", () => {
-    it("creates prefix:hash format with string hash", () => {
-      assertEquals(distributedKey("url", "abc123"), "url:abc123");
+        assertEquals(
+          [...backend.entries.keys()].sort(),
+          [`${VERSION}:code:abc123`, `${VERSION}:hash:abc123`, `${VERSION}:url:abc123`],
+          "every bundle key is namespaced by release version and prefix",
+        );
+      });
     });
 
-    it("creates prefix:hash format with numeric hash", () => {
-      assertEquals(distributedKey("code", 12345), "code:12345");
-    });
+    it("keys a legacy decimal hash the same way", async () => {
+      await withBackend(async (backend) => {
+        await httpBundleCache.setCode(
+          "12345",
+          "export const x = 1;" as never,
+          "https://esm.sh/x@1.0.0",
+          60,
+        );
 
-    it("works with all known prefixes", () => {
-      assertEquals(distributedKey("url", "h"), "url:h");
-      assertEquals(distributedKey("code", "h"), "code:h");
-      assertEquals(distributedKey("hash", "h"), "hash:h");
+        assert(
+          backend.entries.has(`${VERSION}:code:12345`),
+          "a legacy decimal hash uses the same versioned key format",
+        );
+      });
     });
   });
 
   // ── hasIncompatibleFilePaths ──
   describe("hasIncompatibleFilePaths", () => {
     it("returns false when no file:// paths", () => {
-      assertEquals(hasIncompatibleFilePaths("const x = 1;", "/local/cache"), false);
+      assertEquals(
+        hasIncompatibleFilePaths("const x = 1;", "/local/cache"),
+        false,
+        "code without file:// paths is compatible everywhere",
+      );
     });
 
     it("returns false when paths match local cache dir", () => {
       const code = `import f from "file:///local/cache/veryfront-http-bundle/http-123.mjs"`;
-      assertEquals(hasIncompatibleFilePaths(code, "/local/cache/veryfront-http-bundle"), false);
+      assertEquals(
+        hasIncompatibleFilePaths(code, "/local/cache/veryfront-http-bundle"),
+        false,
+        "a bundle path under the local cache dir is compatible",
+      );
     });
 
     it("returns true when paths from different environment", () => {
       const code = `import f from "file:///app/.cache/veryfront-http-bundle/http-123.mjs"`;
-      assertEquals(hasIncompatibleFilePaths(code, "/local/cache/veryfront-http-bundle"), true);
+      assertEquals(
+        hasIncompatibleFilePaths(code, "/local/cache/veryfront-http-bundle"),
+        true,
+        "another environment's bundle path is incompatible",
+      );
+    });
+
+    it("rejects a sibling directory that merely shares the cache dir prefix", () => {
+      const code = `import f from "file:///local/cache-other/veryfront-http-bundle/http-123.mjs"`;
+      assertEquals(
+        hasIncompatibleFilePaths(code, "/local/cache"),
+        true,
+        "the cache dir match is a path boundary, not a bare string prefix",
+      );
     });
 
     it("ignores non-bundle file:// paths", () => {
       const code = `import f from "file:///some/other/path.mjs"`;
-      assertEquals(hasIncompatibleFilePaths(code, "/local/cache"), false);
+      assertEquals(
+        hasIncompatibleFilePaths(code, "/local/cache"),
+        false,
+        "only veryfront bundle paths are environment-bound",
+      );
     });
 
     it("detects first incompatible path among multiple", () => {
@@ -152,156 +147,248 @@ describe("http-cache utilities", { sanitizeResources: false, sanitizeOps: false 
         `import a from "file:///local/cache/veryfront-http-bundle/http-aaa.mjs";`,
         `import b from "file:///app/.cache/veryfront-http-bundle/http-bbb.mjs";`,
       ].join("\n");
-      assertEquals(hasIncompatibleFilePaths(code, "/local/cache/veryfront-http-bundle"), true);
+      assertEquals(
+        hasIncompatibleFilePaths(code, "/local/cache/veryfront-http-bundle"),
+        true,
+        "one foreign path is enough to reject the artifact",
+      );
     });
 
     it("handles concurrent calls safely (new regex per call)", () => {
       const code1 = `import f from "file:///app/veryfront-http-bundle/http-1.mjs"`;
       const code2 = `import f from "file:///app/veryfront-http-bundle/http-2.mjs"`;
-      // Both should return true (different local dir)
-      assertEquals(hasIncompatibleFilePaths(code1, "/local"), true);
-      assertEquals(hasIncompatibleFilePaths(code2, "/local"), true);
+      assertEquals(hasIncompatibleFilePaths(code1, "/local"), true, "first call rejects");
+      assertEquals(
+        hasIncompatibleFilePaths(code2, "/local"),
+        true,
+        "a repeated call is not affected by leftover regex state",
+      );
     });
   });
 
   // ── ensureAbsoluteDir ──
   describe("ensureAbsoluteDir", () => {
     it("returns absolute path unchanged", () => {
-      assertEquals(ensureAbsoluteDir("/absolute/path"), "/absolute/path");
+      assertEquals(
+        ensureAbsoluteDir("/absolute/path"),
+        "/absolute/path",
+        "an absolute cache dir is used as given",
+      );
     });
 
     it("prefixes relative path with cwd", () => {
       const result = ensureAbsoluteDir("relative/path");
-      assert(result.startsWith("/"));
-      assert(result.includes("relative/path"));
+      assert(result.startsWith("/"), "a relative cache dir is resolved to an absolute path");
+      assert(result.includes("relative/path"), "the relative segment is preserved");
     });
   });
 
   // ── isHttpUrl ──
   describe("isHttpUrl", () => {
     it("recognizes https URLs", () => {
-      assertEquals(isHttpUrl("https://esm.sh/react"), true);
+      assertEquals(isHttpUrl("https://esm.sh/react"), true, "https is an HTTP module URL");
     });
 
     it("recognizes http URLs", () => {
-      assertEquals(isHttpUrl("http://localhost:3000"), true);
+      assertEquals(isHttpUrl("http://localhost:3000"), true, "http is an HTTP module URL");
     });
 
     it("rejects non-http URLs", () => {
-      assertEquals(isHttpUrl("file:///path"), false);
-      assertEquals(isHttpUrl("node:fs"), false);
-      assertEquals(isHttpUrl("react"), false);
-      assertEquals(isHttpUrl("./relative"), false);
+      assertEquals(isHttpUrl("file:///path"), false, "file: is not an HTTP module URL");
+      assertEquals(isHttpUrl("node:fs"), false, "node: is not an HTTP module URL");
+      assertEquals(isHttpUrl("react"), false, "a bare specifier is not an HTTP module URL");
+      assertEquals(isHttpUrl("./relative"), false, "a relative path is not an HTTP module URL");
     });
   });
 
-  // ── isReactCoreUrl ──
-  describe("isReactCoreUrl", () => {
+  // ── canonical React esm.sh URLs ──
+  describe("isCanonicalReactEsmUrl", () => {
     it("matches react on esm.sh", () => {
-      assertEquals(isReactCoreUrl("https://esm.sh/react@18.3.1"), true);
+      assertEquals(
+        isCanonicalReactEsmUrl("https://esm.sh/react@18.3.1"),
+        true,
+        "a pinned react package is canonical",
+      );
     });
 
     it("matches react-dom on esm.sh", () => {
-      assertEquals(isReactCoreUrl("https://esm.sh/react-dom@18.3.1"), true);
+      assertEquals(
+        isCanonicalReactEsmUrl("https://esm.sh/react-dom@18.3.1"),
+        true,
+        "a pinned react-dom package is canonical",
+      );
     });
 
-    it("matches versioned paths like /v150/react@18", () => {
-      assertEquals(isReactCoreUrl("https://esm.sh/v150/react@18.3.1"), true);
+    it("matches versioned paths like /v150/react@18.3.1", () => {
+      assertEquals(
+        isCanonicalReactEsmUrl("https://esm.sh/v150/react@18.3.1"),
+        true,
+        "a /vNNN/ build prefix still resolves to canonical react",
+      );
     });
 
     it("matches /stable/ prefix", () => {
-      assertEquals(isReactCoreUrl("https://esm.sh/stable/react@18.3.1"), true);
+      assertEquals(
+        isCanonicalReactEsmUrl("https://esm.sh/stable/react@18.3.1"),
+        true,
+        "a /stable/ build prefix still resolves to canonical react",
+      );
     });
 
     it("matches react with subpath", () => {
-      assertEquals(isReactCoreUrl("https://esm.sh/react@18.3.1/jsx-runtime"), true);
+      assertEquals(
+        isCanonicalReactEsmUrl("https://esm.sh/react@18.3.1/jsx-runtime"),
+        true,
+        "a react subpath belongs to the canonical react graph",
+      );
+    });
+
+    it("rejects a version that is not a full exact SemVer", () => {
+      assertEquals(
+        isCanonicalReactEsmUrl("https://esm.sh/react@18"),
+        false,
+        "an ambient major-only version is not a canonical React identity",
+      );
     });
 
     it("rejects non-esm.sh URLs", () => {
-      assertEquals(isReactCoreUrl("https://cdn.example.com/react@18"), false);
+      assertEquals(
+        isCanonicalReactEsmUrl("https://cdn.example.com/react@18.3.1"),
+        false,
+        "another CDN is not the canonical React host",
+      );
+    });
+
+    it("rejects hosts that merely contain esm.sh", () => {
+      assertEquals(
+        isCanonicalReactEsmUrl("https://evil-esm.sh.example.com/react@18.3.1"),
+        false,
+        "the canonical React host must match exactly, not by substring",
+      );
     });
 
     it("rejects non-React packages on esm.sh", () => {
-      assertEquals(isReactCoreUrl("https://esm.sh/lodash@4.17.21"), false);
+      assertEquals(
+        isCanonicalReactEsmUrl("https://esm.sh/lodash@4.17.21"),
+        false,
+        "an unrelated package is not canonical React",
+      );
     });
 
     it("rejects packages that start with react but are different", () => {
-      // "react-query" should not match (pattern requires exact react or react-dom)
-      assertEquals(isReactCoreUrl("https://esm.sh/react-query@3.0.0"), false);
+      assertEquals(
+        isCanonicalReactEsmUrl("https://esm.sh/react-query@3.0.0"),
+        false,
+        "only react and react-dom are canonical",
+      );
     });
 
     it("handles invalid URLs", () => {
-      assertEquals(isReactCoreUrl("not-a-url"), false);
+      assertEquals(
+        isCanonicalReactEsmUrl("not-a-url"),
+        false,
+        "a malformed URL is not canonical React",
+      );
     });
   });
 
   // ── isExternalScheme ──
   describe("isExternalScheme", () => {
     it("detects node: scheme", () => {
-      assertEquals(isExternalScheme("node:fs"), true);
+      assertEquals(isExternalScheme("node:fs"), true, "node: stays external");
     });
 
     it("detects data: scheme", () => {
-      assertEquals(isExternalScheme("data:text/plain"), true);
+      assertEquals(isExternalScheme("data:text/plain"), true, "data: stays external");
     });
 
     it("detects file: scheme", () => {
-      assertEquals(isExternalScheme("file:///path"), true);
+      assertEquals(isExternalScheme("file:///path"), true, "file: stays external");
     });
 
     it("detects bun: scheme", () => {
-      assertEquals(isExternalScheme("bun:test"), true);
+      assertEquals(isExternalScheme("bun:test"), true, "bun: stays external");
+    });
+
+    it("detects jsr: scheme", () => {
+      assertEquals(isExternalScheme("jsr:@std/path"), true, "jsr: stays external");
     });
 
     it("rejects http/https", () => {
-      assertEquals(isExternalScheme("https://example.com"), false);
-      assertEquals(isExternalScheme("http://example.com"), false);
+      assertEquals(
+        isExternalScheme("https://example.com"),
+        false,
+        "https modules are cached, not external",
+      );
+      assertEquals(
+        isExternalScheme("http://example.com"),
+        false,
+        "http modules are cached, not external",
+      );
     });
 
     it("rejects bare specifiers", () => {
-      assertEquals(isExternalScheme("react"), false);
-      assertEquals(isExternalScheme("lodash/fp"), false);
+      assertEquals(isExternalScheme("react"), false, "a bare specifier is not an external scheme");
+      assertEquals(
+        isExternalScheme("lodash/fp"),
+        false,
+        "a bare subpath is not an external scheme",
+      );
     });
   });
 
   // ── isRelative ──
   describe("isRelative", () => {
     it("detects ./ paths", () => {
-      assertEquals(isRelative("./utils.js"), true);
+      assertEquals(isRelative("./utils.js"), true, "./ is relative");
     });
 
     it("detects ../ paths", () => {
-      assertEquals(isRelative("../lib/foo.js"), true);
+      assertEquals(isRelative("../lib/foo.js"), true, "../ is relative");
     });
 
     it("detects / absolute paths", () => {
-      assertEquals(isRelative("/root/path.js"), true);
+      assertEquals(isRelative("/root/path.js"), true, "a rooted path is resolved like a relative");
     });
 
     it("rejects bare specifiers", () => {
-      assertEquals(isRelative("react"), false);
-      assertEquals(isRelative("lodash"), false);
+      assertEquals(isRelative("react"), false, "a bare specifier is not relative");
+      assertEquals(isRelative("lodash"), false, "a bare specifier is not relative");
     });
 
     it("rejects URLs", () => {
-      assertEquals(isRelative("https://example.com"), false);
+      assertEquals(isRelative("https://example.com"), false, "an absolute URL is not relative");
     });
   });
 
   // ── isInternalBare ──
   describe("isInternalBare", () => {
     it("detects veryfront/ specifiers", () => {
-      assertEquals(isInternalBare("veryfront/head"), true);
+      assertEquals(isInternalBare("veryfront/head"), true, "veryfront/ is internal");
     });
 
     it("detects @std/ specifiers", () => {
-      assertEquals(isInternalBare("@std/path"), true);
+      assertEquals(isInternalBare("@std/path"), true, "@std/ is internal");
+    });
+
+    it("detects private hash-import aliases", () => {
+      assertEquals(isInternalBare("#veryfront/utils"), true, "#veryfront/ is internal");
+      assertEquals(isInternalBare("#project/env"), true, "any # alias is internal");
+    });
+
+    it("detects _veryfront/ specifiers", () => {
+      assertEquals(isInternalBare("_veryfront/lib.js"), true, "_veryfront/ is internal");
+      assertEquals(isInternalBare("/_veryfront/lib.js"), true, "/_veryfront/ is internal");
     });
 
     it("rejects other specifiers", () => {
-      assertEquals(isInternalBare("react"), false);
-      assertEquals(isInternalBare("lodash"), false);
-      assertEquals(isInternalBare("@scope/package"), false);
+      assertEquals(isInternalBare("react"), false, "a public package is not internal");
+      assertEquals(isInternalBare("lodash"), false, "a public package is not internal");
+      assertEquals(
+        isInternalBare("@scope/package"),
+        false,
+        "an unrelated scoped package is not internal",
+      );
     });
   });
 
@@ -310,106 +397,154 @@ describe("http-cache utilities", { sanitizeResources: false, sanitizeOps: false 
     it("removes /denonext/ from pathname", () => {
       const url = new URL("https://esm.sh/denonext/lodash@4.17.21");
       normalizeEsmShUrl(url);
-      assertEquals(url.pathname.includes("denonext"), false);
+      assertEquals(
+        url.pathname.includes("denonext"),
+        false,
+        "a leading /denonext/ target selector is dropped",
+      );
     });
 
     it("adds target=es2022 when missing", () => {
       const url = new URL("https://esm.sh/lodash@4.17.21");
       normalizeEsmShUrl(url);
-      assertEquals(url.searchParams.get("target"), "es2022");
+      assertEquals(url.searchParams.get("target"), "es2022", "a default target is pinned");
     });
 
     it("preserves existing target parameter", () => {
       const url = new URL("https://esm.sh/lodash@4.17.21?target=es2020");
       normalizeEsmShUrl(url);
-      assertEquals(url.searchParams.get("target"), "es2020");
+      assertEquals(
+        url.searchParams.get("target"),
+        "es2020",
+        "an explicit target is left untouched",
+      );
     });
 
     it("adds external=react for non-React packages", () => {
       const url = new URL("https://esm.sh/lodash@4.17.21");
       normalizeEsmShUrl(url);
       const ext = url.searchParams.get("external");
-      assert(ext !== null && ext.includes("react"));
+      assertExists(ext, "a non-React package gets an external list");
+      assert(ext.includes("react"), "React stays external so the singleton is preserved");
     });
 
     it("does not add external=react for base react package", () => {
       const url = new URL("https://esm.sh/react@18.3.1");
       normalizeEsmShUrl(url);
-      assertEquals(url.searchParams.get("external"), null);
+      assertEquals(
+        url.searchParams.get("external"),
+        null,
+        "React itself cannot be external to itself",
+      );
     });
 
     it("appends react to existing externals", () => {
       const url = new URL("https://esm.sh/some-pkg@1.0?external=preact");
       normalizeEsmShUrl(url);
       const ext = url.searchParams.get("external")!;
-      assert(ext.includes("preact"));
-      assert(ext.includes("react"));
+      assert(ext.includes("preact"), "an existing external is preserved");
+      assert(ext.includes("react"), "React is appended to the existing external list");
     });
 
     it("does not duplicate react in externals", () => {
       const url = new URL("https://esm.sh/some-pkg@1.0?external=react");
       normalizeEsmShUrl(url);
-      assertEquals(url.searchParams.get("external"), "react");
+      assertEquals(
+        url.searchParams.get("external"),
+        "react",
+        "React is not appended twice",
+      );
     });
 
     it("is a no-op for non-esm.sh URLs", () => {
       const url = new URL("https://cdn.example.com/pkg@1.0");
       const before = url.toString();
       normalizeEsmShUrl(url);
-      assertEquals(url.toString(), before);
+      assertEquals(url.toString(), before, "only esm.sh URLs are canonicalized");
     });
   });
 
   // ── normalizeHttpUrl ──
   describe("normalizeHttpUrl", () => {
     it("normalizes esm.sh URL", () => {
-      const result = normalizeHttpUrl("https://esm.sh/lodash@4.17.21");
-      assert(result.includes("target=es2022"));
-      assert(result.includes("external=react"));
+      assertEquals(
+        normalizeHttpUrl("https://esm.sh/lodash@4.17.21"),
+        "https://esm.sh/lodash@4.17.21?external=react&target=es2022",
+        "an esm.sh URL is canonicalized to one pinned identity",
+      );
+    });
+
+    it("preserves literal commas in the external list", () => {
+      assertEquals(
+        normalizeHttpUrl("https://esm.sh/some-pkg@1.0.0?external=react,react-dom"),
+        "https://esm.sh/some-pkg@1.0.0?external=react,react-dom&target=es2022",
+        "esm.sh list params must not be percent-encoded",
+      );
     });
 
     it("sorts query parameters", () => {
       const result = normalizeHttpUrl("https://esm.sh/pkg@1.0?z=1&a=2");
-      const url = new URL(result);
-      const keys = [...url.searchParams.keys()];
-
-      for (let i = 1; i < keys.length; i++) {
-        assert(keys[i]! >= keys[i - 1]!);
-      }
+      const keys = [...new URL(result).searchParams.keys()];
+      assertEquals(keys, [...keys].sort(), "query parameters are sorted for a stable identity");
     });
 
     it("returns raw string for invalid URLs", () => {
-      assertEquals(normalizeHttpUrl("not-a-url"), "not-a-url");
+      assertEquals(
+        normalizeHttpUrl("not-a-url"),
+        "not-a-url",
+        "a malformed URL is returned unchanged",
+      );
     });
 
     it("idempotent: normalizing twice produces same result", () => {
-      const url = "https://esm.sh/lodash@4.17.21";
-      const once = normalizeHttpUrl(url);
-      const twice = normalizeHttpUrl(once);
-      assertEquals(once, twice);
+      const once = normalizeHttpUrl("https://esm.sh/lodash@4.17.21");
+      assertEquals(normalizeHttpUrl(once), once, "normalization is a fixed point");
     });
   });
 
-  // ── gzip detection patterns ──
-  describe("gzip detection", () => {
-    function isGzipEncoded(s: string): boolean {
-      return s.startsWith("gz:") || s.startsWith("gzip:");
-    }
+  // ── gzip decoding through the cache gateway ──
+  describe("gzip decoding", () => {
+    it("decodes a gz: payload", async () => {
+      await withBackend(async (backend) => {
+        const code = "export const compressed = 1;";
+        backend.entries.set(`${VERSION}:code:a1`, gzipPayload("gz:", code));
 
-    it("detects gz: prefix", () => {
-      assertEquals(isGzipEncoded("gz:H4sIAA..."), true);
+        const result = await httpBundleCache.getCodeByHash("a1");
+        assertEquals(result.code as unknown as string, code, "a gz: payload is inflated");
+        assertEquals(result.wasGzipped, true, "the gz: prefix is reported as gzipped");
+      });
     });
 
-    it("detects gzip: prefix", () => {
-      assertEquals(isGzipEncoded("gzip:compressed-data"), true);
+    it("decodes a gzip: payload", async () => {
+      await withBackend(async (backend) => {
+        const code = "export const compressed = 2;";
+        backend.entries.set(`${VERSION}:code:a2`, gzipPayload("gzip:", code));
+
+        const result = await httpBundleCache.getCodeByHash("a2");
+        assertEquals(result.code as unknown as string, code, "a gzip: payload is inflated");
+        assertEquals(result.wasGzipped, true, "the gzip: prefix is reported as gzipped");
+      });
     });
 
-    it("rejects normal JavaScript", () => {
-      assertEquals(isGzipEncoded("export const foo = 1;"), false);
+    it("returns normal JavaScript untouched", async () => {
+      await withBackend(async (backend) => {
+        const code = "export const foo = 1;";
+        backend.entries.set(`${VERSION}:code:a3`, code);
+
+        const result = await httpBundleCache.getCodeByHash("a3");
+        assertEquals(result.code as unknown as string, code, "uncompressed code is passed through");
+        assertEquals(result.wasGzipped, false, "uncompressed code is not reported as gzipped");
+      });
     });
 
-    it("rejects empty string", () => {
-      assertEquals(isGzipEncoded(""), false);
+    it("reports an empty cache entry as a miss", async () => {
+      await withBackend(async (backend) => {
+        backend.entries.set(`${VERSION}:code:a4`, "");
+
+        const result = await httpBundleCache.getCodeByHash("a4");
+        assertEquals(result.code, null, "an empty cache entry yields no code");
+        assertEquals(result.failReason, "not_found", "an empty cache entry is a miss");
+      });
     });
   });
 });

@@ -1,5 +1,5 @@
 import { renderToString } from "react-dom/server";
-import { assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { mkdir, withTempDir, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import { ClientApp, type PageDataResponse } from "./ClientApp.tsx";
@@ -90,5 +90,50 @@ describe("client/spa/ClientApp", () => {
         assertStringIncludes(html, "&quot;slug&quot;:[&quot;guide&quot;,&quot;intro&quot;]");
       });
     }, { prefix: "vf-client-app-" });
+  });
+
+  it("rejects hostile initial page data before it reaches the render path", async () => {
+    await withTempDir(async (tempDir) => {
+      await writeModule(
+        tempDir,
+        "pages/docs.tsx",
+        "export default function Page(props) { return JSON.stringify({ title: props.title }); }",
+      );
+
+      await withModuleServerUrl(tempDir, async () => {
+        await loadComponent("pages/docs.tsx");
+
+        let reads = 0;
+        const initialData: PageDataResponse = {
+          slug: "/docs",
+          pagePath: "pages/docs.tsx",
+          pageType: "tsx",
+          layouts: [],
+          providers: [],
+          frontmatter: {},
+          props: {},
+          params: {},
+          layoutProps: {},
+        };
+        Object.defineProperty(initialData.props, "title", {
+          enumerable: true,
+          get() {
+            reads++;
+            return "Welcome";
+          },
+        });
+
+        const html = renderToString(<ClientApp initialData={initialData} />);
+
+        assertStringIncludes(html, "Invalid SPA page data");
+        assertStringIncludes(html, "veryfront-page-error");
+        assertEquals(
+          html.includes("&quot;title&quot;"),
+          false,
+          "page props must not reach the render path when the snapshot gate rejects them",
+        );
+        assertEquals(reads, 0, "the accessor must never run");
+      });
+    }, { prefix: "vf-client-app-hostile-" });
   });
 });

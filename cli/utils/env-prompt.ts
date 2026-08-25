@@ -7,7 +7,7 @@ import { cliLogger as logger } from "#cli/utils";
 import { cyan, dim, green, yellow } from "#cli/ui";
 import { isInteractive as checkIsInteractive } from "veryfront/platform";
 import { isCiEnv, isDenoTestingEnv } from "veryfront/config";
-import type { EnvVarConfig } from "../templates/index.ts";
+import type { EnvVarConfig } from "../../templates/index.ts";
 import { promptPassword, promptUser } from "./index.ts";
 import { isInteractive as isCliInteractive } from "../shared/interactive.ts";
 
@@ -178,7 +178,7 @@ export function generateGitignoreContent(existingContent?: string): string {
       "dist/",
       ".veryfront/",
       "",
-      "# Local AI model cache",
+      "# Local build cache",
       ".cache/",
       "",
       "# IDE",

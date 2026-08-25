@@ -61,7 +61,7 @@ export function brand<TBranded extends Brand<string, string>>(
 ): TBranded {
   // Single, centralized unsound widening: attaching a phantom brand to a
   // runtime value. This is the only place this cast should occur.
-  return value as unknown as TBranded;
+  return value as TBranded;
 }
 
 /**

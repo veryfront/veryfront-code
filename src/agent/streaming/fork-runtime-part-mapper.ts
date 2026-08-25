@@ -1,7 +1,7 @@
 import { isRecord } from "#veryfront/chat/conversation.ts";
 import { toRenderableCustomChunk } from "#veryfront/chat/ag-ui-helpers.ts";
 import { safeJsonParse } from "#veryfront/chat/provider-errors.ts";
-import type { AgUiRuntimeStreamEvent } from "../ag-ui/browser-encoder.ts";
+import type { AgUiRuntimeStreamEvent } from "../ag-ui/encoder.ts";
 import {
   mergeToolInputDelta,
   parseToolInputObject,

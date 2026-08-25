@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RateLimiter } from "./rate-limiter.ts";
 
@@ -51,6 +51,67 @@ describe("modules/server/rate-limiter", () => {
 
       limiter.cleanup(socket);
 
+      assertEquals(limiter.check(socket), true);
+    });
+
+    it("rejects invalid message limits", () => {
+      for (const maxMessages of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        assertThrows(
+          () => new RateLimiter(maxMessages),
+          RangeError,
+          "maxMessages",
+        );
+      }
+    });
+
+    it("rejects invalid window durations", () => {
+      for (const windowMs of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        assertThrows(
+          () => new RateLimiter(1, { windowMs }),
+          RangeError,
+          "windowMs",
+        );
+      }
+    });
+
+    it("rejects invalid options with a stable error", () => {
+      assertThrows(
+        () => new RateLimiter(1, null as never),
+        TypeError,
+        "options",
+      );
+    });
+
+    it("fails closed when the clock returns a non-finite value", () => {
+      const limiter = new RateLimiter(1, { now: () => Number.NaN });
+      assertEquals(limiter.check(mockSocket()), false);
+    });
+
+    it("opens a new window at the exact boundary", () => {
+      let now = 100;
+      const limiter = new RateLimiter(1, {
+        windowMs: 10,
+        now: () => now,
+      });
+      const socket = mockSocket();
+
+      assertEquals(limiter.check(socket), true);
+      assertEquals(limiter.check(socket), false);
+      now = 110;
+      assertEquals(limiter.check(socket), true);
+    });
+
+    it("recovers safely if an injected clock moves backwards", () => {
+      let now = 100;
+      const limiter = new RateLimiter(1, {
+        windowMs: 10,
+        now: () => now,
+      });
+      const socket = mockSocket();
+
+      assertEquals(limiter.check(socket), true);
+      assertEquals(limiter.check(socket), false);
+      now = 90;
       assertEquals(limiter.check(socket), true);
     });
   });

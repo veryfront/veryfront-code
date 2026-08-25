@@ -158,7 +158,8 @@ describe("VeryfrontApiClient", () => {
 
   describe("file operations", () => {
     it("should handle pagination in listAllFiles", async () => {
-      let page = 0;
+      const fileListUrls: string[] = [];
+      const unexpectedCursors: string[] = [];
 
       await withMockFetch(
         (url) => {
@@ -182,9 +183,11 @@ describe("VeryfrontApiClient", () => {
           }
 
           if (urlStr.includes("/projects/test-project/files?") && urlStr.includes("branch=main")) {
-            page++;
+            fileListUrls.push(urlStr);
+            const cursor = new URL(urlStr).searchParams.get("cursor");
+            if (cursor !== null && cursor !== "page2") unexpectedCursors.push(cursor);
 
-            if (page === 1) {
+            if (cursor === null && fileListUrls.length === 1) {
               return Promise.resolve(
                 new Response(
                   JSON.stringify({
@@ -216,24 +219,39 @@ describe("VeryfrontApiClient", () => {
               );
             }
 
+            if (cursor === "page2") {
+              return Promise.resolve(
+                new Response(
+                  JSON.stringify({
+                    data: [
+                      {
+                        path: "file3.ts",
+                        content: "// file3",
+                        size: 300,
+                        type: "file",
+                        updated_at: "2024-01-01",
+                      },
+                    ],
+                    page_info: {
+                      self: "page2",
+                      first: null,
+                      next: null,
+                      prev: "page1",
+                    },
+                  }),
+                  { status: 200, headers: { "Content-Type": "application/json" } },
+                ),
+              );
+            }
+
+            // Terminate any request that repeats an already-served cursor so a
+            // client that never forwards page_info.next fails an assertion
+            // instead of looping forever.
             return Promise.resolve(
               new Response(
                 JSON.stringify({
-                  data: [
-                    {
-                      path: "file3.ts",
-                      content: "// file3",
-                      size: 300,
-                      type: "file",
-                      updated_at: "2024-01-01",
-                    },
-                  ],
-                  page_info: {
-                    self: "page2",
-                    first: null,
-                    next: null,
-                    prev: "page1",
-                  },
+                  data: [],
+                  page_info: { self: null, first: null, next: null, prev: null },
                 }),
                 { status: 200, headers: { "Content-Type": "application/json" } },
               ),
@@ -261,6 +279,26 @@ describe("VeryfrontApiClient", () => {
           assertEquals(files[0]?.path, "file1.ts");
           assertEquals(files[1]?.path, "file2.ts");
           assertEquals(files[2]?.path, "file3.ts");
+          assertEquals(
+            unexpectedCursors,
+            [],
+            "listAllFiles must only send cursors the API handed back",
+          );
+          assertEquals(
+            fileListUrls.length,
+            2,
+            "listAllFiles must issue exactly one request per page",
+          );
+          assertEquals(
+            new URL(fileListUrls[0]!).searchParams.get("cursor"),
+            null,
+            "the first page request must not carry a cursor",
+          );
+          assertEquals(
+            new URL(fileListUrls[1]!).searchParams.get("cursor"),
+            "page2",
+            "the follow-up request must carry the cursor returned in page_info.next",
+          );
         },
       );
     });

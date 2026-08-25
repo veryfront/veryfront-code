@@ -13,8 +13,13 @@ import "#veryfront/schemas/_test-setup.ts";
  * - Edge cases and error scenarios
  */
 
-import { assertEquals, assertExists, assertStrictEquals } from "#veryfront/testing/assert.ts";
-import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
 import { scaleMs } from "#veryfront/testing/timing.ts";
 
@@ -32,13 +37,95 @@ import {
 import { __resetAutoInstrumentForTests } from "./auto-instrument/orchestrator.ts";
 import { metricsManager } from "./metrics/manager.ts";
 import {
+  _resetShimForTests,
+  type AttributeValue,
+  setGlobalTracerProvider,
+  type Span,
+  type Tracer,
+} from "./tracing/api-shim.ts";
+import { initTracing, shutdownTracing } from "./tracing/index.ts";
+import {
   createResolvedFetch,
   createThrowingFetch,
   withMockFetch,
 } from "./auto-instrument.test-helpers.ts";
 
+type RecordedSpan = {
+  name: string;
+  attributes: Record<string, AttributeValue>;
+};
+
+function createRecordingTracer(recorded: RecordedSpan[]): Tracer {
+  const openSpan = (name: string, attributes: Record<string, AttributeValue>): Span => {
+    const record: RecordedSpan = { name, attributes: { ...attributes } };
+    recorded.push(record);
+    const span: Span = {
+      setAttribute(key, value) {
+        record.attributes[key] = value;
+        return span;
+      },
+      setAttributes(attrs) {
+        Object.assign(record.attributes, attrs);
+        return span;
+      },
+      setStatus() {
+        return span;
+      },
+      recordException() {},
+      addEvent() {
+        return span;
+      },
+      end() {},
+      spanContext() {
+        return { traceId: "1".repeat(32), spanId: "1".repeat(16), traceFlags: 1 };
+      },
+      updateName() {},
+    };
+    return span;
+  };
+
+  return {
+    startSpan(name: string, options?: { attributes?: Record<string, AttributeValue> }) {
+      return openSpan(name, options?.attributes ?? {});
+    },
+    startActiveSpan(
+      name: string,
+      optionsOrFn: { attributes?: Record<string, AttributeValue> } | ((span: Span) => unknown),
+      contextOrFn?: unknown,
+      fn?: (span: Span) => unknown,
+    ) {
+      const options = typeof optionsOrFn === "function" ? {} : optionsOrFn;
+      const callback = typeof optionsOrFn === "function"
+        ? optionsOrFn
+        : typeof contextOrFn === "function"
+        ? contextOrFn as (span: Span) => unknown
+        : fn!;
+      return callback(openSpan(name, options.attributes ?? {}));
+    },
+  } as unknown as Tracer;
+}
+
+/** Record spans opened through the api-shim tracer (HTTP/fetch instrumentation). */
+function installRecordingTracer(): RecordedSpan[] {
+  const recorded: RecordedSpan[] = [];
+  setGlobalTracerProvider({ getTracer: () => createRecordingTracer(recorded) });
+  return recorded;
+}
+
+/** Record spans opened through the tracing manager (wrappers, React instrumentation). */
+async function installRecordingTracerRuntime(): Promise<RecordedSpan[]> {
+  const recorded = installRecordingTracer();
+  await initTracing({ enabled: true, exporter: "console" });
+  return recorded;
+}
+
 beforeEach((): void => {
   __resetAutoInstrumentForTests();
+});
+
+afterEach((): void => {
+  shutdownTracing();
+  _resetShimForTests();
 });
 
 describe("Auto-Instrumentation", () => {
@@ -339,9 +426,15 @@ describe("Auto-Instrumentation", () => {
 
   describe("instrumentFetch", () => {
     it("should instrument global fetch", () => {
-      withMockFetch(globalThis.fetch, () => {
-        instrumentFetch();
-        assertEquals(typeof globalThis.fetch, "function");
+      const baseFetch = createResolvedFetch(new Response("OK"));
+      withMockFetch(baseFetch, () => {
+        const instrumented = instrumentFetch();
+        assertEquals(typeof instrumented, "function");
+        assertEquals(
+          instrumented === baseFetch,
+          false,
+          "instrumentFetch must return a wrapper around the base fetch",
+        );
       });
     });
 
@@ -351,86 +444,175 @@ describe("Auto-Instrumentation", () => {
       });
     });
 
-    it("should create span for fetch calls with string URL", () => {
-      withMockFetch(createResolvedFetch(new Response("OK")), () => {
-        instrumentFetch();
-        assertExists(globalThis.fetch);
+    it("should create span for fetch calls with string URL", async () => {
+      const recorded = installRecordingTracer();
+      await withMockFetch(createResolvedFetch(new Response("OK")), async () => {
+        await instrumentFetch()("https://example.test/string-url");
       });
+
+      assertEquals(
+        recorded[0]?.name,
+        "http.client.fetch",
+        "a string URL fetch must open a client span",
+      );
+      assertEquals(
+        recorded[0]?.attributes["http.target"],
+        "/string-url",
+        "the client span records the requested path",
+      );
     });
 
-    it("should create span for fetch calls with URL object", () => {
-      withMockFetch(createResolvedFetch(new Response("OK")), () => {
-        instrumentFetch();
-        assertExists(globalThis.fetch);
+    it("should create span for fetch calls with URL object", async () => {
+      const recorded = installRecordingTracer();
+      await withMockFetch(createResolvedFetch(new Response("OK")), async () => {
+        await instrumentFetch()(new URL("https://example.test/url-object"));
       });
+
+      assertEquals(
+        recorded[0]?.attributes["http.target"],
+        "/url-object",
+        "a URL object fetch records the requested path",
+      );
+      assertEquals(
+        recorded[0]?.attributes["http.host"],
+        "example.test",
+        "a URL object fetch records the requested host",
+      );
     });
 
-    it("should create span for fetch calls with Request object", () => {
-      withMockFetch(createResolvedFetch(new Response("OK")), () => {
-        instrumentFetch();
-        assertExists(globalThis.fetch);
+    it("should create span for fetch calls with Request object", async () => {
+      const recorded = installRecordingTracer();
+      await withMockFetch(createResolvedFetch(new Response("OK")), async () => {
+        await instrumentFetch()(
+          new Request("https://example.test/request-object", { method: "PUT" }),
+        );
       });
+
+      assertEquals(
+        recorded[0]?.attributes["http.target"],
+        "/request-object",
+        "a Request object fetch records the requested path",
+      );
+      assertEquals(
+        recorded[0]?.attributes["http.method"],
+        "PUT",
+        "a Request object fetch records its own method",
+      );
     });
 
-    it("should record HTTP method from init options", () => {
-      withMockFetch(createResolvedFetch(new Response("OK")), () => {
-        instrumentFetch();
-        assertExists(globalThis.fetch);
+    it("should record HTTP method from init options", async () => {
+      const recorded = installRecordingTracer();
+      await withMockFetch(createResolvedFetch(new Response("OK")), async () => {
+        await instrumentFetch()("https://example.test/items", { method: "POST" });
       });
+
+      assertEquals(
+        recorded[0]?.attributes["http.method"],
+        "POST",
+        "the client span records the method from init options",
+      );
     });
 
-    it("should default to GET method when not specified", () => {
-      withMockFetch(createResolvedFetch(new Response("OK")), () => {
-        instrumentFetch();
-        assertExists(globalThis.fetch);
+    it("should default to GET method when not specified", async () => {
+      const recorded = installRecordingTracer();
+      await withMockFetch(createResolvedFetch(new Response("OK")), async () => {
+        await instrumentFetch()("https://example.test/items");
       });
+
+      assertEquals(
+        recorded[0]?.attributes["http.method"],
+        "GET",
+        "fetch span defaults the method to GET",
+      );
     });
 
-    it("should record response status and content length", () => {
-      withMockFetch(
+    it("should record response status and content length", async () => {
+      const recorded = installRecordingTracer();
+      await withMockFetch(
         createResolvedFetch(
           new Response("test", {
             status: 200,
             headers: { "content-length": "4" },
           }),
         ),
-        () => {
-          instrumentFetch();
-          assertExists(globalThis.fetch);
+        async () => {
+          await instrumentFetch()("https://example.test/items");
         },
+      );
+
+      assertEquals(
+        recorded[0]?.attributes["http.status_code"],
+        200,
+        "fetch span records the response status",
+      );
+      assertEquals(
+        recorded[0]?.attributes["http.response.size"],
+        4,
+        "fetch span records the response content-length",
       );
     });
 
-    it("should measure fetch duration", () => {
-      withMockFetch(
+    it("should measure fetch duration", async () => {
+      const recorded = installRecordingTracer();
+      await withMockFetch(
         (async () => {
           await delay(10);
           return new Response("OK");
         }) as typeof fetch,
-        () => {
-          instrumentFetch();
-          assertExists(globalThis.fetch);
+        async () => {
+          await instrumentFetch()("https://example.test/slow");
         },
+      );
+
+      assertEquals(
+        Number(recorded[0]?.attributes["http.duration_ms"]) >= scaleMs(8),
+        true,
+        "fetch span records the measured request duration",
       );
     });
 
-    it("should handle fetch errors", () => {
-      withMockFetch(
+    it("should handle fetch errors", async () => {
+      const recorded = installRecordingTracer();
+      await withMockFetch(
         createThrowingFetch(new Error("Network error")),
-        () => {
-          instrumentFetch();
-          assertExists(globalThis.fetch);
+        async () => {
+          await assertRejects(
+            () => instrumentFetch()("https://example.test/items"),
+            Error,
+            "Network error",
+          );
         },
+      );
+
+      assertEquals(
+        recorded[0]?.attributes["error"],
+        "true",
+        "a failed fetch marks its span as errored",
+      );
+      assertEquals(
+        recorded[0]?.attributes["error.message"],
+        "Network error",
+        "a failed fetch records the failure message",
       );
     });
 
-    it("should record error type on fetch failure", () => {
-      withMockFetch(
+    it("should record error type on fetch failure", async () => {
+      const recorded = installRecordingTracer();
+      await withMockFetch(
         createThrowingFetch(new TypeError("Failed to fetch")),
-        () => {
-          instrumentFetch();
-          assertExists(globalThis.fetch);
+        async () => {
+          await assertRejects(
+            () => instrumentFetch()("https://example.test/items"),
+            TypeError,
+            "Failed to fetch",
+          );
         },
+      );
+
+      assertEquals(
+        recorded[0]?.attributes["error.type"],
+        "TypeError",
+        "fetch failures record the error type",
       );
     });
   });
@@ -498,8 +680,8 @@ describe("Auto-Instrumentation", () => {
       await instrumentReactRender(renderFn, "SlowComponent");
       const duration = performance.now() - start;
 
-      // With time scaling, delay(10) may be shorter, so just check some time passed
-      assertEquals(duration >= scaleMs(10), true);
+      // Timer resolution can report slightly below the requested delay in Bun.
+      assertEquals(duration >= scaleMs(8), true);
     });
 
     it("should handle render errors", async () => {
@@ -567,36 +749,57 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should instrument error handler without span capture", async () => {
+      const recorded = await installRecordingTracerRuntime();
       const handler = (error: Error): Response => new Response(error.message, { status: 500 });
       const instrumented = instrumentErrorHandler(handler, false);
 
       const error = new Error("Test error");
       const response = await instrumented(error);
 
-      assertExists(response);
+      assertEquals(await response.text(), "Test error");
+      assertEquals(recorded.length, 0, "captureToSpan=false must not open an error span");
     });
 
     it("should record error type and message", async () => {
+      const recorded = await installRecordingTracerRuntime();
       const handler = (_error: Error): Response => new Response("Error handled", { status: 500 });
       const instrumented = instrumentErrorHandler(handler);
 
       const error = new Error("Custom error");
       await instrumented(error);
 
-      assertExists(instrumented);
+      assertEquals(recorded[0]?.name, "error.handler", "error capture opens an error.handler span");
+      assertEquals(
+        recorded[0]?.attributes["error.type"],
+        "Error",
+        "the captured span records the error type",
+      );
+      assertEquals(
+        recorded[0]?.attributes["error.message"],
+        "Custom error",
+        "the captured span records the error message",
+      );
     });
 
     it("should record error stack trace", async () => {
+      const recorded = await installRecordingTracerRuntime();
       const handler = (): Response => new Response("OK", { status: 500 });
       const instrumented = instrumentErrorHandler(handler);
 
       const error = new Error("Error with stack");
       await instrumented(error);
 
-      assertExists(instrumented);
+      const stack = recorded[0]?.attributes["error.stack"];
+      assertEquals(typeof stack, "string", "the captured span records a stack trace");
+      assertEquals(
+        String(stack).includes("Error with stack"),
+        true,
+        "the recorded stack belongs to the captured error",
+      );
     });
 
     it("should include request context when provided", async () => {
+      const recorded = await installRecordingTracerRuntime();
       const handler = (): Response => new Response("Error", { status: 500 });
       const instrumented = instrumentErrorHandler(handler);
 
@@ -604,10 +807,20 @@ describe("Auto-Instrumentation", () => {
       const request = new Request("http://localhost:3000/error-path");
       await instrumented(error, request);
 
-      assertExists(instrumented);
+      assertEquals(
+        recorded[0]?.attributes["http.path"],
+        "/error-path",
+        "request context adds the request path to the error span",
+      );
+      assertEquals(
+        recorded[0]?.attributes["http.method"],
+        "GET",
+        "request context adds the request method to the error span",
+      );
     });
 
     it("should record HTTP method and URL from request", async () => {
+      const recorded = await installRecordingTracerRuntime();
       const handler = (): Response => new Response("Error", { status: 500 });
       const instrumented = instrumentErrorHandler(handler);
 
@@ -615,7 +828,16 @@ describe("Auto-Instrumentation", () => {
       const request = new Request("http://localhost:3000/api/fail", { method: "POST" });
       await instrumented(error, request);
 
-      assertExists(instrumented);
+      assertEquals(
+        recorded[0]?.attributes["http.method"],
+        "POST",
+        "the error span records the request method",
+      );
+      assertEquals(
+        recorded[0]?.attributes["http.path"],
+        "/api/fail",
+        "the error span records the request path",
+      );
     });
   });
 
@@ -655,8 +877,8 @@ describe("Auto-Instrumentation", () => {
       await instrumented();
       const duration = performance.now() - start;
 
-      // With time scaling, delay(10) may be shorter
-      assertEquals(duration >= scaleMs(10), true);
+      // Timer resolution can report slightly below the requested delay in Bun.
+      assertEquals(duration >= scaleMs(8), true);
     });
 
     it("should handle errors and rethrow", async () => {
@@ -743,29 +965,33 @@ describe("Auto-Instrumentation", () => {
 
     it("should respect batch size", async () => {
       const items = Array.from({ length: 25 }, (_, i) => i);
-      const batches: number[][] = [];
-      let currentBatch: number[] = [];
+      const processed: number[] = [];
+      let inFlight = 0;
+      let maxInFlight = 0;
 
       await instrumentBatch(
         "sized.batch",
         items,
-        // deno-lint-ignore require-await
         async (item: number) => {
-          currentBatch.push(item);
-          if (currentBatch.length !== 10) return;
-
-          batches.push([...currentBatch]);
-          currentBatch = [];
+          inFlight++;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await Promise.resolve();
+          processed.push(item);
+          inFlight--;
         },
-        { batchSize: 10 },
+        { batchSize: 4 },
       );
 
-      if (currentBatch.length) batches.push(currentBatch);
-
-      assertExists(instrumentBatch);
+      assertEquals(
+        maxInFlight,
+        4,
+        "instrumentBatch must run at most batchSize items concurrently",
+      );
+      assertEquals(processed.length, 25, "all items must still be processed");
     });
 
     it("should record batch metadata", async () => {
+      const recorded = await installRecordingTracerRuntime();
       const items = Array.from({ length: 15 }, (_, i) => i);
 
       await instrumentBatch("metadata.batch", items, () => Promise.resolve(), {
@@ -773,7 +999,32 @@ describe("Auto-Instrumentation", () => {
         attributes: { operation: "test", source: "unit-test" },
       });
 
-      assertExists(instrumentBatch);
+      const batchSpan = recorded.find((span) => span.name === "metadata.batch");
+      assertEquals(
+        batchSpan?.attributes["batch.total_items"],
+        15,
+        "the batch span records the total item count",
+      );
+      assertEquals(
+        batchSpan?.attributes["batch.size"],
+        5,
+        "the batch span records the caller-requested batch size",
+      );
+      assertEquals(
+        batchSpan?.attributes["batch.total_batches"],
+        3,
+        "the batch span records the number of batches it will run",
+      );
+      assertEquals(
+        batchSpan?.attributes["operation"],
+        "test",
+        "caller attributes are merged into the batch span",
+      );
+      assertEquals(
+        recorded.filter((span) => span.name === "metadata.batch.batch").length,
+        3,
+        "one child span is opened per processed batch",
+      );
     });
 
     it("should handle batch processing errors", async () => {
@@ -802,16 +1053,35 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should handle empty batch", async () => {
-      await instrumentBatch("empty.batch", [], async () => {});
-      assertExists(instrumentBatch);
+      let processorRan = false;
+      // deno-lint-ignore require-await
+      await instrumentBatch("empty.batch", [], async () => {
+        processorRan = true;
+      });
+
+      assertEquals(processorRan, false, "an empty batch must never invoke the processor");
     });
 
     it("should calculate correct batch count", async () => {
       const items = Array.from({ length: 23 }, (_, i) => i);
+      const processed: number[] = [];
+      let inFlight = 0;
+      let maxInFlight = 0;
 
-      await instrumentBatch("counted.batch", items, async () => {}, { batchSize: 7 });
+      await instrumentBatch("counted.batch", items, async (item: number) => {
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await Promise.resolve();
+        processed.push(item);
+        inFlight--;
+      }, { batchSize: 7 });
 
-      assertExists(instrumentBatch);
+      assertEquals(
+        maxInFlight,
+        7,
+        "a 23 item run at batchSize 7 must never exceed 7 concurrent items",
+      );
+      assertEquals(processed.length, 23, "all items must still be processed");
     });
   });
 

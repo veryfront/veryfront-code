@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { ProjectScopedRegistryManager } from "./project-scoped-registry-manager.ts";
-import { ScopedRegistryFacade } from "./scoped-registry-facade.ts";
+import { ScopedRegistryFacade, ScopedRegistryView } from "./scoped-registry-facade.ts";
 
 describe("ScopedRegistryFacade", () => {
   it("preserves the manager's scoped and shared registry contract", () => {
@@ -41,5 +41,24 @@ describe("ScopedRegistryFacade", () => {
 
     registry.clearAll();
     assertEquals(registry.getAll(), new Map());
+  });
+});
+
+describe("ScopedRegistryView", () => {
+  it("preserves the public maintenance contract", () => {
+    const manager = new ProjectScopedRegistryManager<string>("test");
+    const view = new ScopedRegistryView(new ScopedRegistryFacade(manager));
+
+    view.registerShared("shared", "shared-value");
+    view.register("project", "project-value");
+
+    assertEquals(view.getStats(), {
+      projectCount: 1,
+      sharedCount: 1,
+      totalItems: 2,
+      currentProjectItems: 1,
+    });
+    view.clearAll();
+    assertEquals(view.getAll(), new Map());
   });
 });

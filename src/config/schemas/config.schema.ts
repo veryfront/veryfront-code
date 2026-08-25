@@ -9,6 +9,10 @@ import {
   MAX_SOURCE_INTEGRATION_POLICY_TOOL_IDS,
 } from "#veryfront/integrations/limits.ts";
 import { ALL_INTEGRATION_NAMES } from "#veryfront/integrations/schema.ts";
+import {
+  EXAMPLE_CSP_DIRECTIVES,
+  isCspDirectiveName,
+} from "#veryfront/security/http/csp-directives.ts";
 import type {
   SourceIntegrationPolicyConfig,
   SourceIntegrationRestriction,
@@ -31,6 +35,11 @@ import {
   MAX_REMOTE_HOST_URL_LENGTH,
 } from "#veryfront/utils/remote-host-policy-limits.ts";
 import {
+  isValidRedirectOriginList,
+  MAX_REDIRECT_ORIGIN_COUNT,
+  MAX_REDIRECT_ORIGIN_LENGTH,
+} from "#veryfront/utils/redirect-policy.ts";
+import {
   MAX_FILE_LOG_FILES,
   MAX_GITHUB_FILESYSTEM_ATTEMPTS,
   MAX_VERYFRONT_FILESYSTEM_RETRIES,
@@ -48,6 +57,12 @@ import {
 } from "#veryfront/utils/discovery-path-policy.ts";
 import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
 import { isCanonicalProjectRelativePath } from "#veryfront/utils/project-relative-path.ts";
+import {
+  hasUniqueServerExternalPackages,
+  isValidServerExternalPackageName,
+  MAX_SERVER_EXTERNAL_PACKAGE_COUNT,
+  MAX_SERVER_EXTERNAL_PACKAGE_NAME_LENGTH,
+} from "#veryfront/config/server-external-packages.ts";
 
 const integrationNames = new Set<string>(ALL_INTEGRATION_NAMES);
 const MAX_CSRF_EXCLUDE_PATH_COUNT = 64;
@@ -331,7 +346,7 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
         .optional(),
       experimental: v
         .object({
-          esmLayouts: v.boolean().optional(),
+          esmLayouts: v.literal(true).optional(),
           precompileMDX: v.boolean().optional(),
           rsc: v.boolean().optional(),
         })
@@ -352,6 +367,25 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
         .object({
           outDir: v.string().optional(),
           trailingSlash: v.boolean().optional(),
+          /** Bare npm package roots that the runtime resolves instead of bundling. */
+          serverExternalPackages: v
+            .array(
+              v
+                .string()
+                .min(1)
+                .max(MAX_SERVER_EXTERNAL_PACKAGE_NAME_LENGTH)
+                .refine(
+                  isValidServerExternalPackageName,
+                  "Expected a bare npm package name without a version or subpath",
+                ),
+            )
+            .min(1)
+            .max(MAX_SERVER_EXTERNAL_PACKAGE_COUNT)
+            .refine(
+              hasUniqueServerExternalPackages,
+              "Server external package names must be unique",
+            )
+            .optional(),
           /**
            * Generate static HTML for all routes during `veryfront build`.
            * Defaults to true; disabling it produces no pages, so only turn it
@@ -514,10 +548,54 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
               "Configure either basic or bearer authentication, not both",
             )
             .optional(),
-          csp: v.record(v.string(), v.array(v.string())).optional(),
+          /**
+           * Extra CSP sources, merged into the platform's baseline policy.
+           *
+           * Additive: `{ fontSrc: ["https://fonts.gstatic.com"] }` keeps every
+           * default and adds that origin. `null` drops the platform's optional
+           * sources for one directive (e.g. `styleSrc: null` removes
+           * `'unsafe-inline'`) while keeping the ones the renderer requires.
+           */
+          csp: v
+            .record(v.string(), v.union([v.array(v.string()), v.null()]))
+            .superRefine((csp, ctx) => {
+              for (const key of Object.keys(csp)) {
+                if (isCspDirectiveName(key)) continue;
+                // Browsers ignore unknown directives silently, so a typo would
+                // otherwise read as configured and protect nothing.
+                ctx.addIssue({
+                  message: `Unknown Content-Security-Policy directive "${key}". ` +
+                    `Use a directive name such as ${
+                      EXAMPLE_CSP_DIRECTIVES.join(", ")
+                    } (camelCase or kebab-case).`,
+                  // Relative to the refined value, which is already
+                  // `security.csp`. Prefixing "csp" would report
+                  // `security.csp.csp.<key>`.
+                  path: [key],
+                });
+              }
+            })
+            .optional(),
           remoteHosts: v
             .array(v.string().max(MAX_REMOTE_HOST_URL_LENGTH).url())
             .max(MAX_REMOTE_HOST_COUNT)
+            .optional(),
+          /**
+           * Restrict project redirects to the request origin and exact allowed
+           * HTTP(S) origins. Omit this policy to preserve unrestricted redirect
+           * behavior. An empty allowlist permits same-origin redirects only.
+           */
+          redirects: v
+            .object({
+              allowedOrigins: v
+                .array(v.string().min(1).max(MAX_REDIRECT_ORIGIN_LENGTH))
+                .max(MAX_REDIRECT_ORIGIN_COUNT)
+                .refine(
+                  isValidRedirectOriginList,
+                  "Redirect origins must be unique canonical HTTP(S) origins within the policy limits",
+                ),
+            })
+            .strict()
             .optional(),
           cors: getCorsSchema().optional(),
           /**
@@ -1077,7 +1155,11 @@ export function validateVeryfrontConfig(input: unknown): VeryfrontConfig {
   const corsHint = path.includes("security.cors")
     ? " Expected boolean or a CORS object with origin, credentials, methods, allowedHeaders, exposedHeaders, or maxAge."
     : "";
-  const expectedWithHint = expected + corsHint;
+  const esmLayoutsHint = path === "experimental.esmLayouts"
+    ? " The esmLayouts opt-out was removed; layout rendering always uses the ESM path." +
+      " Remove the setting. See the Experimental features section in docs/guides/configuration.md."
+    : "";
+  const expectedWithHint = expected + corsHint + esmLayoutsHint;
 
   const context = {
     field: path,

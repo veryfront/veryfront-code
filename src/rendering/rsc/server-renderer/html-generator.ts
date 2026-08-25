@@ -7,14 +7,40 @@ export { escapeHtml };
 
 const SKIP_PROPS = new Set(["children", "key", "ref"]);
 
-export function renderAttributes(props: Record<string, unknown>): string {
+// Mirrors React's custom-element detection. These SVG/MathML names contain a
+// hyphen but remain standard elements, so React still applies normal attribute
+// aliases (for example `htmlFor` -> `for`). The `is` prop does not change the
+// serialization path for customized built-ins either.
+const RESERVED_HYPHENATED_ELEMENTS = new Set([
+  "annotation-xml",
+  "color-profile",
+  "font-face",
+  "font-face-format",
+  "font-face-name",
+  "font-face-src",
+  "font-face-uri",
+  "missing-glyph",
+]);
+
+function isCustomElement(tagName: string | undefined): boolean {
+  return tagName?.includes("-") === true && !RESERVED_HYPHENATED_ELEMENTS.has(tagName);
+}
+
+function renderAttributeName(key: string, customElement: boolean): string {
+  if (key === "className") return "class";
+  if (key === "htmlFor" && !customElement) return "for";
+  return key;
+}
+
+export function renderAttributes(props: Record<string, unknown>, tagName?: string): string {
   const attrs: string[] = [];
+  const customElement = isCustomElement(tagName);
 
   for (const [key, value] of Object.entries(props)) {
     if (value == null || SKIP_PROPS.has(key)) continue;
     if (!isSafeSerializedPropName(key)) continue;
 
-    const attrName = key === "className" ? "class" : key;
+    const attrName = renderAttributeName(key, customElement);
 
     if (typeof value === "boolean") {
       if (value) attrs.push(attrName);
@@ -72,7 +98,7 @@ export async function treeToHTML(
 
       const tag = node.component;
       if (!/^[A-Za-z][A-Za-z0-9:_-]*$/.test(tag)) return "";
-      const attrs = renderAttributes(node.props ?? {});
+      const attrs = renderAttributes(node.props ?? {}, tag);
       const childrenHtml = await Promise.all(
         (node.children ?? []).map((child) => treeToHTML(child, clientRefs, clientManifest)),
       );

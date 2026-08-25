@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -8,10 +13,13 @@ import {
   getNodeExternalPackagesToResolve,
   NODE_BUILTINS,
   resolveEsmUserDependencies,
+  resolveVeryfrontPackageExport,
   rewriteCompiledBinaryUserDependencyImports,
   rewriteCompiledBinaryVeryfrontImports,
   rewriteDenoNodeBuiltinImports,
   rewriteDenoNpmDependencyImports,
+  rewriteDenoVeryfrontImports,
+  rewriteNodeExternalImports,
 } from "./external-import-rewriter.ts";
 
 function createFakeFileSystem(files: Record<string, string>): FileSystem {
@@ -294,6 +302,46 @@ describe("external-import-rewriter", () => {
     });
   });
 
+  describe("Deno Veryfront package imports", () => {
+    it("resolves packaged Veryfront exports inside the running package", () => {
+      const runningPackage = {
+        packageUrl: new URL("file:///opt/veryfront/package.json"),
+        exports: {
+          "./embedding": { import: "./esm/src/embedding/index.js" },
+          "./escape": { import: "../escape.js" },
+        },
+      };
+
+      assertEquals(
+        resolveVeryfrontPackageExport("veryfront/embedding", runningPackage),
+        "file:///opt/veryfront/esm/src/embedding/index.js",
+      );
+      assertThrows(
+        () => resolveVeryfrontPackageExport("veryfront/escape", runningPackage),
+        TypeError,
+        "escapes its package root",
+      );
+    });
+
+    it("resolves Veryfront imports from the running package for Deno temp modules", async () => {
+      const source = [
+        `import { createUploadHandler } from "veryfront/embedding";`,
+        `const agentModule = import("veryfront/agent");`,
+      ].join("\n");
+
+      const out = await rewriteDenoVeryfrontImports(source);
+
+      assertStringIncludes(
+        out,
+        `from "${import.meta.resolve("veryfront/embedding")}"`,
+      );
+      assertStringIncludes(
+        out,
+        `import("${import.meta.resolve("veryfront/agent")}")`,
+      );
+    });
+  });
+
   describe("rewriteDenoNodeBuiltinImports", () => {
     it("prefixes bare node builtin static imports with node:", () => {
       const out = rewriteDenoNodeBuiltinImports(`import { readFile } from "fs";`);
@@ -347,6 +395,155 @@ describe("external-import-rewriter", () => {
       assertStringIncludes(shim, "var require = function(id)");
       assertStringIncludes(shim, "__vf_interopDefault");
       assert(shim.length > 0);
+    });
+  });
+
+  describe("Node Veryfront package imports", () => {
+    // An API route that imports `veryfront/tool` must reach the SAME module
+    // instance the running server uses, or `toolRegistry.get()` looks into a
+    // second, empty registry and every tool reads as "not found" (the Tools
+    // guide's own verify route). That happens whenever the CLI runs from a
+    // different veryfront copy than the project's node_modules — a global
+    // `npm install -g veryfront`, an `npx` cache, or a hoisted monorepo store.
+    it("resolves veryfront route imports against the running package, not the project copy", async () => {
+      const runningPackage = {
+        packageUrl: new URL("file:///opt/cli/node_modules/veryfront/package.json"),
+        exports: {
+          "./tool": { import: "./esm/src/tool/index.js" },
+        },
+      };
+      const fs = createFakeFileSystem({
+        "/srv/app/node_modules/veryfront/package.json": JSON.stringify({
+          exports: { "./tool": { import: "./esm/src/tool/index.js" } },
+        }),
+      });
+
+      const out = await rewriteNodeExternalImports(
+        `import { toolRegistry } from "veryfront/tool";`,
+        "/srv/app",
+        fs,
+        new Map(),
+        { loadRunningPackage: () => Promise.resolve(runningPackage) },
+      );
+
+      assertStringIncludes(out, "file:///opt/cli/node_modules/veryfront/esm/src/tool/index.js");
+      assertEquals(out.includes("/srv/app/node_modules/veryfront"), false);
+    });
+
+    it("falls back to the project copy for a subpath the running package lacks", async () => {
+      // An older global CLI against a newer project dependency: the running copy
+      // cannot serve `veryfront/knowledge`, and leaving the bare specifier in the
+      // temp handler module would break a route that used to work.
+      const runningPackage = {
+        packageUrl: new URL("file:///opt/cli/node_modules/veryfront/package.json"),
+        exports: {
+          "./tool": { import: "./esm/src/tool/index.js" },
+        },
+      };
+      const fs = createFakeFileSystem({
+        "/srv/app/node_modules/veryfront/package.json": JSON.stringify({
+          exports: {
+            "./tool": { import: "./esm/src/tool/index.js" },
+            "./knowledge": { import: "./esm/src/knowledge/index.js" },
+          },
+        }),
+      });
+
+      const out = await rewriteNodeExternalImports(
+        [
+          `import { toolRegistry } from "veryfront/tool";`,
+          `import { ingest } from "veryfront/knowledge";`,
+        ].join("\n"),
+        "/srv/app",
+        fs,
+        new Map(),
+        { loadRunningPackage: () => Promise.resolve(runningPackage) },
+      );
+
+      assertStringIncludes(out, "file:///opt/cli/node_modules/veryfront/esm/src/tool/index.js");
+      assertStringIncludes(out, "/srv/app/node_modules/veryfront/esm/src/knowledge/index.js");
+      assertEquals(out.includes(`"veryfront/knowledge"`), false);
+    });
+
+    it("falls back to the project copy when no running package is discoverable", async () => {
+      const fs = createFakeFileSystem({
+        "/srv/app/node_modules/veryfront/package.json": JSON.stringify({
+          exports: { "./tool": { import: "./esm/src/tool/index.js" } },
+        }),
+      });
+
+      const out = await rewriteNodeExternalImports(
+        `import { toolRegistry } from "veryfront/tool";`,
+        "/srv/app",
+        fs,
+        new Map(),
+        { loadRunningPackage: () => Promise.resolve(null) },
+      );
+
+      assertStringIncludes(out, "/srv/app/node_modules/veryfront/esm/src/tool/index.js");
+    });
+  });
+
+  describe("Node user dependency subpath imports", () => {
+    it("resolves a Node subpath import inside the package directory", async () => {
+      const fs = createFakeFileSystem({});
+
+      const out = await rewriteNodeExternalImports(
+        `import util from "my-lib/utils.js";`,
+        "/srv/app",
+        fs,
+        new Map([["my-lib", "^1"]]),
+        { loadRunningPackage: () => Promise.resolve(null) },
+      );
+
+      assertStringIncludes(out, `from "file:///srv/app/node_modules/my-lib/utils.js"`);
+    });
+
+    it("resolves subpath containment against an absolute package directory", async () => {
+      const fs = createFakeFileSystem({});
+
+      const out = await rewriteNodeExternalImports(
+        `import util from "my-lib/utils.js";`,
+        "relative-app",
+        fs,
+        new Map([["my-lib", "^1"]]),
+        { loadRunningPackage: () => Promise.resolve(null) },
+      );
+
+      assertEquals(out.includes(`from "my-lib/utils.js"`), false);
+      assertStringIncludes(out, `/relative-app/node_modules/my-lib/utils.js`);
+    });
+
+    it("preserves query and hash suffixes outside the resolved file path", async () => {
+      const fs = createFakeFileSystem({});
+
+      const out = await rewriteNodeExternalImports(
+        `import worker from "my-lib/worker.js?raw#entry";`,
+        "/srv/app",
+        fs,
+        new Map([["my-lib", "^1"]]),
+        { loadRunningPackage: () => Promise.resolve(null) },
+      );
+
+      assertStringIncludes(out, `file:///srv/app/node_modules/my-lib/worker.js?raw#entry`);
+      assertEquals(out.includes("worker.js%3Fraw%23entry"), false);
+    });
+
+    it("leaves a Node subpath import untouched when it escapes the package directory", async () => {
+      const fs = createFakeFileSystem({});
+      const code = `import secret from "my-lib/../../../../etc/passwd";`;
+
+      assertEquals(
+        await rewriteNodeExternalImports(
+          code,
+          "/srv/app",
+          fs,
+          new Map([["my-lib", "^1"]]),
+          { loadRunningPackage: () => Promise.resolve(null) },
+        ),
+        code,
+        "an escaping subpath must not be rewritten to a file:// URL outside node_modules",
+      );
     });
   });
 });

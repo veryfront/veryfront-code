@@ -3,6 +3,7 @@ import { assertEquals, assertRejects } from "@std/assert";
 
 import {
   ProviderOverloadedError,
+  ProviderQuotaError,
   ProviderRateLimitError,
   ProviderRequestError,
 } from "veryfront/provider/shared";
@@ -216,6 +217,57 @@ describe("ext-llm-google/google-provider", () => {
         totalTokens: 10,
       },
     });
+  });
+
+  it("emits Gemini responseMimeType and responseJsonSchema when responseFormat is structured", async () => {
+    let requestedInit: RequestInit | undefined;
+
+    const runtime = createGoogleModelRuntime({
+      apiKey: "test-google-key",
+      baseURL: "https://example.google.test/v1beta",
+      fetch: (_input, init) => {
+        requestedInit = init;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              candidates: [{
+                content: { role: "model", parts: [{ text: "{}" }] },
+                finishReason: "STOP",
+              }],
+              usageMetadata: {
+                promptTokenCount: 1,
+                candidatesTokenCount: 1,
+                totalTokenCount: 2,
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      },
+    }, "gemini-2.0-flash");
+
+    const schema = {
+      type: "object",
+      properties: { name: { type: "string" } },
+      required: ["name"],
+    };
+    await runtime.doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+      responseFormat: { type: "json_schema", name: "Person", schema, strict: true },
+    });
+
+    const requestBody = JSON.parse(readRequestBody(requestedInit) ?? "{}");
+    assertEquals(requestBody.generationConfig.responseMimeType, "application/json");
+    assertEquals(requestBody.generationConfig.responseJsonSchema, schema);
+  });
+
+  it("advertises structured output support", () => {
+    const runtime = createGoogleModelRuntime({
+      apiKey: "test-google-key",
+      baseURL: "https://example.google.test/v1beta",
+      fetch: () => Promise.reject(new Error("not called")),
+    }, "gemini-2.0-flash");
+    assertEquals(runtime.runtimeCapabilities?.structuredOutput, true);
   });
 
   it("sends image URL user parts as Google fileData content", async () => {
@@ -1533,7 +1585,7 @@ describe("ext-llm-google/google-provider", () => {
       assertEquals(err.retryable, true);
     });
 
-    it("classifies Google 429 RESOURCE_EXHAUSTED as ProviderRateLimitError (retryable)", async () => {
+    it("classifies a Google 429 RESOURCE_EXHAUSTED with no retry delay as ProviderQuotaError (non-retryable)", async () => {
       const runtime = createGoogleModelRuntime({
         apiKey: "k",
         baseURL: "https://example.google.test/v1beta",
@@ -1546,9 +1598,37 @@ describe("ext-llm-google/google-provider", () => {
       }, "gemini-1.5-pro");
       const err = await expectError(
         runtime.doGenerate({ prompt: [userPrompt] }),
+        ProviderQuotaError,
+      );
+      assertEquals(err.retryable, false);
+    });
+
+    it("classifies a Google 429 RESOURCE_EXHAUSTED carrying a retry delay as a retryable rate limit", async () => {
+      // A per-minute limit uses the same status as the daily quota; the
+      // RetryInfo delay is what says the request can succeed again shortly.
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: () =>
+          Promise.resolve(
+            errorResponse(429, {
+              error: {
+                code: 429,
+                status: "RESOURCE_EXHAUSTED",
+                message: "Requests per minute exceeded",
+                details: [
+                  { "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "23s" },
+                ],
+              },
+            }),
+          ),
+      }, "gemini-1.5-pro");
+      const err = await expectError(
+        runtime.doGenerate({ prompt: [userPrompt] }),
         ProviderRateLimitError,
       );
       assertEquals(err.retryable, true);
+      assertEquals(err.retryAfterMs, 23_000);
     });
   });
 

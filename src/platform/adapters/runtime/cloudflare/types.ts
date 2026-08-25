@@ -47,7 +47,10 @@ export interface KVGetWithMetadataResult<T = string> {
 }
 
 export interface KVNamespace {
-  get(key: string, type?: "text" | "arrayBuffer"): Promise<string | ArrayBuffer | null>;
+  get(
+    key: string,
+    type?: "text" | "arrayBuffer" | "stream",
+  ): Promise<string | ArrayBuffer | ReadableStream<Uint8Array> | null>;
   put(
     key: string,
     value: string | ArrayBuffer | ArrayBufferView,

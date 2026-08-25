@@ -45,61 +45,85 @@ export interface BundleManifestStore {
   getStats(): Promise<BundleManifestStats>;
 }
 
+/** Minimum interval between full expired-metadata sweeps (amortized on writes). */
+export const BUNDLE_MANIFEST_SWEEP_INTERVAL_MS = 30_000;
+
 export class InMemoryBundleManifestStore implements BundleManifestStore {
   private metadata = new Map<string, { value: BundleMetadata; expiry?: number }>();
   private code = new Map<string, { value: BundleCode; expiry?: number }>();
   private sourceIndex = new Map<string, Set<string>>();
+  // codeHash → metadata keys holding a reference. Each key holds at most one
+  // reference per hash, so set size is the reference count and the members
+  // let reads prune only the metadata entries relevant to one hash.
+  private codeReferences = new Map<string, Set<string>>();
+  private lastExpiredSweepAt = Date.now();
 
-  private getIfNotExpired<T>(
-    map: Map<string, { value: T; expiry?: number }>,
-    key: string,
-  ): T | undefined {
-    const entry = map.get(key);
+  async getBundleMetadata(key: string): Promise<BundleMetadata | undefined> {
+    const entry = this.metadata.get(key);
     if (!entry) return undefined;
 
-    if (entry.expiry != null && Date.now() > entry.expiry) {
-      map.delete(key);
+    if (entry.expiry != null && Date.now() >= entry.expiry) {
+      this.removeMetadata(key);
       return undefined;
     }
 
-    return entry.value;
-  }
-
-  async getBundleMetadata(key: string): Promise<BundleMetadata | undefined> {
-    return this.getIfNotExpired(this.metadata, key);
+    return structuredClone(entry.value);
   }
 
   async setBundleMetadata(key: string, metadata: BundleMetadata, ttlMs?: number): Promise<void> {
+    this.sweepExpiredMetadataIfDue();
     const expiry = ttlMs != null ? Date.now() + ttlMs : undefined;
-    this.metadata.set(key, { value: metadata, expiry });
+    const snapshot = structuredClone(metadata);
+    const previous = this.metadata.get(key)?.value;
 
-    const keys = this.sourceIndex.get(metadata.source) ?? new Set<string>();
+    if (!previous) {
+      this.addCodeReference(snapshot.codeHash, key);
+    } else if (previous.codeHash !== snapshot.codeHash) {
+      this.removeCodeReference(previous.codeHash, key);
+      this.addCodeReference(snapshot.codeHash, key);
+    }
+
+    if (previous && previous.source !== snapshot.source) {
+      this.removeSourceReference(key, previous.source);
+    }
+
+    this.metadata.set(key, { value: snapshot, expiry });
+
+    const keys = this.sourceIndex.get(snapshot.source) ?? new Set<string>();
     keys.add(key);
-    this.sourceIndex.set(metadata.source, keys);
+    this.sourceIndex.set(snapshot.source, keys);
   }
 
   async getBundleCode(hash: string): Promise<BundleCode | undefined> {
-    return this.getIfNotExpired(this.code, hash);
+    // Only the metadata entries referencing this hash decide its liveness, so
+    // prune those lazily instead of sweeping the entire metadata map on every
+    // per-render read. Full sweeps are amortized onto writes.
+    this.pruneExpiredReferencesTo(hash);
+    const entry = this.code.get(hash);
+    if (!entry) return undefined;
+
+    // Metadata references own code liveness. A shorter code TTL must not turn
+    // a still-valid manifest into a pointer to a missing content blob.
+    if (
+      entry.expiry != null &&
+      Date.now() >= entry.expiry &&
+      !this.codeReferences.has(hash)
+    ) {
+      this.code.delete(hash);
+      return undefined;
+    }
+
+    return structuredClone(entry.value);
   }
 
   async setBundleCode(hash: string, code: BundleCode, ttlMs?: number): Promise<void> {
+    this.sweepExpiredMetadataIfDue();
     const expiry = ttlMs != null ? Date.now() + ttlMs : undefined;
-    this.code.set(hash, { value: code, expiry });
+    this.code.set(hash, { value: structuredClone(code), expiry });
   }
 
   async deleteBundle(key: string): Promise<void> {
-    const metadata = await this.getBundleMetadata(key);
-
-    this.metadata.delete(key);
-    if (!metadata) return;
-
-    this.code.delete(metadata.codeHash);
-
-    const sourceKeys = this.sourceIndex.get(metadata.source);
-    if (!sourceKeys) return;
-
-    sourceKeys.delete(key);
-    if (sourceKeys.size === 0) this.sourceIndex.delete(metadata.source);
+    this.removeMetadata(key);
   }
 
   async invalidateSource(source: string): Promise<number> {
@@ -107,7 +131,7 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
     if (!keys) return 0;
 
     const keysArray = [...keys];
-    await Promise.all(keysArray.map((key) => this.deleteBundle(key)));
+    for (const key of keysArray) this.removeMetadata(key);
     this.sourceIndex.delete(source);
 
     return keysArray.length;
@@ -117,6 +141,7 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
     this.metadata.clear();
     this.code.clear();
     this.sourceIndex.clear();
+    this.codeReferences.clear();
   }
 
   async isAvailable(): Promise<boolean> {
@@ -124,11 +149,17 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
   }
 
   async getStats(): Promise<BundleManifestStats> {
+    // Non-mutating expiry view: expired entries are excluded from the
+    // aggregate without paying a pruning sweep on this read path.
+    const now = Date.now();
+    let totalBundles = 0;
     let totalSize = 0;
     let oldestBundle: number | undefined;
     let newestBundle: number | undefined;
 
-    for (const { value } of this.metadata.values()) {
+    for (const { value, expiry } of this.metadata.values()) {
+      if (expiry != null && now >= expiry) continue;
+      totalBundles++;
       totalSize += value.size;
       oldestBundle = oldestBundle == null
         ? value.compiledAt
@@ -139,11 +170,79 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
     }
 
     return {
-      totalBundles: this.metadata.size,
+      totalBundles,
       totalSize,
       oldestBundle,
       newestBundle,
     };
+  }
+
+  private addCodeReference(codeHash: string, key: string): void {
+    const refs = this.codeReferences.get(codeHash) ?? new Set<string>();
+    refs.add(key);
+    this.codeReferences.set(codeHash, refs);
+  }
+
+  /**
+   * Drop expired metadata entries referencing one code hash so the reference
+   * check in getBundleCode stays trustworthy without a full-map sweep.
+   */
+  private pruneExpiredReferencesTo(hash: string, now = Date.now()): void {
+    const refs = this.codeReferences.get(hash);
+    if (!refs) return;
+
+    for (const key of [...refs]) {
+      const entry = this.metadata.get(key);
+      if (!entry) {
+        // Defensive: a reference without metadata is stale bookkeeping.
+        this.removeCodeReference(hash, key);
+        continue;
+      }
+      if (entry.expiry != null && now >= entry.expiry) this.removeMetadata(key);
+    }
+  }
+
+  /**
+   * Full expired-metadata sweep, amortized: runs on writes at most once per
+   * BUNDLE_MANIFEST_SWEEP_INTERVAL_MS so unread expired entries cannot pin
+   * memory forever while per-render reads stay off the O(all-metadata) path.
+   */
+  private sweepExpiredMetadataIfDue(now = Date.now()): void {
+    if (now - this.lastExpiredSweepAt < BUNDLE_MANIFEST_SWEEP_INTERVAL_MS) return;
+    this.lastExpiredSweepAt = now;
+
+    for (const [key, entry] of this.metadata) {
+      if (entry.expiry != null && now >= entry.expiry) this.removeMetadata(key);
+    }
+  }
+
+  private removeCodeReference(codeHash: string, key: string): void {
+    const refs = this.codeReferences.get(codeHash);
+    if (refs) {
+      refs.delete(key);
+      if (refs.size > 0) return;
+      this.codeReferences.delete(codeHash);
+    }
+
+    this.code.delete(codeHash);
+  }
+
+  private removeMetadata(key: string): BundleMetadata | undefined {
+    const metadata = this.metadata.get(key)?.value;
+    if (!metadata) return undefined;
+
+    this.metadata.delete(key);
+    this.removeSourceReference(key, metadata.source);
+    this.removeCodeReference(metadata.codeHash, key);
+    return metadata;
+  }
+
+  private removeSourceReference(key: string, source: string): void {
+    const sourceKeys = this.sourceIndex.get(source);
+    if (!sourceKeys) return;
+
+    sourceKeys.delete(key);
+    if (sourceKeys.size === 0) this.sourceIndex.delete(source);
   }
 }
 

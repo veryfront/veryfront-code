@@ -1,8 +1,9 @@
 import * as React from "react";
 import { flushSync } from "react-dom";
-import { createRoot, hydrateRoot, type Root } from "react-dom/client";
+import { createRoot, hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ColorModeProvider, ColorModeScript, useColorMode } from "./color-mode.tsx";
@@ -103,30 +104,45 @@ function ToggleFixture(): React.ReactElement {
   );
 }
 
-/**
- * Unmount and drain the scheduler task React leaves behind.
- *
- * React's scheduler holds a `setImmediate` until it next runs. It completes on
- * its own, but the test has to yield once more or Deno's leak sanitizer sees
- * the timer still pending.
- */
-async function unmount(root: Root): Promise<void> {
-  flushSync(() => root.unmount());
-  await new Promise((resolve) => setTimeout(resolve, 0));
+function readSingleInlineScript(markup: string): string {
+  const dom = new JSDOM(`<!doctype html><html><body>${markup}</body></html>`);
+  try {
+    const scripts = dom.window.document.querySelectorAll("script");
+    assertEquals(scripts.length, 1, "Expected exactly one inline script");
+    const script = scripts.item(0);
+    assertEquals(script.hasAttribute("src"), false, "Expected an inline script");
+    return script.textContent ?? "";
+  } finally {
+    dom.window.close();
+  }
 }
 
 describe("react/components/ui/color-mode", () => {
   it("escapes storage keys before embedding them in the inline color-mode script", () => {
     const storageKey = `vf";</script><script>alert(1)</script>//`;
-    const element = ColorModeScript({ defaultMode: "dark", storageKey }) as React.ReactElement<{
-      dangerouslySetInnerHTML: { __html: string };
-    }>;
-    const script = element.props.dangerouslySetInnerHTML.__html;
+    const markup = renderToString(
+      <ColorModeScript defaultMode="dark" storageKey={storageKey} />,
+    );
+    const script = readSingleInlineScript(markup);
 
     assertEquals(script.includes(`</script><script>alert(1)</script>`), false);
     assertStringIncludes(script, `\\u003c/script\\u003e`);
     assertStringIncludes(script, `localStorage.getItem("vf\\";\\u003c/script`);
     assertStringIncludes(script, `m!=="light"&&m!=="dark"&&m!=="system"`);
+
+    const themeAttributeScript = readSingleInlineScript(
+      renderToString(<ColorModeScript defaultMode="dark" attribute="data-theme" />),
+    );
+    assertStringIncludes(
+      themeAttributeScript,
+      'd.setAttribute("data-theme",r)',
+      "the pre-hydration script honours the data-theme variant",
+    );
+    assertEquals(
+      themeAttributeScript.includes("classList"),
+      false,
+      "the data-theme variant never touches the class list",
+    );
   });
 
   it("updates the html color-scheme inline style when toggling color mode", async () => {
@@ -162,8 +178,47 @@ describe("react/components/ui/color-mode", () => {
 
       await waitFor(() => document.documentElement.classList.contains("light"));
       assertEquals(document.documentElement.style.colorScheme, "light");
+      assertEquals(
+        localStorage.getItem(storageKey),
+        "light",
+        "toggling persists the explicit mode for the next load",
+      );
 
-      await unmount(root);
+      await unmountReactRoot(root);
+    } finally {
+      restore();
+    }
+  });
+
+  it("applies the data-theme attribute variant instead of the class list", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const media = createMutableMatchMedia(false);
+    const restore = installDomGlobals(dom, media.matchMedia);
+    const storageKey = `vf-color-mode-attribute-${crypto.randomUUID()}`;
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "Expected root element to exist");
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(
+          <ColorModeProvider defaultMode="dark" attribute="data-theme" storageKey={storageKey}>
+            <ToggleFixture />
+          </ColorModeProvider>,
+        );
+      });
+
+      await waitFor(() => document.documentElement.getAttribute("data-theme") === "dark");
+      assert(
+        !document.documentElement.classList.contains("dark"),
+        "the data-theme variant does not also toggle classes",
+      );
+      assertEquals(document.documentElement.style.colorScheme, "dark");
+
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -198,7 +253,7 @@ describe("react/components/ui/color-mode", () => {
       assertEquals(document.querySelector("button")?.getAttribute("data-mode"), "dark");
       assertEquals(document.documentElement.style.colorScheme, "dark");
 
-      await unmount(root);
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -227,9 +282,11 @@ describe("react/components/ui/color-mode", () => {
       });
 
       await waitFor(() => document.querySelector("button")?.getAttribute("data-mode") === "dark");
-      assertEquals(document.documentElement.style.colorScheme, "dark");
+      // The rendered mode and the colorScheme the provider writes to the root
+      // element land in separate commits, so wait for the second one too.
+      await waitFor(() => document.documentElement.style.colorScheme === "dark");
 
-      await unmount(root);
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -267,7 +324,7 @@ describe("react/components/ui/color-mode", () => {
       await waitFor(() => document.querySelector("button")?.getAttribute("data-mode") === "dark");
       assertEquals(recoverableErrors, []);
 
-      await unmount(root);
+      await unmountReactRoot(root);
     } finally {
       restore();
     }

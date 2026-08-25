@@ -209,6 +209,48 @@ describe("agent/hosted-stream-finalization", () => {
     ]);
   });
 
+  it("completes hosted responses after a trailing provider failure", async () => {
+    const calls: string[] = [];
+
+    await finalizeHostedResponse({
+      isAborted: false,
+      streamError: new Error("Provider request failed with status 502"),
+      getFinalStep: async () => ({ step: 1, finishReason: "tool-calls" }),
+      buildState: async () => ({
+        persistedMessage: { id: "msg-1" },
+        finalizedMessage: { id: "msg-1", parts: ["text"] },
+        fallbackChunks: ["chunk-1"],
+        hasIncompleteToolParts: false,
+        metadata: { modelId: "anthropic/claude-haiku-4-5" },
+      }),
+      shouldFailEmptyMessage: () => false,
+      resolveEmptyTerminalError: ({ streamError }) => ({
+        code: "STREAM_ERROR",
+        message: streamError instanceof Error ? streamError.message : String(streamError),
+      }),
+      appendFallbackChunk: async (chunk) => {
+        calls.push(`append:${chunk}`);
+      },
+      flushMirror: async () => {
+        calls.push("flush");
+      },
+      dispatchTerminalState: async (state) => {
+        calls.push(`dispatch:${state.status}:${state.metadata?.modelId}`);
+      },
+      resolveTerminalState: () => ({ status: "completed" }),
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+    });
+
+    assertEquals(calls, [
+      "append:chunk-1",
+      "flush",
+      "dispatch:completed:anthropic/claude-haiku-4-5",
+      "cleanup",
+    ]);
+  });
+
   it("fails hosted responses with content when a body read fails without a final step finish reason", async () => {
     const calls: string[] = [];
 
@@ -401,6 +443,84 @@ describe("agent/hosted-stream-finalization", () => {
       "dispatch:failed:STREAM_ERROR:error reading a body from connection",
       "cleanup",
     ]);
+  });
+
+  it("finalizeHostedResponse treats an aborted run with a stream error as cancelled", async () => {
+    const calls: string[] = [];
+
+    await finalizeHostedResponse({
+      isAborted: true,
+      streamError: new Error("aborted"),
+      getFinalStep: async () => ({ step: 1 }),
+      buildState: async () => ({
+        persistedMessage: { id: "msg-1" },
+        finalizedMessage: { id: "msg-1", parts: ["partial text"] },
+        fallbackChunks: [],
+        hasIncompleteToolParts: false,
+        metadata: { modelId: "openai/gpt-5.4" },
+      }),
+      shouldFailEmptyMessage: () => false,
+      resolveEmptyTerminalError: () => ({ code: "STREAM_ERROR", message: "aborted" }),
+      appendFallbackChunk: async (chunk) => {
+        calls.push(`append:${chunk}`);
+      },
+      flushMirror: async () => {
+        calls.push("flush");
+      },
+      dispatchTerminalState: async (state) => {
+        calls.push(`dispatch:${state.status}`);
+      },
+      resolveTerminalState: ({ isAborted }) => ({
+        status: isAborted ? "cancelled" : "completed",
+      }),
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+    });
+
+    assertEquals(
+      calls,
+      ["flush", "dispatch:cancelled", "cleanup"],
+      "aborted runs must be cancelled rather than failed for the stream error",
+    );
+  });
+
+  it("finalizeHostedDetached treats an aborted run with no content and a stream error as cancelled", async () => {
+    const calls: string[] = [];
+
+    await finalizeHostedDetached({
+      isAborted: true,
+      mirroredDurableOutput: false,
+      streamError: new Error("aborted"),
+      getFinalStep: async () => ({ step: 1 }),
+      buildState: async () => ({
+        hasContent: false,
+        fallbackChunks: [],
+        hasIncompleteToolParts: false,
+      }),
+      resolveEmptyTerminalError: () => ({ code: "EMPTY", message: "empty" }),
+      appendFallbackChunk: async (chunk) => {
+        calls.push(`append:${chunk}`);
+      },
+      flushMirror: async () => {
+        calls.push("flush");
+      },
+      dispatchTerminalState: async (state) => {
+        calls.push(`dispatch:${state.status}`);
+      },
+      resolveTerminalState: ({ isAborted }) => ({
+        status: isAborted ? "cancelled" : "completed",
+      }),
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+    });
+
+    assertEquals(
+      calls,
+      ["flush", "dispatch:cancelled", "cleanup"],
+      "aborted runs must not be failed for empty output or the stream error",
+    );
   });
 
   it("propagates cleanup errors after dispatching terminal state", async () => {

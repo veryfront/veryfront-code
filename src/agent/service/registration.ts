@@ -1,7 +1,12 @@
 import type { Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "../../schemas/define.ts";
 import { lazySchema } from "../../schemas/lazy.ts";
-import { CONFIG_INVALID, NETWORK_ERROR } from "#veryfront/errors";
+import {
+  CONFIG_INVALID,
+  isVeryfrontError,
+  NETWORK_ERROR,
+  retryWithBackoff,
+} from "#veryfront/errors";
 import { computeHash } from "#veryfront/utils";
 
 /** Public API contract for agent service registration mode. */
@@ -227,6 +232,51 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Total heartbeat attempts for one tick, including the first. */
+const HEARTBEAT_MAX_ATTEMPTS = 3;
+/** Backoff before the first retry when the heartbeat interval leaves room for it. */
+const HEARTBEAT_RETRY_BASE_DELAY_MS = 250;
+/** Minimum time allowed for a control-plane heartbeat attempt. */
+const HEARTBEAT_MIN_ATTEMPT_TIMEOUT_MS = 5_000;
+/**
+ * Share of one heartbeat interval the retry backoff may occupy.
+ *
+ * This bounds only the waits between attempts. Each request has its own
+ * interval-derived deadline, so a complete retry sequence can still outlive
+ * one interval. The in-flight guard below prevents overlap in that case.
+ */
+const HEARTBEAT_RETRY_BUDGET_RATIO = 0.25;
+
+/** Bounded retry plan for one heartbeat tick. */
+export type HeartbeatRetrySchedule = {
+  /** Total attempts, including the first. */
+  maxAttempts: number;
+  /** Backoff after each attempt that may still be retried, in attempt order. */
+  delaysMs: readonly number[];
+};
+
+/**
+ * Build the doubling backoff for one heartbeat tick, scaled down so the whole
+ * sequence of waits fits inside {@link HEARTBEAT_RETRY_BUDGET_RATIO} of the
+ * configured interval however short that interval is.
+ */
+export function heartbeatRetrySchedule(heartbeatIntervalMs: number): HeartbeatRetrySchedule {
+  // Doubling weights 1, 2, 4, … over the maxAttempts - 1 waits sum to 2^(n-1) - 1.
+  const totalWeight = 2 ** (HEARTBEAT_MAX_ATTEMPTS - 1) - 1;
+  const budgetMs = heartbeatIntervalMs * HEARTBEAT_RETRY_BUDGET_RATIO;
+  const unitDelayMs = Math.max(
+    0,
+    Math.min(HEARTBEAT_RETRY_BASE_DELAY_MS, Math.floor(budgetMs / totalWeight)),
+  );
+  return {
+    maxAttempts: HEARTBEAT_MAX_ATTEMPTS,
+    delaysMs: Array.from(
+      { length: HEARTBEAT_MAX_ATTEMPTS - 1 },
+      (_unused, attempt) => unitDelayMs * 2 ** attempt,
+    ),
+  };
+}
+
 async function stableServiceKey(input: {
   serviceName: string;
   agentId?: string;
@@ -317,10 +367,27 @@ async function readAgentPushRuntimeServiceResponse(
   if (!response.ok) {
     throw NETWORK_ERROR.create({
       detail: `Agent runtime registration request failed with HTTP ${response.status}`,
+      context: { httpStatus: response.status },
     });
   }
 
-  const parsed = agentPushRuntimeServiceResponseSchema.parse(await response.json());
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch (cause) {
+    // The headers landed but the body did not: the deadline fired while the
+    // JSON was still arriving, or the connection reset mid-body. No complete
+    // response came back and nothing upstream was applied, so this is as
+    // transport-level as a failed connect and gets the same retries. It
+    // carries no httpStatus, which is what marks it retryable.
+    throw NETWORK_ERROR.create({ detail: getErrorMessage(cause), cause });
+  }
+
+  // Outside that wrapper on purpose. A body that arrived intact but does not
+  // match the schema is a permanent protocol mismatch, not a transient one.
+  // Wrapping it as a transport error would make every tick spend all three
+  // attempts on a response that will never parse.
+  const parsed = agentPushRuntimeServiceResponseSchema.parse(payload);
   return parsed.service;
 }
 
@@ -360,15 +427,93 @@ async function registerAgentPushRuntimeService(
   return await readAgentPushRuntimeServiceResponse(response);
 }
 
-async function heartbeatAgentPushRuntimeService(
-  input: { apiUrl: string; authToken: string; serviceId: string },
+type HeartbeatRequest = {
+  apiUrl: string;
+  authToken: string;
+  serviceId: string;
+  heartbeatIntervalMs: number;
+};
+
+async function sendHeartbeatRequest(
+  input: HeartbeatRequest,
   fetchImpl: typeof globalThis.fetch,
+  abortSignal: AbortSignal | undefined,
 ): Promise<AgentPushRuntimeServiceRest> {
-  const response = await fetchImpl(getHeartbeatEndpoint(input.apiUrl, input.serviceId), {
-    method: "POST",
-    headers: createHeaders(input.authToken),
-  });
+  let response: Response;
+  try {
+    response = await fetchImpl(getHeartbeatEndpoint(input.apiUrl, input.serviceId), {
+      method: "POST",
+      headers: createHeaders(input.authToken),
+      signal: abortSignal,
+    });
+  } catch (cause) {
+    // A caller-supplied fetch may reject with an error that is already ours,
+    // and that error already carries its own slug and httpStatus. Reclassifying
+    // it would drop the status that keeps a 4xx from being retried.
+    if (isVeryfrontError(cause)) throw cause;
+    // Anything else means no response, so the request never reached a handler
+    // and applied nothing. It carries no httpStatus, which is what marks it
+    // transport-level below.
+    throw NETWORK_ERROR.create({
+      detail: getErrorMessage(cause),
+      cause,
+    });
+  }
+  // Deliberately outside the wrapper above. The read does its own transport
+  // mapping, so a failed body read is still retried, while a non-ok status
+  // keeps its httpStatus and a schema mismatch stays permanent.
   return await readAgentPushRuntimeServiceResponse(response);
+}
+
+/** Upstream response status recorded on a heartbeat failure, if it got one. */
+function readUpstreamHttpStatus(context: unknown): number | undefined {
+  if (typeof context !== "object" || context === null) return undefined;
+  const httpStatus = (context as { httpStatus?: unknown }).httpStatus;
+  return typeof httpStatus === "number" ? httpStatus : undefined;
+}
+
+/**
+ * A control-plane 5xx is transient — a dropped pooler connection clears within
+ * a second — and the heartbeat is idempotent, so repeating it is safe. So is a
+ * failure with no status: it never produced a response, so nothing was applied.
+ * A 4xx (unknown service id, rejected token) is a real error that repeating
+ * only delays, and any other error slug is not ours to retry.
+ */
+function isRetryableHeartbeatFailure(error: unknown): boolean {
+  if (!isVeryfrontError(error) || error.slug !== NETWORK_ERROR.slug) return false;
+  const httpStatus = readUpstreamHttpStatus(error.context);
+  return httpStatus === undefined || (httpStatus >= 500 && httpStatus <= 599);
+}
+
+async function heartbeatAgentPushRuntimeService(
+  input: HeartbeatRequest,
+  fetchImpl: typeof globalThis.fetch,
+  options: {
+    logger?: AgentServiceRegistrationLogger;
+    /** Aborts the in-flight request and any pending backoff on teardown. */
+    abortSignal?: AbortSignal;
+  } = {},
+): Promise<AgentPushRuntimeServiceRest> {
+  const schedule = heartbeatRetrySchedule(input.heartbeatIntervalMs);
+  return await retryWithBackoff((signal) => sendHeartbeatRequest(input, fetchImpl, signal), {
+    maxAttempts: schedule.maxAttempts,
+    abortSignal: options.abortSignal,
+    // Derive the deadline from the configured interval, but keep enough room
+    // for a known-valid slow control-plane response. Raising the interval for a
+    // slower link still raises the deadline, while the floor prevents a short
+    // interval from falsely escalating a healthy service.
+    timeoutMs: Math.max(input.heartbeatIntervalMs, HEARTBEAT_MIN_ATTEMPT_TIMEOUT_MS),
+    computeDelay: (attempt) => schedule.delaysMs[attempt] ?? 0,
+    shouldRetry: isRetryableHeartbeatFailure,
+    onRetry: ({ error, attempt, delay }) => {
+      options.logger?.warn?.("Agent service heartbeat retrying after transient failure", {
+        serviceId: input.serviceId,
+        attempt: attempt + 1,
+        retryInMs: delay,
+        error: getErrorMessage(error),
+      });
+    },
+  });
 }
 
 /** Create agent service registration lifecycle. */
@@ -379,21 +524,60 @@ export async function createAgentServiceRegistrationLifecycle(
   const input = resolvedAgentServiceRegistrationInputSchema.parse(options);
   const service = await registerAgentPushRuntimeService(input, fetchImpl);
   let stopped = false;
+  const teardown = new AbortController();
+  let heartbeatInFlight: Promise<void> | undefined;
+  let heartbeatSkipLogged = false;
 
-  const heartbeat = async () => {
-    if (stopped) {
-      return;
-    }
-    await heartbeatAgentPushRuntimeService({
-      apiUrl: input.apiUrl,
-      authToken: input.authToken,
-      serviceId: service.id,
-    }, fetchImpl);
+  const heartbeat = () => {
+    if (heartbeatInFlight) return heartbeatInFlight;
+
+    heartbeatSkipLogged = false;
+    heartbeatInFlight = (async () => {
+      if (stopped) {
+        return;
+      }
+      try {
+        await heartbeatAgentPushRuntimeService(
+          {
+            apiUrl: input.apiUrl,
+            authToken: input.authToken,
+            serviceId: service.id,
+            heartbeatIntervalMs: input.heartbeatIntervalMs,
+          },
+          fetchImpl,
+          { logger: options.logger, abortSignal: teardown.signal },
+        );
+      } catch (error) {
+        // stop() aborts the in-flight request and any pending backoff. That is a
+        // teardown, not a heartbeat failure, so it must not reach the counter.
+        if (stopped) {
+          return;
+        }
+        throw error;
+      }
+    })().finally(() => {
+      heartbeatInFlight = undefined;
+    });
+    return heartbeatInFlight;
   };
 
   let consecutiveHeartbeatFailures = 0;
 
   const interval = setInterval(() => {
+    // Retries make a tick outlive its interval whenever the control plane is
+    // slow. Starting another tick on top would double the load on a service
+    // that is already struggling, and would let the failure counter advance
+    // out of order, so the beat is skipped instead.
+    if (heartbeatInFlight) {
+      if (!heartbeatSkipLogged) {
+        heartbeatSkipLogged = true;
+        options.logger?.warn?.(
+          "Agent service heartbeat tick skipped, previous tick still running",
+          { serviceId: service.id },
+        );
+      }
+      return;
+    }
     void heartbeat().then(() => {
       consecutiveHeartbeatFailures = 0;
     }).catch((error: unknown) => {
@@ -429,6 +613,7 @@ export async function createAgentServiceRegistrationLifecycle(
     stop: () => {
       stopped = true;
       clearInterval(interval);
+      teardown.abort();
     },
   };
 }

@@ -1,5 +1,6 @@
 import type { DataContext, DataResult, PageWithData } from "./types.ts";
 import { isDataControlResult, toDataControlResult } from "./helpers.ts";
+import { validateDataResult } from "./data-result-validation.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
@@ -11,6 +12,17 @@ import {
   type WorkerResponse,
 } from "#veryfront/security/sandbox/worker-types.ts";
 import { requireActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
+import {
+  digestWorkerGenerationMaterial,
+  resolveWorkerGeneration,
+  snapshotWorkerGenerationIdentity,
+} from "#veryfront/security/sandbox/worker-generation.ts";
+import { getTrustedProjectEnvSnapshot } from "#veryfront/platform/compat/process/env.ts";
+import type { ProjectEnvSnapshot } from "#veryfront/platform/compat/process/project-env-contract.ts";
+import { INITIALIZATION_ERROR } from "#veryfront/errors";
+import { readBodyBytesWithLimit } from "#veryfront/security/input-validation/limits.ts";
+import { createApplicationRequestHeaders } from "#veryfront/security/http/application-request.ts";
 
 /**
  * Options for isolated data fetching through Worker pool.
@@ -20,6 +32,84 @@ export interface ServerDataFetchOptions {
   modulePath?: string;
   /** Project directory for worker scoping */
   projectDir?: string;
+  /** Host-owned locality decision for development-only behavior. */
+  isLocalProject?: boolean;
+  /** Narrow host-owned capability for project-code execution. */
+  allowHostProjectCodeExecution?: boolean;
+  /** Stable host-owned tenant/project scope for reusable workers. */
+  workerScope?: string;
+  /** Immutable release or source-snapshot identity for reusable workers. */
+  sourceGeneration?: string;
+}
+
+interface DataWorkerAdmission {
+  readonly projectEnv?: ProjectEnvSnapshot;
+  readonly sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
+  readonly workerId: string;
+  readonly reusable: boolean;
+}
+
+function appendIdentityPart(parts: string[], value: string): void {
+  parts.push(`${value.length}:${value}`);
+}
+
+async function resolveDataWorkerAdmission(
+  options: ServerDataFetchOptions,
+): Promise<DataWorkerAdmission> {
+  const sourceIntegrationPolicy = requireActiveSourceIntegrationPolicy();
+  const projectEnv = getTrustedProjectEnvSnapshot();
+  const hasScope = options.workerScope !== undefined;
+  const hasGeneration = options.sourceGeneration !== undefined;
+  if (hasScope !== hasGeneration) {
+    throw new TypeError(
+      "Data worker scope and source generation must be supplied together",
+    );
+  }
+
+  if (!hasScope || !hasGeneration) {
+    const generation = await resolveWorkerGeneration("data");
+    return {
+      projectEnv,
+      sourceIntegrationPolicy,
+      workerId: generation.workerId,
+      reusable: false,
+    };
+  }
+
+  const semanticParts: string[] = [];
+  appendIdentityPart(semanticParts, options.sourceGeneration!);
+  appendIdentityPart(semanticParts, sourceIntegrationPolicy.mode);
+  appendIdentityPart(semanticParts, JSON.stringify(sourceIntegrationPolicy));
+  if (projectEnv) {
+    for (const key of Object.keys(projectEnv).sort()) {
+      appendIdentityPart(semanticParts, key);
+      appendIdentityPart(semanticParts, projectEnv[key]!);
+    }
+  }
+
+  const identity = snapshotWorkerGenerationIdentity(
+    options.workerScope!,
+    await digestWorkerGenerationMaterial(semanticParts.join("|")),
+  );
+  if (!identity) throw new TypeError("Data worker generation identity is required");
+  const generation = await resolveWorkerGeneration("data", identity);
+  return {
+    projectEnv,
+    sourceIntegrationPolicy,
+    workerId: generation.workerId,
+    reusable: generation.reusable,
+  };
+}
+
+/** @internal Exact worker identity probe for boundary regression tests. */
+export async function __resolveDataWorkerIdentityForTests(
+  options: ServerDataFetchOptions,
+): Promise<Readonly<Pick<DataWorkerAdmission, "workerId" | "reusable">>> {
+  const admission = await resolveDataWorkerAdmission(options);
+  return Object.freeze({
+    workerId: admission.workerId,
+    reusable: admission.reusable,
+  });
 }
 
 export class ServerDataFetcher {
@@ -28,6 +118,16 @@ export class ServerDataFetcher {
     context: DataContext,
     options?: ServerDataFetchOptions,
   ): Promise<DataResult> {
+    if (
+      options?.isLocalProject === false &&
+      options.allowHostProjectCodeExecution !== true
+    ) {
+      return Promise.reject(
+        INITIALIZATION_ERROR.create({
+          detail: "Remote server-data execution requires a generation-owned prepared module graph",
+        }),
+      );
+    }
     if (typeof pageModule.getServerData !== "function") {
       return Promise.resolve({ props: {} });
     }
@@ -58,7 +158,7 @@ export class ServerDataFetcher {
             try {
               return await withTimeoutThrow(
                 useIsolation
-                  ? this.fetchIsolated(options!.modulePath!, options!.projectDir!, context)
+                  ? this.fetchIsolated(options!, context)
                   : Promise.resolve(pageModule.getServerData!(context)),
                 DATA_FETCH_TIMEOUT_MS,
                 `getServerData for ${pathname}`,
@@ -73,10 +173,10 @@ export class ServerDataFetcher {
             }
           });
 
-          if (result.redirect) return { redirect: result.redirect };
-          if (result.notFound) return { notFound: true };
+          const validated = validateDataResult(result, "getServerData");
+          if (validated.redirect || validated.notFound) return validated;
 
-          return { props: result.props ?? {}, revalidate: result.revalidate };
+          return { ...validated, props: validated.props ?? {} };
         } catch (error) {
           const durationMs = Math.round(performance.now() - start);
 
@@ -122,72 +222,65 @@ export class ServerDataFetcher {
    * Execute getServerData in a per-project Worker.
    */
   private async fetchIsolated(
-    modulePath: string,
-    projectDir: string,
+    options: ServerDataFetchOptions,
     context: DataContext,
   ): Promise<DataResult> {
+    const modulePath = options.modulePath!;
+    const projectDir = options.projectDir!;
     const pool = getWorkerPool();
     let body: Uint8Array | null = null;
     if (context.request?.body) {
-      // Fast path: reject before buffering if Content-Length is known
-      const contentLength = context.request.headers?.get("content-length");
-      if (contentLength) {
-        const bytes = parseInt(contentLength, 10);
-        if (bytes > MAX_WORKER_BODY_BYTES) {
-          throw new Error(
-            `Request body too large for isolated data fetch (${
-              (bytes / 1024 / 1024).toFixed(1)
-            } MB, limit ${MAX_WORKER_BODY_BYTES / 1024 / 1024} MB)`,
-          );
-        }
-      }
-
-      body = new Uint8Array(await context.request.arrayBuffer());
-
-      // Fallback: check actual size for chunked/streaming bodies
-      if (body.byteLength > MAX_WORKER_BODY_BYTES) {
-        throw new Error(
-          `Request body too large for isolated data fetch (${
-            (body.byteLength / 1024 / 1024).toFixed(1)
-          } MB, limit ${MAX_WORKER_BODY_BYTES / 1024 / 1024} MB)`,
-        );
-      }
+      body = await readBodyBytesWithLimit(
+        context.request,
+        MAX_WORKER_BODY_BYTES,
+      );
     }
 
-    const workerResponse: WorkerResponse = await pool.execute(
-      projectDir,
-      [projectDir],
-      {
-        type: "fetch-data",
-        id: crypto.randomUUID(),
-        modulePath,
-        context: {
-          params: context.params,
-          query: context.query?.toString() ?? "",
-          request: {
-            url: context.request?.url ?? context.url?.toString() ?? "http://localhost",
-            method: context.request?.method ?? "GET",
-            headers: context.request ? [...context.request.headers.entries()] : [],
-            body,
+    const applicationHeaders = context.request
+      ? createApplicationRequestHeaders(context.request.headers)
+      : undefined;
+
+    const admission = await resolveDataWorkerAdmission(options);
+
+    try {
+      const workerResponse: WorkerResponse = await pool.execute(
+        admission.workerId,
+        [projectDir],
+        {
+          type: "fetch-data",
+          id: crypto.randomUUID(),
+          modulePath,
+          context: {
+            params: context.params,
+            query: context.query?.toString() ?? "",
+            request: {
+              url: context.request?.url ?? context.url?.toString() ?? "http://localhost",
+              method: context.request?.method ?? "GET",
+              headers: applicationHeaders ? [...applicationHeaders.entries()] : [],
+              body,
+            },
+            url: context.url?.toString() ?? "http://localhost",
           },
-          url: context.url?.toString() ?? "http://localhost",
+          sourceIntegrationPolicy: admission.sourceIntegrationPolicy,
+          projectEnv: admission.projectEnv,
         },
-        sourceIntegrationPolicy: requireActiveSourceIntegrationPolicy(),
-      },
-    );
+      );
 
-    if (workerResponse.type === "error") {
-      const err = new Error(workerResponse.error.message);
-      err.name = workerResponse.error.name;
-      throw err;
+      if (workerResponse.type === "error") {
+        const err = new Error(workerResponse.error.message);
+        err.name = workerResponse.error.name;
+        throw err;
+      }
+
+      if (workerResponse.type === "data-result") {
+        return workerResponse.result as DataResult;
+      }
+
+      // Unexpected response type — shouldn't happen but be defensive
+      throw new Error(`Unexpected worker response type: ${workerResponse.type}`);
+    } finally {
+      if (!admission.reusable) pool.evictWorker(admission.workerId);
     }
-
-    if (workerResponse.type === "data-result") {
-      return workerResponse.result as DataResult;
-    }
-
-    // Unexpected response type — shouldn't happen but be defensive
-    throw new Error(`Unexpected worker response type: ${workerResponse.type}`);
   }
 
   /**

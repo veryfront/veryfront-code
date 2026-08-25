@@ -32,6 +32,14 @@ export const MDX_COMPILE_ERROR = defineError({
   suggestion: "Check your MDX file syntax",
 });
 
+export const MARKDOWN_COMPILE_ERROR = defineError({
+  slug: "markdown-compile-error",
+  category: "BUILD",
+  status: 500,
+  title: "Markdown compilation failed",
+  suggestion: "Check your Markdown file syntax and frontmatter",
+});
+
 export const ASSET_OPTIMIZATION_ERROR = defineError({
   slug: "asset-optimization-error",
   category: "BUILD",
@@ -70,6 +78,7 @@ export const BUILD_REGISTRY = {
   "bundle-error": BUNDLE_ERROR,
   "typescript-error": TYPESCRIPT_ERROR,
   "mdx-compile-error": MDX_COMPILE_ERROR,
+  "markdown-compile-error": MARKDOWN_COMPILE_ERROR,
   "asset-optimization-error": ASSET_OPTIMIZATION_ERROR,
   "ssg-generation-error": SSG_GENERATION_ERROR,
   "sourcemap-error": SOURCEMAP_ERROR,

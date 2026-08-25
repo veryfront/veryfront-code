@@ -10,6 +10,7 @@ import {
   type ImageOptimizationVariantResult,
 } from "#veryfront/extensions/image/index.ts";
 import { resolve } from "#veryfront/extensions/contracts.ts";
+import { resolveImageVariantWidths } from "#veryfront/utils/image-variant-widths.ts";
 import {
   MAX_IMAGE_DECODED_PIXELS,
   MAX_IMAGE_DIMENSION,
@@ -23,7 +24,6 @@ import {
 const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
 const arrayPush = Array.prototype.push;
-const arraySort = Array.prototype.sort;
 const freeze = Object.freeze;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
@@ -394,26 +394,6 @@ function expectedHeight(
   return Math.max(1, Math.round(sourceHeight * width / sourceWidth));
 }
 
-function expectedWidths(
-  configured: readonly number[],
-  sourceWidth: number,
-): number[] {
-  const widths: number[] = [];
-  const seen = new SetConstructor<number>();
-  for (let index = 0; index < configured.length; index++) {
-    const width = configured[index]!;
-    if (width <= sourceWidth && !apply(setHas, seen, [width])) {
-      apply(setAdd, seen, [width]);
-      apply(arrayPush, widths, [width]);
-    }
-  }
-  if (!apply(setHas, seen, [sourceWidth])) {
-    apply(arrayPush, widths, [sourceWidth]);
-  }
-  apply(arraySort, widths, [(left: number, right: number) => left - right]);
-  return widths;
-}
-
 function snapshotResult(
   value: unknown,
   request: RequestSnapshot,
@@ -442,7 +422,7 @@ function snapshotResult(
     );
   }
 
-  const widths = expectedWidths(request.targetWidths, sourceWidth);
+  const widths = resolveImageVariantWidths(sourceWidth, request.targetWidths);
   const expectedVariants = widths.length * request.formats.length;
   const entries = denseDataArray(
     readDataProperty(descriptors, "variants", "Image optimization result"),

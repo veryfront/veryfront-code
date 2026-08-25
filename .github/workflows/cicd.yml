@@ -3,7 +3,6 @@ name: CI/CD
 on:
   workflow_dispatch:
   pull_request:
-    branches: [main]
   # Required for merge-queue entries: queued runs report checks via merge_group.
   merge_group:
     types: [checks_requested]
@@ -34,15 +33,49 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        check: [format, lint, typecheck]
+        check: [test-layout, format, lint, typecheck]
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Configure test migration baselines
+        if: ${{ matrix.check == 'test-layout' || matrix.check == 'lint' }}
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          PUSH_BASE_SHA: ${{ github.event.before }}
+        run: |
+          set -eu
+          case "$EVENT_NAME" in
+            pull_request) fetch_ref="$PR_BASE_SHA"; base="$PR_BASE_SHA" ;;
+            merge_group) fetch_ref="$MERGE_GROUP_BASE_SHA"; base="$MERGE_GROUP_BASE_SHA" ;;
+            push) fetch_ref="$PUSH_BASE_SHA"; base="$PUSH_BASE_SHA" ;;
+            *) fetch_ref="main"; base="origin/main" ;;
+          esac
+
+          if [ -z "$base" ] || printf '%s' "$base" | grep -Eq '^0+$'; then
+            fetch_ref="main"
+            base="origin/main"
+          fi
+          if [ "$base" = "origin/main" ]; then
+            git fetch --no-tags --depth=1 origin "main:refs/remotes/origin/main"
+          else
+            git fetch --no-tags --depth=1 origin "$fetch_ref"
+          fi
+
+          echo "TEST_LAYOUT_MIGRATION_BASE_REF=$base" >> "$GITHUB_ENV"
+          echo "TEST_SEMANTIC_AUDIT_BASE_REF=$base" >> "$GITHUB_ENV"
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
       - name: Run ${{ matrix.check }}
         run: |
           case "${{ matrix.check }}" in
+            test-layout) deno task test:layout ;;
             format) deno fmt --check ;;
-            lint) deno task lint && deno task lint:core-deps && deno task lint:dependency-boundaries && deno task lint:module-boundaries && deno task lint:extension-contracts && deno task lint:extension-capabilities && deno task lint:ban-test-only && deno task lint:sanitizer-baseline && deno task lint:skipped-tests && deno task lint:chat-ratchets && deno task lint:esm-sh-codemod && deno task lint:test-typecheck && deno task storybook:check ;;
+            # The chain lives in the lint:ci task so a contributor can run this
+            # shard locally instead of learning what it covers from a red CI run.
+            lint) deno task lint:ci ;;
             typecheck) deno task typecheck ;;
           esac
 
@@ -56,17 +89,193 @@ jobs:
     timeout-minutes: 15
     name: tests (integration)
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 10
         with:
           warm-cache: "true"
           warm-redis-cache: "true"
-      - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60  # v4.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Install Node resolver test dependencies
+        run: |
+          npm ci --ignore-scripts --prefix tests/node/resolver-dependencies
+          mkdir -p node_modules npm/node_modules
+          cp -R tests/node/resolver-dependencies/node_modules/. npm/node_modules/
+      - name: Run Node cache-link compatibility tests
+        run: node ./tests/node/run-tests.mjs 'src/utils/cache-dir.test.ts'
+      # The pinned egress transport is Node/Bun-only, so the Deno lanes skip its
+      # tests entirely. Without this step nothing in CI exercises it, which is
+      # how it shipped omitting the request headers `fetch` normally supplies.
+      - name: Run Node egress transport tests
+        run: node ./tests/node/run-tests.mjs 'src/platform/compat/http/pinned-fetch.test.ts'
+      - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
         with:
           timeout_minutes: 10
           max_attempts: 3
           retry_wait_seconds: 10
           command: VF_DISABLE_LRU_INTERVAL=1 deno task test:integration --no-lock
+      - name: Run CLI integration tests
+        run: deno task test:integration:cli --no-lock
+
+  tests-node:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    name: tests (node)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+        with:
+          warm-cache: "true"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Run Node runtime suite
+        run: deno task test:node
+
+  tests-bun:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    name: tests (bun)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+        with:
+          warm-cache: "true"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.3.6"
+      - name: Run Bun runtime suite
+        run: deno task test:bun
+
+  npm-compatibility-artifact:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    name: npm compatibility artifact
+    outputs:
+      build_duration_seconds: ${{ steps.build.outputs.build_duration_seconds }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+        with:
+          warm-cache: "true"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Build and pack tested npm output
+        id: build
+        run: |
+          started_at=$(date +%s)
+          BASE_VERSION=$(jq -r '.version' deno.json)
+          if [ "${GITHUB_REF}" = "refs/heads/main" ] && [[ ! "${BASE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            export VERSION="${BASE_VERSION}.${GITHUB_RUN_NUMBER}"
+            deno run -A scripts/ci/prepare-rc-build.ts
+          fi
+          deno task build:npm
+          deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=npm,tar \
+            scripts/ci/npm-compatibility-artifact.ts pack npm dist/npm-compatibility "${GITHUB_SHA}"
+          echo "build_duration_seconds=$(($(date +%s) - started_at))" >> "$GITHUB_OUTPUT"
+      - name: Upload tested npm compatibility artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-compatibility-${{ github.sha }}
+          path: dist/npm-compatibility
+          retention-days: 30
+          overwrite: true
+
+  tests-runtime-critical-flow:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: [npm-compatibility-artifact]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    name: "tests (runtime critical flow: ${{ matrix.runtime }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [deno, node, bun]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+        with:
+          warm-cache: "true"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        if: ${{ matrix.runtime == 'bun' }}
+        with:
+          bun-version: "1.3.6"
+      - name: Download canonical npm compatibility artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: npm-compatibility-${{ github.sha }}
+          path: dist/npm-compatibility
+      - name: Run runtime critical flow
+        run: deno run -A scripts/test/runtime-inference-critical-flow.ts --runtime=${{ matrix.runtime }} --packed-dir=dist/npm-compatibility
+
+  tests-windows-localhost:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: windows-2022
+    timeout-minutes: 20
+    name: tests (Windows localhost routing)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+        with:
+          warm-cache: "true"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Record wildcard localhost resolution
+        shell: pwsh
+        run: |
+          $nodeReport = node scripts/ci/probe-localhost-resolution.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $denoReport = deno run --allow-net scripts/ci/probe-localhost-resolution.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @(
+            "### Windows wildcard localhost resolution",
+            "",
+            '```json',
+            $nodeReport,
+            $denoReport,
+            '```'
+          ) | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+      - name: Install Chromium
+        timeout-minutes: 10
+        run: deno run -A npm:playwright@1.60.0 install chromium
+      - name: Exercise local virtual-host routing
+        run: deno run -A scripts/ci/run-windows-localhost-e2e.ts
 
   coverage-shards:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -78,11 +287,11 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: ./.github/actions/setup-deno
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          warm-cache: "true"
-          warm-redis-cache: "true"
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
       - name: Run unit coverage shard
         id: coverage
         run: |
@@ -91,7 +300,7 @@ jobs:
           echo "duration=$(($(date +%s) - START))s" >> "$GITHUB_OUTPUT"
       - name: Upload unit coverage lcov
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-shard-${{ matrix.shard }}
           path: coverage-shard-${{ matrix.shard }}/lcov.info
@@ -117,7 +326,7 @@ jobs:
 
   coverage:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     name: coverage gate
     needs: [coverage-shards]
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
@@ -130,10 +339,13 @@ jobs:
             echo "::error::Coverage shards finished with $COVERAGE_SHARDS_RESULT"
             exit 1
           fi
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
       - name: Download unit coverage lcov files
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: coverage-profiles
           pattern: coverage-shard-*
@@ -146,17 +358,70 @@ jobs:
       - name: Add coverage summary
         run: echo "### Coverage shard merge completed in ${{ steps.coverage.outputs.duration }}" >> "$GITHUB_STEP_SUMMARY"
 
+  # Uploading is a separate job from `coverage-shards` on purpose. The shard job
+  # runs the unit suite with `--allow-all`, so any code on the branch executes
+  # there. Granting that job `id-token: write` would let branch code mint a
+  # repository OIDC token. This job runs no repository code: it downloads the
+  # shard artifacts, rewrites paths with sed, and calls the upload action.
+  codecov-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    name: codecov upload
+    needs: [coverage-shards]
+    if: ${{ needs.coverage-shards.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download unit coverage lcov files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: coverage-profiles
+          pattern: coverage-shard-*
+      # `deno coverage --lcov` emits absolute `SF:` paths (for example,
+      # `$GITHUB_WORKSPACE/src/...`). Codecov matches
+      # coverage records against repo-relative paths, so strip the workspace
+      # prefix. This edits the downloaded copies only. The stored artifact and
+      # the `coverage gate` job read their own copies and are unaffected.
+      - name: Normalize lcov paths for Codecov
+        run: |
+          for file in coverage-profiles/coverage-shard-*/lcov.info; do
+            sed -i "s|^SF:${GITHUB_WORKSPACE}/|SF:|" "$file"
+          done
+      # Authenticated with OIDC rather than a stored CODECOV_TOKEN, so there is
+      # no upload secret to manage or rotate. A token is otherwise mandatory
+      # here: `main` is a protected branch, and Codecov only permits tokenless
+      # uploads for fork PRs.
+      #
+      # Advisory only: `fail_ci_if_error` stays false so a Codecov outage can
+      # never fail this job, and this job is not a required status check. The
+      # blocking threshold remains `deno task coverage:gate`.
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          use_oidc: true
+          # Comma separated, the form the action documents. All 8 files go up
+          # in one call, so Codecov records one upload per commit.
+          files: coverage-profiles/coverage-shard-1/lcov.info,coverage-profiles/coverage-shard-2/lcov.info,coverage-profiles/coverage-shard-3/lcov.info,coverage-profiles/coverage-shard-4/lcov.info,coverage-profiles/coverage-shard-5/lcov.info,coverage-profiles/coverage-shard-6/lcov.info,coverage-profiles/coverage-shard-7/lcov.info,coverage-profiles/coverage-shard-8/lcov.info
+          disable_search: true
+          name: unit
+          fail_ci_if_error: false
+
   tests-e2e-rsc-browser:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     name: tests (rsc browser e2e)
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: ./.github/actions/setup-deno
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          warm-cache: "true"
-      - name: Configure apt retries and mirrors
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+      - name: Configure apt sources, retries, and mirrors
         run: |
           sudo sed -i \
             -e 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
@@ -168,33 +433,85 @@ jobs:
             echo 'Acquire::http::Timeout "30";'
             echo 'Acquire::https::Timeout "30";'
           } | sudo tee /etc/apt/apt.conf.d/99veryfront-ci-retries
+
+          # `playwright install --with-deps` shells out to `apt-get update`, which
+          # consults every repository configured on the runner image and fails the
+          # whole install when any single one of them is unreachable. The image
+          # ships third-party repositories (packages.microsoft.com/repos/azure-cli,
+          # packages.microsoft.com/ubuntu/24.04/prod, dl.google.com, ...) that
+          # Chromium's system libraries never come from, so an outage there is pure
+          # noise -- and because it is a persistent 403 rather than a blip, retrying
+          # cannot clear it. Park every non-Ubuntu source for the life of this job so
+          # only the archive that actually serves the dependencies can gate us.
+          if grep -rqE '\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
+            sudo mkdir -p /etc/apt/sources.list.d.disabled
+            for source_file in /etc/apt/sources.list.d/*; do
+              [ -f "${source_file}" ] || continue
+              if grep -qE '\.ubuntu\.com' "${source_file}"; then
+                continue
+              fi
+              sudo mv "${source_file}" /etc/apt/sources.list.d.disabled/
+              echo "Disabled apt source unrelated to Chromium deps: ${source_file}"
+            done
+          else
+            echo "::warning::No Ubuntu archive apt source detected; leaving apt sources untouched"
+          fi
       - name: Install Chromium
+        timeout-minutes: 20
         run: |
+          readonly install_attempts=2
+          readonly install_timeout_minutes=7
+          readonly install_kill_grace_seconds=15
+          readonly apt_lock_attempts=12
+          readonly apt_lock_sleep_seconds=5
+          readonly retry_backoff_seconds=20
+          readonly apt_lock_files="/var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock /var/lib/apt/lists/lock"
+
+          # Playwright shells out to apt-get itself, so a lock held by the
+          # runner image's own apt activity used to surface inside the install
+          # as an instant "Could not get lock" failure. A global lock timeout
+          # makes every apt invocation wait for the holder instead.
+          echo 'DPkg::Lock::Timeout "300";' | sudo tee /etc/apt/apt.conf.d/99vf-lock-timeout >/dev/null
+
           wait_for_apt_locks() {
-            for _ in $(seq 1 60); do
-              if ! sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; then
+            for _ in $(seq 1 "${apt_lock_attempts}"); do
+              if ! sudo fuser ${apt_lock_files} >/dev/null 2>&1; then
                 return 0
               fi
-              sleep 5
+              sleep "${apt_lock_sleep_seconds}"
             done
             return 1
           }
 
-          for attempt in 1 2 3; do
-            wait_for_apt_locks
-            timeout 10m deno run -A npm:playwright install --with-deps chromium && exit 0
+          # `timeout` signals only the wrapper process, so a timed-out attempt
+          # orphans the sudo apt-get underneath it. That orphan keeps holding
+          # the dpkg locks and starved every later attempt on this VM. Reap
+          # the lock holders and repair any half-configured packages before
+          # trying again.
+          reap_apt_lock_holders() {
+            sudo fuser -k -TERM ${apt_lock_files} >/dev/null 2>&1 || true
+            sleep 5
+            sudo fuser -k -KILL ${apt_lock_files} >/dev/null 2>&1 || true
+            sudo dpkg --configure -a >/dev/null 2>&1 || true
+          }
+
+          for attempt in $(seq 1 "${install_attempts}"); do
+            if ! wait_for_apt_locks; then
+              echo "::warning::apt/dpkg locks still held; reaping the holders"
+              reap_apt_lock_holders
+            fi
+            timeout --signal=TERM --kill-after="${install_kill_grace_seconds}s" "${install_timeout_minutes}m" \
+              deno run -A npm:playwright install --with-deps chromium && exit 0
             status=$?
 
-            if [ "$attempt" -eq 3 ]; then
+            if [ "$attempt" -eq "${install_attempts}" ]; then
               exit "$status"
             fi
 
-            wait_for_apt_locks || true
-            sudo apt-get clean || true
-            sudo rm -rf /var/lib/apt/lists/* || true
-            sleep $((attempt * 20))
+            reap_apt_lock_holders
+            sleep "${retry_backoff_seconds}"
           done
-      - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60  # v4.0.0
+      - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
         with:
           timeout_minutes: 10
           max_attempts: 2
@@ -211,11 +528,12 @@ jobs:
     timeout-minutes: 60
     name: tests (binary e2e)
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: ./.github/actions/setup-deno
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          warm-cache: "true"
-      - name: Configure apt retries and mirrors
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+      - name: Configure apt sources, retries, and mirrors
         run: |
           sudo sed -i \
             -e 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
@@ -227,33 +545,85 @@ jobs:
             echo 'Acquire::http::Timeout "30";'
             echo 'Acquire::https::Timeout "30";'
           } | sudo tee /etc/apt/apt.conf.d/99veryfront-ci-retries
+
+          # `playwright install --with-deps` shells out to `apt-get update`, which
+          # consults every repository configured on the runner image and fails the
+          # whole install when any single one of them is unreachable. The image
+          # ships third-party repositories (packages.microsoft.com/repos/azure-cli,
+          # packages.microsoft.com/ubuntu/24.04/prod, dl.google.com, ...) that
+          # Chromium's system libraries never come from, so an outage there is pure
+          # noise -- and because it is a persistent 403 rather than a blip, retrying
+          # cannot clear it. Park every non-Ubuntu source for the life of this job so
+          # only the archive that actually serves the dependencies can gate us.
+          if grep -rqE '\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
+            sudo mkdir -p /etc/apt/sources.list.d.disabled
+            for source_file in /etc/apt/sources.list.d/*; do
+              [ -f "${source_file}" ] || continue
+              if grep -qE '\.ubuntu\.com' "${source_file}"; then
+                continue
+              fi
+              sudo mv "${source_file}" /etc/apt/sources.list.d.disabled/
+              echo "Disabled apt source unrelated to Chromium deps: ${source_file}"
+            done
+          else
+            echo "::warning::No Ubuntu archive apt source detected; leaving apt sources untouched"
+          fi
       - name: Install Chromium
+        timeout-minutes: 20
         run: |
+          readonly install_attempts=2
+          readonly install_timeout_minutes=7
+          readonly install_kill_grace_seconds=15
+          readonly apt_lock_attempts=12
+          readonly apt_lock_sleep_seconds=5
+          readonly retry_backoff_seconds=20
+          readonly apt_lock_files="/var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock /var/lib/apt/lists/lock"
+
+          # Playwright shells out to apt-get itself, so a lock held by the
+          # runner image's own apt activity used to surface inside the install
+          # as an instant "Could not get lock" failure. A global lock timeout
+          # makes every apt invocation wait for the holder instead.
+          echo 'DPkg::Lock::Timeout "300";' | sudo tee /etc/apt/apt.conf.d/99vf-lock-timeout >/dev/null
+
           wait_for_apt_locks() {
-            for _ in $(seq 1 60); do
-              if ! sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; then
+            for _ in $(seq 1 "${apt_lock_attempts}"); do
+              if ! sudo fuser ${apt_lock_files} >/dev/null 2>&1; then
                 return 0
               fi
-              sleep 5
+              sleep "${apt_lock_sleep_seconds}"
             done
             return 1
           }
 
-          for attempt in 1 2 3; do
-            wait_for_apt_locks
-            timeout 10m deno run -A npm:playwright install --with-deps chromium && exit 0
+          # `timeout` signals only the wrapper process, so a timed-out attempt
+          # orphans the sudo apt-get underneath it. That orphan keeps holding
+          # the dpkg locks and starved every later attempt on this VM. Reap
+          # the lock holders and repair any half-configured packages before
+          # trying again.
+          reap_apt_lock_holders() {
+            sudo fuser -k -TERM ${apt_lock_files} >/dev/null 2>&1 || true
+            sleep 5
+            sudo fuser -k -KILL ${apt_lock_files} >/dev/null 2>&1 || true
+            sudo dpkg --configure -a >/dev/null 2>&1 || true
+          }
+
+          for attempt in $(seq 1 "${install_attempts}"); do
+            if ! wait_for_apt_locks; then
+              echo "::warning::apt/dpkg locks still held; reaping the holders"
+              reap_apt_lock_holders
+            fi
+            timeout --signal=TERM --kill-after="${install_kill_grace_seconds}s" "${install_timeout_minutes}m" \
+              deno run -A npm:playwright install --with-deps chromium && exit 0
             status=$?
 
-            if [ "$attempt" -eq 3 ]; then
+            if [ "$attempt" -eq "${install_attempts}" ]; then
               exit "$status"
             fi
 
-            wait_for_apt_locks || true
-            sudo apt-get clean || true
-            sudo rm -rf /var/lib/apt/lists/* || true
-            sleep $((attempt * 20))
+            reap_apt_lock_holders
+            sleep "${retry_backoff_seconds}"
           done
-      - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60  # v4.0.0
+      - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
         with:
           timeout_minutes: 30
           max_attempts: 2
@@ -261,33 +631,180 @@ jobs:
           command: |
             VERYFRONT_BINARY_FRESH=1 deno task test:e2e:binary
 
+  quality-gate-merge:
+    name: quality gate (merge)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    needs:
+      - ci
+      - unit-tests
+      - coverage
+      - tests
+      - tests-node
+      - tests-bun
+      - tests-binary-e2e
+      - tests-e2e-rsc-browser
+    if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
+    steps:
+      - name: Require merge correctness dependencies
+        env:
+          SOURCE_CHECKS_RESULT: ${{ needs.ci.result }}
+          UNIT_TESTS_RESULT: ${{ needs.unit-tests.result }}
+          COVERAGE_RESULT: ${{ needs.coverage.result }}
+          INTEGRATION_TESTS_RESULT: ${{ needs.tests.result }}
+          NODE_RUNTIME_TESTS_RESULT: ${{ needs.tests-node.result }}
+          BUN_RUNTIME_TESTS_RESULT: ${{ needs.tests-bun.result }}
+          BINARY_E2E_RESULT: ${{ needs.tests-binary-e2e.result }}
+          RSC_BROWSER_E2E_RESULT: ${{ needs.tests-e2e-rsc-browser.result }}
+        run: |
+          failed=0
+          for result_name in \
+            SOURCE_CHECKS_RESULT \
+            UNIT_TESTS_RESULT \
+            COVERAGE_RESULT \
+            INTEGRATION_TESTS_RESULT \
+            NODE_RUNTIME_TESTS_RESULT \
+            BUN_RUNTIME_TESTS_RESULT \
+            BINARY_E2E_RESULT \
+            RSC_BROWSER_E2E_RESULT
+          do
+            result="${!result_name}"
+            if [ "$result" != "success" ]; then
+              echo "::error::$result_name finished with $result"
+              failed=1
+            fi
+          done
+          exit "$failed"
+
   # ============================================
   # CI: npm Install Smoke
   # ============================================
 
   # Clean-room install of the generated npm packages under Node: bare-install
-  # CLI startup, optional-peer metadata, missing-extension error quality, and
-  # extension package loading (see scripts/test/npm-install-smoke.sh).
-  tests-npm-install-smoke:
+  # CLI startup, optional-peer metadata, extension package loading, and a real
+  # starter dev-server render (see scripts/test/npm-install-smoke.sh).
+  npm-smoke-node-versions:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    name: tests (npm install smoke)
+    timeout-minutes: 10
+    name: npm smoke Node version contract
+    outputs:
+      node_versions: ${{ steps.versions.outputs.node_versions }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+      - name: Read npm smoke Node versions
+        id: versions
+        run: |
+          deno eval '
+            import { NPM_SMOKE_NODE_VERSIONS } from "./scripts/build/runtime-support.ts";
+            console.log(`node_versions=${JSON.stringify(NPM_SMOKE_NODE_VERSIONS)}`);
+          ' >> "$GITHUB_OUTPUT"
+
+  tests-npm-install-smoke:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: [npm-smoke-node-versions, npm-compatibility-artifact]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    name: "tests (npm install smoke: Node ${{ matrix.node-version }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ${{ fromJSON(needs.npm-smoke-node-versions.outputs.node_versions) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
         with:
           warm-cache: "true"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
-          node-version: "24"
+          node-version: ${{ matrix.node-version }}
           package-manager-cache: false
+      - name: Download canonical npm compatibility artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: npm-compatibility-${{ github.sha }}
+          path: dist/npm-compatibility
+      - name: Materialize canonical npm output
+        run: |
+          deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=tar \
+            scripts/ci/npm-compatibility-artifact.ts materialize dist/npm-compatibility npm
       - name: Install TypeScript toolchain
         run: npm --prefix storybook ci --ignore-scripts
       - name: Check published package types
-        run: deno task typecheck:consumer
+        run: deno task typecheck:consumer --skip-build
+      - name: Report npm package size
+        run: |
+          deno run --allow-read --allow-run=npm scripts/build/report-artifact-sizes.ts --npm-package npm \
+            | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Clean-room install/import smoke
+        env:
+          VF_NPM_PACK_DIR: ${{ github.workspace }}/dist/npm-compatibility
         run: bash scripts/test/npm-install-smoke.sh
+
+  quality-gate-artifact:
+    name: quality gate (artifact)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    needs:
+      - npm-compatibility-artifact
+      - tests-npm-install-smoke
+      - tests-runtime-critical-flow
+    if: ${{ always() }}
+    steps:
+      - name: Require canonical artifact compatibility
+        env:
+          ARTIFACT_BUILD_RESULT: ${{ needs.npm-compatibility-artifact.result }}
+          NPM_SMOKE_RESULT: ${{ needs.tests-npm-install-smoke.result }}
+          RUNTIME_CRITICAL_FLOW_RESULT: ${{ needs.tests-runtime-critical-flow.result }}
+        run: |
+          failed=0
+          for result_name in \
+            ARTIFACT_BUILD_RESULT \
+            NPM_SMOKE_RESULT \
+            RUNTIME_CRITICAL_FLOW_RESULT
+          do
+            result="${!result_name}"
+            if [ "$result" != "success" ]; then
+              echo "::error::$result_name finished with $result"
+              failed=1
+            fi
+          done
+          exit "$failed"
+      - name: Report npm build reuse
+        if: ${{ success() }}
+        env:
+          BUILD_DURATION_SECONDS: ${{ needs.npm-compatibility-artifact.outputs.build_duration_seconds }}
+          LEGACY_BUILD_COUNT: "5"
+          CANONICAL_BUILD_COUNT: "1"
+        run: |
+          case "$BUILD_DURATION_SECONDS" in
+            ''|*[!0-9]*)
+              echo "::error::Missing numeric canonical npm build duration"
+              exit 1
+              ;;
+          esac
+          before=$(awk -v seconds="$BUILD_DURATION_SECONDS" -v count="$LEGACY_BUILD_COUNT" \
+            'BEGIN { printf "%.2f", seconds * count / 60 }')
+          after=$(awk -v seconds="$BUILD_DURATION_SECONDS" -v count="$CANONICAL_BUILD_COUNT" \
+            'BEGIN { printf "%.2f", seconds * count / 60 }')
+          saved=$(awk -v before="$before" -v after="$after" \
+            'BEGIN { printf "%.2f", before - after }')
+          {
+            echo "### Canonical npm build reuse"
+            echo
+            echo "Measured producer duration: ${BUILD_DURATION_SECONDS}s"
+            echo "Estimate basis: five current npm build consumers (three runtime critical-flow jobs and two npm install-smoke jobs)"
+            echo "Estimated before: ${before} npm build runner-minutes"
+            echo "Estimated after: ${after} npm build runner-minutes"
+            echo "Estimated savings: ${saved} npm build runner-minutes"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   tests-sentry-runtime-packages:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -295,11 +812,14 @@ jobs:
     timeout-minutes: 15
     name: tests (sentry runtime packages)
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
         with:
           warm-cache: "true"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "24"
           package-manager-cache: false
@@ -313,12 +833,15 @@ jobs:
   tests-split-mode:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.RUN_SPLIT_MODE_TEST == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     name: tests (split mode)
     continue-on-error: true
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
 
       - name: Compile binary
         run: deno task build
@@ -375,14 +898,19 @@ jobs:
       is_stable: ${{ steps.check.outputs.is_stable }}
       stable_release_requested: ${{ steps.check.outputs.stable_release_requested }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
       - name: Detect release type
         id: check
         run: |
           VERSION=$(jq -r '.version' deno.json)
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          if ! [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$ ]]; then
+            echo "::error::deno.json version must be a valid npm semver or prerelease"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
           STABLE_RELEASE_REQUESTED=$(bash scripts/ci/stable-release-requested.sh \
             "${{ github.event_name }}" \
@@ -404,45 +932,169 @@ jobs:
 
   # ============================================
   # CD: Build Binaries (main only)
-  # Version comes directly from deno.json
+  # Stable versions come from deno.json. RC versions append the workflow run number.
   # ============================================
+
+  tests-proxy-binary:
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+      # Caches npm packages from the registry. A truncated response
+      # ("error reading a body from connection") fails the whole leg, so retry
+      # before giving up rather than reddening a build on registry weather.
+      - name: Prepare build dependencies
+        shell: bash
+        run: |
+          set -uo pipefail
+          for attempt in 1 2 3; do
+            if deno task build:prepare; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              delay=$((attempt * 10))
+              echo "build:prepare failed (attempt ${attempt}/3); retrying in ${delay}s" >&2
+              sleep "$delay"
+            fi
+          done
+          echo "build:prepare failed after 3 attempts" >&2
+          exit 1
+      - name: Verify proxy dependency lock is current
+        run: |
+          deno task build:proxy-lock
+          git diff --exit-code -- scripts/build/proxy-deno.lock
+      - name: Compile proxy binary
+        run: |
+          deno run -A scripts/build/compile-binary.ts \
+            --entrypoint cli/proxy-main.ts \
+            --profile proxy \
+            --target x86_64-unknown-linux-gnu \
+            --output veryfront-proxy-linux-x64
+      - name: Smoke test proxy binary
+        run: bash scripts/build/smoke-proxy-binary.sh ./veryfront-proxy-linux-x64
+      - name: Enforce proxy memory limit
+        env:
+          PROXY_MEMORY_LIMIT: 1536m
+          PROXY_MEMORY_ATTEMPTS: "3"
+        run: bash scripts/build/smoke-proxy-memory.sh ./veryfront-proxy-linux-x64
 
   build-binaries:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.ref == 'refs/heads/main' }}
+    needs: [version-check]
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ contains(matrix.os, 'windows') }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: macos-latest
             target: aarch64-apple-darwin
             name: veryfront-macos-arm64
+            entrypoint: cli/main.ts
+            profile: full
           - os: macos-latest
             target: x86_64-apple-darwin
             name: veryfront-macos-x64
+            entrypoint: cli/main.ts
+            profile: full
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             name: veryfront-linux-x64
+            entrypoint: cli/main.ts
+            profile: full
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             name: veryfront-linux-arm64
+            entrypoint: cli/main.ts
+            profile: full
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: veryfront-proxy-linux-x64
+            entrypoint: cli/proxy-main.ts
+            profile: proxy
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            name: veryfront-proxy-linux-arm64
+            entrypoint: cli/proxy-main.ts
+            profile: proxy
           - os: windows-2022
             target: x86_64-pc-windows-msvc
             name: veryfront-windows-x64.exe
+            entrypoint: cli/main.ts
+            profile: full
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
 
-      - run: deno task build:prepare
+      - name: Prepare RC build version
+        if: needs.version-check.outputs.is_stable == 'false'
+        env:
+          VERSION: ${{ needs.version-check.outputs.version }}.${{ github.run_number }}
+        run: deno run -A scripts/ci/prepare-rc-build.ts
+
+      # Caches npm packages from the registry. A truncated response
+      # ("error reading a body from connection") fails the whole leg, so retry
+      # before giving up rather than reddening a build on registry weather.
+      - name: Prepare build dependencies
+        shell: bash
+        run: |
+          set -uo pipefail
+          for attempt in 1 2 3; do
+            if deno task build:prepare; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              delay=$((attempt * 10))
+              echo "build:prepare failed (attempt ${attempt}/3); retrying in ${delay}s" >&2
+              sleep "$delay"
+            fi
+          done
+          echo "build:prepare failed after 3 attempts" >&2
+          exit 1
+
+      - name: Verify proxy dependency lock is current
+        if: matrix.profile == 'proxy'
+        shell: bash
+        run: |
+          deno task build:proxy-lock
+          git diff --exit-code -- scripts/build/proxy-deno.lock
 
       - name: Compile binary
         shell: bash
         run: |
           deno run -A scripts/build/compile-binary.ts \
+            --entrypoint ${{ matrix.entrypoint }} \
+            --profile ${{ matrix.profile }} \
             --target ${{ matrix.target }} \
             --output ${{ matrix.name }}
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+      - name: Report binary size
+        shell: bash
+        run: |
+          deno run --allow-read scripts/build/report-artifact-sizes.ts ./${{ matrix.name }} \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Smoke test proxy binary
+        if: matrix.name == 'veryfront-proxy-linux-x64'
+        shell: bash
+        run: bash scripts/build/smoke-proxy-binary.sh ./${{ matrix.name }}
+
+      - name: Enforce proxy memory limit
+        if: matrix.name == 'veryfront-proxy-linux-x64'
+        shell: bash
+        env:
+          PROXY_MEMORY_LIMIT: 1536m
+          PROXY_MEMORY_ATTEMPTS: "3"
+        run: bash scripts/build/smoke-proxy-memory.sh ./veryfront-proxy-linux-x64
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.name }}
           path: ${{ matrix.name }}
@@ -456,59 +1108,96 @@ jobs:
 
   prerelease:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.outputs.is_stable == 'false' }}
-    needs: [ci, tests, coverage, tests-binary-e2e, tests-npm-install-smoke, tests-sentry-runtime-packages, build-binaries, version-check]
+    needs: [
+      ci,
+      tests,
+      quality-gate-artifact,
+      tests-binary-e2e,
+      tests-npm-install-smoke,
+      tests-sentry-runtime-packages,
+      tests-windows-localhost,
+      build-binaries,
+      npm-compatibility-artifact,
+      version-check,
+    ]
     runs-on: ubuntu-latest
     environment: production
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     permissions:
       contents: write
       id-token: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
           package-manager-cache: false
 
+      - name: Pin npm CLI for publication
+        env:
+          NPM_CLI_VERSION: "11.12.1"
+        run: npm install --global "npm@${NPM_CLI_VERSION}"
+
       - name: Compute RC version
         id: version
+        env:
+          BASE_VERSION: ${{ needs.version-check.outputs.version }}
+          RUN_NUMBER: ${{ github.run_number }}
         run: |
-          BASE=${{ needs.version-check.outputs.version }}
-          RC_VERSION="${BASE}.${{ github.run_number }}"
-          echo "version=${RC_VERSION}" >> $GITHUB_OUTPUT
+          RC_VERSION="${BASE_VERSION}.${RUN_NUMBER}"
+          echo "version=${RC_VERSION}" >> "$GITHUB_OUTPUT"
           echo "Publishing RC: ${RC_VERSION}"
 
-      - name: Build and publish
+      - name: Download tested npm compatibility artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: npm-compatibility-${{ github.sha }}
+          path: dist/npm-compatibility
+
+      - name: Publish tested RC npm artifact
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          NPM_PACK_DIR: ${{ github.workspace }}/dist/npm-compatibility
         run: |
-          deno task build:npm
+          deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=tar \
+            scripts/ci/npm-compatibility-artifact.ts materialize dist/npm-compatibility npm
+          deno run --allow-read --allow-run=npm scripts/build/report-artifact-sizes.ts --npm-package npm \
+            | tee -a "$GITHUB_STEP_SUMMARY"
           scripts/ci/publish-npm-packages.sh rc-publish
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: binaries
+
+      - name: Prepare RC checkout for SBOM
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: deno run -A scripts/ci/prepare-rc-build.ts
 
       - name: Generate SBOM
         env:
           VERSION: ${{ steps.version.outputs.version }}
-        run: deno task sbom:all --output-dir "dist/sbom-${VERSION}"
+        run: |
+          deno task sbom:all --output-dir "dist/sbom-${VERSION}"
+          deno task sbom --lock scripts/build/proxy-deno.lock --output "dist/sbom-${VERSION}/proxy.json"
 
       - name: Create release GitHub App token
         id: release-app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.VERYFRONT_RELEASE_APP_PRIVATE_KEY }}
           owner: veryfront
           repositories: |
             veryfront
-            veryfront-server
-            veryfront-job-runner
-            veryfront-sandbox
           permission-contents: write
 
       - name: Create GitHub pre-release
@@ -543,30 +1232,6 @@ jobs:
             scripts/install.sh \
             $SBOMS
 
-      - name: Trigger server deploy
-        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697  # v4.0.1
-        with:
-          token: ${{ steps.release-app-token.outputs.token }}
-          repository: veryfront/veryfront-server
-          event-type: veryfront-code-released
-          client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
-
-      - name: Trigger job-runner deploy
-        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697  # v4.0.1
-        with:
-          token: ${{ steps.release-app-token.outputs.token }}
-          repository: veryfront/veryfront-job-runner
-          event-type: veryfront-code-released
-          client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
-
-      - name: Trigger sandbox deploy
-        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697  # v4.0.1
-        with:
-          token: ${{ steps.release-app-token.outputs.token }}
-          repository: veryfront/veryfront-sandbox
-          event-type: veryfront-code-released
-          client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
-
   # ============================================
   # CD: Stable Release (clean semver only)
   # Runs when deno.json changes to X.Y.Z (no suffix), or on manual dispatch
@@ -575,33 +1240,48 @@ jobs:
 
   release:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.outputs.is_stable == 'true' && needs.version-check.outputs.stable_release_requested == 'true' }}
-    needs: [ci, tests, coverage, tests-binary-e2e, tests-npm-install-smoke, tests-sentry-runtime-packages, build-binaries, version-check]
+    needs: [
+      ci,
+      tests,
+      coverage,
+      quality-gate-artifact,
+      tests-binary-e2e,
+      tests-npm-install-smoke,
+      tests-sentry-runtime-packages,
+      tests-windows-localhost,
+      build-binaries,
+      npm-compatibility-artifact,
+      version-check,
+    ]
     runs-on: ubuntu-latest
     environment: production
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     permissions:
       contents: write
       id-token: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Read version
         id: version
+        env:
+          VERSION: ${{ needs.version-check.outputs.version }}
         run: |
-          echo "version=${{ needs.version-check.outputs.version }}" >> $GITHUB_OUTPUT
-          echo "Publishing stable: ${{ needs.version-check.outputs.version }}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Publishing stable: ${VERSION}"
 
       - name: Create release GitHub App token
         id: release-app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.VERYFRONT_RELEASE_APP_PRIVATE_KEY }}
           owner: veryfront
           repositories: |
             veryfront
-            veryfront-server
-            veryfront-job-runner
-            veryfront-sandbox
           permission-contents: write
 
       - name: Ensure stable version is unpublished
@@ -626,36 +1306,56 @@ jobs:
           fi
 
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
           package-manager-cache: false
 
-      - name: Build and publish
+      - name: Pin npm CLI for publication
+        env:
+          NPM_CLI_VERSION: "11.12.1"
+        run: npm install --global "npm@${NPM_CLI_VERSION}"
+
+      - name: Download tested npm compatibility artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: npm-compatibility-${{ github.sha }}
+          path: dist/npm-compatibility
+
+      - name: Publish tested stable npm artifact
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          NPM_PACK_DIR: ${{ github.workspace }}/dist/npm-compatibility
         run: |
-          deno task build:npm
+          deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=tar \
+            scripts/ci/npm-compatibility-artifact.ts materialize dist/npm-compatibility npm
+          deno run --allow-read --allow-run=npm scripts/build/report-artifact-sizes.ts --npm-package npm \
+            | tee -a "$GITHUB_STEP_SUMMARY"
           scripts/ci/publish-npm-packages.sh release-publish
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: binaries
 
       - name: Generate SBOM
         env:
           VERSION: ${{ steps.version.outputs.version }}
-        run: deno task sbom:all --output-dir "dist/sbom-${VERSION}"
+        run: |
+          deno task sbom:all --output-dir "dist/sbom-${VERSION}"
+          deno task sbom --lock scripts/build/proxy-deno.lock --output "dist/sbom-${VERSION}/proxy.json"
 
       - name: Create git tag
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          SOURCE_REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="v${VERSION}"
           git tag "${TAG}"
-          git push origin "${TAG}"
+          # Checkout does not persist credentials; authenticate only this push.
+          git push "https://x-access-token:${SOURCE_REPO_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "${TAG}"
           echo "Created tag ${TAG}"
 
       - name: Create GitHub releases
@@ -674,6 +1374,19 @@ jobs:
           done
           echo "Available binaries: $BINARIES"
           echo "Available SBOMs: $SBOMS"
+
+          # Publish a checksum manifest alongside the assets. install.sh verifies a
+          # downloaded binary against this before moving it into place, so the
+          # manifest must name assets exactly as they are uploaded -- basenames,
+          # not the artifact paths they were downloaded to.
+          SUMS_FILE="SHA256SUMS"
+          : > "$SUMS_FILE"
+          for f in $BINARIES scripts/install.sh scripts/install.ps1; do
+            [ -f "$f" ] || continue
+            sha256sum "$f" | sed "s#  .*/#  #" >> "$SUMS_FILE"
+          done
+          echo "Checksum manifest:"
+          cat "$SUMS_FILE"
 
           # Clean up rc pre-releases (created by the prerelease job on main pushes)
           gh release list --repo veryfront/veryfront --json tagName -q ".[].tagName" \
@@ -694,6 +1407,7 @@ jobs:
           npm install -g veryfront
           ```' \
             $BINARIES \
+            "$SUMS_FILE" \
             scripts/install.sh \
             scripts/install.ps1 \
             $SBOMS
@@ -708,29 +1422,118 @@ jobs:
             --generate-notes \
             --notes "Binaries available at: https://github.com/veryfront/veryfront/releases/tag/v${VERSION}"
 
+  quality-gate-registry:
+    name: quality gate (registry)
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.result == 'success' && (needs.version-check.outputs.is_stable == 'false' || needs.version-check.outputs.stable_release_requested == 'true') }}
+    needs: [prerelease, release, version-check]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Report selected release result
+        env:
+          IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
+          PRERELEASE_RESULT: ${{ needs.prerelease.result }}
+          STABLE_RELEASE_RESULT: ${{ needs.release.result }}
+        run: |
+          if [ "$IS_STABLE" = "true" ]; then
+            selected_result_name="STABLE_RELEASE_RESULT"
+          else
+            selected_result_name="PRERELEASE_RESULT"
+          fi
+          selected_result="${!selected_result_name}"
+          if [ "$selected_result" != "success" ]; then
+            echo "::warning::REGISTRY RELEASE NON-SUCCESS [configuration]: $selected_result_name finished with $selected_result. Registry validation will continue, but downstream release dispatch remains blocked." >&2
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Validate exact registry release
+        env:
+          RC_VERSION: ${{ needs.prerelease.outputs.version }}
+          STABLE_VERSION: ${{ needs.release.outputs.version }}
+          GITHUB_SHA: ${{ github.sha }}
+          IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
+        run: bash scripts/ci/registry-release-smoke.sh
+
+  dispatch-release:
+    name: dispatch release
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.quality-gate-registry.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) }}
+    needs: [quality-gate-registry, prerelease, release, version-check]
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 5
+    steps:
+      - name: Resolve published version
+        id: version
+        env:
+          IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
+          RC_VERSION: ${{ needs.prerelease.outputs.version }}
+          STABLE_VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          case "$IS_STABLE" in
+            true) version="$STABLE_VERSION" ;;
+            false) version="$RC_VERSION" ;;
+            *)
+              echo "::error::Unsupported release stability value: $IS_STABLE"
+              exit 1
+              ;;
+          esac
+          if [ -z "$version" ]; then
+            echo "::error::Selected published version is empty"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build dispatch payload
+        id: payload
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          payload=$(jq -cn --arg version "$VERSION" '{version: $version}')
+          echo "payload=$payload" >> "$GITHUB_OUTPUT"
+
+      - name: Create release GitHub App token
+        id: release-app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.VERYFRONT_RELEASE_APP_PRIVATE_KEY }}
+          owner: veryfront
+          repositories: |
+            veryfront-server
+            veryfront-job-runner
+            veryfront-sandbox
+          permission-contents: write
+
       - name: Trigger server deploy
-        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697  # v4.0.1
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
           token: ${{ steps.release-app-token.outputs.token }}
           repository: veryfront/veryfront-server
           event-type: veryfront-code-released
-          client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
+          client-payload: ${{ steps.payload.outputs.payload }}
 
       - name: Trigger job-runner deploy
-        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697  # v4.0.1
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
           token: ${{ steps.release-app-token.outputs.token }}
           repository: veryfront/veryfront-job-runner
           event-type: veryfront-code-released
-          client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
+          client-payload: ${{ steps.payload.outputs.payload }}
 
       - name: Trigger sandbox deploy
-        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697  # v4.0.1
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
           token: ${{ steps.release-app-token.outputs.token }}
           repository: veryfront/veryfront-sandbox
           event-type: veryfront-code-released
-          client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
+          client-payload: ${{ steps.payload.outputs.payload }}
 
   # ============================================
   # CD: Update Homebrew (stable releases only)
@@ -742,11 +1545,13 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Create Homebrew tap GitHub App token
         id: homebrew-app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.HOMEBREW_TAP_APP_CLIENT_ID }}
           private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
@@ -756,7 +1561,7 @@ jobs:
           permission-pull-requests: write
 
       - name: Update Homebrew tap
-        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60  # v4.0.0
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
         env:
           HOMEBREW_TAP_TOKEN: ${{ steps.homebrew-app-token.outputs.token }}
         with:

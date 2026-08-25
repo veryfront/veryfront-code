@@ -73,7 +73,7 @@ describe("BunFileSystemAdapter", () => {
     }
   });
 
-  it("omits only snapshot authority for absent or zero O_NOFOLLOW", () => {
+  it("requires O_NOFOLLOW on POSIX and omits unproven Windows snapshot authority", () => {
     const fake = runtimeFor({
       size: 0,
       exists: () => Promise.resolve(true),
@@ -82,13 +82,18 @@ describe("BunFileSystemAdapter", () => {
     });
     const TestableAdapter = BunFileSystemAdapter as unknown as new (
       runtime: BunFileSystemRuntime,
-      options: { noFollow?: number },
+      options: { noFollow?: number; platform?: "posix" | "windows" },
     ) => BunFileSystemAdapter;
     for (const noFollow of [undefined, 0]) {
-      const adapter = new TestableAdapter(fake.runtime, { noFollow });
+      const adapter = new TestableAdapter(fake.runtime, { noFollow, platform: "posix" });
       assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), false);
       assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), true);
     }
+    const windowsAdapter = new TestableAdapter(fake.runtime, {
+      noFollow: 1,
+      platform: "windows",
+    });
+    assertEquals(Object.hasOwn(windowsAdapter, "readFileSnapshotWithinLimit"), false);
   });
 
   it("marks only direct built-in instances as native", () => {
@@ -106,6 +111,33 @@ describe("BunFileSystemAdapter", () => {
     );
     assertEquals(
       isNativeFileSystemAdapter(new DerivedAdapter(fake.runtime)),
+      false,
+    );
+  });
+
+  it("refuses a subclass that hides its own prototype.constructor", () => {
+    class ConstructorDeletingAdapter extends BunFileSystemAdapter {}
+    Reflect.deleteProperty(ConstructorDeletingAdapter.prototype, "constructor");
+
+    class ConstructorSpoofingAdapter extends BunFileSystemAdapter {}
+    Object.defineProperty(ConstructorSpoofingAdapter.prototype, "constructor", {
+      configurable: true,
+      value: BunFileSystemAdapter,
+    });
+
+    const fake = runtimeFor({
+      size: 0,
+      exists: () => Promise.resolve(true),
+      text: () => Promise.resolve(""),
+      arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+    });
+
+    assertEquals(
+      isNativeFileSystemAdapter(new ConstructorDeletingAdapter(fake.runtime)),
+      false,
+    );
+    assertEquals(
+      isNativeFileSystemAdapter(new ConstructorSpoofingAdapter(fake.runtime)),
       false,
     );
   });

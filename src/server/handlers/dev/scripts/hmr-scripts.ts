@@ -8,6 +8,7 @@
  */
 
 import { studioTargetOriginHelperSource } from "#veryfront/security/http/studio-origin-policy.ts";
+import { PROJECT_STYLESHEET_IDS } from "#veryfront/html";
 
 interface HMRScriptOptions {
   /** Log prefix for console messages */
@@ -25,7 +26,19 @@ interface HMRScriptOptions {
  * 5. Browser fetches fresh versions of all modules in the dependency tree
  */
 function getUpdateJSFunction(logPrefix: string): string {
+  const stylesheetIds = JSON.stringify(PROJECT_STYLESHEET_IDS);
   return `
+  const PROJECT_STYLESHEET_IDS = ${stylesheetIds};
+  let stylesheetUpdateQueue = Promise.resolve();
+
+  function getProjectStylesheet() {
+    for (const id of PROJECT_STYLESHEET_IDS) {
+      const stylesheet = document.getElementById(id);
+      if (stylesheet) return stylesheet;
+    }
+    return null;
+  }
+
   function refreshStylesheets(changedPath) {
     // Try targeted stylesheet refresh first
     if (changedPath) {
@@ -39,18 +52,18 @@ function getUpdateJSFunction(logPrefix: string): string {
       }
     }
 
-    // Fall back to Tailwind CSS link refresh
-    const tailwind = document.getElementById('vf-tailwind-css');
-    if (tailwind) {
-      tailwind.href = '/_vf_styles/styles.css?t=' + Date.now();
-      dlog('${logPrefix} Tailwind CSS refreshed');
+    // Fall back to the generated project stylesheet.
+    const projectStylesheet = getProjectStylesheet();
+    if (projectStylesheet instanceof HTMLLinkElement) {
+      projectStylesheet.href = '/_vf_styles/styles.css?t=' + Date.now();
+      dlog('${logPrefix} Project stylesheet refreshed');
       return true;
     }
     return false;
   }
 
-  async function swapTailwindStylesheet(nextHref) {
-    const current = document.getElementById('vf-tailwind-css');
+  async function swapProjectStylesheet(nextHref) {
+    const current = getProjectStylesheet();
     if (!(current instanceof HTMLLinkElement) || !nextHref || !current.parentNode) {
       return false;
     }
@@ -68,7 +81,7 @@ function getUpdateJSFunction(logPrefix: string): string {
     }
 
     pending.removeAttribute('id');
-    pending.setAttribute('data-vf-tailwind-pending', 'true');
+    pending.setAttribute('data-vf-stylesheet-pending', 'true');
     pending.href = nextHref;
 
     await new Promise((resolve, reject) => {
@@ -91,8 +104,8 @@ function getUpdateJSFunction(logPrefix: string): string {
           return;
         }
 
-        pending.removeAttribute('data-vf-tailwind-pending');
-        pending.id = 'vf-tailwind-css';
+        pending.removeAttribute('data-vf-stylesheet-pending');
+        pending.id = current.id;
         current.remove();
         resolve(true);
       }
@@ -113,10 +126,21 @@ function getUpdateJSFunction(logPrefix: string): string {
     return true;
   }
 
-  async function applyStyleUpdate(changedPath, styleHref) {
+  function applyStyleUpdate(changedPath, styleHref) {
+    const update = stylesheetUpdateQueue.then(() =>
+      applyStyleUpdateNow(changedPath, styleHref)
+    );
+    stylesheetUpdateQueue = update.then(
+      () => undefined,
+      () => undefined,
+    );
+    return update;
+  }
+
+  async function applyStyleUpdateNow(changedPath, styleHref) {
     if (styleHref) {
       try {
-        const swapped = await swapTailwindStylesheet(styleHref);
+        const swapped = await swapProjectStylesheet(styleHref);
         if (swapped) {
           dlog('${logPrefix} Swapped stylesheet:', styleHref);
           return true;
@@ -150,7 +174,7 @@ function getUpdateJSFunction(logPrefix: string): string {
         window.__veryfrontClearComponentCache();
       }
 
-      // Refresh Tailwind CSS (new classes may be needed from JS changes)
+      // Refresh generated project CSS (source changes may introduce new candidates).
       await applyStyleUpdate(path, styleHref);
 
       // Re-render the page with fresh modules

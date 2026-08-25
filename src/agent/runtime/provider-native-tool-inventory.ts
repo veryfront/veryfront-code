@@ -1,4 +1,4 @@
-import type { HostToolSet } from "#veryfront/tool";
+import type { HostToolSet, ToolDefinition } from "#veryfront/tool";
 
 const ANTHROPIC_PROVIDER_NATIVE_TOOL_NAMES = [
   "web_fetch",
@@ -6,6 +6,11 @@ const ANTHROPIC_PROVIDER_NATIVE_TOOL_NAMES = [
 ] as const;
 
 const OPENAI_PROVIDER_NATIVE_TOOL_NAMES = ["web_search"] as const;
+
+const PROVIDER_NATIVE_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = {
+  web_fetch: "Fetch and read the contents of a web page.",
+  web_search: "Search the web for current information.",
+};
 
 /** Options accepted by provider native tool inventory. */
 export interface ProviderNativeToolInventoryOptions {
@@ -56,6 +61,21 @@ export function getProviderNativeToolNames(
     default:
       return [];
   }
+}
+
+/** Create schema-free search entries for configured provider-native tools. */
+export function createProviderNativeToolExposureDefinitions(
+  options: ProviderNativeToolInventoryOptions & { toolNames: readonly string[] },
+): ToolDefinition[] {
+  const supported = new Set(getProviderNativeToolNames(options));
+  return [...new Set(options.toolNames)]
+    .filter((toolName) => supported.has(toolName))
+    .sort()
+    .map((toolName) => ({
+      name: toolName,
+      description: PROVIDER_NATIVE_TOOL_DESCRIPTIONS[toolName] ?? "Provider-native tool.",
+      parameters: { type: "object", properties: {} },
+    }));
 }
 
 /** Normalize allowed remote tool names without adding undeclared provider-native tools. */

@@ -1,5 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
+import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import type { ChatUiMessage } from "../../chat/types.ts";
 import { generateText } from "../../runtime/runtime-bridge.ts";
 import { createGenerateModel } from "../../runtime/runtime-bridge.test-helpers.ts";
@@ -39,7 +41,7 @@ function rejectIfStillPending<T>(
 function createAbortAwarePendingFetch(requestedUrls: string[] = []): typeof fetch {
   return (input, init): Promise<Response> => {
     requestedUrls.push(input.toString());
-    const signal = init?.signal;
+    const signal = observeFetchRequestInit(init).signal;
     if (!(signal instanceof AbortSignal)) {
       return new Promise(() => {});
     }
@@ -65,6 +67,69 @@ Deno.test("prepareAgentRuntimeMessagesFromUiMessages returns an empty-conversati
 
   assertEquals(messages[0]?.role, "user");
   assertEquals(messages[0]?.parts, [{ type: "text", text: "Suggest next steps." }]);
+});
+
+it("prepareAgentRuntimeMessagesFromUiMessages uses the default empty-conversation prompt", async () => {
+  const messages = await prepareAgentRuntimeMessagesFromUiMessages({ messages: [] });
+
+  assertEquals(messages.length, 1, "an empty conversation yields exactly one prompt message");
+  assertEquals(messages[0]?.role, "user", "the default prompt is sent as a user turn");
+  assertEquals(
+    messages[0]?.parts,
+    [{
+      type: "text",
+      text:
+        "Please provide 3-4 specific suggestions for what I could build or improve based on the current project context.",
+    }],
+    "the literal default prompt must reach the model",
+  );
+});
+
+it("prepareAgentRuntimeMessagesFromUiMessages treats a whitespace-only user turn as empty", async () => {
+  const messages = await prepareAgentRuntimeMessagesFromUiMessages({
+    messages: [userMessage([{ type: "text", text: "   " }])],
+  });
+
+  assertEquals(messages.length, 1, "a whitespace-only turn is replaced by one prompt message");
+  assertEquals(
+    messages[0]?.parts,
+    [{
+      type: "text",
+      text:
+        "Please provide 3-4 specific suggestions for what I could build or improve based on the current project context.",
+    }],
+    "a whitespace-only user turn must be substituted with the default prompt",
+  );
+});
+
+it("prepareAgentRuntimeMessagesFromUiMessages keeps an attachment-only user turn", async () => {
+  const messages = await prepareAgentRuntimeMessagesFromUiMessages({
+    messages: [
+      userMessage([
+        {
+          type: "file",
+          mediaType: "image/png",
+          filename: "shot.png",
+          url: "data:image/png;base64,iVBORw0KGgo=",
+        },
+      ]),
+    ],
+  });
+
+  const parts = messages[0]?.parts ?? [];
+  assertEquals(
+    parts.some((part) => part.type === "image" || part.type === "file"),
+    true,
+    "an attachment-only user turn must not be treated as an empty conversation",
+  );
+  const text = parts
+    .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : [])
+    .join("\n");
+  assertEquals(
+    text.includes("specific suggestions"),
+    false,
+    "the canned suggestions prompt must not replace an attachment",
+  );
 });
 
 Deno.test("prepareAgentRuntimeMessagesFromUiMessages preserves source message ids", async () => {

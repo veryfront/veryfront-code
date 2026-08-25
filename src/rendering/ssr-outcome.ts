@@ -1,14 +1,18 @@
 import { isDataControlResult } from "#veryfront/data/helpers.ts";
-import type { DataResult } from "#veryfront/data/types.ts";
+import type { DataResponseMetadata, DataResult } from "#veryfront/data/types.ts";
+import {
+  getAttachedDataResponseMetadata,
+  normalizeDataResponseMetadata,
+} from "#veryfront/data/response-metadata.ts";
 import { VeryfrontError } from "#veryfront/errors";
 
 export type SSRControlOutcome =
-  | { kind: "not-found" }
+  | ({ kind: "not-found" } & DataResponseMetadata)
   | {
     kind: "redirect";
     location: string;
     permanent: boolean;
-  };
+  } & DataResponseMetadata;
 
 export type SSRFailureOutcome =
   | SSRControlOutcome
@@ -42,6 +46,8 @@ interface RedirectResultContext {
     destination?: unknown;
     permanent?: unknown;
   };
+  headers?: unknown;
+  cookies?: unknown;
 }
 
 interface ErrorBoundarySignal {
@@ -93,7 +99,12 @@ export function resolveSSRControlOutcome(error: unknown): SSRControlOutcome | nu
   const control = findSSRControlOutcome(error);
   if (control) return control;
 
-  if (isFileNotFoundError(error)) return { kind: "not-found" };
+  if (isFileNotFoundError(error)) {
+    return {
+      kind: "not-found",
+      ...getAttachedDataResponseMetadata(error),
+    };
+  }
 
   if (error instanceof VeryfrontError && error.slug === "render-error") {
     const redirect = extractRedirectLocation(error);
@@ -102,6 +113,7 @@ export function resolveSSRControlOutcome(error: unknown): SSRControlOutcome | nu
         kind: "redirect",
         location: redirect.destination,
         permanent: redirect.permanent,
+        ...redirect.responseMetadata,
       };
     }
   }
@@ -172,26 +184,84 @@ function toSSRControlOutcome(result: DataResult): SSRControlOutcome {
       kind: "redirect",
       location: result.redirect.destination,
       permanent: result.redirect.permanent === true,
+      ...normalizeDataResponseMetadata(result),
     };
   }
 
-  return { kind: "not-found" };
+  return {
+    kind: "not-found",
+    ...normalizeDataResponseMetadata(result),
+  };
 }
 
 function extractRedirectLocation(
   error: VeryfrontError,
-): { destination: string; permanent: boolean } | null {
-  const redirect = (error.context as RedirectResultContext | undefined)?.redirect;
+): {
+  destination: string;
+  permanent: boolean;
+  responseMetadata: DataResponseMetadata;
+} | null {
+  const context = error.context as RedirectResultContext | undefined;
+  const redirect = context?.redirect;
   if (!redirect || typeof redirect.destination !== "string") return null;
 
-  return {
-    destination: redirect.destination,
-    permanent: redirect.permanent === true,
-  };
+  try {
+    return {
+      destination: redirect.destination,
+      permanent: redirect.permanent === true,
+      responseMetadata: getAttachedDataResponseMetadata(error),
+    };
+  } catch {
+    return null;
+  }
 }
 
-function isFileNotFoundError(error: unknown): boolean {
+function isFileNotFoundError(error: unknown): error is VeryfrontError {
   return error instanceof VeryfrontError && error.slug === "file-not-found";
+}
+
+/**
+ * True for the veryfront-api filesystem adapter's own "this path is not in the
+ * release" error, and for nothing else.
+ *
+ * The `file-not-found` slug alone is not safe to route a status on. It is
+ * raised in-tree for conditions that are not an absent source at all:
+ * `transforms/esm/http-cache.ts` raises it when a bundle write reports success
+ * and the file still is not there, and `discovery/transpiler.ts` folds EACCES,
+ * EIO, aborts and timeouts into it. Both are server faults, and answering them
+ * with a 404 would hide a real outage behind a status nothing alerts on.
+ *
+ * `code` narrows it: of the sixteen in-tree raisers of this slug, exactly two
+ * set ENOENT alongside it -- `createNotFoundLikeError`, and the re-raise in
+ * `rendering/orchestrator/pipeline.ts`, which carries the marker across that
+ * boundary only when every critical failure already had it. Removing either
+ * assignment reddens tests.
+ *
+ * This is a correctness guard, not a security boundary, and the distinction
+ * matters because the check reads as though it were one. `FILE_NOT_FOUND` and
+ * `VeryfrontError` are public API via `veryfront/errors`, so project code can
+ * raise this slug and assign an own `code` that this predicate accepts. The
+ * own-data-descriptor read stops an accidental accessor, not a determined
+ * forgery, and no project getter runs during classification. A project that
+ * did forge it would route its own route to 404 and suppress its own alerting;
+ * nothing cross-tenant turns on it, and `notFound()` already lets a project
+ * reach a 404 by design.
+ *
+ * The narrowing is deliberately conservative: adapters that raise the slug
+ * without ENOENT -- `runtime/cloudflare/filesystem.ts`, `fs/github`, `mock.ts`,
+ * `skill/testing.ts` -- answer 500 for a genuinely absent file rather than 404.
+ * Wrong in the safe direction today because SSR is served through the
+ * veryfront-api adapter. If SSR is ever served through one of those, the
+ * symptom this guard exists to fix returns there and they need the marker too.
+ *
+ * Message text is never consulted, so an error that merely reads "not found"
+ * stays a fault.
+ */
+export function isMissingProjectSourceError(error: unknown): boolean {
+  if (!isFileNotFoundError(error)) return false;
+
+  const code = Object.getOwnPropertyDescriptor(error, "code");
+  return code !== undefined && "value" in code && code.value === "ENOENT";
 }
 
 function isUndeployedFileListError(error: unknown): boolean {

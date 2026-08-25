@@ -13,6 +13,24 @@ import {
   setApplicationErrorReporter,
 } from "./application-errors.ts";
 import type { ApplicationErrorContext as SharedApplicationErrorContext } from "./application-error-contract.ts";
+import { MAX_APPLICATION_ERROR_CONTEXT_VALUE_LENGTH } from "./limits.ts";
+import {
+  ASSET_OPTIMIZATION_ERROR,
+  BUILD_FAILED,
+  BUNDLE_ERROR,
+  COMPILATION_ERROR,
+  CONFIG_PARSE_ERROR,
+  createError,
+  IMPORT_RESOLUTION_ERROR,
+  INITIALIZATION_ERROR,
+  MARKDOWN_COMPILE_ERROR,
+  MDX_COMPILE_ERROR,
+  RENDER_ERROR,
+  SOURCEMAP_ERROR,
+  SSG_GENERATION_ERROR,
+  toError,
+  TYPESCRIPT_ERROR,
+} from "#veryfront/errors";
 
 it("application error reporter is optional", async () => {
   setApplicationErrorReporter(undefined);
@@ -67,6 +85,49 @@ it("application error reporter receives unexpected failures and correlation cont
   assertEquals(flushTimeout, 1_500);
 });
 
+it("application error context is redacted and length bounded before it reaches the reporter", () => {
+  const snapshots: SharedApplicationErrorContext[] = [];
+  setApplicationErrorReporter({
+    capture(_error, context) {
+      snapshots.push(context);
+      return "event-id";
+    },
+    flush: () => Promise.resolve(true),
+  });
+
+  captureApplicationError(new Error("boom"), {
+    boundary: "renderer.request",
+    requestId: "https://user:password@example.test/x?token=secret",
+    attributes: { apiKey: "secret", safe: "value" },
+  });
+
+  const redacted = snapshots[0];
+  assertEquals(
+    redacted?.attributes?.apiKey,
+    "[REDACTED]",
+    "credential-like attribute keys must be redacted before reaching the reporter",
+  );
+  assertEquals(
+    redacted?.attributes?.safe,
+    "value",
+    "non-sensitive attributes must survive sanitization",
+  );
+  assertEquals(
+    redacted?.requestId,
+    "https://user:[REDACTED]@example.test/x?token=[REDACTED]",
+    "URL credentials must be stripped from context values",
+  );
+
+  captureApplicationError(new Error("boom"), {
+    boundary: "b".repeat(MAX_APPLICATION_ERROR_CONTEXT_VALUE_LENGTH + 50),
+  });
+  assertEquals(
+    snapshots[1]?.boundary.length,
+    MAX_APPLICATION_ERROR_CONTEXT_VALUE_LENGTH,
+    "context values are truncated to the documented cap",
+  );
+});
+
 it("application error context exports process role from the shared contract", () => {
   const context: ApplicationErrorContext = {
     boundary: "renderer.request",
@@ -94,6 +155,351 @@ it("application error reporter ignores expected cancellation", () => {
 
   assertEquals(eventId, undefined);
   assertEquals(captured, false);
+});
+
+it("application error reporter ignores client-class veryfront errors", () => {
+  const captures: unknown[] = [];
+  setApplicationErrorReporter({
+    capture(error) {
+      captures.push(error);
+      return "event-id";
+    },
+    flush: () => Promise.resolve(true),
+  });
+
+  const clientError = CONFIG_PARSE_ERROR.create({
+    detail: "Hosted configuration rejected (forbidden-capability: unsupported-call)",
+  });
+  assertEquals(
+    captureApplicationError(clientError, { boundary: "renderer.request" }),
+    undefined,
+  );
+  assertEquals(captures, []);
+
+  const serverError = INITIALIZATION_ERROR.create({
+    detail: "renderer failed to initialize",
+  });
+  assertEquals(
+    captureApplicationError(serverError, { boundary: "renderer.request" }),
+    "event-id",
+  );
+  const plainError = new Error("render failed");
+  assertEquals(
+    captureApplicationError(plainError, { boundary: "renderer.request" }),
+    "event-id",
+  );
+  assertEquals(captures, [serverError, plainError]);
+});
+
+it("application error reporter downgrades tenant build errors to tagged warnings", () => {
+  const captures: Array<{ error: unknown; context: SharedApplicationErrorContext }> = [];
+  setApplicationErrorReporter({
+    capture(error, context) {
+      captures.push({ error, context });
+      return "event-id";
+    },
+    flush: () => Promise.resolve(true),
+  });
+
+  const compileError = TYPESCRIPT_ERROR.create({
+    detail: "TypeScript compilation failed in /pages/index.tsx",
+  });
+  const legacyBuildError = toError(
+    createError({ type: "build", message: "Module transform cache write failed" }),
+  );
+  const pipelineError = RENDER_ERROR.create({
+    detail: "Critical page module(s) failed to load:\n/pages/index.mdx: bad syntax",
+    context: { buildFailure: true, tenantBuildFailure: true },
+  });
+  const frameworkPipelineError = RENDER_ERROR.create({
+    detail: "Critical page module(s) failed to load while persisting its cache entry",
+    context: { buildFailure: true, tenantBuildFailure: false },
+  });
+  const mdxRegistryError = MDX_COMPILE_ERROR.create({
+    detail: "MDX compilation failed in /pages/index.mdx",
+  });
+  const markdownRegistryError = MARKDOWN_COMPILE_ERROR.create({
+    detail: "Markdown frontmatter failed in /pages/index.md",
+  });
+  const sourceCompilationError = COMPILATION_ERROR.create({
+    detail: "TypeScript syntax failed in /pages/index.tsx",
+    context: { tenantBuildFailure: true },
+  });
+  const frameworkImportError = IMPORT_RESOLUTION_ERROR.create({
+    detail: "Could not resolve framework import: #veryfront/missing",
+  });
+  const frameworkError = INITIALIZATION_ERROR.create({
+    detail: "renderer failed to initialize",
+  });
+  const assetOptimizationError = ASSET_OPTIMIZATION_ERROR.create({
+    detail: "framework image optimization failed",
+  });
+  const sourcemapError = SOURCEMAP_ERROR.create({
+    detail: "framework source map generation failed",
+  });
+  const frameworkCacheWriteError = BUILD_FAILED.create({
+    detail: "Failed to write MDX module cache file: <REDACTED>",
+  });
+  const frameworkBundleError = BUNDLE_ERROR.create({
+    detail: "Failed to regenerate framework bundle cache entry: <REDACTED>",
+  });
+  const ssgInfrastructureError = SSG_GENERATION_ERROR.create({
+    detail: "Failed to write generated page output",
+    cause: Object.assign(new Error("No space left on device"), { code: "ENOSPC" }),
+    context: { route: "/" },
+  });
+
+  assertEquals(
+    captureApplicationError(compileError, { boundary: "ssr.render" }),
+    "event-id",
+  );
+  assertEquals(
+    captureApplicationError(pipelineError, { boundary: "ssr.render" }),
+    "event-id",
+  );
+  assertEquals(
+    captureApplicationError(mdxRegistryError, { boundary: "ssr.render" }),
+    "event-id",
+  );
+  assertEquals(
+    captureApplicationError(markdownRegistryError, { boundary: "ssr.render" }),
+    "event-id",
+  );
+  assertEquals(
+    captureApplicationError(sourceCompilationError, { boundary: "ssr.render" }),
+    "event-id",
+  );
+  assertEquals(
+    captureApplicationError(frameworkImportError, { boundary: "ssr.render" }),
+    "event-id",
+  );
+  assertEquals(
+    captureApplicationError(frameworkError, { boundary: "ssr.render" }),
+    "event-id",
+  );
+  assertEquals(
+    captureApplicationError(assetOptimizationError, { boundary: "ssr.render" }),
+    "event-id",
+  );
+  assertEquals(
+    captureApplicationError(sourcemapError, { boundary: "ssr.render" }),
+    "event-id",
+  );
+  assertEquals(
+    captureApplicationError(frameworkCacheWriteError, { boundary: "ssr.render" }),
+    "event-id",
+  );
+  assertEquals(
+    captureApplicationError(frameworkBundleError, { boundary: "ssr.render" }),
+    "event-id",
+  );
+  assertEquals(
+    captureApplicationError(frameworkPipelineError, { boundary: "ssr.render" }),
+    "event-id",
+  );
+  assertEquals(
+    captureApplicationError(legacyBuildError, { boundary: "ssr.render" }),
+    "event-id",
+  );
+  assertEquals(
+    captureApplicationError(ssgInfrastructureError, { boundary: "ssr.render" }),
+    "event-id",
+  );
+
+  const genericCompilationError = COMPILATION_ERROR.create({
+    detail: "esbuild service exited unexpectedly",
+  });
+  assertEquals(
+    captureApplicationError(genericCompilationError, { boundary: "ssr.render" }),
+    "event-id",
+  );
+
+  assertEquals(captures.length, 15);
+  // Tenant build/content failures stay visible for escalation analysis, but
+  // are tagged and downgraded so they stop surfacing as error-level issues.
+  assertEquals(captures[0]?.context.errorClass, "tenant-build");
+  assertEquals(captures[0]?.context.level, "warning");
+  assertEquals(captures[1]?.context.errorClass, "tenant-build");
+  assertEquals(captures[1]?.context.level, "warning");
+  assertEquals(captures[2]?.context.errorClass, "tenant-build");
+  assertEquals(captures[2]?.context.level, "warning");
+  assertEquals(captures[3]?.context.errorClass, "tenant-build");
+  assertEquals(captures[3]?.context.level, "warning");
+  assertEquals(captures[4]?.context.errorClass, "tenant-build");
+  assertEquals(captures[4]?.context.level, "warning");
+  // Generic import-resolution and other framework failures keep their default
+  // error-level capture. Source-aware resolver seams add tenant context when
+  // project code is actually responsible.
+  assertEquals(captures[5]?.context.errorClass, undefined);
+  assertEquals(captures[5]?.context.level, undefined);
+  assertEquals(captures[6]?.context.errorClass, undefined);
+  assertEquals(captures[6]?.context.level, undefined);
+  assertEquals(captures[7]?.context.errorClass, undefined);
+  assertEquals(captures[7]?.context.level, undefined);
+  assertEquals(captures[8]?.context.errorClass, undefined);
+  assertEquals(captures[8]?.context.level, undefined);
+  assertEquals(captures[9]?.context.errorClass, undefined);
+  assertEquals(captures[9]?.context.level, undefined);
+  assertEquals(captures[10]?.context.errorClass, undefined);
+  assertEquals(captures[10]?.context.level, undefined);
+  assertEquals(captures[11]?.context.errorClass, undefined);
+  assertEquals(captures[11]?.context.level, undefined);
+  assertEquals(captures[12]?.context.errorClass, undefined);
+  assertEquals(captures[12]?.context.level, undefined);
+  assertEquals(captures[13]?.context.errorClass, undefined);
+  assertEquals(captures[13]?.context.level, undefined);
+  assertEquals(captures[14]?.context.errorClass, undefined);
+  assertEquals(captures[14]?.context.level, undefined);
+});
+
+it("application error reporter ignores inherited tenant build tags", () => {
+  const tenantBuildFailureTag = Symbol.for("veryfront.module-loader.tenant-build-failure");
+  const previousDescriptor = Object.getOwnPropertyDescriptor(
+    Error.prototype,
+    tenantBuildFailureTag,
+  );
+  Object.defineProperty(Error.prototype, tenantBuildFailureTag, {
+    configurable: true,
+    value: true,
+  });
+
+  try {
+    const captures: Array<{ error: unknown; context: SharedApplicationErrorContext }> = [];
+    setApplicationErrorReporter({
+      capture(error, context) {
+        captures.push({ error, context });
+        return "event-id";
+      },
+      flush: () => Promise.resolve(true),
+    });
+
+    assertEquals(
+      captureApplicationError(new Error("framework failed"), { boundary: "ssr.render" }),
+      "event-id",
+    );
+    assertEquals(captures[0]?.context.errorClass, undefined);
+    assertEquals(captures[0]?.context.level, undefined);
+
+    const accessorTagError = new Error("framework failed");
+    let getterRead = false;
+    Object.defineProperty(accessorTagError, tenantBuildFailureTag, {
+      configurable: true,
+      get() {
+        getterRead = true;
+        return true;
+      },
+    });
+
+    assertEquals(
+      captureApplicationError(accessorTagError, { boundary: "ssr.render" }),
+      "event-id",
+    );
+    assertEquals(getterRead, false);
+    assertEquals(captures[1]?.context.errorClass, undefined);
+    assertEquals(captures[1]?.context.level, undefined);
+  } finally {
+    if (previousDescriptor) {
+      Object.defineProperty(Error.prototype, tenantBuildFailureTag, previousDescriptor);
+    } else {
+      delete (Error.prototype as { [tenantBuildFailureTag]?: unknown })[tenantBuildFailureTag];
+    }
+  }
+});
+
+it("application error reporter rejects prototype-polluted accessor tag descriptors", () => {
+  const tenantBuildFailureTag = Symbol.for("veryfront.module-loader.tenant-build-failure");
+  const previousDescriptorValue = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+  const previousHasOwnProperty = Object.getOwnPropertyDescriptor(
+    Object.prototype,
+    "hasOwnProperty",
+  );
+  if (!previousHasOwnProperty) throw new Error("Expected Object.prototype.hasOwnProperty");
+  const frameworkError = new Error("framework failed");
+  Object.defineProperty(frameworkError, tenantBuildFailureTag, {
+    configurable: true,
+    get: undefined,
+    set: undefined,
+  });
+  const tenantError = new Error("tenant failed");
+  Object.defineProperty(tenantError, tenantBuildFailureTag, {
+    configurable: true,
+    value: true,
+  });
+  Object.defineProperty(Object.prototype, "hasOwnProperty", {
+    ...previousHasOwnProperty,
+    value: () => true,
+  });
+  Object.defineProperty(Object.prototype, "value", { configurable: true, value: true });
+
+  try {
+    const captures: Array<{ error: unknown; context: SharedApplicationErrorContext }> = [];
+    setApplicationErrorReporter({
+      capture(error, context) {
+        captures.push({ error, context });
+        return "event-id";
+      },
+      flush: () => Promise.resolve(true),
+    });
+
+    assertEquals(
+      captureApplicationError(frameworkError, { boundary: "ssr.render" }),
+      "event-id",
+    );
+    assertEquals(captures[0]?.context.errorClass, undefined);
+    assertEquals(captures[0]?.context.level, undefined);
+    assertEquals(
+      captureApplicationError(tenantError, { boundary: "ssr.render" }),
+      "event-id",
+    );
+    assertEquals(captures[1]?.context.errorClass, "tenant-build");
+    assertEquals(captures[1]?.context.level, "warning");
+  } finally {
+    if (previousDescriptorValue) {
+      Object.defineProperty(Object.prototype, "value", previousDescriptorValue);
+    } else {
+      delete (Object.prototype as { value?: unknown }).value;
+    }
+    Object.defineProperty(Object.prototype, "hasOwnProperty", previousHasOwnProperty);
+  }
+});
+
+it("application error reporter ignores poisoned Reflect descriptor lookups for tenant tags", () => {
+  const previousDescriptor = Object.getOwnPropertyDescriptor(
+    Reflect,
+    "getOwnPropertyDescriptor",
+  );
+  if (!previousDescriptor || typeof previousDescriptor.value !== "function") {
+    throw new Error("Expected Reflect.getOwnPropertyDescriptor descriptor");
+  }
+  Object.defineProperty(Reflect, "getOwnPropertyDescriptor", {
+    ...previousDescriptor,
+    value: () => ({
+      configurable: true,
+      enumerable: false,
+      value: true,
+      writable: false,
+    }),
+  });
+
+  try {
+    const captures: Array<{ error: unknown; context: SharedApplicationErrorContext }> = [];
+    setApplicationErrorReporter({
+      capture(error, context) {
+        captures.push({ error, context });
+        return "event-id";
+      },
+      flush: () => Promise.resolve(true),
+    });
+
+    assertEquals(
+      captureApplicationError(new Error("framework failed"), { boundary: "ssr.render" }),
+      "event-id",
+    );
+    assertEquals(captures[0]?.context.errorClass, undefined);
+    assertEquals(captures[0]?.context.level, undefined);
+  } finally {
+    Object.defineProperty(Reflect, "getOwnPropertyDescriptor", previousDescriptor);
+  }
 });
 
 it("application error capture failures never replace application control flow", () => {

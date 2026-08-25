@@ -1,6 +1,10 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { agUiSseEventTypes, parseAgUiSseResponse } from "./sse-parser.ts";
+import {
+  agUiSseEventTypes,
+  type AgUiSseProgressSnapshot,
+  parseAgUiSseResponse,
+} from "./sse-parser.ts";
 
 function createSseResponse(chunks: string[], status = 200): Response {
   const encoder = new TextEncoder();
@@ -22,20 +26,23 @@ function createSseResponse(chunks: string[], status = 200): Response {
 }
 
 describe("agent/ag-ui-sse-parser", () => {
-  it("parses browser-wire SSE chunks incrementally and reports progress", async () => {
-    const progressEventCounts: number[] = [];
+  it("parses SSE chunks incrementally and reports progress", async () => {
+    const progressSnapshots: AgUiSseProgressSnapshot[] = [];
     const response = createSseResponse([
       'id: 1\nevent: RunStarted\ndata: {"runId":"run-1"}\n\n',
       'id: 2\nevent: ToolCallStart\ndata: {"toolCallName":"load_skill"}\n\n',
       'id: 3\nevent: ToolCallArgs\ndata: {"delta":"{\\"skillId\\":\\"plan\\"}"}\n\n',
       'id: 4\nevent: TextMessageContent\ndata: {"delta":"Hello"}\n\n',
-      'id: 5\nevent: TextMessageContent\ndata: {"delta":" world"}\n\n',
+      // the last text event is split across two reads so the parser has to carry
+      // the partial event over the chunk boundary
+      'id: 5\nevent: TextMessageContent\ndata: {"delta":" wor',
+      'ld"}\n\n',
       'id: 6\nevent: RunFinished\ndata: {"metadata":{"finishReason":"stop"}}\n\n',
     ]);
 
     const run = await parseAgUiSseResponse(response, {
       onProgress: (snapshot) => {
-        progressEventCounts.push(snapshot.eventCount);
+        progressSnapshots.push(snapshot);
       },
       progressThrottleMs: 0,
     });
@@ -51,7 +58,16 @@ describe("agent/ag-ui-sse-parser", () => {
     assertEquals(run.toolStarts, ["load_skill"]);
     assertEquals(run.toolArgs, ['{"skillId":"plan"}']);
     assertEquals(run.text, "Hello world");
-    assertEquals(progressEventCounts.at(-1), 6);
+    assertEquals(
+      progressSnapshots.map((snapshot) => snapshot.eventCount),
+      [1, 2, 3, 4, 5, 6, 6],
+      "progress must be reported after each parsed event and once more after the stream ends",
+    );
+    assertEquals(
+      progressSnapshots[2]?.lastToolCallName,
+      "load_skill",
+      "an incremental snapshot must be built from live run state",
+    );
   });
 
   it("keeps parsing legacy raw AG-UI payloads", async () => {
@@ -78,5 +94,39 @@ describe("agent/ag-ui-sse-parser", () => {
 
     assertEquals(run.responseStatus, 502);
     assertEquals(run.runError, "bad gateway");
+  });
+
+  it("uses a RUN_ERROR event message as the run error on a 200 response", async () => {
+    const response = createSseResponse([
+      'id: 1\nevent: RunError\ndata: {"message":"boom"}\n\n',
+    ]);
+
+    const run = await parseAgUiSseResponse(response);
+
+    assertEquals(
+      run.runError,
+      "boom",
+      "a RUN_ERROR event must set runError even on a 200 response",
+    );
+    assertEquals(
+      run.eventTypes,
+      [agUiSseEventTypes.runError],
+      "the RunError event must be recorded",
+    );
+  });
+
+  it("prefers the RUN_ERROR event message over non-OK response text", async () => {
+    const response = createSseResponse([
+      'id: 1\nevent: RunError\ndata: {"message":"boom"}\n\n',
+    ], 502);
+
+    const run = await parseAgUiSseResponse(response);
+
+    assertEquals(
+      run.runError,
+      "boom",
+      "the RUN_ERROR event message must win over non-OK body text",
+    );
+    assertEquals(run.responseStatus, 502, "the non-OK status must still be recorded");
   });
 });

@@ -29,8 +29,40 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import { collectFiles } from "#veryfront/utils/file-discovery.ts";
 import { importDiscoveryModule } from "#veryfront/discovery/module-import.ts";
 import type { WorkflowDefinition } from "../types.ts";
+import { captureWorkflowDefinition } from "../executor/workflow-definition-snapshot.ts";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { normalizeProjectRelativeDiscoveryPath } from "#veryfront/utils/discovery-path-policy.ts";
 
 const logger = baseLogger.component("workflow-discovery");
+const arrayIsArray = Array.isArray;
+const arrayJoin = Array.prototype.join;
+const arrayPush = Array.prototype.push;
+const arraySlice = Array.prototype.slice;
+const arraySort = Array.prototype.sort;
+const MapConstructor = Map;
+const mapHas = Map.prototype.has;
+const mapSet = Map.prototype.set;
+const objectEntries = Object.entries;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const reflectApply = Reflect.apply;
+
+function append<T>(values: T[], value: T): void {
+  reflectApply(arrayPush, values, [value]);
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function sortValues<T>(values: T[], compare: (left: T, right: T) => number): T[] {
+  return reflectApply(arraySort, values, [compare]) as T[];
+}
+
+function toErrorMessage(error: unknown): string {
+  return snapshotThrowableDiagnostic(error);
+}
 
 /**
  * Discovered workflow info
@@ -67,6 +99,9 @@ export interface WorkflowDiscoveryOptions {
 
   /** Enable debug logging */
   debug?: boolean;
+
+  /** Explicit host-owned capability for a trusted local or dedicated runtime. */
+  allowHostProjectCodeExecution?: boolean;
 }
 
 /**
@@ -80,39 +115,90 @@ export interface WorkflowDiscoveryResult {
   errors: Array<{ filePath: string; error: string }>;
 }
 
-/**
- * Check if a value looks like a workflow definition
- */
-function isWorkflowDefinition(value: unknown): value is WorkflowDefinition {
-  if (!value || typeof value !== "object") return false;
-  const obj = value as Record<string, unknown>;
-  return typeof obj.id === "string" && typeof obj.steps !== "undefined";
-}
-
-/**
- * Check if a value is a workflow wrapper (from workflow() DSL)
- */
-function isWorkflowWrapper(value: unknown): value is { definition: WorkflowDefinition } {
-  if (!value || typeof value !== "object") return false;
-  const obj = value as Record<string, unknown>;
-  return isWorkflowDefinition(obj.definition);
+function isWorkflowDefinitionCandidate(value: unknown): value is WorkflowDefinition {
+  if (
+    typeof value !== "object" || value === null || arrayIsArray(value) ||
+    isProxyWithoutHooks(value)
+  ) {
+    return false;
+  }
+  try {
+    return objectGetOwnPropertyDescriptor(value, "id") !== undefined &&
+      objectGetOwnPropertyDescriptor(value, "steps") !== undefined;
+  } catch {
+    return false;
+  }
 }
 
 /**
  * Extract workflow definition from a module export
  */
 function extractWorkflowDefinition(value: unknown): WorkflowDefinition | null {
-  // Direct WorkflowDefinition
-  if (isWorkflowDefinition(value)) {
-    return value;
+  if (
+    typeof value !== "object" || value === null || arrayIsArray(value) ||
+    isProxyWithoutHooks(value)
+  ) {
+    return null;
   }
 
-  // Workflow wrapper (from workflow() DSL)
-  if (isWorkflowWrapper(value)) {
-    return value.definition;
+  let candidate: unknown = value;
+  const definitionDescriptor = objectGetOwnPropertyDescriptor(value, "definition");
+  if (definitionDescriptor !== undefined) {
+    if (!("value" in definitionDescriptor)) {
+      throw new TypeError("Workflow wrapper definition must be a data property");
+    }
+    candidate = definitionDescriptor.value;
   }
 
-  return null;
+  if (!isWorkflowDefinitionCandidate(candidate)) return null;
+  return captureWorkflowDefinition(candidate, { allowEmptySteps: true });
+}
+
+function finalizeWorkflowDiscoveryResult(
+  workflows: DiscoveredWorkflow[],
+  errors: WorkflowDiscoveryResult["errors"],
+): WorkflowDiscoveryResult {
+  const sorted = sortValues(
+    reflectApply(arraySlice, workflows, []) as DiscoveredWorkflow[],
+    (left, right) =>
+      compareText(left.id, right.id) ||
+      compareText(left.filePath, right.filePath) ||
+      compareText(left.exportName, right.exportName),
+  );
+  const unique: DiscoveredWorkflow[] = [];
+
+  for (let index = 0; index < sorted.length;) {
+    let end = index + 1;
+    while (end < sorted.length && sorted[end]!.id === sorted[index]!.id) end++;
+    if (end === index + 1) {
+      append(unique, sorted[index]!);
+      index = end;
+      continue;
+    }
+
+    const declarations: string[] = [];
+    for (let declarationIndex = index; declarationIndex < end; declarationIndex++) {
+      const workflow = sorted[declarationIndex]!;
+      append(declarations, `${workflow.filePath} (export ${workflow.exportName})`);
+    }
+    const message = `Duplicate workflow id "${sorted[index]!.id}" was declared by: ${
+      reflectApply(arrayJoin, declarations, [", "])
+    }`;
+    for (let declarationIndex = index; declarationIndex < end; declarationIndex++) {
+      append(errors, {
+        filePath: sorted[declarationIndex]!.filePath,
+        error: message,
+      });
+    }
+    index = end;
+  }
+
+  sortValues(
+    errors,
+    (left, right) =>
+      compareText(left.filePath, right.filePath) || compareText(left.error, right.error),
+  );
+  return { workflows: unique, errors };
 }
 
 /**
@@ -125,30 +211,33 @@ export async function discoverWorkflows(
     projectDir,
     adapter,
     config,
-    workflowsDir = "workflows",
+    workflowsDir: configuredWorkflowsDir = "workflows",
     debug = false,
+    allowHostProjectCodeExecution,
   } = options;
 
   const workflows: DiscoveredWorkflow[] = [];
   const errors: Array<{ filePath: string; error: string }> = [];
 
-  // For remote adapters, use relative paths
-  const fsType = config?.fs?.type ?? "local";
-  const useRelativePaths = fsType === "github" || fsType === "veryfront-api";
-  const baseDir = useRelativePaths ? workflowsDir : join(projectDir, workflowsDir);
-
-  if (debug) {
-    logger.info(`Scanning ${baseDir} for workflows`);
-  }
+  let baseDir = configuredWorkflowsDir;
 
   try {
+    const workflowsDir = normalizeProjectRelativeDiscoveryPath(configuredWorkflowsDir);
+    const fsType = config?.fs?.type ?? "local";
+    const useRelativePaths = fsType === "github" || fsType === "veryfront-api";
+    baseDir = useRelativePaths ? workflowsDir : join(projectDir, workflowsDir);
+
+    if (debug) {
+      logger.info(`Scanning ${baseDir} for workflows`);
+    }
+
     // Check if workflows directory exists
     const dirExists = await adapter.fs.exists(baseDir);
     if (!dirExists) {
       if (debug) {
         logger.info(`No workflows directory found at ${baseDir}`);
       }
-      return { workflows, errors };
+      return finalizeWorkflowDiscoveryResult(workflows, errors);
     }
 
     // Discover workflow files
@@ -159,24 +248,31 @@ export async function discoverWorkflows(
       ignorePatterns: ["node_modules", ".git", "__tests__", "*.test.*", "*.spec.*"],
       adapter,
     });
+    sortValues(files, (left, right) => compareText(left.path, right.path));
 
     if (debug) {
       logger.info(`Found ${files.length} potential workflow files`);
     }
 
     // Load and extract workflows from each file
-    for (const file of files) {
+    for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+      const file = files[fileIndex]!;
       try {
         const module = await importDiscoveryModule(file.path, {
           adapter,
           projectDir,
+          allowHostProjectCodeExecution,
         });
 
         // Extract workflows from module exports
-        for (const [exportName, value] of Object.entries(module)) {
-          const definition = extractWorkflowDefinition(value);
-          if (definition) {
-            workflows.push({
+        const exports = objectEntries(module);
+        sortValues(exports, (left, right) => compareText(left[0], right[0]));
+        for (let exportIndex = 0; exportIndex < exports.length; exportIndex++) {
+          const [exportName, value] = exports[exportIndex]!;
+          try {
+            const definition = extractWorkflowDefinition(value);
+            if (!definition) continue;
+            append(workflows, {
               id: definition.id,
               filePath: file.path,
               exportName,
@@ -188,29 +284,28 @@ export async function discoverWorkflows(
                 `[WorkflowDiscovery] Found workflow "${definition.id}" in ${file.path} (export: ${exportName})`,
               );
             }
+          } catch (error) {
+            append(errors, { filePath: file.path, error: toErrorMessage(error) });
           }
         }
       } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        errors.push({ filePath: file.path, error: errorMsg });
+        const errorMsg = toErrorMessage(error);
+        append(errors, { filePath: file.path, error: errorMsg });
 
         if (debug) {
           logger.warn(`Failed to load ${file.path}: ${errorMsg}`);
         }
       }
     }
-
-    if (debug) {
-      logger.info(`Discovered ${workflows.length} workflows`);
-    }
-
-    return { workflows, errors };
   } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
+    const errorMsg = toErrorMessage(error);
     logger.error(`Discovery failed: ${errorMsg}`);
-    errors.push({ filePath: baseDir, error: errorMsg });
-    return { workflows, errors };
+    append(errors, { filePath: baseDir, error: errorMsg });
   }
+
+  const result = finalizeWorkflowDiscoveryResult(workflows, errors);
+  if (debug) logger.info(`Discovered ${result.workflows.length} workflows`);
+  return result;
 }
 
 /**
@@ -221,7 +316,10 @@ export async function findWorkflowById(
   options: WorkflowDiscoveryOptions,
 ): Promise<DiscoveredWorkflow | null> {
   const { workflows } = await discoverWorkflows(options);
-  return workflows.find((w) => w.id === workflowId) ?? null;
+  for (let index = 0; index < workflows.length; index++) {
+    if (workflows[index]!.id === workflowId) return workflows[index]!;
+  }
+  return null;
 }
 
 /**
@@ -230,9 +328,21 @@ export async function findWorkflowById(
 export function createWorkflowRegistry(
   workflows: DiscoveredWorkflow[],
 ): Map<string, DiscoveredWorkflow> {
-  const registry = new Map<string, DiscoveredWorkflow>();
-  for (const workflow of workflows) {
-    registry.set(workflow.id, workflow);
+  const registry = new MapConstructor<string, DiscoveredWorkflow>();
+  for (let index = 0; index < workflows.length; index++) {
+    const workflow = workflows[index]!;
+    const id = workflow.id;
+    if (typeof id !== "string" || id.length === 0) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Discovered workflow id must be a non-empty string",
+      });
+    }
+    if (reflectApply(mapHas, registry, [id])) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Duplicate workflow id "${id}" cannot be added to the registry`,
+      });
+    }
+    reflectApply(mapSet, registry, [id, workflow]);
   }
   return registry;
 }

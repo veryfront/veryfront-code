@@ -1,7 +1,7 @@
 import { isRecord } from "#veryfront/chat/conversation.ts";
 import { safeJsonParse } from "#veryfront/chat/provider-errors.ts";
 
-/** AG-UI runtime event type constants normalized from browser-wire SSE events. */
+/** AG-UI runtime event type constants normalized from legacy SSE event names. */
 export const agUiSseEventTypes = {
   custom: "CUSTOM",
   textMessageStart: "TEXT_MESSAGE_START",
@@ -145,7 +145,7 @@ function applyParsedEvent(run: ParsedAgUiSseRun, event: Record<string, unknown>)
   }
 }
 
-function coerceBrowserWireEvent(
+function coerceWireEvent(
   eventName: string,
   payload: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -207,7 +207,7 @@ function normalizeParsedEvent(
     return null;
   }
 
-  return coerceBrowserWireEvent(eventName, payload);
+  return coerceWireEvent(eventName, payload);
 }
 
 function consumeSseBuffer(

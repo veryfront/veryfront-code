@@ -1,22 +1,52 @@
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import * as uiModule from "./index.ts";
 import * as colorModeModule from "./color-mode.tsx";
 import * as cvaModule from "./cva.ts";
+import * as buttonModule from "./button.tsx";
+import * as cardModule from "./card.tsx";
+import * as inputModule from "./input.tsx";
+import * as dialogModule from "./dialog.tsx";
+import * as tabsModule from "./tabs.tsx";
 
 // Exact runtime surface of `veryfront/ui`. Keep this list sorted and in sync
-// with the barrel — a new primitive (or a removed one) must be an intentional,
+// with the barrel: a new primitive (or a removed one) must be an intentional,
 // reviewed change to the public API, not an accidental widening. Type-only
 // exports (e.g. `ButtonProps`) do not appear at runtime and are omitted.
 const expectedRuntimeExports = [
+  "Accordion",
+  "AccordionContent",
+  "AccordionItem",
+  "AccordionTrigger",
   "Alert",
   "AlertAction",
   "AlertContent",
+  "AlertDialog",
+  "AlertDialogAction",
+  "AlertDialogCancel",
+  "AlertDialogContent",
+  "AlertDialogDescription",
+  "AlertDialogFooter",
+  "AlertDialogTitle",
+  "AlertDialogTrigger",
   "AlertIcon",
   "AppShell",
+  "AspectRatio",
+  "Autocomplete",
+  "AutocompleteContent",
+  "AutocompleteInput",
+  "AutocompleteItem",
   "Avatar",
   "Badge",
+  "Breadcrumb",
+  "BreadcrumbEllipsis",
+  "BreadcrumbItem",
+  "BreadcrumbLink",
+  "BreadcrumbList",
+  "BreadcrumbPage",
+  "BreadcrumbSeparator",
   "Button",
+  "Calendar",
   "Card",
   "CardContent",
   "CardHeader",
@@ -31,6 +61,10 @@ const expectedRuntimeExports = [
   "ColorModeProvider",
   "ColorModeScript",
   "ColorModeToggle",
+  "Combobox",
+  "ComboboxContent",
+  "ComboboxInput",
+  "ComboboxItem",
   "Command",
   "CommandDialog",
   "CommandEmpty",
@@ -43,6 +77,16 @@ const expectedRuntimeExports = [
   "CommandList",
   "CommandSeparator",
   "CommandShortcut",
+  "ContextMenu",
+  "ContextMenuContent",
+  "ContextMenuGroup",
+  "ContextMenuItem",
+  "ContextMenuLabel",
+  "ContextMenuSeparator",
+  "ContextMenuTrigger",
+  "DatePicker",
+  "DatePickerContent",
+  "DatePickerTrigger",
   "DesignTokenStyle",
   "Dialog",
   "DialogAction",
@@ -72,15 +116,45 @@ const expectedRuntimeExports = [
   "DropdownMenuLabel",
   "DropdownMenuSeparator",
   "DropdownMenuTrigger",
+  "Field",
+  "FieldControl",
+  "FieldDescription",
+  "FieldError",
+  "FieldLabel",
   "FileType",
   "FileTypeThumb",
+  "HoverCard",
+  "HoverCardContent",
+  "HoverCardTrigger",
   "IconButton",
   "Input",
+  "InputOTP",
   "Label",
   "List",
   "ListItem",
   "ListLabel",
   "LoadingButton",
+  "Menubar",
+  "MenubarContent",
+  "MenubarItem",
+  "MenubarMenu",
+  "MenubarSeparator",
+  "MenubarTrigger",
+  "Meter",
+  "NavigationMenu",
+  "NavigationMenuContent",
+  "NavigationMenuItem",
+  "NavigationMenuLink",
+  "NavigationMenuList",
+  "NavigationMenuTrigger",
+  "NumberField",
+  "Pagination",
+  "PaginationContent",
+  "PaginationEllipsis",
+  "PaginationItem",
+  "PaginationLink",
+  "PaginationNext",
+  "PaginationPrevious",
   "Pill",
   "Popover",
   "PopoverActions",
@@ -94,6 +168,7 @@ const expectedRuntimeExports = [
   "Radio",
   "RadioField",
   "RadioGroup",
+  "ScrollArea",
   "ScrollFade",
   "Select",
   "SelectContent",
@@ -103,8 +178,10 @@ const expectedRuntimeExports = [
   "SelectSeparator",
   "SelectTrigger",
   "SelectValue",
+  "Separator",
   "Shimmer",
   "Skeleton",
+  "Slider",
   "Slot",
   "Status",
   "Switch",
@@ -116,10 +193,25 @@ const expectedRuntimeExports = [
   "TagGroup",
   "TagLink",
   "Textarea",
+  "Toast",
+  "ToastClose",
+  "ToastDescription",
+  "ToastProvider",
+  "ToastTitle",
+  "ToastViewport",
+  "Toaster",
+  "Toggle",
+  "ToggleGroup",
+  "ToggleGroupItem",
+  "Toolbar",
+  "ToolbarButton",
+  "ToolbarLink",
+  "ToolbarSeparator",
   "Tooltip",
   "TooltipContent",
   "TooltipProvider",
   "TooltipTrigger",
+  "UIAdapterProvider",
   "badgeVariants",
   "buttonVariants",
   "cva",
@@ -130,12 +222,18 @@ const expectedRuntimeExports = [
   "inputVariants",
   "labelVariants",
   "pillVariants",
+  "scrollAreaVariants",
   "selectTriggerVariants",
   "switchTrackVariants",
   "textareaVariants",
+  "toolbarVariants",
+  "useAdapter",
   "useAppShell",
   "useColorMode",
   "useColorModeOptional",
+  "useDocumentNonce",
+  "useToast",
+  "useTokenScope",
 ];
 
 describe("react/components/ui/index.ts exports", () => {
@@ -155,12 +253,21 @@ describe("react/components/ui/index.ts exports", () => {
   });
 
   it("exposes the foundational primitives as callable components", () => {
-    for (const name of ["Button", "Card", "Input", "Dialog", "Tabs"] as const) {
-      assert(
-        typeof uiModule[name] === "function" ||
-          typeof uiModule[name] === "object",
-        `${name} should be a component`,
-      );
-    }
+    // Identity against the source module is the strongest oracle: a `typeof`
+    // check also accepts `null` and any plain object, so a barrel entry that no
+    // longer points at the real component would pass it.
+    assertStrictEquals(
+      uiModule.Button,
+      buttonModule.Button,
+      "Button is re-exported from ./button.tsx",
+    );
+    assertStrictEquals(uiModule.Card, cardModule.Card, "Card is re-exported from ./card.tsx");
+    assertStrictEquals(uiModule.Input, inputModule.Input, "Input is re-exported from ./input.tsx");
+    assertStrictEquals(
+      uiModule.Dialog,
+      dialogModule.Dialog,
+      "Dialog is re-exported from ./dialog.tsx",
+    );
+    assertStrictEquals(uiModule.Tabs, tabsModule.Tabs, "Tabs is re-exported from ./tabs.tsx");
   });
 });

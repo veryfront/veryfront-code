@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ContextAwareCacheCoordinator } from "./context-aware-cache.ts";
 import type { CachePayload, CacheStore } from "../cache/types.ts";
@@ -130,6 +130,120 @@ describe("rendering/shared/context-aware-cache", () => {
       assertEquals(typeof lookup.lookupDurationMs, "number");
       assertEquals(lookup.cachedResult?.html, "<h1>Hello</h1>");
       assertEquals(lookup.cachedResult?.ssrHash, "abc123");
+    });
+
+    it("rebinds cached inline nonce slots without touching application tags", async () => {
+      const store = createInMemoryStore();
+      const cache = new ContextAwareCacheCoordinator({ store });
+      const ctx = makeMockCtx();
+      const renderResult = {
+        html: '<script nonce="nonce-a">framework()</script>' +
+          '<style nonce="nonce-a">.framework{}</style>' +
+          '<script nonce="application-owned">application()</script>',
+        frontmatter: {},
+        headings: [],
+        stream: null,
+      };
+
+      await cache.persistResult(
+        renderResult as any,
+        "nonce-page",
+        ctx,
+        undefined,
+        undefined,
+        "nonce-a",
+      );
+      const lookup = await cache.checkCache(
+        "nonce-page",
+        ctx,
+        undefined,
+        undefined,
+        "nonce-b",
+      );
+
+      assertEquals(lookup.cachedResult?.html.includes('nonce="nonce-b">framework()'), true);
+      assertEquals(lookup.cachedResult?.html.includes('nonce="nonce-b">.framework{}'), true);
+      assertEquals(
+        lookup.cachedResult?.html.includes('nonce="application-owned">application()'),
+        true,
+      );
+      assertEquals(lookup.cachedResult?.html.includes("nonce-a"), false);
+      assertEquals(lookup.cachedResult?.html.includes("veryfront-cache-nonce"), false);
+    });
+
+    it("rejects and evicts an unsealed entry when the response enforces a nonce", async () => {
+      const store = createInMemoryStore();
+      const cache = new ContextAwareCacheCoordinator({ store });
+      const ctx = makeMockCtx();
+      const renderResult = {
+        html: "<script>framework()</script>",
+        frontmatter: {},
+        headings: [],
+        stream: null,
+      };
+
+      // Persisted without a nonce, so the entry carries no sealed placeholder.
+      await cache.persistResult(renderResult as any, "legacy-nonce-page", ctx);
+
+      const lookup = await cache.checkCache(
+        "legacy-nonce-page",
+        ctx,
+        undefined,
+        undefined,
+        "nonce-x",
+      );
+
+      assertEquals(
+        lookup.status,
+        "miss",
+        "an entry stored without a nonce placeholder must not be served to a nonce-enforcing response",
+      );
+      assertEquals(lookup.hit, false, "an unsealed entry must not count as a hit");
+      assertEquals(lookup.cachedResult, undefined, "an unsealed entry must not return HTML");
+      assertEquals(
+        store.data.has(lookup.cacheKey),
+        false,
+        "the incompatible entry must be evicted, not left to poison later lookups",
+      );
+    });
+
+    it("serves a sealed entry without a nonce by stripping the cached slots", async () => {
+      const store = createInMemoryStore();
+      const cache = new ContextAwareCacheCoordinator({ store });
+      const ctx = makeMockCtx();
+      const renderResult = {
+        html: '<script nonce="nonce-a">framework()</script>',
+        frontmatter: {},
+        headings: [],
+        stream: null,
+      };
+
+      await cache.persistResult(
+        renderResult as any,
+        "sealed-nonce-page",
+        ctx,
+        undefined,
+        undefined,
+        "nonce-a",
+      );
+
+      const lookup = await cache.checkCache("sealed-nonce-page", ctx);
+
+      assertEquals(
+        lookup.hit,
+        true,
+        "a sealed entry stays usable for a response that enforces no nonce",
+      );
+      assertEquals(
+        lookup.cachedResult?.html.includes("nonce="),
+        false,
+        "a response without a nonce must not receive a nonce attribute",
+      );
+      assertEquals(
+        lookup.cachedResult?.html.includes("vf-cache-"),
+        false,
+        "the cache placeholder must never reach the response",
+      );
     });
 
     it("should not cache results with streams", async () => {
@@ -282,6 +396,71 @@ describe("rendering/shared/context-aware-cache", () => {
 
       const noThemeLookup = await cache.checkCache("themed", ctx);
       assertEquals(noThemeLookup.hit, false);
+    });
+
+    it("honours cacheKeyOverride when keying entries", async () => {
+      const store = createInMemoryStore();
+      const cache = new ContextAwareCacheCoordinator({ store });
+      const ctx = makeMockCtx();
+
+      const renderResult = {
+        html: "<h1>Variant A</h1>",
+        frontmatter: {},
+        headings: [],
+        stream: null,
+        ssrHash: "variant-a",
+      };
+
+      await cache.persistResult(
+        renderResult as any,
+        "index",
+        ctx,
+        undefined,
+        "page:index:variant-a",
+      );
+
+      const sameOverride = await cache.checkCache("index", ctx, undefined, "page:index:variant-a");
+      assertEquals(sameOverride.hit, true, "the same override must hit");
+
+      const otherOverride = await cache.checkCache("index", ctx, undefined, "page:index:variant-b");
+      assertEquals(otherOverride.hit, false, "a different override must miss");
+
+      const noOverride = await cache.checkCache("index", ctx);
+      assertEquals(
+        noOverride.hit,
+        false,
+        "an override entry must not be served to callers passing no override",
+      );
+    });
+
+    it("does not double-suffix an override that already carries a theme", async () => {
+      const store = createInMemoryStore();
+      const cache = new ContextAwareCacheCoordinator({ store });
+      const ctx = makeMockCtx();
+
+      const renderResult = {
+        html: "<h1>Themed override</h1>",
+        frontmatter: {},
+        headings: [],
+        stream: null,
+        ssrHash: "themed-override",
+      };
+
+      await cache.persistResult(
+        renderResult as any,
+        "index",
+        ctx,
+        "light",
+        "page:index:theme-light",
+      );
+
+      const lookup = await cache.checkCache("index", ctx, "light", "page:index:theme-light");
+      assertEquals(lookup.hit, true, "the themed override must hit its own entry");
+      assertEquals(
+        lookup.cacheKey.match(/:theme-light/g)?.length,
+        1,
+        "an override already carrying a theme suffix must not be double-suffixed",
+      );
     });
 
     it("should clear all cached data", async () => {
@@ -462,6 +641,7 @@ describe("rendering/shared/context-aware-cache", () => {
         html: "<h1>Original</h1>",
         frontmatter: { title: "Original" },
         headings: [{ level: 1, text: "Original" }],
+        nodeMap: new Map<number, unknown>([[1, {}]]),
         stream: null,
         ssrHash: "orig",
       };
@@ -473,10 +653,27 @@ describe("rendering/shared/context-aware-cache", () => {
 
       if (lookup.cachedResult) {
         lookup.cachedResult.html = "MUTATED";
+        lookup.cachedResult.headings!.push({ id: "injected", level: 2, text: "Injected" });
+        (lookup.cachedResult.frontmatter as Record<string, unknown>).title = "MUTATED";
       }
 
       const reLookup = await cache.checkCache("clone-test", ctx);
       assertEquals(reLookup.cachedResult?.html, "<h1>Original</h1>");
+      assertEquals(
+        reLookup.cachedResult?.headings?.length,
+        1,
+        "a cached headings array must not be shared with a previous caller",
+      );
+      assertEquals(
+        reLookup.cachedResult?.frontmatter.title,
+        "Original",
+        "a cached frontmatter object must not be shared with a previous caller",
+      );
+      assertNotStrictEquals(
+        lookup.cachedResult?.nodeMap,
+        reLookup.cachedResult?.nodeMap,
+        "each lookup must receive its own nodeMap instance",
+      );
     });
   });
 });

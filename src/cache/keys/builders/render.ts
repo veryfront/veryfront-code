@@ -14,20 +14,32 @@ import { sanitizeQueryParamsForCacheKey } from "../utils.ts";
 import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
 import { encodeCacheSourceIdentity } from "../source-identity.ts";
 import { buildDependencyPinningCacheVariant } from "../dependency-pinning.ts";
+import { encodeCacheKeyLiteralSegment } from "../segment-codec.ts";
+import { RENDER_COMPILE_MODE_SEGMENTS, type RenderCompileMode } from "../render-compile-mode.ts";
 
 export function buildRenderCachePrefix(
   projectId: string,
   environment: "preview" | "production",
   releaseKey: string,
   /**
+   * Compile mode of the render this prefix caches. It is required because
+   * `environment` does not imply it: a local development server and a hosted
+   * preview server share `preview`, the same branch and the same release key,
+   * yet compile with different modes. The cached render carries a hydration
+   * bundle and a page module, so without this segment a development-compiled
+   * bundle can be served to a production-mode render.
+   */
+  compileMode: RenderCompileMode,
+  /**
    * Release asset manifest version currently being consumed for this render.
    * When set (a ready manifest is in use), it is folded into the prefix so
-   * manifest-rewritten HTML is cached separately from JIT HTML. Omitted when
-   * no manifest is consumed — preserving today's cache keys byte-for-byte.
+   * manifest-rewritten HTML is cached separately from JIT HTML.
    */
   manifestVersion?: number,
 ): string {
-  const base = `${projectId}:${environment}:${releaseKey}:${VERSION}`;
+  const base = `${projectId}:${environment}:${releaseKey}:${VERSION}:${
+    RENDER_COMPILE_MODE_SEGMENTS[compileMode]
+  }`;
   return manifestVersion === undefined ? base : `${base}:m${manifestVersion}`;
 }
 
@@ -108,8 +120,21 @@ export function buildProxyManagerCacheKey(
   releaseId: string | null,
   branch: string | null,
   environmentName?: string | null,
+  authority?: {
+    projectId: string | null;
+    credentialPrincipal: string;
+  },
 ): string {
   const mode = productionMode ? "production" : "preview";
+  if (authority && !authority.credentialPrincipal) {
+    throw CACHE_INVARIANT_VIOLATION.create({
+      detail: `Missing credential principal for proxy adapter ${projectSlug}`,
+    });
+  }
+  const authorityKey = authority
+    ? `:project:${encodeCacheKeyLiteralSegment(authority.projectId ?? "")}` +
+      `:credential:${encodeCacheKeyLiteralSegment(authority.credentialPrincipal)}`
+    : "";
 
   if (productionMode) {
     if (!releaseId) {
@@ -120,11 +145,16 @@ export function buildProxyManagerCacheKey(
     const source = environmentName
       ? encodeCacheSourceIdentity({ type: "environment", environmentName, releaseId })
       : encodeCacheSourceIdentity({ type: "release", releaseId });
-    return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:${source.key}`;
+    return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:${source.key}${authorityKey}`;
   }
 
   const source = encodeCacheSourceIdentity({ type: "branch", branch: branch ?? "main" });
-  return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:${source.qualifier}`;
+  // ProxyFSAdapterManager asserts environmentName matches on reuse, so it must
+  // be part of the key. Omitted when unnamed to keep existing keys stable.
+  const environmentQualifier = environmentName
+    ? `:env:${encodeCacheKeyLiteralSegment(environmentName)}`
+    : "";
+  return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:${source.qualifier}${environmentQualifier}${authorityKey}`;
 }
 
 /**

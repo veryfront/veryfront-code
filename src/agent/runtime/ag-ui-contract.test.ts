@@ -3,7 +3,7 @@ import { assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   getAgUiRuntimeRequestSchema,
-  normalizeAgUiBrowserRuntimeRequest,
+  normalizeAgUiRuntimeRequest,
   parseAgUiRuntimeRequest,
   parseAgUiRuntimeRequestOrError,
 } from "../index.ts";
@@ -77,8 +77,8 @@ describe("agent/runtime-ag-ui-contract", () => {
     assertEquals(parsed.messages.length, 1);
   });
 
-  it("normalizes runtime browser request defaults without leaking non-object state", () => {
-    const normalized = normalizeAgUiBrowserRuntimeRequest(
+  it("normalizes runtime request defaults without leaking non-object state", () => {
+    const normalized = normalizeAgUiRuntimeRequest(
       getAgUiRuntimeRequestSchema().parse({
         threadId: crypto.randomUUID(),
         runId: "run_1",
@@ -102,6 +102,35 @@ describe("agent/runtime-ag-ui-contract", () => {
     assertEquals(normalized.runId, "run_override");
     assertEquals(Array.isArray(normalized.messages), true);
     assertEquals("state" in normalized, false);
+  });
+
+  it("keeps plain-object state while applying runtime request defaults", () => {
+    const normalized = normalizeAgUiRuntimeRequest(
+      getAgUiRuntimeRequestSchema().parse({
+        threadId: crypto.randomUUID(),
+        runId: "run_1",
+        state: { phase: "draft" },
+        messages: [
+          {
+            id: "user_1",
+            role: "user",
+            content: "Hello",
+          },
+        ],
+        context: [],
+        tools: [],
+      }),
+      {
+        runId: "run_override",
+      },
+    );
+
+    assertEquals(
+      normalized.state,
+      { phase: "draft" },
+      "plain-object state must survive normalization",
+    );
+    assertEquals(normalized.runId, "run_override", "defaults must still override runId");
   });
 
   it("returns a 400 response for malformed runtime AG-UI JSON bodies", async () => {

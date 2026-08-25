@@ -12,6 +12,10 @@ import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } 
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 import { getSSRModuleCacheStats } from "#veryfront/modules/react-loader/ssr-module-loader/index.ts";
 import type { MultiProjectFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import {
+  createLocalControlAccessDeniedResponse,
+  isTrustedLocalControlRequest,
+} from "#veryfront/security/http/local-control-request.ts";
 
 export class DebugContextHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -28,6 +32,13 @@ export class DebugContextHandler extends BaseHandler {
     }
     if (!ctx.isLocalProject) {
       return Promise.resolve(this.continue());
+    }
+    if (!isTrustedLocalControlRequest(req)) {
+      return Promise.resolve(
+        this.respond(
+          createLocalControlAccessDeniedResponse(req, "Debug context request rejected"),
+        ),
+      );
     }
 
     const token = req.headers.get("x-token");

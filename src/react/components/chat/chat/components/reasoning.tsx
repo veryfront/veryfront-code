@@ -1,6 +1,6 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
-import { Markdown } from "../../markdown.tsx";
+import { ChatMarkdown } from "../../chat-markdown.tsx";
 import { ChevronDownIcon } from "../../../ui/icons/index.ts";
 import { createStrictContext } from "../../../create-strict-context.ts";
 import { Shimmer } from "./animations.tsx";
@@ -16,21 +16,41 @@ import { Shimmer } from "./animations.tsx";
 
 /** Per-card state shared with `Reasoning.*` sub-parts. */
 export interface ReasoningContextValue {
+  /** The reasoning markdown text to render in the body. */
   text: string;
+  /** Whether tokens are still streaming; drives the shimmer label + auto-open. */
   isStreaming: boolean;
+  /** Whether the disclosure is currently expanded. */
   isOpen: boolean;
+  /** Toggle the disclosure open/closed (opts out of stream-driven auto-collapse). */
   toggle: () => void;
 }
 
-const [ReasoningContext, useReasoning] = createStrictContext<ReasoningContextValue>(
+const [ReasoningContext, useReasoningContext] = createStrictContext<ReasoningContextValue>(
   "useReasoning",
   "a Reasoning",
 );
-export { useReasoning };
+
+/**
+ * Read the disclosure state provided by `Reasoning.Root` (text + open state).
+ * Use it to build a custom disclosure part; throws outside a `Reasoning`.
+ *
+ * @example
+ * ```tsx
+ * function MyTrigger() {
+ *   const { isOpen, toggle } = useReasoning();
+ *   return <button onClick={toggle}>{isOpen ? "Hide" : "Show"} reasoning</button>;
+ * }
+ * // <Reasoning.Root text={text}><MyTrigger /><Reasoning.Content /></Reasoning.Root>
+ * ```
+ */
+export const useReasoning = useReasoningContext;
 
 /** Props accepted by `Reasoning` / `Reasoning.Root`. */
 export interface ReasoningProps {
+  /** The reasoning markdown text rendered in the disclosure body. */
   text: string;
+  /** Whether tokens are still streaming; shimmers the label and auto-opens the card. */
   isStreaming?: boolean;
   className?: string;
   /** Overrides the chevron glyph. Rotation-on-open styling is applied to the
@@ -56,6 +76,10 @@ export interface ReasoningProps {
 /**
  * `Reasoning.Root` — context provider + wrapper. No children renders the
  * default anatomy (`Trigger` + `Content`); pass children to recompose.
+ *
+ * Spacing belongs to the parent. The wrapper carries no bottom margin (it used
+ * to add `mb-3`, which doubled up with the flex gap of every layout that hosts
+ * it). Pass `className` to space it inside a container that has no gap.
  */
 function ReasoningRoot(
   {
@@ -121,10 +145,10 @@ function ReasoningRoot(
 
   return (
     <ReasoningContext.Provider value={context}>
-      <div ref={ref} className={cn("not-prose mb-3", className)}>
+      <div ref={ref} className={cn("not-prose", className)}>
         {children ?? (
           <>
-            <ReasoningTrigger icon={icon} labels={labels} />
+            <ReasoningTrigger labels={labels}>{icon}</ReasoningTrigger>
             <ReasoningContent />
           </>
         )}
@@ -136,16 +160,19 @@ ReasoningRoot.displayName = "Reasoning.Root";
 
 /** Props for `Reasoning.Trigger` — the disclosure button. */
 export interface ReasoningTriggerProps {
-  /** Overrides the chevron glyph. */
-  icon?: React.ReactNode;
+  /** Replace the default glyph. The canonical path (RFC 2980: a leaf renders its
+   * default icon when childless; pass children to replace it). */
+  children?: React.ReactNode;
   /** Override the two labels; each defaults to the current string. */
   labels?: { thinking?: string; thought?: string };
   className?: string;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLButtonElement>;
 }
 
 /** The header row: a "Thinking…" / "Thought process" label + expand chevron. */
 function ReasoningTrigger(
-  { icon, labels, className }: ReasoningTriggerProps,
+  { children, labels, className, ref }: ReasoningTriggerProps,
 ): React.JSX.Element {
   const { isStreaming, isOpen, toggle } = useReasoning();
   const thinkingLabel = labels?.thinking ?? "Thinking...";
@@ -154,6 +181,7 @@ function ReasoningTrigger(
 
   return (
     <button
+      ref={ref}
       type="button"
       onClick={toggle}
       className={cn(
@@ -168,7 +196,7 @@ function ReasoningTrigger(
           !isOpen && "-rotate-90",
         )}
       >
-        {icon ?? <ChevronDownIcon className="size-3.5 shrink-0" />}
+        {children ?? <ChevronDownIcon className="size-3.5 shrink-0" />}
       </span>
     </button>
   );
@@ -177,16 +205,18 @@ ReasoningTrigger.displayName = "Reasoning.Trigger";
 
 /** The reasoning body. Renders when open; pass children to replace the markdown. */
 function ReasoningContent(
-  { className, children }: { className?: string; children?: React.ReactNode },
+  { className, children, ref, ...props }:
+    & React.HTMLAttributes<HTMLDivElement>
+    & { ref?: React.Ref<HTMLDivElement> },
 ): React.JSX.Element | null {
   const { text, isOpen } = useReasoning();
   if (!isOpen) return null;
   return (
-    <div className={cn("mt-2 text-sm text-[var(--foreground)]", className)}>
+    <div {...props} ref={ref} className={cn("mt-2 text-sm text-[var(--foreground)]", className)}>
       {children ?? (
         // `text-sm!` overrides Markdown's base `text-base` (cn does not tw-merge)
         // so reasoning renders at 14px like Studio's compact variant.
-        <Markdown className="mb-0 space-y-2.5 text-sm!">{text}</Markdown>
+        <ChatMarkdown className="mb-0 space-y-2.5 text-sm!">{text}</ChatMarkdown>
       )}
     </div>
   );

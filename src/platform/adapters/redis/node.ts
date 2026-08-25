@@ -56,6 +56,23 @@ export class NodeRedisAdapter implements RedisAdapter {
     return this.client.xAdd(key, id, fields);
   }
 
+  async xread(
+    streams: Array<{ key: string; xid: string }>,
+    options: { block?: number; count?: number } = {},
+  ): Promise<
+    Array<{ key: string; messages: Array<{ id: string; data: Record<string, string> }> }>
+  > {
+    const result = await this.client.xRead(
+      streams.map((stream) => ({ key: stream.key, id: stream.xid })),
+      { BLOCK: options.block, COUNT: options.count },
+    );
+    if (!result) return [];
+    return result.map((stream) => ({
+      key: stream.name,
+      messages: stream.messages.map((message) => ({ id: message.id, data: message.message })),
+    }));
+  }
+
   xgroupCreate(key: string, group: string, id: string, mkstream?: boolean): Promise<string> {
     return this.client.xGroupCreate(key, group, id, { MKSTREAM: mkstream });
   }

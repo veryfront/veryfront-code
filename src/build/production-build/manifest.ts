@@ -1,5 +1,6 @@
 import type { AppRouteInfo, BuildStats, RouteInfo } from "#veryfront/server/build-types.ts";
 import { bundlerLogger } from "#veryfront/utils";
+import { VERSION } from "#veryfront/utils/version-constant.ts";
 
 export interface ManifestChunkInfo {
   file: string;
@@ -94,7 +95,7 @@ export function generateManifest(options: ManifestOptions): BuildManifest {
   }
 
   return {
-    version: "2.0.0",
+    version: VERSION,
     buildTime: new Date().toISOString(),
     features: {
       streaming: true,

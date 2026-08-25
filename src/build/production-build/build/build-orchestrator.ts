@@ -2,6 +2,7 @@ import { serverLogger as logger } from "#veryfront/utils";
 import type { BuildOptions, BuildStats } from "#veryfront/server/build-types.ts";
 import { createError, toError } from "#veryfront/errors";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { ensureCacheDirIgnored } from "#veryfront/utils/cache-dir.ts";
 import {
   cleanupCaches,
   cleanupRenderer,
@@ -83,6 +84,15 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
       }
 
       logger.debug("Starting production build", options);
+
+      // Outside production the cache root is `<project>/.cache`, so a build
+      // drops generated bundles into the user's project. Server startup writes
+      // a self-ignoring `.gitignore` there, but a build never starts a server,
+      // so the bundles showed up as untracked files in a project whose own
+      // .gitignore predates Veryfront. Marked here rather than in
+      // `setupBuildDirectories` because a dry run skips that step and still
+      // populates the cache root.
+      await ensureCacheDirIgnored();
 
       const context = await withSpan(
         "build.initializeContext",

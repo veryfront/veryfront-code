@@ -12,7 +12,6 @@ export class ResponseBuilder implements FluentMethodsContext, ResponseMethodsCon
   securityConfig: SecurityConfig | null;
   isDev: boolean;
   nonce: string;
-  cspUserHeader: string | null;
   adapter: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter | undefined;
   isVeryfrontDomain: boolean;
 
@@ -20,7 +19,6 @@ export class ResponseBuilder implements FluentMethodsContext, ResponseMethodsCon
     this.securityConfig = config?.securityConfig ?? null;
     this.isDev = config?.isDev ?? false;
     this.nonce = config?.nonce ?? generateNonce();
-    this.cspUserHeader = config?.cspUserHeader ?? null;
     this.adapter = config?.adapter;
     this.isVeryfrontDomain = config?.isVeryfrontDomain ?? false;
   }
@@ -54,7 +52,7 @@ export class ResponseBuilder implements FluentMethodsContext, ResponseMethodsCon
 // but TS can't verify this because property-assigned methods with generic
 // `this` parameters resolve to the constraint type, not the class type.
 staticHelpers.setResponseBuilderClass(
-  ResponseBuilder as unknown as Parameters<typeof staticHelpers.setResponseBuilderClass>[0],
+  ResponseBuilder as Parameters<typeof staticHelpers.setResponseBuilderClass>[0],
 );
 
 export function createResponseBuilder(config?: ResponseBuilderConfig): ResponseBuilder {

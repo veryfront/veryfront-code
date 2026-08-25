@@ -70,6 +70,17 @@ function createMockInstruments(): MetricsInstruments & {
   _dataFetchErrorCounter: MockCounter;
   _corsRejectionCounter: MockCounter;
   _securityHeadersCounter: MockCounter;
+  _errorCounter: MockCounter;
+  _streamLifecycleOutcomeCounter: MockCounter;
+  _streamLifecycleDeadlineCounter: MockCounter;
+  _streamLifecycleTelemetryCounter: MockCounter;
+  _streamLifecycleRepairCounter: MockCounter;
+  _streamLifecycleShadowDivergenceCounter: MockCounter;
+  _streamLifecycleAttemptDuration: MockHistogram;
+  _streamLifecycleFirstProgressDuration: MockHistogram;
+  _streamLifecycleSemanticIdleDuration: MockHistogram;
+  _streamLifecycleToolInputDuration: MockHistogram;
+  _streamLifecycleToolExecutionDuration: MockHistogram;
 } {
   const httpRequestCounter = createMockCounter();
   const httpRequestDuration = createMockHistogram();
@@ -102,6 +113,17 @@ function createMockInstruments(): MetricsInstruments & {
   const dataFetchErrorCounter = createMockCounter();
   const corsRejectionCounter = createMockCounter();
   const securityHeadersCounter = createMockCounter();
+  const errorCounter = createMockCounter();
+  const streamLifecycleOutcomeCounter = createMockCounter();
+  const streamLifecycleDeadlineCounter = createMockCounter();
+  const streamLifecycleTelemetryCounter = createMockCounter();
+  const streamLifecycleRepairCounter = createMockCounter();
+  const streamLifecycleShadowDivergenceCounter = createMockCounter();
+  const streamLifecycleAttemptDuration = createMockHistogram();
+  const streamLifecycleFirstProgressDuration = createMockHistogram();
+  const streamLifecycleSemanticIdleDuration = createMockHistogram();
+  const streamLifecycleToolInputDuration = createMockHistogram();
+  const streamLifecycleToolExecutionDuration = createMockHistogram();
 
   return {
     httpRequestCounter: httpRequestCounter as never,
@@ -136,27 +158,21 @@ function createMockInstruments(): MetricsInstruments & {
     dataFetchErrorCounter: dataFetchErrorCounter as never,
     corsRejectionCounter: corsRejectionCounter as never,
     securityHeadersCounter: securityHeadersCounter as never,
-    errorCounter: null,
+    errorCounter: errorCounter as never,
     memoryUsageGauge: null,
     heapUsageGauge: null,
     heapTotalGauge: null,
     heapPercentGauge: null,
-    streamLifecycleOutcomeCounter: null,
-    streamLifecycleDeadlineCounter: null,
-    streamLifecycleTelemetryCounter: null,
-    streamLifecycleRepairCounter: null,
-    streamLifecycleShadowDivergenceCounter: null,
-    streamLifecycleAttemptDuration: null,
-    streamLifecycleFirstProgressDuration: null,
-    streamLifecycleSemanticIdleDuration: null,
-    streamLifecycleToolInputDuration: null,
-    streamLifecycleToolExecutionDuration: null,
-    modelCallContextWriterOutcomeCounter: null,
-    modelCallContextBarrierOutcomeCounter: null,
-    modelCallContextLogicalByteLength: null,
-    modelCallContextPartCount: null,
-    modelCallContextAppendRequestCount: null,
-    modelCallContextRecorderBarrierDuration: null,
+    streamLifecycleOutcomeCounter: streamLifecycleOutcomeCounter as never,
+    streamLifecycleDeadlineCounter: streamLifecycleDeadlineCounter as never,
+    streamLifecycleTelemetryCounter: streamLifecycleTelemetryCounter as never,
+    streamLifecycleRepairCounter: streamLifecycleRepairCounter as never,
+    streamLifecycleShadowDivergenceCounter: streamLifecycleShadowDivergenceCounter as never,
+    streamLifecycleAttemptDuration: streamLifecycleAttemptDuration as never,
+    streamLifecycleFirstProgressDuration: streamLifecycleFirstProgressDuration as never,
+    streamLifecycleSemanticIdleDuration: streamLifecycleSemanticIdleDuration as never,
+    streamLifecycleToolInputDuration: streamLifecycleToolInputDuration as never,
+    streamLifecycleToolExecutionDuration: streamLifecycleToolExecutionDuration as never,
 
     _httpRequestCounter: httpRequestCounter,
     _httpRequestDuration: httpRequestDuration,
@@ -189,6 +205,17 @@ function createMockInstruments(): MetricsInstruments & {
     _dataFetchErrorCounter: dataFetchErrorCounter,
     _corsRejectionCounter: corsRejectionCounter,
     _securityHeadersCounter: securityHeadersCounter,
+    _errorCounter: errorCounter,
+    _streamLifecycleOutcomeCounter: streamLifecycleOutcomeCounter,
+    _streamLifecycleDeadlineCounter: streamLifecycleDeadlineCounter,
+    _streamLifecycleTelemetryCounter: streamLifecycleTelemetryCounter,
+    _streamLifecycleRepairCounter: streamLifecycleRepairCounter,
+    _streamLifecycleShadowDivergenceCounter: streamLifecycleShadowDivergenceCounter,
+    _streamLifecycleAttemptDuration: streamLifecycleAttemptDuration,
+    _streamLifecycleFirstProgressDuration: streamLifecycleFirstProgressDuration,
+    _streamLifecycleSemanticIdleDuration: streamLifecycleSemanticIdleDuration,
+    _streamLifecycleToolInputDuration: streamLifecycleToolInputDuration,
+    _streamLifecycleToolExecutionDuration: streamLifecycleToolExecutionDuration,
   };
 }
 
@@ -619,6 +646,104 @@ describe("observability/metrics/recorder", () => {
     });
   });
 
+  describe("recordError", () => {
+    it("should increment the application error counter", () => {
+      recorder.recordError({ type: "boom" });
+
+      assertEquals(
+        instruments._errorCounter._value,
+        1,
+        "recordError must increment errorCounter",
+      );
+      assertEquals(
+        instruments._errorCounter._lastAttributes,
+        { type: "boom" },
+        "recordError must forward its attributes to errorCounter",
+      );
+      assertEquals(
+        instruments._renderErrorCounter._value,
+        0,
+        "recordError must not write to the render error counter",
+      );
+    });
+  });
+
+  describe("stream lifecycle", () => {
+    const attributes = { project_id: "project-123" };
+
+    const counters = [
+      ["outcome", "_streamLifecycleOutcomeCounter"],
+      ["deadline", "_streamLifecycleDeadlineCounter"],
+      ["telemetry", "_streamLifecycleTelemetryCounter"],
+      ["repair", "_streamLifecycleRepairCounter"],
+      ["shadowDivergence", "_streamLifecycleShadowDivergenceCounter"],
+    ] as const;
+
+    const durations = [
+      ["attempt", "_streamLifecycleAttemptDuration"],
+      ["first_progress", "_streamLifecycleFirstProgressDuration"],
+      ["semantic_idle", "_streamLifecycleSemanticIdleDuration"],
+      ["tool_input", "_streamLifecycleToolInputDuration"],
+      ["tool_execution", "_streamLifecycleToolExecutionDuration"],
+    ] as const;
+
+    it("should route each lifecycle event to its own counter", () => {
+      for (const [event, handle] of counters) {
+        const scoped = createMockInstruments();
+        const scopedRecorder = new MetricsRecorder(scoped, runtimeState);
+
+        if (event === "outcome") scopedRecorder.recordStreamLifecycleOutcome(attributes);
+        if (event === "deadline") scopedRecorder.recordStreamLifecycleDeadline(attributes);
+        if (event === "telemetry") scopedRecorder.recordStreamLifecycleTelemetry(attributes);
+        if (event === "repair") scopedRecorder.recordStreamLifecycleRepair(attributes);
+        if (event === "shadowDivergence") {
+          scopedRecorder.recordStreamLifecycleShadowDivergence(attributes);
+        }
+
+        assertEquals(scoped[handle]._value, 1, `${event} must increment ${handle}`);
+        assertEquals(
+          scoped[handle]._lastAttributes,
+          attributes,
+          `${event} must forward its attributes to ${handle}`,
+        );
+        for (const [, other] of counters) {
+          if (other === handle) continue;
+          assertEquals(scoped[other]._value, 0, `${event} must not increment ${other}`);
+        }
+      }
+    });
+
+    it("should route each duration kind to its own histogram", () => {
+      for (const [kind, handle] of durations) {
+        const scoped = createMockInstruments();
+        const scopedRecorder = new MetricsRecorder(scoped, runtimeState);
+
+        scopedRecorder.recordStreamLifecycleDuration(kind, 25, attributes);
+
+        assertEquals(scoped[handle]._value, 25, `${kind} must be recorded into ${handle}`);
+        assertEquals(
+          scoped[handle]._lastAttributes,
+          attributes,
+          `${kind} must forward its attributes to ${handle}`,
+        );
+        for (const [, other] of durations) {
+          if (other === handle) continue;
+          assertEquals(scoped[other]._value, 0, `${kind} must not be recorded into ${other}`);
+        }
+      }
+    });
+
+    it("should clamp negative durations to zero", () => {
+      recorder.recordStreamLifecycleDuration("attempt", -5, attributes);
+
+      assertEquals(
+        instruments._streamLifecycleAttemptDuration._value,
+        0,
+        "negative durations clamp to 0",
+      );
+    });
+  });
+
   describe("null instruments", () => {
     it("should handle all null instruments gracefully", () => {
       const nullInstruments: MetricsInstruments = {
@@ -669,12 +794,6 @@ describe("observability/metrics/recorder", () => {
         streamLifecycleSemanticIdleDuration: null,
         streamLifecycleToolInputDuration: null,
         streamLifecycleToolExecutionDuration: null,
-        modelCallContextWriterOutcomeCounter: null,
-        modelCallContextBarrierOutcomeCounter: null,
-        modelCallContextLogicalByteLength: null,
-        modelCallContextPartCount: null,
-        modelCallContextAppendRequestCount: null,
-        modelCallContextRecorderBarrierDuration: null,
       };
       const nullRecorder = new MetricsRecorder(nullInstruments, runtimeState);
 
@@ -702,6 +821,16 @@ describe("observability/metrics/recorder", () => {
       nullRecorder.recordCorsRejection();
       nullRecorder.recordSecurityHeaders();
       nullRecorder.recordError();
+      nullRecorder.recordStreamLifecycleOutcome({});
+      nullRecorder.recordStreamLifecycleDeadline({});
+      nullRecorder.recordStreamLifecycleTelemetry({});
+      nullRecorder.recordStreamLifecycleRepair({});
+      nullRecorder.recordStreamLifecycleShadowDivergence({});
+      nullRecorder.recordStreamLifecycleDuration("attempt", 1, {});
+      nullRecorder.recordStreamLifecycleDuration("first_progress", 1, {});
+      nullRecorder.recordStreamLifecycleDuration("semantic_idle", 1, {});
+      nullRecorder.recordStreamLifecycleDuration("tool_input", 1, {});
+      nullRecorder.recordStreamLifecycleDuration("tool_execution", 1, {});
     });
   });
 });

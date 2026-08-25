@@ -6,7 +6,8 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
-import { assert, assertEquals } from "#veryfront/testing/assert";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
+import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import type { ChatMessage, UseChatResult } from "#veryfront/agent/react";
 import { Chat } from "./index.tsx";
@@ -90,7 +91,14 @@ describe("Chat — controlled via chat={useChat()}", () => {
   });
 
   it("treats chat={} as controlled — no agentId/app-mode fetch needed", () => {
-    const html = renderToString(<Chat chat={fakeSession([])} />);
+    const html = renderToString(
+      <Chat chat={fakeSession([], { input: "draft from session" })} />,
+    );
+    assertStringIncludes(
+      html,
+      "draft from session",
+      "the composer renders the controlled session draft, proving the controlled route was taken",
+    );
     assert(html.length > 0, "renders an empty controlled chat");
   });
 
@@ -117,7 +125,7 @@ describe("Chat — controlled via chat={useChat()}", () => {
     );
   });
 
-  it("submits externally controlled attachments through the chat session", () => {
+  it("submits externally controlled attachments through the chat session", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
@@ -171,7 +179,7 @@ describe("Chat — controlled via chat={useChat()}", () => {
         }],
       });
       assertEquals(removed, ["file-1"]);
-      root.unmount();
+      await unmountReactRoot(root);
     } finally {
       restore();
     }

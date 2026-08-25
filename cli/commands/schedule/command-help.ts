@@ -8,7 +8,7 @@ export const scheduleHelp: CommandHelp = {
   options: [
     {
       flag: "--input <file>",
-      description: "JSON input file to override the schedule input (run only)",
+      description: "JSON object file to override the schedule input (run only)",
     },
     {
       flag: "--remote",
@@ -16,8 +16,16 @@ export const scheduleHelp: CommandHelp = {
         "Run the pushed source schedule in the Veryfront cloud runtime; cannot be combined with --input (run only)",
     },
     {
+      flag: "-d, --dir <path>",
+      description: "Project directory (default: current directory)",
+    },
+    {
       flag: "--json",
       description: "Output as JSON",
+    },
+    {
+      flag: "--debug",
+      description: "Enable debug logging (run only)",
     },
   ],
   examples: [

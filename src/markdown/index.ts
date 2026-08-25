@@ -14,7 +14,7 @@
  * <Markdown># Hello{"\n\n"}Some **bold** text with `code`.</Markdown>
  * ```
  *
- * @see https://veryfront.com/docs/guides/chat-ui
+ * @see https://veryfront.com/docs/code/guides/chat-ui
  */
 
 export {

@@ -15,19 +15,104 @@ src/                      # Source code with colocated unit tests
 ├── module/
 │   ├── function.ts
 │   └── function.test.ts  # Unit test colocated with source
+cli/                      # CLI source with colocated unit tests
+extensions/               # Extension source with colocated unit tests
+templates/                # Template source with colocated unit tests
+scripts/                  # Repository scripts with colocated unit tests
+react/                    # React package source with colocated unit tests
 
 tests/
 ├── _helpers/             # Shared test utilities (TestContext, etc.)
 ├── _examples/            # Example tests demonstrating best practices
-├── e2e/                  # End-to-end tests (Playwright)
+├── e2e/                  # End-to-end journeys (Deno and Playwright)
 ├── fixtures/             # Test data and mock implementations
 └── integration/          # Integration tests (multiple components, I/O, servers)
 ```
 
+### Canonical Leaf Suites
+
+The executable test tree is classified by `deno task test:layout` before quick
+verification and in the earliest CI job. The gate maps every executable test
+path to exactly one `level -> leaf suite -> runner` owner and reports timing
+without gating on duration.
+
+Canonical leaves are:
+
+- `src/`, `cli/`, `extensions/`, `templates/`, `scripts/`, `react/` ->
+  `unit -> unit -> deno`
+- `tests/integration/` -> `integration -> integration -> deno`
+- `tests/e2e/**/*.test.*` -> `e2e -> e2e -> deno`
+- `tests/e2e/**/*.playwright.ts` -> `e2e -> e2e -> playwright`
+
+Runtime is a suite variant, not a competing leaf owner. Runtime metadata lives
+on one registry record and can assign variant runners, but it does not create a
+second canonical owner for a path. Existing off-layout tests are covered by the
+temporary explicit-path migration inventory in
+`scripts/test/test-layout-migration.ts`; each entry carries an owner and removal
+PR. That inventory is a shrink-only migration aid, not a permanent all-test
+manifest.
+
+### Semantic Unit-Boundary Audit
+
+`deno task lint:test-semantic-dispositions` is the temporary semantic companion
+to `deno task test:layout`. Layout owns path classification; the semantic audit
+then parses every executable test currently owned by the colocated unit roots
+(`src/`, `cli/`, `extensions/`, `templates/`, `scripts/`, and `react/`) and
+flags executable filesystem, process, server, network, browser, or shared-cwd
+effects. Filesystem watchers are tracked separately from fixture reads because
+they retain operating-system resources and are never hermetic-unit exemptions.
+Process effects include child-process execution and access to or mutation of
+process-global environment/runtime state. The suite planner remains path-only.
+
+Current semantic debt is listed in
+`scripts/test/test-semantic-audit-migration.ts`. That file is debt-only and
+shrink-only: adding a new effect-bearing unit test, or adding a new effect to an
+already-listed test, fails CI. Removing debt should delete the stale disposition
+entry in the same change.
+
+The audit compares the inventory with the merge base of `origin/main` by
+default. Set `TEST_SEMANTIC_AUDIT_BASE_REF` to a fetched commit or ref when
+reproducing CI from a shallow checkout. Pass `--json` for machine-readable
+candidate, error, and considered-file output.
+
+Disposition values:
+
+- `hermetic-unit`: the test reads checked-in repository fixtures or contract
+  files without mutating process, network, or external runtime state.
+- `replaceable-fake`: the test can stay colocated after the side effect is
+  replaced by an injected fake or pure fixture boundary.
+- `integration-relocation`: the test exercises filesystem mutation or watching,
+  process, server, network, browser, or multi-component runtime behavior and
+  should move under `tests/integration/...`.
+
+Each disposition carries a domain owner and rationale. Replaceable fakes carry a
+removal lane; relocations also name their intended `tests/integration/...`
+destination. Hermetic repository-contract reads need no migration lane. The
+inventory is not a permanent all-test manifest; it exists only to make later
+migration slices finite and reviewable.
+
+Executable test filenames are limited to:
+
+- `*.test.ts`
+- `*.test.tsx`
+- `*.test.js`
+- `*.test.mjs`
+- `*.test.cjs`
+- `*.playwright.ts`
+
+Unsupported test-like names such as `*.test.jsx`, `*.spec.ts`, and
+`*.playwright.js` fail layout validation until the registry deliberately owns
+them. Executable-looking files below `tests/**/fixtures/**` or
+`tests/**/support/**` also fail; fixture and support directories are not runner
+entry points.
+
 **Key Principles:**
 
-- **Unit tests** (pure functions, no I/O, no external dependencies) are **colocated** with source code in `src/`
-- **Integration tests** (servers, databases, file systems, multiple components) live in `tests/integration/`
+- **Unit tests** (pure functions, no I/O, no external dependencies) are
+  **colocated** with source code in `src/`, `cli/`, `extensions/`, `templates/`,
+  `scripts/`, or `react/`
+- **Integration tests** (servers, databases, file systems, multiple components)
+  live in `tests/integration/`
 - **E2E tests** live in `tests/e2e/` when full user-flow coverage is needed
 
 ### File Naming
@@ -56,6 +141,36 @@ tests/
 - React SSR/streaming tests
 - Example: API endpoints, page rendering, build processes
 
+## Where test primitives live
+
+Every shared test capability has exactly one home. Reach for the shared
+helper instead of writing a local copy; the `lint:testing-front-door` ratchet
+(`scripts/lint/check-testing-front-door.ts`) counts the remaining bypasses
+per file in `scripts/lint/testing-front-door-baseline.json` and fails CI when
+any file grows a new one.
+
+| Capability | Home | Use |
+| ---------- | ---- | --- |
+| Temp dirs and files | `src/testing/deno-compat.ts` | `makeTempDir`, `withTempDir`, `makeTempFile`, `withTempFile` |
+| Env vars (async scope) | `src/testing/deno-compat.ts` | `withEnv(vars, fn)` sets, runs `fn`, restores |
+| Env vars (sync restore) | `tests/_helpers/utils.ts` | `withEnvSync(vars)` returns the restore callback |
+| Polling for a condition | `src/testing/deno-compat.ts` | `waitFor(condition, options)`, time-scaled |
+| Time scaling | `src/testing/timing.ts` | `scaleMs`, `testDelay` |
+| JSDOM browser globals | `src/testing/dom-globals.ts` | `installComponentDom(dom, options)` installs, drains animation frames, restores |
+| Fetch stubbing | `src/testing/mock-fetch.ts` | `withMockFetch` (scoped) or `installMockFetch`/`restoreMockFetch` (hook style) |
+| Cache backend fakes | `src/cache/testing/` | `MockCacheBackend` (pass `{ type: "redis", ignoreTtl: true }` for a distributed fake) |
+| HTTP server lifecycle | `tests/_helpers/server.ts` | `waitForServerReady`, `waitForServerStopped`, `pollUrlReady`, `fetchWithTimeout` |
+
+Two of these are correctness rules, not just deduplication:
+
+- Assigning `globalThis.fetch =` directly does not control the outbound
+  transport behind `guardedOutboundFetch`, so code under test that goes
+  through the transport still reaches the real network. `withMockFetch` and
+  `installMockFetch` move the global and the transport together.
+- Hand-stubbing `requestAnimationFrame` with `setTimeout` leaks any frame
+  still queued at teardown, which the op sanitizer reports as a suite-level
+  timer leak. `installComponentDom` drains pending frames before restoring.
+
 ## Test Structure
 
 ### Use BDD Style
@@ -77,17 +192,16 @@ describe("ComponentName", () => {
 **Never commit a focused test:** `it.only` / `describe.only` — and the option
 form `it({ only: true }, fn)` that our BDD wrapper also honors — silently skip
 every sibling test in the file. `deno task lint:ban-test-only` fails CI if any
-focused test reaches a committed `*.test.ts(x)` under `src/`, `cli/`, `tests/`,
-`react/`, `extensions/`, or `scripts/`. Use focus locally, then remove it before
-committing.
+focused test reaches a committed test file under the `deno.json` test roots.
+Use focus locally, then remove it before committing.
 
 **Don't pile up skipped tests:** `it.skip` / `it.ignore` (and `skip: true` /
 `ignore: true`) leave dead coverage that looks present but never runs. They're
 allowed when genuinely blocked, but `deno task lint:skipped-tests` ratchets the
 total against a baseline in `scripts/lint/check-skipped-tests-baseline.ts` — CI
 fails if it grows. Prefer fixing and re-enabling, or deleting the test and
-recording why in the commit/issue. When you reduce the count, the task prints
-the new total to lock into the baseline.
+recording why in the commit/issue. When you reduce the count,
+`deno task lint:skipped-tests:update` lowers the baseline to lock it in.
 
 ### Test Naming Conventions
 
@@ -105,7 +219,8 @@ the new total to lock into the baseline.
 - `"works"` - no context
 - `"test1"` - meaningless
 
-**The test name should explain what's being tested. Additional documentation is rarely needed.**
+**The test name should explain what's being tested. Additional documentation is
+rarely needed.**
 
 ## Resource Management
 
@@ -198,11 +313,12 @@ Deno.test({
 4. Still use TestContext for proper cleanup even with disabled sanitizers
 
 **Enforced by a ratchet:** `deno task lint:sanitizer-baseline` counts every
-`sanitizeResources/Ops/Exit: false` across `src/`, `cli/`, `tests/`, `react/`,
-`extensions/`, and `scripts/` and fails CI if the total grows beyond the
-baseline in `scripts/lint/check-sanitizer-baseline.ts`. New tests must not add
-opt-outs — fix the leak instead. When you remove opt-outs, the task prints the
-new total; lower `SANITIZER_OPT_OUT_BASELINE` to that number to lock in the win.
+`sanitizeResources/Ops/Exit: false` across the `deno.json` test roots and fails
+CI if the total grows beyond the baseline in
+`scripts/lint/check-sanitizer-baseline.ts`. New tests must not add opt-outs —
+fix the leak instead. When you remove opt-outs, the task prints the new total;
+`deno task lint:sanitizer-baseline:update` lowers `SANITIZER_OPT_OUT_BASELINE`
+to lock in the win.
 
 ## Assertions
 
@@ -505,10 +621,13 @@ it("should process data correctly", async () => {
 
 To migrate existing tests to the colocated structure:
 
-1. **Identify unit tests** - Look for tests with no I/O, no TestContext, no server
-2. **Move to source directory** - Place `function.test.ts` next to `function.ts` in `src/`
+1. **Identify unit tests** - Look for tests with no I/O, no TestContext, no
+   server
+2. **Move to source directory** - Place `function.test.ts` next to `function.ts`
+   in `src/`
 3. **Update imports** - Change relative paths (e.g., `../../../src/` → `./`)
-4. **Keep integration tests** - Tests using TestContext stay in `tests/integration/`
+4. **Keep integration tests** - Tests using TestContext stay in
+   `tests/integration/`
 
 ### Improving Test Quality
 

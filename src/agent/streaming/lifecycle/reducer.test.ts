@@ -412,8 +412,31 @@ describe("stream lifecycle reducer", () => {
       event: { type: "step_finish", finishReason: "tool-calls" },
     }, 2).state;
 
-    assertEquals(state.snapshot.phase, "failed");
-    assertEquals(state.snapshot.tools[0]?.phase, "input_rejected");
+    assertEquals(
+      state.snapshot.phase,
+      "failed",
+      "an unavailable tool call must fail the stream",
+    );
+    assertEquals(
+      state.snapshot.tools[0]?.phase,
+      "input_rejected",
+      "the unavailable tool must stay rejected instead of moving to execution",
+    );
+    assertEquals(
+      state.terminalError?.code,
+      "PROTOCOL_VIOLATION",
+      "an unavailable tool is a protocol violation, not incomplete tool input",
+    );
+    assertEquals(
+      state.terminalError?.source,
+      "runtime",
+      "an unavailable tool is a runtime fault, not a tool fault",
+    );
+    assertEquals(
+      state.terminalError?.publicMessage,
+      "Provider requested tool handoff without an executable tool call",
+      "unavailable-tool failures must not use the incomplete-input public message",
+    );
   });
 
   it("accepts provider tool output only for explicitly provider-executed input", () => {
@@ -468,6 +491,59 @@ describe("stream lifecycle reducer", () => {
       state = reduceStreamSignal(state, { kind: "protocol", event }, 1).state;
     }
     assertEquals(state.snapshot.tools[0]?.phase, "succeeded");
+  });
+
+  it("keeps provider tools running across preliminary output", () => {
+    let state = reduceEvents([
+      {
+        type: "tool_input_start",
+        toolCallId: "native-1",
+        toolName: "web_fetch",
+        providerExecuted: true,
+      },
+      {
+        type: "tool_input_ready",
+        toolCallId: "native-1",
+        toolName: "web_fetch",
+        input: { url: "https://docs.example/page" },
+        providerExecuted: true,
+      },
+      {
+        type: "provider_tool_start",
+        toolCallId: "native-1",
+        toolName: "web_fetch",
+        providerExecuted: true,
+      },
+      {
+        type: "provider_tool_result",
+        toolCallId: "native-1",
+        toolName: "web_fetch",
+        output: { partial: true },
+        isError: false,
+        providerExecuted: true,
+        preliminary: true,
+      },
+    ]);
+
+    assertEquals(state.snapshot.phase, "streaming");
+    assertEquals(state.snapshot.tools[0]?.phase, "running");
+
+    state = reduceStreamSignal(
+      state,
+      protocol({
+        type: "provider_tool_result",
+        toolCallId: "native-1",
+        toolName: "web_fetch",
+        output: { content: "final" },
+        isError: false,
+        providerExecuted: true,
+      }),
+      5,
+    ).state;
+
+    assertEquals(state.snapshot.phase, "streaming");
+    assertEquals(state.snapshot.tools[0]?.phase, "succeeded");
+    assertEquals(state.snapshot.tools[0]?.output, { content: "final" });
   });
 
   it("uses running as the only entry to every provider tool terminal state", () => {

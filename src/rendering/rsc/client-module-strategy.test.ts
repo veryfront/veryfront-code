@@ -8,11 +8,68 @@ import {
   buildRSCTransportHeaders,
   determineClientModuleStrategy,
   getHydrationReactImportSpecifiers,
+  readHydrationData,
   resolveClientModuleStrategy,
   resolveReleaseAssetModuleUrl,
+  seedHydrationDependencyPins,
 } from "./client-module-strategy.ts";
+import { getReactCDNUrl, getReactDOMClientCDNUrl } from "#veryfront/utils/constants/cdn.ts";
 
 describe("rendering/rsc/client-module-strategy", () => {
+  it("accepts only the unique server-owned hydration location", () => {
+    const genuine = {
+      id: "veryfront-hydration-data",
+      tagName: "SCRIPT",
+      textContent: '{"clientModuleStrategy":"rsc-module"}',
+      getAttribute: (name: string) => name === "type" ? "application/json" : null,
+    };
+    const document = {
+      body: { firstElementChild: genuine },
+      querySelectorAll: () => [genuine],
+    } as unknown as Document;
+
+    assertEquals(readHydrationData(document), { clientModuleStrategy: "rsc-module" });
+    assertEquals(seedHydrationDependencyPins(document, "on:snapshot-a"), true);
+    assertEquals(JSON.parse(genuine.textContent).dependencyPinningCacheKey, "on:snapshot-a");
+
+    const legacyBody = { firstElementChild: { id: "root" } };
+    const legacy = {
+      ...genuine,
+      textContent: '{"clientModuleStrategy":"rsc-module"}',
+      parentElement: legacyBody,
+    };
+    const nestedForgery = {
+      ...genuine,
+      textContent: '{"clientModuleStrategy":"fs"}',
+      parentElement: { id: "root" },
+    };
+    const legacyDocument = {
+      body: legacyBody,
+      querySelectorAll: () => [legacy],
+    } as unknown as Document;
+    assertEquals(readHydrationData(legacyDocument), {
+      clientModuleStrategy: "rsc-module",
+    });
+
+    const nestedDuplicate = {
+      body: legacyBody,
+      querySelectorAll: () => [nestedForgery, legacy],
+    } as unknown as Document;
+    assertEquals(readHydrationData(nestedDuplicate), null);
+
+    const forged = {
+      ...genuine,
+      textContent: '{"clientModuleStrategy":"fs"}',
+      parentElement: document.body,
+    };
+    const ambiguous = {
+      body: document.body,
+      querySelectorAll: () => [genuine, forged],
+    } as unknown as Document;
+    assertEquals(readHydrationData(ambiguous), null);
+    assertEquals(seedHydrationDependencyPins(ambiguous, "on:snapshot-b"), false);
+  });
+
   it("uses the fs strategy only for local projects", () => {
     // Only the server-trusted `isLocalProject` signal unlocks the dev-only
     // `/_veryfront/fs/` handler. Preview mode (which can be reached via
@@ -37,6 +94,21 @@ describe("rendering/rsc/client-module-strategy", () => {
   it("resolves strategy from hydration data without probing endpoints", () => {
     assertEquals(resolveClientModuleStrategy({ clientModuleStrategy: "fs" }), "fs");
     assertEquals(resolveClientModuleStrategy({ clientModuleStrategy: "rsc-module" }), "rsc-module");
+    assertEquals(
+      resolveClientModuleStrategy({ dev: true }),
+      "fs",
+      "dev hydration data falls back to the fs strategy",
+    );
+    assertEquals(
+      resolveClientModuleStrategy({}),
+      "rsc-module",
+      "a payload without dev or an explicit strategy must use rsc-module",
+    );
+    assertEquals(
+      resolveClientModuleStrategy(null),
+      "rsc-module",
+      "unparseable hydration data must not select the dev-only fs endpoint",
+    );
   });
 
   it("builds explicit client module urls for each strategy", () => {
@@ -152,6 +224,42 @@ describe("rendering/rsc/client-module-strategy", () => {
     const specifiers = getHydrationReactImportSpecifiers(doc);
     assertEquals(specifiers.react, "react");
     assertEquals(specifiers.reactDomClient, "react-dom/client");
+  });
+
+  it("resolves each React specifier against its own import-map entry", () => {
+    const docWithImports = (imports: Record<string, string>): Document =>
+      ({
+        querySelector: (selector: string) =>
+          selector === 'script[type="importmap"]'
+            ? { textContent: JSON.stringify({ imports }) }
+            : null,
+      }) as unknown as Document;
+
+    const reactOnly = getHydrationReactImportSpecifiers(
+      docWithImports({ react: "/react.js" }),
+      "18.3.1",
+    );
+    assertEquals(reactOnly.react, "react", "an owned react specifier stays bare");
+    assertEquals(
+      reactOnly.reactDomClient,
+      getReactDOMClientCDNUrl("18.3.1"),
+      "an unowned react-dom/client falls back to the CDN URL",
+    );
+
+    const clientOnly = getHydrationReactImportSpecifiers(
+      docWithImports({ "react-dom/client": "/react-dom-client.js" }),
+      "18.3.1",
+    );
+    assertEquals(
+      clientOnly.reactDomClient,
+      "react-dom/client",
+      "an owned react-dom/client specifier stays bare",
+    );
+    assertEquals(
+      clientOnly.react,
+      getReactCDNUrl("18.3.1"),
+      "an unowned react falls back to the CDN URL",
+    );
   });
 
   it("uses the server-provided React version when the page has no import map", () => {

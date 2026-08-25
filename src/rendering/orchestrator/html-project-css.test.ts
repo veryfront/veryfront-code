@@ -1,10 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import {
   buildRouteManifestKey,
   extractProjectClassesForRoute,
   getProjectContentVersion,
+  startPreparedCSSWarmup,
   startProjectCSSPreparation,
 } from "./html-project-css.ts";
 
@@ -88,6 +90,205 @@ describe("rendering/orchestrator/html-project-css", () => {
 
       assertEquals(result, undefined);
       assertEquals(called, false);
+    });
+
+    it("generates project CSS for published production pages", async () => {
+      const calls: unknown[][] = [];
+
+      const result = startProjectCSSPreparation(
+        {
+          slug: "docs",
+        } as any,
+        {
+          environment: "production",
+          isLocalProject: false,
+          projectSlug: "demo",
+          projectId: "proj_1",
+          globalCSS: "body{}",
+          projectClasses: new Set(["prose"]),
+          mode: "production",
+        } as any,
+        {
+          getProjectCSS: ((...args: unknown[]) => {
+            calls.push(args);
+            return Promise.resolve({ hash: "abc123" });
+          }) as any,
+        },
+      );
+
+      assertNotEquals(
+        result,
+        undefined,
+        "a published production page must start project CSS generation",
+      );
+      assertEquals(
+        await result,
+        { hash: "abc123" } as any,
+        "the generated project CSS is handed back to the caller",
+      );
+      assertEquals(calls.length, 1, "project CSS is generated exactly once per render");
+      assertEquals(
+        calls[0]?.[0],
+        "demo",
+        "projectSlug wins over projectId and context.slug",
+      );
+      assertEquals(calls[0]?.[1], "body{}", "the project global CSS is forwarded verbatim");
+      assertEquals(
+        [...(calls[0]?.[2] as Set<string>)],
+        ["prose"],
+        "the collected project classes are forwarded",
+      );
+      assertEquals(
+        calls[0]?.[3],
+        { minify: true, environment: "production", buildMode: "production" },
+        "published CSS is minified and built for the request environment",
+      );
+    });
+
+    it("skips generation when the project scope is the shared default", () => {
+      let called = false;
+
+      const result = startProjectCSSPreparation(
+        {
+          slug: "docs",
+        } as any,
+        {
+          environment: "production",
+          isLocalProject: false,
+          projectSlug: "default",
+          globalCSS: "body{}",
+          mode: "production",
+        } as any,
+        {
+          getProjectCSS: (() => {
+            called = true;
+            return Promise.resolve({ hash: "abc123" });
+          }) as any,
+        },
+      );
+
+      assertEquals(result, undefined, "the shared default scope must not be generated for");
+      assertEquals(called, false, "no CSS build runs for the shared default scope");
+    });
+  });
+
+  describe("startPreparedCSSWarmup", () => {
+    function makeConfig(mode: "development" | "production") {
+      return {
+        projectDir: "/project",
+        adapter: {
+          fs: {
+            getUnderlyingAdapter: () => ({
+              getAllSourceFiles: () => [
+                {
+                  path: "/project/app/page.tsx",
+                  content: `<div className="text-red-500" />`,
+                },
+              ],
+            }),
+          },
+        } as any,
+        config: {} as any,
+        mode,
+      };
+    }
+
+    it("warms the preview stylesheet for a preview render", async () => {
+      const calls: Array<Record<string, unknown>> = [];
+
+      startPreparedCSSWarmup(
+        makeConfig("production"),
+        { slug: "docs" } as any,
+        { environment: "preview", projectSlug: "p" } as any,
+        {
+          warmPreparedCSSArtifactFromFiles: ((input: Record<string, unknown>) => {
+            calls.push(input);
+            return Promise.resolve(undefined);
+          }) as any,
+          getProjectContentVersion: () => "content-v1",
+          createStyleScopeProfile: (() => ({ mode: "test" })) as any,
+        },
+      );
+
+      await waitFor(() => calls.length === 1, {
+        interval: 5,
+        message: "a preview render must warm the prepared CSS artifact",
+      });
+      assertEquals(calls[0]?.projectSlug, "p", "the warmup is scoped to the project slug");
+      assertEquals(
+        calls[0]?.projectVersion,
+        "content-v1",
+        "the warmup keys on the resolved project content version",
+      );
+      assertEquals(calls[0]?.environment, "preview", "the warmed artifact is the preview one");
+      assertEquals(calls[0]?.buildMode, "production", "preview artifacts are built for production");
+    });
+
+    it("does not warm the preview stylesheet for a published production render", async () => {
+      const calls: Array<Record<string, unknown>> = [];
+      const deps = {
+        warmPreparedCSSArtifactFromFiles: ((input: Record<string, unknown>) => {
+          calls.push(input);
+          return Promise.resolve(undefined);
+        }) as any,
+        getProjectContentVersion: () => "content-v1",
+        createStyleScopeProfile: (() => ({ mode: "test" })) as any,
+      };
+
+      startPreparedCSSWarmup(
+        makeConfig("production"),
+        { slug: "docs" } as any,
+        { environment: "production", isLocalProject: false, projectSlug: "p" } as any,
+        deps,
+      );
+
+      // A preview warmup started afterwards is the time barrier: once it has
+      // landed, any warmup the published render would have started has had
+      // its chance to land too.
+      startPreparedCSSWarmup(
+        makeConfig("production"),
+        { slug: "docs" } as any,
+        { environment: "preview", projectSlug: "control" } as any,
+        deps,
+      );
+
+      await waitFor(() => calls.some((call) => call.projectSlug === "control"), {
+        interval: 5,
+        message: "the control preview warmup must land",
+      });
+      assertEquals(
+        calls.filter((call) => call.projectSlug === "p").length,
+        0,
+        "a published production render must not warm the preview stylesheet",
+      );
+    });
+
+    it("falls back to the dev version marker when no content version is known", async () => {
+      const calls: Array<Record<string, unknown>> = [];
+
+      startPreparedCSSWarmup(
+        makeConfig("development"),
+        { slug: "docs" } as any,
+        { environment: "preview", projectSlug: "p" } as any,
+        {
+          warmPreparedCSSArtifactFromFiles: ((input: Record<string, unknown>) => {
+            calls.push(input);
+            return Promise.resolve(undefined);
+          }) as any,
+          getProjectContentVersion: () => undefined,
+          createStyleScopeProfile: (() => ({ mode: "test" })) as any,
+        },
+      );
+
+      await waitFor(() => calls.length === 1, {
+        interval: 5,
+        message: "a preview render must warm the prepared CSS artifact",
+      });
+      assertEquals(
+        calls[0]?.projectVersion,
+        "dev",
+        "an unknown content version must never key the artifact cache as undefined",
+      );
     });
   });
 

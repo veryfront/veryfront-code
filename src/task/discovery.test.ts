@@ -1,16 +1,35 @@
+import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { FileSystemAdapter, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
 import { clearConfigCache } from "#veryfront/config";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
-import { deriveTaskId, discoverTasks, findTaskById } from "./discovery.ts";
-import { discoverProjectTaskRuntime, listProjectRuntimeTasks } from "./project-runtime.ts";
-import { runTriggerTarget } from "../trigger/local-runner.ts";
+import { discoverAll, type DiscoveryResult } from "#veryfront/discovery";
+import { taskHandler } from "#veryfront/discovery/handlers/task-handler.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
+import { runTriggerTarget } from "#veryfront/trigger/local-runner.ts";
+import {
+  deriveTaskId,
+  discoverTasks as discoverTasksRaw,
+  findTaskById as findTaskByIdRaw,
+} from "./discovery.ts";
+import {
+  discoverProjectTaskRuntime as discoverProjectTaskRuntimeRaw,
+  listProjectRuntimeTasks,
+} from "./project-runtime.ts";
 import { isTaskDefinition } from "./types.ts";
-import type { DiscoveryResult } from "#veryfront/discovery";
+
+const discoverTasks: typeof discoverTasksRaw = (options) =>
+  discoverTasksRaw({ ...options, allowHostProjectCodeExecution: true });
+const findTaskById: typeof findTaskByIdRaw = (taskId, options) =>
+  findTaskByIdRaw(taskId, { ...options, allowHostProjectCodeExecution: true });
+const discoverProjectTaskRuntime: typeof discoverProjectTaskRuntimeRaw = (options) =>
+  discoverProjectTaskRuntimeRaw({
+    ...options,
+    allowHostProjectCodeExecution: true,
+  });
 
 function createMockAdapter(files: Record<string, string>): FileSystemAdapter {
   const normalize = (path: string): string => path.replace(/^\/project\/?/, "").replace(/^\/+/, "");
@@ -22,7 +41,7 @@ function createMockAdapter(files: Record<string, string>): FileSystemAdapter {
     async readFile(path: string): Promise<string> {
       const content = normalizedFiles[normalize(path)];
       if (content === undefined) {
-        throw new Deno.errors.NotFound(`File not found: ${path}`);
+        throw Object.assign(new Error(`File not found: ${path}`), { code: "ENOENT" });
       }
       return content;
     },
@@ -128,7 +147,7 @@ function markAdapterAsSingleProjectVirtual(adapter: RuntimeAdapter): void {
 
 // Discovery uses the shared esbuild service under the hood, which outlives
 // individual test cases until stopEsbuild() runs in afterAll.
-describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () => {
+describe("task/discovery", () => {
   afterEach(() => {
     clearTranspileCache();
     clearConfigCache();
@@ -195,6 +214,10 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
     it("accepts objects with a runnable export", () => {
       assertEquals(isTaskDefinition({ run: () => {} }), true);
       assertEquals(
+        isTaskDefinition(Object.defineProperty({}, "run", { value() {} })),
+        true,
+      );
+      assertEquals(
         isTaskDefinition({
           name: "My Task",
           description: "Does things",
@@ -202,6 +225,64 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
         }),
         true,
       );
+    });
+
+    it("keeps class-instance task definitions structurally valid", () => {
+      class StatefulTask {
+        private readonly _prefix = "stateful";
+
+        run(): string {
+          return this._prefix;
+        }
+      }
+
+      const task = new StatefulTask();
+      Object.defineProperties(StatefulTask.prototype, {
+        name: { value: "Stateful task" },
+        schedulable: { value: true },
+        inputSchema: {
+          value: { type: "object", properties: { id: { type: "string" } } },
+        },
+        integrationRequirements: {
+          value: [{ integration: "slack", requiredScopes: ["channels:read"] }],
+        },
+      });
+      assertEquals(isTaskDefinition(task), true);
+      const registered = taskHandler.register("stateful", task, "tasks/stateful.ts", "tasks");
+      assertEquals(
+        registered.run({
+          env: {},
+          config: {},
+        }),
+        "stateful",
+      );
+      assertEquals(registered.name, "Stateful task");
+      assertEquals(registered.schedulable, true);
+      assertEquals(registered.inputSchema, {
+        type: "object",
+        properties: { id: { type: "string" } },
+      });
+      assertEquals(registered.integrationRequirements, [{
+        integration: "slack",
+        requiredScopes: ["channels:read"],
+        resources: [],
+      }]);
+    });
+
+    it("rejects inherited metadata accessors without invoking them", () => {
+      let reads = 0;
+      const prototype = Object.defineProperties({}, {
+        run: { value() {} },
+        integrationRequirements: {
+          get() {
+            reads++;
+            return [{ integration: "slack" }];
+          },
+        },
+      });
+
+      assertEquals(isTaskDefinition(Object.create(prototype)), false);
+      assertEquals(reads, 0);
     });
 
     it("rejects non-task values", () => {
@@ -219,6 +300,18 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       assertEquals(isTaskDefinition({ run() {}, inputSchema: [] }), false);
       assertEquals(isTaskDefinition({ run() {}, outputSchema: null }), false);
       assertEquals(isTaskDefinition({ run() {}, schedulable: "true" }), false);
+      assertEquals(isTaskDefinition({ run() {}, integrationRequirements: {} }), false);
+      assertEquals(
+        isTaskDefinition({ run() {}, integrationRequirements: [{ integration: 42 }] }),
+        false,
+      );
+      assertEquals(
+        isTaskDefinition({
+          run() {},
+          integrationRequirements: [{ integration: "slack", requiredScopes: "channels:read" }],
+        }),
+        false,
+      );
       assertEquals(
         isTaskDefinition({
           run() {},
@@ -227,8 +320,219 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
           inputSchema: { type: "object" },
           outputSchema: { type: "object" },
           schedulable: true,
+          integrationRequirements: [{
+            integration: "slack",
+            requiredScopes: ["channels:read"],
+            resources: [{ kind: "channel", id: "C012345" }],
+          }],
         }),
         true,
+      );
+    });
+
+    it("does not evaluate integration requirement accessors", () => {
+      let reads = 0;
+      const task = Object.defineProperties({}, {
+        run: { enumerable: true, value() {} },
+        integrationRequirements: {
+          enumerable: true,
+          get() {
+            reads++;
+            return [{ integration: "slack" }];
+          },
+        },
+      });
+
+      assertEquals(isTaskDefinition(task), false);
+      assertEquals(reads, 0);
+    });
+
+    it("rejects non-canonical integration requirement metadata", () => {
+      for (
+        const integrationRequirements of [
+          [{ integration: "Slack" }],
+          [{ integration: "slack" }, { integration: "slack" }],
+          [{ integration: "slack", requiredScopes: ["channels:read", "channels:read"] }],
+          [{ integration: "slack", resources: [{ kind: "Channel", id: "C012345" }] }],
+          [{
+            integration: "slack",
+            resources: [
+              { kind: "channel", id: "C012345" },
+              { kind: "channel", id: "C012345" },
+            ],
+          }],
+        ]
+      ) {
+        assertEquals(isTaskDefinition({ run() {}, integrationRequirements }), false);
+      }
+
+      assertThrows(
+        () =>
+          taskHandler.register(
+            "invalid",
+            { run() {}, integrationRequirements: [{ integration: "Slack" }] },
+            "tasks/invalid.ts",
+            "tasks",
+          ),
+        Error,
+        "Task integrationRequirements[0].integration",
+      );
+    });
+
+    it("registers detached immutable schema metadata", () => {
+      const inputSchema = {
+        type: "object",
+        properties: { name: { type: "string" } },
+      };
+      const outputSchema = {
+        type: "object",
+        properties: { ok: { type: "boolean" } },
+      };
+
+      const registered = taskHandler.register(
+        "schema-task",
+        { run() {}, inputSchema, outputSchema },
+        "tasks/schema-task.ts",
+        "tasks",
+      );
+
+      inputSchema.properties.name.type = "number";
+      outputSchema.properties.ok.type = "string";
+
+      assertEquals(registered.inputSchema, {
+        type: "object",
+        properties: { name: { type: "string" } },
+      });
+      assertEquals(registered.outputSchema, {
+        type: "object",
+        properties: { ok: { type: "boolean" } },
+      });
+      assertEquals(Object.isFrozen(registered.inputSchema), true);
+      assertEquals(Object.isFrozen(registered.inputSchema?.properties), true);
+      assertEquals(Object.isFrozen(registered.outputSchema), true);
+      assertEquals(Object.isFrozen(registered.outputSchema?.properties), true);
+    });
+
+    it("preserves record-compatible schemas with callbacks and non-enumerable fields", () => {
+      const parse = (value: unknown) => value;
+      const inputSchema = { parse } as Record<string, unknown>;
+      Object.defineProperty(inputSchema, "schemaVersion", {
+        value: 7,
+        enumerable: false,
+      });
+
+      const task = { run() {}, inputSchema };
+      assertEquals(isTaskDefinition(task), true);
+      const registered = taskHandler.register(
+        "compatible-schema",
+        task,
+        "tasks/compatible-schema.ts",
+        "tasks",
+      );
+
+      assertEquals(registered.inputSchema === inputSchema, true);
+      assertEquals(registered.inputSchema?.parse === parse, true);
+      assertEquals(
+        Object.getOwnPropertyDescriptor(registered.inputSchema, "schemaVersion")?.value,
+        7,
+      );
+    });
+
+    it("preserves the receiver of record-compatible schema methods", () => {
+      const states = new WeakMap<object, string>();
+      const inputSchema = {
+        parse(this: object) {
+          return states.get(this);
+        },
+      };
+      states.set(inputSchema, "original receiver");
+
+      const registered = taskHandler.register(
+        "stateful-schema",
+        { run() {}, inputSchema },
+        "tasks/stateful-schema.ts",
+        "tasks",
+      );
+
+      const parse = registered.inputSchema?.parse as () => unknown;
+      assertEquals(parse.call(registered.inputSchema), "original receiver");
+    });
+
+    it("preserves inherited callback schema receivers", () => {
+      const parserState = new WeakMap<object, string>();
+      class StatefulSchema {
+        parse(value: unknown): string {
+          return `${parserState.get(this)}:${String(value)}`;
+        }
+      }
+      const inputSchema = new StatefulSchema();
+      parserState.set(inputSchema, "ready");
+
+      const registered = taskHandler.register(
+        "inherited-receiver-schema",
+        { run() {}, inputSchema },
+        "tasks/inherited-receiver-schema.ts",
+        "tasks",
+      );
+
+      const registeredInputSchema = registered.inputSchema;
+      if (!registeredInputSchema) throw new Error("Expected captured input schema");
+      const parse = registeredInputSchema.parse as (
+        this: Record<string, unknown>,
+        value: unknown,
+      ) => string;
+      assertEquals(parse.call(registeredInputSchema, "value"), "ready:value");
+    });
+
+    it("preserves inherited schema methods with private receiver state", () => {
+      class StatefulSchema {
+        #state = "private receiver";
+
+        parse() {
+          return this.#state;
+        }
+      }
+
+      const inputSchema = new StatefulSchema();
+      const schemaRecord = inputSchema as unknown as Record<string, unknown>;
+      const registered = taskHandler.register(
+        "class-schema",
+        { run() {}, inputSchema: schemaRecord },
+        "tasks/class-schema.ts",
+        "tasks",
+      );
+
+      assertEquals(registered.inputSchema === schemaRecord, true);
+      const parse = registered.inputSchema?.parse as () => unknown;
+      assertEquals(parse.call(registered.inputSchema), "private receiver");
+    });
+
+    it("registers detached immutable integration requirement metadata", () => {
+      const integrationRequirements = [{
+        integration: "slack",
+        requiredScopes: ["channels:read"],
+        resources: [{ kind: "channel", id: "C012345" }],
+      }];
+      const task = { run() {}, integrationRequirements };
+
+      const registered = taskHandler.register("sync", task, "tasks/sync.ts", "tasks");
+
+      integrationRequirements[0]!.requiredScopes[0] = "mutated";
+      integrationRequirements[0]!.resources[0]!.id = "mutated";
+
+      assertEquals(registered.integrationRequirements, [{
+        integration: "slack",
+        requiredScopes: ["channels:read"],
+        resources: [{ kind: "channel", id: "C012345" }],
+      }]);
+      assertEquals(Object.isFrozen(registered), true);
+      assertEquals(Object.isFrozen(registered.integrationRequirements), true);
+      assertEquals(Object.isFrozen(registered.integrationRequirements![0]), true);
+      assertEquals(Object.isFrozen(registered.integrationRequirements![0]!.requiredScopes), true);
+      assertEquals(Object.isFrozen(registered.integrationRequirements![0]!.resources), true);
+      assertThrows(
+        () => registered.integrationRequirements!.push({ integration: "github" }),
+        TypeError,
       );
     });
   });
@@ -247,6 +551,206 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
 
     assertEquals(result.errors, []);
     assertEquals(result.tasks.map((task) => task.id), ["a-first", "z-last"]);
+  });
+
+  it("reports invalid integration requirement metadata during legacy discovery", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/invalid.ts": [
+        "export default {",
+        "  run() {},",
+        '  integrationRequirements: [{ integration: "Slack" }],',
+        "};",
+      ].join("\n"),
+    });
+
+    const result = await discoverTasks({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+    });
+
+    assertEquals(result.tasks, []);
+    assertEquals(result.errors.length, 1);
+    assertEquals(
+      result.errors[0]?.error.includes("must use a lowercase integration identifier"),
+      true,
+    );
+  });
+
+  it("keeps valid sibling tasks after malformed legacy candidates", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/default-first.ts": [
+        "export default {",
+        "  run() {},",
+        '  integrationRequirements: [{ integration: "Slack" }],',
+        "};",
+        'export const validDefaultSibling = { name: "   ", run() { return "default sibling"; } };',
+      ].join("\n"),
+      "/project/tasks/named-first.ts": [
+        "export const aBroken = {",
+        "  run() {},",
+        '  integrationRequirements: [{ integration: "Slack" }],',
+        "};",
+        'export const zValidNamedSibling = { run() { return "named sibling"; } };',
+      ].join("\n"),
+    });
+
+    const result = await discoverTasks({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+    });
+
+    assertEquals(result.tasks.map((task) => [task.id, task.exportName]), [
+      ["default-first", "validDefaultSibling"],
+      ["named-first", "zValidNamedSibling"],
+    ]);
+    assertEquals(
+      result.tasks.map((task) => task.name),
+      ["default-first", "named-first"],
+      "a blank or missing task name falls back to the file-derived id",
+    );
+    assertEquals(result.errors.length, 2);
+    assertEquals(
+      result.errors.every((entry) =>
+        entry.error.includes("must use a lowercase integration identifier")
+      ),
+      true,
+    );
+  });
+
+  it("reports invalid integration requirement metadata during unified discovery", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/sync.ts": [
+        "export default {",
+        "  run() {},",
+        '  integrationRequirements: [{ integration: "Slack" }],',
+        "};",
+      ].join("\n"),
+    });
+
+    const result = await discoverAll({
+      baseDir: "/project",
+      fsAdapter: adapter.fs,
+      allowHostProjectCodeExecution: true,
+    });
+
+    assertEquals(result.tasks.size, 0);
+    assertEquals(result.errors.length, 1);
+    assertEquals(
+      result.errors[0]?.error.message.includes(
+        "must use a lowercase integration identifier",
+      ),
+      true,
+    );
+  });
+
+  it("keeps valid sibling tasks after malformed unified candidates", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/default-first.ts": [
+        "export default {",
+        "  run() {},",
+        '  integrationRequirements: [{ integration: "Slack" }],',
+        "};",
+        'export const validDefaultSibling = { run() { return "default sibling"; } };',
+      ].join("\n"),
+      "/project/tasks/named-first.ts": [
+        "export const aBroken = {",
+        "  run() {},",
+        '  integrationRequirements: [{ integration: "Slack" }],',
+        "};",
+        'export const zValidNamedSibling = { run() { return "named sibling"; } };',
+      ].join("\n"),
+    });
+
+    const result = await discoverAll({
+      baseDir: "/project",
+      fsAdapter: adapter.fs,
+      allowHostProjectCodeExecution: true,
+    });
+
+    assertEquals([...result.tasks.keys()].sort(), [
+      "default-first",
+      "named-first",
+    ]);
+    assertEquals(result.errors.length, 2);
+    assertEquals(
+      result.errors.every((entry) =>
+        entry.error.message.includes("must use a lowercase integration identifier")
+      ),
+      true,
+    );
+  });
+
+  it("keeps the file-derived ID when malformed named candidates are rejected", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/sync.ts": [
+        'export const aBroken = { run: "not a function" };',
+        'export const zValid = { run() { return "valid sibling"; } };',
+      ].join("\n"),
+    });
+
+    const result = await discoverAll({
+      baseDir: "/project",
+      fsAdapter: adapter.fs,
+      allowHostProjectCodeExecution: true,
+    });
+
+    assertEquals([...result.tasks.keys()], ["sync"]);
+    assertEquals(result.tasks.get("sync")?.run({ env: {}, config: {} }), "valid sibling");
+    assertEquals(result.errors.map((entry) => entry.error.message), [
+      "Task definition run must be a function.",
+    ]);
+  });
+
+  it("reports accessor-backed task metadata without invoking the accessor", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/sync.ts": [
+        "export default {",
+        "  run() {},",
+        "  get integrationRequirements() {",
+        '    throw new Error("integrationRequirements accessor executed");',
+        "  },",
+        "};",
+      ].join("\n"),
+    });
+
+    const result = await discoverAll({
+      baseDir: "/project",
+      fsAdapter: adapter.fs,
+      allowHostProjectCodeExecution: true,
+    });
+
+    assertEquals(result.tasks.size, 0);
+    assertEquals(result.errors.length, 1);
+    assertEquals(
+      result.errors[0]?.error.message.includes(
+        "integrationRequirements must be a data property",
+      ),
+      true,
+    );
+  });
+
+  it("discovers class-instance tasks and preserves their run receiver", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/stateful.ts": [
+        "class StatefulTask {",
+        '  prefix = "stateful";',
+        "  run() { return this.prefix; }",
+        "}",
+        "export default new StatefulTask();",
+      ].join("\n"),
+    });
+
+    const result = await discoverAll({
+      baseDir: "/project",
+      fsAdapter: adapter.fs,
+      allowHostProjectCodeExecution: true,
+    });
+
+    assertEquals(result.errors, []);
+    assertEquals([...result.tasks.keys()], ["stateful"]);
+    assertEquals(result.tasks.get("stateful")?.run({ env: {}, config: {} }), "stateful");
   });
 
   it("rejects ambiguous legacy task ids across supported extensions", async () => {
@@ -395,9 +899,44 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
     assertEquals(task?.exportName, "pingTask");
   });
 
+  it("logs malformed task candidates while finding by id in debug mode", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/invalid.ts": [
+        "export default {",
+        "  run() {},",
+        '  integrationRequirements: [{ integration: "Slack" }],',
+        "};",
+      ].join("\n"),
+    });
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
+
+    let task;
+    try {
+      task = await findTaskById("invalid", {
+        projectDir: "/project",
+        adapter,
+        config: { fs: { type: "veryfront-api" } } as never,
+        debug: true,
+      });
+    } finally {
+      unsubscribe();
+    }
+
+    assertEquals(task, null);
+    assertEquals(
+      records.some((entry) =>
+        entry.component === "task-discovery" &&
+        entry.level === "warn" &&
+        entry.message.includes("must use a lowercase integration identifier")
+      ),
+      true,
+    );
+  });
+
   it("finds a task by id even if another task file fails to load", async () => {
     const adapter = createRuntimeAdapter({
-      "/project/tasks/broken.ts": 'import "./missing.ts"; export default { run() {} };',
+      "/project/tasks/ping.js": 'import "./missing.ts"; export default { run() {} };',
       "/project/tasks/ping.ts": [
         "export const pingTask = {",
         '  name: "Ping task",',
@@ -414,9 +953,14 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       config: { fs: { type: "veryfront-api" } } as never,
     });
 
-    assertEquals(task?.id, "ping");
-    assertEquals(task?.name, "Ping task");
-    assertEquals(task?.exportName, "pingTask");
+    assertEquals(task?.id, "ping", "the recovered task keeps the requested id");
+    assertEquals(task?.name, "Ping task", "the recovered task keeps its declared name");
+    assertEquals(task?.exportName, "pingTask", "the recovered task keeps its export name");
+    assertEquals(
+      task?.filePath,
+      "tasks/ping.ts",
+      "a task file that throws during load must not stop findTaskById from returning the valid sibling with the same id",
+    );
   });
 
   it("discovers runtime tasks through adapter-backed project paths", async () => {

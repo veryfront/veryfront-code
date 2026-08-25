@@ -4,7 +4,7 @@
  * Common utilities for checking page state, errors, and hydration.
  */
 
-import { ConsoleMessage, expect, Page } from "npm:playwright@1.59.0/test";
+import { ConsoleMessage, expect, Page } from "npm:playwright@1.60.0/test";
 import { findHydrationOrCspFailures } from "../../_helpers/playwright.ts";
 
 /**
@@ -46,8 +46,6 @@ function isIgnorableError(message: string): boolean {
     // Font loading errors are not critical
     "Failed to decode downloaded font",
     "OTS parsing error",
-    // lvh.me is intentionally plain HTTP in local E2E; Chrome logs this warning for COOP headers.
-    "The Cross-Origin-Opener-Policy header has been ignored, because the URL's origin was untrustworthy",
   ];
 
   const lower = message.toLowerCase();

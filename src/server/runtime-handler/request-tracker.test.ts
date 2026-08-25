@@ -140,28 +140,97 @@ describe("server/runtime-handler/request-tracker", () => {
   });
 
   describe("module request logging", () => {
-    it("should handle module request path completion without error", () => {
+    const hasCompletionLog = (entries: LogEntry[], line: string): boolean =>
+      entries.some((entry) => String(entry.message).includes(line));
+
+    it("should handle module request path completion without a per request log", () => {
+      const entries = captureLogs();
       requestTracker.start("req-mod", "proj", "/_vf_modules/foo.js", "GET");
       requestTracker.complete("req-mod", 200);
+      assertEquals(
+        hasCompletionLog(entries, "GET /_vf_modules/foo.js 200"),
+        false,
+        "a fast lightweight module must not emit a per request completion log",
+      );
+
+      requestTracker.start("req-page", "proj", "/page", "GET");
+      requestTracker.complete("req-page", 200);
+      assertEquals(
+        hasCompletionLog(entries, "GET /page 200"),
+        true,
+        "an ordinary request must still emit a completion log",
+      );
     });
 
     it("should treat lightweight stylesheet requests as internal assets", () => {
+      const entries = captureLogs();
       requestTracker.start("req-style", "proj", "/_vf_styles/styles.css", "GET");
       requestTracker.complete("req-style", 200);
+      assertEquals(
+        hasCompletionLog(entries, "GET /_vf_styles/styles.css 200"),
+        false,
+        "a fast lightweight asset must not emit a per request completion log",
+      );
+
+      requestTracker.start("req-page", "proj", "/page", "GET");
+      requestTracker.complete("req-page", 200);
+      assertEquals(
+        hasCompletionLog(entries, "GET /page 200"),
+        true,
+        "an ordinary request must still emit a completion log",
+      );
     });
 
-    it("should handle _veryfront module path completion without error", () => {
-      requestTracker.start("req-vf", "proj", "/_veryfront/bar.js", "GET");
+    it("should handle _veryfront module path completion without a per request log", () => {
+      const entries = captureLogs();
+      requestTracker.start("req-vf", "proj", "/_veryfront/modules/bar.js", "GET");
       requestTracker.complete("req-vf", 200);
+      assertEquals(
+        hasCompletionLog(entries, "GET /_veryfront/modules/bar.js 200"),
+        false,
+        "a fast lightweight module must not emit a per request completion log",
+      );
+
+      requestTracker.start("req-page", "proj", "/page", "GET");
+      requestTracker.complete("req-page", 200);
+      assertEquals(
+        hasCompletionLog(entries, "GET /page 200"),
+        true,
+        "an ordinary request must still emit a completion log",
+      );
     });
   });
 
   describe("WebSocket path handling", () => {
     it("should not set slow timer for WebSocket path", () => {
-      requestTracker.start("req-ws", "proj", "/_ws", "GET");
-      // Just verify it doesn't crash and tracks correctly
-      assertEquals(requestTracker.getInFlightCount() >= 1, true);
-      requestTracker.complete("req-ws", 101);
+      const scheduledDelays: number[] = [];
+      const originalSetTimeout = globalThis.setTimeout;
+
+      globalThis.setTimeout = ((callback: TimerHandler, delay?: number, ...args: unknown[]) => {
+        if (delay !== undefined) scheduledDelays.push(delay);
+        return originalSetTimeout(callback, delay, ...args);
+      }) as typeof setTimeout;
+
+      try {
+        requestTracker.start("req-ws", "proj", "/_ws", "GET");
+        assertEquals(
+          scheduledDelays.includes(10_000),
+          false,
+          "a WebSocket path must not arm the slow-request timer",
+        );
+
+        scheduledDelays.length = 0;
+        requestTracker.start("req-page", "proj", "/page", "GET");
+        assertEquals(
+          scheduledDelays.includes(10_000),
+          true,
+          "an ordinary request must still arm the slow-request timer",
+        );
+      } finally {
+        requestTracker.complete("req-ws", 101);
+        requestTracker.complete("req-page", 200);
+        globalThis.setTimeout = originalSetTimeout;
+      }
     });
   });
 
@@ -371,6 +440,41 @@ describe("server/runtime-handler/request-tracker", () => {
       assertEquals(verySlowEntry?.level, "error");
     });
 
+    it("skips generic stuck timers for expected long-running run execution", () => {
+      const scheduledDelays: number[] = [];
+      const originalSetTimeout = globalThis.setTimeout;
+
+      globalThis.setTimeout = ((callback: TimerHandler, delay?: number, ...args: unknown[]) => {
+        if (delay !== undefined) scheduledDelays.push(delay);
+        return originalSetTimeout(callback, delay, ...args);
+      }) as typeof setTimeout;
+
+      try {
+        const path = "/api/control-plane/runs/run_scheduled_1/execute";
+        const beforeCount = requestTracker.getInFlightCount();
+
+        requestTracker.start("expected-long-run", "proj", path, "POST");
+        assertEquals(scheduledDelays.includes(10_000), false);
+        assertEquals(requestTracker.getInFlightCount(), beforeCount + 1);
+        requestTracker.complete("expected-long-run", 200);
+
+        scheduledDelays.length = 0;
+        requestTracker.start("non-execute-method", "proj", path, "GET");
+        assertEquals(scheduledDelays.includes(10_000), true);
+        requestTracker.complete("non-execute-method", 405);
+
+        scheduledDelays.length = 0;
+        requestTracker.start("lookalike-path", "proj", `${path}/extra`, "POST");
+        assertEquals(scheduledDelays.includes(10_000), true);
+        requestTracker.complete("lookalike-path", 404);
+      } finally {
+        requestTracker.complete("expected-long-run", 500);
+        requestTracker.complete("non-execute-method", 500);
+        requestTracker.complete("lookalike-path", 500);
+        globalThis.setTimeout = originalSetTimeout;
+      }
+    });
+
     it("handles module request with short duration (no debug log)", () => {
       requestTracker.start("fast-mod", "proj", "/_vf_modules/fast.js", "GET");
       requestTracker.complete("fast-mod", 200);
@@ -472,7 +576,30 @@ describe("server/runtime-handler/request-tracker", () => {
 
     it("should clear both slow and very slow timers on completion", () => {
       const clearedTimers: ReturnType<typeof setTimeout>[] = [];
+      const originalSetTimeout = globalThis.setTimeout;
       const originalClearTimeout = globalThis.clearTimeout;
+      let slowHandle: ReturnType<typeof setTimeout> | undefined;
+      let verySlowHandle: ReturnType<typeof setTimeout> | undefined;
+      const createInertTimerHandle = () => {
+        const handle = originalSetTimeout(() => {}, 0);
+        originalClearTimeout(handle);
+        return handle;
+      };
+
+      // Fire the slow timer synchronously so the very slow timer gets armed
+      // before completion, then record both handles.
+      globalThis.setTimeout = ((callback: TimerHandler, delay?: number, ...args: unknown[]) => {
+        if (delay === 10_000) {
+          slowHandle = createInertTimerHandle();
+          if (typeof callback === "function") callback(...args);
+          return slowHandle;
+        }
+        if (delay === 15_000) {
+          verySlowHandle = createInertTimerHandle();
+          return verySlowHandle;
+        }
+        return originalSetTimeout(callback, delay, ...args);
+      }) as typeof setTimeout;
       globalThis.clearTimeout = ((id?: ReturnType<typeof setTimeout>) => {
         if (id !== undefined) clearedTimers.push(id);
         originalClearTimeout(id);
@@ -480,12 +607,23 @@ describe("server/runtime-handler/request-tracker", () => {
 
       try {
         requestTracker.start("req-timer", "proj", "/slow", "GET");
+        assertEquals(slowHandle !== undefined, true, "the slow timer must be armed");
+        assertEquals(verySlowHandle !== undefined, true, "the very slow timer must be armed");
+
         requestTracker.complete("req-timer", 200);
 
-        // Should have cleared the slow timer (verySlowTimer hasn't been set
-        // yet since the outer timer hasn't fired)
-        assertEquals(clearedTimers.length >= 1, true);
+        assertEquals(
+          clearedTimers.includes(slowHandle!),
+          true,
+          "complete() must clear the slow timer",
+        );
+        assertEquals(
+          clearedTimers.includes(verySlowHandle!),
+          true,
+          "complete() must clear the very slow timer or a finished request logs 'Very slow request - likely stuck'",
+        );
       } finally {
+        globalThis.setTimeout = originalSetTimeout;
         globalThis.clearTimeout = originalClearTimeout;
       }
     });

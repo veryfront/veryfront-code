@@ -53,6 +53,7 @@ export interface RuntimeGenerateTextResult {
   toolResults?: RuntimeGenerateToolResult[];
   usage?: RuntimeGenerateUsage;
   finishReason?: string | null;
+  providerMetadata?: Record<string, unknown>;
 }
 
 export interface RuntimeRepairToolCall {
@@ -143,6 +144,7 @@ export type RuntimeStreamPart =
   | {
     type: "finish";
     finishReason?: string | null;
+    providerMetadata?: Record<string, unknown>;
     totalUsage?: {
       inputTokens?: number;
       outputTokens?: number;

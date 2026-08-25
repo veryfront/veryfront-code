@@ -69,14 +69,21 @@ describe("rewriteDntImports", () => {
   it("rewrites relative imports in node_modules files to absolute file:// paths", async () => {
     const code = `import { foo } from "../utils.js";\n`;
     const result = await rewriteDntImports(code, "/app/node_modules/veryfront/dist/head.js");
-    assertEquals(result.includes("file://"), true);
-    assertEquals(result.includes("../"), false);
+    assertEquals(
+      result,
+      `import { foo } from "file:///app/node_modules/veryfront/utils.js";\n`,
+      "a relative import resolves against the source file directory",
+    );
   });
 
   it("rewrites side-effect imports in framework files", async () => {
     const code = `import "../_dnt.polyfills.js";\n`;
     const result = await rewriteDntImports(code, "/app/node_modules/veryfront/dist/head.js");
-    assertEquals(result.includes("file://"), true);
+    assertEquals(
+      result,
+      `import "file:///app/node_modules/veryfront/_dnt.polyfills.js";\n`,
+      "a side-effect import resolves against the source file directory",
+    );
   });
 
   it("does not rewrite non-relative imports", async () => {
@@ -93,6 +100,32 @@ describe("rewriteDntImports", () => {
     assertEquals(result.includes(`from "file://`), true);
     assertEquals(result.includes(`from "./ai/csp-nonce.js"`), false);
     assertEquals(/\/ai\/csp-nonce\./.test(rewrittenSpecifier), true);
+  });
+
+  it("remaps a transpiled .js specifier onto the framework source file on disk", async () => {
+    const sourceDir = join(FRAMEWORK_ROOT, "src/transforms/mdx/esm-module-loader/module-fetcher");
+    const code = `import { rewriteDntImports } from "./import-rewriter.js";\n`;
+
+    const result = await rewriteDntImports(code, join(sourceDir, "caller.js"));
+
+    assertEquals(
+      result,
+      `import { rewriteDntImports } from "file://${join(sourceDir, "import-rewriter.ts")}";\n`,
+      "a transpiled .js specifier is remapped onto the framework source file that exists on disk",
+    );
+  });
+
+  it("keeps the plain absolute path when no framework candidate exists on disk", async () => {
+    const sourceDir = join(FRAMEWORK_ROOT, "src/transforms/mdx/esm-module-loader/module-fetcher");
+    const code = `import { missing } from "./does-not-exist.js";\n`;
+
+    const result = await rewriteDntImports(code, join(sourceDir, "caller.js"));
+
+    assertEquals(
+      result,
+      `import { missing } from "file://${join(sourceDir, "does-not-exist.js")}";\n`,
+      "with no candidate on disk the plain absolute path is kept",
+    );
   });
 
   it("rewrites the matched import instead of the same text in an earlier comment", async () => {

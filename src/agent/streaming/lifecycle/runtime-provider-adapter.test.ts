@@ -106,6 +106,40 @@ describe("runtime stream Provider Adapter", () => {
         },
       },
     );
+    assertEquals(
+      decodeRuntimeStreamPart(
+        { type: "tool-call", toolCallId: "c1", toolName: "missing_tool", input: {} },
+        snapshot,
+        options,
+      )[0],
+      {
+        kind: "protocol",
+        event: {
+          type: "tool_input_rejected",
+          toolCallId: "c1",
+          toolName: "missing_tool",
+          reason: "unavailable",
+        },
+      },
+      "a tool-call for an unavailable tool must be rejected, never handed to execution",
+    );
+    assertEquals(
+      decodeRuntimeStreamPart(
+        { type: "tool-input-available", toolCallId: "c1", toolName: "missing_tool", input: {} },
+        snapshot,
+        options,
+      )[0],
+      {
+        kind: "protocol",
+        event: {
+          type: "tool_input_rejected",
+          toolCallId: "c1",
+          toolName: "missing_tool",
+          reason: "unavailable",
+        },
+      },
+      "an available tool input for an unavailable tool must be rejected, never handed to execution",
+    );
   });
 
   it("turns unknown provider parts into diagnostic candidates", () => {
@@ -136,5 +170,29 @@ describe("runtime stream Provider Adapter", () => {
       retryable: true,
       terminal: false,
     });
+  });
+
+  it("maps recognized terminal provider errors to non-retryable terminal failures", () => {
+    const error = classifyRuntimeProviderError(
+      Object.assign(new Error("schema"), {
+        responseBody: "Invalid Veryfront schema: defineSchema missing",
+      }),
+    );
+
+    assertEquals(
+      error.code,
+      "PROJECT_SCHEMA_ERROR",
+      "a recognized provider failure keeps its specific code",
+    );
+    assertEquals(
+      error.retryable,
+      false,
+      "a recognized terminal provider failure must not be retried",
+    );
+    assertEquals(
+      error.terminal,
+      true,
+      "a recognized terminal provider failure must be marked terminal",
+    );
   });
 });

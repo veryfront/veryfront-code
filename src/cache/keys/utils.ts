@@ -13,6 +13,8 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 import { cacheRegistry } from "../registry.ts";
 
+import { isRenderCompileModeSegment } from "./render-compile-mode.ts";
+
 import { DEFAULT_EXCLUDED_QUERY_PARAMS, type QueryParamCacheOptions } from "./prefixes.ts";
 
 const querySegmentEncoder = new TextEncoder();
@@ -50,6 +52,8 @@ export function parseRenderCacheKey(cacheKey: string): {
   environment: string;
   releaseKey: string;
   version: string;
+  /** Compile mode segment, absent on keys written before it existed. */
+  compileMode?: string;
   contentKey: string;
 } | null {
   const parts = cacheKey.split(":");
@@ -58,11 +62,19 @@ export function parseRenderCacheKey(cacheKey: string): {
   const [projectId, environment, releaseKey, version, ...contentParts] = parts;
   if (!projectId || !environment || !releaseKey || !version) return null;
 
+  // The compile mode sits between the version and the content key. Keys that
+  // predate it keep parsing, with the mode reported as absent rather than
+  // guessed.
+  const compileMode = isRenderCompileModeSegment(contentParts[0])
+    ? contentParts.shift()
+    : undefined;
+
   return {
     projectId,
     environment,
     releaseKey,
     version,
+    compileMode,
     contentKey: contentParts.join(":"),
   };
 }

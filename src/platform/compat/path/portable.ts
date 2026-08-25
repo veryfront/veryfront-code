@@ -1,4 +1,47 @@
 import type { PathObject } from "./types.ts";
+import {
+  primordialArrayAt as arrayAt,
+  primordialArrayFilter as arrayFilter,
+  primordialArrayJoin as arrayJoin,
+  primordialArrayPop as arrayPop,
+  primordialArrayPush as arrayPush,
+} from "../primordials/array.ts";
+
+const apply = Reflect.apply;
+const arraySlice = Array.prototype.slice;
+const regExpExec = RegExp.prototype.exec;
+const stringEndsWith = String.prototype.endsWith;
+const stringIncludes = String.prototype.includes;
+const stringLastIndexOf = String.prototype.lastIndexOf;
+const stringReplaceAll = String.prototype.replaceAll;
+const stringSlice = String.prototype.slice;
+const stringSplit = String.prototype.split;
+const stringStartsWith = String.prototype.startsWith;
+const stringToLowerCase = String.prototype.toLowerCase;
+
+function includes(value: string, search: string): boolean {
+  return apply(stringIncludes, value, [search]) as boolean;
+}
+
+function startsWith(value: string, search: string): boolean {
+  return apply(stringStartsWith, value, [search]) as boolean;
+}
+
+function endsWith(value: string, search: string): boolean {
+  return apply(stringEndsWith, value, [search]) as boolean;
+}
+
+function slice(value: string, start: number, end?: number): string {
+  return apply(stringSlice, value, end === undefined ? [start] : [start, end]) as string;
+}
+
+function lastIndexOf(value: string, search: string): number {
+  return apply(stringLastIndexOf, value, [search]) as number;
+}
+
+function matches(pattern: RegExp, value: string): RegExpExecArray | null {
+  return apply(regExpExec, pattern, [value]) as RegExpExecArray | null;
+}
 
 interface RootInfo {
   absolute: boolean;
@@ -8,20 +51,20 @@ interface RootInfo {
 }
 
 export function hasWindowsLikePath(path: string): boolean {
-  return path.includes("\\") ||
-    /^[A-Za-z]:/.test(path);
+  return includes(path, "\\") || matches(/^[A-Za-z]:/, path) !== null;
 }
 
 export function toPortableSeparators(path: string): string {
-  return path.replaceAll("\\", "/");
+  return apply(stringReplaceAll, path, ["\\", "/"]) as string;
 }
 
 function analyzeRoot(path: string, windows: boolean): RootInfo {
   const portable = toPortableSeparators(path);
 
   if (windows) {
-    const unc = portable.match(
+    const unc = matches(
       /^\/\/([^/]+)\/+([^/]+)(\/+(.*))?$/,
+      portable,
     );
     if (unc?.[1] && unc[2]) {
       const device = `//${unc[1]}/${unc[2]}`;
@@ -33,7 +76,7 @@ function analyzeRoot(path: string, windows: boolean): RootInfo {
       };
     }
 
-    const drive = portable.match(/^([A-Za-z]:)(\/+)?(.*)$/);
+    const drive = matches(/^([A-Za-z]:)(\/+)?(.*)$/, portable);
     if (drive?.[1] !== undefined) {
       const absolute = drive[2] !== undefined;
       return {
@@ -45,11 +88,13 @@ function analyzeRoot(path: string, windows: boolean): RootInfo {
     }
   }
 
-  if (portable.startsWith("/")) {
+  if (startsWith(portable, "/")) {
+    let restStart = 0;
+    while (portable[restStart] === "/") restStart++;
     return {
       absolute: true,
       device: "",
-      rest: portable.replace(/^\/+/, ""),
+      rest: slice(portable, restStart),
       root: "/",
     };
   }
@@ -66,27 +111,32 @@ function appendRoot(root: RootInfo, tail: string): string {
   if (root.root === "") return tail || ".";
   if (!root.absolute) return `${root.root}${tail || "."}`;
   if (!tail) {
-    return root.device.startsWith("//") ? `${root.device}/` : root.root;
+    return startsWith(root.device, "//") ? `${root.device}/` : root.root;
   }
-  return root.root.endsWith("/") ? `${root.root}${tail}` : `${root.root}/${tail}`;
+  return endsWith(root.root, "/") ? `${root.root}${tail}` : `${root.root}/${tail}`;
 }
 
 function normalizeTail(rest: string, absolute: boolean): string[] {
   const normalized: string[] = [];
+  const segments = apply(stringSplit, rest, ["/"]) as string[];
 
-  for (const segment of rest.split("/")) {
+  // Path normalization is reached by shared-runtime coordination after tenant
+  // code has loaded. Avoid the live Array iterator so post-import prototype
+  // mutation cannot turn canonical lockfile lookup into a process-wide outage.
+  for (let index = 0; index < segments.length; index++) {
+    const segment = segments[index]!;
     if (segment === "" || segment === ".") continue;
 
     if (segment !== "..") {
-      normalized.push(segment);
+      arrayPush(normalized, segment);
       continue;
     }
 
-    const previous = normalized.at(-1);
+    const previous = arrayAt(normalized, -1);
     if (previous !== undefined && previous !== "..") {
-      normalized.pop();
+      arrayPop(normalized);
     } else if (!absolute) {
-      normalized.push("..");
+      arrayPush(normalized, "..");
     }
   }
 
@@ -104,17 +154,17 @@ export function removeTrailingSeparatorsExceptRoot(
   const root = analyzeRoot(path, windows);
   let canonical = canonicalPath(path, windows);
   while (
-    canonical.endsWith("/") &&
+    endsWith(canonical, "/") &&
     canonical.length > root.root.length
   ) {
-    canonical = canonical.slice(0, -1);
+    canonical = slice(canonical, 0, -1);
   }
   return canonical;
 }
 
 function rootKey(root: RootInfo, windows: boolean): string {
   const value = root.device || root.root;
-  return windows ? value.toLowerCase() : value;
+  return windows ? apply(stringToLowerCase, value, []) as string : value;
 }
 
 export function runtimeUsesWindowsPaths(): boolean {
@@ -155,15 +205,15 @@ export function portableNormalize(path: string, windows: boolean): string {
   if (path === "") return ".";
 
   const root = analyzeRoot(path, windows);
-  const tail = normalizeTail(root.rest, root.absolute).join("/");
+  const tail = arrayJoin(normalizeTail(root.rest, root.absolute), "/");
   let result = appendRoot(root, tail);
 
-  const hadTrailingSeparator = /[\\/]$/.test(path);
+  const hadTrailingSeparator = matches(/[\\/]$/, path) !== null;
   if (hadTrailingSeparator && result === ".") return "./";
   if (
     hadTrailingSeparator &&
     result !== root.root &&
-    !result.endsWith("/")
+    !endsWith(result, "/")
   ) {
     result += "/";
   }
@@ -172,9 +222,9 @@ export function portableNormalize(path: string, windows: boolean): string {
 }
 
 export function portableJoin(paths: readonly string[], windows: boolean): string {
-  const nonempty = paths.filter((path) => path.length > 0);
+  const nonempty = arrayFilter(paths, (path) => path.length > 0);
   if (nonempty.length === 0) return "/";
-  return portableNormalize(nonempty.join("/"), windows);
+  return portableNormalize(arrayJoin(nonempty, "/"), windows);
 }
 
 export function portableDirname(path: string, windows: boolean): string {
@@ -183,21 +233,21 @@ export function portableDirname(path: string, windows: boolean): string {
   const root = analyzeRoot(path, windows);
   let canonical = canonicalPath(path, windows);
   while (
-    canonical.endsWith("/") &&
+    endsWith(canonical, "/") &&
     canonical.length > root.root.length
   ) {
-    canonical = canonical.slice(0, -1);
+    canonical = slice(canonical, 0, -1);
   }
 
   if (canonical === root.root || canonical === root.device) {
     return root.root || root.device || ".";
   }
 
-  const lastSeparator = canonical.lastIndexOf("/");
+  const lastSeparator = lastIndexOf(canonical, "/");
   if (lastSeparator === -1) return root.device || ".";
   if (lastSeparator < root.root.length) return root.root || "/";
   if (lastSeparator === 0) return "/";
-  return canonical.slice(0, lastSeparator);
+  return slice(canonical, 0, lastSeparator);
 }
 
 export function portableBasename(
@@ -212,44 +262,44 @@ export function portableBasename(
   const originalPath = canonical;
   if (ext !== undefined && ext !== "" && ext === originalPath) return "";
   while (
-    canonical.endsWith("/") &&
+    endsWith(canonical, "/") &&
     canonical.length > root.root.length
   ) {
-    canonical = canonical.slice(0, -1);
+    canonical = slice(canonical, 0, -1);
   }
 
   if (
     windows &&
-    root.device.startsWith("//") &&
+    startsWith(root.device, "//") &&
     root.rest === ""
   ) {
-    return root.device.slice(root.device.lastIndexOf("/") + 1);
+    return slice(root.device, lastIndexOf(root.device, "/") + 1);
   }
 
   if (canonical === root.root || canonical === root.device) return "";
 
-  const lastSeparator = canonical.lastIndexOf("/");
-  let base = canonical.slice(lastSeparator + 1);
+  const lastSeparator = lastIndexOf(canonical, "/");
+  let base = slice(canonical, lastSeparator + 1);
   if (
     !root.absolute &&
     root.device &&
     lastSeparator === -1 &&
-    base.startsWith(root.device)
+    startsWith(base, root.device)
   ) {
-    base = base.slice(root.device.length);
+    base = slice(base, root.device.length);
   }
 
-  if (ext !== undefined && ext !== "" && base.endsWith(ext)) {
-    if (ext.length < base.length) return base.slice(0, -ext.length);
+  if (ext !== undefined && ext !== "" && endsWith(base, ext)) {
+    if (ext.length < base.length) return slice(base, 0, -ext.length);
   }
   return base;
 }
 
 export function portableExtname(path: string, windows: boolean): string {
   const base = portableBasename(path, undefined, windows);
-  const lastDot = base.lastIndexOf(".");
+  const lastDot = lastIndexOf(base, ".");
   if (lastDot <= 0 || base === "." || base === "..") return "";
-  return base.slice(lastDot);
+  return slice(base, lastDot);
 }
 
 export function portableIsAbsolute(path: string, windows: boolean): boolean {
@@ -262,7 +312,8 @@ export function portableResolve(
 ): string {
   let resolved = runtimeCwd();
 
-  for (const rawPath of paths) {
+  for (let index = 0; index < paths.length; index++) {
+    const rawPath = paths[index]!;
     if (rawPath.length === 0) continue;
 
     const path = toPortableSeparators(rawPath);
@@ -285,11 +336,11 @@ export function portableResolve(
   const normalized = portableNormalize(resolved, windows);
   const root = analyzeRoot(normalized, windows);
   if (
-    normalized.endsWith("/") &&
+    endsWith(normalized, "/") &&
     normalized !== root.root &&
     normalized !== `${root.device}/`
   ) {
-    return normalized.slice(0, -1);
+    return slice(normalized, 0, -1);
   }
   return normalized;
 }
@@ -315,39 +366,45 @@ export function portableRelative(
   while (common < fromParts.length && common < toParts.length) {
     const fromPart = fromParts[common]!;
     const toPart = toParts[common]!;
-    const equal = windows ? fromPart.toLowerCase() === toPart.toLowerCase() : fromPart === toPart;
+    const equal = windows
+      ? apply(stringToLowerCase, fromPart, []) === apply(stringToLowerCase, toPart, [])
+      : fromPart === toPart;
     if (!equal) break;
     common++;
   }
 
-  const result = [
-    ...Array.from({ length: fromParts.length - common }, () => ".."),
-    ...toParts.slice(common),
-  ];
-  return result.join("/") || ".";
+  const result: string[] = [];
+  for (let index = common; index < fromParts.length; index++) {
+    arrayPush(result, "..");
+  }
+  const remainingToParts = apply(arraySlice, toParts, [common]) as string[];
+  for (let index = 0; index < remainingToParts.length; index++) {
+    arrayPush(result, remainingToParts[index]!);
+  }
+  return arrayJoin(result, "/") || ".";
 }
 
 export function portableParse(path: string, windows: boolean): PathObject {
   const root = analyzeRoot(path, windows);
   let canonical = canonicalPath(path, windows);
   while (
-    canonical.endsWith("/") &&
+    endsWith(canonical, "/") &&
     canonical.length > root.root.length
   ) {
-    canonical = canonical.slice(0, -1);
+    canonical = slice(canonical, 0, -1);
   }
 
-  const base = windows && root.device.startsWith("//") && root.rest === ""
+  const base = windows && startsWith(root.device, "//") && root.rest === ""
     ? ""
     : portableBasename(canonical, undefined, windows);
   const ext = portableExtname(base, windows);
-  const name = base.slice(0, base.length - ext.length);
+  const name = slice(base, 0, base.length - ext.length);
   let dir = "";
 
   if (base === "") {
     dir = root.root;
   } else if (
-    canonical.includes("/") ||
+    includes(canonical, "/") ||
     (windows && root.device !== "")
   ) {
     dir = portableDirname(canonical, windows);
@@ -369,14 +426,14 @@ export function portableFormat(
   const root = toPortableSeparators(pathObject.root ?? "");
   const dir = toPortableSeparators(pathObject.dir ?? "");
   const rawExt = pathObject.ext ?? "";
-  const ext = rawExt && !rawExt.startsWith(".") ? `.${rawExt}` : rawExt;
+  const ext = rawExt && !startsWith(rawExt, ".") ? `.${rawExt}` : rawExt;
   const base = pathObject.base ||
     `${pathObject.name ?? ""}${ext}`;
   const directory = dir || root;
 
   if (!directory) return base;
   if (!base) return directory;
-  if (directory.endsWith("/") || (windows && /^[A-Za-z]:$/.test(directory))) {
+  if (endsWith(directory, "/") || (windows && matches(/^[A-Za-z]:$/, directory) !== null)) {
     return `${directory}${base}`;
   }
   return `${directory}/${base}`;

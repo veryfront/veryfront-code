@@ -1,6 +1,7 @@
 import { isRecord } from "../../chat/conversation.ts";
 import { extractFinalStepTerminalError } from "../../chat/final-step-fallback.ts";
 import { parseProviderError } from "../../chat/provider-errors.ts";
+import { isStreamTimeoutError } from "../streaming/stream-outcome.ts";
 
 const EMPTY_RESPONSE_TERMINAL_ERROR_CODE = "EMPTY_RESPONSE";
 const EMPTY_RESPONSE_TERMINAL_ERROR_MESSAGE = "Assistant completed without producing a response";
@@ -36,13 +37,7 @@ function formatTimeoutDuration(input: string): string | null {
 
 function getHostedStreamTimeoutTerminalError(error: unknown): HostedStreamTerminalError | null {
   const message = getUnknownErrorMessage(error).trim();
-  const normalized = message.toLowerCase();
-  const isTimeout = normalized.includes("stream timed out") ||
-    normalized.includes("chat stream idle timeout") ||
-    normalized.includes("chat stream bootstrap timeout") ||
-    normalized.includes("stream timeout");
-
-  if (!isTimeout) {
+  if (!isStreamTimeoutError(error)) {
     return null;
   }
 

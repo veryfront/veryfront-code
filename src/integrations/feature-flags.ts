@@ -2,6 +2,8 @@ import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { ALL_INTEGRATION_NAMES } from "./schema.ts";
 
 export const EXPERIMENTAL_INTEGRATIONS_ENV = "VERYFRONT_EXPERIMENTAL_INTEGRATIONS";
+/** Env var naming adapter-only connectors the host drives with its own client. */
+export const HOST_ADAPTER_INTEGRATIONS_ENV = "VERYFRONT_HOST_ADAPTER_INTEGRATIONS";
 
 /**
  * The subset of {@link ALL_INTEGRATION_NAMES} that ships visible by default.
@@ -104,6 +106,48 @@ export function isExperimentalIntegrationEnabled(name: string | null | undefined
     .map((item) => item.trim())
     .filter(Boolean)
     .includes(normalizedName);
+}
+
+/**
+ * Adapter-only connectors the embedding host declares it drives with its own
+ * client. Only {@link isCatalogVisibleIntegration} honours this: scaffolding
+ * keeps refusing them, because generated routes run on the generic runtime and
+ * that is precisely what cannot serve them. Blanket values are ignored, so a
+ * host has to name each connector it actually implements.
+ */
+export function isHostAdapterIntegration(name: string | null | undefined): boolean {
+  if (
+    typeof name !== "string" || !isDeclaredIntegration(name) || !requiresProviderAdapter(name)
+  ) return false;
+
+  const value = readEnv(HOST_ADAPTER_INTEGRATIONS_ENV);
+  if (!value) return false;
+
+  const normalizedName = normalizeIntegrationName(name);
+  return value
+    .trim()
+    .toLowerCase()
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .includes(normalizedName);
+}
+
+/**
+ * Visibility for catalog lookup. Wider than {@link isVisibleIntegration}: a
+ * host that supplies its own adapter still needs the connector definitions,
+ * otherwise it has a working integration with no tools.
+ */
+export function isCatalogVisibleIntegration(name: string | null | undefined): boolean {
+  return isVisibleIntegration(name) || isHostAdapterIntegration(name);
+}
+
+export function filterCatalogVisibleIntegrations<T extends { id?: string; name?: string }>(
+  integrations: readonly T[],
+): T[] {
+  return integrations.filter((integration) =>
+    isCatalogVisibleIntegration(integration.id ?? integration.name)
+  );
 }
 
 export function isVisibleIntegration(name: string | null | undefined): boolean {

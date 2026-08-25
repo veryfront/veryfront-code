@@ -72,7 +72,7 @@ export function resolveNodeAgentServiceSentryConfig(
   defaultServiceName = DEFAULT_SERVICE_NAME,
 ): NodeAgentServiceSentryConfig | undefined {
   const dsn = readTrimmedEnv(env, "SENTRY_DSN");
-  if (!isSentryEnabled(env.SENTRY_ENABLED, true)) return undefined;
+  if (!isSentryEnabled(env.SENTRY_ENABLED)) return undefined;
   if (!dsn) return undefined;
 
   const serviceName = readTrimmedEnv(env, "SENTRY_SERVICE_NAME") ??
@@ -247,7 +247,7 @@ export async function initializeNodeAgentServiceSentryApplicationErrors(options:
   if (!config) {
     deactivateCurrentLifecycle();
     if (
-      isSentryEnabled(options.env.SENTRY_ENABLED, false) &&
+      isSentryEnabled(options.env.SENTRY_ENABLED) &&
       !readTrimmedEnv(options.env, "SENTRY_DSN")
     ) {
       warnAboutMissingDsnOnce();

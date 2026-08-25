@@ -1,11 +1,20 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { ModelRuntime } from "#veryfront/provider";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
-import type { AgentConfig, Message } from "../types.ts";
-import type { AgentRuntimeStepState } from "./agent-runtime-step.ts";
-import { prepareAgentRuntimeStep } from "./agent-runtime-step.ts";
+import type { AgentConfig, AgentSystem, Message } from "../types.ts";
+import type { AgentRuntimeStepState, RuntimeStepToolLoader } from "./agent-runtime-step.ts";
+import {
+  prepareAgentRuntimeStep,
+  withIntegrationToolDiscoveryStatus,
+} from "./agent-runtime-step.ts";
 import { createToolExposureState } from "./tool-exposure.ts";
+import { flattenSystemInstructions } from "./tool-inventory.ts";
+
+function systemText(system: AgentSystem): string {
+  return typeof system === "string" ? system : flattenSystemInstructions(system);
+}
 
 function toolDefinition(name: string): ToolDefinition {
   return {
@@ -24,11 +33,65 @@ function remoteToolSource(id: string): RemoteToolSource {
 }
 
 describe("agent/runtime-step", () => {
+  it("passes the configured provider alias to runtime-state cloning", async () => {
+    let providerOptionKey: unknown;
+    await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "bedrock/claude-sonnet", system: "Base" } as AgentConfig,
+      effectiveModel: "bedrock/claude-sonnet",
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools: async () => [],
+      supportsToolCalling: true,
+      messages: [],
+      mode: "generate",
+      remoteToolSources: undefined,
+      resolveRuntimeState: async (...args: unknown[]) => {
+        providerOptionKey = args[5];
+        return { systemPrompt: "Base" };
+      },
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+    });
+
+    assertEquals(providerOptionKey, "bedrock");
+  });
+
+  it("derives runtime-state provider keys from the effective runtime", async () => {
+    let providerOptionKey: unknown;
+    await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "bedrock/claude-sonnet", system: "Base" } as AgentConfig,
+      effectiveModel: "bedrock/claude-sonnet",
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools: async () => [],
+      supportsToolCalling: true,
+      messages: [],
+      mode: "generate",
+      modelRuntime: { provider: "AWS-Anthropic" } as unknown as ModelRuntime,
+      remoteToolSources: undefined,
+      resolveRuntimeState: async (...args: unknown[]) => {
+        providerOptionKey = args[5];
+        return { systemPrompt: "Base" };
+      },
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+    });
+
+    assertEquals(providerOptionKey, "AWS-Anthropic");
+  });
+
   it("exposes only bootstrap and loaded schemas in deferred mode", async () => {
     const state = createToolExposureState(["get_release"]);
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
-      activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
       config: {
@@ -43,7 +106,7 @@ describe("agent/runtime-step", () => {
         toolDefinition("get_release"),
         toolDefinition("load_skill"),
       ],
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "generate",
       remoteToolSources: undefined,
@@ -57,24 +120,24 @@ describe("agent/runtime-step", () => {
 
     assertEquals(
       prepared.tools.map((tool) => tool.name),
-      ["form_input", "get_release", "load_skill", "tool_search"],
+      ["get_release", "load_skill", "tool_search"],
     );
     assertEquals(
       prepared.toolExposurePlan.deferred.map((tool) => tool.name),
-      ["create_release"],
+      ["create_release", "form_input"],
     );
   });
 
-  it("keeps provider-native tools in prompt inventory but outside tool_search authorization", async () => {
+  it("keeps provider-native tools authorized but deferred until tool_search loads them", async () => {
+    const state = createToolExposureState();
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
-      activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
       config: { model: "anthropic/claude-opus-4-6", system: "Base", tools: true } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       getAvailableTools: async () => [toolDefinition("create_release")],
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "generate",
       providerToolNames: ["web_search"],
@@ -87,10 +150,253 @@ describe("agent/runtime-step", () => {
       step: 0,
       systemPrompt: "Base",
       toolContextBase: undefined,
+      toolExposureState: state,
     });
 
-    assertEquals(prepared.systemPrompt.includes("- web_search"), true);
-    assertEquals(prepared.toolExposurePlan.authorized.map((tool) => tool.name), ["create_release"]);
+    assertEquals(systemText(prepared.systemPrompt).includes("- web_search"), true);
+    assertEquals(prepared.tools.map((tool) => tool.name), ["tool_search"]);
+    assertEquals(
+      prepared.toolExposurePlan.authorized.map((tool) => tool.name),
+      ["create_release", "web_search"],
+    );
+    assertEquals(
+      prepared.toolExposurePlan.deferred.map((tool) => tool.name),
+      ["create_release", "web_search"],
+    );
+
+    state.loadedToolNames.add("web_search");
+    const loaded = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "anthropic/claude-opus-4-6", system: "Base", tools: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools: async () => [toolDefinition("create_release")],
+      supportsToolCalling: true,
+      messages: [],
+      mode: "generate",
+      providerToolNames: ["web_search"],
+      remoteToolSources: undefined,
+      resolveRuntimeState: async () => ({ systemPrompt: prepared.systemPrompt }),
+      runtimeContext: undefined,
+      step: 1,
+      systemPrompt: prepared.systemPrompt,
+      toolContextBase: undefined,
+      toolExposureState: state,
+    });
+    assertEquals(loaded.tools.map((tool) => tool.name), ["tool_search", "web_search"]);
+  });
+
+  it("preserves a typed empty integration catalog without adding a warning", async () => {
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "auto", system: "Base", tools: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools: async (_toolsConfig, options) => {
+        options?.onIntegrationToolDiscovery?.({ status: "ok", tools: [] });
+        return [];
+      },
+      supportsToolCalling: true,
+      messages: [],
+      mode: "generate",
+      remoteToolSources: undefined,
+      resolveRuntimeState: async () => ({ systemPrompt: "Base" }),
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+    });
+
+    assertEquals(prepared.integrationToolDiscovery, { status: "ok", tools: [] });
+    const systemPrompt = withIntegrationToolDiscoveryStatus(
+      prepared.systemPrompt,
+      prepared.integrationToolDiscovery,
+    );
+    assertEquals(systemPrompt, "Base");
+  });
+
+  it("tells the model once when integration discovery is unavailable", async () => {
+    const getAvailableTools: RuntimeStepToolLoader = async (_toolsConfig, options) => {
+      options?.onIntegrationToolDiscovery?.({
+        status: "unavailable",
+        reason: "request_failed",
+      });
+      return [];
+    };
+    const input = {
+      agentId: "agent_1",
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "auto", system: "Base", tools: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools,
+      supportsToolCalling: true,
+      messages: [],
+      mode: "generate" as const,
+      remoteToolSources: undefined,
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+    };
+
+    const first = await prepareAgentRuntimeStep({
+      ...input,
+      resolveRuntimeState: async () => ({ systemPrompt: "Base" }),
+    });
+    const firstSystemPrompt = withIntegrationToolDiscoveryStatus(
+      first.systemPrompt,
+      first.integrationToolDiscovery,
+    );
+    const second = await prepareAgentRuntimeStep({
+      ...input,
+      systemPrompt: firstSystemPrompt,
+      resolveRuntimeState: async () => ({ systemPrompt: firstSystemPrompt }),
+    });
+    const secondSystemPrompt = withIntegrationToolDiscoveryStatus(
+      systemText(second.systemPrompt),
+      second.integrationToolDiscovery,
+    );
+
+    assertEquals(second.integrationToolDiscovery, {
+      status: "unavailable",
+      reason: "request_failed",
+    });
+    assertEquals(
+      secondSystemPrompt.includes(
+        "You must not treat this failure as an empty integration catalog",
+      ),
+      true,
+    );
+    assertEquals(
+      secondSystemPrompt.split("Integration tool discovery status:").length - 1,
+      1,
+    );
+  });
+
+  it("tells the model once when integration discovery is unavailable with a structured system prompt", async () => {
+    const getAvailableTools: RuntimeStepToolLoader = async (_toolsConfig, options) => {
+      options?.onIntegrationToolDiscovery?.({
+        status: "unavailable",
+        reason: "request_failed",
+      });
+      return [];
+    };
+    const baseSystemPrompt = [{ role: "system" as const, content: "Base" }];
+    const input = {
+      agentId: "agent_1",
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "auto", system: baseSystemPrompt, tools: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools,
+      supportsToolCalling: true,
+      messages: [],
+      mode: "generate" as const,
+      remoteToolSources: undefined,
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: baseSystemPrompt,
+      toolContextBase: undefined,
+    };
+
+    const first = await prepareAgentRuntimeStep({
+      ...input,
+      resolveRuntimeState: async () => ({ systemPrompt: baseSystemPrompt }),
+    });
+    const firstSystemPrompt = withIntegrationToolDiscoveryStatus(
+      first.systemPrompt,
+      first.integrationToolDiscovery,
+    );
+    const second = await prepareAgentRuntimeStep({
+      ...input,
+      systemPrompt: firstSystemPrompt,
+      resolveRuntimeState: async () => ({ systemPrompt: firstSystemPrompt }),
+    });
+    const secondSystemPrompt = withIntegrationToolDiscoveryStatus(
+      second.systemPrompt,
+      second.integrationToolDiscovery,
+    );
+
+    if (typeof secondSystemPrompt === "string") {
+      throw new Error("Expected a structured system prompt to stay structured");
+    }
+    assertEquals(
+      secondSystemPrompt.map((m) => m.content).join("\n").split(
+        "Integration tool discovery status:",
+      ).length - 1,
+      1,
+      "a structured prompt must not accumulate one status block per step",
+    );
+    assertEquals(
+      secondSystemPrompt.length,
+      2,
+      "stripping must drop the emptied status message rather than keep an empty system message",
+    );
+    assertEquals(
+      secondSystemPrompt[0],
+      { role: "system", content: "Base" },
+      "the authored system message must survive the strip-and-reappend",
+    );
+  });
+
+  it("replaces an integration discovery status block before prompt suffix content", () => {
+    const unavailable = {
+      status: "unavailable" as const,
+      reason: "request_failed" as const,
+    };
+    const firstSystemPrompt = withIntegrationToolDiscoveryStatus("Base", unavailable);
+    const secondSystemPrompt = withIntegrationToolDiscoveryStatus(
+      `${firstSystemPrompt}\n\nSuffix`,
+      unavailable,
+    );
+
+    assertEquals(
+      secondSystemPrompt.split("Integration tool discovery status:").length - 1,
+      1,
+    );
+    assertEquals(secondSystemPrompt.startsWith("Base\n\nSuffix\n\n"), true);
+  });
+
+  it("does not report unavailable discovery when forwarded integration tools remain usable", async () => {
+    const forwardedTool = toolDefinition("gmail__list_emails");
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: [forwardedTool.name],
+      config: { model: "auto", system: "Base", tools: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: [forwardedTool],
+      getAvailableTools: async (_toolsConfig, options) => {
+        options?.onIntegrationToolDiscovery?.({
+          status: "unavailable",
+          reason: "request_failed",
+        });
+        return [forwardedTool];
+      },
+      supportsToolCalling: true,
+      messages: [],
+      mode: "generate",
+      remoteToolSources: undefined,
+      resolveRuntimeState: async () => ({ systemPrompt: "Base" }),
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+    });
+
+    assertEquals(prepared.integrationToolDiscovery, {
+      status: "ok",
+      tools: [forwardedTool],
+    });
+    assertEquals(
+      withIntegrationToolDiscoveryStatus(
+        prepared.systemPrompt,
+        prepared.integrationToolDiscovery,
+      ),
+      "Base",
+    );
   });
 
   it("does not let runtime context shadow the trusted abort signal", async () => {
@@ -98,13 +404,12 @@ describe("agent/runtime-step", () => {
     const shadowAbort = new AbortController();
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
-      activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
       config: { model: "auto", system: "Base", __vfToolLoadingMode: "eager" } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       getAvailableTools: async () => [],
-      isLocalModel: true,
+      supportsToolCalling: false,
       messages: [],
       mode: "generate",
       remoteToolSources: undefined,
@@ -124,7 +429,6 @@ describe("agent/runtime-step", () => {
   it("does not let runtime context shadow trusted allowed skill ids", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
-      activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
       config: {
@@ -138,7 +442,7 @@ describe("agent/runtime-step", () => {
         assertEquals(options?.remoteToolContext?.allowedSkillIds, ["selected"]);
         return [];
       },
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "generate",
       remoteToolSources: undefined,
@@ -156,7 +460,7 @@ describe("agent/runtime-step", () => {
     assertEquals(prepared.runtimeContext, { allowedSkillIds: ["selected"], keep: true });
   });
 
-  it("resolves runtime state, merges tool context, and applies active skill policy", async () => {
+  it("resolves runtime state and merges tool context", async () => {
     const messages: Message[] = [{
       id: "msg_1",
       role: "user",
@@ -167,6 +471,9 @@ describe("agent/runtime-step", () => {
       model: "auto",
       system: "Base system",
       tools: true,
+      // Declared, so the skill tools are expected regardless of what the
+      // registry holds in this test.
+      skills: true,
       __vfToolLoadingMode: "eager",
     } as AgentConfig;
     const capturedContexts: ToolExecutionContext[] = [];
@@ -174,12 +481,11 @@ describe("agent/runtime-step", () => {
 
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
-      activeSkillPolicy: ["allowed_tool"],
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: ["remote_allowed"],
       config,
       forwardedRemoteToolDefinitions: [toolDefinition("forwarded_remote")],
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages,
       mode: "generate",
       remoteToolSources: [remoteSource],
@@ -228,14 +534,15 @@ describe("agent/runtime-step", () => {
       traceId: "trace_1",
     });
     assertEquals(capturedContexts, [prepared.toolContext]);
-    assertEquals(prepared.tools.map((tool) => tool.name), ["allowed_tool"]);
+    // No skill policy narrows the tool set: `allowed-tools` is spec pre-approval
+    // metadata, not an authorization boundary.
+    assertEquals(prepared.tools.map((tool) => tool.name), ["allowed_tool", "blocked_tool"]);
   });
 
   it("passes active skill state to tool execution context", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
       activeSkillId: "support-escalation",
-      activeSkillPolicy: ["search_knowledge"],
       activeSkillToolAvailability: {
         hasActiveSkill: true,
         references: ["references/guide.md"],
@@ -249,7 +556,7 @@ describe("agent/runtime-step", () => {
         __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "stream",
       remoteToolSources: [],
@@ -272,7 +579,6 @@ describe("agent/runtime-step", () => {
   it("does not include skill tools for the explicit none selector", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
-      activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
       config: {
@@ -287,7 +593,7 @@ describe("agent/runtime-step", () => {
         assertEquals(options?.includeSkillTools, false);
         return [toolDefinition("ordinary_tool")];
       },
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "stream",
       remoteToolSources: [],
@@ -309,7 +615,6 @@ describe("agent/runtime-step", () => {
     };
     const prepared = await prepareAgentRuntimeStep({
       agentId: "root-agent",
-      activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
       config: {
@@ -320,7 +625,7 @@ describe("agent/runtime-step", () => {
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       getAvailableTools: async () => [],
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "stream",
       remoteToolSources: undefined,
@@ -342,15 +647,14 @@ describe("agent/runtime-step", () => {
     assertEquals(prepared.toolContext.__vfSourceIntegrationPolicy, sourceIntegrationPolicy);
   });
 
-  it("uses the canonical deferred exposure contract for local models", async () => {
+  it("does not load tools for runtimes that declare tool calling unsupported", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
-      activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
       config: { model: "local/test", system: "Local", tools: true } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: true,
+      supportsToolCalling: false,
       messages: [],
       mode: "stream",
       remoteToolSources: [],
@@ -359,13 +663,43 @@ describe("agent/runtime-step", () => {
       systemPrompt: "Local",
       toolContextBase: undefined,
       getAvailableTools: async () => {
-        throw new Error("local model should not load tools");
+        throw new Error("tool-incompatible runtime should not load tools");
       },
       resolveRuntimeState: async () => ({ systemPrompt: "Local", context: undefined }),
     });
 
     assertEquals(prepared.tools.map((tool) => tool.name), []);
     assertEquals(prepared.toolContext, {});
+  });
+
+  it("loads tools for server-local runtimes that declare tool calling support", async () => {
+    let loaded = false;
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "local/test", system: "Local", tools: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      supportsToolCalling: true,
+      messages: [],
+      mode: "stream",
+      remoteToolSources: [],
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: "Local",
+      toolContextBase: undefined,
+      getAvailableTools: async () => {
+        loaded = true;
+        return [toolDefinition("local_lookup")];
+      },
+      resolveRuntimeState: async () => ({ systemPrompt: "Local", context: undefined }),
+    });
+
+    assertEquals(loaded, true);
+    assertEquals(
+      prepared.toolExposurePlan.authorized.map((tool) => tool.name),
+      ["local_lookup"],
+    );
   });
 
   it("hides intake tools but keeps delegation tools after submitted form input", async () => {
@@ -383,7 +717,6 @@ describe("agent/runtime-step", () => {
 
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
-      activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
       config: {
@@ -394,7 +727,7 @@ describe("agent/runtime-step", () => {
         __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages,
       mode: "stream",
       remoteToolSources: [],
@@ -419,10 +752,64 @@ describe("agent/runtime-step", () => {
     ]);
   });
 
+  it("keeps only advertised active-skill reference loads after submitted form input", async () => {
+    const messages: Message[] = [{
+      id: "tool_result_1",
+      role: "tool",
+      parts: [{
+        type: "tool-result",
+        toolCallId: "call_form",
+        toolName: "form_input",
+        result: { submitted: true, values: { brief: "plan" } },
+      }],
+    }];
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillId: "plan",
+      activeSkillToolAvailability: {
+        hasActiveSkill: true,
+        references: ["references/guide.md"],
+        scripts: [],
+      },
+      allowedRemoteToolNames: undefined,
+      config: {
+        model: "auto",
+        system: "Base",
+        tools: true,
+        skills: true,
+        __vfToolLoadingMode: "eager",
+      } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      supportsToolCalling: true,
+      messages,
+      mode: "stream",
+      remoteToolSources: [],
+      runtimeContext: undefined,
+      step: 1,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+      getAvailableTools: async () => [
+        toolDefinition("form_input"),
+        toolDefinition("load_skill"),
+      ],
+      resolveRuntimeState: async () => ({ systemPrompt: "Base", context: undefined }),
+    });
+
+    assertEquals(prepared.tools.map((tool) => tool.name), ["load_skill"]);
+    assertEquals(prepared.tools[0]?.parameters, {
+      type: "object",
+      properties: {
+        skillId: { type: "string", enum: ["plan"] },
+        file: { type: "string", enum: ["references/guide.md"] },
+      },
+      required: ["skillId", "file"],
+      additionalProperties: false,
+    });
+  });
+
   it("hides intake tools but keeps delegation tools when hosted context records submitted form input", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
-      activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
       config: {
@@ -433,7 +820,7 @@ describe("agent/runtime-step", () => {
         __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "stream",
       remoteToolSources: [],
@@ -484,7 +871,6 @@ describe("agent/runtime-step", () => {
 
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
-      activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
       config: {
@@ -495,7 +881,7 @@ describe("agent/runtime-step", () => {
         __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages,
       mode: "stream",
       remoteToolSources: [],
@@ -522,7 +908,6 @@ describe("agent/runtime-step", () => {
   it("hides load_skill_reference when the active skill has no references", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
-      activeSkillPolicy: ["search_knowledge"],
       activeSkillToolAvailability: {
         hasActiveSkill: true,
         references: [],
@@ -537,7 +922,7 @@ describe("agent/runtime-step", () => {
         __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "stream",
       remoteToolSources: [],
@@ -563,7 +948,6 @@ describe("agent/runtime-step", () => {
   it("hides skill file tools before any skill is active", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
-      activeSkillPolicy: undefined,
       activeSkillToolAvailability: {
         hasActiveSkill: false,
         references: [],
@@ -578,7 +962,7 @@ describe("agent/runtime-step", () => {
         __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "stream",
       remoteToolSources: [],

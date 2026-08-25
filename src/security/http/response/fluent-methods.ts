@@ -5,7 +5,7 @@
 import { applyCORSHeaders, applyCORSHeadersSync } from "../cors/index.ts";
 import { buildCacheControl } from "./cache-handler.ts";
 import { applySecurityHeaders } from "./security-handler.ts";
-import { applyCsrfCookie } from "../../csrf/helpers.ts";
+import { applyCsrfCookie, csrfCookieSetting } from "../../csrf/helpers.ts";
 import type { CacheStrategy, SecurityConfig, SyncCORSConfig } from "./types.ts";
 
 export interface FluentMethodsContext {
@@ -14,7 +14,6 @@ export interface FluentMethodsContext {
   securityConfig: SecurityConfig | null;
   isDev: boolean;
   nonce: string;
-  cspUserHeader: string | null;
   adapter: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter | undefined;
   isVeryfrontDomain: boolean;
 }
@@ -56,14 +55,13 @@ export function withSecurity<T extends FluentMethodsContext>(
     this.headers,
     this.isDev,
     this.nonce,
-    this.cspUserHeader,
     config ?? this.securityConfig,
     this.adapter,
     this.isVeryfrontDomain,
   );
   if (req) {
     const secConfig = config ?? this.securityConfig;
-    applyCsrfCookie(req, this.headers, secConfig?.csrf);
+    applyCsrfCookie(req, this.headers, csrfCookieSetting(secConfig?.csrf, this.isDev));
   }
   return this;
 }

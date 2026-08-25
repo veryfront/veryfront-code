@@ -120,6 +120,25 @@ Deno.test("serializeYaml - produces valid YAML", () => {
   assertEquals(yaml.includes('assignees: ["alice"]'), true);
 });
 
+Deno.test("serializeYaml - escapes double quotes in the title", () => {
+  const metadata: IssueMetadata = {
+    id: "ISSUE-001",
+    title: 'Fix "login" timeout',
+    state: "open",
+    labels: [],
+    assignees: [],
+    created_at: "2026-01-23T00:00:00.000Z",
+    updated_at: "2026-01-23T00:00:00.000Z",
+  };
+
+  const yaml = serializeYaml(metadata);
+  assertEquals(
+    yaml.includes('title: "Fix \\"login\\" timeout"'),
+    true,
+    "serializeYaml escapes double quotes inside the title",
+  );
+});
+
 Deno.test("serializeYaml - preserves empty arrays", () => {
   const metadata: IssueMetadata = {
     id: "ISSUE-001",
@@ -302,6 +321,32 @@ Deno.test("IssuesManager.update - clears milestone when set to null", async () =
 
     assertExists(updated);
     assertEquals(updated.metadata.milestone, undefined);
+
+    const reloaded = await manager.get(created.metadata.id);
+    assertExists(reloaded);
+    assertEquals(
+      reloaded.metadata.milestone,
+      undefined,
+      "a cleared milestone must not survive the write and re-read",
+    );
+  });
+});
+
+Deno.test("IssuesManager - persists milestone across serialize and parse", async () => {
+  await withTempDir(async (dir) => {
+    const manager = createIssuesManager(dir);
+    const created = await manager.create({
+      title: "Original",
+      milestone: "v1",
+    });
+
+    const reloaded = await manager.get(created.metadata.id);
+    assertExists(reloaded);
+    assertEquals(
+      reloaded.metadata.milestone,
+      "v1",
+      "serializeYaml must emit the milestone line so parseYaml can read it back",
+    );
   });
 });
 
@@ -370,6 +415,46 @@ Deno.test("IssuesManager.list - filters by labels", async () => {
 
     assertEquals((await manager.list({ labels: ["bug"] })).total, 2);
     assertEquals((await manager.list({ labels: ["bug", "priority:high"] })).total, 1);
+  });
+});
+
+Deno.test("IssuesManager.list - filters by milestone", async () => {
+  await withTempDir(async (dir) => {
+    const manager = createIssuesManager(dir);
+    await manager.create({ title: "A", milestone: "v1" });
+    await manager.create({ title: "B", milestone: "v1" });
+    await manager.create({ title: "C", milestone: "v2" });
+
+    assertEquals(
+      (await manager.list({ milestone: "v1" })).total,
+      2,
+      "list returns only issues carrying the requested milestone",
+    );
+    assertEquals(
+      (await manager.list({ milestone: "v3" })).total,
+      0,
+      "an unused milestone matches no issues",
+    );
+  });
+});
+
+Deno.test("IssuesManager.list - filters by assignee", async () => {
+  await withTempDir(async (dir) => {
+    const manager = createIssuesManager(dir);
+    await manager.create({ title: "A", assignees: ["alice"] });
+    await manager.create({ title: "B", assignees: ["alice", "bob"] });
+    await manager.create({ title: "C", assignees: ["bob"] });
+
+    assertEquals(
+      (await manager.list({ assignee: "alice" })).total,
+      2,
+      "list returns only issues assigned to the requested user",
+    );
+    assertEquals(
+      (await manager.list({ assignee: "carol" })).total,
+      0,
+      "an unassigned user matches no issues",
+    );
   });
 });
 

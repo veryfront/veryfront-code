@@ -1,9 +1,21 @@
-import { RENDER_ERROR } from "#veryfront/errors";
+import { RENDER_ERROR, VeryfrontError } from "#veryfront/errors";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import * as React from "react";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isProductionMode, SSRHandler } from "./ssr.handler.ts";
-import type { HandlerContext } from "../../types.ts";
+import { SSRHandler } from "./ssr.handler.ts";
+import { __setComponentSourceLoaderForTests } from "./error-page-fallback.ts";
+import {
+  __injectProjectReactForTests,
+  __injectReactDOMServerForTests,
+  resetReactCache,
+} from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
+import type { HandlerContext, HandlerResult } from "../../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { SSRRenderOptions } from "../../../services/rendering/ssr.service.ts";
 import { createMockAdapter, createMockSSRService, makeCtx } from "./ssr.handler.test-helpers.ts";
@@ -79,11 +91,32 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
     });
 
     it("continues for dot-segment paths in production", async () => {
-      const handler = new SSRHandler();
-      const req = new Request("http://localhost/.env");
+      // An extensionless dot route: the file-extension guard does not catch it,
+      // so only the production route-visibility policy can hide it.
+      const handler = new SSRHandler(createMockSSRService());
+      const req = new Request("http://localhost/.veryfront/secrets");
       const ctx = makeCtx({ resolvedEnvironment: "production" });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, true);
+      assertEquals(result.continue, true, "extensionless dot routes must be hidden in production");
+      assertEquals(result.response, undefined);
+    });
+
+    it("still renders dot-segment paths outside production", async () => {
+      const handler = new SSRHandler(createMockSSRService());
+      const req = new Request("http://localhost/.veryfront/secrets");
+      const ctx = makeCtx({
+        isLocalProject: true,
+        projectSlug: "preview-project",
+        resolvedEnvironment: "preview",
+        requestContext: {
+          token: "",
+          slug: "preview-project",
+          branch: "main",
+          mode: "preview",
+        },
+      });
+      const result = await handler.handle(req, ctx);
+      assertEquals(result.response?.status, 200, "dot routes must still render outside production");
     });
 
     it("continues for /_veryfront/ deeply nested paths", async () => {
@@ -96,6 +129,387 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
   });
 
   describe("handle - with mock SSRService", () => {
+    it("awaits the current preview source snapshot before rendering", async () => {
+      const events: string[] = [];
+      let releaseRefresh!: () => void;
+      const refreshPending = new Promise<void>((resolve) => {
+        releaseRefresh = resolve;
+      });
+      const adapter = createMockAdapter();
+      adapter.fs.ensureSourceSnapshotFresh = async () => {
+        events.push("refresh-start");
+        await refreshPending;
+        events.push("refresh-complete");
+      };
+      const handler = new SSRHandler(createMockSSRService({
+        renderPage: () => {
+          events.push("render");
+          return Promise.resolve({
+            status: 200,
+            html: "<html>current draft</html>",
+            isStreaming: false,
+            cacheStrategy: "short" as const,
+            slug: "preview",
+          });
+        },
+      }));
+      const handling = handler.handle(
+        new Request("http://localhost/preview"),
+        makeCtx({
+          adapter,
+          isLocalProject: true,
+          projectSlug: "preview-project",
+          requestContext: {
+            token: "",
+            slug: "preview-project",
+            branch: "main",
+            mode: "preview",
+          },
+        }),
+      );
+
+      await Promise.resolve();
+      await Promise.resolve();
+      assertEquals(events, ["refresh-start"]);
+
+      releaseRefresh();
+      const result = await handling;
+
+      assertEquals(events, ["refresh-start", "refresh-complete", "render"]);
+      assertEquals(result.response?.status, 200);
+    });
+
+    it("serves source published between two preview renders", async () => {
+      // The adapter only observes a newer draft when freshness is established,
+      // so a render that skips the freshness boundary keeps serving the older
+      // snapshot however many times you reload.
+      let publishedSource = "Ready to Create";
+      let observedSource = publishedSource;
+      const adapter = createMockAdapter();
+      adapter.fs.ensureSourceSnapshotFresh = () => {
+        observedSource = publishedSource;
+        return Promise.resolve();
+      };
+      const handler = new SSRHandler(createMockSSRService({
+        renderPage: () =>
+          Promise.resolve({
+            status: 200,
+            html: `<html><h1>${observedSource}</h1></html>`,
+            isStreaming: false,
+            cacheStrategy: "short" as const,
+            slug: "preview",
+          }),
+      }));
+      const render = () =>
+        handler.handle(
+          new Request("http://localhost/preview"),
+          makeCtx({
+            adapter,
+            isLocalProject: true,
+            projectSlug: "preview-project",
+            requestContext: {
+              token: "",
+              slug: "preview-project",
+              branch: "main",
+              mode: "preview",
+            },
+          }),
+        );
+
+      const first = await render();
+      assertStringIncludes(await first.response!.text(), "<h1>Ready to Create</h1>");
+
+      publishedSource = "Ready to Create222333444555666777888999";
+
+      const second = await render();
+      assertStringIncludes(
+        await second.response!.text(),
+        "<h1>Ready to Create222333444555666777888999</h1>",
+      );
+    });
+
+    it("surfaces preview source refresh failures without rendering stale HTML", async () => {
+      let renderCalls = 0;
+      const adapter = createMockAdapter();
+      adapter.fs.ensureSourceSnapshotFresh = () =>
+        Promise.reject(new Error("preview snapshot refresh failed"));
+      const handler = new SSRHandler(createMockSSRService({
+        renderPage: () => {
+          renderCalls++;
+          return Promise.resolve({
+            status: 200,
+            html: "<html>stale</html>",
+            isStreaming: false,
+            cacheStrategy: "short" as const,
+            slug: "preview",
+          });
+        },
+      }));
+
+      await assertRejects(
+        () =>
+          handler.handle(
+            new Request("http://localhost/preview"),
+            makeCtx({
+              adapter,
+              isLocalProject: true,
+              projectSlug: "preview-project",
+              requestContext: {
+                token: "",
+                slug: "preview-project",
+                branch: "main",
+                mode: "preview",
+              },
+            }),
+          ),
+        Error,
+        "preview snapshot refresh failed",
+      );
+      assertEquals(renderCalls, 0);
+    });
+
+    it("does not refresh immutable production source before rendering", async () => {
+      let refreshCalls = 0;
+      const adapter = createMockAdapter();
+      adapter.fs.ensureSourceSnapshotFresh = () => {
+        refreshCalls++;
+        return Promise.resolve();
+      };
+      const handler = new SSRHandler(createMockSSRService());
+
+      const result = await handler.handle(
+        new Request("http://localhost/production"),
+        makeCtx({
+          adapter,
+          isLocalProject: true,
+          projectSlug: "production-project",
+          releaseId: "release-1",
+          resolvedEnvironment: "production",
+          requestContext: {
+            token: "",
+            slug: "production-project",
+            branch: null,
+            mode: "production",
+          },
+        }),
+      );
+
+      assertEquals(result.response?.status, 200);
+      assertEquals(refreshCalls, 0);
+    });
+
+    it("fails the request when a snapshot source cannot establish freshness", async () => {
+      let renderCalls = 0;
+      const adapter = createMockAdapter();
+      // Declares a source snapshot, but offers no way to bring it up to date.
+      adapter.fs.getSourceSnapshotVersion = () => 1;
+      const handler = new SSRHandler(createMockSSRService({
+        renderPage: () => {
+          renderCalls++;
+          return Promise.resolve({
+            status: 200,
+            html: "<html>stale</html>",
+            isStreaming: false,
+            cacheStrategy: "short" as const,
+            slug: "preview",
+          });
+        },
+      }));
+
+      const rejection = await assertRejects(
+        () =>
+          handler.handle(
+            new Request("http://localhost/preview"),
+            makeCtx({
+              adapter,
+              projectSlug: "preview-project",
+              requestContext: {
+                token: "",
+                slug: "preview-project",
+                branch: "main",
+                mode: "preview",
+              },
+            }),
+          ),
+      );
+      assertInstanceOf(rejection, VeryfrontError);
+      assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
+      assertEquals(rejection.status, 503);
+      assertEquals(renderCalls, 0);
+    });
+
+    it("renders a snapshot source that only implements refreshSourceSnapshot", async () => {
+      const reasons: Array<string | undefined> = [];
+      const adapter = createMockAdapter();
+      adapter.fs.refreshSourceSnapshot = (reason?: string) => {
+        reasons.push(reason);
+        return Promise.resolve();
+      };
+      const handler = new SSRHandler(createMockSSRService());
+
+      const result = await handler.handle(
+        new Request("http://localhost/preview"),
+        makeCtx({
+          adapter,
+          projectSlug: "preview-project",
+          requestContext: {
+            token: "",
+            slug: "preview-project",
+            branch: "main",
+            mode: "preview",
+          },
+        }),
+      );
+
+      assertEquals(result.response?.status, 200);
+      assertEquals(reasons, ["preview-ssr-render"]);
+    });
+
+    it("renders a live source that declares no snapshot at all", async () => {
+      // Local filesystem adapters (deno, node, bun) implement none of the
+      // source snapshot methods. Their reads are already current, so the
+      // freshness boundary must let them through rather than fail the request.
+      const handler = new SSRHandler(createMockSSRService());
+
+      const result = await handler.handle(
+        new Request("http://localhost/preview"),
+        makeCtx({
+          isLocalProject: true,
+          projectSlug: "preview-project",
+          requestContext: {
+            token: "",
+            slug: "preview-project",
+            branch: "main",
+            mode: "preview",
+          },
+        }),
+      );
+
+      assertEquals(result.response?.status, 200);
+    });
+
+    it("renders immutable production source that cannot establish freshness", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.getSourceSnapshotVersion = () => 1;
+      const handler = new SSRHandler(createMockSSRService());
+
+      const result = await handler.handle(
+        new Request("http://localhost/production"),
+        makeCtx({
+          adapter,
+          projectSlug: "production-project",
+          releaseId: "release-1",
+          resolvedEnvironment: "production",
+          requestContext: {
+            token: "",
+            slug: "production-project",
+            branch: null,
+            mode: "production",
+          },
+        }),
+      );
+
+      assertEquals(result.response?.status, 200);
+    });
+
+    it("passes only application headers into project rendering", async () => {
+      let renderedRequest: Request | undefined;
+      const mockService = createMockSSRService({
+        renderPage: (_ctx, options) => {
+          renderedRequest = options.request;
+          return Promise.resolve({
+            status: 200,
+            html: "<html>rendered page</html>",
+            isStreaming: false,
+            cacheStrategy: "short" as const,
+            slug: "headers",
+          });
+        },
+      });
+      const handler = new SSRHandler(mockService);
+      await handler.handle(
+        new Request("http://localhost/headers", {
+          headers: {
+            authorization: "Bearer application-token",
+            cookie: "session=application-cookie",
+            "proxy-authorization": "Basic infrastructure-proxy-token",
+            "x-forwarded-host": "internal-proxy.example",
+            "x-project-id": "infrastructure-project",
+            "x-token": "platform-service-token",
+            "x-veryfront-control-plane-jws": "signed-control-plane-request",
+          },
+        }),
+        makeCtx({ isLocalProject: true }),
+      );
+
+      assertEquals(renderedRequest?.headers.get("authorization"), "Bearer application-token");
+      assertEquals(renderedRequest?.headers.get("cookie"), "session=application-cookie");
+      assertEquals(renderedRequest?.headers.get("proxy-authorization"), null);
+      assertEquals(renderedRequest?.headers.get("x-forwarded-host"), null);
+      assertEquals(renderedRequest?.headers.get("x-project-id"), null);
+      assertEquals(renderedRequest?.headers.get("x-token"), null);
+      assertEquals(renderedRequest?.headers.get("x-veryfront-control-plane-jws"), null);
+    });
+
+    it("returns a typed 503 before shared-runtime rendering", async () => {
+      let renderCalls = 0;
+      const handler = new SSRHandler(createMockSSRService({
+        renderPage: () => {
+          renderCalls++;
+          throw new Error("shared runtime reached the host renderer");
+        },
+      }));
+      const result = await handler.handle(
+        new Request("https://tenant.example/private-page"),
+        makeCtx({
+          isLocalProject: false,
+          prepareHostedConfigContext: (() => {
+            throw new Error("shared runtime prepared host rendering context");
+          }) as HandlerContext["prepareHostedConfigContext"],
+        }),
+      );
+
+      assertEquals(result.response?.status, 503);
+      assertEquals(result.response?.headers.get("cache-control"), "no-store");
+      assertEquals(result.response?.headers.get("content-type"), "application/problem+json");
+      assertEquals(
+        (await result.response?.json() as { type?: string }).type,
+        "https://veryfront.com/docs/code/guides/errors#project-execution-unavailable",
+      );
+      assertEquals(renderCalls, 0);
+    });
+
+    it("renders once the host grants execution", async () => {
+      // The granted counterpart to the fail-closed test above. veryfront-code
+      // #3364 shipped a hardcoded `true` on a sibling surface that survived
+      // review because a fail-closed test cannot tell a correct predicate from
+      // a literal denial. Only this direction can.
+      let renderCalls = 0;
+      const handler = new SSRHandler(createMockSSRService({
+        renderPage: () => {
+          renderCalls++;
+          return Promise.resolve({
+            status: 200,
+            html: "<html>granted</html>",
+            isStreaming: false,
+            cacheStrategy: "short" as const,
+            slug: "private-page",
+          });
+        },
+      }));
+      const result = await handler.handle(
+        new Request("https://tenant.example/private-page"),
+        makeCtx({
+          isLocalProject: false,
+          allowHostProjectCodeExecution: true,
+          prepareHostedConfigContext: (() => {}) as HandlerContext["prepareHostedConfigContext"],
+        } as Partial<HandlerContext>),
+      );
+
+      assertEquals(result.response?.status, 200);
+      assertEquals(renderCalls, 1);
+    });
+
     it("returns response from renderPage result", async () => {
       const mockService = createMockSSRService({
         renderPage: () =>
@@ -143,7 +557,13 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
             html: "<html>not found</html>",
             isStreaming: false,
             cacheStrategy: "no-cache" as const,
-            failure: { kind: "not-found" } as const,
+            failure: {
+              kind: "not-found",
+              headers: { "x-missing-reason": "gone" },
+              cookies: [{ name: "visited-missing", value: "1", path: "/" }],
+            } as const,
+            headers: { "x-missing-reason": "gone" },
+            cookies: [{ name: "visited-missing", value: "1", path: "/" }],
             slug: "missing-page",
           }),
       });
@@ -156,6 +576,8 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       // The handler's handleNotFound tries fallback pages, but they won't exist in mock;
       // it eventually builds a 404 response.
       assertEquals(result.response!.status, 404);
+      assertEquals(result.response!.headers.get("x-missing-reason"), "gone");
+      assertEquals(result.response!.headers.getSetCookie(), ["visited-missing=1; Path=/"]);
     });
 
     it("returns redirect responses for redirect error type", async () => {
@@ -178,6 +600,36 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       assertEquals(result.response!.status, 302);
       assertEquals(result.response!.headers.get("location"), "/login");
       assertEquals(result.response!.body, null);
+    });
+
+    it("applies response metadata to redirects", async () => {
+      const mockService = createMockSSRService({
+        renderPage: () =>
+          Promise.resolve({
+            status: 302,
+            isStreaming: false,
+            cacheStrategy: "no-cache" as const,
+            failure: {
+              kind: "redirect",
+              location: "/account",
+              permanent: false,
+            } as const,
+            headers: { "x-auth-result": "signed-in" },
+            cookies: [{ name: "session", value: "abc", path: "/", httpOnly: true }],
+            slug: "sign-in",
+          } as any),
+      });
+      const result = await new SSRHandler(mockService).handle(
+        new Request("http://localhost/sign-in"),
+        makeCtx(),
+      );
+
+      assertEquals(result.response!.status, 302);
+      assertEquals(result.response!.headers.get("location"), "/account");
+      assertEquals(result.response!.headers.get("x-auth-result"), "signed-in");
+      assertEquals(result.response!.headers.getSetCookie(), [
+        "session=abc; Path=/; HttpOnly",
+      ]);
     });
 
     it("returns 500 for server-error type", async () => {
@@ -342,7 +794,7 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       };
     }
 
-    it("calls runWithContext with correct args in multi-project mode", async () => {
+    it("fails closed before entering a multi-project rendering context", async () => {
       const mockService = createMockSSRService();
       const handler = new SSRHandler(mockService);
       const { ctx, calls } = makeExtendedCtx({}, {
@@ -362,15 +814,66 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       });
 
       const req = new Request("http://localhost/page");
-      await handler.handle(req, ctx);
+      const result = await handler.handle(req, ctx);
 
-      assertEquals(calls.runWithContext![0], "my-slug");
-      assertEquals(calls.runWithContext![1], "tok-abc");
-      assertEquals(calls.runWithContext![2], "proj-42");
-      const opts = calls.runWithContext![3] as Record<string, unknown>;
-      assertEquals(opts.releaseId, "rel-1");
-      assertEquals(opts.branch, "feature-x");
-      assertEquals(opts.environmentName, "staging");
+      assertEquals(calls.runWithContext, undefined);
+      assertEquals(result.response?.status, 503);
+      assertEquals(result.response?.headers.get("content-type"), "application/problem+json");
+    });
+
+    it("refreshes preview source inside the matching project context", async () => {
+      const events: string[] = [];
+      let inProjectContext = false;
+      const mockService = createMockSSRService({
+        renderPage: () => {
+          events.push(inProjectContext ? "render-in-context" : "render-outside-context");
+          return Promise.resolve({
+            status: 200,
+            html: "<html>current preview</html>",
+            isStreaming: false,
+            cacheStrategy: "short" as const,
+            slug: "page",
+          });
+        },
+      });
+      const handler = new SSRHandler(mockService);
+      const { ctx } = makeExtendedCtx({}, {
+        allowHostProjectCodeExecution: true,
+        projectSlug: "preview-project",
+        projectId: "project-1",
+        releaseId: undefined,
+        requestContext: {
+          token: "project-token",
+          slug: "preview-project",
+          branch: "main",
+          mode: "preview",
+        },
+      });
+      const fs = ctx.adapter.fs as unknown as {
+        runWithContext: (
+          slug: string,
+          token: string,
+          fn: () => Promise<HandlerResult>,
+        ) => Promise<HandlerResult>;
+        ensureSourceSnapshotFresh: (reason?: string) => Promise<void>;
+      };
+      fs.runWithContext = async (_slug, _token, fn) => {
+        inProjectContext = true;
+        try {
+          return await fn();
+        } finally {
+          inProjectContext = false;
+        }
+      };
+      fs.ensureSourceSnapshotFresh = () => {
+        events.push(inProjectContext ? "refresh-in-context" : "refresh-outside-context");
+        return Promise.resolve();
+      };
+
+      const result = await handler.handle(new Request("http://localhost/page"), ctx);
+
+      assertEquals(result.response?.status, 200);
+      assertEquals(events, ["refresh-in-context", "render-in-context"]);
     });
 
     it("skips runWithContext when projectSlug is missing", async () => {
@@ -537,6 +1040,73 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       assertEquals(result.response!.status, 500);
     });
 
+    it("preserves response metadata on a custom server-error page", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.stat = (path: string) => {
+        if (path.endsWith("/pages")) {
+          return Promise.resolve({
+            isFile: false,
+            isDirectory: true,
+            isSymlink: false,
+            size: 0,
+            mtime: null,
+          });
+        }
+        if (path.endsWith("/pages/500.tsx")) {
+          return Promise.resolve({
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+            size: 1,
+            mtime: null,
+          });
+        }
+        return Promise.reject(new Error("not found"));
+      };
+      adapter.fs.readFile = () => Promise.resolve("export default function ErrorPage() {}");
+      __setComponentSourceLoaderForTests(() => Promise.resolve(() => null));
+      __injectProjectReactForTests(React);
+      __injectReactDOMServerForTests({
+        renderToString: () => "",
+        renderToStaticMarkup: () => "",
+      });
+      try {
+        const mockService = createMockSSRService({
+          renderPage: () =>
+            Promise.resolve({
+              status: 500,
+              html: "<html>dev overlay</html>",
+              isStreaming: false,
+              cacheStrategy: "no-cache" as const,
+              failure: {
+                kind: "server-error" as const,
+                exposure: "generic" as const,
+                error: new Error("Oops"),
+              },
+              headers: { "x-error-state": "reported" },
+              cookies: [{ name: "error-seen", value: "1", path: "/" }],
+              slug: "page",
+            }),
+        });
+        const handler = new SSRHandler(mockService);
+        const result = await handler.handle(
+          new Request("http://localhost/page"),
+          makeCtx({
+            adapter,
+            isLocalProject: true,
+            projectId: "metadata-error-page",
+          }),
+        );
+
+        assertEquals(result.response!.status, 500);
+        assertEquals(result.response!.headers.get("x-error-state"), "reported");
+        assertStringIncludes(result.response!.headers.get("set-cookie") ?? "", "error-seen=1");
+      } finally {
+        __setComponentSourceLoaderForTests(null);
+        resetReactCache();
+      }
+    });
+
     it("returns runtime error type with dev overlay content", async () => {
       const mockService = createMockSSRService({
         renderPage: () =>
@@ -601,8 +1171,8 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
     });
   });
 
-  describe("handle - context setup error", () => {
-    it("falls through to 404 when context setup throws", async () => {
+  describe("handle - hostile shared context", () => {
+    it("returns 503 without invoking a throwing shared context", async () => {
       const throwingFs = {
         exists: () => Promise.resolve(false),
         readFile: () => Promise.resolve(""),
@@ -624,7 +1194,8 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       const ctx = makeCtx({ adapter, projectSlug: "test" });
 
       const result = await handler.handle(new Request("http://localhost/page"), ctx);
-      assertEquals(result.continue, true);
+      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 503);
     });
   });
 
@@ -690,45 +1261,6 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       );
 
       assertEquals(capturedOptions!.forceProductionScripts, true);
-    });
-  });
-
-  describe("isProductionMode", () => {
-    it("returns true when config has productionMode = true", () => {
-      const ctx = makeCtx({
-        config: { fs: { veryfront: { productionMode: true } } } as any,
-      });
-      assertEquals(isProductionMode(ctx), true);
-    });
-
-    it("returns true when resolvedEnvironment is production", () => {
-      const ctx = makeCtx({ resolvedEnvironment: "production" });
-      assertEquals(isProductionMode(ctx), true);
-    });
-
-    it("returns false when resolvedEnvironment is preview", () => {
-      const ctx = makeCtx({ resolvedEnvironment: "preview" });
-      assertEquals(isProductionMode(ctx), false);
-    });
-
-    it("falls back to requestContext.mode when resolvedEnvironment is not set", () => {
-      const ctx = makeCtx({
-        requestContext: { mode: "production" } as any,
-      });
-      assertEquals(isProductionMode(ctx), true);
-    });
-
-    it("returns false when neither resolvedEnvironment nor mode is set", () => {
-      const ctx = makeCtx();
-      assertEquals(isProductionMode(ctx), false);
-    });
-
-    it("config productionMode overrides resolvedEnvironment", () => {
-      const ctx = makeCtx({
-        config: { fs: { veryfront: { productionMode: true } } } as any,
-        resolvedEnvironment: "preview",
-      });
-      assertEquals(isProductionMode(ctx), true);
     });
   });
 });

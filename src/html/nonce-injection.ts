@@ -1,4 +1,5 @@
 import { escapeHtml } from "#veryfront/utils/html-escape.ts";
+import { isProdHydrationModulePath } from "./hydration-script-builder/prod-path.ts";
 
 function findTagEnd(html: string, start: number): number {
   let activeQuote: '"' | "'" | null = null;
@@ -60,6 +61,12 @@ interface ParsedAttribute {
   start: number;
   end: number;
   value: string | null;
+}
+
+const CACHE_NONCE_PLACEHOLDER_PATTERN = /^vf-cache-[a-f0-9]{48}$/u;
+
+export function isHtmlNonceCachePlaceholder(value: unknown): value is string {
+  return typeof value === "string" && CACHE_NONCE_PLACEHOLDER_PATTERN.test(value);
 }
 
 function findAttribute(tag: string, attributeName: string): ParsedAttribute | undefined {
@@ -124,6 +131,131 @@ function injectNonceIntoOpeningTag(tag: string, escapedNonce: string): string {
   return `${tag.slice(0, insertAt)} nonce="${escapedNonce}"${tag.slice(insertAt)}`;
 }
 
+function acceptsAmbientNonce(tag: string, tagName: "script" | "style"): boolean {
+  return tagName === "style" ||
+    findAttribute(tag, "src") === undefined ||
+    isFrameworkOwnedExternalScript(tag);
+}
+
+function isFrameworkOwnedExternalScript(tag: string): boolean {
+  const src = findAttribute(tag, "src")?.value;
+  return src === "/_veryfront/rsc/client.js" ||
+    (typeof src === "string" && isProdHydrationModulePath(src));
+}
+
+function replaceExactAuthorizedNonce(
+  html: string,
+  expectedNonce: string,
+  replacementNonce: string | undefined,
+): { html: string; replacements: number } {
+  const lowerHtml = html.toLowerCase();
+  let result = "";
+  let index = 0;
+  let rawTextTag: "script" | "style" | null = null;
+  let replacements = 0;
+
+  while (index < html.length) {
+    if (rawTextTag) {
+      const closingIndex = findRawTextClosingTagStart(lowerHtml, rawTextTag, index);
+      if (closingIndex === -1) {
+        result += html.slice(index);
+        break;
+      }
+      result += html.slice(index, closingIndex);
+      index = closingIndex;
+      rawTextTag = null;
+      continue;
+    }
+
+    if (html.startsWith("<!--", index)) {
+      const commentEnd = html.indexOf("-->", index + 4);
+      const endIndex = commentEnd === -1 ? html.length : commentEnd + 3;
+      result += html.slice(index, endIndex);
+      index = endIndex;
+      continue;
+    }
+
+    if (html[index] !== "<") {
+      result += html[index++];
+      continue;
+    }
+
+    const tagEnd = findTagEnd(html, index);
+    if (tagEnd === -1) {
+      result += html.slice(index);
+      break;
+    }
+    const tag = html.slice(index, tagEnd + 1);
+    const tagName = getOpeningTagName(tag);
+    if (!tagName) {
+      result += tag;
+      index = tagEnd + 1;
+      continue;
+    }
+
+    const nonce = findAttribute(tag, "nonce");
+    const isExternalScript = tagName === "script" && findAttribute(tag, "src") !== undefined;
+    const isAuthorizedSlot = !isExternalScript || isFrameworkOwnedExternalScript(tag);
+    if (isAuthorizedSlot && nonce?.value === expectedNonce) {
+      const replacement = replacementNonce === undefined ? "" : `nonce="${replacementNonce}"`;
+      result += `${tag.slice(0, nonce.start)}${replacement}${tag.slice(nonce.end)}`;
+      replacements++;
+    } else {
+      result += tag;
+    }
+    index = tagEnd + 1;
+    if (!/\/\s*>$/u.test(tag)) rawTextTag = tagName;
+  }
+
+  return { html: result, replacements };
+}
+
+function createCacheNoncePlaceholder(): string {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  return `vf-cache-${Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/**
+ * Replace only inline script/style nonce attributes that already hold the
+ * render's unpredictable response nonce. The random placeholder is internal
+ * to this cache entry, so raw application markup cannot opt itself into nonce
+ * rebinding on a later request.
+ */
+export interface SealedHtmlNonce {
+  readonly html: string;
+  readonly placeholder?: string;
+}
+
+export function sealHtmlNonceForCache(html: string, nonce?: string): SealedHtmlNonce {
+  if (!nonce) return { html };
+  const placeholder = createCacheNoncePlaceholder();
+  const sealed = replaceExactAuthorizedNonce(html, escapeHtml(nonce), placeholder);
+  return { html: sealed.html, placeholder };
+}
+
+/** Reject legacy/unsealed entries whenever the response enforces a nonce. */
+export function isHtmlNonceCacheCompatible(
+  placeholder: string | undefined,
+  nonce?: string,
+): boolean {
+  return !nonce || isHtmlNonceCachePlaceholder(placeholder);
+}
+
+/** Bind an internally authenticated cache slot to the current response. */
+export function bindHtmlNonceFromCache(
+  html: string,
+  placeholder: string | undefined,
+  nonce?: string,
+): string {
+  if (!isHtmlNonceCachePlaceholder(placeholder)) return html;
+  return replaceExactAuthorizedNonce(
+    html,
+    placeholder,
+    nonce ? escapeHtml(nonce) : undefined,
+  ).html;
+}
+
 export function addNonceToHtmlTags(html: string, nonce?: string): string {
   if (!nonce) return html;
 
@@ -176,7 +308,9 @@ export function addNonceToHtmlTags(html: string, nonce?: string): string {
       continue;
     }
 
-    result += injectNonceIntoOpeningTag(tag, escapedNonce);
+    result += acceptsAmbientNonce(tag, tagName)
+      ? injectNonceIntoOpeningTag(tag, escapedNonce)
+      : tag;
     index = tagEnd + 1;
 
     if (!/\/\s*>$/u.test(tag)) {
@@ -269,7 +403,9 @@ export function addNonceToHtmlStream(
         continue;
       }
 
-      result += injectNonceIntoOpeningTag(tag, escapedNonce);
+      result += acceptsAmbientNonce(tag, tagName)
+        ? injectNonceIntoOpeningTag(tag, escapedNonce)
+        : tag;
       index = tagEnd + 1;
 
       if (!/\/\s*>$/u.test(tag)) {

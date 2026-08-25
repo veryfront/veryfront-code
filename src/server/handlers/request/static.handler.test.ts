@@ -3,6 +3,8 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "../types.ts";
 import { StaticHandler } from "./static.handler.ts";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/platform/compat/fs.ts";
 
 function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
   return {
@@ -13,7 +15,6 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
       fs: {},
     },
     securityConfig: {},
-    cspUserHeader: null,
     isLocalProject: false,
     requestContext: {
       mode: "production",
@@ -54,6 +55,125 @@ describe("server/handlers/request/static.handler", () => {
       "application/javascript; charset=utf-8",
     );
     assertEquals(await result.response.text(), "export const page = true;");
+  });
+
+  it("answers a matching If-None-Match with 304 and serves a stale validator in full", async () => {
+    const handler = new StaticHandler();
+    (handler as any).staticService = {
+      resolveFile: async () => ({
+        path: "/tmp/test-project/dist/_veryfront/chunks/index.js",
+        data: new TextEncoder().encode("export const page = true;"),
+        etag: '"asset-etag"',
+        contentType: "application/javascript; charset=utf-8",
+        cacheStrategy: "immutable",
+        source: "dist",
+      }),
+      isAssetRequest: () => true,
+    };
+    const url = "http://localhost/_veryfront/chunks/index.js";
+
+    const first = await handler.handle(new Request(url), makeCtx());
+    assertExists(first.response);
+    const etag = first.response.headers.get("etag");
+    assertExists(etag, "a served static asset must carry a validator");
+    await first.response.text();
+
+    const revalidated = await handler.handle(
+      new Request(url, { headers: { "if-none-match": etag } }),
+      makeCtx(),
+    );
+    assertExists(revalidated.response);
+    assertEquals(revalidated.response.status, 304, "a matching validator must answer 304");
+    assertEquals(await revalidated.response.text(), "", "a 304 must not carry a body");
+
+    const stale = await handler.handle(
+      new Request(url, { headers: { "if-none-match": '"other"' } }),
+      makeCtx(),
+    );
+    assertExists(stale.response);
+    assertEquals(stale.response.status, 200, "a foreign validator must not be treated as a match");
+    assertEquals(
+      await stale.response.text(),
+      "export const page = true;",
+      "a stale validator must receive the full asset",
+    );
+  });
+
+  it("suppresses the body for HEAD requests while keeping the headers", async () => {
+    const handler = new StaticHandler();
+    (handler as any).staticService = {
+      resolveFile: async () => ({
+        path: "/tmp/test-project/dist/_veryfront/chunks/index.js",
+        data: new TextEncoder().encode("export const page = true;"),
+        etag: '"asset-etag"',
+        contentType: "application/javascript; charset=utf-8",
+        cacheStrategy: "immutable",
+        source: "dist",
+      }),
+      isAssetRequest: () => true,
+    };
+
+    const result = await handler.handle(
+      new Request("http://localhost/_veryfront/chunks/index.js", { method: "HEAD" }),
+      makeCtx(),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(
+      result.response.headers.get("content-type"),
+      "application/javascript; charset=utf-8",
+    );
+    assertEquals(await result.response.text(), "", "HEAD responses must not carry a body");
+  });
+
+  it("forwards the configured build output directory to static resolution", async () => {
+    const handler = new StaticHandler();
+    let resolvedBuildOutDir: string | undefined;
+    (handler as any).staticService = {
+      resolveFile: async (_pathname: string, options: { buildOutDir?: string }) => {
+        resolvedBuildOutDir = options.buildOutDir;
+        return null;
+      },
+      isAssetRequest: () => true,
+    };
+
+    await handler.handle(
+      new Request("http://localhost/_veryfront/hydration-runtime.2b3c4d5e.js"),
+      makeCtx({ config: { build: { outDir: "custom-output" } } }),
+    );
+
+    assertEquals(resolvedBuildOutDir, "custom-output");
+  });
+
+  it("serves a release runtime from an absolute build output directory", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-static-project-" });
+    const buildOutDir = await makeTempDir({ prefix: "vf-static-output-" });
+    const runtimePath = "/_veryfront/hydration-runtime.2b3c4d5e.js";
+
+    try {
+      await mkdir(`${buildOutDir}/_veryfront`, { recursive: true });
+      await writeTextFile(
+        `${buildOutDir}${runtimePath}`,
+        "export const releaseRuntime = true;",
+      );
+      const handler = new StaticHandler();
+      const result = await handler.handle(
+        new Request(`http://localhost${runtimePath}`),
+        makeCtx({
+          projectDir,
+          adapter: await getAdapter(),
+          config: { build: { outDir: buildOutDir } },
+        }),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      assertEquals(await result.response.text(), "export const releaseRuntime = true;");
+    } finally {
+      await remove(projectDir, { recursive: true });
+      await remove(buildOutDir, { recursive: true });
+    }
   });
 
   it("serves generated hydration runtime under /_veryfront", async () => {
@@ -186,7 +306,7 @@ describe("server/handlers/request/static.handler", () => {
     assertEquals(result.response.headers.get("location"), "http://localhost/favicon.svg");
   });
 
-  it("adds matching nonces to static HTML responses before applying CSP", async () => {
+  it("adds matching nonces to source-authored static HTML before applying CSP", async () => {
     const handler = new StaticHandler();
     (handler as any).staticService = {
       resolveFile: async () => ({
@@ -216,7 +336,12 @@ describe("server/handlers/request/static.handler", () => {
 
     const response = result.response;
     const body = await response.text();
-    const csp = response.headers.get("content-security-policy") ?? "";
+    // Either header carries the policy: the floor is served report-only
+    // until a project opts in, and this asserts nonce alignment either way.
+    const csp = // Reported first: the enforced header carries only the directives that
+      // bind, and the nonce lives in the reported `script-src`.
+      response.headers.get("content-security-policy-report-only") ??
+        response.headers.get("content-security-policy") ?? "";
     const nonceMatch = csp.match(/nonce-([^' ;]+)/);
 
     assertEquals(Boolean(nonceMatch), true);

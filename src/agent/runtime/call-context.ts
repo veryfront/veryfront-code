@@ -2,8 +2,8 @@
  * Agent Call Context
  *
  * Assembles the complete system-message set for one provider call. Every
- * caller that talks to a model — the hosted cloud runtime, the project
- * runtime's internal agent runs, and the `agent()` factory — gathers its own
+ * caller that talks to a model, the hosted cloud runtime, the project
+ * runtime's internal agent runs, and the `agent()` factory, gathers its own
  * inputs and hands them here, so ordering, block tags, marker splitting,
  * deduplication, and skill rendering live in exactly one place.
  *
@@ -13,32 +13,50 @@
  *
  * Layout of the returned messages:
  *
- * 1. One cached system message holding, in order, the instructions before the
- *    runtime-context marker, `<project_instructions>`, `<project_context>`,
- *    any caller-supplied extra blocks, the instructions after the marker, and
- *    `<available_skills>`.
- * 2. An uncached `<environment_context>` message.
+ * 1. One cached system message holding only the instructions before the
+ *    runtime-context marker (or all instructions when the marker is absent).
+ * 2. One optional uncached system message holding, in order,
+ *    `<project_instructions>`, `<project_context>`, any caller-supplied extra
+ *    blocks, `<available_skills>` or an `<authorized_skill_ids>`
+ *    fallback, `<environment_context>`, and the instructions after the marker.
  *
  * Only the instructions are unconditional: each block appears only when the
  * caller supplied its input and the instructions do not already carry that tag
  * as a complete element, so message 2 can be absent and message 1 can be the
- * instructions alone. Callers compose in layers — the factory's output is later
- * re-composed by a project-runtime run — and skipping already-present elements
+ * instructions alone. Callers compose in layers: the factory's output is later
+ * re-composed by a project-runtime run, and skipping already-present elements
  * keeps that idempotent instead of repeating a project reference or catalog.
  *
  * @module
  */
 
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
+import type { AgentSystem } from "#veryfront/agent/types.ts";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { createRuntimePromptBlock } from "./prompt-block.ts";
-import { buildRuntimeAvailableSkillsPromptBlock } from "./skill-prompt.ts";
+import {
+  buildRuntimeAuthorizedSkillIdsPromptBlock,
+  buildRuntimeAvailableSkillsPromptBlock,
+  RUNTIME_GENERATED_SKILL_CATALOG_MARKER,
+} from "./skill-prompt.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
+import { flattenSystemInstructions } from "./tool-inventory.ts";
+import { isOwnDataPropertyDescriptor, readOwnDataProperty } from "./data-property-descriptor.ts";
+
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
+const ReflectApply = Reflect.apply;
+const ReflectDeleteProperty = Reflect.deleteProperty;
+const ReflectOwnKeys = Reflect.ownKeys;
 
 /** Marker authored instructions use to place runtime blocks mid-prompt. */
 export const DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER = "<!-- veryfront-runtime-context -->";
 
 const ENVIRONMENT_CONTEXT_BLOCK_NAME = "environment_context";
 const AVAILABLE_SKILLS_BLOCK_NAME = "available_skills";
+const AUTHORIZED_SKILL_IDS_BLOCK_NAME = "authorized_skill_ids";
+const AUTHORIZED_SKILL_ID_DISCOVERY_BLOCK_NAME = "authorized_skill_id_discovery";
 
 /** Project the call runs against, rendered as the `<project_context>` block. */
 export type AgentCallProjectContext = {
@@ -49,7 +67,7 @@ export type AgentCallProjectContext = {
 /** Input payload for build agent call context. */
 export type BuildAgentCallContextInput = {
   /** Agent instructions, optionally split by the runtime-context marker. */
-  instructions: string;
+  instructions: AgentSystem;
   /** Marker that places runtime blocks mid-prompt. Defaults to the shared marker. */
   runtimeContextMarker?: string;
   /** Steering text the host requires the agent to follow. */
@@ -60,13 +78,26 @@ export type BuildAgentCallContextInput = {
   extraBlocks?: readonly string[];
   /** Skills the agent may load during the call. */
   skills?: readonly RuntimeSkillDefinition[];
-  /** Tool names actually available in this run, used to scope delegation guidance. */
-  availableToolNames?: readonly string[];
-  /** Include the skill tool call signatures in the skills block. */
-  includeSkillToolUsage?: boolean;
   /** Host-supplied environment facts. */
   environmentContext?: string;
+  /**
+   * Prompt-cache TTL for the static (Layer 0) system message. `"5m"` (default)
+   * keeps the standard ephemeral breakpoint; `"1h"` extends it for interactive
+   * multi-turn sessions. Gate this at the call site. Only set `"1h"` during
+   * interactive run rendering where a second read is likely. Structured prompts
+   * keep their latest four Anthropic breakpoints when the final breakpoint is
+   * added. See RFC 0001.
+   */
+  cacheTtl?: AgentCallCacheTtl;
+  /**
+   * Active Anthropic provider alias whose structured cache metadata participates
+   * in TTL normalization. Defaults to the built-in `veryfront-cloud` alias.
+   */
+  anthropicProviderAlias?: string;
 };
+
+/** Supported prompt-cache TTLs for the cached static system message. */
+export type AgentCallCacheTtl = "5m" | "1h";
 
 /** Builds the shared project-context prompt block (project reference + branch). */
 export function buildProjectContextPromptBlock(input: AgentCallProjectContext): string {
@@ -96,16 +127,17 @@ export function buildProjectInstructionsPromptBlock(instructions: string): strin
 function splitInstructionsAtMarker(input: {
   instructions: string;
   runtimeContextMarker: string;
-}): { before: string; after: string | null } {
+}): { before: string; after: string | null; hasMarker: boolean } {
   const markerIndex = input.instructions.indexOf(input.runtimeContextMarker);
 
   if (markerIndex < 0) {
-    return { before: input.instructions, after: null };
+    return { before: input.instructions, after: null, hasMarker: false };
   }
 
   return {
     before: input.instructions.slice(0, markerIndex).trim(),
     after: input.instructions.slice(markerIndex + input.runtimeContextMarker.length).trim() || null,
+    hasMarker: true,
   };
 }
 
@@ -127,76 +159,629 @@ function hasBlock(instructions: string, blockName: string): boolean {
   return instructions.indexOf(`</${blockName}>`, openIndex) > openIndex;
 }
 
-/** Builds the complete system-message set for one provider call. */
+function removeCompleteBlocks(instructions: string, blockName: string): string {
+  const openTag = `<${blockName}>`;
+  const closeTag = `</${blockName}>`;
+  let result = instructions;
+  let openIndex = result.indexOf(openTag);
+
+  while (openIndex >= 0) {
+    const closeIndex = result.indexOf(closeTag, openIndex + openTag.length);
+    if (closeIndex < 0) {
+      break;
+    }
+    const before = result.slice(0, openIndex).trimEnd();
+    const after = result.slice(closeIndex + closeTag.length).trimStart();
+    result = before.length > 0 && after.length > 0 ? `${before}\n\n${after}` : `${before}${after}`;
+    openIndex = result.indexOf(openTag);
+  }
+
+  return result;
+}
+
+function removeGeneratedSkillCatalogBlocks(instructions: string): string {
+  const openTag = `<${AVAILABLE_SKILLS_BLOCK_NAME}>`;
+  const closeTag = `</${AVAILABLE_SKILLS_BLOCK_NAME}>`;
+  let result = instructions;
+  let searchIndex = 0;
+
+  while (searchIndex < result.length) {
+    const openIndex = result.indexOf(openTag, searchIndex);
+    if (openIndex < 0) {
+      break;
+    }
+    const closeIndex = result.indexOf(closeTag, openIndex + openTag.length);
+    if (closeIndex < 0) {
+      break;
+    }
+    const content = result.slice(openIndex + openTag.length, closeIndex).trimStart();
+    if (!content.startsWith(RUNTIME_GENERATED_SKILL_CATALOG_MARKER)) {
+      searchIndex = closeIndex + closeTag.length;
+      continue;
+    }
+    const before = result.slice(0, openIndex).trimEnd();
+    const after = result.slice(closeIndex + closeTag.length).trimStart();
+    result = before.length > 0 && after.length > 0 ? `${before}\n\n${after}` : `${before}${after}`;
+    searchIndex = 0;
+  }
+
+  return result;
+}
+
+function snapshotOwnEnumerableDataRecord(
+  value: unknown,
+  label: string,
+  options: { ignoreUnsafeDataKeys?: readonly PropertyKey[] } = {},
+): Record<PropertyKey, unknown> {
+  if (!isRecord(value)) {
+    return {};
+  }
+  if (isProxyWithoutHooks(value)) {
+    throw new TypeError(`${label} must not be a Proxy`);
+  }
+
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = ReflectApply(ObjectGetOwnPropertyDescriptors, undefined, [
+      value,
+    ]) as PropertyDescriptorMap;
+  } catch {
+    throw new TypeError(`${label} must expose data properties`);
+  }
+
+  const snapshot: Record<PropertyKey, unknown> = {};
+  const keys = ReflectApply(ReflectOwnKeys, undefined, [descriptors]) as PropertyKey[];
+  for (const key of keys) {
+    const descriptorEntry = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+      descriptors,
+      key,
+    ]) as PropertyDescriptor | undefined;
+    const descriptor = isOwnDataPropertyDescriptor(descriptorEntry)
+      ? descriptorEntry.value as PropertyDescriptor
+      : undefined;
+    if (!descriptor?.enumerable) {
+      continue;
+    }
+    if (!isOwnDataPropertyDescriptor(descriptor)) {
+      if (options.ignoreUnsafeDataKeys?.includes(key)) {
+        continue;
+      }
+      throw new TypeError(`${label}.${String(key)} must be an own enumerable data property`);
+    }
+    ReflectApply(ObjectDefineProperty, undefined, [snapshot, key, {
+      configurable: true,
+      enumerable: true,
+      value: descriptor.value,
+      writable: true,
+    }]);
+  }
+  return snapshot;
+}
+
+function prepareStructuredInstructionMessages(input: {
+  instructions: ChatSystemMessage[];
+  removeGeneratedSkillContext: boolean;
+}): ChatSystemMessage[] {
+  return input.instructions.flatMap((message, index) => {
+    const label = `Structured system message ${index}`;
+    const contentValue = readOwnDataProperty(message, "content", label);
+    if (typeof contentValue !== "string") {
+      throw new TypeError(`${label}.content must be a string data property`);
+    }
+    const providerOptionsValue = readOwnDataProperty(
+      message,
+      "providerOptions",
+      label,
+      false,
+    );
+    const providerOptions = isRecord(providerOptionsValue)
+      ? snapshotOwnEnumerableDataRecord(providerOptionsValue, `${label} providerOptions`)
+      : undefined;
+    const withoutGeneratedSkillContext = input.removeGeneratedSkillContext
+      ? removeCompleteBlocks(
+        removeCompleteBlocks(
+          removeGeneratedSkillCatalogBlocks(contentValue),
+          AUTHORIZED_SKILL_IDS_BLOCK_NAME,
+        ),
+        AUTHORIZED_SKILL_ID_DISCOVERY_BLOCK_NAME,
+      )
+      : contentValue;
+    return withoutGeneratedSkillContext.length > 0
+      ? [{
+        role: "system",
+        content: withoutGeneratedSkillContext,
+        ...(providerOptions ? { providerOptions } : {}),
+      }]
+      : [];
+  });
+}
+
+function splitStructuredInstructionMessages(
+  messages: readonly ChatSystemMessage[],
+  runtimeContextMarker: string,
+): { before: ChatSystemMessage[]; after: ChatSystemMessage[]; hasMarker: boolean } {
+  const before: ChatSystemMessage[] = [];
+  const after: ChatSystemMessage[] = [];
+  let foundMarker = false;
+
+  for (const message of messages) {
+    if (foundMarker) {
+      after.push(message);
+      continue;
+    }
+
+    const split = splitInstructionsAtMarker({
+      instructions: message.content,
+      runtimeContextMarker,
+    });
+    if (!split.hasMarker) {
+      before.push(message);
+      continue;
+    }
+
+    foundMarker = true;
+    if (split.before.length > 0) {
+      before.push({ ...message, content: split.before });
+    }
+    if (split.after !== null) {
+      after.push({ ...message, content: split.after });
+    }
+  }
+
+  return { before, after, hasMarker: foundMarker };
+}
+/**
+ * Renders the Anthropic `cacheControl` for the static system message. The
+ * default (`"5m"`) omits `ttl` to preserve the standard 5-minute ephemeral
+ * breakpoint byte-for-byte; `"1h"` requests the 1-hour cache.
+ */
+function buildCacheControl(cacheTtl: AgentCallCacheTtl | undefined): {
+  type: "ephemeral";
+  ttl?: "1h";
+} {
+  return cacheTtl === "1h" ? { type: "ephemeral", ttl: "1h" } : { type: "ephemeral" };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isAnthropicCacheProviderKey(key: string): boolean {
+  const normalized = key.toLowerCase();
+  return normalized === "bedrock" || normalized === "veryfront-cloud" ||
+    normalized.includes("anthropic");
+}
+
+function getAnthropicCacheProviderAlias(input: BuildAgentCallContextInput): string {
+  const alias = input.anthropicProviderAlias;
+  return alias && alias.trim().length > 0 ? alias : "veryfront-cloud";
+}
+
+function isAnthropicCacheControl(value: unknown): boolean {
+  if (!isRecord(value) || isProxyWithoutHooks(value)) {
+    return false;
+  }
+  try {
+    const descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+      value,
+      "type",
+    ]) as PropertyDescriptor | undefined;
+    return descriptor !== undefined && descriptor.enumerable === true &&
+      isOwnDataPropertyDescriptor(descriptor) && descriptor.value === "ephemeral";
+  } catch {
+    return false;
+  }
+}
+
+type StructuredCacheProviderBucket = {
+  key: PropertyKey;
+  value: Record<PropertyKey, unknown>;
+  cacheControl: unknown;
+};
+
+function getStructuredCacheProviderBuckets(
+  providerOptions: Record<PropertyKey, unknown>,
+  anthropicProviderAlias: string,
+): StructuredCacheProviderBucket[] {
+  const buckets: StructuredCacheProviderBucket[] = [];
+  const keys = ReflectApply(ReflectOwnKeys, undefined, [providerOptions]) as PropertyKey[];
+  for (const key of keys) {
+    if (key !== "anthropic" && key !== anthropicProviderAlias) {
+      continue;
+    }
+    let bucketDescriptor: PropertyDescriptor | undefined;
+    try {
+      bucketDescriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+        providerOptions,
+        key,
+      ]) as PropertyDescriptor | undefined;
+    } catch {
+      throw new TypeError(
+        `Structured system message providerOptions.${String(key)} must be inspectable`,
+      );
+    }
+    if (!bucketDescriptor?.enumerable || !isOwnDataPropertyDescriptor(bucketDescriptor)) {
+      continue;
+    }
+    const value = bucketDescriptor.value;
+    if (!isRecord(value)) {
+      continue;
+    }
+    if (isProxyWithoutHooks(value)) {
+      throw new TypeError(
+        `Structured system message providerOptions.${String(key)} must not be a Proxy`,
+      );
+    }
+
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+        value,
+        "cacheControl",
+      ]) as PropertyDescriptor | undefined;
+    } catch {
+      throw new TypeError(
+        `Structured system message providerOptions.${String(key)}.cacheControl must be inspectable`,
+      );
+    }
+    const cacheControl = descriptor?.enumerable && isOwnDataPropertyDescriptor(descriptor)
+      ? descriptor.value
+      : undefined;
+    if (
+      typeof key === "string" && !isAnthropicCacheProviderKey(key) &&
+      !isAnthropicCacheControl(cacheControl)
+    ) {
+      continue;
+    }
+    buckets.push({
+      key,
+      cacheControl,
+      value: snapshotOwnEnumerableDataRecord(
+        value,
+        `Structured system message providerOptions.${String(key)}`,
+        { ignoreUnsafeDataKeys: ["cacheControl"] },
+      ),
+    });
+  }
+  return buckets;
+}
+
+function removeStructuredCacheControls(
+  messages: readonly ChatSystemMessage[],
+  anthropicProviderAlias: string,
+): ChatSystemMessage[] {
+  return messages.map((message) => {
+    const providerOptions = snapshotOwnEnumerableDataRecord(
+      message.providerOptions,
+      "Structured system message providerOptions",
+    );
+    const cacheProviderBuckets = getStructuredCacheProviderBuckets(
+      providerOptions,
+      anthropicProviderAlias,
+    );
+    if (cacheProviderBuckets.length === 0) {
+      return message;
+    }
+
+    const nextProviderOptions = { ...providerOptions };
+    for (const bucket of cacheProviderBuckets) {
+      const nextBucket = { ...bucket.value };
+      ReflectApply(ReflectDeleteProperty, undefined, [nextBucket, "cacheControl"]);
+      if (ReflectOwnKeys(nextBucket).length > 0) {
+        ReflectApply(ObjectDefineProperty, undefined, [nextProviderOptions, bucket.key, {
+          configurable: true,
+          enumerable: true,
+          value: nextBucket,
+          writable: true,
+        }]);
+      } else {
+        ReflectApply(ReflectDeleteProperty, undefined, [nextProviderOptions, bucket.key]);
+      }
+    }
+
+    return ReflectOwnKeys(nextProviderOptions).length > 0
+      ? { ...message, providerOptions: nextProviderOptions }
+      : { role: "system", content: message.content };
+  });
+}
+
+function hasStructuredCacheControl(
+  messages: readonly ChatSystemMessage[],
+  anthropicProviderAlias: string,
+): boolean {
+  for (const message of messages) {
+    const providerOptions = snapshotOwnEnumerableDataRecord(
+      message.providerOptions,
+      "Structured system message providerOptions",
+    );
+    if (
+      getStructuredCacheProviderBuckets(providerOptions, anthropicProviderAlias).some((bucket) =>
+        bucket.cacheControl !== undefined
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+const ANTHROPIC_MAX_CACHE_BREAKPOINTS = 4;
+
+function applyStructuredCacheTtl(
+  messages: ChatSystemMessage[],
+  cacheTtl: AgentCallCacheTtl | undefined,
+  anthropicProviderAlias: string,
+): ChatSystemMessage[] {
+  if (messages.length === 0) {
+    return messages;
+  }
+  if (cacheTtl === undefined && hasStructuredCacheControl(messages, anthropicProviderAlias)) {
+    return messages;
+  }
+
+  const breakpointIndex = messages.length - 1;
+  const cacheMetadata = messages.map((message) => {
+    const providerOptions = snapshotOwnEnumerableDataRecord(
+      message.providerOptions,
+      "Structured system message providerOptions",
+    );
+    const structuredCacheProviderBuckets = getStructuredCacheProviderBuckets(
+      providerOptions,
+      anthropicProviderAlias,
+    );
+    const cacheProviderBuckets = structuredCacheProviderBuckets.filter((bucket) =>
+      bucket.cacheControl !== undefined
+    );
+    const undefinedCacheProviderBuckets = structuredCacheProviderBuckets.filter((bucket) =>
+      bucket.cacheControl === undefined
+    );
+    return {
+      providerOptions,
+      cacheProviderBuckets,
+      undefinedCacheProviderBuckets,
+    };
+  });
+  const breakpointIndexes: number[] = [];
+  for (const [index, { cacheProviderBuckets }] of cacheMetadata.entries()) {
+    if (cacheProviderBuckets.length > 0) {
+      breakpointIndexes.push(index);
+    }
+  }
+  const addCanonicalBreakpoint = cacheMetadata[breakpointIndex]!.cacheProviderBuckets.length === 0;
+  if (addCanonicalBreakpoint) {
+    breakpointIndexes.push(breakpointIndex);
+  }
+  const retainedBreakpointIndexes = new Set(
+    breakpointIndexes.slice(-ANTHROPIC_MAX_CACHE_BREAKPOINTS),
+  );
+
+  return messages.map((message, index) => {
+    const { providerOptions, cacheProviderBuckets, undefinedCacheProviderBuckets } =
+      cacheMetadata[index]!;
+    const shouldAddCanonicalBreakpoint = addCanonicalBreakpoint && index === breakpointIndex;
+    if (
+      cacheProviderBuckets.length === 0 && undefinedCacheProviderBuckets.length === 0 &&
+      !shouldAddCanonicalBreakpoint
+    ) {
+      return message;
+    }
+
+    const nextProviderOptions = { ...providerOptions };
+    for (const bucket of undefinedCacheProviderBuckets) {
+      const nextBucket = { ...bucket.value };
+      ReflectApply(ReflectDeleteProperty, undefined, [nextBucket, "cacheControl"]);
+      if (ReflectOwnKeys(nextBucket).length > 0) {
+        ReflectApply(ObjectDefineProperty, undefined, [nextProviderOptions, bucket.key, {
+          configurable: true,
+          enumerable: true,
+          value: nextBucket,
+          writable: true,
+        }]);
+      } else {
+        ReflectApply(ReflectDeleteProperty, undefined, [nextProviderOptions, bucket.key]);
+      }
+    }
+    for (const bucket of cacheProviderBuckets) {
+      if (retainedBreakpointIndexes.has(index)) {
+        ReflectApply(ObjectDefineProperty, undefined, [nextProviderOptions, bucket.key, {
+          configurable: true,
+          enumerable: true,
+          value: {
+            ...bucket.value,
+            cacheControl: buildCacheControl(cacheTtl),
+          },
+          writable: true,
+        }]);
+        continue;
+      }
+      const nextBucket = { ...bucket.value };
+      ReflectApply(ReflectDeleteProperty, undefined, [nextBucket, "cacheControl"]);
+      if (ReflectOwnKeys(nextBucket).length > 0) {
+        ReflectApply(ObjectDefineProperty, undefined, [nextProviderOptions, bucket.key, {
+          configurable: true,
+          enumerable: true,
+          value: nextBucket,
+          writable: true,
+        }]);
+      } else {
+        ReflectApply(ReflectDeleteProperty, undefined, [nextProviderOptions, bucket.key]);
+      }
+    }
+    if (shouldAddCanonicalBreakpoint) {
+      const anthropic = snapshotOwnEnumerableDataRecord(
+        nextProviderOptions.anthropic,
+        "Structured system message providerOptions.anthropic",
+        { ignoreUnsafeDataKeys: ["cacheControl"] },
+      );
+      ReflectApply(ObjectDefineProperty, undefined, [nextProviderOptions, "anthropic", {
+        configurable: true,
+        enumerable: true,
+        value: {
+          ...anthropic,
+          cacheControl: buildCacheControl(cacheTtl),
+        },
+        writable: true,
+      }]);
+    }
+    const nextMessage = { ...message };
+    if (ReflectOwnKeys(nextProviderOptions).length > 0) {
+      nextMessage.providerOptions = nextProviderOptions;
+    } else {
+      ReflectApply(ReflectDeleteProperty, undefined, [nextMessage, "providerOptions"]);
+    }
+    return nextMessage;
+  });
+}
+
+/**
+ * Builds the layered system-message set for one provider call (RFC 0001).
+ *
+ * Layer 0 (cached, shared across runs): the agent prompt only, with nothing
+ * project- or turn-specific. Its `cacheControl` breakpoint is the sole shared
+ * cache key, so it must be byte-identical across projects.
+ *
+ * Dynamic tail (uncached): project context/instructions, extra blocks, the
+ * skills catalog, and host environment facts. This includes everything that varies by
+ * project, session, or turn. Kept out of the cached prefix so a fresh project
+ * or session still reads the shared Layer 0 instead of paying full price.
+ */
 export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSystemMessage[] {
+  const preserveRuntimeContextMarker = (
+    input as InternalBuildAgentCallContextInput
+  )[PRESERVE_RUNTIME_CONTEXT_MARKER] === true;
   const runtimeContextMarker = input.runtimeContextMarker ?? DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER;
+  const anthropicProviderAlias = getAnthropicCacheProviderAlias(input);
+  if (Array.isArray(input.instructions)) {
+    const preparedMessages = prepareStructuredInstructionMessages({
+      instructions: input.instructions,
+      removeGeneratedSkillContext: input.skills !== undefined,
+    });
+    const splitMessages = splitStructuredInstructionMessages(
+      preparedMessages,
+      runtimeContextMarker,
+    );
+    const staticMessages = applyStructuredCacheTtl(
+      splitMessages.before,
+      input.cacheTtl,
+      anthropicProviderAlias,
+    );
+    const flattenedInstructions = flattenSystemInstructions([
+      ...splitMessages.before,
+      ...splitMessages.after,
+    ]);
+    const generatedMessages = buildAgentCallContext({
+      ...input,
+      instructions: flattenedInstructions,
+    });
+    const dynamicMessage = generatedMessages[flattenedInstructions.length > 0 ? 1 : 0];
+    return [
+      ...staticMessages,
+      ...(preserveRuntimeContextMarker && splitMessages.hasMarker
+        ? [{ role: "system" as const, content: runtimeContextMarker }]
+        : []),
+      ...(dynamicMessage ? [dynamicMessage] : []),
+      ...removeStructuredCacheControls(splitMessages.after, anthropicProviderAlias),
+    ];
+  }
+  const sourceInstructions = input.skills === undefined ? input.instructions : removeCompleteBlocks(
+    removeCompleteBlocks(
+      removeGeneratedSkillCatalogBlocks(input.instructions),
+      AUTHORIZED_SKILL_IDS_BLOCK_NAME,
+    ),
+    AUTHORIZED_SKILL_ID_DISCOVERY_BLOCK_NAME,
+  );
   const instructions = splitInstructionsAtMarker({
-    instructions: input.instructions,
+    instructions: sourceInstructions,
     runtimeContextMarker,
   });
 
-  const blocks: string[] = [];
+  // Layer 0 contains only the static prompt before the marker. When no marker
+  // exists, `before` contains the complete instructions.
+  const staticPrompt = instructions.before;
+
+  // The dynamic tail contains project blocks, extra blocks, skills, and environment. Each is
+  // dropped if the agent's instructions already carry the same block (dedup).
+  const dynamicParts: string[] = [];
+
+  if (preserveRuntimeContextMarker && instructions.hasMarker) {
+    dynamicParts.push(runtimeContextMarker);
+  }
+
+  const projectBlocks: string[] = [];
   if (input.projectInstructions) {
-    blocks.push(buildProjectInstructionsPromptBlock(input.projectInstructions));
+    projectBlocks.push(buildProjectInstructionsPromptBlock(input.projectInstructions));
   }
   if (input.projectContext) {
-    blocks.push(buildProjectContextPromptBlock(input.projectContext));
+    projectBlocks.push(buildProjectContextPromptBlock(input.projectContext));
   }
-  blocks.push(...(input.extraBlocks ?? []));
+  projectBlocks.push(...(input.extraBlocks ?? []));
 
-  const staticParts: string[] = [];
-
-  if (instructions.before) {
-    staticParts.push(instructions.before);
-  }
-
-  for (const block of blocks) {
+  for (const block of projectBlocks) {
     if (block.length === 0) {
       continue;
     }
     const blockName = getBlockName(block);
-    if (blockName !== null && hasBlock(input.instructions, blockName)) {
+    if (blockName !== null && hasBlock(sourceInstructions, blockName)) {
       continue;
     }
-    staticParts.push(block);
+    dynamicParts.push(block);
   }
 
-  if (instructions.after) {
-    staticParts.push(instructions.after);
+  if (input.skills !== undefined) {
+    const hasAuthoredSkillCatalog = hasBlock(sourceInstructions, AVAILABLE_SKILLS_BLOCK_NAME);
+    if (input.skills.length > 0 || hasAuthoredSkillCatalog) {
+      dynamicParts.push(
+        hasAuthoredSkillCatalog
+          ? buildRuntimeAuthorizedSkillIdsPromptBlock(input.skills)
+          : buildRuntimeAvailableSkillsPromptBlock(input.skills),
+      );
+    }
   }
 
-  if (input.skills?.length && !hasBlock(input.instructions, AVAILABLE_SKILLS_BLOCK_NAME)) {
-    staticParts.push(
-      buildRuntimeAvailableSkillsPromptBlock(input.skills, {
-        ...(input.availableToolNames === undefined
-          ? {}
-          : { availableToolNames: input.availableToolNames }),
-        ...(input.includeSkillToolUsage === undefined
-          ? {}
-          : { includeSkillToolUsage: input.includeSkillToolUsage }),
+  if (input.environmentContext && !hasBlock(sourceInstructions, ENVIRONMENT_CONTEXT_BLOCK_NAME)) {
+    dynamicParts.push(
+      createRuntimePromptBlock({
+        name: ENVIRONMENT_CONTEXT_BLOCK_NAME,
+        content: input.environmentContext,
       }),
     );
   }
 
-  const messages: ChatSystemMessage[] = [
-    {
-      role: "system",
-      content: staticParts.join("\n\n"),
-      providerOptions: {
-        anthropic: { cacheControl: { type: "ephemeral" } },
-      },
-    },
-  ];
+  if (instructions.after) {
+    dynamicParts.push(instructions.after);
+  }
 
-  if (input.environmentContext && !hasBlock(input.instructions, ENVIRONMENT_CONTEXT_BLOCK_NAME)) {
+  const messages: ChatSystemMessage[] = staticPrompt.length > 0
+    ? [{
+      role: "system",
+      content: staticPrompt,
+      providerOptions: {
+        anthropic: { cacheControl: buildCacheControl(input.cacheTtl) },
+      },
+    }]
+    : [];
+
+  if (dynamicParts.length > 0) {
     messages.push({
       role: "system",
-      content: createRuntimePromptBlock({
-        name: ENVIRONMENT_CONTEXT_BLOCK_NAME,
-        content: input.environmentContext,
-      }),
+      content: dynamicParts.join("\n\n"),
     });
   }
 
   return messages;
+}
+
+const PRESERVE_RUNTIME_CONTEXT_MARKER = Symbol("preserveRuntimeContextMarker");
+type InternalBuildAgentCallContextInput = BuildAgentCallContextInput & {
+  [PRESERVE_RUNTIME_CONTEXT_MARKER]?: true;
+};
+
+/** Keeps the marker so another internal context composer can consume it. */
+export function buildAgentCallContextPreservingRuntimeMarker(
+  input: BuildAgentCallContextInput,
+): ChatSystemMessage[] {
+  return buildAgentCallContext({
+    ...input,
+    [PRESERVE_RUNTIME_CONTEXT_MARKER]: true,
+  } as InternalBuildAgentCallContextInput);
 }

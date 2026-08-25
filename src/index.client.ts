@@ -22,7 +22,12 @@
 export { defineConfig, defineConfigWithEnv, mergeConfigs } from "#veryfront/config";
 export type { VeryfrontConfig } from "#veryfront/config";
 
-export { getEnv } from "#veryfront/platform";
+// Source `getEnv` from its browser-safe leaf, not the `#veryfront/platform`
+// barrel: that barrel statically re-exports the eager runtime-adapter singletons
+// (`detect.ts` → Deno/Node/Bun adapters), which drags the server filesystem
+// adapter graph into the client bundle and crashes hydration on a browser-absent
+// `fs.constants.O_NOFOLLOW` (#3661).
+export { getEnv } from "#veryfront/platform/compat/process/env.ts";
 
 // NOTE: the server bootstrap value export (`createHandler`, `startServer`,
 // `toNodeHandler` from the public server entrypoint) is intentionally omitted
@@ -30,22 +35,28 @@ export { getEnv } from "#veryfront/platform";
 // chunks. Types are erased at transform time, so re-exporting them is inert.
 export type { StartServerOptions, VeryfrontHandler, VeryfrontServer } from "#veryfront/server";
 
+// Sourced from the compat module directly: the routing barrel's value graph
+// reaches the server-only API handler (VFS adapter, sandbox worker pool).
 export {
   badRequest,
   forbidden,
-  json,
+  internalServerError as serverError,
+  jsonResponse as json,
   notFound as apiNotFound,
-  redirect as apiRedirect,
-  serverError,
+  redirectResponse as apiRedirect,
   unauthorized,
-} from "#veryfront/routing";
+} from "#veryfront/http/responses";
 export type { APIContext, APIHandler, APIResponse, APIRoute } from "#veryfront/routing";
 
 export { notFound, redirect } from "#veryfront/data";
 export type {
   DataContext,
+  DataResponseMetadata,
+  DataResult,
   InferGetServerDataProps,
   PageWithData,
+  ResponseCookie,
+  StaticDataResult,
   StaticPathsResult,
 } from "#veryfront/data";
 
@@ -62,3 +73,6 @@ export {
   sanitizeData,
 } from "#veryfront/security";
 export type { ValidatedHandlerConfig, ValidatedHandlerFunction } from "#veryfront/security";
+
+export { csrfMutationHeaders } from "#veryfront/security/csrf/browser-mutation-headers.ts";
+export type { CsrfMutationHeadersOptions } from "#veryfront/security/csrf/browser-mutation-headers.ts";

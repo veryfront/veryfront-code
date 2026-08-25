@@ -55,7 +55,10 @@ describe("cli-error-boundary", () => {
 
       assertMatch(output, /Docs:/);
       const docsLine = output.split("\n").find((line) => line.trimStart().startsWith("Docs:"));
-      assertEquals(docsLine?.trim(), "Docs: https://veryfront.com/docs/errors/config-not-found");
+      assertEquals(
+        docsLine?.trim(),
+        "Docs: https://veryfront.com/docs/code/guides/errors#config-not-found",
+      );
     });
 
     it("should honor color-related environment variables by default", () => {

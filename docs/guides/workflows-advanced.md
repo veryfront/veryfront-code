@@ -20,19 +20,25 @@ the base workflow can't do yet.
 Repeat steps based on conditions:
 
 ```ts
-import { delay, doWhile, loop, map, times } from "veryfront/workflow";
+import { delay, doWhile, loop, map, step, times } from "veryfront/workflow";
 
 // Repeat while condition is true
-loop("refine", (ctx) => ctx.results.review.score < 0.9, [
-  step("rewrite", { agent: "writer" }),
-  step("review", { agent: "reviewer" }),
-]);
+loop("refine", {
+  while: (ctx) => ((ctx.review as { score?: number } | undefined)?.score ?? 0) < 0.9,
+  steps: [
+    step("rewrite", { agent: "writer" }),
+    step("review", { agent: "reviewer" }),
+  ],
+});
 
-// Execute once, then repeat while true
-doWhile("poll", (ctx) => !ctx.results.check.done, [
-  step("check", { tool: "statusChecker" }),
-  delay("wait", "5s"),
-]);
+// Execute once, then repeat until the condition is true
+doWhile("poll", {
+  until: (ctx) => Boolean((ctx.check as { done?: boolean } | undefined)?.done),
+  steps: [
+    step("check", { tool: "statusChecker" }),
+    delay("wait", "5s"),
+  ],
+});
 
 // Fixed iterations
 times("generate", 3, [
@@ -40,14 +46,15 @@ times("generate", 3, [
 ]);
 
 // Map over array items
-map("process", (ctx) => ctx.input.urls, [
-  step("scrape", { tool: "webScraper" }),
-]);
+map("process", {
+  items: (ctx) => (ctx.input as { urls: string[] }).urls,
+  processor: step("scrape", { tool: "webScraper" }),
+});
 ```
 
-`loop` checks the condition before each iteration. `doWhile` runs the body once
-before checking. `times` runs a fixed number of iterations. `map` runs the body
-once per item in an array.
+`loop` checks the condition before each iteration. `doWhile` runs the body once,
+then repeats until its condition is true. `times` runs a fixed number of
+iterations. `map` runs the processor once per item in an array.
 
 ## Blob storage
 
@@ -102,6 +109,139 @@ function WorkflowStatus({ runId }: { runId: string }) {
 subscribes to `${apiBase}/runs/${runId}` and keeps `status` and `nodeStates` in
 sync with the server's run state.
 
+### Serve the hook routes
+
+Nothing serves those paths by default. Mount `createWorkflowHandler` on a
+catch-all route to answer all of them at once:
+
+```ts theme={null}
+// app/api/workflows/[...path]/route.ts
+import { createWorkflowHandler } from "veryfront/workflow";
+import { workflows } from "../../../../lib/workflows.ts";
+
+export const { GET, POST } = createWorkflowHandler(workflows);
+```
+
+Pass the same client the rest of the app starts workflows with. A client created
+inside the route file would carry its own in-memory backend and would not see
+those runs.
+
+The handler covers every path the hooks call:
+
+| Method        | Path                                   | Hook               |
+| ------------- | -------------------------------------- | ------------------ |
+| `POST`        | `/{workflowId}/start`                  | `useWorkflowStart` |
+| `GET`         | `/runs`                                | `useWorkflowList`  |
+| `GET`         | `/runs/{runId}`                        | `useWorkflow`      |
+| `GET`         | `/runs/{runId}/events`                 | SSE clients        |
+| `POST`        | `/runs/{runId}/cancel`                 | `useWorkflow`      |
+| `POST`        | `/runs/{runId}/retry`                  | `useWorkflow`      |
+| `GET`, `POST` | `/runs/{runId}/approvals/{approvalId}` | `useApproval`      |
+
+Mounting somewhere else means telling both sides. Pass `basePath` to the handler
+and the matching `apiBase` to every hook.
+
+### Stream run events
+
+Use the SSE route when a dashboard, operator, or CI client needs durable progress
+without polling the run endpoint:
+
+```ts
+const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
+
+export function observeWorkflowRun(runId: string): EventSource {
+  const events = new EventSource(`/api/workflows/runs/${runId}/events`);
+
+  events.addEventListener("snapshot", (message) => {
+    const run = JSON.parse((message as MessageEvent).data);
+    console.log(run.status, run.nodeStates);
+    if (TERMINAL_RUN_STATUSES.has(run.status)) events.close();
+  });
+
+  for (
+    const name of [
+      "step.started",
+      "step.completed",
+      "step.failed",
+      "step.skipped",
+      "run.status",
+      "approval.pending",
+    ]
+  ) {
+    events.addEventListener(name, (message) => {
+      const event = JSON.parse((message as MessageEvent).data);
+      console.log(name, event);
+      if (event.type === "run.status" && TERMINAL_RUN_STATUSES.has(event.status)) {
+        events.close();
+      }
+    });
+  }
+
+  events.addEventListener("error", (event) => {
+    if (event instanceof MessageEvent) {
+      console.error(JSON.parse(event.data));
+      events.close();
+    }
+  });
+
+  return events;
+}
+```
+
+The first frame is normally `snapshot`, using the same public run projection as
+`GET /runs/{runId}`. When the stored run cannot be serialized, the stream opens
+with a single `error` frame instead and closes; reconnecting re-reads the same
+stored run, so that error is marked not retryable. Later frames use these
+shapes:
+
+| Event              | Data                                                                            |
+| ------------------ | ------------------------------------------------------------------------------- |
+| `step.started`     | `{ type: "step.started", runId, nodeId, attempt }`                              |
+| `step.completed`   | `{ type: "step.completed", runId, nodeId, attempt }`                            |
+| `step.failed`      | `{ type: "step.failed", runId, nodeId, attempt, error? }`                       |
+| `step.skipped`     | `{ type: "step.skipped", runId, nodeId }`                                       |
+| `run.status`       | `{ type: "run.status", runId, status, error? }`                                 |
+| `approval.pending` | `{ type: "approval.pending", runId, approvalId, nodeId, message? }`             |
+| `error`            | `{ code: "workflow_observation_failed", message, retryable: true }`             |
+| `error`            | `{ code: "workflow_snapshot_serialization_failed", message, retryable: false }` |
+
+A run that parks on `waitForApproval` reports `run.status` with `waiting`
+first, then `approval.pending` once the approval is persisted. The event names
+the blocking approval directly, so a subscriber can render or decide it without
+fetching the run's approvals and racing the approval write. Approval payloads
+are not part of the stream; fetch the approval by id when the decision needs
+them.
+
+Top-level sequential nodes persist `running` before their side effect starts and
+persist their settled state before dependents execute. Parallel nodes start as a
+batch and settle after the batch joins. Top-level composites report their own
+boundaries; synthetic child graphs do not replace the durable root state.
+
+The same boundaries keep `currentNodes` on the run current. While a run is
+`running` it names the batch in flight, so a run that stops making progress
+shows which step it is on from its persisted state alone. While the run is
+`waiting` it names the node the run is parked on, which can be a child of a
+composite. It is empty once the run completes. A failed run keeps the nodes in
+its terminal batch that failed or were still running. A cancelled run keeps the
+last recorded value, so both terminal states still name where execution stopped.
+
+A terminal snapshot closes immediately. A terminal `run.status` frame is the last
+transition frame. Cancelling the response or aborting the request releases the
+backend observation. An observation failure sends the sanitized `error` frame and
+then closes.
+
+Native `EventSource` reconnects automatically when a transport disconnects or a
+successful SSE response reaches EOF. The helper calls `close()` for terminal runs
+to avoid reconnecting to an already-finished run. A transport failure dispatches
+a plain `Event`, which keeps the native reconnect behavior. The server's named
+`error` frame dispatches a `MessageEvent`; the helper closes it so the caller can
+decide when to retry from a fresh snapshot.
+
+A new connection receives a fresh snapshot and future transitions. It does not
+replay transitions that are already represented by that snapshot. A missing run
+returns 404. A custom backend that does not implement atomic run observation
+returns 501.
+
 ## Verify it worked
 
 For loops, run the workflow with an input that triggers the loop condition (a
@@ -110,9 +250,11 @@ shows the loop body executing once per iteration. The final run status reaches
 `completed` after the condition flips.
 
 For blob storage, configure an adapter, run a workflow that writes a large
-artifact, and confirm the storage backend received it. The step output should
+artifact, and ensure the storage backend received it. The step output should
 reference a blob handle rather than the inline payload.
 
-For React hooks, render the dashboard component above, select **Run Pipeline**,
-and confirm the status string moves through `running` to `completed` while
-individual `nodeStates` entries update.
+For React hooks, mount the handler as shown above, render the dashboard
+component, select **Run Pipeline**, and ensure the status string moves through
+`running` to `completed` while individual `nodeStates` entries update. A status
+that never leaves its initial value usually means the hook routes are not
+mounted, so every poll is answering 404.

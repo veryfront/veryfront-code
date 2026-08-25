@@ -40,6 +40,15 @@ export function isLateProviderBodyReadError(error: unknown): boolean {
   return /error reading a body from connection/i.test(getStreamErrorMessage(error));
 }
 
+/** True when a thrown stream error represents a lifecycle or watchdog timeout. */
+export function isStreamTimeoutError(error: unknown): boolean {
+  const normalized = getStreamErrorMessage(error).trim().toLowerCase();
+  return normalized.includes("stream timed out") ||
+    normalized.includes("chat stream idle timeout") ||
+    normalized.includes("chat stream bootstrap timeout") ||
+    normalized.includes("stream timeout");
+}
+
 /** True when the provider finish reason marks a completed step. */
 export function hasCompletedStepSignal(finishReason: string | null): boolean {
   switch (finishReason) {
@@ -132,7 +141,7 @@ export function resolveStreamOutcome(
     !(
       input.snapshot.hasStreamOutput &&
       hasCompletedStepSignal(input.snapshot.finishReason) &&
-      isLateProviderBodyReadError(input.thrownError)
+      !isStreamTimeoutError(input.thrownError)
     )
   ) {
     return failedClassifiedProviderOutcome(

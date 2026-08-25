@@ -110,18 +110,39 @@ Draft concise copy.
 
 Deno.test("runtime agent definition file helpers reject traversal-prone names", () => {
   withTempDir((rootDir) => {
-    assertThrows(() =>
-      resolveRuntimeAgentDefinitionsDir({
-        baseDir: rootDir,
-        id: "../escape",
-      })
+    const agentsDir = resolve(rootDir, "agents");
+    Deno.mkdirSync(agentsDir, { recursive: true });
+    // Put a real definition at the traversal target so a missing-file error
+    // cannot masquerade as the schema guard firing.
+    Deno.writeTextFileSync(
+      resolve(rootDir, "support.md"),
+      "---\nname: Support\n---\nHelp users.",
     );
-    assertThrows(() =>
-      loadRuntimeAgentMarkdownDefinitionFromFile({
-        agentsDir: rootDir,
-        id: "support",
-        fileName: "../support.md",
-      })
+    Deno.writeTextFileSync(
+      resolve(rootDir, "escape.md"),
+      "---\nname: Escape\n---\nHelp users.",
+    );
+
+    assertThrows(
+      () =>
+        resolveRuntimeAgentDefinitionsDir({
+          baseDir: agentsDir,
+          id: "../escape",
+        }),
+      Error,
+      "id",
+      "traversal-prone id must fail schema validation",
+    );
+    assertThrows(
+      () =>
+        loadRuntimeAgentMarkdownDefinitionFromFile({
+          agentsDir,
+          id: "support",
+          fileName: "../support.md",
+        }),
+      Error,
+      "fileName",
+      "traversal-prone fileName must fail schema validation, not file IO",
     );
   });
 });

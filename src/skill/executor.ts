@@ -9,18 +9,211 @@
 import { getEnv, runCommand } from "#veryfront/platform/compat/process.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.ts";
-import { extname } from "#veryfront/compat/path";
-import { readTextFile } from "#veryfront/platform/compat/fs.ts";
+import { dirname, extname } from "#veryfront/compat/path";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import { createFileSystem, readTextFile } from "#veryfront/platform/compat/fs.ts";
+import { captureSnapshotReadCapability } from "#veryfront/platform/adapters/file-system-capabilities.ts";
 import { createError, toError } from "#veryfront/errors";
 import { logger } from "#veryfront/utils";
-import type { SkillScriptExecutor, SkillScriptExecutorInput, SkillScriptResult } from "./types.ts";
-import { SKILL_SCRIPT_MAX_OUTPUT_BYTES } from "./limits.ts";
+import type {
+  SkillScriptExecutor,
+  SkillScriptExecutorInput,
+  SkillScriptResult,
+  SkillScriptSnapshot,
+  SkillScriptSnapshotFile,
+} from "./types.ts";
+import { isCanonicalAdapterRelativeSkillRoot } from "./types.ts";
+import {
+  SKILL_PATH_SEGMENT_MAX_LENGTH,
+  SKILL_RELATIVE_PATH_MAX_LENGTH,
+  SKILL_SCRIPT_MAX_CONTENT_BYTES,
+  SKILL_SCRIPT_MAX_OUTPUT_BYTES,
+  SKILL_SCRIPT_SNAPSHOT_MAX_BYTES,
+  SKILL_SCRIPT_SNAPSHOT_MAX_FILES,
+} from "./limits.ts";
 
 const DEFAULT_SCRIPT_TIMEOUT_MS = 60_000;
 const MAX_SCRIPT_TIMEOUT_MS = 300_000;
 const TIMEOUT_EXIT_CODE = 124;
 const ENV_KEY_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const TIMEOUT_SENTINEL = Symbol("skill-script-timeout");
+const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
+const utf8Encoder = new TextEncoder();
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const defineOwnProperty = Object.defineProperty;
+const hasOwnProperty = Object.prototype.hasOwnProperty;
+const reflectApply = Reflect.apply;
+const freeze = Object.freeze;
+const arrayIsArray = Array.isArray;
+const numberIsSafeInteger = Number.isSafeInteger;
+const setAdd = Set.prototype.add;
+const setHas = Set.prototype.has;
+const stringSplit = String.prototype.split;
+const stringStartsWith = String.prototype.startsWith;
+
+function appendOwnArrayElement<T>(values: T[], value: T): void {
+  defineOwnProperty(values, values.length, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+}
+
+function readOwnDataProperty(value: object, key: PropertyKey, label: string): unknown {
+  const descriptor = getOwnPropertyDescriptor(value, key);
+  if (
+    !descriptor ||
+    !(reflectApply(hasOwnProperty, descriptor, ["value"]) as boolean)
+  ) {
+    throw new TypeError(`${label} must be an own data property`);
+  }
+  return descriptor.value;
+}
+
+function assertScriptSnapshotPath(path: string): void {
+  if (
+    path.length > SKILL_RELATIVE_PATH_MAX_LENGTH ||
+    !(reflectApply(stringStartsWith, path, ["scripts/"]) as boolean) ||
+    !isCanonicalAdapterRelativeSkillRoot(path)
+  ) {
+    throw new TypeError("Skill script snapshot paths must be canonical scripts/ paths");
+  }
+  const segments = reflectApply(stringSplit, path, ["/"]) as string[];
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index]!;
+    if (segment.length > SKILL_PATH_SEGMENT_MAX_LENGTH) {
+      throw new RangeError(
+        `Skill script snapshot path segments may contain at most ${SKILL_PATH_SEGMENT_MAX_LENGTH} characters`,
+      );
+    }
+  }
+}
+
+function captureScriptSnapshot(input: SkillScriptExecutorInput): SkillScriptSnapshot | undefined {
+  if (isProxyWithoutHooks(input)) {
+    throw new TypeError("Skill script executor input must not be a proxy");
+  }
+  const descriptor = getOwnPropertyDescriptor(input, "scriptSnapshot");
+  if (descriptor === undefined) return undefined;
+  if (!(reflectApply(hasOwnProperty, descriptor, ["value"]) as boolean)) {
+    throw new TypeError("Skill script snapshot must be an own data property");
+  }
+  const rawSnapshot = descriptor.value;
+  if (
+    typeof rawSnapshot !== "object" || rawSnapshot === null ||
+    isProxyWithoutHooks(rawSnapshot)
+  ) {
+    throw new TypeError("Skill script snapshot must be an object");
+  }
+
+  const entryPath = readOwnDataProperty(
+    rawSnapshot,
+    "entryPath",
+    "Skill script snapshot entryPath",
+  );
+  const rawFiles = readOwnDataProperty(rawSnapshot, "files", "Skill script snapshot files");
+  if (typeof entryPath !== "string") {
+    throw new TypeError("Skill script snapshot entryPath must be a string");
+  }
+  assertScriptSnapshotPath(entryPath);
+  if (!arrayIsArray(rawFiles) || isProxyWithoutHooks(rawFiles)) {
+    throw new TypeError("Skill script snapshot files must be an array");
+  }
+  const length = readOwnDataProperty(rawFiles, "length", "Skill script snapshot files length");
+  if (!numberIsSafeInteger(length) || (length as number) < 1) {
+    throw new TypeError("Skill script snapshot must contain at least one file");
+  }
+  if ((length as number) > SKILL_SCRIPT_SNAPSHOT_MAX_FILES) {
+    throw new RangeError(
+      `Skill script snapshots may contain at most ${SKILL_SCRIPT_SNAPSHOT_MAX_FILES} files`,
+    );
+  }
+
+  const files: SkillScriptSnapshotFile[] = [];
+  const seen = new Set<string>();
+  let entryContent: string | undefined;
+  let totalBytes = 0;
+  for (let index = 0; index < (length as number); index += 1) {
+    const rawFile = readOwnDataProperty(
+      rawFiles,
+      index,
+      `Skill script snapshot file ${index}`,
+    );
+    if (
+      typeof rawFile !== "object" || rawFile === null ||
+      isProxyWithoutHooks(rawFile)
+    ) {
+      throw new TypeError(`Skill script snapshot file ${index} must be an object`);
+    }
+    const path = readOwnDataProperty(
+      rawFile,
+      "path",
+      `Skill script snapshot file ${index} path`,
+    );
+    const content = readOwnDataProperty(
+      rawFile,
+      "content",
+      `Skill script snapshot file ${index} content`,
+    );
+    if (typeof path !== "string" || typeof content !== "string") {
+      throw new TypeError(`Skill script snapshot file ${index} must contain string data`);
+    }
+    assertScriptSnapshotPath(path);
+    if (reflectApply(setHas, seen, [path]) as boolean) {
+      throw new TypeError(`Skill script snapshot contains duplicate path: ${path}`);
+    }
+    reflectApply(setAdd, seen, [path]);
+    const contentBytes = utf8Encoder.encode(content).byteLength;
+    if (contentBytes > SKILL_SCRIPT_MAX_CONTENT_BYTES) {
+      throw new RangeError(
+        `Skill script snapshot files may contain at most ${SKILL_SCRIPT_MAX_CONTENT_BYTES} bytes`,
+      );
+    }
+    totalBytes += contentBytes;
+    if (totalBytes > SKILL_SCRIPT_SNAPSHOT_MAX_BYTES) {
+      throw new RangeError(
+        `Skill script snapshots may contain at most ${SKILL_SCRIPT_SNAPSHOT_MAX_BYTES} bytes`,
+      );
+    }
+    const capturedFile = freeze({ path, content });
+    appendOwnArrayElement(files, capturedFile);
+    if (path === entryPath) entryContent = content;
+  }
+  if (entryContent === undefined) {
+    throw new TypeError("Skill script snapshot does not contain its entryPath");
+  }
+  if (input.scriptContent !== undefined && input.scriptContent !== entryContent) {
+    throw new TypeError("Skill script snapshot entry does not match scriptContent");
+  }
+  return freeze({ entryPath, files: freeze(files) });
+}
+
+async function resolveValidatedScriptContent(
+  input: SkillScriptExecutorInput,
+): Promise<string | undefined> {
+  if (input.validatedSourceRoot === undefined) return input.scriptContent;
+
+  const snapshot = captureSnapshotReadCapability(
+    createFileSystem(),
+    "Native skill script filesystem",
+  );
+  if (snapshot === undefined) {
+    throw new TypeError("Native skill script filesystem must support snapshot reads");
+  }
+
+  const content = utf8Decoder.decode(
+    await snapshot.read(
+      input.scriptPath,
+      input.validatedSourceRoot,
+      SKILL_SCRIPT_MAX_CONTENT_BYTES,
+    ),
+  );
+  if (input.scriptContent !== undefined && content !== input.scriptContent) {
+    throw new TypeError("Skill script changed after validation");
+  }
+  return content;
+}
 
 function resolveTimeoutMs(timeoutMs?: number): number {
   if (timeoutMs === undefined || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -82,6 +275,11 @@ function createSandboxScriptPath(scriptPath: string): string {
   return `/tmp/veryfront-skill-script-${Date.now()}-${suffix}${ext}`;
 }
 
+function createSandboxScriptRoot(): string {
+  const suffix = crypto.randomUUID().slice(0, 8);
+  return `/tmp/veryfront-skill-script-${Date.now()}-${suffix}`;
+}
+
 function getSandboxAuthOverride(): string | undefined {
   return getEnv("SANDBOX_AUTH_TOKEN")?.trim() || undefined;
 }
@@ -121,29 +319,65 @@ export function detectRuntime(scriptPath: string): { command: string; args: stri
  */
 export class LocalScriptExecutor implements SkillScriptExecutor {
   async execute(input: SkillScriptExecutorInput): Promise<SkillScriptResult> {
+    const scriptSnapshot = captureScriptSnapshot(input);
+    const scriptContent = await resolveValidatedScriptContent(input);
     const timeoutMs = resolveTimeoutMs(input.timeoutMs);
-    const { command, args: runtimeArgs } = detectRuntime(input.scriptPath);
-    const allArgs = [...runtimeArgs, ...(input.args ?? [])];
+    const fs = createFileSystem();
+    let executionPath = input.scriptPath;
+    let materializationRoot: string | undefined;
 
-    // Remove the script path from args if it's already the command
-    const finalArgs = command === input.scriptPath ? (input.args ?? []) : allArgs;
+    try {
+      if (scriptSnapshot !== undefined) {
+        materializationRoot = await fs.makeTempDir({ prefix: "veryfront-skill-script-" });
+        for (let index = 0; index < scriptSnapshot.files.length; index += 1) {
+          const file = scriptSnapshot.files[index]!;
+          const materializedPath = `${materializationRoot}/${file.path}`;
+          await fs.mkdir(dirname(materializedPath), { recursive: true });
+          await fs.writeTextFile(materializedPath, file.content);
+        }
+        executionPath = `${materializationRoot}/${scriptSnapshot.entryPath}`;
+        await fs.chmod(executionPath, 0o700);
+      } else if (scriptContent !== undefined) {
+        materializationRoot = await fs.makeTempDir({ prefix: "veryfront-skill-script-" });
+        executionPath = `${materializationRoot}/script${extname(input.scriptPath)}`;
+        await fs.writeTextFile(executionPath, scriptContent);
+        await fs.chmod(executionPath, 0o700);
+      }
 
-    const result = await runCommand(command, {
-      args: finalArgs,
-      cwd: input.cwd,
-      env: input.env,
-      capture: true,
-      timeoutMs,
-      signal: input.abortSignal,
-      maxOutputBytes: SKILL_SCRIPT_MAX_OUTPUT_BYTES,
-      terminateProcessTreeOnExit: true,
-    });
+      const { command: detectedCommand, args: detectedArgs } = detectRuntime(input.scriptPath);
+      const command = detectedCommand === input.scriptPath ? executionPath : detectedCommand;
+      const runtimeArgs = detectedArgs.map((arg) => arg === input.scriptPath ? executionPath : arg);
+      const allArgs = [...runtimeArgs, ...(input.args ?? [])];
 
-    return {
-      stdout: result.stdout ?? "",
-      stderr: result.stderr ?? "",
-      exitCode: result.code,
-    };
+      // Directly executable scripts use the materialized path as the command,
+      // so their caller-supplied arguments must not be prefixed with a path.
+      const finalArgs = detectedCommand === input.scriptPath ? (input.args ?? []) : allArgs;
+
+      const result = await runCommand(command, {
+        args: finalArgs,
+        cwd: input.cwd ?? materializationRoot,
+        env: input.env,
+        capture: true,
+        timeoutMs,
+        signal: input.abortSignal,
+        maxOutputBytes: SKILL_SCRIPT_MAX_OUTPUT_BYTES,
+        terminateProcessTreeOnExit: true,
+      });
+
+      return {
+        stdout: result.stdout ?? "",
+        stderr: result.stderr ?? "",
+        exitCode: result.code,
+      };
+    } finally {
+      if (materializationRoot !== undefined) {
+        try {
+          await fs.remove(materializationRoot, { recursive: true });
+        } catch (error) {
+          logger.warn("[skill/executor] Failed to remove materialized local script", error);
+        }
+      }
+    }
   }
 }
 
@@ -154,17 +388,34 @@ export class LocalScriptExecutor implements SkillScriptExecutor {
  */
 class CloudScriptExecutor implements SkillScriptExecutor {
   async execute(input: SkillScriptExecutorInput): Promise<SkillScriptResult> {
+    const scriptSnapshot = captureScriptSnapshot(input);
     const timeoutMs = resolveTimeoutMs(input.timeoutMs);
+    const scriptContent = await resolveValidatedScriptContent(input) ??
+      await readTextFile(input.scriptPath);
 
     // Lazy import to avoid bundling sandbox in non-cloud environments
     const { Sandbox } = await import("#veryfront/sandbox");
     const authToken = getSandboxAuthOverride();
     const sandbox = await Sandbox.create(authToken ? { authToken } : undefined);
     try {
-      const sandboxScriptPath = createSandboxScriptPath(input.scriptPath);
-      const scriptContent = input.scriptContent ?? await readTextFile(input.scriptPath);
+      const sandboxRoot = scriptSnapshot === undefined ? undefined : createSandboxScriptRoot();
+      const sandboxScriptPath = scriptSnapshot === undefined
+        ? createSandboxScriptPath(input.scriptPath)
+        : `${sandboxRoot}/${scriptSnapshot.entryPath}`;
+      const sandboxFiles: Array<{ path: string; content: string }> = [];
+      if (scriptSnapshot === undefined) {
+        appendOwnArrayElement(sandboxFiles, { path: sandboxScriptPath, content: scriptContent });
+      } else {
+        for (let index = 0; index < scriptSnapshot.files.length; index += 1) {
+          const file = scriptSnapshot.files[index]!;
+          appendOwnArrayElement(sandboxFiles, {
+            path: `${sandboxRoot}/${file.path}`,
+            content: file.content,
+          });
+        }
+      }
 
-      await sandbox.writeFiles([{ path: sandboxScriptPath, content: scriptContent }]);
+      await sandbox.writeFiles(sandboxFiles);
       await sandbox.executeCommand(buildShellCommand(["chmod", "+x", sandboxScriptPath]));
 
       const { command, args: runtimeArgs } = detectRuntime(sandboxScriptPath);
@@ -176,7 +427,10 @@ class CloudScriptExecutor implements SkillScriptExecutor {
         ? ["env", ...envAssignments, command, ...finalArgs]
         : [command, ...finalArgs];
 
-      const cmdString = buildShellCommand(commandParts);
+      const invocation = buildShellCommand(commandParts);
+      const cmdString = sandboxRoot === undefined
+        ? invocation
+        : `cd ${shellEscapeArg(sandboxRoot)} && ${invocation}`;
       const commandPromise = sandbox.executeCommand(cmdString);
       const result = await withTimeout(commandPromise, timeoutMs);
 

@@ -19,6 +19,10 @@ export interface RedisAdapter {
   llen(key: string): Promise<number>;
 
   xadd(key: string, id: string, fields: Record<string, string>): Promise<string>;
+  xread(
+    streams: Array<{ key: string; xid: string }>,
+    options?: { block?: number; count?: number },
+  ): Promise<Array<{ key: string; messages: Array<{ id: string; data: Record<string, string> }> }>>;
   xgroupCreate(key: string, group: string, id: string, mkstream?: boolean): Promise<string>;
   xreadgroup(
     streams: Array<{ key: string; xid: string }>,

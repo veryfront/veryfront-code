@@ -8,32 +8,54 @@
 
 import type { Resource, ResourceConfig } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
+import { validateResourcePatternParameters } from "./pattern.ts";
 
-/** Create a typed resource definition. */
+let generatedResourcePatternCounter = 0;
+
+/** Create a typed resource definition with unique URI-template parameter names. */
 export function resource<TParams = unknown, TData = unknown>(
   config: ResourceConfig<TParams, TData>,
 ): Resource<TParams, TData> {
   const pattern = config.pattern ?? generateFallbackPattern();
+  assertUniqueParameterNames(pattern);
   const id = resourcePatternToId(pattern);
+  const paramsSchema = config.paramsSchema;
+  const parseParams = paramsSchema.parse;
+  const load = config.load;
+  const subscribe = config.subscribe;
+
+  const validateParams = (params: TParams): TParams => {
+    try {
+      return Reflect.apply(parseParams, paramsSchema, [params]) as TParams;
+    } catch (error) {
+      throw createParamsValidationError(id, error);
+    }
+  };
 
   return {
     id,
     pattern,
     description: config.description,
     title: config.title,
-    paramsSchema: config.paramsSchema,
+    paramsSchema,
     load: async (params: TParams): Promise<TData> => {
-      try {
-        config.paramsSchema.parse(params);
-      } catch (error) {
-        throw createParamsValidationError(id, error);
-      }
-
-      return config.load(params);
+      return Reflect.apply(load, config, [validateParams(params)]);
     },
-    subscribe: config.subscribe,
+    subscribe: subscribe === undefined
+      ? undefined
+      : (params: TParams) => Reflect.apply(subscribe, config, [validateParams(params)]),
     mcp: config.mcp,
   };
+}
+
+function assertUniqueParameterNames(pattern: string): void {
+  const seen = new Set<string>();
+  for (const name of validateResourcePatternParameters(pattern)) {
+    if (seen.has(name)) {
+      throw new TypeError(`Resource pattern contains duplicate parameter name "${name}"`);
+    }
+    seen.add(name);
+  }
 }
 
 /**
@@ -43,7 +65,7 @@ export function resource<TParams = unknown, TData = unknown>(
  * the filesystem and extracts patterns from resource definitions.
  */
 function generateFallbackPattern(): string {
-  return `/resource_${Date.now()}`;
+  return `/resource_${Date.now()}_${generatedResourcePatternCounter++}`;
 }
 
 /**

@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../../transforms/mdx/compiler/__tests__/content-processor-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { SSRService } from "./ssr.service.ts";
 import type { RendererProvider, SSRRenderOptions, SSRRenderResult } from "./ssr.service.ts";
@@ -10,9 +10,19 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { SERVICE_OVERLOADED, VeryfrontError } from "#veryfront/errors/index.ts";
 import { notFound, redirect } from "#veryfront/data/helpers.ts";
 import {
+  attachDataResponseMetadata,
+  wrapDataResponseMetadataError,
+} from "#veryfront/data/response-metadata.ts";
+import {
   type ApplicationErrorContext,
   setApplicationErrorReporter,
 } from "#veryfront/observability/application-errors.ts";
+import { createNotFoundLikeError } from "#veryfront/platform/adapters/fs/veryfront/read-operations-helpers.ts";
+import { resetMetrics, state } from "#veryfront/observability/simple-metrics/index.ts";
+import {
+  __injectDepsForTests as __injectPressureDepsForTests,
+  THRESHOLDS,
+} from "../../shared/renderer/memory/pressure.ts";
 
 function createMockAdapter(): RuntimeAdapter {
   return {
@@ -51,9 +61,18 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
     projectDir: "/tmp/test-project",
     adapter: createMockAdapter(),
     securityConfig: null,
-    cspUserHeader: null,
+    isLocalProject: true,
     ...overrides,
   };
+}
+
+function makeSharedCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
+  return makeCtx({
+    isLocalProject: false,
+    prepareHostedConfigContext: () =>
+      Promise.reject(new Error("Shared context preparation is not used by this unit test")),
+    ...overrides,
+  });
 }
 
 function makeRenderOptions(overrides: Partial<SSRRenderOptions> = {}): SSRRenderOptions {
@@ -170,6 +189,50 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(status.heapLimitMB >= 0, true);
         assertEquals(status.heapUsedPercent >= 0, true);
       });
+
+      it("reports the live heap statistics", () => {
+        const service = new SSRService();
+        const status = service.checkMemoryPressure();
+        assertEquals(
+          status.heapLimitMB > 0,
+          true,
+          "heapLimitMB must come from getHeapStats, not a hardcoded zero",
+        );
+        assertEquals(status.heapUsedMB > 0, true, "heapUsedMB must come from getHeapStats");
+        assertEquals(
+          Math.abs(status.heapUsedPercent - (status.heapUsedMB / status.heapLimitMB) * 100) < 1,
+          true,
+          "heapUsedPercent must be the real ratio reported by getHeapStats",
+        );
+      });
+
+      // shouldReject is derived from the live heap against the process-wide
+      // MEMORY_CRITICAL_THRESHOLD, so it is pinned through the pressure module's
+      // injection seam rather than asserted against whatever the runner's heap
+      // happens to be doing.
+      it("derives shouldReject from the configured critical threshold", () => {
+        const service = new SSRService();
+        try {
+          __injectPressureDepsForTests({
+            getHeapStats: () => ({ heapUsedPercent: THRESHOLDS.CRITICAL - 1 }),
+          });
+          assertEquals(
+            service.checkMemoryPressure().shouldReject,
+            false,
+            `heap below CRITICAL (${THRESHOLDS.CRITICAL}) must not shed the request`,
+          );
+          __injectPressureDepsForTests({
+            getHeapStats: () => ({ heapUsedPercent: THRESHOLDS.CRITICAL }),
+          });
+          assertEquals(
+            service.checkMemoryPressure().shouldReject,
+            true,
+            `heap at CRITICAL (${THRESHOLDS.CRITICAL}) must shed the request`,
+          );
+        } finally {
+          __injectPressureDepsForTests(null);
+        }
+      });
     });
 
     describe("createMemoryPressureResult", () => {
@@ -232,9 +295,68 @@ describe("server/services/rendering/ssr.service", () => {
         await service.getRenderer(ctx);
         assertEquals(receivedProjectSlug, "my-project");
       });
+
+      it("rejects direct shared renderer access before invoking the provider", async () => {
+        let called = false;
+        const service = new SSRService({
+          rendererProvider: {
+            getRenderer: () => {
+              called = true;
+              return Promise.resolve(createMockRendererAdapter());
+            },
+          },
+        });
+
+        await assertRejects(
+          () => service.getRenderer(makeSharedCtx()),
+          Error,
+          "generation-owned isolated renderer admission",
+        );
+        assertEquals(called, false);
+      });
+
+      it("allows a dedicated non-local runtime to use its renderer", async () => {
+        let called = false;
+        const service = new SSRService({
+          rendererProvider: {
+            getRenderer: () => {
+              called = true;
+              return Promise.resolve(createMockRendererAdapter());
+            },
+          },
+        });
+
+        await service.getRenderer(makeCtx({
+          isLocalProject: false,
+          allowHostProjectCodeExecution: true,
+        }));
+        assertEquals(called, true);
+      });
     });
 
     describe("renderPage (with mock renderer)", () => {
+      it("fails closed before resolving a renderer in a shared runtime", async () => {
+        let rendererRequests = 0;
+        const service = new SSRService({
+          rendererProvider: {
+            getRenderer: () => {
+              rendererRequests++;
+              return Promise.resolve(createMockRendererAdapter());
+            },
+          },
+        });
+
+        const result = await service.renderPage(
+          makeSharedCtx(),
+          makeRenderOptions(),
+        );
+
+        assertEquals(result.status, 503);
+        assertEquals(result.cacheStrategy, "no-cache");
+        assertEquals(result.htmlProvenance, "framework");
+        assertEquals(rendererRequests, 0);
+      });
+
       it("returns 200 with HTML from renderer", async () => {
         const adapter = createMockRendererAdapter({
           renderPage: () =>
@@ -294,6 +416,33 @@ describe("server/services/rendering/ssr.service", () => {
           makeRenderOptions({ useNoCache: false }),
         );
         assertEquals(result.cacheStrategy, "short");
+      });
+
+      it("forces no-cache and suppresses etags when a render sets cookies", async () => {
+        const adapter = createMockRendererAdapter({
+          renderPage: () =>
+            Promise.resolve({
+              html: "<html>rendered</html>",
+              stream: undefined,
+              ssrHash: "hash123",
+              frontmatter: {},
+              headers: { "x-page-state": "fresh" },
+              cookies: [{ name: "session", value: "abc", path: "/" }],
+            } as any),
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        const result = await service.renderPage(
+          makeCtx(),
+          makeRenderOptions({ useNoCache: false }),
+        );
+
+        assertEquals(result.headers, { "x-page-state": "fresh" });
+        assertEquals(result.cookies, [{ name: "session", value: "abc", path: "/" }]);
+        assertEquals(result.cacheStrategy, "no-cache");
+        assertEquals(result.etag, undefined);
       });
 
       it("requests buffered delivery when the response is cacheable", async () => {
@@ -394,12 +543,18 @@ describe("server/services/rendering/ssr.service", () => {
       it("handles file-not-found error as not-found result", async () => {
         const adapter = createMockRendererAdapter({
           renderPage: () => {
-            throw new VeryfrontError("Not found", {
-              slug: "file-not-found",
-              category: "ROUTE",
-              status: 404,
-              title: "File not found",
-            });
+            throw attachDataResponseMetadata(
+              new VeryfrontError("Not found", {
+                slug: "file-not-found",
+                category: "ROUTE",
+                status: 404,
+                title: "File not found",
+              }),
+              {
+                headers: { "x-missing-reason": "gone" },
+                cookies: [{ name: "visited-missing", value: "1", path: "/" }],
+              },
+            );
           },
         });
         const service = new SSRService({
@@ -411,6 +566,8 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.failure?.kind, "not-found");
         assertEquals(result.isStreaming, false);
         assertEquals(result.cacheStrategy, "no-cache");
+        assertEquals(result.headers, { "x-missing-reason": "gone" });
+        assertEquals(result.cookies, [{ name: "visited-missing", value: "1", path: "/" }]);
       });
 
       it("handles api-client-error 404 for undeployed project", async () => {
@@ -436,21 +593,105 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.failure?.kind, "undeployed");
       });
 
+      it("answers 404 when the project's release source is gone", async () => {
+        // A deleted project answers 404 to every source read. The error the
+        // filesystem adapter actually raises must reach SSR as a 404 condition,
+        // not as a platform fault.
+        const adapter = createMockRendererAdapter({
+          renderPage: () => {
+            throw createNotFoundLikeError("app/layout.tsx");
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        const result = await service.renderPage(makeCtx(), makeRenderOptions());
+        assertEquals(result.status, 404, "a deleted project is a 404, not a 500");
+        assertEquals(result.failure?.kind, "not-found", "classified as a routing outcome");
+      });
+
+      it("counts an unreadable project source so the 404 is not silent", async () => {
+        // The old 500 raised a Sentry event per request. Dropping that must not
+        // leave an API-side regression invisible, so the condition is counted:
+        // an ordinary route miss stays uncounted, a source that cannot be read
+        // moves the counter.
+        resetMetrics();
+        const adapter = createMockRendererAdapter({
+          renderPage: () => {
+            throw createNotFoundLikeError("app/layout.tsx");
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        await service.renderPage(makeCtx(), makeRenderOptions());
+
+        assertEquals(
+          state.ssrSourceUnavailable,
+          1,
+          "an unreadable release must remain visible after the Sentry event is gone",
+        );
+      });
+
+      it("does not count an ordinary route miss as an unreadable source", async () => {
+        resetMetrics();
+        const adapter = createMockRendererAdapter({
+          renderPage: () => {
+            throw notFound();
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        const result = await service.renderPage(makeCtx(), makeRenderOptions());
+
+        assertEquals(result.status, 404, "a route miss is still a 404");
+        assertEquals(
+          state.ssrSourceUnavailable,
+          0,
+          "routine 404s must not drown the signal they would otherwise raise",
+        );
+      });
+
+      it("still answers 500 when a layout exists but throws", async () => {
+        const adapter = createMockRendererAdapter({
+          renderPage: () => {
+            throw new Error("Cannot read properties of undefined (reading 'map')");
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        const result = await service.renderPage(makeCtx(), makeRenderOptions());
+        assertEquals(result.status, 500, "a genuine render fault must stay a fault");
+        assertEquals(result.failure?.kind, "runtime", "not downgraded to a routing outcome");
+      });
+
       it("maps render redirects to redirect results", async () => {
         const adapter = createMockRendererAdapter({
           renderPage: () => {
-            throw new VeryfrontError("Redirect to /login", {
-              slug: "render-error",
-              category: "RUNTIME",
-              status: 500,
-              title: "Component render failed",
-              context: {
-                redirect: {
-                  destination: "/login",
-                  permanent: false,
+            throw wrapDataResponseMetadataError(
+              new VeryfrontError("Redirect to /login", {
+                slug: "render-error",
+                category: "RUNTIME",
+                status: 500,
+                title: "Component render failed",
+                context: {
+                  redirect: {
+                    destination: "/login",
+                    permanent: false,
+                  },
                 },
+              }),
+              {
+                headers: { "x-auth-result": "required" },
+                cookies: [{ name: "return-to", value: "/private", path: "/" }],
               },
-            });
+            );
           },
         });
         const service = new SSRService({
@@ -462,6 +703,12 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.failure?.kind, "redirect");
         assertEquals(redirectLocationOf(result), "/login");
         assertEquals(result.cacheStrategy, "no-cache");
+        assertEquals(result.headers, { "x-auth-result": "required" });
+        assertEquals(result.cookies, [{
+          name: "return-to",
+          value: "/private",
+          path: "/",
+        }]);
       });
 
       it("maps a thrown notFound() control result to a 404", async () => {
@@ -497,6 +744,209 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.cacheStrategy, "no-cache");
       });
 
+      it("preserves external redirects when redirect validation is not configured", async () => {
+        const adapter = createMockRendererAdapter({
+          renderPage: () => {
+            throw redirect("https://accounts.example.com/login");
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        const result = await service.renderPage(makeCtx(), makeRenderOptions());
+
+        assertEquals(result.status, 302);
+        assertEquals(redirectLocationOf(result), "https://accounts.example.com/login");
+      });
+
+      it("allows relative, same-origin, and allowlisted redirect destinations", async () => {
+        for (
+          const destination of [
+            "/login",
+            "http://localhost/account",
+            "https://accounts.example.com/login",
+          ]
+        ) {
+          const adapter = createMockRendererAdapter({
+            renderPage: () => {
+              throw redirect(destination);
+            },
+          });
+          const service = new SSRService({
+            rendererProvider: createMockRendererProvider(adapter),
+          });
+
+          const result = await service.renderPage(
+            makeCtx({
+              securityConfig: {
+                redirects: { allowedOrigins: ["https://accounts.example.com"] },
+              },
+            }),
+            makeRenderOptions(),
+          );
+
+          assertEquals(result.status, 302);
+          assertEquals(redirectLocationOf(result), destination);
+        }
+      });
+
+      it("blocks an off-origin thrown redirect when same-origin validation is configured", async () => {
+        const adapter = createMockRendererAdapter({
+          renderPage: () => {
+            throw redirect("https://untrusted.example/login", false, {
+              headers: { "x-redirect-state": "blocked" },
+              cookies: [{ name: "redirect-state", value: "blocked", path: "/" }],
+            });
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        const result = await service.renderPage(
+          makeCtx({ securityConfig: { redirects: { allowedOrigins: [] } } }),
+          makeRenderOptions(),
+        );
+
+        assertEquals(result.status, 500);
+        assertEquals(result.failure?.kind, "runtime");
+        if (result.failure?.kind !== "runtime") throw new Error("expected runtime failure");
+        assertEquals(
+          (result.failure.error as VeryfrontError).slug,
+          "redirect-destination-not-allowed",
+        );
+        assertEquals(result.headers, undefined);
+        assertEquals(result.cookies, undefined);
+      });
+
+      it("validates same-origin redirects against the browser-visible request origin", async () => {
+        const options = makeRenderOptions({
+          request: new Request("http://runtime.internal/test-page"),
+          url: new URL("http://runtime.internal/test-page"),
+        });
+        const context = makeCtx({
+          requestOrigin: "https://app.example.com",
+          securityConfig: { redirects: { allowedOrigins: [] } },
+        });
+
+        for (
+          const [destination, expectedStatus] of [
+            ["https://app.example.com/login", 302],
+            ["http://runtime.internal/login", 500],
+          ] as const
+        ) {
+          const adapter = createMockRendererAdapter({
+            renderPage: () => {
+              throw redirect(destination);
+            },
+          });
+          const service = new SSRService({
+            rendererProvider: createMockRendererProvider(adapter),
+          });
+
+          const result = await service.renderPage(context, options);
+
+          assertEquals(result.status, expectedStatus);
+        }
+      });
+
+      it("blocks an off-origin returned redirect when validation is configured", async () => {
+        const adapter = createMockRendererAdapter({
+          renderPage: () => {
+            throw new VeryfrontError("Redirect", {
+              slug: "render-error",
+              category: "RUNTIME",
+              status: 500,
+              title: "Component render failed",
+              context: {
+                redirect: {
+                  destination: "https://untrusted.example/login",
+                  permanent: false,
+                },
+              },
+            });
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        const result = await service.renderPage(
+          makeCtx({ securityConfig: { redirects: { allowedOrigins: [] } } }),
+          makeRenderOptions(),
+        );
+
+        assertEquals(result.status, 500);
+        assertEquals(result.failure?.kind, "runtime");
+      });
+
+      it("blocks unsafe redirect schemes when validation is configured", async () => {
+        for (const destination of ["javascript:alert(1)", "data:text/html,blocked"]) {
+          const adapter = createMockRendererAdapter({
+            renderPage: () => {
+              throw redirect(destination);
+            },
+          });
+          const service = new SSRService({
+            rendererProvider: createMockRendererProvider(adapter),
+          });
+
+          const result = await service.renderPage(
+            makeCtx({ securityConfig: { redirects: { allowedOrigins: [] } } }),
+            makeRenderOptions(),
+          );
+
+          assertEquals(result.status, 500);
+          assertEquals(result.failure?.kind, "runtime");
+        }
+      });
+
+      it("applies buffered control metadata after loader metadata", async () => {
+        for (
+          const [control, expectedStatus, expectedKind] of [
+            [
+              notFound({
+                headers: { "x-state": "control" },
+                cookies: [{ name: "control-seen", value: "1", path: "/" }],
+              }),
+              404,
+              "not-found",
+            ],
+            [
+              redirect("/login", false, {
+                headers: { "x-state": "control" },
+                cookies: [{ name: "control-seen", value: "1", path: "/" }],
+              }),
+              302,
+              "redirect",
+            ],
+          ] as const
+        ) {
+          const adapter = createMockRendererAdapter({
+            renderPage: () => {
+              throw wrapDataResponseMetadataError(control, {
+                headers: { "x-state": "loader" },
+                cookies: [{ name: "loader-seen", value: "1", path: "/" }],
+              });
+            },
+          });
+          const service = new SSRService({
+            rendererProvider: createMockRendererProvider(adapter),
+          });
+
+          const result = await service.renderPage(makeCtx(), makeRenderOptions());
+
+          assertEquals(result.status, expectedStatus);
+          assertEquals(result.failure?.kind, expectedKind);
+          assertEquals(result.headers, { "x-state": "control" });
+          assertEquals(result.cookies, [
+            { name: "loader-seen", value: "1", path: "/" },
+            { name: "control-seen", value: "1", path: "/" },
+          ]);
+        }
+      });
+
       it("maps a notFound() reported after the streaming shell to a 404 before responding", async () => {
         const adapter = createMockRendererAdapter({
           renderPage: () =>
@@ -505,6 +955,8 @@ describe("server/services/rendering/ssr.service", () => {
               stream: createReactReadyStream(notFound()),
               ssrHash: undefined,
               frontmatter: {},
+              headers: { "x-data-state": "missing" },
+              cookies: [{ name: "missing-seen", value: "1", path: "/" }],
             }),
         });
         const service = new SSRService({
@@ -520,6 +972,8 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.failure?.kind, "not-found");
         assertEquals(result.isStreaming, false);
         assertEquals(result.cacheStrategy, "no-cache");
+        assertEquals(result.headers, { "x-data-state": "missing" });
+        assertEquals(result.cookies, [{ name: "missing-seen", value: "1", path: "/" }]);
       });
 
       it("maps a redirect() reported after the streaming shell to a redirect before responding", async () => {
@@ -527,9 +981,16 @@ describe("server/services/rendering/ssr.service", () => {
           renderPage: () =>
             Promise.resolve({
               html: "",
-              stream: createReactReadyStream(redirect("/login")),
+              stream: createReactReadyStream(
+                redirect("/login", false, {
+                  headers: { "x-data-state": "redirect-control" },
+                  cookies: [{ name: "control-seen", value: "1", path: "/" }],
+                }),
+              ),
               ssrHash: undefined,
               frontmatter: {},
+              headers: { "x-data-state": "redirected" },
+              cookies: [{ name: "redirect-seen", value: "1", path: "/" }],
             }),
         });
         const service = new SSRService({
@@ -546,6 +1007,48 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(redirectLocationOf(result), "/login");
         assertEquals(result.isStreaming, false);
         assertEquals(result.cacheStrategy, "no-cache");
+        assertEquals(result.headers, { "x-data-state": "redirect-control" });
+        assertEquals(result.cookies, [
+          { name: "redirect-seen", value: "1", path: "/" },
+          { name: "control-seen", value: "1", path: "/" },
+        ]);
+      });
+
+      it("blocks a disallowed post-shell redirect without forwarding metadata", async () => {
+        const adapter = createMockRendererAdapter({
+          renderPage: () =>
+            Promise.resolve({
+              html: "",
+              stream: createReactReadyStream(
+                redirect("https://untrusted.example/login", false, {
+                  headers: { "x-data-state": "blocked-control" },
+                  cookies: [{ name: "control-seen", value: "blocked", path: "/" }],
+                }),
+              ),
+              ssrHash: undefined,
+              frontmatter: {},
+              headers: { "x-data-state": "blocked-loader" },
+              cookies: [{ name: "loader-seen", value: "blocked", path: "/" }],
+            }),
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        const result = await service.renderPage(
+          makeCtx({ securityConfig: { redirects: { allowedOrigins: [] } } }),
+          makeRenderOptions({ useNoCache: true }),
+        );
+
+        assertEquals(result.status, 500);
+        assertEquals(result.failure?.kind, "runtime");
+        if (result.failure?.kind !== "runtime") throw new Error("expected runtime failure");
+        assertEquals(
+          (result.failure.error as VeryfrontError).slug,
+          "redirect-destination-not-allowed",
+        );
+        assertEquals(result.headers, undefined);
+        assertEquals(result.cookies, undefined);
       });
 
       it("maps a permanent thrown redirect() to a 301", async () => {
@@ -593,7 +1096,7 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(redirectLocationOf(result), "/login");
       });
 
-      it("treats an unbranded notFound-shaped throw as a server error", async () => {
+      it("treats an unbranded notFound-shaped throw as a local runtime error", async () => {
         // A loader doing `throw await response.json()` against an upstream
         // answering `{ notFound: true }` is reporting a failure, not requesting a
         // 404. Only the brand, never the shape, routes to not-found.
@@ -608,10 +1111,10 @@ describe("server/services/rendering/ssr.service", () => {
 
         const result = await service.renderPage(makeCtx(), makeRenderOptions());
         assertEquals(result.status, 500);
-        assertEquals(result.failure?.kind, "server-error");
+        assertEquals(result.failure?.kind, "runtime");
       });
 
-      it("returns server-error for generic errors in production", async () => {
+      it("captures generic local runtime errors", async () => {
         const captured: Array<{ error: unknown; context: ApplicationErrorContext }> = [];
         setApplicationErrorReporter({
           capture(error, context) {
@@ -632,7 +1135,7 @@ describe("server/services/rendering/ssr.service", () => {
         try {
           const result = await service.renderPage(makeCtx(), makeRenderOptions());
           assertEquals(result.status, 500);
-          assertEquals(result.failure?.kind, "server-error");
+          assertEquals(result.failure?.kind, "runtime");
           assertEquals(typeof result.html, "string");
           assertEquals(captured.length, 1);
           assertEquals((captured[0]?.error as Error).message, "Something broke");
@@ -645,6 +1148,39 @@ describe("server/services/rendering/ssr.service", () => {
         }
       });
 
+      it("preserves attached response metadata on non-control render failures", async () => {
+        for (
+          const [ctx, expectedKind] of [
+            [makeCtx(), "runtime"],
+            [
+              makeCtx({
+                isLocalProject: false,
+                allowHostProjectCodeExecution: true,
+              }),
+              "server-error",
+            ],
+          ] as const
+        ) {
+          const adapter = createMockRendererAdapter({
+            renderPage: () => {
+              throw attachDataResponseMetadata(new Error("Render failed after data"), {
+                headers: { "x-error-state": "reported" },
+                cookies: [{ name: "error-seen", value: "1", path: "/" }],
+              });
+            },
+          });
+          const service = new SSRService({
+            rendererProvider: createMockRendererProvider(adapter),
+          });
+
+          const result = await service.renderPage(ctx, makeRenderOptions());
+
+          assertEquals(result.failure?.kind, expectedKind);
+          assertEquals(result.headers, { "x-error-state": "reported" });
+          assertEquals(result.cookies, [{ name: "error-seen", value: "1", path: "/" }]);
+        }
+      });
+
       it("captures app-router error-boundary failures before returning boundary HTML", async () => {
         const captured: Array<{ error: unknown; context: ApplicationErrorContext }> = [];
         setApplicationErrorReporter({
@@ -654,9 +1190,16 @@ describe("server/services/rendering/ssr.service", () => {
           },
           flush: () => Promise.resolve(true),
         });
-        const renderError = Object.assign(new Error("App router render failed"), {
+        const boundaryError = Object.assign(new Error("App router render failed"), {
           errorBoundaryHtml: "<!doctype html><html><body>Error boundary</body></html>",
         });
+        const renderError = wrapDataResponseMetadataError(
+          boundaryError,
+          {
+            headers: { "x-error-state": "reported" },
+            cookies: [{ name: "error-seen", value: "1", path: "/" }],
+          },
+        );
         const adapter = createMockRendererAdapter({
           renderPage: () => {
             throw renderError;
@@ -670,7 +1213,9 @@ describe("server/services/rendering/ssr.service", () => {
           const result = await service.renderPage(makeCtx(), makeRenderOptions());
           assertEquals(result.status, 500);
           assertEquals(result.failure?.kind, "app-router-error-boundary");
-          assertEquals(result.html, renderError.errorBoundaryHtml);
+          assertEquals(result.html, boundaryError.errorBoundaryHtml);
+          assertEquals(result.headers, { "x-error-state": "reported" });
+          assertEquals(result.cookies, [{ name: "error-seen", value: "1", path: "/" }]);
           assertEquals(captured.length, 1);
           assertEquals((captured[0]?.error as Error).message, "App router render failed");
           assertEquals(captured[0]?.context, {

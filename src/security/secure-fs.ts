@@ -120,7 +120,7 @@ const SECURE_FS_IMMUTABLE_AUTHORITY_KEYS = [
   "maxWholeFileReadBytes",
 ] as const;
 
-function hardenSecureFsAuthority(target: object): void {
+function hardenSecureFsAuthority(target: SecureFs): void {
   for (const key of SECURE_FS_IMMUTABLE_AUTHORITY_KEYS) {
     const descriptor = objectGetOwnPropertyDescriptor(target, key);
     if (descriptor === undefined || !("value" in descriptor)) {
@@ -707,6 +707,16 @@ export class SecureFs {
       snapshotReader = captureSnapshotReadCapability(
         suppliedFileSystem,
         "SecureFs filesystem",
+        // Treat an explicitly undefined capability as unsupported rather than
+        // malformed. FSAdapterWrapper deliberately publishes every optional
+        // capability as a frozen own property, including the ones the
+        // underlying adapter does not provide, so that project code cannot
+        // inject one after construction. Rejecting that shape made SecureFs
+        // refuse the platform's own wrapper, and every hosted project on a
+        // remote filesystem failed its render. The wrapper itself captures with
+        // this same allowance. A present-but-non-function value is still
+        // rejected below.
+        true,
       );
     } catch (_) {
       invalidSecureFsOption("SecureFs filesystem snapshot capability is invalid");
@@ -717,6 +727,11 @@ export class SecureFs {
         virtualSnapshotReader = captureStaticReadCapabilities(
           suppliedFileSystem,
           "SecureFs filesystem",
+          // Same wrapper shape as the snapshot capture above. Without this the
+          // capture threw on FSAdapterWrapper's frozen `undefined` slots, and
+          // the catch below turned that into a silent loss of virtual snapshot
+          // authority rather than an error.
+          true,
         ).virtual;
       } catch {
         // A malformed optional virtual publisher must not weaken otherwise

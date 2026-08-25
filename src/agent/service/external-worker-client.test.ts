@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import {
   createExternalAgentWorkerClient,
   type ExternalAgentWorker,
@@ -181,12 +182,14 @@ describe("external agent worker client", () => {
       `${API_URL}/agent-workers/workers/${WORKER_ID}/claim`,
     );
     assertEquals(authorization(calls[1]!), `Bearer ${WORKER_TOKEN}`);
+    assertEquals(calls[1]?.[1]?.method, "POST", "claiming a run must POST to the claim endpoint");
     assertEquals(requestBody(calls[1]!), { lease_duration_seconds: 30 });
     assertEquals(
       String(calls[2]?.[0]),
       `${API_URL}/agent-workers/workers/${WORKER_ID}/runs/${RUN_ID}/session`,
     );
     assertEquals(authorization(calls[2]!), `Bearer ${WORKER_TOKEN}`);
+    assertEquals(calls[2]?.[1]?.method, "PUT", "recording a session must PUT the session record");
     assertEquals(requestBody(calls[2]!), {
       session_key: "codex-session-1",
       status: "active",
@@ -196,10 +199,85 @@ describe("external agent worker client", () => {
       String(calls[3]?.[0]),
       `${API_URL}/conversations/${CONVERSATION_ID}/runs/${RUN_ID}/events`,
     );
+    assertEquals(calls[3]?.[1]?.method, "POST", "appending run events must POST them");
     assertEquals(requestBody(calls[3]!), {
       events: [{ type: "TEXT_MESSAGE_CHUNK", payload: { delta: "hello" } }],
       expected_previous_external_event_sequence: 4,
     });
     assertEquals(String(calls[4]?.[0]), `${API_URL}/runs/${RUN_ID}/complete`);
+    assertEquals(calls[4]?.[1]?.method, "POST", "completing a run must POST the completion");
+    assertEquals(
+      requestBody(calls[4]!),
+      { status: "completed" },
+      "completeRun must post the terminal status",
+    );
+  });
+
+  it("forwards the terminal error of a failed completion", async () => {
+    const { calls, fetchImpl } = fetchSequence(jsonResponse({ completed: true }));
+    const client = createExternalAgentWorkerClient({
+      apiUrl: API_URL,
+      authToken: API_TOKEN,
+      fetch: fetchImpl,
+    });
+
+    await client.completeRun({
+      runId: RUN_ID,
+      status: "failed",
+      terminalErrorCode: "ABORTED",
+      terminalErrorMessage: "stopped",
+    });
+
+    assertEquals(
+      requestBody(calls[0]!),
+      {
+        status: "failed",
+        terminal_error_code: "ABORTED",
+        terminal_error_message: "stopped",
+      },
+      "a failed completion must forward the terminal error",
+    );
+  });
+
+  it("raises a network error for non-2xx worker API responses", async () => {
+    const { fetchImpl } = fetchSequence(jsonResponse({ error: "boom" }, 500));
+    const client = createExternalAgentWorkerClient({
+      apiUrl: API_URL,
+      authToken: API_TOKEN,
+      fetch: fetchImpl,
+    });
+
+    await assertRejects(
+      () => client.completeRun({ runId: RUN_ID, status: "completed" }),
+      VeryfrontError,
+      "boom",
+      "non-2xx API responses must raise NETWORK_ERROR with the body detail",
+    );
+  });
+
+  it("rejects an unauthorized claim instead of resolving to no run", async () => {
+    const { fetchImpl } = fetchSequence(
+      jsonResponse({ worker: worker(), token: WORKER_TOKEN }, 201),
+      new Response(null, { status: 401 }),
+    );
+    const client = createExternalAgentWorkerClient({
+      apiUrl: API_URL,
+      authToken: API_TOKEN,
+      fetch: fetchImpl,
+    });
+
+    const registeredWorker = await client.registerWorker({
+      projectReference: PROJECT_REFERENCE,
+      implementationKind: "veryfront-codex",
+      implementationDisplayName: "Veryfront Codex",
+      workerKey: "local-codex",
+    });
+
+    await assertRejects(
+      () => client.claimRun({ workerId: registeredWorker.id, leaseDurationSeconds: 30 }),
+      VeryfrontError,
+      "Veryfront API returned HTTP 401",
+      "an unauthorized claim must reject rather than resolve to null",
+    );
   });
 });

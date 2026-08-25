@@ -31,7 +31,13 @@ export interface APIContext {
   body: <T = unknown>() => Promise<T>;
   text: (data: string, init?: ResponseInit) => Response;
   fs: FileSystemAdapter;
+  /** Immutable environment snapshot for the current project request. */
+  env: Readonly<Record<string, string>>;
 }
+
+const EMPTY_PROJECT_ENV = Object.freeze(
+  Object.create(null) as Record<string, string>,
+);
 
 /**
  * Statuses that the Fetch spec forbids from carrying a body. Constructing
@@ -113,6 +119,7 @@ export function createContext(
   request: Request,
   match: RouteMatch,
   fs: FileSystemAdapter,
+  env: Readonly<Record<string, string>> = EMPTY_PROJECT_ENV,
 ): APIContext {
   const url = new URL(request.url);
   const json = createJsonHelper(request);
@@ -131,6 +138,7 @@ export function createContext(
     body,
     text,
     fs,
+    env,
   };
 }
 

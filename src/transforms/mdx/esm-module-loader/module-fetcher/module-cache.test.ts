@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   makeTempDir,
+  readDir,
   readTextFile,
   remove,
   writeTextFile,
@@ -117,6 +118,41 @@ describe("module-cache", () => {
     } finally {
       await remove(esmCacheDir, { recursive: true }).catch(() => {});
       await remove(projectDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("refuses to cache a module with unresolved vf module imports", async () => {
+    const esmCacheDir = await makeTempDir({ prefix: "vf-module-cache-unresolved-" });
+    const pathCache = new Map<string, string>();
+
+    try {
+      const cachedPath = await cacheModule(
+        "_vf_modules/components/Broken.js",
+        [
+          `import x from "/_vf_modules/_veryfront/missing.mjs";`,
+          `export default x;`,
+        ].join("\n"),
+        esmCacheDir,
+        pathCache,
+        noopLog,
+      );
+
+      assertEquals(
+        cachedPath,
+        null,
+        "a module with unresolved /_vf_modules/ imports must not be cached",
+      );
+      assertEquals(
+        pathCache.size,
+        0,
+        "no path-cache entry may be registered for an unresolved module",
+      );
+
+      const entries = [];
+      for await (const entry of readDir(esmCacheDir)) entries.push(entry.name);
+      assertEquals(entries, [], "no artifact may be written for an unresolved module");
+    } finally {
+      await remove(esmCacheDir, { recursive: true }).catch(() => {});
     }
   });
 });

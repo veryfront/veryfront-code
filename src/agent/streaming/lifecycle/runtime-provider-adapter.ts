@@ -119,6 +119,9 @@ export function decodeRuntimeStreamPart(
           event: {
             type: "step_finish" as const,
             finishReason: normalizeFinishReason(typed.finishReason),
+            ...(typed.providerMetadata === undefined
+              ? {}
+              : { providerMetadata: typed.providerMetadata }),
           },
         },
       ];
@@ -359,6 +362,12 @@ function providerToolTerminalSignals(
 ): readonly StreamSignal[] {
   const tool = findTool(snapshot, typed.toolCallId);
   if (tool?.phase === "input_rejected") return [];
+  if (
+    tool?.phase === "succeeded" || tool?.phase === "failed" ||
+    tool?.phase === "denied" || tool?.phase === "cancelled"
+  ) {
+    return [];
+  }
   const dynamic = resolveDynamic(typed.dynamic, typed.toolName);
   const rawOutput = typed.type === "tool-error"
     ? typed.error

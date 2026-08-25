@@ -3,6 +3,7 @@ import {
   assertEquals,
   assertExists,
   assertRejects,
+  assertStrictEquals,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -160,6 +161,31 @@ describe("NodeServerAdapter WebSocket upgrade", () => {
     );
   });
 
+  it("rejects a second upgrade of the same Request", () => {
+    const requestId = "QUJDREVGR0hJSktMTU5PUA==";
+    const adapter = new NodeServerAdapter();
+    const request = websocketRequest(requestId);
+
+    adapter.upgradeWebSocket(request);
+
+    assertThrows(
+      () => adapter.upgradeWebSocket(request),
+      Error,
+      "already been upgraded",
+      "a Node Request must not be upgraded twice",
+    );
+    assertEquals(
+      resolveWebSocketUpgrade(requestId, createMockWs()),
+      true,
+      "only the first upgrade may register pending transport state",
+    );
+    assertEquals(
+      resolveWebSocketUpgrade(requestId, createMockWs()),
+      false,
+      "the rejected second upgrade must not leave a second pending registration",
+    );
+  });
+
   it("rejects requests that are not valid RFC 6455 handshakes", () => {
     const adapter = new NodeServerAdapter();
 
@@ -198,6 +224,37 @@ describe("NodeServerAdapter WebSocket upgrade", () => {
         ),
       Error,
       "Sec-WebSocket-Version",
+    );
+    assertThrows(
+      () =>
+        adapter.upgradeWebSocket(
+          new Request("http://localhost/_ws", {
+            headers: {
+              upgrade: "websocket",
+              "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+              "sec-websocket-version": "13",
+            },
+          }),
+        ),
+      Error,
+      "Connection: Upgrade",
+      "a handshake without a Connection: Upgrade token must be rejected",
+    );
+    assertThrows(
+      () =>
+        adapter.upgradeWebSocket(
+          new Request("http://localhost/_ws", {
+            headers: {
+              connection: "keep-alive",
+              upgrade: "websocket",
+              "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+              "sec-websocket-version": "13",
+            },
+          }),
+        ),
+      Error,
+      "Connection: Upgrade",
+      "a Connection header without an upgrade token must be rejected",
     );
   });
 
@@ -329,13 +386,22 @@ describe("NodeWebSocket close handling", () => {
     // Regression test: Node <23 does not expose `CloseEvent` as a global. The
     // previous implementation used `new CloseEvent("close")`, which crashed
     // the dev server with an unhandled `ReferenceError` on every socket
-    // teardown. The handler must complete without throwing regardless of the
-    // runtime's `CloseEvent` support.
+    // teardown. The handler must build and deliver the close event itself.
+    // The companion case in tests/integration/adapters covers the same path
+    // with the global constructor removed.
     const { socket, ws } = attach();
-    socket.onclose = () => {};
+    let received: CloseEvent | null = null;
+    socket.onclose = (event) => {
+      received = event;
+    };
 
     ws.emit("close", 1000, Buffer.from("ok"));
-    // Reaching this line without throwing proves the regression is fixed.
+
+    const event = received as unknown as CloseEvent;
+    assertExists(event, "the close handler must run without throwing a ReferenceError");
+    assertEquals(event.code, 1000, "the close code must reach the handler");
+    assertEquals(event.reason, "ok", "the close reason must reach the handler");
+    assertEquals(event.wasClean, true, "a 1000 close must be reported as clean");
   });
 
   it("transitions readyState to CLOSED after close", () => {
@@ -370,6 +436,11 @@ describe("NodeWebSocket error handling", () => {
     assertEquals(event.message, "transport failed");
     assertEquals(event.error instanceof Error, true);
     assertEquals(socket.readyState, NodeWebSocket.CLOSED);
+    assertStrictEquals(
+      Object.getPrototypeOf(event),
+      Event.prototype,
+      "the error event must be a plain Event so runtimes without a global ErrorEvent do not throw",
+    );
   });
 });
 

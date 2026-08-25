@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { delay } from "#std/async.ts";
 import { FakeTime } from "#std/testing/time";
 import { Singleflight, waitForSharedPromise } from "./singleflight.ts";
 
@@ -16,6 +17,84 @@ describe("Singleflight", () => {
 
     shared.resolve(42);
     assertEquals(await follower, 42);
+  });
+
+  it("rejects a pre-aborted waiter without waiting for the shared promise", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("already stopped"));
+    const shared = Promise.withResolvers<number>();
+
+    await assertRejects(
+      () => waitForSharedPromise(shared.promise, controller.signal),
+      Error,
+      "already stopped",
+    );
+
+    // The detached waiter must still observe the shared rejection, otherwise a
+    // sole detached caller leaves it unhandled and crashes the process.
+    shared.reject(new Error("shared failed"));
+    await delay(0);
+  });
+
+  it("does not start shared work for a caller that already gave up", async () => {
+    const sf = new Singleflight<string>();
+    const controller = new AbortController();
+    controller.abort(new Error("caller gave up"));
+    let calls = 0;
+
+    await assertRejects(
+      () =>
+        sf.do("key", () => {
+          calls++;
+          return Promise.resolve("value");
+        }, { signal: controller.signal }),
+      Error,
+      "caller gave up",
+    );
+
+    assertEquals(calls, 0, "an already-aborted caller must not start the shared operation");
+    assertEquals(sf.has("key"), false, "no leader entry may be registered for an aborted caller");
+  });
+
+  it("cancels shared work only after its final abortable waiter detaches", async () => {
+    const sf = new Singleflight<number>();
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    let operationSignal: AbortSignal | undefined;
+    let operationCalls = 0;
+
+    const operation = (control: { signal: AbortSignal }): Promise<number> => {
+      operationCalls++;
+      operationSignal = control.signal;
+      return new Promise((_resolve, reject) => {
+        control.signal.addEventListener(
+          "abort",
+          () => reject(control.signal.reason),
+          { once: true },
+        );
+      });
+    };
+
+    const first = sf.do("key", operation, {
+      signal: firstController.signal,
+      cancelWhenUnobserved: true,
+    });
+    const second = sf.do("key", operation, {
+      signal: secondController.signal,
+      cancelWhenUnobserved: true,
+    });
+
+    const firstReason = new DOMException("first render cancelled", "AbortError");
+    firstController.abort(firstReason);
+    await assertRejects(() => first, Error, "first render cancelled");
+    assertEquals(operationSignal?.aborted, false);
+
+    const secondReason = new DOMException("second render cancelled", "AbortError");
+    secondController.abort(secondReason);
+    await assertRejects(() => second, Error, "second render cancelled");
+    assertEquals(operationSignal?.aborted, true);
+    assertEquals(operationSignal?.reason, secondReason);
+    assertEquals(operationCalls, 1);
   });
 
   it("should execute operation and return result", async () => {
@@ -129,6 +208,25 @@ describe("Singleflight", () => {
 
     assertEquals(r1, 1);
     assertEquals(r2, 2);
+  });
+
+  it("allows a replacement after an active operation is forgotten", async () => {
+    const sf = new Singleflight<number>();
+    const staleResult = Promise.withResolvers<number>();
+    const stale = sf.do("key", () => staleResult.promise);
+
+    assertEquals(sf.forget("key"), true);
+    assertEquals(sf.forget("key"), false);
+    const replacementResult = Promise.withResolvers<number>();
+    const replacement = sf.do("key", () => replacementResult.promise);
+
+    staleResult.resolve(1);
+    assertEquals(await stale, 1);
+    assertEquals(sf.size, 1);
+
+    replacementResult.resolve(2);
+    assertEquals(await replacement, 2);
+    assertEquals(sf.size, 0);
   });
 
   it("evicts only the exact leader that exceeds its stale window", async () => {

@@ -1,0 +1,101 @@
+import "#veryfront/schemas/_test-setup.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createAgUiRuntimeResponse } from "./runtime-response.ts";
+
+describe("agent/ag-ui-runtime-response", () => {
+  it("normalizes runtime defaults and wraps the stream in SSE headers", async () => {
+    const response = createAgUiRuntimeResponse({
+      agUiInput: {
+        threadId: "11111111-1111-4111-8111-111111111111",
+        runId: "run_1",
+        state: "ignored",
+        messages: [],
+        tools: [],
+        context: [],
+      },
+      defaults: {
+        threadId: "22222222-2222-4222-8222-222222222222",
+        runId: "run_override",
+      },
+      agentId: "agent-1",
+      execution: {
+        agentUIStream: {
+          async *[Symbol.asyncIterator]() {
+            yield "chunk-1";
+          },
+        },
+        fail: async () => {},
+        waitForFinish: async () => {},
+      },
+      encoder: {
+        encode: (chunk) => [{ event: "Custom", payload: { chunk } }],
+        finalize: () => [],
+      },
+      initialState: { seen: false },
+    });
+
+    assertEquals(response.headers.get("content-type"), "text/event-stream; charset=utf-8");
+    const text = await response.text();
+    assertStringIncludes(text, "event: RunStarted");
+    assertStringIncludes(text, '"runId":"run_override"');
+    assertStringIncludes(text, '"threadId":"22222222-2222-4222-8222-222222222222"');
+    assertEquals(
+      text.includes("11111111-1111-4111-8111-111111111111"),
+      false,
+      "the client-supplied threadId must not reach the RunStarted payload",
+    );
+    assertStringIncludes(text, "event: StateSnapshot");
+    assertStringIncludes(text, '"snapshot":{}');
+    assertStringIncludes(text, "event: Custom");
+    assertStringIncludes(text, '"chunk":"chunk-1"');
+  });
+
+  it("passes chunk observers and final response builders through to the response stream", async () => {
+    const seen: string[] = [];
+
+    const response = createAgUiRuntimeResponse({
+      agUiInput: {
+        threadId: crypto.randomUUID(),
+        runId: "run_1",
+        state: { phase: "draft" },
+        messages: [],
+        tools: [],
+        context: [],
+      },
+      agentId: "agent-1",
+      execution: {
+        agentUIStream: {
+          async *[Symbol.asyncIterator]() {
+            yield "chunk-1";
+          },
+        },
+        fail: async () => {},
+        waitForFinish: async () => {},
+      },
+      encoder: {
+        encode: (chunk) => [{ event: "Custom", payload: { chunk } }],
+        finalize: (result) => [{ event: "Done", payload: { result } }],
+      },
+      initialState: { finishReason: "" },
+      onChunk: (state, chunk) => {
+        seen.push(chunk);
+        state.finishReason = "stop";
+      },
+      getFinalResponse: (state) => ({
+        text: "",
+        messages: [],
+        toolCalls: [],
+        status: "completed",
+        metadata: {
+          finishReason: state.finishReason,
+        },
+      }),
+    });
+
+    const text = await response.text();
+    assertEquals(seen, ["chunk-1"]);
+    assertStringIncludes(text, "event: Done");
+    assertStringIncludes(text, '"finishReason":"stop"');
+  });
+});

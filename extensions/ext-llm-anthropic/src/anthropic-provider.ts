@@ -15,6 +15,8 @@ import {
   buildProviderError,
   createAnthropicRequestInit,
   createWarningCollector,
+  DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS,
+  DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS,
   getAnthropicMessagesUrl,
   isNumberArray,
   mergeUsage,
@@ -29,6 +31,7 @@ import {
   requestStream,
   stringifyJsonValue,
   TOOL_INPUT_PENDING_THRESHOLD_MS,
+  waitForProviderStreamRetry,
 } from "veryfront/provider/shared";
 import {
   buildAnthropicMessagesRequestWithCorrelationState,
@@ -52,6 +55,49 @@ import {
 import { type AnthropicCitation, normalizeAnthropicCitation } from "./anthropic-citations.ts";
 
 const MAX_PAUSE_TURN_CONTINUATIONS = 5;
+
+/**
+ * Replays allowed when the SSE body itself reports a retryable failure.
+ *
+ * Anthropic answers HTTP 200 and then delivers `overloaded_error` or
+ * `rate_limit_error` as the first event of the stream. `requestStream` cannot
+ * retry that: it hands the body off the moment headers arrive, and past that
+ * point a reader owns the body. So the replay has to live here, where the
+ * request body is still available to re-issue. The bound and the backoff match
+ * the pre-header loop in `provider/runtime-loader/provider-http.ts`.
+ *
+ * The backoff can add at most 3 seconds. Replay header attempts remain inside
+ * the shared total header/idle-window budget, and each replay's header wait is
+ * capped at 10 seconds.
+ */
+const MAX_ANTHROPIC_STREAM_REPLAYS = 2;
+const ANTHROPIC_STREAM_REPLAY_DELAY_MS = 1_000;
+
+/**
+ * Ceiling on how long one replay may wait for response headers.
+ *
+ * The shared idle-window budget already stops replays from each opening a
+ * fresh 40-second header budget, but it is generous by the time a replay
+ * starts early in a window. This clamps the wait to the failure it covers: an
+ * `overloaded_error` is the first event of the stream and arrives within about
+ * a second of the headers, so a replay that cannot get headers inside ten
+ * seconds was never going to rescue the run, and spending the rest of the idle
+ * window on it only delays the same failure with a vaguer message.
+ */
+const ANTHROPIC_STREAM_REPLAY_HEADERS_BUDGET_MS = 10_000;
+
+/**
+ * Only a typed provider failure the classifier marked retryable may be
+ * replayed. Caller cancellation surfaces as an `AbortError`, never a
+ * `ProviderError`, so it can never reach a replay.
+ *
+ * The other half of the safety condition lives at the call site: a replay is
+ * only issued while the consumer has seen nothing, because re-issuing after
+ * output would duplicate it.
+ */
+function isReplayableAnthropicStreamFailure(error: unknown): boolean {
+  return error instanceof ProviderError && error.retryable;
+}
 
 export {
   buildProviderError,
@@ -483,6 +529,9 @@ export function createAnthropicModelRuntime(
     modelId,
     specificationVersion: "v3",
     supportedUrls: {},
+    runtimeCapabilities: {
+      structuredOutput: supportsAnthropicStructuredOutput(modelId) ? ["json_schema"] : false,
+    },
     async doGenerate(options: OpenAICompatibleLanguageOptions) {
       const url = getAnthropicMessagesUrl(config.baseURL);
       const warnings = createWarningCollector();
@@ -514,6 +563,7 @@ export function createAnthropicModelRuntime(
           fetchImpl,
           providerLabel: config.name ?? "anthropic",
           providerKind: "anthropic",
+          modelId,
           init: createAnthropicRequestInit({
             apiKey: config.apiKey,
             authToken: config.authToken,
@@ -581,23 +631,63 @@ export function createAnthropicModelRuntime(
       const enableMcpConnector = usesAnthropicMcpConnector(body);
       throwIfAnthropicRequestAborted(options.abortSignal);
       const providerAbortScope = createProviderAbortScope(options.abortSignal);
-      let firstResponseStream: ReadableStream<Uint8Array>;
-      try {
-        firstResponseStream = await requestStream({
+      // Anchor for the shared header budget. It bounds one *idle window*: the
+      // stretch where the consumer is awaiting a part and the stream watchdog
+      // is counting. Replays stay inside the window they failed in, because a
+      // replay only happens when nothing was yielded.
+      //
+      // It is re-anchored when a part is yielded, because that is when the
+      // watchdog window restarts: the watchdog wraps each pending pull, so a
+      // delivered part ends one window and the consumer's next pull opens the
+      // next. A pause_turn continuation deliberately does NOT re-anchor. The
+      // stream may spend most of a window finishing the paused response after
+      // its last visible part, and handing the continuation a fresh budget
+      // there would let it wait for headers past the window the watchdog is
+      // still timing.
+      let streamHeadersBudgetStartedAt = Math.floor(performance.now());
+      const remainingStreamHeadersBudgetMs = () =>
+        Math.max(
+          0,
+          DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS -
+            (Math.floor(performance.now()) - streamHeadersBudgetStartedAt),
+        );
+      const issueStream = (
+        requestBody: AnthropicRequestBody,
+        headersBudgetCeilingMs?: number,
+      ): Promise<ReadableStream<Uint8Array>> => {
+        const totalHeadersBudgetMs = headersBudgetCeilingMs === undefined
+          ? remainingStreamHeadersBudgetMs()
+          : Math.min(headersBudgetCeilingMs, remainingStreamHeadersBudgetMs());
+        return requestStream({
           url,
           fetchImpl,
           providerLabel: config.name ?? "anthropic",
           providerKind: "anthropic",
+          modelId,
           init: createAnthropicRequestInit({
             apiKey: config.apiKey,
             authToken: config.authToken,
             extraHeaders: options.headers,
             enableFineGrainedToolStreaming: true,
             enableMcpConnector,
-            body: JSON.stringify(body),
+            body: JSON.stringify(requestBody),
             signal: providerAbortScope.controller.signal,
           }),
+          // `requestStream` never shortens a request's *first* attempt to fit
+          // the total budget, so the attempt deadline is clamped here as
+          // well: to the replay ceiling when one is given, and always to what
+          // is left of the idle window, so a request issued late in a window
+          // cannot wait for headers beyond it.
+          headersTimeoutMs: Math.min(
+            headersBudgetCeilingMs ?? DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS,
+            totalHeadersBudgetMs,
+          ),
+          totalHeadersBudgetMs,
         });
+      };
+      let firstResponseStream: ReadableStream<Uint8Array>;
+      try {
+        firstResponseStream = await issueStream(body);
       } catch (error) {
         providerAbortScope.dispose();
         throw error;
@@ -607,6 +697,7 @@ export function createAnthropicModelRuntime(
       const continuePausedStream = async function* (): AsyncIterable<unknown> {
         let responseStream = firstResponseStream;
         let continuationCount = 0;
+        let streamReplayCount = 0;
         let aggregateUsage: RuntimeUsage | undefined;
         let requestBody: AnthropicRequestBody = body;
         const rawAssistantMessages: unknown[][] = [];
@@ -617,22 +708,63 @@ export function createAnthropicModelRuntime(
         while (true) {
           let completion: AnthropicStreamCompletion | undefined;
           let finishPart: Record<string, unknown> | undefined;
-          for await (
-            const part of streamAnthropicCompatibleParts(responseStream, {
-              ...streamOptions,
-              providerLabel: providerName,
-              providerToolNamesById,
-              onCompletion(value) {
-                completion = value;
-              },
-            })
-          ) {
-            const record = readRecord(part);
-            if (record?.type === "finish") {
-              finishPart = record;
-              continue;
+          // Every registry mutation in the parser is immediately followed by a
+          // yield, so a replay can only happen while the registry is still
+          // untouched. No snapshot is needed to restore it.
+          let yieldedThisAttempt = false;
+          try {
+            for await (
+              const part of streamAnthropicCompatibleParts(responseStream, {
+                ...streamOptions,
+                providerLabel: providerName,
+                providerToolNamesById,
+                onCompletion(value) {
+                  completion = value;
+                },
+              })
+            ) {
+              const record = readRecord(part);
+              if (record?.type === "finish") {
+                finishPart = record;
+                continue;
+              }
+              yieldedThisAttempt = true;
+              yield part;
+              // Resuming after a yield means the consumer received that part
+              // and pulled the next one: a new idle window just opened, so
+              // the header budget and the replay bound restart with it. This
+              // is the only place either resets.
+              streamHeadersBudgetStartedAt = Math.floor(performance.now());
+              streamReplayCount = 0;
             }
-            yield part;
+          } catch (error) {
+            if (
+              yieldedThisAttempt ||
+              streamReplayCount >= MAX_ANTHROPIC_STREAM_REPLAYS ||
+              !isReplayableAnthropicStreamFailure(error)
+            ) {
+              throw error;
+            }
+            if (
+              Math.floor(performance.now()) - streamHeadersBudgetStartedAt >=
+                DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS
+            ) {
+              throw error;
+            }
+            await waitForProviderStreamRetry(
+              ANTHROPIC_STREAM_REPLAY_DELAY_MS * 2 ** streamReplayCount,
+              providerAbortScope.controller.signal,
+            );
+            streamReplayCount++;
+            throwIfAnthropicRequestAborted(providerAbortScope.controller.signal);
+            if (remainingStreamHeadersBudgetMs() <= 0) {
+              throw error;
+            }
+            responseStream = await issueStream(
+              requestBody,
+              ANTHROPIC_STREAM_REPLAY_HEADERS_BUDGET_MS,
+            );
+            continue;
           }
 
           aggregateUsage = addAnthropicUsage(aggregateUsage, completion?.usage);
@@ -667,21 +799,22 @@ export function createAnthropicModelRuntime(
           continuationCount++;
           requestBody = createPauseTurnContinuationBody(requestBody, continuationContent);
           throwIfAnthropicRequestAborted(providerAbortScope.controller.signal);
-          responseStream = await requestStream({
-            url,
-            fetchImpl,
-            providerLabel: config.name ?? "anthropic",
-            providerKind: "anthropic",
-            init: createAnthropicRequestInit({
-              apiKey: config.apiKey,
-              authToken: config.authToken,
-              extraHeaders: options.headers,
-              enableFineGrainedToolStreaming: true,
-              enableMcpConnector,
-              body: JSON.stringify(requestBody),
-              signal: providerAbortScope.controller.signal,
-            }),
-          });
+          // The idle window open here began at the last yielded part, and the
+          // watchdog timing it does not restart for a continuation. Draw on
+          // what remains of that window instead of resetting it; when the
+          // paused response already spent the whole window after its last
+          // visible part, report the exhaustion rather than issuing a request
+          // with no time to succeed in.
+          if (remainingStreamHeadersBudgetMs() <= 0) {
+            throw new ProviderRequestError({
+              provider: "anthropic",
+              status: 0,
+              message: `${providerName} request failed: the stream header budget ` +
+                `was exhausted before the pause_turn continuation was issued`,
+              retryable: true,
+            });
+          }
+          responseStream = await issueStream(requestBody);
         }
       };
 
@@ -695,6 +828,11 @@ export function createAnthropicModelRuntime(
       };
     },
   };
+}
+
+function supportsAnthropicStructuredOutput(modelId: string): boolean {
+  return /^claude-(?:fable-5|mythos-5|mythos-preview|haiku-4-5|sonnet-(?:4-[56]|5)|opus-(?:4-[5-8]|5))(?:-|$)/i
+    .test(modelId);
 }
 
 export class AnthropicProvider implements LLMProvider {

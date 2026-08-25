@@ -17,6 +17,7 @@ import {
 } from "../runtime/index.ts";
 import type { Agent } from "../types.ts";
 import type { ChatUiMessage, MessageMetadata } from "#veryfront/chat/types.ts";
+import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const getAgUiDetachedRunIdSchema = defineSchema((v) =>
@@ -302,7 +303,11 @@ export async function executeAgUiDetachedStart(
   input: ExecuteAgUiDetachedStartInput,
 ): Promise<Response> {
   const rawRequest = assertDetachedStartRawRequest(options, input);
-  const context = await resolveDetachedStartContext(options, input);
+  const applicationRequest = rawRequest ? createApplicationRequest(rawRequest) : undefined;
+  const context = await resolveDetachedStartContext(options, {
+    ...input,
+    rawRequest: applicationRequest,
+  });
 
   try {
     const abortSignal = options.sessionManager.startRun({
@@ -321,8 +326,8 @@ export async function executeAgUiDetachedStart(
         if (options.startDetachedExecution) {
           await options.startDetachedExecution({
             request: input.request,
-            requestOrCtx: input.requestOrCtx,
-            rawRequest: rawRequest!,
+            requestOrCtx: applicationRequest,
+            rawRequest: applicationRequest!,
             context,
             abortSignal,
           });
@@ -410,9 +415,12 @@ export function createAgUiDetachedStartHandler(
 
   return async function POST(requestOrCtx: unknown): Promise<Response> {
     const request = extractRequest(requestOrCtx);
+    const applicationRequest = createApplicationRequest(request);
 
     try {
-      const parsed = getAgUiDetachedStartRequestSchema().parse(await parseAgUiJsonBody(request));
+      const parsed = getAgUiDetachedStartRequestSchema().parse(
+        await parseAgUiJsonBody(applicationRequest),
+      );
       return await executeAgUiDetachedStart(options, {
         request: parsed,
         rawRequest: request,

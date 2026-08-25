@@ -8,7 +8,7 @@ import {
 } from "#veryfront/html/client-route-head.ts";
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
 import { rendererLogger } from "#veryfront/utils";
-import { applyHeadDirectives, manageFocus } from "./dom-utils.ts";
+import { applyHeadDirectives, manageFocus, routeRequiresDocumentNavigation } from "./dom-utils.ts";
 import type { RouteData } from "./page-loader.ts";
 
 const logger = rendererLogger.component("veryfront");
@@ -36,11 +36,9 @@ export class PageTransition {
 
   updatePage(data: RouteData, isPopState: boolean, scrollY: number): void {
     this.cancelPendingTransition();
-    if (
-      data.requiresFullDocumentNavigation ||
-      data.managedHead?.some((entry) => entry.tagName === "script") ||
-      (typeof data.html === "string" && /<script\b/i.test(data.html))
-    ) {
+    // A backstop: the loader classifies scripted destinations so the router
+    // hands them to the document loader before reaching a soft transition.
+    if (routeRequiresDocumentNavigation(data)) {
       throw new TypeError("Scripted routes require a full document navigation");
     }
 

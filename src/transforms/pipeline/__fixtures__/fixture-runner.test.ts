@@ -9,12 +9,16 @@ import "#veryfront/schemas/_test-setup.ts";
  * - Relative imports
  */
 
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { readTextFile } from "#veryfront/testing/deno-compat.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import * as esbuild from "veryfront/extensions/bundler";
-import { runPipeline } from "../index.ts";
+import { runPipeline } from "#veryfront/transforms/pipeline/index.ts";
+import {
+  CSSTYPE_VERSION,
+  DEFAULT_REACT_VERSION,
+} from "#veryfront/transforms/import-rewriter/url-builder.ts";
 
 const FIXTURES_DIR = new URL(".", import.meta.url).pathname;
 
@@ -28,7 +32,7 @@ const TEST_OPTIONS = {
   moduleServerUrl: "http://localhost:3001/_vf_modules",
 };
 
-describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps: false }, () => {
+describe("transform pipeline fixtures", () => {
   afterAll(async () => {
     await esbuild.stop();
   });
@@ -43,7 +47,14 @@ describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps:
       });
 
       assertStringIncludes(result.code, "jsx");
-      assertStringIncludes(result.code, "esm.sh/react");
+      // Pin the fixture's own React import, version included: the auto-injected
+      // jsx-runtime import alone would satisfy a bare "esm.sh/react" match, and
+      // a browser React version that drifts from SSR breaks hydration.
+      assertStringIncludes(
+        result.code,
+        `import { useState } from "https://esm.sh/react@${DEFAULT_REACT_VERSION}?target=es2022&deps=csstype@${CSSTYPE_VERSION}"`,
+        "the browser artifact must import React from the default pinned esm.sh URL",
+      );
       assertEquals(result.code.includes('from "react"'), false);
     });
 
@@ -105,6 +116,21 @@ describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps:
       });
 
       assertEquals(result.code.includes('from "@/'), false);
+      assertStringIncludes(
+        result.code,
+        'from "http://localhost:3001/_vf_modules/lib/utils.js"',
+        "@/ alias must resolve to the module server URL",
+      );
+      assertStringIncludes(
+        result.code,
+        'from "http://localhost:3001/_vf_modules/pages/components/Button"',
+        "a sibling relative import must resolve to the module server URL",
+      );
+      assertStringIncludes(
+        result.code,
+        'from "http://localhost:3001/_vf_modules/hooks/useAuth"',
+        "a parent relative import must resolve to the module server URL",
+      );
     });
   });
 
@@ -124,6 +150,43 @@ describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps:
       assertEquals(result.contentHash.length > 0, true);
 
       assertEquals(result.totalMs >= 0, true);
+    });
+
+    it("derives the content hash from the source, not the path", async () => {
+      const input = await readFixture("react-only", "input.tsx");
+      const filePath = "/project/components/Counter.tsx";
+      const options = { ...TEST_OPTIONS, ssr: false };
+
+      const first = await runPipeline(input, filePath, "/project", options);
+      const second = await runPipeline(
+        `${input}\nexport const marker = 1;\n`,
+        filePath,
+        "/project",
+        options,
+      );
+      const third = await runPipeline(input, filePath, "/project", options);
+      const fourth = await runPipeline(
+        input,
+        "/project/components/RenamedCounter.tsx",
+        "/project",
+        options,
+      );
+
+      assertNotEquals(
+        second.contentHash,
+        first.contentHash,
+        "content hash must change when the source changes",
+      );
+      assertEquals(
+        third.contentHash,
+        first.contentHash,
+        "content hash must be stable for identical source",
+      );
+      assertEquals(
+        fourth.contentHash,
+        first.contentHash,
+        "content hash must not include the in-project file path",
+      );
     });
   });
 });

@@ -6,7 +6,12 @@ export interface JSXRuntime {
 }
 
 export async function loadJSXRuntime(): Promise<JSXRuntime> {
-  const runtime = (await import("react/jsx-dev-runtime")) as unknown as Record<string, unknown>;
+  const runtime: {
+    Fragment?: unknown;
+    jsx?: unknown;
+    jsxs?: unknown;
+    jsxDEV?: unknown;
+  } = await import("react/jsx-dev-runtime");
 
   return {
     Fragment: runtime.Fragment,

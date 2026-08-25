@@ -1,18 +1,29 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
-import { isConfigOptionalControlPlaneRunRequest } from "#veryfront/channels/control-plane.ts";
+import {
+  isConfigOptionalControlPlaneRunRequest,
+  isSignedChannelDispatch,
+  isSignedControlPlaneDispatch,
+} from "#veryfront/channels/control-plane.ts";
 import { MiddlewareContext } from "#veryfront/middleware/core/context.ts";
 import { MiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts";
 import { getProjectEnvSnapshot } from "#veryfront/server/project-env";
 import {
   loadMiddlewareFile,
   type MiddlewareFunction,
+  ProjectMiddlewareHostExecutionDeniedError,
 } from "#veryfront/server/dev-server/middleware.ts";
+import {
+  createErrorResponseFromDefinition,
+  PROJECT_EXECUTION_UNAVAILABLE,
+} from "#veryfront/errors";
 import type { HandlerContext } from "#veryfront/types";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { serverLogger } from "#veryfront/utils";
 import { isWebSocketPath } from "#veryfront/server/runtime-handler/request-utils.ts";
+import { isHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
+import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
 
 const DEFAULT_MAX_ENTRIES = 100;
 const logger = serverLogger.component("project-middleware");
@@ -20,6 +31,7 @@ const logger = serverLogger.component("project-middleware");
 type MiddlewareLoader = (
   projectDir: string,
   adapter: RuntimeAdapter,
+  allowHostProjectCodeExecution: boolean,
 ) => Promise<MiddlewareFunction[]>;
 
 interface ProjectMiddlewareRuntimeOptions {
@@ -57,7 +69,11 @@ export class ProjectMiddlewareRuntime {
       maxEntries: options.maxEntries ?? DEFAULT_MAX_ENTRIES,
     });
     this.#loadMiddleware = options.loadMiddleware ??
-      ((projectDir, adapter) => loadMiddlewareFile(projectDir, adapter, { throwOnError: true }));
+      ((projectDir, adapter, allowHostProjectCodeExecution) =>
+        loadMiddlewareFile(projectDir, adapter, {
+          throwOnError: true,
+          allowHostProjectCodeExecution,
+        }));
 
     if (options.registryName) {
       registerLRUCache(options.registryName, this.#cache);
@@ -92,6 +108,57 @@ export class ProjectMiddlewareRuntime {
       return next();
     }
 
+    // A control-plane dispatch is not the project's traffic. It addresses a
+    // platform handler in the reserved control-plane namespace, carries a
+    // signed operation envelope rather than a user session, and asks the
+    // runtime to perform internal work such as building the release asset
+    // manifest for the project's own deploy.
+    //
+    // Project middleware cannot authorize such a request even in principle:
+    // `createApplicationRequest` withholds every `x-veryfront-*` header from
+    // project code, so the signature the receiving handler authenticates with
+    // is invisible to middleware. A root `middleware.ts` that gates requests
+    // therefore has no choice but to reject its own deploy, which surfaces
+    // only as `deploy` timing out with `last state: missing`.
+    //
+    // The bypass is keyed on a registered surface, not on a path shape:
+    // `isSignedControlPlaneDispatch` requires both a method/path pair a
+    // control-plane handler owns and the signature header that handler
+    // verifies. The predicate cannot tell a genuine dispatch from a set header
+    // and does not try to; it concedes nothing to an unauthenticated caller
+    // because the only routes it can reach are owned by handlers registered
+    // ahead of `ApiHandlerWrapper`, which answer 401 without a valid envelope
+    // and never fall through to project code. Every other request, including
+    // an unsigned one to the same path and a project route that merely sits
+    // inside the reserved namespace, still traverses project middleware.
+    if (isSignedControlPlaneDispatch(request)) {
+      return next();
+    }
+
+    // A platform channel dispatch is not the project's traffic either. It
+    // addresses `ChannelInvokeHandler`, carries a signed dispatch envelope
+    // rather than a user session, and asks the runtime to run one of the
+    // project's own agents on a message that arrived from Slack, Discord or a
+    // sibling runtime instance that owns the run.
+    //
+    // The same impossibility applies: `createApplicationRequest` withholds
+    // every `x-veryfront-*` header from project code, so the dispatch signature
+    // is invisible to middleware, and a root `middleware.ts` that gates
+    // requests has no choice but to reject the project's own channels. The
+    // symptom is that the channel simply goes quiet.
+    //
+    // Two predicates, not one: a channel dispatch is verified by
+    // `verifyDispatchJws` against the dispatch id, platform, project id and
+    // body hash, not by `verifyControlPlaneJws` against a method and path. What
+    // is shared is the set of gates each dispatch kind is exempt from. See
+    // `security/http/dispatch-exemption-matrix.test.ts`. The bypass concedes
+    // nothing: `POST /channels/invoke` without a valid envelope answers 401 at
+    // the handler and never falls through to project code, and an unsigned
+    // request to the same path still traverses project middleware.
+    if (isSignedChannelDispatch(request)) {
+      return next();
+    }
+
     if (
       isConfigOptionalControlPlaneRunRequest(
         request.method,
@@ -103,8 +170,37 @@ export class ProjectMiddlewareRuntime {
 
     const environment = resolvedEnvironment(ctx);
     const branch = resolvedBranch(ctx);
+    const allowHostProjectCodeExecution = isHostProjectCodeExecutionAllowed(ctx);
     const executeMiddleware = async (): Promise<Response | undefined> => {
-      const middleware = await this.#getMiddleware(ctx, environment, branch);
+      let middleware: readonly MiddlewareFunction[];
+      try {
+        middleware = await this.#getMiddleware(
+          ctx,
+          environment,
+          branch,
+          isSharedProxy,
+          allowHostProjectCodeExecution,
+        );
+      } catch (error) {
+        if (!(error instanceof ProjectMiddlewareHostExecutionDeniedError)) throw error;
+
+        const unavailable = createErrorResponseFromDefinition(
+          PROJECT_EXECUTION_UNAVAILABLE,
+          {
+            detail:
+              "Shared runtimes require a dedicated isolated project runtime for project middleware",
+            instance: pathname,
+          },
+        );
+        unavailable.headers.set("cache-control", "no-store");
+        if (request.method !== "HEAD") return unavailable;
+
+        return new Response(null, {
+          status: unavailable.status,
+          statusText: unavailable.statusText,
+          headers: unavailable.headers,
+        });
+      }
       if (middleware.length === 0) return next();
 
       const pipeline = new MiddlewarePipeline();
@@ -112,7 +208,7 @@ export class ProjectMiddlewareRuntime {
 
       const composed = pipeline.compose();
       const middlewareContext = new MiddlewareContext(
-        request,
+        createApplicationRequest(request),
         getProjectEnvSnapshot() ?? {},
       );
       return await composed(middlewareContext, next);
@@ -144,13 +240,21 @@ export class ProjectMiddlewareRuntime {
     ctx: HandlerContext,
     environment: "production" | "preview",
     branch: string | null,
+    isSharedProxy: boolean,
+    allowHostProjectCodeExecution: boolean,
   ): Promise<readonly MiddlewareFunction[]> {
-    const key = this.#buildCacheKey(ctx, environment, branch);
-    if (!key) return this.#load(ctx);
+    const key = this.#buildCacheKey(
+      ctx,
+      environment,
+      branch,
+      isSharedProxy,
+      allowHostProjectCodeExecution,
+    );
+    if (!key) return this.#load(ctx, allowHostProjectCodeExecution);
 
     let pending = this.#cache.get(key);
     if (!pending) {
-      pending = Promise.resolve().then(() => this.#load(ctx));
+      pending = Promise.resolve().then(() => this.#load(ctx, allowHostProjectCodeExecution));
       this.#cache.set(key, pending);
     }
 
@@ -165,35 +269,54 @@ export class ProjectMiddlewareRuntime {
   #buildCacheKey(
     ctx: HandlerContext,
     environment: "production" | "preview",
-    branch: string | null,
+    _branch: string | null,
+    isSharedProxy: boolean,
+    allowHostProjectCodeExecution: boolean,
   ): string | null {
+    // A branch name identifies a mutable pointer, not a source generation. Do
+    // not retain preview middleware across requests until the adapter exposes a
+    // verified content digest. Production release IDs are immutable snapshots.
+    if (environment !== "production" || !ctx.releaseId) return null;
+
+    // Shared caches require the canonical ID resolved at an authenticated
+    // boundary. A tenant-selected slug alone must never be cache authority.
+    if (isSharedProxy && (!ctx.projectId || !ctx.projectSlug)) return null;
+
     const projectIdentity = ctx.projectId ?? ctx.projectSlug;
     if (!projectIdentity) return null;
-
-    const sourceIdentity = environment === "production" ? ctx.releaseId : branch ?? "default";
-    if (!sourceIdentity) return null;
 
     const environmentIdentity = ctx.environmentId ?? ctx.environmentName ?? "default";
     return [
       cacheSegment(projectIdentity),
+      cacheSegment(ctx.projectSlug ?? ""),
+      allowHostProjectCodeExecution ? "host" : "isolated",
       environment,
-      cacheSegment(sourceIdentity),
+      cacheSegment(ctx.releaseId),
       cacheSegment(environmentIdentity),
     ].join(":");
   }
 
-  async #load(ctx: HandlerContext): Promise<readonly MiddlewareFunction[]> {
+  async #load(
+    ctx: HandlerContext,
+    allowHostProjectCodeExecution: boolean,
+  ): Promise<readonly MiddlewareFunction[]> {
     try {
-      const fileMiddleware = await this.#loadMiddleware(ctx.projectDir, ctx.adapter);
+      const fileMiddleware = await this.#loadMiddleware(
+        ctx.projectDir,
+        ctx.adapter,
+        allowHostProjectCodeExecution,
+      );
       return [...fileMiddleware, ...(ctx.config?.middleware?.custom ?? [])];
     } catch (error) {
-      logger.error("Failed to load project middleware", {
-        projectSlug: ctx.projectSlug,
-        projectId: ctx.projectId,
-        releaseId: ctx.releaseId,
-        branch: resolvedBranch(ctx),
-        error: error instanceof Error ? error.message : String(error),
-      });
+      if (!(error instanceof ProjectMiddlewareHostExecutionDeniedError)) {
+        logger.error("Failed to load project middleware", {
+          projectSlug: ctx.projectSlug,
+          projectId: ctx.projectId,
+          releaseId: ctx.releaseId,
+          branch: resolvedBranch(ctx),
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
       throw error;
     }
   }

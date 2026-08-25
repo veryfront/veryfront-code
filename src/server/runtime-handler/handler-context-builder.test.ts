@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildHandlerContext,
@@ -7,18 +7,25 @@ import {
   type HandlerContextOptions,
 } from "./handler-context-builder.ts";
 
+const prepareHostedConfigContext: NonNullable<HandlerContextOptions["prepareHostedConfigContext"]> =
+  () => Promise.resolve({} as any);
+
 function makeOpts(overrides: Partial<HandlerContextOptions> = {}): HandlerContextOptions {
   return {
     projectDir: "/tmp/project",
     adapter: {} as any,
     securityConfig: { allowedOrigins: ["*"] } as any,
-    cspUserHeader: "default-src 'self'",
+    requestOrigin: "https://my-project.example.com",
     debug: true,
     config: { name: "test" } as any,
     parsedDomain: { slug: "my-project", branch: null, environment: "production" } as any,
     projectSlug: "my-project",
     projectId: "proj-123",
     releaseId: "rel-456",
+    branchId: "branch-1",
+    branchName: "feature-x",
+    defaultBranchName: "main",
+    prepareHostedConfigContext,
     proxyToken: "secret-token",
     environmentName: "production",
     resolvedEnvironment: "production",
@@ -30,6 +37,7 @@ function makeOpts(overrides: Partial<HandlerContextOptions> = {}): HandlerContex
     },
     routeRegistry: {} as any,
     isLocalProject: false,
+    isProxyMode: true,
     moduleServerUrl: "https://modules.example.com",
     environmentId: "env-789",
     ...overrides,
@@ -45,18 +53,39 @@ describe("buildHandlerContext", () => {
     assertEquals(ctx.adapter, opts.adapter);
     assertEquals(ctx.moduleServerUrl, "https://modules.example.com");
     assertEquals(ctx.securityConfig, opts.securityConfig);
-    assertEquals(ctx.cspUserHeader, "default-src 'self'");
+    assertEquals(ctx.requestOrigin, "https://my-project.example.com");
     assertEquals(ctx.debug, true);
     assertEquals(ctx.config, opts.config);
     assertEquals(ctx.parsedDomain, opts.parsedDomain);
     assertEquals(ctx.projectSlug, "my-project");
     assertEquals(ctx.projectId, "proj-123");
     assertEquals(ctx.releaseId, "rel-456");
+    assertEquals(
+      ctx.branchId,
+      "branch-1",
+      "the hosted agent-source check needs the canonical branch id",
+    );
+    assertEquals(
+      ctx.branchName,
+      "feature-x",
+      "the hosted agent-source check needs the canonical branch name",
+    );
+    assertEquals(
+      ctx.defaultBranchName,
+      "main",
+      "the hosted agent-source check needs the project default branch name",
+    );
+    assertStrictEquals(
+      ctx.prepareHostedConfigContext,
+      opts.prepareHostedConfigContext,
+      "the hosted config preparer must pass through by identity",
+    );
     assertEquals(ctx.proxyToken, "secret-token");
     assertEquals(ctx.environmentName, "production");
     assertEquals(ctx.resolvedEnvironment, "production");
     assertEquals(ctx.routeRegistry, opts.routeRegistry);
     assertEquals(ctx.isLocalProject, false);
+    assertEquals(ctx.isProxyMode, true);
     assertEquals(ctx.environmentId, "env-789");
     assertEquals(ctx.enriched !== undefined, true);
   });
@@ -66,6 +95,16 @@ describe("buildHandlerContext", () => {
     const ctx = buildHandlerContext(opts);
 
     assertEquals(ctx.proxyToken, undefined);
+  });
+
+  it("preserves the narrow host project-code execution capability", () => {
+    const ctx = buildHandlerContext(
+      makeOpts({ allowHostProjectCodeExecution: true }),
+    );
+
+    assertEquals(ctx.allowHostProjectCodeExecution, true);
+    assertEquals(ctx.isLocalProject, false);
+    assertEquals(ctx.enriched?.allowHostProjectCodeExecution, true);
   });
 
   it("builds enriched context when both config and projectSlug present", () => {
@@ -143,7 +182,7 @@ describe("buildHandlerContext", () => {
 });
 
 describe("buildMinimalContext", () => {
-  it("returns only projectDir, adapter, securityConfig, cspUserHeader, debug, config", () => {
+  it("returns only projectDir, adapter, securityConfig, debug, config", () => {
     const adapter = {} as any;
     const securityConfig = { foo: "bar" } as any;
     const config = { name: "minimal" } as any;
@@ -152,7 +191,6 @@ describe("buildMinimalContext", () => {
       "/tmp/minimal",
       adapter,
       securityConfig,
-      "csp-header",
       false,
       config,
     );
@@ -160,7 +198,6 @@ describe("buildMinimalContext", () => {
     assertEquals(ctx.projectDir, "/tmp/minimal");
     assertEquals(ctx.adapter, adapter);
     assertEquals(ctx.securityConfig, securityConfig);
-    assertEquals(ctx.cspUserHeader, "csp-header");
     assertEquals(ctx.debug, false);
     assertEquals(ctx.config, config);
 

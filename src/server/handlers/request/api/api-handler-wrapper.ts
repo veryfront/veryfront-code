@@ -5,15 +5,17 @@ import type {
   HandlerPriority,
   HandlerResult,
 } from "../../types.ts";
-import {
-  ensurePreviewSourceSnapshotFresh,
-  getApiHandler,
-  withApiHandler,
-} from "./pages-api-handler.ts";
+import { getApiHandler, withApiHandler } from "./pages-api-handler.ts";
+import { ensurePreviewSourceSnapshotFresh } from "../source-snapshot-freshness.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ensureProjectDiscovery } from "./project-discovery.ts";
 import { PageResolver } from "#veryfront/rendering/page-resolution/page-resolver.ts";
+import {
+  createErrorResponseFromDefinition,
+  PROJECT_EXECUTION_UNAVAILABLE,
+} from "#veryfront/errors";
+import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 
 type FsWrapper = {
   isMultiProjectMode?: () => boolean;
@@ -80,8 +82,10 @@ export class ApiHandlerWrapper extends BaseHandler {
       typeof fsWrapper.isMultiProjectMode === "function" &&
       fsWrapper.isMultiProjectMode();
 
+    const mustDenyProjectExecution = requiresIsolatedProjectRuntime(ctx);
+
     if (!isMultiProject) {
-      return this.handleWithContext(req, ctx, pathname);
+      return this.handleWithContext(req, ctx, pathname, mustDenyProjectExecution);
     }
 
     const isProduction = ctx.requestContext?.mode === "production";
@@ -100,7 +104,9 @@ export class ApiHandlerWrapper extends BaseHandler {
     return fsWrapper.runWithContext!(
       ctx.projectSlug!,
       ctx.proxyToken ?? "",
-      () => this.handleWithContext(req, ctx, pathname),
+      // Multi-project mode implies a shared runtime, but not that execution is
+      // denied: a host-owned entrypoint can still have granted the capability.
+      () => this.handleWithContext(req, ctx, pathname, mustDenyProjectExecution),
       ctx.projectId,
       {
         productionMode: isProduction,
@@ -116,11 +122,19 @@ export class ApiHandlerWrapper extends BaseHandler {
     req: Request,
     ctx: HandlerContext,
     pathname: string,
+    mustDenyProjectExecution: boolean,
   ): Promise<HandlerResult> {
     return withSpan(
       "api.handleWithContext",
       async () => {
         try {
+          if (
+            mustDenyProjectExecution &&
+            (pathname === "/api" || pathname.startsWith("/api/"))
+          ) {
+            return this.sharedRuntimeExecutionUnavailable(req, ctx, pathname);
+          }
+
           // WebSocket pokes update mutable previews immediately. This bounded,
           // coalesced check is the fallback for missed pokes and establishes
           // one source snapshot for route and primitive discovery.
@@ -132,11 +146,15 @@ export class ApiHandlerWrapper extends BaseHandler {
 
           let isPageRequest = false;
           if (canResolveAsPage) {
-            isPageRequest = await this.isPageRequest(pathname, ctx);
+            isPageRequest = await this.isPageRequest(pathname, ctx, req.signal);
           }
 
           if (isPageRequest) {
             return this.continue();
+          }
+
+          if (mustDenyProjectExecution) {
+            return this.sharedRuntimeExecutionUnavailable(req, ctx, pathname);
           }
 
           // Lazy per-project primitive discovery (agents, tools) on first access.
@@ -173,6 +191,7 @@ export class ApiHandlerWrapper extends BaseHandler {
 
           return this.respond(finalRes);
         } catch (error) {
+          if (req.signal.aborted) throw error;
           this.logDebug(
             "[API-Wrapper] API handler error - falling through to next handler",
             {
@@ -194,7 +213,33 @@ export class ApiHandlerWrapper extends BaseHandler {
     );
   }
 
-  private async isPageRequest(pathname: string, ctx: HandlerContext): Promise<boolean> {
+  private sharedRuntimeExecutionUnavailable(
+    req: Request,
+    ctx: HandlerContext,
+    pathname: string,
+  ): HandlerResult {
+    const problem = createErrorResponseFromDefinition(
+      PROJECT_EXECUTION_UNAVAILABLE,
+      {
+        detail:
+          "Shared runtimes do not execute tenant API modules in the host process or same-process Workers",
+        instance: pathname,
+      },
+    );
+    const response = this.createResponseBuilder(ctx)
+      .withCORS(req, ctx.securityConfig?.cors)
+      .withSecurity(ctx.securityConfig ?? undefined, req)
+      .withCache("no-store")
+      .withHeaders(problem.headers)
+      .build(problem.body, problem.status);
+    return this.respond(response, { executionTopology: "dedicated-runtime-required" });
+  }
+
+  private async isPageRequest(
+    pathname: string,
+    ctx: HandlerContext,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
     const slug = pathname === "/" ? "" : pathname.replace(/^\/+|\/+$/g, "");
     const pageResolver = new PageResolver({
       projectDir: ctx.projectDir,
@@ -204,8 +249,9 @@ export class ApiHandlerWrapper extends BaseHandler {
     });
 
     try {
-      return await pageResolver.pageExists(slug);
+      return await pageResolver.pageExists(slug, { signal });
     } catch (error) {
+      if (signal?.aborted) throw error;
       this.logDebug(
         "[API-Wrapper] Page ownership is indeterminate; preserving API discovery",
         {

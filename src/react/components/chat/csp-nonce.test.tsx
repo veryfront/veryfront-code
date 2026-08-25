@@ -2,12 +2,18 @@ import * as React from "react";
 import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
+import { type ComponentDomOptions, installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import { Head } from "../Head.tsx";
 import { ChatStyleProvider } from "./chat-style-provider.tsx";
 import { ChatRoot } from "./chat/composition/chat-root.tsx";
 import { ColorModeScript } from "../ui/color-mode.tsx";
+import { getDocumentNonce } from "../ui/csp-nonce.ts";
+import { DesignTokenStyle } from "../ui/tokens.tsx";
+import { runWithHeadCollector } from "../../head-collector.ts";
+import { setupSSRGlobals } from "#veryfront/rendering/ssr-globals.ts";
 
 const TEST_NONCE = "nonce-123";
 
@@ -21,46 +27,14 @@ function injectNonceIntoInlineTags(html: string, nonce: string): string {
     .replaceAll("<script", `<script nonce="${nonce}"`);
 }
 
-function installDomGlobals(dom: JSDOM): () => void {
-  const window = dom.window;
-  const previous = {
-    window: globalThis.window,
-    document: globalThis.document,
-    navigator: globalThis.navigator,
-    self: globalThis.self,
-    Node: globalThis.Node,
-    Element: globalThis.Element,
-    HTMLElement: globalThis.HTMLElement,
-    HTMLStyleElement: globalThis.HTMLStyleElement,
-    HTMLTextAreaElement: globalThis.HTMLTextAreaElement,
-    MutationObserver: globalThis.MutationObserver,
-    requestAnimationFrame: globalThis.requestAnimationFrame,
-    cancelAnimationFrame: globalThis.cancelAnimationFrame,
-    getComputedStyle: globalThis.getComputedStyle,
-  };
-
-  Object.assign(globalThis, {
-    window,
-    document: window.document,
-    navigator: window.navigator,
-    self: window,
-    Node: window.Node,
-    Element: window.Element,
-    HTMLElement: window.HTMLElement,
-    HTMLStyleElement: window.HTMLStyleElement,
-    HTMLTextAreaElement: window.HTMLTextAreaElement,
-    MutationObserver: window.MutationObserver,
-    requestAnimationFrame: (callback: FrameRequestCallback) =>
-      setTimeout(() => callback(Date.now()), 0) as unknown as number,
-    cancelAnimationFrame: (handle: number) => clearTimeout(handle),
-    getComputedStyle: window.getComputedStyle.bind(window),
-  });
-
-  return () => {
-    Object.assign(globalThis, previous);
-    dom.window.close();
-  };
-}
+const DOM_OPTIONS: ComponentDomOptions = {
+  windowGlobals: [
+    "self",
+    "HTMLStyleElement",
+    "HTMLTextAreaElement",
+    "MutationObserver",
+  ],
+};
 
 async function waitFor(
   condition: () => boolean,
@@ -86,7 +60,7 @@ async function hydrateAndReadStyleNonce(element: React.ReactElement): Promise<st
   const dom = new JSDOM(`<!doctype html><div id="root">${serverMarkup}</div>`, {
     url: "https://example.com/",
   });
-  const restore = installDomGlobals(dom);
+  const restore = installComponentDom(dom, DOM_OPTIONS);
 
   try {
     const root = document.getElementById("root");
@@ -99,7 +73,7 @@ async function hydrateAndReadStyleNonce(element: React.ReactElement): Promise<st
     assert(style, "Expected hydrated tree to contain an inline style tag");
 
     const nonce = style.getAttribute("nonce");
-    hydratedRoot.unmount();
+    await unmountReactRoot(hydratedRoot);
     await flushHydrationTimers();
     return nonce;
   } finally {
@@ -112,7 +86,7 @@ async function hydrateAndReadScriptNonce(element: React.ReactElement): Promise<s
   const dom = new JSDOM(`<!doctype html><div id="root">${serverMarkup}</div>`, {
     url: "https://example.com/",
   });
-  const restore = installDomGlobals(dom);
+  const restore = installComponentDom(dom, DOM_OPTIONS);
 
   try {
     const root = document.getElementById("root");
@@ -125,7 +99,7 @@ async function hydrateAndReadScriptNonce(element: React.ReactElement): Promise<s
     assert(script, "Expected hydrated tree to contain an inline script tag");
 
     const nonce = script.getAttribute("nonce");
-    hydratedRoot.unmount();
+    await unmountReactRoot(hydratedRoot);
     await flushHydrationTimers();
     return nonce;
   } finally {
@@ -143,7 +117,7 @@ async function hydrateAndReadManagedHeadStyleNonce(
       url: "https://example.com/",
     },
   );
-  const restore = installDomGlobals(dom);
+  const restore = installComponentDom(dom, DOM_OPTIONS);
 
   try {
     const root = document.getElementById("root");
@@ -156,7 +130,7 @@ async function hydrateAndReadManagedHeadStyleNonce(
     assert(style, "Expected Head to append a managed inline style tag");
 
     const nonce = style.getAttribute("nonce");
-    hydratedRoot.unmount();
+    await unmountReactRoot(hydratedRoot);
     await flushHydrationTimers();
     return nonce;
   } finally {
@@ -237,6 +211,66 @@ function HydratingColorModeScriptFixture(): React.ReactElement {
 }
 
 describe("getDocumentNonce hydration behavior", () => {
+  it("prefers the server render nonce when SSR globals install a document stub", async () => {
+    setupSSRGlobals();
+    const { result: html } = await runWithHeadCollector(
+      () => renderToString(<DesignTokenStyle />),
+      { nonce: TEST_NONCE },
+    );
+
+    assert(html.startsWith(`<style nonce="${TEST_NONCE}">`));
+  });
+
+  it("applies the isolated render nonce to framework-owned server styles", async () => {
+    const { result: html } = await runWithHeadCollector(
+      () => renderToString(<DesignTokenStyle />),
+      { nonce: TEST_NONCE },
+    );
+
+    assert(html.startsWith(`<style nonce="${TEST_NONCE}">`));
+  });
+
+  it("applies the isolated render nonce to ColorModeScript during SSR", async () => {
+    const { result: html } = await runWithHeadCollector(
+      () => renderToString(<ColorModeScript />),
+      { nonce: TEST_NONCE },
+    );
+
+    assert(html.startsWith(`<script nonce="${TEST_NONCE}">`));
+  });
+
+  it("recovers the document nonce from an existing nonced element in the browser", () => {
+    const nonced = new JSDOM(
+      `<!doctype html><html><head><style nonce="${TEST_NONCE}">.seed{color:black}</style></head><body></body></html>`,
+      { url: "https://example.com/" },
+    );
+    const restoreNonced = installComponentDom(nonced, DOM_OPTIONS);
+    try {
+      assertEquals(
+        getDocumentNonce(),
+        TEST_NONCE,
+        "the client recovers the CSP nonce from a framework-generated element",
+      );
+    } finally {
+      restoreNonced();
+    }
+
+    const bare = new JSDOM(
+      `<!doctype html><html><head><style>.seed{color:black}</style></head><body></body></html>`,
+      { url: "https://example.com/" },
+    );
+    const restoreBare = installComponentDom(bare, DOM_OPTIONS);
+    try {
+      assertEquals(
+        getDocumentNonce(),
+        undefined,
+        "no nonce is invented when the document carries none",
+      );
+    } finally {
+      restoreBare();
+    }
+  });
+
   it("preserves nonces on ChatStyleProvider style tags after hydration re-renders", async () => {
     const nonce = await hydrateAndReadStyleNonce(<HydratingChatStyleProviderFixture />);
     assertEquals(nonce, TEST_NONCE);

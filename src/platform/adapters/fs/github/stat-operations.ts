@@ -10,6 +10,7 @@ import type { FileCache } from "../cache/file-cache.ts";
 import type { GitHubApiClient } from "./github-api-client.ts";
 import type { FileIndexEntry, FileInfo, GitHubTreeEntry, ResolvedGitHubConfig } from "./types.ts";
 import { normalizeGitHubPath } from "./path-utils.ts";
+import { buildGitHubCacheRef } from "./cache-scope.ts";
 
 const LOG_PREFIX = "[GitHubStatOperations]";
 const RESOLVE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"];
@@ -92,7 +93,7 @@ export class GitHubStatOperations {
         this.fileIndex.set(entry.path, {
           path: entry.path,
           sha: entry.sha,
-          size: entry.size ?? 0,
+          ...(entry.size === undefined ? {} : { size: entry.size }),
           type: "blob",
         });
         this.addDirectoryHierarchy(entry.path);
@@ -128,7 +129,10 @@ export class GitHubStatOperations {
       indexSize: this.fileIndex.size,
     });
 
-    const cacheKey = buildGitHubStatCacheKey(this.config.ref, normalizedPath);
+    const cacheKey = buildGitHubStatCacheKey(
+      buildGitHubCacheRef(this.config),
+      normalizedPath,
+    );
     const cached = this.cache.get<FileInfo>(cacheKey);
     if (cached) return cached;
 
@@ -138,7 +142,7 @@ export class GitHubStatOperations {
         isFile: true,
         isDirectory: false,
         isSymlink: false,
-        size: fileEntry.size,
+        size: fileEntry.size ?? 0,
         mtime: null,
       };
       this.cache.set(cacheKey, info);
@@ -182,7 +186,13 @@ export class GitHubStatOperations {
     await this.ensureIndex();
 
     const normalizedPath = normalizeGitHubPath(basePath, this.projectDir);
-    const cacheKey = buildGitHubResolveCacheKey(this.config.ref, normalizedPath);
+    // The pages-prefix fallback changes the answer for the same path, so the
+    // opt-out needs its own cache scope; otherwise one variant serves the other.
+    const cacheRef = buildGitHubCacheRef(this.config);
+    const cacheKey = buildGitHubResolveCacheKey(
+      options?.allowPagesPrefix === false ? `${cacheRef}:no-pages-prefix` : cacheRef,
+      normalizedPath,
+    );
     const cached = this.cache.get<string | null>(cacheKey);
     if (cached !== undefined) return cached;
 

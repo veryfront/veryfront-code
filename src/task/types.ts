@@ -6,6 +6,9 @@
  * locally via `veryfront task <name>` or in the cloud as runs and schedules.
  */
 
+import type { ScheduleIntegrationRequirementConfig } from "#veryfront/schedule/types.ts";
+import { captureTaskDefinition } from "./definition-snapshot.ts";
+
 /**
  * Context passed to task run() function
  */
@@ -34,24 +37,12 @@ export interface TaskDefinition {
   inputSchema?: Record<string, unknown>;
   /** Optional JSON-schema-like output contract surfaced in APIs/UIs */
   outputSchema?: Record<string, unknown>;
+  /** Explicit integration scopes and resources required by scheduled runs. */
+  integrationRequirements?: ScheduleIntegrationRequirementConfig[];
   /** Whether this task can be scheduled */
   schedulable?: boolean;
   /** The function to execute */
   run: (ctx: TaskContext) => Promise<unknown> | unknown;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isOptionalString(value: unknown): value is string | undefined {
-  return value === undefined || typeof value === "string";
-}
-
-function isOptionalRecord(
-  value: unknown,
-): value is Record<string, unknown> | undefined {
-  return value === undefined || isRecord(value);
 }
 
 /**
@@ -59,11 +50,10 @@ function isOptionalRecord(
  * match the public `TaskDefinition` contract.
  */
 export function isTaskDefinition(value: unknown): value is TaskDefinition {
-  if (!isRecord(value)) return false;
-  return typeof value.run === "function" &&
-    isOptionalString(value.name) &&
-    isOptionalString(value.description) &&
-    isOptionalRecord(value.inputSchema) &&
-    isOptionalRecord(value.outputSchema) &&
-    (value.schedulable === undefined || typeof value.schedulable === "boolean");
+  try {
+    captureTaskDefinition(value);
+    return true;
+  } catch {
+    return false;
+  }
 }

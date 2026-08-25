@@ -54,6 +54,7 @@ import { readGoogleGroundingMetadata } from "./google-grounding-metadata.ts";
 import {
   createGoogleProviderMetadata,
   readGoogleThoughtSignature,
+  reconcileGoogleProviderMetadata,
 } from "./google-thought-signatures.ts";
 import {
   extractGoogleCandidateParts,
@@ -563,6 +564,18 @@ export function createGoogleModelRuntime(
     modelId,
     specificationVersion: "v3",
     supportedUrls: {},
+    runtimeCapabilities: { structuredOutput: true },
+    _reconcileProviderMetadata(
+      input: {
+        providerMetadata: Record<string, unknown>;
+        suppressedToolCalls: readonly { id: string; name: string }[];
+      },
+    ) {
+      return reconcileGoogleProviderMetadata(
+        input.providerMetadata,
+        input.suppressedToolCalls,
+      );
+    },
     doGenerate(options: OpenAICompatibleLanguageOptions) {
       const url = getGoogleGenerateContentUrl(config.baseURL, modelId);
       const warnings = createWarningCollector();
@@ -576,6 +589,7 @@ export function createGoogleModelRuntime(
         fetchImpl,
         providerLabel,
         providerKind: "google",
+        modelId,
         init: createGoogleRequestInit({
           apiKey: config.apiKey,
           extraHeaders: options.headers,
@@ -606,6 +620,7 @@ export function createGoogleModelRuntime(
           fetchImpl,
           providerLabel,
           providerKind: "google",
+          modelId,
           init: createGoogleRequestInit({
             apiKey: config.apiKey,
             extraHeaders: options.headers,
@@ -661,6 +676,7 @@ export function createGoogleEmbeddingRuntime(
             fetchImpl,
             providerLabel,
             providerKind: "google",
+            modelId,
             init: createGoogleRequestInit({
               apiKey: config.apiKey,
               body: JSON.stringify({

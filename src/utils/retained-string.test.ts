@@ -18,6 +18,13 @@ describe("retained string cache utilities", () => {
       estimateRetainedStringBytes("a".repeat(100)) >= 200,
       true,
     );
+
+    const threeByteText = "\u3042".repeat(4_096);
+    assertEquals(
+      estimateRetainedStringBytes(threeByteText) >= threeByteText.length * 3,
+      true,
+      "three-byte UTF-8 text must be accounted at its UTF-8 size, not its UTF-16 size",
+    );
   });
 
   it("uses captured copy intrinsics", () => {

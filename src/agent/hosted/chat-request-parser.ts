@@ -25,6 +25,16 @@ import {
   verifyHostedRuntimeSourceBinding,
 } from "./runtime-source-binding.ts";
 import { getHostedChatUiToolIdentity } from "./chat-request-tool-part.ts";
+import { registerHostedRunEventWriterToken } from "./child-run-event-writer-token.ts";
+import {
+  MAX_GRANTED_INTEGRATION_TOOL_NAMES,
+  MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH,
+} from "../../integrations/limits.ts";
+import { parseIntegrationToolIdentity } from "../../integrations/source-policy.ts";
+import {
+  type HostedServiceRunEventAppendTokenVerification as RunEventAppendTokenVerification,
+  toRunEventAppendTokenResult,
+} from "../service/auth.ts";
 
 /** Internal control-plane credential for exact-run durable event appends. */
 export const RUN_EVENT_APPEND_TOKEN_HEADER = "X-Veryfront-Run-Event-Token";
@@ -47,15 +57,24 @@ export type HostedChatProjectAccessResult =
   | { success: true; projectSlug?: string }
   | { success: false; error: HostedChatProjectAccessError };
 
-/** Request payload for parsed hosted chat. */
+/**
+ * Request payload for parsed hosted chat.
+ *
+ * Verified run-event credentials remain in process-private ingress state and
+ * are never exposed on this application-facing request value.
+ */
 export type ParsedHostedChatRequest = {
   agentId: string | undefined;
   userId: string;
   authToken: string;
-  /** Internal control-plane credential; never parsed from the public request body. */
-  runEventAppendToken?: string;
   /** True only after a server envelope credential is verified and bound to this run. */
   serverEnvelopeVerified?: true;
+  /**
+   * Integration tools the control plane resolved for this run, taken from the
+   * verified run-event token rather than the request body. Absent unless a
+   * token verified, so a forged body can never introduce it.
+   */
+  serverResolvedIntegrationToolNames?: readonly string[];
   messages: ChatUiMessage[];
   validatedContext: ChatRequestContext;
   projectId: string | null;
@@ -85,7 +104,7 @@ export type ParseHostedChatRequestOptions = {
     token: string;
     projectId: string;
     runId: string;
-  }) => Promise<boolean>;
+  }) => Promise<RunEventAppendTokenVerification>;
 };
 
 /** Options accepted when parsing a signed control-plane runtime invocation. */
@@ -149,26 +168,73 @@ async function withVerifiedRunEventAppendToken(
 
   const projectId = parsedRequest.projectId;
   const runId = parsedRequest.durableRootRun?.runId;
-  if (
-    !projectId ||
-    !runId ||
-    !verifyRunEventAppendToken ||
-    !await verifyRunEventAppendToken({ token, projectId, runId })
-  ) {
+  const verification = projectId && runId && verifyRunEventAppendToken
+    ? toRunEventAppendTokenResult(
+      await verifyRunEventAppendToken({ token, projectId, runId }),
+    )
+    : { verified: false };
+  if (!projectId || !runId || !verification.verified) {
     return Response.json(
       { errorCode: "INVALID_RUN_EVENT_APPEND_TOKEN" },
       { status: 403 },
     );
   }
 
-  return {
+  // The grant rides on the verified token, so it is trusted on every path that
+  // presents one — including the durable-chat path, whose body stays untrusted.
+  const grantedIntegrationToolNames = sanitizeGrantedIntegrationToolNames(
+    verification.integrationTools,
+  );
+
+  const verifiedRequest: ParsedHostedChatRequest = {
     ...parsedRequest,
-    runEventAppendToken: token,
     ...(trustServerEnvelope ? { serverEnvelopeVerified: true as const } : {}),
+    ...(grantedIntegrationToolNames.length > 0
+      ? { serverResolvedIntegrationToolNames: grantedIntegrationToolNames }
+      : {}),
     forwardedProps: trustServerEnvelope
       ? parsedRequest.forwardedProps
       : stripUnverifiedServerResolvedForwardedProps(parsedRequest.forwardedProps),
   };
+  registerHostedRunEventWriterToken(
+    verifiedRequest,
+    {
+      token,
+      projectId,
+      runId,
+    },
+  );
+  return verifiedRequest;
+}
+
+/**
+ * Keep only names that are canonical integration tool ids, deduplicated and
+ * capped. The grant is signed, so this guards against a control-plane bug
+ * rather than an attacker; one malformed name is dropped on its own instead of
+ * discarding the whole grant.
+ */
+function sanitizeGrantedIntegrationToolNames(
+  toolNames: readonly string[] | undefined,
+): string[] {
+  if (!Array.isArray(toolNames)) return [];
+  const sanitized: string[] = [];
+  const seen = new Set<string>();
+  for (const toolName of toolNames) {
+    if (
+      typeof toolName !== "string" ||
+      toolName.length === 0 ||
+      toolName.length > MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH ||
+      toolName.trim() !== toolName ||
+      parseIntegrationToolIdentity(toolName) === null ||
+      seen.has(toolName)
+    ) {
+      continue;
+    }
+    seen.add(toolName);
+    sanitized.push(toolName);
+    if (sanitized.length >= MAX_GRANTED_INTEGRATION_TOOL_NAMES) break;
+  }
+  return sanitized;
 }
 
 function stripUnverifiedServerResolvedForwardedProps(
@@ -178,6 +244,25 @@ function stripUnverifiedServerResolvedForwardedProps(
   const sanitized = Object.fromEntries(
     Object.entries(forwardedProps).filter(([key]) => !key.startsWith("serverResolved")),
   );
+
+  // The integration grant is nested one level down, so the top-level filter
+  // above does not reach it. Leaving a caller-supplied copy in place would let
+  // any future reader mistake it for server-resolved state.
+  const runtimeOverrides = sanitized.runtimeOverrides;
+  if (
+    isRecord(runtimeOverrides) &&
+    Object.hasOwn(runtimeOverrides, "serverResolvedIntegrationTools")
+  ) {
+    const sanitizedRuntimeOverrides = Object.fromEntries(
+      Object.entries(runtimeOverrides).filter(([key]) => key !== "serverResolvedIntegrationTools"),
+    );
+    if (Object.keys(sanitizedRuntimeOverrides).length > 0) {
+      sanitized.runtimeOverrides = sanitizedRuntimeOverrides;
+    } else {
+      delete sanitized.runtimeOverrides;
+    }
+  }
+
   return Object.keys(sanitized).length > 0 ? sanitized : undefined;
 }
 

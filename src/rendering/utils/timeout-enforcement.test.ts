@@ -24,6 +24,13 @@ function hang<T>(): Promise<T> {
   return new Promise(() => {});
 }
 
+/** Drains the microtask queue so a promise that never settles can be told apart. */
+async function flushMicrotasks(): Promise<void> {
+  for (let index = 0; index < 25; index += 1) {
+    await Promise.resolve();
+  }
+}
+
 describe("Timeout Enforcement", () => {
   describe("withTimeoutThrow (hard timeout)", () => {
     it("resolves normally when operation completes before timeout", async () => {
@@ -105,6 +112,35 @@ describe("Timeout Enforcement", () => {
       assertEquals(error, reason);
     });
 
+    it("rejects immediately when the caller signal is already aborted", async () => {
+      // Time is never advanced, so the 1000ms deadline cannot fire: only the
+      // already-aborted fast path can settle this call.
+      using _time = new FakeTime();
+      const controller = new AbortController();
+      const reason = new Error("client already disconnected");
+      controller.abort(reason);
+      let observedReason: unknown;
+
+      const pending = withTimeoutThrow(hang(), 1000, "pre-aborted", {
+        signal: controller.signal,
+        onAbort: (abortReason) => {
+          observedReason = abortReason;
+        },
+      });
+
+      const outcome = await Promise.race([
+        pending.then((): unknown => "resolved", (error: unknown) => error),
+        flushMicrotasks().then((): unknown => "still pending"),
+      ]);
+
+      assertEquals(
+        outcome,
+        reason,
+        "a pre-aborted caller signal must reject with the caller's reason, not a TimeoutError",
+      );
+      assertEquals(observedReason, reason, "onAbort must fire for an already-aborted signal");
+    });
+
     it("invokes onTimeout exactly when the local timeout fires", async () => {
       let observedError: TimeoutError | undefined;
 
@@ -141,6 +177,35 @@ describe("Timeout Enforcement", () => {
   });
 
   describe("withProgressTimeoutThrow (bounded idle timeout)", () => {
+    it("rejects an invalid timeout pair before the operation runs", async () => {
+      let started = false;
+      const operation = (): Promise<string> => {
+        started = true;
+        return Promise.resolve("unexpected");
+      };
+
+      for (
+        const options of [
+          { label: "zero idle deadline", idleTimeoutMs: 0 },
+          { label: "zero hard cap", idleTimeoutMs: 50, hardTimeoutMs: 0 },
+          { label: "inverted deadlines", idleTimeoutMs: 50, hardTimeoutMs: 20 },
+        ]
+      ) {
+        await assertRejects(
+          () => withProgressTimeoutThrow(operation, options),
+          RangeError,
+          "hardTimeoutMs >= idleTimeoutMs",
+          "an invalid timeout pair must be rejected before the operation runs",
+        );
+      }
+
+      assertEquals(
+        started,
+        false,
+        "the operation must never start when the timeout options are invalid",
+      );
+    });
+
     it("allows total work beyond the idle deadline while progress continues", async () => {
       using time = new FakeTime();
       let markStarted!: () => void;

@@ -42,6 +42,7 @@ export {
   authRateLimit,
   type AuthRateLimitOptions,
   MemoryRateLimitStore,
+  type MemoryRateLimitStoreOptions,
   rateLimit,
   type RateLimitOptions,
 } from "./builtin/security/rate-limit.ts";

@@ -127,6 +127,46 @@ describe("agent/ag-ui-host-support", () => {
     assertEquals(parsed.forwardedProps, forwardedProps);
   });
 
+  it("rejects forwarded props above the 192 KB AG-UI budget", async () => {
+    const forwardedProps = {
+      runtimeOverrides: {
+        integrationToolDefinitions: [{
+          name: "github__large_tool",
+          description: "x".repeat(192 * 1024),
+          inputSchema: { type: "object" },
+        }],
+      },
+    };
+    const request = new Request("http://localhost/api/ag-ui", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [{
+          id: "msg-1",
+          role: "user",
+          parts: [{ type: "text", text: "hello" }],
+        }],
+        forwardedProps,
+      }),
+    });
+
+    const result = await parseAgUiRequestOrError(request);
+
+    assertInstanceOf(result, Response);
+    assertEquals(
+      result.status,
+      400,
+      "oversized forwardedProps must be rejected by the field cap, not accepted up to the body limit",
+    );
+    const body = await result.json();
+    const details = body.details as Array<{ message: string }>;
+    assertEquals(
+      details.some((detail) => detail.message === "forwardedProps must be less than 192 KB"),
+      true,
+      "the rejection must name the 192 KB forwardedProps budget",
+    );
+  });
+
   it("returns a 400 Response from parseAgUiRequestOrError for malformed JSON bodies", async () => {
     const request = new Request("http://localhost/api/ag-ui", {
       method: "POST",
@@ -484,6 +524,23 @@ describe("agent/ag-ui-host-support", () => {
     ]);
 
     const wireMessages = convertToTextGenerationRuntimeMessages(normalized as Message[]);
+    const toolMessages = wireMessages.filter((message) => message.role === "tool");
+    assertEquals(
+      toolMessages.length,
+      2,
+      "each replayed tool output must convert to its own tool message",
+    );
+    const resultIds = toolMessages.flatMap((message) =>
+      Array.isArray(message.content)
+        ? message.content.flatMap((part) => part.type === "tool-result" ? [part.toolCallId] : [])
+        : []
+    );
+    assertEquals(
+      resultIds,
+      ["tool-load", "tool-search"],
+      "the converted tool messages must carry the replayed tool-result ids in order",
+    );
+
     for (let index = 0; index < wireMessages.length; index += 1) {
       const message = wireMessages[index];
       if (!message) continue;
@@ -505,6 +562,37 @@ describe("agent/ag-ui-host-support", () => {
         }
       }
     }
+  });
+
+  it("routes composer file attachments to image or file parts by media type", () => {
+    const messages = normalizeAgUiMessages([
+      {
+        id: "user-1",
+        role: "user",
+        parts: [
+          { type: "file", url: "data:image/png;base64,iVBORw0KGgo=", mediaType: "image/png" },
+          {
+            type: "file",
+            url: "https://uploads.example.com/spec.pdf",
+            mediaType: "application/pdf",
+          },
+          { type: "file", url: "", mediaType: "image/png" },
+        ],
+      },
+    ]);
+
+    assertEquals(
+      messages[0]?.parts,
+      [
+        { type: "image", url: "data:image/png;base64,iVBORw0KGgo=", mediaType: "image/png" },
+        {
+          type: "file",
+          url: "https://uploads.example.com/spec.pdf",
+          mediaType: "application/pdf",
+        },
+      ],
+      "image/* attachments must become image parts the model can view, everything else stays a file part, and a urlless attachment is dropped",
+    );
   });
 
   it("does not synthesize tool results for provider-owned assistant tool parts", () => {

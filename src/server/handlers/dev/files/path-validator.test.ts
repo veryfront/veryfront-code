@@ -7,16 +7,13 @@ import type { HandlerContext } from "../../types.ts";
 
 function makeCtx(
   projectDir: string,
-  statResult?: { isFile: boolean } | "throw",
+  stat: () => Promise<{ isFile: boolean }> = () => Promise.resolve({ isFile: true }),
 ): HandlerContext {
   return {
     projectDir,
     adapter: {
       fs: {
-        stat: async (_path: string) => {
-          if (statResult === "throw") throw new Error("not found");
-          return statResult ?? { isFile: true };
-        },
+        stat,
       },
     },
   } as unknown as HandlerContext;
@@ -26,42 +23,47 @@ describe("server/handlers/dev/files/path-validator", () => {
   it("should return error for invalid base64 encoding", async () => {
     const ctx = makeCtx("/project");
     const result = await validateDevFilePath("!!!invalid!!!", ctx);
-    assertEquals(result, "Error: Invalid path encoding");
+    assertEquals(result, { kind: "rejected", message: "Invalid path encoding" });
+    assertEquals(Object.isFrozen(result), true);
   });
 
   it("should return error for path outside project directory", async () => {
     const encoded = toBase64Url("/etc/passwd");
     const ctx = makeCtx("/project");
     const result = await validateDevFilePath(encoded, ctx);
-    assertEquals(result, "Error: Path outside project");
+    assertEquals(result, { kind: "rejected", message: "Path outside project" });
   });
 
   it("should return error for disallowed top-level directory", async () => {
     const encoded = toBase64Url("node_modules/foo.ts");
     const ctx = makeCtx("/project");
     const result = await validateDevFilePath(encoded, ctx);
-    assertEquals(result, "Error: Access to directory not allowed");
+    assertEquals(result, { kind: "rejected", message: "Access to directory not allowed" });
   });
 
-  it("should return error when file does not exist", async () => {
+  it("should reject when stat reports canonical absence", async () => {
     const encoded = toBase64Url("src/foo.ts");
-    const ctx = makeCtx("/project", "throw");
+    const ctx = makeCtx(
+      "/project",
+      () => Promise.reject(new Deno.errors.NotFound("missing dev file")),
+    );
     const result = await validateDevFilePath(encoded, ctx);
-    assertEquals(result, "Error: File not found");
+    assertEquals(result, { kind: "rejected", message: "File not found" });
   });
 
   it("should return error when path is a directory", async () => {
     const encoded = toBase64Url("src/foo");
-    const ctx = makeCtx("/project", { isFile: false });
+    const ctx = makeCtx("/project", () => Promise.resolve({ isFile: false }));
     const result = await validateDevFilePath(encoded, ctx);
-    assertEquals(result, "Error: Not a file");
+    assertEquals(result, { kind: "rejected", message: "Not a file" });
   });
 
   it("should return absolute path for valid file in allowed directory", async () => {
     const encoded = toBase64Url("src/foo.ts");
-    const ctx = makeCtx("/project", { isFile: true });
+    const ctx = makeCtx("/project");
     const result = await validateDevFilePath(encoded, ctx);
-    assertEquals(result, "/project/src/foo.ts");
+    assertEquals(result, { kind: "ready", path: "/project/src/foo.ts" });
+    assertEquals(Object.isFrozen(result), true);
   });
 
   for (
@@ -81,16 +83,56 @@ describe("server/handlers/dev/files/path-validator", () => {
   ) {
     it(`should allow files in '${dir}' directory`, async () => {
       const encoded = toBase64Url(`${dir}/test.ts`);
-      const ctx = makeCtx("/project", { isFile: true });
+      const ctx = makeCtx("/project");
       const result = await validateDevFilePath(encoded, ctx);
-      assertEquals(result, `/project/${dir}/test.ts`);
+      assertEquals(result, { kind: "ready", path: `/project/${dir}/test.ts` });
     });
   }
 
   it("should handle absolute path within project", async () => {
     const encoded = toBase64Url("/project/src/foo.ts");
-    const ctx = makeCtx("/project", { isFile: true });
+    const ctx = makeCtx("/project");
     const result = await validateDevFilePath(encoded, ctx);
-    assertEquals(result, "/project/src/foo.ts");
+    assertEquals(result, { kind: "ready", path: "/project/src/foo.ts" });
+  });
+
+  for (
+    const [label, failure] of [
+      [
+        "a NotFound-named lookalike",
+        Object.assign(new Error("not actually absent"), { name: "NotFound" }),
+      ],
+      ["an EACCES failure", Object.assign(new Error("access denied"), { code: "EACCES" })],
+      ["an EIO failure", Object.assign(new Error("I/O failure"), { code: "EIO" })],
+      ["an arbitrary failure", new Error("stat unavailable")],
+      ["a plain ENOENT-shaped rejection", Object.freeze({ code: "ENOENT" })],
+    ] as const
+  ) {
+    it(`should fail closed on ${label} from stat`, async () => {
+      const encoded = toBase64Url("src/foo.ts");
+      const ctx = makeCtx("/project", () => Promise.reject(failure));
+
+      const result = await validateDevFilePath(encoded, ctx);
+
+      assertEquals(result, { kind: "rejected", message: "File not accessible" });
+      assertEquals(Object.isFrozen(result), true);
+    });
+  }
+
+  it("should fail closed on a hostile stat rejection without invoking its hooks", async () => {
+    const failure = new Proxy({}, {
+      get() {
+        throw new Error("stat rejection must not be read");
+      },
+      getPrototypeOf() {
+        throw new Error("stat rejection prototype must not escape");
+      },
+    });
+    const encoded = toBase64Url("src/foo.ts");
+    const ctx = makeCtx("/project", () => Promise.reject(failure));
+
+    const result = await validateDevFilePath(encoded, ctx);
+
+    assertEquals(result, { kind: "rejected", message: "File not accessible" });
   });
 });

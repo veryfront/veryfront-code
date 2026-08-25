@@ -32,7 +32,8 @@ test(
     const runtime = getRuntimeForPlaywrightProject(testInfo.project.name);
 
     for (const subdomain of PROJECTS) {
-      const response = await request.get(`${runtime.getUrl(subdomain)}/api/status`);
+      const apiRequest = runtime.getApiRequest(subdomain, "/api/status");
+      const response = await request.get(apiRequest.url, { headers: apiRequest.headers });
 
       expect(response.ok()).toBeTruthy();
       expect(await response.json()).toEqual({ ok: true, project: subdomain });
@@ -50,7 +51,7 @@ test(
     );
 
     for (const subdomain of PROJECTS) {
-      const response = await page.goto(`http://${subdomain}--feature.preview.lvh.me:8080/`);
+      const response = await page.goto(`http://${subdomain}--feature.preview.localhost:8080/`);
 
       expect(response?.ok()).toBeTruthy();
       await expect(page.locator("#project-name")).toHaveText(subdomain);

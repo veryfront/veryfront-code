@@ -89,25 +89,61 @@ describe("cache/keys", () => {
 
   describe("buildRenderCachePrefix", () => {
     it("should build prefix for production", () => {
-      const prefix = buildRenderCachePrefix("proj_123", "production", "rel_456");
+      const prefix = buildRenderCachePrefix("proj_123", "production", "rel_456", "production");
       assertMatch(prefix, /^proj_123:production:rel_456:.+$/);
     });
 
     it("should build prefix for preview", () => {
-      const prefix = buildRenderCachePrefix("proj_123", "preview", "main");
+      const prefix = buildRenderCachePrefix("proj_123", "preview", "main", "production");
       assertMatch(prefix, /^proj_123:preview:main:.+$/);
     });
 
     it("should append :m{n} suffix when manifestVersion is provided", () => {
-      const base = buildRenderCachePrefix("proj_123", "production", "rel_456");
-      const withManifest = buildRenderCachePrefix("proj_123", "production", "rel_456", 1);
+      const base = buildRenderCachePrefix("proj_123", "production", "rel_456", "production");
+      const withManifest = buildRenderCachePrefix(
+        "proj_123",
+        "production",
+        "rel_456",
+        "production",
+        1,
+      );
       assertMatch(withManifest, /^proj_123:production:rel_456:.+:m1$/);
       assertNotEquals(base, withManifest);
     });
 
+    it("separates the two compile modes for one project, environment and release", () => {
+      const development = buildRenderCachePrefix("proj_123", "preview", "main", "development");
+      const production = buildRenderCachePrefix("proj_123", "preview", "main", "production");
+
+      assertNotEquals(development, production);
+    });
+
+    it("keeps the compile mode readable back out of a render cache key", () => {
+      const key = buildRenderCacheKey(
+        buildRenderCachePrefix("proj_123", "preview", "main", "development"),
+        "page:index",
+      );
+
+      assertEquals(parseRenderCacheKey(key)?.compileMode, "cdev");
+      assertEquals(parseRenderCacheKey(key)?.contentKey, "page:index");
+    });
+
+    it("reports no compile mode for a key written before the segment existed", () => {
+      const legacy = "proj_123:preview:main:0.1.0:page:index";
+
+      assertEquals(parseRenderCacheKey(legacy)?.compileMode, undefined);
+      assertEquals(parseRenderCacheKey(legacy)?.contentKey, "page:index");
+    });
+
     it("should produce identical prefix when manifestVersion is undefined (flag-off byte-identical)", () => {
-      const withUndefined = buildRenderCachePrefix("proj_123", "production", "rel_456", undefined);
-      const withoutArg = buildRenderCachePrefix("proj_123", "production", "rel_456");
+      const withUndefined = buildRenderCachePrefix(
+        "proj_123",
+        "production",
+        "rel_456",
+        "production",
+        undefined,
+      );
+      const withoutArg = buildRenderCachePrefix("proj_123", "production", "rel_456", "production");
       assertEquals(withUndefined, withoutArg);
     });
   });
@@ -150,11 +186,17 @@ describe("cache/keys", () => {
       assertEquals(getReadyManifestForRender("rel_456"), null);
 
       // Cache prefix is byte-identical whether manifestVersion is undefined or not passed
-      const prefixNoManifest = buildRenderCachePrefix("proj_123", "production", "rel_456");
+      const prefixNoManifest = buildRenderCachePrefix(
+        "proj_123",
+        "production",
+        "rel_456",
+        "production",
+      );
       const prefixWithUndefined = buildRenderCachePrefix(
         "proj_123",
         "production",
         "rel_456",
+        "production",
         undefined,
       );
       assertEquals(prefixNoManifest, prefixWithUndefined);
@@ -184,11 +226,12 @@ describe("cache/keys", () => {
       assertEquals(cached?.manifestVersion, 1);
 
       // Prefixes must differ
-      const prefixJIT = buildRenderCachePrefix("proj_123", "production", "rel_456");
+      const prefixJIT = buildRenderCachePrefix("proj_123", "production", "rel_456", "production");
       const prefixManifest = buildRenderCachePrefix(
         "proj_123",
         "production",
         "rel_456",
+        "production",
         cached?.manifestVersion,
       );
       assertNotEquals(prefixJIT, prefixManifest);
@@ -201,11 +244,12 @@ describe("cache/keys", () => {
       const manifest = getReadyManifestForRender("rel_456");
       assertEquals(manifest, null);
 
-      const prefixJIT = buildRenderCachePrefix("proj_123", "production", "rel_456");
+      const prefixJIT = buildRenderCachePrefix("proj_123", "production", "rel_456", "production");
       const prefixWithNull = buildRenderCachePrefix(
         "proj_123",
         "production",
         "rel_456",
+        "production",
         manifest?.manifestVersion,
       );
       assertEquals(prefixJIT, prefixWithNull);
@@ -228,6 +272,7 @@ describe("cache/keys", () => {
         environment: "production",
         releaseKey: "rel",
         version: "1.0.0",
+        compileMode: undefined,
         contentKey: "page:content",
       });
     });
@@ -338,6 +383,67 @@ describe("cache/keys", () => {
       assertNotEquals(environment, release);
       assertEquals(environment.includes("environment:Production:release-1"), true);
       assertEquals(release.includes("release:release-1"), true);
+    });
+
+    it("separates preview environments so adapter identities cannot collide", () => {
+      const unnamed = buildProxyManagerCacheKey("example-project", false, null, "main");
+      const preview = buildProxyManagerCacheKey("example-project", false, null, "main", "preview");
+
+      assertNotEquals(unnamed, preview);
+    });
+
+    it("separates distinct preview environment names on the same branch", () => {
+      const preview = buildProxyManagerCacheKey("example-project", false, null, "main", "preview");
+      const staging = buildProxyManagerCacheKey("example-project", false, null, "main", "staging");
+
+      assertNotEquals(preview, staging);
+    });
+
+    it("keeps the branch key stable when no environment is named", () => {
+      assertEquals(
+        buildProxyManagerCacheKey("example-project", false, null, "main"),
+        "proxy:example-project:preview:main",
+      );
+    });
+
+    it("escapes delimiters in an environment name", () => {
+      const forged = buildProxyManagerCacheKey("example-project", false, null, "main", "a:b");
+
+      assertEquals(forged.includes("a:b"), false);
+      assertNotEquals(
+        forged,
+        buildProxyManagerCacheKey("example-project", false, null, "main", "a"),
+      );
+    });
+
+    it("separates canonical projects and credential principals", () => {
+      const first = buildProxyManagerCacheKey(
+        "reusable-slug",
+        false,
+        null,
+        "main",
+        null,
+        { projectId: "project-one", credentialPrincipal: "principal-one" },
+      );
+      const reassigned = buildProxyManagerCacheKey(
+        "reusable-slug",
+        false,
+        null,
+        "main",
+        null,
+        { projectId: "project-two", credentialPrincipal: "principal-one" },
+      );
+      const rotatedCredential = buildProxyManagerCacheKey(
+        "reusable-slug",
+        false,
+        null,
+        "main",
+        null,
+        { projectId: "project-one", credentialPrincipal: "principal-two" },
+      );
+
+      assertNotEquals(first, reassigned);
+      assertNotEquals(first, rotatedCredential);
     });
   });
 
@@ -572,6 +678,42 @@ describe("cache/keys", () => {
     it("returns well-formed keys unchanged (no cache churn)", async () => {
       const key = "veryfront:ssr-module:proj_123:production:rel-abc:components/Button.tsx";
       assertEquals(await sanitizeCacheKey(key), key);
+    });
+
+    it("truncates an overlong trusted backend prefix so the fallback stays API-valid", async () => {
+      const sanitized = await sanitizeCacheKey("a b", "x".repeat(600));
+      assertEquals(
+        sanitized.length <= API_CACHE_KEY_MAX_LENGTH,
+        true,
+        "a trusted prefix must be truncated so the sanitized key stays API-valid",
+      );
+      assertEquals(
+        isValidCacheKey(sanitized),
+        true,
+        "a truncated trusted prefix must still yield a valid concrete key",
+      );
+    });
+
+    it("retains a valid trusted backend prefix on the fallback key", async () => {
+      const sanitized = await sanitizeCacheKey("a b", "render:proj");
+      assertEquals(
+        sanitized.startsWith("render:proj:vf-sanitized:"),
+        true,
+        "a valid trusted prefix must be retained so prefix invalidation still reaches the fallback key",
+      );
+      assertEquals(
+        isValidCacheKey(sanitized),
+        true,
+        "a prefixed fallback key must still be valid for the API backend",
+      );
+    });
+
+    it("drops a trusted prefix that carries the reserved sanitized marker", async () => {
+      assertEquals(
+        await sanitizeCacheKey("a b", "vf-sanitized:evil"),
+        await sanitizeCacheKey("a b"),
+        "a marker-bearing prefix must be dropped entirely rather than aliased into the reserved namespace",
+      );
     });
 
     it("treats `*` as a wildcard for patterns but not as a valid key character", () => {

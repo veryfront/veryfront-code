@@ -29,14 +29,37 @@ const ASSET_PATH_RE = /^\/_vf\/assets\/([0-9a-f]{64})\.(js|css)$/;
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 10_000;
 const MAX_UPSTREAM_TIMEOUT_MS = 30_000;
 
-/** Count and byte bounds for completed immutable asset snapshots. */
-const MAX_CACHED_ASSETS = 100;
+/**
+ * Count and byte bounds for completed immutable asset snapshots.
+ *
+ * The byte budget is the binding limit. The entry count only exists so a
+ * pathological run of tiny assets cannot grow the map without end; sized so a
+ * pod serving several projects keeps whole module graphs resident, because
+ * evicting one holds the next page load hostage to a cold-load round trip.
+ */
+const MAX_CACHED_ASSETS = 2_000;
 const MAX_CACHED_ASSET_BYTES = 32 * 1024 * 1024;
 
-/** Aggregate process-local bounds for cache-miss work and attached callers. */
+/**
+ * Concurrent upstream fetches. This is the one real resource: each in-flight
+ * load buffers a whole asset in memory, so peak bytes is this count times
+ * RELEASE_ASSET_MAX_SIZE_BYTES.
+ *
+ * Excess demand queues rather than failing. A page's module graph is a fan-out
+ * this proxy itself produced by serving the HTML, so shedding it would reject
+ * the predictable consequence of our own response — and browser `import()`
+ * never retries, which turns one shed asset into a dead page. Callers are
+ * already bounded by their own deadline (`timeoutMs`) and the producer ceiling
+ * (`MAX_UPSTREAM_TIMEOUT_MS`); a saturated proxy therefore shows up as latency
+ * and finally an honest 504.
+ *
+ * A 503 is still reachable, but only from the semaphore's own
+ * `DEFAULT_PERMIT_SEMAPHORE_MAX_QUEUE_SIZE` backstop. That threshold is two
+ * orders of magnitude above one page's module graph, so reaching it means a
+ * genuine flood rather than a project being shed for the size of the document
+ * this proxy just served.
+ */
 const MAX_CONCURRENT_COLD_LOADS = 4;
-const MAX_QUEUED_COLD_LOADS = 16;
-const MAX_COLD_LOAD_WAITERS = 64;
 
 interface CachedAsset {
   bytes: Uint8Array<ArrayBuffer>;
@@ -92,11 +115,8 @@ const assetCache = new LRUCache<string, CachedAsset>({
   maxSizeBytes: MAX_CACHED_ASSET_BYTES,
   estimateSizeOf: (asset) => asset.bytes.byteLength + asset.contentType.length * 2 + 64,
 });
-const coldLoadAdmission = new PermitSemaphore(MAX_CONCURRENT_COLD_LOADS, {
-  maxQueueSize: MAX_QUEUED_COLD_LOADS,
-});
+const coldLoadAdmission = new PermitSemaphore(MAX_CONCURRENT_COLD_LOADS);
 const inflightAssetLoads = new Map<string, InflightAssetLoad>();
-let coldLoadWaiters = 0;
 
 /** True when the path is owned by the release asset prefix. */
 export function isReleaseAssetPath(pathname: string): boolean {
@@ -408,8 +428,6 @@ export async function handleReleaseAssetRequest(
   }
 
   if (req.signal.aborted) return clientClosedRequest();
-  if (coldLoadWaiters >= MAX_COLD_LOAD_WAITERS) return serviceUnavailable();
-  coldLoadWaiters++;
   try {
     const task = getOrCreateInflightAssetLoad(
       hash,
@@ -426,8 +444,6 @@ export async function handleReleaseAssetRequest(
     if (error instanceof ReleaseAssetTimeoutError) return gatewayTimeout();
     if (error instanceof ReleaseAssetOverloadedError) return serviceUnavailable();
     return badGateway();
-  } finally {
-    coldLoadWaiters--;
   }
 }
 

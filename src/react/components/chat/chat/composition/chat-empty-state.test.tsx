@@ -28,6 +28,12 @@ describe("ChatEmptyState — default anatomy", () => {
       </ChatEmptyState.Root>,
     );
     assertStringIncludes(html, "animate-pulse");
+    const idle = renderToString(
+      <ChatEmptyState.Root>
+        <ChatEmptyState.Avatar alt="Idle" />
+      </ChatEmptyState.Root>,
+    );
+    assert(!idle.includes("animate-pulse"), "avatar must not pulse when isCreating is false");
   });
 
   it("Heading renders the requested heading level", () => {

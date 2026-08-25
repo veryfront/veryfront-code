@@ -16,9 +16,19 @@
  *   it resolves the explicitly composed `CSSProcessor` extension and calls
  *   `compiler.build(candidates)` with no cross-request/distributed state.
  * - Work is bounded: one compile over the candidate set the executor already
- *   gathered, output minified, no background tasks.
+ *   gathered, no background tasks.
  * - Configuration and compile failures propagate; a release must not publish
  *   a silent CSS gap.
+ *
+ * Minification is requested, not required. `CSSOptimizationEngine` ships only
+ * in `@veryfront/ext-css-lightning`, which `first-party-defaults.ts` marks
+ * `selection: "explicit"`. A scaffolded project has no optimiser, so a
+ * release that asks for minification and gets none is the normal case, not an
+ * outage. `acquireCSSGenerationSession` degrades to unminified output and
+ * records that in `cacheIdentity`, which travels into the manifest as
+ * `cssPipelineIdentity`; nothing downstream assumes minified bytes, and no
+ * cache can serve a stale minified entry in its place. A *missing optional
+ * capability* is a skip; a *failing* one still fails the release.
  *
  * @module release-assets/css-compile
  */

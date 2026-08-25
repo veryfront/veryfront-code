@@ -99,7 +99,7 @@ Layout content`,
       const file2 = join(pagesDir, "index.mdx");
       await createTestFile(file2, "# Home");
 
-      const info2 = await getEntityInfo(file2);
+      const info2 = await getEntityInfo(file2, undefined, { routeRoot: pagesDir });
       assertExists(info2);
       assertEquals(info2.entity.slug, "");
 

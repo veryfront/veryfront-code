@@ -173,12 +173,8 @@ export interface UseConversationsResult {
   conversations: ConversationSummary[];
   /** The full active conversation (with messages), or `null`. */
   activeConversation: Conversation | null;
-  /** @deprecated Use `activeConversation`. */
-  active: Conversation | null;
   /** Id of the active conversation, or `null`. */
   activeConversationId: string | null;
-  /** @deprecated Use `activeConversationId`. */
-  activeId: string | null;
   /**
    * True only while the initial list is loading from the store. Active-record
    * loading is reported separately by {@link UseConversationsPersistenceState}.
@@ -1394,9 +1390,7 @@ export function useConversations(
   return React.useMemo(() => ({
     conversations: summaries,
     activeConversation: active,
-    active,
     activeConversationId: activeId,
-    activeId,
     isLoading,
     isActiveConversationLoading,
     activeConversationError,

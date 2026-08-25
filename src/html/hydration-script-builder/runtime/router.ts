@@ -7,6 +7,7 @@ import type {
   ClientRouter,
   HydrationRuntimeEnv,
   PageDataPayload,
+  RuntimeDocument,
   RuntimeElement,
   RuntimeEvent,
   RuntimeFetchInit,
@@ -131,10 +132,14 @@ export function createRouterRuntime(deps: RouterRuntimeDeps): RouterRuntime {
    * navigation, reloads the current route instead — the user still escapes the
    * broken SPA state, without the runtime executing a URL it could not vet.
    */
-  function navigateDocument(target: string): void {
+  function navigateDocument(target: string, options: { replace?: boolean } = {}): void {
     const safeUrl = resolveDocumentNavigationUrl(target, window.location.origin);
     if (safeUrl) {
-      window.location.href = safeUrl;
+      if (options.replace && window.location.replace) {
+        window.location.replace(safeUrl);
+      } else {
+        window.location.href = safeUrl;
+      }
       return;
     }
 
@@ -411,11 +416,11 @@ export function createRouterRuntime(deps: RouterRuntimeDeps): RouterRuntime {
   function handlePageDataVersionMismatch(
     path: string,
     data: PageDataPayload,
-  ): PageDataPayload {
+  ): PageDataPayload | Promise<PageDataPayload> {
     if (data.buildVersion && checkVersionMismatch(data.buildVersion)) {
       log("Version mismatch detected, performing full page reload to:", path);
       navigateDocument(path);
-      return new Promise<PageDataPayload>(() => {}) as unknown as PageDataPayload;
+      return new Promise<PageDataPayload>(() => {});
     }
 
     return data;
@@ -468,7 +473,11 @@ export function createRouterRuntime(deps: RouterRuntimeDeps): RouterRuntime {
     const cached = getCachedPageData(path);
     if (cached) {
       log("Using cached page data:", path);
-      refreshPageDataInBackground(path);
+      // A route that leaves the SPA never renders this payload client-side,
+      // so refreshing it in the background is wasted work.
+      if (!cached.requiresFullDocumentNavigation) {
+        refreshPageDataInBackground(path);
+      }
       emitRouteTiming("page-data", path, startedAt, { source: "cache" });
       return cached;
     }
@@ -551,15 +560,35 @@ export function createRouterRuntime(deps: RouterRuntimeDeps): RouterRuntime {
       // rather than reloading, which is what it did before the scheme check
       // moved into resolveDocumentNavigationUrl.
       if (pageData && pageData.redirect && typeof pageData.redirect.destination === "string") {
-        const redirectUrl = resolveDocumentNavigationUrl(
-          pageData.redirect.destination,
+        const redirectBaseUrl = resolveDocumentNavigationUrl(
+          targetPath,
           window.location.origin,
         );
+        const redirectUrl = redirectBaseUrl
+          ? resolveDocumentNavigationUrl(pageData.redirect.destination, redirectBaseUrl)
+          : null;
         if (redirectUrl) {
           log("SPA navigation redirect -> " + redirectUrl);
           window.location.href = redirectUrl;
           return;
         }
+      }
+
+      // A server-owned layout only exists in the document render, so the SPA
+      // cannot rebuild this route client-side. Handing it to the browser's
+      // document loader is the designed path for these routes, not a failure —
+      // and the loader owns the history entry, so nothing is pushed here.
+      if (pageData.requiresFullDocumentNavigation) {
+        log("Server layout requires a full document navigation:", href);
+        // Progress state is restored first: if the unload is cancelled (a
+        // beforeunload guard on the current page), the document stays alive
+        // and must not remain aria-busy behind a stuck progress bar.
+        hideNavigationProgress();
+        // Only an explicit push may grow the history stack. "replace" must
+        // replace, and "none" (popstate) is already on the target entry — an
+        // href assignment there would push a duplicate.
+        navigateDocument(href, { replace: historyMode !== "push" });
+        return;
       }
 
       if (historyMode === "push") {
@@ -680,7 +709,7 @@ export function createRouterRuntime(deps: RouterRuntimeDeps): RouterRuntime {
 
     handoffClientRouteMetadata(
       pageData.frontmatter ?? {},
-      document as unknown as Document,
+      document as RuntimeDocument & Document,
     );
 
     if (pageData.css) {
@@ -1010,7 +1039,7 @@ export function createRouterRuntime(deps: RouterRuntimeDeps): RouterRuntime {
 
         viewportPrefetchObserver?.unobserve(entry.target);
         const href = getInternalRouteHrefFromLink(
-          entry.target as unknown as RuntimeElement,
+          entry.target as Element & RuntimeElement,
         );
         if (href) prefetchPage(href);
       }
@@ -1027,7 +1056,7 @@ export function createRouterRuntime(deps: RouterRuntimeDeps): RouterRuntime {
       if (observedPrefetchLinks.has(link)) continue;
 
       observedPrefetchLinks.add(link);
-      observer.observe(link as unknown as Element);
+      observer.observe(link as RuntimeElement & Element);
     }
   }
 

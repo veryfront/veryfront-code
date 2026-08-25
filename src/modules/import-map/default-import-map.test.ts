@@ -32,6 +32,40 @@ describe("modules/import-map/default-import-map", () => {
       assert("veryfront/router" in imports, "should have 'veryfront/router' mapping");
       assert("veryfront/context" in imports, "should have 'veryfront/context' mapping");
       assert("veryfront/fonts" in imports, "should have 'veryfront/fonts' mapping");
+      assert("veryfront/ui" in imports, "should have 'veryfront/ui' mapping");
+    });
+
+    it("maps every React-bearing deno.json export so the specifier resolves", () => {
+      // veryfront/ui was exported from deno.json but named in no import map, so
+      // a project importing it shipped a bare specifier the browser could not
+      // resolve -- and the release build then counted the importing module as
+      // uncovered, which is fatal to the whole manifest.
+      const imports = getImports();
+
+      assertEquals(
+        Object.keys(imports).filter((key) => key.startsWith("veryfront/")).sort(),
+        [
+          "veryfront/chat",
+          "veryfront/context",
+          "veryfront/fonts",
+          "veryfront/head",
+          "veryfront/markdown",
+          "veryfront/mdx",
+          "veryfront/react",
+          "veryfront/react/context",
+          "veryfront/react/fonts",
+          "veryfront/react/head",
+          "veryfront/react/router",
+          "veryfront/router",
+          "veryfront/ui",
+          "veryfront/workflow",
+        ],
+        "every React-bearing veryfront export must stay mapped",
+      );
+      assertEquals(
+        imports["veryfront/ui"],
+        "/_vf_modules/_veryfront/react/components/ui/index.js?ssr=true",
+      );
     });
 
     it("should map veryfront/react to the browser public barrel", () => {
@@ -55,13 +89,22 @@ describe("modules/import-map/default-import-map", () => {
     it("should map veryfront aliases to module server URLs", () => {
       const imports = getImports();
 
-      const headUrl = imports["veryfront/head"];
-      assertExists(headUrl);
-      assert(
-        headUrl.startsWith("/_vf_modules/_veryfront/react/"),
-        `Expected module server URL starting with /_vf_modules/_veryfront/react/ but got: ${headUrl}`,
+      const coreReactUrl = "/_vf_modules/_veryfront/react/runtime/core.js?ssr=true";
+      assertEquals(
+        imports["veryfront/head"],
+        coreReactUrl,
+        "veryfront/head must map to the React runtime core module",
       );
-      assert(headUrl.includes("?ssr=true"), `Expected ssr=true param but got: ${headUrl}`);
+      assertEquals(
+        imports["veryfront/router"],
+        coreReactUrl,
+        "veryfront/router must map to the React runtime core module",
+      );
+      assertEquals(
+        imports["veryfront/context"],
+        coreReactUrl,
+        "veryfront/context must map to the React runtime core module",
+      );
     });
 
     it("should map veryfront/head and veryfront/react/head to the same file", () => {

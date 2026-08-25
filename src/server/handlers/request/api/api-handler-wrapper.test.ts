@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { ApiHandlerWrapper } from "./api-handler-wrapper.ts";
@@ -26,7 +26,6 @@ function createCtx(captured: { options?: Record<string, unknown> }): HandlerCont
       env: { get: () => undefined },
     },
     securityConfig: null,
-    cspUserHeader: null,
     projectSlug: "my-project",
     projectId: "project-123",
     proxyToken: "vf_proxy_token",
@@ -41,6 +40,31 @@ function createCtx(captured: { options?: Record<string, unknown> }): HandlerCont
 }
 
 describe("ApiHandlerWrapper", () => {
+  it("propagates request cancellation instead of continuing handler discovery", async () => {
+    const ctx = createCtx({});
+    const fs = ctx.adapter.fs as unknown as {
+      runWithContext: (
+        slug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+      ) => Promise<unknown>;
+    };
+    fs.runWithContext = async (_slug, _token, fn) => await fn();
+    const handler = new ApiHandlerWrapper("/tmp/project", ctx.adapter);
+    const controller = new AbortController();
+    const request = new Request("http://localhost/review", { signal: controller.signal });
+    // Bun's synthetic Request follower can lose a custom reason after other
+    // network tests, so keep the fixture's cancellation source explicit.
+    Object.defineProperty(request, "signal", { value: controller.signal });
+    controller.abort(new Error("request cancelled"));
+
+    await assertRejects(
+      () => handler.handle(request, ctx),
+      Error,
+      "request cancelled",
+    );
+  });
+
   it("routes known pages without remote stat misses or full API discovery", async () => {
     let enteredProjectContext = false;
     let remoteStatMisses = 0;
@@ -64,7 +88,9 @@ describe("ApiHandlerWrapper", () => {
         isSymlink: boolean;
       }>;
       resolveFile: (path: string) => Promise<string | null>;
+      symlinkSemantics: "none";
       readFile: (path: string) => Promise<string>;
+      readFileBytesWithinLimit: (path: string, byteLimit: number) => Promise<Uint8Array>;
       refreshSourceSnapshot: (reason?: string) => Promise<void>;
     };
     fs.runWithContext = async (_slug, _token, fn) => {
@@ -95,10 +121,23 @@ describe("ApiHandlerWrapper", () => {
       Promise.resolve(
         path === "/tmp/project/pages/review" ? "/tmp/project/pages/review.tsx" : null,
       );
+    fs.symlinkSemantics = "none";
     fs.readFile = (path) => {
       if (path === "/tmp/project/pages/review.tsx" || path === "pages/review.tsx") {
-        pageReads++;
         return Promise.resolve("export default function Review() { return null; }");
+      }
+      return Promise.reject(new Error("File not found"));
+    };
+    fs.readFileBytesWithinLimit = (path, byteLimit) => {
+      if (path === "/tmp/project/pages/review.tsx" || path === "pages/review.tsx") {
+        pageReads++;
+        const source = new TextEncoder().encode(
+          "export default function Review() { return null; }",
+        );
+        if (source.byteLength > byteLimit) {
+          return Promise.reject(new Error("File exceeds byte limit"));
+        }
+        return Promise.resolve(source);
       }
       return Promise.reject(new Error("File not found"));
     };
@@ -135,7 +174,9 @@ describe("ApiHandlerWrapper", () => {
       exists: (path: string) => Promise<boolean>;
       readDir: (path: string) => AsyncIterable<never>;
       resolveFile: (path: string) => Promise<string | null>;
+      symlinkSemantics: "none";
       readFile: (path: string) => Promise<string>;
+      readFileBytesWithinLimit: (path: string, byteLimit: number) => Promise<Uint8Array>;
       refreshSourceSnapshot: (reason?: string) => Promise<void>;
     };
     fs.runWithContext = async (_slug, _token, fn) => await fn();
@@ -151,9 +192,22 @@ describe("ApiHandlerWrapper", () => {
         path === "/tmp/project/pages/review" ? "/tmp/project/pages/review.tsx" : null,
       );
     };
+    fs.symlinkSemantics = "none";
     fs.readFile = (path) => {
       if (path === "pages/review.tsx" || path === "/tmp/project/pages/review.tsx") {
         return Promise.resolve("export default function Review() { return null; }");
+      }
+      return Promise.reject(new Error("File not found"));
+    };
+    fs.readFileBytesWithinLimit = (path, byteLimit) => {
+      if (path === "pages/review.tsx" || path === "/tmp/project/pages/review.tsx") {
+        const source = new TextEncoder().encode(
+          "export default function Review() { return null; }",
+        );
+        if (source.byteLength > byteLimit) {
+          return Promise.reject(new Error("File exceeds byte limit"));
+        }
+        return Promise.resolve(source);
       }
       return Promise.reject(new Error("File not found"));
     };
@@ -202,7 +256,8 @@ describe("ApiHandlerWrapper", () => {
 
     const result = await handler.handle(new Request("http://localhost/new-webhook"), ctx);
 
-    assertEquals(result, { continue: true });
+    assertEquals(result.response?.status, 503);
+    assertEquals(result.response?.headers.get("content-type"), "application/problem+json");
     assertEquals(sourceSnapshotRefreshes, 1);
   });
 
@@ -236,8 +291,98 @@ describe("ApiHandlerWrapper", () => {
 
     const result = await handler.handle(new Request("http://localhost/api"), ctx);
 
-    assertEquals(result.response?.status, 404);
-    assertEquals(sourceSnapshotRefreshes, 1);
+    assertEquals(result.response?.status, 503);
+    assertEquals(sourceSnapshotRefreshes, 0);
+  });
+
+  it("never starts shared-runtime API discovery or a same-process Worker", async () => {
+    let projectContextEntries = 0;
+    let filesystemReads = 0;
+    const ctx = createCtx({});
+    const fs = ctx.adapter.fs as unknown as {
+      runWithContext: (
+        slug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+      ) => Promise<unknown>;
+      exists: (path: string) => Promise<boolean>;
+      readDir: (path: string) => AsyncIterable<never>;
+    };
+    fs.runWithContext = async (_slug, _token, fn) => {
+      projectContextEntries++;
+      return await fn();
+    };
+    fs.exists = () => {
+      filesystemReads++;
+      return Promise.resolve(true);
+    };
+    fs.readDir = async function* () {
+      filesystemReads++;
+      yield* [];
+    };
+
+    const handler = new ApiHandlerWrapper("/tmp/project", ctx.adapter);
+    const result = await handler.handle(
+      new Request("http://localhost/api/private"),
+      ctx,
+    );
+
+    assertEquals(result.response?.status, 503);
+    assertEquals(projectContextEntries, 1);
+    assertEquals(filesystemReads, 0);
+    const problem = await result.response!.json();
+    assertEquals(
+      problem.type,
+      "https://veryfront.com/docs/code/guides/errors#project-execution-unavailable",
+    );
+  });
+
+  it("starts shared-runtime API discovery once the host grants execution", async () => {
+    // The granted counterpart of the fail-closed case above. Without this,
+    // nothing pins that the operator grant actually reaches this surface.
+    let projectContextEntries = 0;
+    let filesystemReads = 0;
+    const ctx = createCtx({});
+    ctx.allowHostProjectCodeExecution = true;
+    const fs = ctx.adapter.fs as unknown as {
+      runWithContext: (
+        slug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+      ) => Promise<unknown>;
+      exists: (path: string) => Promise<boolean>;
+      readDir: (path: string) => AsyncIterable<never>;
+    };
+    fs.runWithContext = async (_slug, _token, fn) => {
+      projectContextEntries++;
+      return await fn();
+    };
+    fs.exists = () => {
+      filesystemReads++;
+      return Promise.resolve(false);
+    };
+    fs.readDir = async function* () {
+      filesystemReads++;
+      yield* [];
+    };
+
+    const handler = new ApiHandlerWrapper("/tmp/project", ctx.adapter);
+    const result = await handler.handle(
+      new Request("http://localhost/api/private"),
+      ctx,
+    );
+
+    assertNotEquals(
+      result.response?.status,
+      503,
+      "a granted shared executor must not return project-execution-unavailable",
+    );
+    assertEquals(projectContextEntries, 1);
+    assertEquals(
+      filesystemReads > 0,
+      true,
+      "the request must reach source resolution instead of failing at the guard",
+    );
   });
 
   it("forwards environmentName into multi-project request context", async () => {
@@ -247,6 +392,16 @@ describe("ApiHandlerWrapper", () => {
     await handler.handle(new Request("http://localhost/api/test"), createCtx(captured));
 
     assertEquals(captured.options?.environmentName, "Staging");
+    assertEquals(
+      captured.options?.productionMode,
+      true,
+      "production requests must enter production context",
+    );
+    assertEquals(
+      captured.options?.branch,
+      null,
+      "production must not carry a preview branch into the project context",
+    );
   });
 
   it("forwards preview branch into multi-project request context", async () => {
@@ -259,5 +414,10 @@ describe("ApiHandlerWrapper", () => {
     await handler.handle(new Request("http://localhost/api/test"), ctx);
 
     assertEquals(captured.options?.branch, "feature-branch");
+    assertEquals(
+      captured.options?.productionMode,
+      false,
+      "preview requests must not enter production context",
+    );
   });
 });

@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import {
   applyDefaultResearchArtifactPath,
   createDefaultResearchRunArtifactMirrorHandler,
@@ -42,10 +43,63 @@ describe("default research artifact support", () => {
       system: "base",
     });
 
-    assertEquals(typeof system, "string");
+    assertStringIncludes(
+      system as string,
+      "base",
+      "the caller's existing system text is preserved",
+    );
+    assertStringIncludes(
+      system as string,
+      "Default research workspace (because no exact artifact path was provided):",
+      "the research workspace reminder is appended to the system prompt",
+    );
+    assertStringIncludes(
+      system as string,
+      "/research/ai-coding-agents/runs/run-1.report.md",
+      "the reminder names the run-scoped report path",
+    );
+    assertStringIncludes(
+      system as string,
+      "/research/ai-coding-agents/report.md",
+      "the reminder names the current topic report path",
+    );
     assertEquals(
       taskContext.defaultResearchArtifacts?.currentReportPath,
       "/research/ai-coding-agents/report.md",
+    );
+  });
+
+  it("does not append the research workspace reminder twice", () => {
+    const taskContext: DefaultResearchArtifactContext = { parentRunId: "run-1" };
+    const latestUserText =
+      "/research Research AI coding agents and save the report to the project.";
+    const first = updateDefaultResearchArtifacts({ taskContext, latestUserText, system: "base" });
+    const second = updateDefaultResearchArtifacts({ taskContext, latestUserText, system: first });
+
+    assertEquals(second, first, "the reminder is not appended twice");
+  });
+
+  it("appends the research workspace reminder as its own system message", () => {
+    const taskContext: DefaultResearchArtifactContext = { parentRunId: "run-1" };
+    const result = updateDefaultResearchArtifacts({
+      taskContext,
+      latestUserText: "/research Research AI coding agents and save the report to the project.",
+      system: [{ role: "system", content: "base" }],
+    }) as ChatSystemMessage[];
+
+    assertEquals(result.length, 2, "the array form keeps the caller's system message");
+    assertEquals(
+      result[0],
+      { role: "system", content: "base" },
+      "the caller's system message is left untouched",
+    );
+    const reminder = result[1];
+    assert(reminder, "the array form appends a second system message");
+    assertEquals(reminder.role, "system", "the reminder is pushed with the system role");
+    assertStringIncludes(
+      reminder.content,
+      "Default research workspace",
+      "the array form pushes the reminder as its own system message",
     );
   });
 
@@ -68,6 +122,45 @@ describe("default research artifact support", () => {
     );
   });
 
+  it("canonicalizes any other report.md path onto the injected current report path", () => {
+    assertEquals(
+      applyDefaultResearchArtifactPath(
+        "update_file",
+        {
+          path: "research/ai-coding-agents-v2/report.md",
+          content: "# r",
+        },
+        {
+          defaultResearchArtifacts: defaultArtifacts(),
+        },
+      ),
+      {
+        path: "research/ai-coding-agents/report.md",
+        content: "# r",
+      },
+      "an invented topic folder must be redirected to the canonical report",
+    );
+  });
+
+  it("leaves canonical supporting artifacts and non-report paths untouched", () => {
+    const taskContext = { defaultResearchArtifacts: defaultArtifacts() };
+    const untouchedPaths = [
+      "research/ai-coding-agents/findings.md",
+      "research/ai-coding-agents/sources.md",
+      "research/ai-coding-agents/runs/run-1.report.md",
+      "docs/notes.md",
+    ];
+
+    for (const path of untouchedPaths) {
+      const toolInput = { path, content: "# r" };
+      assertEquals(
+        applyDefaultResearchArtifactPath("update_file", toolInput, taskContext),
+        toolInput,
+        "canonical supporting artifacts must be returned untouched",
+      );
+    }
+  });
+
   it("retries existing-file collisions for explicit research markdown paths without injected defaults", () => {
     assertEquals(
       shouldRetryCreateResearchArtifactAsUpdate({
@@ -85,6 +178,46 @@ describe("default research artifact support", () => {
         },
       }),
       true,
+    );
+  });
+
+  it("scopes create-file retries to the injected research topic root", () => {
+    assertEquals(
+      shouldRetryCreateResearchArtifactAsUpdate({
+        toolName: "create_file",
+        toolInput: {
+          path: "research/ai-coding-agents/findings.md",
+          content: "# findings",
+        },
+        taskContext: { defaultResearchArtifacts: defaultArtifacts() },
+        error: {
+          output: {
+            error: "tool_error",
+            message: "File already exists: research/ai-coding-agents/findings.md",
+          },
+        },
+      }),
+      true,
+      "a collision inside the run topic root must retry as update_file",
+    );
+
+    assertEquals(
+      shouldRetryCreateResearchArtifactAsUpdate({
+        toolName: "create_file",
+        toolInput: {
+          path: "research/other-topic/report.md",
+          content: "# report",
+        },
+        taskContext: { defaultResearchArtifacts: defaultArtifacts() },
+        error: {
+          output: {
+            error: "tool_error",
+            message: "File already exists: research/other-topic/report.md",
+          },
+        },
+      }),
+      false,
+      "a collision outside the run topic root must not overwrite another topic report",
     );
   });
 

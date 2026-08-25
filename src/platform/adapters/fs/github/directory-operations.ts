@@ -4,6 +4,7 @@ import type { FileCache } from "../cache/file-cache.ts";
 import type { GitHubStatOperations } from "./stat-operations.ts";
 import type { DirectoryEntry, ResolvedGitHubConfig } from "./types.ts";
 import { normalizeGitHubPath } from "./path-utils.ts";
+import { buildGitHubCacheRef } from "./cache-scope.ts";
 
 const LOG_PREFIX = "[GitHubDirectoryOperations]";
 
@@ -17,7 +18,10 @@ export class GitHubDirectoryOperations {
 
   readdir(path: string): DirectoryEntry[] {
     const normalizedPath = normalizeGitHubPath(path, this.projectDir);
-    const cacheKey = buildGitHubDirCacheKey(this.config.ref, normalizedPath);
+    const cacheKey = buildGitHubDirCacheKey(
+      buildGitHubCacheRef(this.config),
+      normalizedPath,
+    );
 
     const cached = this.cache.get<DirectoryEntry[]>(cacheKey);
     if (cached) return cached;

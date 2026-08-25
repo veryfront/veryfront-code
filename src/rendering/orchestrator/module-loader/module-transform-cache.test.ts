@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
@@ -57,7 +62,73 @@ describe("module-loader/module-transform-cache", () => {
     await esbuild.stop();
   });
 
-  it("isolates outer transform cache keys by React, runtime, and dependency-pin state", async () => {
+  it("forwards module-loading cancellation into the SSR transform", async () => {
+    const callerController = new AbortController();
+    const transformController = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    let observedCacheSignal: AbortSignal | undefined;
+
+    await transformModuleCodeWithCache({
+      fileContent: "export const page = 1;",
+      filePath: "/project/app/page.tsx",
+      projectDir: "/project",
+      effectiveProjectId: "project-1",
+      mode: "production",
+      adapter: {} as RuntimeAdapter,
+      signal: callerController.signal,
+      deps: createDeps({
+        getOrComputeTransform: async (_key, compute, _ttl, _progress, signal) => {
+          observedCacheSignal = signal;
+          return {
+            code: await compute(undefined, transformController.signal),
+            cacheHit: false,
+          };
+        },
+        transformToESM: (_code, _filePath, _projectDir, _adapter, options) => {
+          observedSignal = options.abortSignal;
+          return Promise.resolve("export const page = 1;");
+        },
+      }),
+    });
+
+    assertEquals(observedSignal, transformController.signal);
+    assertStrictEquals(
+      observedCacheSignal,
+      callerController.signal,
+      "caller cancellation must reach the transform cache",
+    );
+  });
+
+  it("stops after the transform when the caller has already aborted", async () => {
+    const callerController = new AbortController();
+
+    await assertRejects(
+      () =>
+        transformModuleCodeWithCache({
+          fileContent: "export const page = 1;",
+          filePath: "/project/app/page.tsx",
+          projectDir: "/project",
+          effectiveProjectId: "project-1",
+          mode: "production",
+          adapter: {} as RuntimeAdapter,
+          signal: callerController.signal,
+          deps: createDeps({
+            getOrComputeTransform: () => {
+              callerController.abort(new Error("render cancelled"));
+              return Promise.resolve({
+                code: "export const page = 1;",
+                cacheHit: true,
+              });
+            },
+          }),
+        }),
+      Error,
+      "render cancelled",
+      "an abort raised while the cached transform ran must stop the module load",
+    );
+  });
+
+  it("isolates outer transform cache keys by React, runtime, pins, and server externals", async () => {
     const cacheKeys: string[] = [];
     const deps = createDeps({
       getOrComputeTransform: async (
@@ -123,8 +194,20 @@ describe("module-loader/module-transform-cache", () => {
       dependencyPinningCacheKey: CHANGED_PIN_KEY,
       moduleServerOrigin: "https://b.example",
     });
+    await transformModuleCodeWithCache({
+      ...baseInput,
+      mode: "production",
+      reactVersion: "18.3.1",
+      serverExternalPackages: ["knex", "@prisma/client"],
+    });
+    await transformModuleCodeWithCache({
+      ...baseInput,
+      mode: "production",
+      reactVersion: "18.3.1",
+      serverExternalPackages: ["@prisma/client", "knex"],
+    });
 
-    assertEquals(new Set(cacheKeys).size, 6);
+    assertEquals(new Set(cacheKeys).size, 7);
   });
 
   it("preserves the legacy outer transform identity when pinning is off", async () => {
@@ -394,8 +477,10 @@ describe("module-loader/module-transform-cache", () => {
 
   it("retries through the transform pipeline when cached code has unresolved _vf_modules imports", async () => {
     const retryCode = "export const page = 2;";
-    const setCalls: Array<{ code: string; hash: string }> = [];
+    const setCalls: Array<{ key: string; code: string; hash: string; ttl?: number }> = [];
     let pipelineCalls = 0;
+    let observedKey: string | undefined;
+    let observedTtl: number | undefined;
 
     const result = await transformModuleCodeWithCache({
       fileContent: "export const page = 2;",
@@ -407,11 +492,14 @@ describe("module-loader/module-transform-cache", () => {
       reactVersion: "19.1.1",
       ttlSeconds: 456,
       deps: createDeps({
-        getOrComputeTransform: () =>
-          Promise.resolve({
+        getOrComputeTransform: (key, _compute, ttl) => {
+          observedKey = key;
+          observedTtl = ttl;
+          return Promise.resolve({
             code: 'import React from "/_vf_modules/_veryfront/react.js";',
             cacheHit: true,
-          }),
+          });
+        },
         validateCachedBundlesByManifestOrCode: () =>
           Promise.resolve({
             valid: true,
@@ -428,8 +516,8 @@ describe("module-loader/module-transform-cache", () => {
           assertEquals(options.reactVersion, "19.1.1");
           return Promise.resolve({ code: retryCode });
         },
-        setCachedTransformAsync: (_key, code, hash) => {
-          setCalls.push({ code, hash });
+        setCachedTransformAsync: (key, code, hash, ttl) => {
+          setCalls.push({ key, code, hash, ttl });
           return Promise.resolve();
         },
       }),
@@ -437,9 +525,82 @@ describe("module-loader/module-transform-cache", () => {
 
     assertEquals(result.code, retryCode);
     assertEquals(pipelineCalls, 1);
-    assertEquals(setCalls, [{
-      code: retryCode,
-      hash: hashCodeHex(retryCode).slice(0, 16),
-    }]);
+    assertEquals(
+      observedTtl,
+      456,
+      "the caller-supplied TTL must reach the transform cache",
+    );
+    assertExists(
+      observedKey,
+      "the transform cache lookup must have been given a cache key",
+    );
+    assertEquals(
+      setCalls,
+      [{
+        key: observedKey,
+        code: retryCode,
+        hash: hashCodeHex(retryCode).slice(0, 16),
+        ttl: 456,
+      }],
+      "the repaired transform must be rewritten under the same cache key and TTL the lookup used",
+    );
+    assertEquals(
+      result.cacheKey,
+      observedKey,
+      "the returned cache key must be the key the lookup and the rewrite used",
+    );
+  });
+
+  it("does not write back a retry that still has unresolved _vf_modules imports", async () => {
+    const unresolvedRetryCode = [
+      'import React from "/_vf_modules/_veryfront/react.js";',
+      "export const page = 3;",
+    ].join("\n");
+    const setCalls: string[] = [];
+    let pipelineCalls = 0;
+
+    const result = await transformModuleCodeWithCache({
+      fileContent: "export const page = 3;",
+      filePath: "/project/app/page.tsx",
+      projectDir: "/project",
+      effectiveProjectId: "project-3",
+      mode: "development",
+      adapter: {} as RuntimeAdapter,
+      reactVersion: "19.1.1",
+      ttlSeconds: 456,
+      deps: createDeps({
+        getOrComputeTransform: () =>
+          Promise.resolve({
+            code: 'import React from "/_vf_modules/_veryfront/react.js";',
+            cacheHit: true,
+          }),
+        validateCachedBundlesByManifestOrCode: () =>
+          Promise.resolve({
+            valid: true,
+            failedHashes: [],
+            source: "code",
+          }),
+        runPipeline: () => {
+          pipelineCalls++;
+          return Promise.resolve({ code: unresolvedRetryCode });
+        },
+        setCachedTransformAsync: (key) => {
+          setCalls.push(key);
+          return Promise.resolve();
+        },
+      }),
+    });
+
+    assertEquals(pipelineCalls, 1, "the unresolved cached transform is retried once");
+    assertEquals(
+      setCalls,
+      [],
+      "a retry that still carries unresolved /_vf_modules/ imports must never be written back to the shared transform cache",
+    );
+    assertEquals(
+      result.code,
+      unresolvedRetryCode,
+      "the retry result is still returned to the caller, only the cache write is withheld",
+    );
   });
 });

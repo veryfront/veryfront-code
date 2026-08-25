@@ -354,6 +354,47 @@ Deno.test("prepareDefaultHostedChildForkToolAssembly closes sources when tool se
   assertEquals(closeCalls, ["tooling", "runtime"]);
 });
 
+Deno.test("prepareDefaultHostedChildForkToolAssembly still closes the runtime when closeTooling rejects during a selection failure", async () => {
+  const closeCalls: string[] = [];
+
+  const result = await prepareDefaultHostedChildForkToolAssembly({
+    prepareToolSources: () =>
+      Promise.resolve({
+        ok: true,
+        forkTools: {
+          create_file: { description: "Create file" },
+        },
+        closeTooling: () => {
+          closeCalls.push("tooling");
+          return Promise.reject(new Error("tooling close failed"));
+        },
+        closeRuntime: () => {
+          closeCalls.push("runtime");
+          return Promise.resolve();
+        },
+      }),
+    provider: "anthropic",
+    forkModel: "claude-sonnet-4-5-20250929",
+    effectivePrompt: "Create the requested project artifact",
+    requestedTools: ["not_a_real_tool"],
+  });
+
+  assertEquals(
+    result,
+    {
+      ok: false,
+      errorMessage:
+        "Requested fork tools not available in runtime: not_a_real_tool. Available: create_file, web_fetch, web_search.",
+    },
+    "selection failure must be returned, not rethrown from a rejecting closer",
+  );
+  assertEquals(
+    closeCalls,
+    ["tooling", "runtime"],
+    "closeRuntime must still run after closeTooling rejects",
+  );
+});
+
 Deno.test("buildDefaultHostedChildForkToolSet merges tool sets deterministically and removes default exclusions", () => {
   const bashTool = { description: "Run shell commands" };
   const createFileTool = { description: "Create a file" };

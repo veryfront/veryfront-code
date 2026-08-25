@@ -3,15 +3,15 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertNotStrictEquals, assertThrows } from "#veryfront/testing/assert";
 import type { Prompt } from "./types.ts";
 import { prompt } from "./factory.ts";
-import { promptRegistry } from "./registry.ts";
+import { promptRegistry, promptRegistryInternal } from "./registry.ts";
 
 describe("prompt registry", () => {
   beforeEach(() => {
-    promptRegistry.clearAll();
+    promptRegistryInternal.clearAll();
   });
 
   afterEach(() => {
-    promptRegistry.clearAll();
+    promptRegistryInternal.clearAll();
   });
 
   describe("getContent()", () => {
@@ -52,6 +52,29 @@ describe("prompt registry", () => {
       assertEquals(reads, 0);
     });
 
+    it("rejects blank definition ids at project and shared registry boundaries", () => {
+      for (const id of ["", " ", "\t\n"]) {
+        const definition: Prompt = {
+          id,
+          description: "desc",
+          getContent: async () => "Hello",
+        };
+
+        for (
+          const register of [
+            () => promptRegistry.register(id, definition),
+            () => promptRegistry.registerShared(id, definition),
+          ]
+        ) {
+          assertThrows(
+            register,
+            TypeError,
+            "Prompt definition id must not be blank",
+          );
+        }
+      }
+    });
+
     it("should store an owned immutable definition", () => {
       const definition = Object.freeze({
         id: "owned-definition",
@@ -63,6 +86,25 @@ describe("prompt registry", () => {
       const stored = promptRegistry.get("owned-definition");
       assertNotStrictEquals(stored, definition);
       assertEquals(Object.isFrozen(stored), true);
+    });
+
+    it("should preserve the receiver of a stateful prompt definition", async () => {
+      const state = new WeakMap<object, string>();
+      const definition: Prompt = {
+        id: "stateful-definition",
+        description: "desc",
+        async getContent() {
+          return state.get(this) ?? "receiver-lost";
+        },
+      };
+      state.set(definition, "receiver-kept");
+
+      promptRegistry.register(definition.id, definition);
+
+      assertEquals(
+        await promptRegistry.getContent(definition.id),
+        "receiver-kept",
+      );
     });
 
     it("should snapshot MCP metadata for project and shared registrations", () => {

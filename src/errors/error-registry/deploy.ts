@@ -40,6 +40,15 @@ export const ENVIRONMENT_NOT_FOUND = defineError({
   suggestion: "Check environment names with: veryfront config",
 });
 
+export const ENVIRONMENT_NOT_ROUTABLE = defineError({
+  slug: "environment-not-routable",
+  category: "DEPLOY",
+  status: 400,
+  title: "Environment name has no Veryfront-hosted address",
+  suggestion:
+    "Deploy to preview, staging, or production, or attach a custom domain to this environment in Studio",
+});
+
 export const RELEASE_MISSING_VERSION = defineError({
   slug: "release-missing-version",
   category: "DEPLOY",
@@ -72,6 +81,23 @@ export const PUSH_RECEIPT_MISSING = defineError({
   suggestion: "Run: veryfront push --branch main first",
 });
 
+export const PUSH_CONFLICT = defineError({
+  slug: "push-conflict",
+  category: "DEPLOY",
+  status: 409,
+  title: "Push rejected because remote files changed",
+  suggestion:
+    "Commit or stash local changes, run veryfront pull, reconcile the changes with Git, then push again",
+});
+
+export const SYNC_STATE_INVALID = defineError({
+  slug: "sync-state-invalid",
+  category: "DEPLOY",
+  status: 400,
+  title: "Local sync metadata is invalid",
+  suggestion: "Remove .veryfront/sync-state.json, run veryfront pull, and try again",
+});
+
 export const SOURCE_DIGEST_MISMATCH = defineError({
   slug: "source-digest-mismatch",
   category: "DEPLOY",
@@ -96,17 +122,38 @@ export const BRANCH_NOT_FOUND = defineError({
   suggestion: "List branches in Studio or push a new one with: veryfront push --branch <name>",
 });
 
+/**
+ * The project's configuration file uses a construct Veryfront Cloud's
+ * configuration evaluator can never accept, so the release would answer 500 to
+ * every request. Raised before a release is created; the detail names the file,
+ * the change that makes the project deployable, and the line when the evaluator
+ * located the construct it refused.
+ */
+export const CONFIG_NOT_DEPLOYABLE = defineError({
+  slug: "config-not-deployable",
+  category: "DEPLOY",
+  status: 400,
+  title: "Configuration cannot be deployed to Veryfront Cloud",
+  suggestion:
+    "Veryfront Cloud reads veryfront.config.ts as data: keep it to literals and the veryfront configuration helpers",
+  exitCode: 2,
+});
+
 /** Registry fragment for DEPLOY errors (slug → definition). */
 export const DEPLOY_REGISTRY = {
+  "config-not-deployable": CONFIG_NOT_DEPLOYABLE,
   "deployment-error": DEPLOYMENT_ERROR,
   "platform-error": PLATFORM_ERROR,
   "env-var-missing": ENV_VAR_MISSING,
   "production-build-required": PRODUCTION_BUILD_REQUIRED,
   "environment-not-found": ENVIRONMENT_NOT_FOUND,
+  "environment-not-routable": ENVIRONMENT_NOT_ROUTABLE,
   "release-missing-version": RELEASE_MISSING_VERSION,
   "release-build-timeout": RELEASE_BUILD_TIMEOUT,
   "deployment-verification-timeout": DEPLOYMENT_VERIFICATION_TIMEOUT,
   "push-receipt-missing": PUSH_RECEIPT_MISSING,
+  "push-conflict": PUSH_CONFLICT,
+  "sync-state-invalid": SYNC_STATE_INVALID,
   "source-digest-mismatch": SOURCE_DIGEST_MISMATCH,
   "preview-hostname-too-long": PREVIEW_HOSTNAME_TOO_LONG,
   "branch-not-found": BRANCH_NOT_FOUND,

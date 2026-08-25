@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/adapter.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { clearConfigCache, type VeryfrontConfig } from "#veryfront/config";
 import {
@@ -119,7 +119,7 @@ describe("security/http/config", () => {
     }
   });
 
-  it("serializes object CSP config for downstream handler context", async () => {
+  it("merges object CSP config into the policy the loader builds", async () => {
     const loader = new SecurityConfigLoader(
       "/project",
       createMockAdapter(),
@@ -135,14 +135,12 @@ describe("security/http/config", () => {
 
     await loader.ensureLoaded();
 
-    assertEquals(
-      loader.getCspUserHeader(),
-      "default-src 'self'; script-src 'self' 'nonce-{NONCE}'",
+    const csp = loader.buildCsp(false, "abc123");
+    assert(
+      csp.includes("'nonce-abc123'"),
+      "the {NONCE} placeholder is substituted in project sources",
     );
-    assertEquals(
-      loader.buildCsp(false, "abc123"),
-      "default-src 'self'; script-src 'self' 'nonce-abc123'",
-    );
+    assert(csp.includes("object-src 'none'"), "project config merges into the floor");
   });
 
   it("prefers configured headers over env headers and falls back to defaults", async () => {
@@ -181,11 +179,11 @@ describe("security/http/config", () => {
     await loader.ensureLoaded();
 
     assertEquals(loader.getSecurityConfig()?.cors, true);
-    assertEquals(loader.getCspUserHeader(), "default-src 'self'");
+    assertEquals(loader.getSecurityConfig()?.csp, { "default-src": ["'self'"] });
 
     assertEquals("reset" in loader, false);
     assertEquals(loader.getSecurityConfig()?.cors, true);
-    assertEquals(loader.getCspUserHeader(), "default-src 'self'");
+    assertEquals(loader.getSecurityConfig()?.csp, { "default-src": ["'self'"] });
   });
 
   it("defaults CSRF protection on in production when not explicitly configured", async () => {
@@ -293,6 +291,9 @@ describe("security/http/config", () => {
         csp: {
           "default-src": ["'none'"],
         },
+        redirects: {
+          allowedOrigins: ["https://accounts.example.com"],
+        },
         auth: {
           basic: {
             username: "alice",
@@ -321,6 +322,8 @@ describe("security/http/config", () => {
     assertEquals(Object.isFrozen(first.securityConfig), true);
     assertEquals(Object.isFrozen(derivedCors), true);
     assertEquals(Object.isFrozen(derivedCors.methods), true);
+    assertEquals(Object.isFrozen(first.securityConfig.redirects), true);
+    assertEquals(Object.isFrozen(first.securityConfig.redirects?.allowedOrigins), true);
     assertEquals(derivedCors.origin === originValidator, false);
     assertEquals(Object.isFrozen(derivedCors.origin), true);
     assertEquals(
@@ -333,7 +336,7 @@ describe("security/http/config", () => {
         (second.securityConfig.cors as { origin?: unknown }).origin === derivedCors.origin,
       false,
     );
-    assertEquals(first.cspUserHeader, "default-src 'none'");
+    assertEquals(first.securityConfig.csp, { "default-src": ["'none'"] });
 
     sourceCors.methods?.push("POST");
     assertEquals(derivedCors.methods, ["GET"]);

@@ -40,7 +40,7 @@ export class MDXCacheAdapter {
   }
 
   private getCacheKey(contentHash: string): string {
-    return `mdx:${this.mode}:${contentHash}`;
+    return `mdx:v2:${this.mode}:${contentHash}`;
   }
 
   private getTTL(): number | undefined {

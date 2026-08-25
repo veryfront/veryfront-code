@@ -10,6 +10,10 @@ function splitAllowedOrigins(value: string): string[] {
   return value.split(",").map((origin) => origin.trim());
 }
 
+function buildVeryfrontMcpUrl(apiUrl: string): string {
+  return `${apiUrl.replace(/\/+$/, "")}/mcp`;
+}
+
 export type AgentServiceRegistrationMode = "auto" | "enabled" | "disabled";
 
 /** Configuration used by agent service. */
@@ -97,12 +101,14 @@ const getAgentServiceConfigSchema = defineSchema<AgentServiceConfig>((v) => {
       64_000,
     ),
     VERYFRONT_CONTEXT_COMPACTION_SUMMARY_MODEL: v.string().min(1).optional(),
-    ALLOWED_ORIGINS: v.string().default("http://localhost:3000,http://veryfront.me:3000"),
+    // One default entry: the dev server has a single printed origin, and the
+    // former second entry was an alias of this same loopback origin.
+    ALLOWED_ORIGINS: v.string().default("http://localhost:3000"),
     OTEL_ENABLED: booleanFlagSchema,
     OTEL_EXPORTER_OTLP_ENDPOINT: v.string().optional(),
   }).transform((env) => ({
     VERYFRONT_API_URL: env.VERYFRONT_API_URL,
-    VERYFRONT_MCP_URL: `${env.VERYFRONT_API_URL}/mcp`,
+    VERYFRONT_MCP_URL: buildVeryfrontMcpUrl(env.VERYFRONT_API_URL),
     VERYFRONT_API_TOKEN: env.VERYFRONT_API_TOKEN,
     VERYFRONT_PROJECT_ID: env.VERYFRONT_PROJECT_ID,
     VERYFRONT_AGENT_SERVICE_URL: env.VERYFRONT_AGENT_SERVICE_URL,

@@ -33,3 +33,14 @@ export const MAX_WORKFLOW_DEFINITION_STATIC_BYTES = 16 * 1024 * 1024;
  * backends evict the oldest entries by append order once this bound is reached.
  */
 export const MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES = 1_000;
+
+/**
+ * Maximum per-run approval records retained. The per-run approval list is
+ * append-only: decisions rewrite records in place, so decided approvals stay
+ * in the list and dominate its growth. Once this bound is reached, built-in
+ * backends evict the oldest decided records and reject the append when there
+ * are not enough to make room. Expired records remain pending until the
+ * expiration reconciler decides them, so a decidable approval a run is waiting
+ * on is never silently dropped.
+ */
+export const MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES = 1_000;

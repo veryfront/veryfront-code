@@ -19,6 +19,7 @@ describe("LRUCache", () => {
       maxSizeBytes?: number;
       ttlMs?: number;
       cleanupIntervalMs?: number;
+      onEvict?: (key: string, value: unknown) => void;
       estimateSizeOf?: (value: V) => number;
     },
   ): LRUCache<K, V> {
@@ -64,6 +65,18 @@ describe("LRUCache", () => {
       cache.set("exists", "value");
       assertEquals(cache.delete("exists"), true);
       assertEquals(cache.delete("exists"), false);
+    });
+
+    it("tracks membership for an undefined value", (): void => {
+      const cache = createCache<string, undefined>({ maxEntries: 3 });
+
+      cache.set("present", undefined);
+
+      assertEquals(cache.get("present"), undefined);
+      assertEquals(cache.has("present"), true);
+      assertEquals(cache.delete("present"), true);
+      assertEquals(cache.has("present"), false);
+      assertEquals(cache.delete("present"), false);
     });
 
     it("clear and size", (): void => {
@@ -164,6 +177,21 @@ describe("LRUCache", () => {
       assertEquals(cache.get("a"), undefined);
       assertEquals(cache.get("c"), 3);
       assertEquals(cache.get("d"), 4);
+    });
+
+    it("forwards onEvict to the adapter", (): void => {
+      const evicted: Array<[string, unknown]> = [];
+      const cache = createCache<string, string>({
+        maxEntries: 1,
+        onEvict: (key, value) => evicted.push([key, value]),
+      });
+
+      cache.set("a", "1");
+      cache.set("b", "2");
+      assertEquals(evicted, [["a", "1"]], "the wrapper must forward onEvict to the adapter");
+
+      cache.delete("b");
+      assertEquals(evicted.length, 2, "delete must also reach the forwarded onEvict");
     });
 
     it("prune with no expired entries", (): void => {

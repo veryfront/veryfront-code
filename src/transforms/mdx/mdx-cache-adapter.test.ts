@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { delay } from "#std/async.ts";
 import { MDXCacheAdapter, type MDXCompilationResult } from "./mdx-cache-adapter.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -9,6 +10,10 @@ import {
   InMemoryBundleManifestStore,
   setBundleManifestStore,
 } from "#veryfront/utils/bundle-manifest.ts";
+import {
+  BUNDLE_MANIFEST_DEV_TTL_MS,
+  BUNDLE_MANIFEST_PROD_TTL_MS,
+} from "#veryfront/utils/constants/cache.ts";
 
 describe("MDXCacheAdapter", () => {
   let adapter: MDXCacheAdapter;
@@ -94,14 +99,43 @@ describe("MDXCacheAdapter", () => {
       expect(result).toBeUndefined();
     });
 
+    it("treats legacy unversioned metadata as a cache miss", async () => {
+      const contentHash = await adapter.computeHash(testContent);
+      const codeHash = "legacy-code-hash";
+      await manifestStore.setBundleCode(codeHash, {
+        code: testBundle.compiledCode,
+      });
+      await manifestStore.setBundleMetadata(`mdx:development:${contentHash}`, {
+        hash: contentHash,
+        codeHash,
+        size: testBundle.compiledCode.length,
+        compiledAt: Date.now(),
+        source: "legacy.mdx",
+        mode: "development",
+        meta: { type: "mdx" },
+      });
+
+      assertEquals(
+        await adapter.getCachedBundle(testContent),
+        undefined,
+        "legacy unversioned metadata must not be served as a cache hit",
+      );
+    });
+
     it("should return cached bundle on cache hit", async () => {
-      await adapter.setCachedBundle(testContent, testBundle, "test.mdx");
+      const headings = [{ id: "a", text: "A", level: 2 }];
+      await adapter.setCachedBundle(
+        testContent,
+        createBundle({ compiledCode: testBundle.compiledCode, headings }),
+        "test.mdx",
+      );
 
       const cached = await adapter.getCachedBundle(testContent);
 
       expect(cached).toBeDefined();
       expect(cached?.compiledCode).toBe(testBundle.compiledCode);
       expect(cached?.frontmatter).toEqual({});
+      expect(cached?.headings).toEqual(headings);
     });
 
     it("should preserve frontmatter on cache hit", async () => {
@@ -191,6 +225,45 @@ describe("MDXCacheAdapter", () => {
 
       const cached = await prodAdapter.getCachedBundle(content);
       expect(cached).toBeDefined();
+    });
+
+    it("should store with the mode TTL when no explicit TTL is configured", async () => {
+      const noTtlConfig: VeryfrontConfig = {
+        cache: {
+          bundleManifest: {
+            enabled: true,
+            type: "memory",
+          },
+        },
+      };
+
+      const baseStore = new InMemoryBundleManifestStore();
+      const metadataTtls: Array<number | undefined> = [];
+      const codeTtls: Array<number | undefined> = [];
+      const recordingStore = Object.create(baseStore) as BundleManifestStore;
+      recordingStore.setBundleMetadata = (key, metadata, ttlMs) => {
+        metadataTtls.push(ttlMs);
+        return baseStore.setBundleMetadata(key, metadata, ttlMs);
+      };
+      recordingStore.setBundleCode = (hash, code, ttlMs) => {
+        codeTtls.push(ttlMs);
+        return baseStore.setBundleCode(hash, code, ttlMs);
+      };
+      setBundleManifestStore(recordingStore);
+
+      try {
+        const prodAdapter = new MDXCacheAdapter({ config: noTtlConfig, mode: "production" });
+        const devAdapter = new MDXCacheAdapter({ config: noTtlConfig, mode: "development" });
+
+        await prodAdapter.setCachedBundle("# Prod TTL", createBundle(), "prod.mdx");
+        await devAdapter.setCachedBundle("# Dev TTL", createBundle(), "dev.mdx");
+
+        expect(metadataTtls).toEqual([BUNDLE_MANIFEST_PROD_TTL_MS, BUNDLE_MANIFEST_DEV_TTL_MS]);
+        expect(codeTtls).toEqual([BUNDLE_MANIFEST_PROD_TTL_MS, BUNDLE_MANIFEST_DEV_TTL_MS]);
+      } finally {
+        setBundleManifestStore(manifestStore);
+        await baseStore.clear();
+      }
     });
   });
 
@@ -369,7 +442,7 @@ describe("MDXCacheAdapter", () => {
       await adapter.setCachedBundle(content, bundle, "/path/to/test.mdx");
 
       const hash = await adapter.computeHash(content);
-      const cacheKey = `mdx:development:${hash}`;
+      const cacheKey = `mdx:v2:development:${hash}`;
       const metadata = await manifestStore.getBundleMetadata(cacheKey);
 
       expect(metadata).toBeDefined();
@@ -393,6 +466,22 @@ describe("MDXCacheAdapter", () => {
 
       expect(cached).toBeDefined();
       expect(cached?.compiledCode).toBe(bundle.compiledCode);
+    });
+
+    it("should invalidate a cached bundle whose HTTP bundles are gone", async () => {
+      const missingHash = crypto.randomUUID().replaceAll("-", "");
+      const content = "# Missing HTTP Bundles";
+      const bundle = createBundle({
+        compiledCode:
+          `import b from "file:///tmp/vf-missing-bundles/veryfront-http-bundle/http-${missingHash}.mjs";\nexport default b;`,
+      });
+
+      await adapter.setCachedBundle(content, bundle, "missing-http.mdx");
+      const cacheKey = `mdx:development:${await adapter.computeHash(content)}`;
+
+      expect(await adapter.getCachedBundle(content)).toBeUndefined();
+      expect(await manifestStore.getBundleMetadata(cacheKey)).toBeUndefined();
+      expect(await adapter.getCachedBundle(content)).toBeUndefined();
     });
 
     it("should skip validation for bundles without HTTP bundle paths", async () => {

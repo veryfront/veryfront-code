@@ -1,5 +1,6 @@
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import type { BaseNodeConfig, RetryConfig, WorkflowContext, WorkflowNode } from "../types.ts";
-import { validateNodeId } from "./validation.ts";
+import { isCanonicalNonEmptyString, validateNodeId } from "./validation.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 /** Options accepted by wait for approval. */
@@ -10,6 +11,11 @@ export interface WaitForApprovalOptions extends Omit<BaseNodeConfig, "checkpoint
   approvers?: string[];
   retry?: RetryConfig;
   skip?: (context: WorkflowContext) => boolean | Promise<boolean>;
+  /**
+   * Shape the approver's structured answer must satisfy. Submitting a
+   * non-conformant answer is refused instead of persisted.
+   */
+  responseSchema?: Schema<unknown>;
 }
 
 /** Create a wait-for-approval node. Pauses until human approves/rejects. */
@@ -20,10 +26,12 @@ export function waitForApproval(id: string, options: WaitForApprovalOptions = {}
     id,
     config: {
       type: "wait",
+      description: options.description,
       waitType: "approval",
       message: options.message ?? "Approval required",
       payload: options.payload,
       approvers: options.approvers,
+      ...(options.responseSchema ? { responseSchema: options.responseSchema } : {}),
       timeout: options.timeout,
       checkpoint: true,
       retry: options.retry,
@@ -44,7 +52,7 @@ export interface WaitForEventOptions extends Omit<BaseNodeConfig, "checkpoint"> 
 export function waitForEvent(id: string, options: WaitForEventOptions): WorkflowNode {
   validateNodeId(id);
 
-  if (!options.eventName) {
+  if (!isCanonicalNonEmptyString(options.eventName)) {
     throw INVALID_ARGUMENT.create({ detail: `waitForEvent "${id}" must specify an eventName` });
   }
 
@@ -52,6 +60,7 @@ export function waitForEvent(id: string, options: WaitForEventOptions): Workflow
     id,
     config: {
       type: "wait",
+      description: options.description,
       waitType: "event",
       eventName: options.eventName,
       timeout: options.timeout,

@@ -5,11 +5,13 @@ import {
   getOpenAIEnvConfig,
 } from "#veryfront/config/env.ts";
 import { findVeryfrontCloudModelByModelId } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
-import { NOT_SUPPORTED } from "#veryfront/errors";
+import { DEFAULT_MODEL_CREDENTIAL_MISMATCH, NOT_SUPPORTED } from "#veryfront/errors";
 import {
   getDefaultVeryfrontCloudModel,
   isVeryfrontCloudEnabled,
 } from "#veryfront/platform/cloud/resolver.ts";
+import type { ModelRuntime } from "#veryfront/provider/types.ts";
+import { getModelRuntimeProvider } from "#veryfront/provider/runtime-inspection.ts";
 
 export const AUTO_AGENT_MODEL = "auto";
 export const DEFAULT_AGENT_MODEL = "openai/gpt-5.4-nano";
@@ -22,45 +24,45 @@ const HOSTED_PROVIDER_NAMES = new Set([
   "moonshotai",
   "openai",
 ]);
-const DIRECT_CREDENTIAL_PROVIDER_ALIASES: Record<string, string> = {
-  "google-ai-studio": "google",
-};
-const DIRECT_RUNTIME_PROVIDER_ALIASES: Record<string, string> = {
-  "google-ai-studio": "google",
-};
+const DIRECT_CREDENTIAL_PROVIDER_ALIASES = new Map<string, string>([
+  ["google-ai-studio", "google"],
+]);
+const DIRECT_RUNTIME_PROVIDER_ALIASES = new Map<string, string>([
+  ["google-ai-studio", "google"],
+]);
 const DIRECT_AUTO_MODEL_DEFAULTS: Array<{ provider: string; modelId: string }> = [
   { provider: "openai", modelId: "gpt-5.4-nano" },
   { provider: "anthropic", modelId: "claude-sonnet-4-6" },
   { provider: "google-ai-studio", modelId: "gemini-3.5-flash" },
   { provider: "mistral", modelId: "mistral-large-2512" },
 ];
-const LEGACY_MODEL_ALIASES: Record<string, string> = {
-  opus: "anthropic/claude-opus-4-8",
-  sonnet: "anthropic/claude-sonnet-4-6",
-  haiku: "anthropic/claude-haiku-4-5-20251001",
-  "claude-opus-4-8": "anthropic/claude-opus-4-8",
-  "claude-opus-4-6": "anthropic/claude-opus-4-6",
-  "claude-sonnet-4-6": "anthropic/claude-sonnet-4-6",
-  "claude-haiku-4-5-20251001": "anthropic/claude-haiku-4-5-20251001",
-  "gpt-5.5": "openai/gpt-5.5",
-  "gpt-5.2": "openai/gpt-5.2",
-  "gpt-5.4": "openai/gpt-5.4",
-  "gpt-5.4-mini": "openai/gpt-5.4-mini",
-  "gpt-5.4-nano": "openai/gpt-5.4-nano",
-  "o3-pro": "openai/o3-pro",
-  "o4-mini": "openai/o4-mini",
-  "gemini-3.1-pro": "google-ai-studio/gemini-3.1-pro-preview",
-  "gemini-3.1-pro-preview": "google-ai-studio/gemini-3.1-pro-preview",
-  "gemini-3.5-flash": "google-ai-studio/gemini-3.5-flash",
-  "gemini-3-flash-preview": "google-ai-studio/gemini-3-flash-preview",
-  "gemini-3.1-flash-lite": "google-ai-studio/gemini-3.1-flash-lite",
-  "gemini-2.5-pro": "google-ai-studio/gemini-2.5-pro",
-  "gemini-2.5-flash": "google-ai-studio/gemini-2.5-flash",
-  "mistral-large": "mistral/mistral-large-2512",
-  "mistral-large-2512": "mistral/mistral-large-2512",
-  "kimi-k2.6": "moonshotai/kimi-k2.6",
-  "kimi-k2.5": "moonshotai/kimi-k2.5",
-};
+const LEGACY_MODEL_ALIASES = new Map<string, string>([
+  ["opus", "anthropic/claude-opus-4-8"],
+  ["sonnet", "anthropic/claude-sonnet-4-6"],
+  ["haiku", "anthropic/claude-haiku-4-5-20251001"],
+  ["claude-opus-4-8", "anthropic/claude-opus-4-8"],
+  ["claude-opus-4-6", "anthropic/claude-opus-4-6"],
+  ["claude-sonnet-4-6", "anthropic/claude-sonnet-4-6"],
+  ["claude-haiku-4-5-20251001", "anthropic/claude-haiku-4-5-20251001"],
+  ["gpt-5.5", "openai/gpt-5.5"],
+  ["gpt-5.2", "openai/gpt-5.2"],
+  ["gpt-5.4", "openai/gpt-5.4"],
+  ["gpt-5.4-mini", "openai/gpt-5.4-mini"],
+  ["gpt-5.4-nano", "openai/gpt-5.4-nano"],
+  ["o3-pro", "openai/o3-pro"],
+  ["o4-mini", "openai/o4-mini"],
+  ["gemini-3.1-pro", "google-ai-studio/gemini-3.1-pro-preview"],
+  ["gemini-3.1-pro-preview", "google-ai-studio/gemini-3.1-pro-preview"],
+  ["gemini-3.5-flash", "google-ai-studio/gemini-3.5-flash"],
+  ["gemini-3-flash-preview", "google-ai-studio/gemini-3-flash-preview"],
+  ["gemini-3.1-flash-lite", "google-ai-studio/gemini-3.1-flash-lite"],
+  ["gemini-2.5-pro", "google-ai-studio/gemini-2.5-pro"],
+  ["gemini-2.5-flash", "google-ai-studio/gemini-2.5-flash"],
+  ["mistral-large", "mistral/mistral-large-2512"],
+  ["mistral-large-2512", "mistral/mistral-large-2512"],
+  ["kimi-k2.6", "moonshotai/kimi-k2.6"],
+  ["kimi-k2.5", "moonshotai/kimi-k2.5"],
+]);
 
 export function normalizeAgentModelConfig(model?: string): string {
   if (model === undefined) return DEFAULT_AGENT_MODEL;
@@ -79,11 +81,28 @@ export function resolveConfiguredAgentModel(model?: string): string {
     return normalized;
   }
 
-  return LEGACY_MODEL_ALIASES[normalized] ?? normalized;
+  return LEGACY_MODEL_ALIASES.get(normalized) ?? normalized;
+}
+
+/** Resolve the provider-options key used by the effective model runtime. */
+export function resolveModelProviderOptionKey(
+  model?: string,
+  runtime?: ModelRuntime,
+): string | undefined {
+  const runtimeProvider = runtime === undefined ? undefined : getModelRuntimeProvider(runtime);
+  if (runtimeProvider) {
+    return runtimeProvider;
+  }
+  const resolvedModel = resolveConfiguredAgentModel(model);
+  const slashIndex = resolvedModel.indexOf("/");
+  if (slashIndex <= 0) {
+    return undefined;
+  }
+  return resolvedModel.slice(0, slashIndex) || undefined;
 }
 
 function hasDirectProviderCredentials(provider: string): boolean {
-  switch (DIRECT_CREDENTIAL_PROVIDER_ALIASES[provider] ?? provider) {
+  switch (DIRECT_CREDENTIAL_PROVIDER_ALIASES.get(provider) ?? provider) {
     case "anthropic":
       return Boolean(getAnthropicEnvConfig().apiKey);
     case "google":
@@ -95,6 +114,13 @@ function hasDirectProviderCredentials(provider: string): boolean {
     default:
       return false;
   }
+}
+
+/** Direct-credential providers that currently have a key, in stable order. */
+function listAvailableDirectProviders(): string[] {
+  return DIRECT_AUTO_MODEL_DEFAULTS
+    .map(({ provider }) => provider)
+    .filter((provider) => hasDirectProviderCredentials(provider));
 }
 
 function isSupportedHostedMistralModel(modelId: string): boolean {
@@ -114,7 +140,7 @@ function normalizeVeryfrontCloudRuntimeModel(modelId: string): string {
 }
 
 function toDirectRuntimeModel(provider: string, modelId: string): string {
-  const runtimeProvider = DIRECT_RUNTIME_PROVIDER_ALIASES[provider] ?? provider;
+  const runtimeProvider = DIRECT_RUNTIME_PROVIDER_ALIASES.get(provider) ?? provider;
   return `${runtimeProvider}/${modelId}`;
 }
 
@@ -201,6 +227,24 @@ export function resolveRuntimeModel(model?: string): string {
   }
 
   if (!isVeryfrontCloudEnabled() || hasDirectProviderCredentials(provider)) {
+    // The default model is a framework choice, not the user's. If its provider
+    // has no key but another provider does, the user almost certainly meant
+    // that other provider. Say so instead of failing later against the wrong
+    // vendor. Resolution stays deterministic — never substitute silently, or
+    // the same project resolves differently per machine.
+    if (
+      model === undefined && !isVeryfrontCloudEnabled() &&
+      !hasDirectProviderCredentials(provider)
+    ) {
+      const available = listAvailableDirectProviders();
+      if (available.length > 0) {
+        throw DEFAULT_MODEL_CREDENTIAL_MISMATCH.create({
+          detail: `Default model "${configuredModel}" needs a ${provider} credential. ` +
+            `Found ${available.join(", ")} instead. ` +
+            `Set model: "${available[0]}/<model>" or model: "auto".`,
+        });
+      }
+    }
     return toDirectRuntimeModel(provider, modelId);
   }
 

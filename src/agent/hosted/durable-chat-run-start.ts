@@ -1,5 +1,6 @@
 import { parseProviderError } from "../../chat/provider-errors.ts";
 import { INPUT_VALIDATION_FAILED, INVALID_ARGUMENT } from "#veryfront/errors";
+import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
 import {
   compactHistoricalUiMessageToolInputs,
   type HistoricalToolInputCompactionDiagnostic,
@@ -16,7 +17,18 @@ import type { DetachedRunTracker } from "../service/detached-run-tracker.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 
 /** Public API contract for hosted durable run setup error status code. */
-export type HostedDurableRunSetupErrorStatusCode = 400 | 402 | 413 | 429 | 500 | 503;
+export type HostedDurableRunSetupErrorStatusCode =
+  | 400
+  | 402
+  | 403
+  | 404
+  | 408
+  | 413
+  | 429
+  | 500
+  | 501
+  | 502
+  | 503;
 
 /** Public API contract for hosted durable run accepted. */
 export type HostedDurableRunAccepted = {
@@ -34,13 +46,16 @@ export type HostedDurableRunAuthErrorResponse = {
 /** Public API contract for hosted durable run logger. */
 export type HostedDurableRunLogger = {
   debug?: (message: string, metadata?: Record<string, unknown>) => void;
+  warn?: (message: string, metadata?: Record<string, unknown>) => void;
   error(message: string, metadata?: Record<string, unknown>): void;
 };
 
-/** Input payload for hosted durable run start execution. */
+/** Input delivered to a hosted durable-run starter after request isolation. */
 export type HostedDurableRunStartExecutionInput<TExecution> = {
   execution: TExecution;
   abortSignal: AbortSignal;
+  /** Required application-facing request clone with internal control headers removed. */
+  rawRequest: Request;
 };
 
 /** Input payload for hosted durable run start cleanup. */
@@ -68,8 +83,30 @@ export type ExecuteHostedDurableChatRunInput<TExecution> = {
 function isDurableRunSetupErrorStatusCode(
   status: number | undefined,
 ): status is HostedDurableRunSetupErrorStatusCode {
-  return status === 400 || status === 402 || status === 413 || status === 429 ||
-    status === 500 || status === 503;
+  return status === 400 || status === 402 || status === 403 || status === 404 ||
+    status === 408 || status === 413 || status === 429 || status === 500 ||
+    status === 501 || status === 502 || status === 503;
+}
+
+/**
+ * Classify a setup failure into an error code and status.
+ *
+ * Veryfront platform errors (for example PERMISSION_DENIED thrown when an
+ * untrusted client requests an explicit Studio MCP server) carry their own
+ * code and status, so they must not fall through to the provider-error
+ * parser's EXTERNAL_SERVICE_ERROR default. The error is snapshotted once
+ * because proxied errors can pass the guard yet throw from field getters.
+ */
+function classifyDurableRunSetupError(error: unknown): { code: string; status?: number } {
+  const snapshot = snapshotVeryfrontError(error);
+  if (snapshot) {
+    return {
+      code: snapshot.slug.toUpperCase().replaceAll("-", "_"),
+      status: snapshot.status,
+    };
+  }
+
+  return parseProviderError(error);
 }
 
 function fallbackDurableRunSetupErrorStatusCode(
@@ -179,10 +216,11 @@ async function executeHostedDurableChatRunStart<TExecution>(
   const detachedStartResponse = await executeAgUiDetachedStart(
     {
       sessionManager: input.tracker.sessionManager,
-      startDetachedExecution: async ({ abortSignal }) => {
+      startDetachedExecution: async ({ abortSignal, rawRequest }) => {
         const detachedExecution = input.startDetachedExecution({
           execution,
           abortSignal,
+          rawRequest,
         });
         input.tracker.registerExecution(durableRootRun.runId, detachedExecution);
         await detachedExecution;
@@ -267,14 +305,18 @@ export async function executeHostedDurableChatRun<TExecution>(
       );
     }
 
-    const { code, status } = parseProviderError(error);
+    const { code, status } = classifyDurableRunSetupError(error);
     const response = resolveHostedDurableRunSetupErrorResponse({
       code,
       status,
       originalError: error,
     });
-    input.logger?.error("Durable chat execute failed during setup", {
+    const logSetupFailure = response.statusCode < 500
+      ? (input.logger?.warn?.bind(input.logger) ?? input.logger?.error.bind(input.logger))
+      : input.logger?.error.bind(input.logger);
+    logSetupFailure?.("Durable chat execute failed during setup", {
       errorCode: code,
+      statusCode: response.statusCode,
       originalError: error instanceof Error ? error.message : String(error),
       projectId,
       userId,

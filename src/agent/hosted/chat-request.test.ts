@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { convertUiMessagesToProviderModelMessages } from "#veryfront/chat/conversation";
+import { convertUiMessagesToProviderModelMessages } from "../../chat/provider-message-conversion.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
@@ -208,8 +208,7 @@ function createRuntimeInvocation(): ReturnType<typeof RuntimeAgentRunInvocationS
       project: {
         projectId,
         projectSlug: "demo-project",
-        runtimeTargetKind: "preview_branch",
-        runtimeTargetBranchId: branchId,
+        runtimeTargetKind: "main_branch",
       },
       parentConversationId: "10000000-1000-4000-8000-100000000007",
       parentRunId: "run_parent_1",
@@ -1417,7 +1416,20 @@ describe("agent/hosted-chat-request", () => {
   });
 
   it("builds a hosted chat request from a runtime agent invocation", () => {
-    const invocation = createRuntimeInvocation();
+    const baseInvocation = createRuntimeInvocation();
+    const invocation = RuntimeAgentRunInvocationSchema.parse({
+      ...baseInvocation,
+      run: {
+        ...baseInvocation.run,
+        project: {
+          projectId,
+          projectSlug: "demo-project",
+          runtimeTargetKind: "preview_branch",
+          runtimeTargetBranchId: branchId,
+        },
+      },
+      agentSource: { type: "branch", branch: "feature/runtime-preview" },
+    });
     const forwardedProps = buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation(
       invocation,
     );
@@ -1441,6 +1453,17 @@ describe("agent/hosted-chat-request", () => {
       parentRunId: "run_parent_1",
       spawnedFromToolCallId: "tool_1",
     });
+  });
+
+  it("preserves explicit delegation denial from runtime invocations", () => {
+    const invocation = RuntimeAgentRunInvocationSchema.parse({
+      ...createRuntimeInvocation(),
+      allowDelegation: false,
+    });
+
+    const request = buildHostedChatRequestFromRuntimeAgentInvocation(invocation);
+
+    assertEquals(request.allowDelegation, false);
   });
 
   it("builds hosted chat requests with raw replay tool parts from runtime invocations", () => {
@@ -1542,6 +1565,11 @@ describe("agent/hosted-chat-request", () => {
           runtimeTargetKind: "environment",
           runtimeTargetEnvironmentId: environmentId,
         },
+      },
+      agentSource: {
+        type: "environment",
+        environmentName: "Production",
+        releaseId: "release-42",
       },
     });
 
@@ -1650,7 +1678,8 @@ describe("agent/hosted-chat-request", () => {
 
     assertEquals(parsed.userId, userId);
     assertEquals(parsed.authToken, "token_1");
-    assertEquals(parsed.runEventAppendToken, "untrusted-public-header-token");
+    assertEquals("runEventAppendToken" in parsed, false);
+    assertEquals(JSON.stringify(parsed).includes("untrusted-public-header-token"), false);
     assertEquals(parsed.serverEnvelopeVerified, undefined);
     assertEquals(verifiedRunEventTokens, [{
       token: "untrusted-public-header-token",
@@ -1735,7 +1764,9 @@ describe("agent/hosted-chat-request", () => {
     }
 
     assertEquals(parsed.authToken, "user-api-token");
-    assertEquals(parsed.runEventAppendToken, "run-event-service-token");
+    assertEquals("runEventAppendToken" in parsed, false);
+    assertEquals(Object.keys(parsed).includes("runEventAppendToken"), false);
+    assertEquals(JSON.stringify(parsed).includes("run-event-service-token"), false);
     assertEquals(parsed.serverEnvelopeVerified, true);
     assertEquals(verifiedRunEventTokens, [{
       token: "run-event-service-token",
@@ -1777,7 +1808,8 @@ describe("agent/hosted-chat-request", () => {
     );
 
     if (parsed instanceof Response) throw new Error("Expected parsed request");
-    assertEquals(parsed.runEventAppendToken, "run-event-service-token");
+    assertEquals("runEventAppendToken" in parsed, false);
+    assertEquals(JSON.stringify(parsed).includes("run-event-service-token"), false);
     assertEquals(parsed.serverEnvelopeVerified, undefined);
     assertEquals(parsed.forwardedProps, { harmless: "preserved" });
   });

@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 /** @module transforms/mdx/esm-module-loader/jsx-cache.test */
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   makeTempDir,
@@ -55,6 +55,27 @@ describe("ensureCachedJsxModulePatched", () => {
       await remove(tempDir, { recursive: true });
     }
   });
+
+  it("reports an unreadable cached module as needing regeneration", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-cache-missing-test-" });
+
+    try {
+      const sourceFilePath = join(
+        FRAMEWORK_ROOT,
+        "src",
+        "react",
+        "components",
+        "Head.tsx",
+      );
+      assertEquals(
+        await ensureCachedJsxModulePatched(join(tempDir, "missing-jsx.mjs"), sourceFilePath),
+        false,
+        "unreadable cached module must be regenerated",
+      );
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
 });
 
 describe("transformJsxImports", () => {
@@ -83,6 +104,11 @@ describe("transformJsxImports", () => {
     try {
       const firstCachedPath = join(tempDir, buildMdxJsxCacheFileName(sourcePath, firstSource));
       const secondCachedPath = join(tempDir, buildMdxJsxCacheFileName(sourcePath, secondSource));
+      assertNotEquals(
+        firstCachedPath,
+        secondCachedPath,
+        "a source-content change must produce a distinct cache file name",
+      );
       await writeTextFile(firstCachedPath, "export const PlatformOverview = () => null;");
       await writeTextFile(secondCachedPath, "export default function PlatformOverview() {}");
 
@@ -93,8 +119,18 @@ describe("transformJsxImports", () => {
       const second = await transformJsxImports(mdxImportCode, adapter, tempDir);
       const secondPath = extractCachedJsxPath(second);
 
+      assertNotEquals(
+        firstPath,
+        secondPath,
+        "the transform must select a distinct cached module after the source changed",
+      );
       assertEquals(firstPath, firstCachedPath);
       assertEquals(secondPath, secondCachedPath);
+      assertEquals(
+        (await readTextFile(firstPath)).includes("default"),
+        false,
+        "the first cached module must not be overwritten by the second",
+      );
       assertEquals((await readTextFile(secondPath)).includes("default"), true);
     } finally {
       await remove(tempDir, { recursive: true });

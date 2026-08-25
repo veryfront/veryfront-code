@@ -183,6 +183,7 @@ describe("source integration policy", () => {
     const right = normalizeSourceIntegrationPolicy({
       allow: {
         gmail: { allowedTools: ["delete_email", "list_emails"] },
+        github: {},
         confluence: {},
       },
     });
@@ -191,6 +192,7 @@ describe("source integration policy", () => {
       schemaVersion: 1,
       mode: "allowlist",
       integrations: {
+        github: { allowedToolIds: null },
         gmail: { allowedToolIds: ["list_emails"] },
       },
     });
@@ -200,6 +202,37 @@ describe("source integration policy", () => {
         right,
       ),
       right,
+    );
+    assertEquals(
+      intersectSourceIntegrationPolicies(
+        left,
+        { schemaVersion: 1, mode: "unrestricted" },
+      ),
+      left,
+      "an unrestricted right-hand policy must keep the left restrictions untouched",
+    );
+  });
+
+  it("keeps the narrower tool allowlist when one side allows every tool", () => {
+    const allowAll = normalizeSourceIntegrationPolicy({ allow: { github: {} } });
+    const narrowed = normalizeSourceIntegrationPolicy({
+      allow: { github: { allowedTools: ["list_repos"] } },
+    });
+    const expected = {
+      schemaVersion: 1,
+      mode: "allowlist",
+      integrations: { github: { allowedToolIds: ["list_repos"] } },
+    } as const;
+
+    assertEquals(
+      intersectSourceIntegrationPolicies(allowAll, narrowed),
+      expected,
+      "an allow-all left side must not discard the right side's tool allowlist",
+    );
+    assertEquals(
+      intersectSourceIntegrationPolicies(narrowed, allowAll),
+      expected,
+      "an allow-all right side must not discard the left side's tool allowlist",
     );
   });
 });

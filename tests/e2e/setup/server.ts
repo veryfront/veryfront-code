@@ -14,7 +14,13 @@ let serverProcess: ChildProcess | null = null;
 let runtimeServer: Awaited<ReturnType<typeof startVeryfrontRuntimeServer>> | null = null;
 let runtimeServerAbortController: AbortController | null = null;
 let workspaceRoot: string | null = null;
-let readinessUrl = "http://blank.lvh.me:8080/";
+// Readiness polls bare `localhost` and carries the project in `x-project-slug`.
+// RFC 6761 only *recommends* that resolvers map the `.localhost` tree to loopback,
+// so `<slug>.localhost` can fail with EAI_AGAIN on a plain glibc NSS setup; bare
+// `localhost` always resolves. The dev server reads `x-project-slug` inbound
+// (src/server/context/request-context.ts), so routing is preserved.
+let readinessUrl = "http://localhost:8080/_vf_debug/context";
+let readinessProjectSlug = "blank";
 
 async function writeProjectFile(
   projectDir: string,
@@ -228,7 +234,11 @@ async function cleanupWorkspace(): Promise<void> {
   }
 }
 
-async function waitForReady(url: string, timeout = 30_000): Promise<void> {
+async function waitForReady(
+  url: string,
+  timeout = 30_000,
+  projectSlug = readinessProjectSlug,
+): Promise<void> {
   const start = Date.now();
   const pollInterval = 500;
 
@@ -237,7 +247,10 @@ async function waitForReady(url: string, timeout = 30_000): Promise<void> {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 2000);
 
-      const response = await fetch(url, { signal: controller.signal });
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: { "x-project-slug": projectSlug },
+      });
 
       clearTimeout(timeoutId);
 
@@ -271,7 +284,8 @@ export async function startServer(
     ? options.projectSlugs
     : getProjectsToProvision();
   workspaceRoot = await createPlaywrightWorkspace(projectSlugs);
-  readinessUrl = `http://${projectSlugs[0]}.lvh.me:8080/`;
+  readinessUrl = "http://localhost:8080/_vf_debug/context";
+  readinessProjectSlug = projectSlugs[0]!;
   await persistWorkspaceState(workspaceRoot);
 
   if (options.mode === "production") {

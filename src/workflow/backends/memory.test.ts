@@ -42,7 +42,210 @@ describe("MemoryBackend", () => {
     backend = new MemoryBackend();
   });
 
+  /** Bound an observed-state read so a missing publish fails instead of hanging. */
+  async function nextWithin<T>(iterator: AsyncIterator<T>, ms = 2_000): Promise<IteratorResult<T>> {
+    const timeout = Promise.withResolvers<never>();
+    const timeoutId = setTimeout(
+      () => timeout.reject(new Error("Timed out waiting for an observed run state")),
+      ms,
+    );
+    try {
+      return await Promise.race([iterator.next(), timeout.promise]);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
   describe("Run Management", () => {
+    it("observes exact cross-client run transitions in revision order", async () => {
+      const run = createTestRun("run-observed");
+      await backend.createRun(run);
+      const observation = await backend.openRunObservation(run.id);
+      assertExists(observation);
+
+      await backend.updateRun(run.id, {
+        status: "waiting",
+        nodeStates: {
+          review: {
+            nodeId: "review",
+            status: "running",
+            attempt: 1,
+            input: { secret: "input" },
+            output: { secret: "output" },
+          },
+        },
+      });
+      await backend.updateRun(run.id, { status: "running" });
+
+      const iterator = observation.changes[Symbol.asyncIterator]();
+      assertEquals((await iterator.next()).value, {
+        revision: 1,
+        status: "waiting",
+        nodes: { review: { status: "running", attempt: 1 } },
+      });
+      assertEquals((await iterator.next()).value, {
+        revision: 2,
+        status: "running",
+        nodes: { review: { status: "running", attempt: 1 } },
+      });
+      await observation.close();
+    });
+
+    it("publishes an approval append as its own contiguous revision with a minimal projection", async () => {
+      const run = createTestRun("run-approval-observed");
+      await backend.createRun(run);
+      const observation = await backend.openRunObservation(run.id);
+      assertExists(observation);
+
+      await backend.updateRun(run.id, { status: "waiting" });
+      await backend.savePendingApproval(run.id, {
+        id: "apr-1",
+        nodeId: "review",
+        message: "Please review",
+        payload: { secret: "approval-payload" },
+        requestedAt: new Date(),
+        status: "pending",
+      });
+
+      const iterator = observation.changes[Symbol.asyncIterator]();
+      assertEquals((await nextWithin(iterator)).value, {
+        revision: 1,
+        status: "waiting",
+        nodes: {},
+      });
+      // The approval write is its own revision, carrying only identifiers:
+      // a subscriber learns which approval blocks the run without a second
+      // fetch, and without the approval payload leaking into the stream.
+      assertEquals((await nextWithin(iterator)).value, {
+        revision: 2,
+        status: "waiting",
+        nodes: {},
+        approvals: [{ id: "apr-1", nodeId: "review", message: "Please review" }],
+      });
+      await observation.close();
+    });
+
+    it("publishes owned approval appends only when ownership holds", async () => {
+      const run = createTestRun("run-owned-approval", { status: "waiting", workerId: "w1" });
+      await backend.createRun(run);
+      const observation = await backend.openRunObservation(run.id);
+      assertExists(observation);
+
+      const approval = (id: string): PendingApproval => ({
+        id,
+        nodeId: "review",
+        message: "Please review",
+        payload: undefined,
+        requestedAt: new Date(),
+        status: "pending",
+      });
+
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          run.id,
+          ["waiting"],
+          "other-worker",
+          approval("apr-denied"),
+        ),
+        false,
+      );
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          run.id,
+          ["waiting"],
+          "w1",
+          approval("apr-owned"),
+        ),
+        true,
+      );
+
+      // The denied append must publish nothing: revision 1 is the owned
+      // append, and it projects only the approval that was actually saved.
+      const iterator = observation.changes[Symbol.asyncIterator]();
+      assertEquals((await nextWithin(iterator)).value, {
+        revision: 1,
+        status: "waiting",
+        nodes: {},
+        approvals: [{ id: "apr-owned", nodeId: "review", message: "Please review" }],
+      });
+      await observation.close();
+    });
+
+    it("delivers the terminal state and then closes the observation", async () => {
+      const run = createTestRun("run-terminal");
+      await backend.createRun(run);
+      const observation = await backend.openRunObservation(run.id);
+      assertExists(observation);
+      const iterator = observation.changes[Symbol.asyncIterator]();
+
+      await backend.updateRun(run.id, { status: "completed" });
+
+      assertEquals((await iterator.next()).value?.status, "completed");
+      assertEquals(await iterator.next(), { value: undefined, done: true });
+    });
+
+    it("fails and detaches a slow observer without failing writes", async () => {
+      const run = createTestRun("run-overflow");
+      await backend.createRun(run);
+      const slow = await backend.openRunObservation(run.id);
+      const active = await backend.openRunObservation(run.id);
+      assertExists(slow);
+      assertExists(active);
+      const activeIterator = active.changes[Symbol.asyncIterator]();
+
+      for (let revision = 1; revision <= 66; revision++) {
+        await backend.updateRun(run.id, { heartbeatAt: new Date(revision) });
+        assertEquals((await activeIterator.next()).value?.revision, revision);
+      }
+
+      const iterator = slow.changes[Symbol.asyncIterator]();
+      await assertRejects(() => iterator.next(), Error, "slow observer");
+      await backend.updateRun(run.id, { status: "running" });
+      assertEquals((await activeIterator.next()).value?.status, "running");
+      await active.close();
+    });
+
+    it("closes observations on abort and explicit close", async () => {
+      const run = createTestRun("run-abort");
+      await backend.createRun(run);
+      const controller = new AbortController();
+      const aborted = await backend.openRunObservation(run.id, { signal: controller.signal });
+      const closed = await backend.openRunObservation(run.id);
+      assertExists(aborted);
+      assertExists(closed);
+      controller.abort();
+      await closed.close();
+
+      assertEquals(await aborted.changes[Symbol.asyncIterator]().next(), {
+        value: undefined,
+        done: true,
+      });
+      assertEquals(await closed.changes[Symbol.asyncIterator]().next(), {
+        value: undefined,
+        done: true,
+      });
+    });
+
+    it("closes observations when the run is deleted or the backend is destroyed", async () => {
+      await backend.createRun(createTestRun("run-delete"));
+      const deleted = await backend.openRunObservation("run-delete");
+      assertExists(deleted);
+      await backend.deleteRun("run-delete");
+      assertEquals(await deleted.changes[Symbol.asyncIterator]().next(), {
+        value: undefined,
+        done: true,
+      });
+
+      await backend.createRun(createTestRun("run-destroy"));
+      const destroyed = await backend.openRunObservation("run-destroy");
+      assertExists(destroyed);
+      await backend.destroy();
+      assertEquals(await destroyed.changes[Symbol.asyncIterator]().next(), {
+        value: undefined,
+        done: true,
+      });
+    });
+
     it("should create and retrieve a run", async () => {
       await backend.createRun(createTestRun("run-1"));
 
@@ -212,6 +415,24 @@ describe("MemoryBackend", () => {
   });
 
   describe("Approvals", () => {
+    it("should hydrate pending approvals when retrieving a run", async () => {
+      const run = createTestRun("run-with-approval", { status: "waiting" });
+      const approval: PendingApproval = {
+        id: "approval-on-run",
+        nodeId: "review-step",
+        status: "pending",
+        message: "Please review",
+        payload: { data: "test" },
+        requestedAt: new Date(),
+      };
+
+      await backend.createRun(run);
+      await backend.savePendingApproval(run.id, approval);
+
+      const retrieved = await backend.getRun(run.id);
+      assertEquals(retrieved?.pendingApprovals, [approval]);
+    });
+
     it("should save and retrieve pending approvals", async () => {
       const approval: PendingApproval = {
         id: "approval-1",
@@ -242,16 +463,42 @@ describe("MemoryBackend", () => {
 
       await backend.savePendingApproval("run-2", approval);
 
-      await backend.updateApproval("run-2", "approval-2", {
-        approved: true,
-        approver: "admin@example.com",
-        comment: "Looks good!",
-      });
+      assertEquals(
+        await backend.updateApproval("run-2", "approval-2", {
+          approved: true,
+          approver: "admin@example.com",
+          comment: "Looks good!",
+        }),
+        true,
+        "the first decision on a pending approval must report that it was written",
+      );
 
       const updatedApproval = await backend.getPendingApproval("run-2", "approval-2");
       assertEquals(updatedApproval?.status, "approved");
       assertEquals(updatedApproval?.decidedBy, "admin@example.com");
       assertEquals(updatedApproval?.comment, "Looks good!");
+
+      assertEquals(
+        await backend.updateApproval("run-2", "approval-2", {
+          approved: false,
+          approver: "mallory@example.com",
+        }),
+        false,
+        "a decision on an already-resolved approval must be reported as skipped",
+      );
+
+      const afterLosingDecision = await backend.getPendingApproval("run-2", "approval-2");
+      assertEquals(afterLosingDecision?.status, "approved", "the winning decision must stand");
+      assertEquals(
+        afterLosingDecision?.decidedBy,
+        "admin@example.com",
+        "a losing decision must not overwrite the recorded approver",
+      );
+      assertEquals(
+        afterLosingDecision?.comment,
+        "Looks good!",
+        "a losing decision must not overwrite the recorded comment",
+      );
     });
 
     it("should condition approval appends on owner and patch notification metadata", async () => {
@@ -310,6 +557,31 @@ describe("MemoryBackend", () => {
       const dequeued = await backend.dequeue();
       assertExists(dequeued);
       assertEquals(dequeued.runId, "run-1");
+    });
+
+    it("rejects enqueue once the queue cap is reached", async () => {
+      const cappedBackend = new MemoryBackend({ maxQueueSize: 1 });
+      const createdAt = new Date();
+
+      await cappedBackend.enqueue({ runId: "first", workflowId: "wf", input: {}, createdAt });
+
+      await assertRejects(
+        () => cappedBackend.enqueue({ runId: "second", workflowId: "wf", input: {}, createdAt }),
+        Error,
+        "Queue full (max: 1)",
+        "enqueue must apply back-pressure at the cap",
+      );
+
+      assertEquals(
+        (await cappedBackend.dequeue())?.runId,
+        "first",
+        "the queued job must survive the rejected enqueue",
+      );
+      assertEquals(
+        await cappedBackend.dequeue(),
+        null,
+        "the rejected job must never have entered the queue",
+      );
     });
 
     it("should return null when queue is empty", async () => {

@@ -5,7 +5,7 @@ import type {
   ChatProviderModelInputMessage,
   ChatProviderModelInputPart,
   ChatProviderModelInputToolResultPart,
-} from "#veryfront/chat/conversation";
+} from "./provider-input-types.ts";
 import type {
   ChatToolCallPart,
   ChatToolPartState,
@@ -14,16 +14,13 @@ import type {
   ProviderModelMessage,
 } from "veryfront/chat/types";
 import {
-  apiConversationSchema,
-  apiMessageSchema,
-  conversationTypeSchema,
-  messagePartSchema,
-  messageStatusSchema,
-} from "#veryfront/chat/compat";
-import {
-  convertUiMessagesToProviderModelMessages,
   extractTextFromMessage,
   extractUploadId,
+  getApiConversationSchema,
+  getApiMessageSchema,
+  getConversationTypeSchema,
+  getMessagePartSchema,
+  getMessageStatusSchema,
   hasIncompleteToolParts,
   isRecord,
   isToolCallPart,
@@ -34,7 +31,13 @@ import {
   stringifyUnknown,
   toConversationPartsFromUiMessage,
 } from "#veryfront/chat/conversation";
+import { convertUiMessagesToProviderModelMessages } from "./provider-message-conversion.ts";
 
+const apiConversationSchema = getApiConversationSchema();
+const apiMessageSchema = getApiMessageSchema();
+const conversationTypeSchema = getConversationTypeSchema();
+const messagePartSchema = getMessagePartSchema();
+const messageStatusSchema = getMessageStatusSchema();
 const GITHUB_PR_DIFF_INPUT = { owner: "veryfront", repo: "veryfront-code", pull_number: 3092 };
 const GITHUB_LIST_PRS_INPUT = { owner: "veryfront", repo: "veryfront-code" };
 type JsonToolResultValue = Extract<ChatToolResultPart["output"], { type: "json" }>["value"];
@@ -209,8 +212,41 @@ describe("chat/conversation helpers", () => {
       output: "ok",
     });
 
-    assertEquals(mapToolState("approval-requested"), "pending");
-    assertEquals(mapToolState("output-denied"), "error");
+    assertEquals(
+      mapToolState("input-streaming"),
+      "streaming",
+      "input-streaming is the only producer of the persisted streaming state",
+    );
+    assertEquals(
+      mapToolState("input-available"),
+      "pending",
+      "a tool waiting to run must persist as pending",
+    );
+    assertEquals(
+      mapToolState("output-available"),
+      "completed",
+      "a tool with output must persist as completed",
+    );
+    assertEquals(
+      mapToolState("output-error"),
+      "error",
+      "a failed tool must persist as error",
+    );
+    assertEquals(
+      mapToolState("approval-requested"),
+      "pending",
+      "an approval request must persist as pending",
+    );
+    assertEquals(
+      mapToolState("output-denied"),
+      "error",
+      "a denied tool must persist as error",
+    );
+    assertEquals(
+      mapToolState("unknown-state"),
+      "pending",
+      "an unrecognized SDK state must fall back to pending",
+    );
     assertEquals(parts, [
       { type: "tool_call", id: "tc-1", name: "bash", input: { command: "ls" }, state: "completed" },
       { type: "tool_result", tool_call_id: "tc-1", output: "ok", is_error: false },
@@ -538,6 +574,84 @@ describe("chat/conversation helpers", () => {
 });
 
 describe("convertUiMessagesToProviderModelMessages", () => {
+  it("replays assistant reasoning with its signature and redacted data", () => {
+    assertEquals(
+      convertUiMessagesToProviderModelMessages([
+        assistantInputMessage(
+          [{ type: "reasoning", text: "Thinking", signature: "sig", redactedData: "red" }],
+          "assistant-reasoning",
+        ),
+      ]),
+      [
+        {
+          role: "assistant",
+          content: [
+            { type: "reasoning", text: "Thinking", signature: "sig", redactedData: "red" },
+          ],
+        },
+      ],
+      "assistant reasoning must reach provider content with its signature and redactedData",
+    );
+  });
+
+  it("converts system messages into a provider system message", () => {
+    assertEquals(
+      convertUiMessagesToProviderModelMessages([
+        {
+          id: "system-1",
+          role: "system",
+          parts: [textInputPart("Be terse."), textInputPart(" Cite sources.")],
+        },
+      ]),
+      [{ role: "system", content: "Be terse. Cite sources." }],
+      "system text parts must concatenate into one provider system message",
+    );
+
+    assertEquals(
+      convertUiMessagesToProviderModelMessages([
+        { id: "system-empty", role: "system", parts: [textInputPart("")] },
+      ]),
+      [],
+      "an empty system message must not reach the provider",
+    );
+  });
+
+  it("forwards user file attachments to provider content", () => {
+    assertEquals(
+      convertUiMessagesToProviderModelMessages([
+        {
+          id: "user-attachment",
+          role: "user",
+          parts: [
+            { type: "text", text: "What is in this screenshot?" },
+            {
+              type: "file",
+              mediaType: "image/png",
+              url: "https://files.example.com/shot.png",
+              filename: "shot.png",
+            },
+          ],
+        },
+      ]),
+      [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "What is in this screenshot?" },
+            {
+              type: "file",
+              mediaType: "image/png",
+              data: "https://files.example.com/shot.png",
+              url: "https://files.example.com/shot.png",
+              filename: "shot.png",
+            },
+          ],
+        },
+      ],
+      "user file attachments must be forwarded to provider content",
+    );
+  });
+
   it("normalizes non-JSON tool output without crashing provider conversion", () => {
     const output: Record<string, unknown> = {
       big: 42n,

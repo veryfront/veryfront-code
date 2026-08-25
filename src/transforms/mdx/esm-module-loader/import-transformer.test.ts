@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { NODE_BUILTINS } from "#veryfront/transforms/import-rewriter/node-builtins.ts";
 import {
@@ -71,13 +72,49 @@ describe("transformImports", () => {
   });
 
   it("strips react from import map", () => {
-    const code = `import React from "react";\n`;
+    const code = [
+      `import React from "react";`,
+      `import ReactDOM from "react-dom";`,
+      `import { jsx } from "react/jsx-runtime";`,
+      `import { createRoot } from "react-dom/client";`,
+      `import { foo } from "my-lib";`,
+      ``,
+    ].join("\n");
     const result = transformImports(code, {
-      imports: { "react": "/mapped/react.js", "other": "/mapped/other.js" },
+      imports: {
+        "react": "/mapped/react.js",
+        "react-dom": "/mapped/react-dom.js",
+        "react/jsx-runtime": "/mapped/jsx-runtime.js",
+        "react-dom/client": "/mapped/client.js",
+        "my-lib": "/mapped/my-lib.js",
+      },
     });
-    // React should NOT be rewritten
-    assertEquals(result.includes("react"), true);
-    assertEquals(result.includes("/mapped/react.js"), false);
+    // Every React target stays bare so SSR uses a single React instance.
+    assertEquals(
+      result.includes("/mapped/react.js"),
+      false,
+      "react must stay bare so SSR uses one React instance",
+    );
+    assertEquals(
+      result.includes("/mapped/react-dom.js"),
+      false,
+      "react-dom must stay bare so SSR uses one React instance",
+    );
+    assertEquals(
+      result.includes("/mapped/jsx-runtime.js"),
+      false,
+      "react subpaths must stay bare so SSR uses one React instance",
+    );
+    assertEquals(
+      result.includes("/mapped/client.js"),
+      false,
+      "react-dom subpaths must stay bare so SSR uses one React instance",
+    );
+    assertEquals(
+      result.includes("/mapped/my-lib.js"),
+      true,
+      "non-React entries are still applied",
+    );
   });
 
   it("returns code unchanged when import map has no matching entries", () => {
@@ -178,6 +215,108 @@ describe("rewriteMdxRootDependencyImports", () => {
         `import lodash from "https://esm.sh/lodash@4.17.21?external=react,react-dom&target=es2022";`,
       ),
     );
+  });
+
+  it("rejects configured server external packages with pinning on or off", async () => {
+    const code = [
+      `import knex from "knex";`,
+      `import prisma from "@prisma/client";`,
+      `const queryBuilder = import("knex/query");`,
+    ].join("\n");
+
+    for (const dependencyPinningCacheKey of ["on:snapshot-a", "off"]) {
+      const error = await assertRejects(
+        () =>
+          rewriteMdxRootDependencyImports(
+            code,
+            { imports: {} },
+            {
+              ...baseOptions,
+              dependencyPinningCacheKey,
+              serverExternalPackages: ["knex", "@prisma/client"],
+            },
+          ),
+        Error,
+        "build.serverExternalPackages",
+      );
+      assertEquals(error instanceof VeryfrontError, true);
+      assertEquals((error as VeryfrontError).message.includes(baseOptions.projectDir), false);
+      assertEquals(
+        (error as VeryfrontError).message.includes("__veryfront_mdx_root__.mjs"),
+        true,
+      );
+      assertEquals(
+        (error as VeryfrontError).instance,
+        "__veryfront_mdx_root__.mjs",
+      );
+    }
+  });
+
+  it("rejects configured CommonJS packages with pinning on or off", async () => {
+    for (
+      const code of [
+        `const database = require("knex");`,
+        `const database = require?.("knex");`,
+        `const database = require.resolve("knex");`,
+      ]
+    ) {
+      for (const dependencyPinningCacheKey of ["on:snapshot-a", "off"]) {
+        await assertRejects(
+          () =>
+            rewriteMdxRootDependencyImports(
+              code,
+              { imports: {} },
+              {
+                ...baseOptions,
+                dependencyPinningCacheKey,
+                serverExternalPackages: ["knex"],
+              },
+            ),
+          Error,
+          "build.serverExternalPackages",
+        );
+      }
+    }
+  });
+
+  it("rejects import-map aliases that resolve to configured server externals", async () => {
+    const cases = [
+      [`import database from "db";`, { db: "knex" }, ["knex"]],
+      [`const database = import("db");`, { db: "knex" }, ["knex"]],
+      [
+        `import database from "db";`,
+        { db: "npm:@prisma/client/runtime/library" },
+        ["@prisma/client"],
+      ],
+      [`import query from "db/query";`, { "db/": "knex/" }, ["knex"]],
+      [
+        `import database from "db";`,
+        { db: "https://esm.sh/knex@3.1.0" },
+        ["knex"],
+      ],
+      // An import map that aliases the declared external away must not smuggle
+      // it into a browser transform: the pre-import-map check catches this one.
+      [`import knex from "knex";`, { knex: "/shims/knex.js" }, ["knex"]],
+    ] as const;
+
+    for (const [code, imports, serverExternalPackages] of cases) {
+      for (const dependencyPinningCacheKey of ["on:snapshot-a", "off"]) {
+        await assertRejects(
+          () =>
+            rewriteMdxRootDependencyImports(
+              code,
+              { imports },
+              {
+                ...baseOptions,
+                dependencyPinningCacheKey,
+                serverExternalPackages,
+              },
+            ),
+          Error,
+          "build.serverExternalPackages",
+        );
+      }
+    }
   });
 
   it("keeps every supported bare Node builtin and its node: form unchanged", async () => {

@@ -14,17 +14,6 @@ export interface FileListMatchResult {
   content?: string;
 }
 
-function hashPreview(content: string): number {
-  return content
-    .slice(0, 100)
-    .split("")
-    .reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0);
-}
-
-function previewText(content: string, max = 80): string {
-  return content.length > max ? `${content.slice(0, max)}...` : content;
-}
-
 const INDEX_STALENESS_LIMIT_MS = 5 * 60 * 1000; // 5 minutes
 
 export class FileListIndex {
@@ -105,8 +94,6 @@ export class FileListIndex {
     logger.debug("FILE_LIST_CACHE_HIT - serving from file list cache", {
       path: normalizedPath,
       contentLength: content.length,
-      contentHash: hashPreview(content),
-      contentPreview: previewText(content, 200).replace(/\n/g, "\\n"),
     });
 
     return {
@@ -210,7 +197,6 @@ export class FileListIndex {
       filesWithContent: fileList.filter((f) => f.content).length,
       sampleFilePath: cacheCheckSample?.path,
       sampleContentLength: cacheCheckSample?.content?.length,
-      sampleContentPreview: cacheCheckSample?.content?.slice(0, 200)?.replace(/\n/g, "\\n"),
     });
 
     const indexKey = `${fileList.length}:${fileList[0]?.path ?? ""}:${
@@ -246,8 +232,6 @@ export class FileListIndex {
       indexedWithContent: index.size,
       sampleFilePath: sampleFile?.path,
       sampleContentLength: sampleContent?.length,
-      sampleContentHash: sampleContent ? hashPreview(sampleContent) : undefined,
-      sampleContentPreview: sampleContent?.slice(0, 200)?.replace(/\n/g, "\\n"),
     });
 
     return {

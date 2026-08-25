@@ -21,7 +21,12 @@ import {
 } from "#veryfront/utils/config-resource-limits.ts";
 import { CSS_OPTIMIZATION } from "#veryfront/utils/constants/build.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
-import { validateVeryfrontConfig } from "./config.schema.ts";
+import { validateVeryfrontConfig, type VeryfrontConfig } from "./config.schema.ts";
+
+/** Derived from the schema so the test tracks it instead of restating the union. */
+type ImageFormat = NonNullable<
+  NonNullable<NonNullable<VeryfrontConfig["assetPipeline"]>["images"]>["formats"]
+>[number];
 
 describe("configSchema", () => {
   it("validates valid config", () => {
@@ -31,6 +36,24 @@ describe("configSchema", () => {
     });
 
     assertEquals(cfg.router, "app");
+  });
+
+  it("rejects opting out of ESM layouts with migration guidance", () => {
+    const error = assertThrows(
+      () => validateVeryfrontConfig({ experimental: { esmLayouts: false } }),
+      Error,
+      "experimental.esmLayouts",
+    ) as Error;
+
+    // The flag no longer controls behavior, so the rejection must tell the
+    // user to remove it and where the migration is documented.
+    assertStringIncludes(error.message, "Remove the setting");
+    assertStringIncludes(error.message, "docs/guides/configuration.md");
+    assertEquals(
+      error.message.includes("—"),
+      false,
+      "public configuration guidance must use ASCII punctuation",
+    );
   });
 
   it("keeps CSS asset-pipeline schema constraints aligned with runtime", () => {
@@ -73,9 +96,10 @@ describe("configSchema", () => {
   });
 
   it("keeps image asset-pipeline schema constraints aligned with runtime", () => {
+    const formats: ImageFormat[] = ["webp", "png"];
     const images = {
       projectDir: Deno.cwd(),
-      formats: ["webp", "png"],
+      formats,
       sizes: [320, 640],
       quality: 85,
       inputDir: "public",
@@ -478,6 +502,33 @@ describe("configSchema", () => {
     );
   });
 
+  it("accepts bare package names in build.serverExternalPackages", () => {
+    const config = validateVeryfrontConfig({
+      build: {
+        serverExternalPackages: ["knex", "@prisma/client"],
+      },
+    });
+
+    assertEquals(config.build?.serverExternalPackages, ["knex", "@prisma/client"]);
+  });
+
+  it("rejects versions, subpaths, duplicates, and empty server external packages", () => {
+    for (
+      const serverExternalPackages of [
+        ["knex@3.1.0"],
+        ["@prisma/client/runtime"],
+        ["knex", "knex"],
+        [],
+      ]
+    ) {
+      assertThrows(
+        () => validateVeryfrontConfig({ build: { serverExternalPackages } }),
+        Error,
+        "Invalid veryfront.config at build.serverExternalPackages",
+      );
+    }
+  });
+
   it("returns registered validation errors without retaining the full config", () => {
     const input = {
       dev: { port: "invalid" },
@@ -556,6 +607,72 @@ describe("configSchema", () => {
         "Invalid veryfront.config at security.remoteHosts",
       );
     }
+  });
+
+  it("accepts bounded canonical redirect origin policies", () => {
+    const allowedOrigins = [
+      "https://accounts.example.com",
+      "http://localhost:3000",
+    ];
+
+    assertEquals(
+      validateVeryfrontConfig({ security: { redirects: { allowedOrigins } } }).security
+        ?.redirects,
+      { allowedOrigins },
+    );
+    assertEquals(
+      validateVeryfrontConfig({ security: { redirects: { allowedOrigins: [] } } }).security
+        ?.redirects,
+      { allowedOrigins: [] },
+    );
+  });
+
+  it("rejects malformed redirect origin policies", () => {
+    for (
+      const redirects of [
+        {},
+        { allowedOrigins: ["https://accounts.example.com/path"] },
+        { allowedOrigins: ["https://accounts.example.com?tenant=one"] },
+        { allowedOrigins: ["https://user:password@accounts.example.com"] },
+        { allowedOrigins: ["javascript:"] },
+        { allowedOrigins: ["//accounts.example.com"] },
+        { allowedOrigins: ["https://accounts.example.com", "https://accounts.example.com"] },
+      ]
+    ) {
+      assertThrows(
+        () => validateVeryfrontConfig({ security: { redirects } }),
+        Error,
+        "Invalid veryfront.config at security.redirects",
+      );
+    }
+  });
+
+  it("accepts CSP directives in either spelling, including null", () => {
+    const csp = {
+      styleSrc: ["https://fonts.googleapis.com"],
+      "font-src": ["https://fonts.gstatic.com"],
+      scriptSrcAttr: null,
+    };
+
+    assertEquals(validateVeryfrontConfig({ security: { csp } }).security?.csp, csp);
+  });
+
+  it("rejects an unknown CSP directive and names the offending key", () => {
+    // Browsers ignore unrecognized directives, so a typo would otherwise read
+    // as configured and protect nothing.
+    const error = assertThrows(
+      () => validateVeryfrontConfig({ security: { csp: { fontSource: ["https://a.example"] } } }),
+      Error,
+      "Invalid veryfront.config at security.csp",
+    ) as Error;
+
+    assertStringIncludes(
+      error.message,
+      'Unknown Content-Security-Policy directive "fontSource"',
+    );
+    // The refinement runs on `security.csp`, so its path is relative to it.
+    // A "csp" prefix here would report `security.csp.csp.fontSource`.
+    assertEquals(error.message.includes("security.csp.csp"), false);
   });
 
   it("gives helpful error for invalid cors", () => {

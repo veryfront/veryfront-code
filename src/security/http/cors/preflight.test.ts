@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { DEFAULT_METHODS } from "./constants.ts";
+import { DEFAULT_MAX_AGE, DEFAULT_METHODS } from "./constants.ts";
 import {
   handleCORSPreflight,
   isPreflightRequest,
@@ -180,6 +180,105 @@ describe("security/http/cors/preflight", () => {
 
       assertEquals(denied.status, 403);
       assertEquals(denied.headers.get("Access-Control-Max-Age"), null);
+
+      const allowedRequest = new Request("http://localhost/", {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://allowed.example.com",
+          "access-control-request-method": "GET",
+        },
+      });
+
+      const allowed = await handleCORSPreflight({
+        request: allowedRequest,
+        config: {
+          origin: "https://allowed.example.com",
+          maxAge: 7,
+        },
+      });
+
+      assertEquals(allowed.status, 204, "an allowed preflight succeeds");
+      assertEquals(
+        allowed.headers.get("Access-Control-Max-Age"),
+        "7",
+        "the configured maxAge is emitted, not the default",
+      );
+
+      const defaulted = await handleCORSPreflight({
+        request: allowedRequest,
+        config: { origin: "https://allowed.example.com" },
+      });
+
+      assertEquals(
+        defaulted.headers.get("Access-Control-Max-Age"),
+        String(DEFAULT_MAX_AGE),
+        "an unconfigured preflight emits the default max age constant",
+      );
+    });
+
+    it("emits allow-credentials only for a credentialed origin-specific preflight", async () => {
+      const request = new Request("http://localhost/", {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://app.example.com",
+          "access-control-request-method": "GET",
+        },
+      });
+
+      const credentialed = await handleCORSPreflight({
+        request,
+        config: { origin: "https://app.example.com", credentials: true },
+      });
+
+      assertEquals(credentialed.status, 204, "a credentialed preflight succeeds");
+      assertEquals(
+        credentialed.headers.get("Access-Control-Allow-Credentials"),
+        "true",
+        "a credentialed origin-specific preflight must allow credentials",
+      );
+
+      const uncredentialed = await handleCORSPreflight({
+        request,
+        config: { origin: "https://app.example.com" },
+      });
+
+      assertEquals(
+        uncredentialed.headers.get("Access-Control-Allow-Credentials"),
+        null,
+        "a preflight without configured credentials must not allow them",
+      );
+    });
+
+    it("varies cached preflights on Origin", async () => {
+      const request = new Request("http://localhost/", {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://app.example.com",
+          "access-control-request-method": "GET",
+        },
+      });
+
+      const specific = await handleCORSPreflight({
+        request,
+        config: { origin: "https://app.example.com" },
+      });
+
+      assertEquals(
+        specific.headers.get("Vary"),
+        "Origin",
+        "an origin-specific preflight must vary on Origin so a shared cache cannot reuse it for another origin",
+      );
+
+      const wildcard = await handleCORSPreflight({
+        request,
+        config: { origin: "*" },
+      });
+
+      assertEquals(
+        wildcard.headers.get("Vary"),
+        null,
+        "a wildcard preflight is origin-independent and must not claim to vary on Origin",
+      );
     });
 
     it("normalizes unknown non-string capability inputs without throwing", () => {

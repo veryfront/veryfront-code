@@ -8,7 +8,7 @@ import type {
 import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts";
 import { runWithVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-credential-context.ts";
 import type { VerifiedControlPlaneRequestClaims } from "#veryfront/internal-agents/control-plane-auth.ts";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 import type { WebSocketUpgradeResponse } from "#veryfront/platform/adapters/base.ts";
 import { getErrorMessage as formatErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { AUTHENTICATION_REQUIRED } from "#veryfront/errors";
@@ -85,7 +85,6 @@ export abstract class BaseHandler implements Handler {
     return new ResponseBuilder({
       securityConfig: ctx.securityConfig ?? undefined,
       isDev: isExplicitlyLocalProject(ctx),
-      cspUserHeader: ctx.cspUserHeader,
       adapter: ctx.adapter,
       nonce,
       isVeryfrontDomain: ctx.parsedDomain?.allowIframeEmbed ?? false,
@@ -140,9 +139,11 @@ export abstract class BaseHandler implements Handler {
       );
     }
 
-    // Framework-owned token: bypass project env overlay so proxy mode works
-    // when a remote project overlay is active.
-    const effectiveToken = ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || "";
+    // Credential selection happens once at request admission. Falling back to
+    // the process token here would combine attacker-selected tenant identity
+    // with a host credential on routes that reached this helper without a
+    // trusted proxy context.
+    const effectiveToken = ctx.proxyToken || "";
     const fsWrapper = ctx.adapter.fs as {
       setRequestToken?: (t: string) => void;
       setRequestBranch?: (b: string | null) => void;

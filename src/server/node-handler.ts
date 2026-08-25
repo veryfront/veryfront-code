@@ -1,4 +1,5 @@
 import { serverLogger } from "#veryfront/utils";
+import { recordNodeIncomingRequestPeer } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
 /** Convert a Web API request handler into a Node.js HTTP listener. */
 export function toNodeHandler(
@@ -23,7 +24,10 @@ export function toNodeHandler(
       };
       if (body) init.duplex = "half";
 
-      const response = await handler(new Request(url.toString(), init));
+      const request = new Request(url.toString(), init);
+      recordNodeIncomingRequestPeer(request, req);
+
+      const response = await handler(request);
 
       if (response.status === 101) return;
       const outHeaders: Record<string, string | string[]> = {};

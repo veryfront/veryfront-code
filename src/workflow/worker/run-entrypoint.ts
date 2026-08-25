@@ -119,6 +119,10 @@ export async function runWorkflowRun(config: WorkflowRunEntrypointConfig): Promi
 
     requireWorkflowSourceIntegrationPolicy(run);
     run = await hydrateRunContextEnv(backend, runId, run, expectedWorkerId);
+    if (!run) {
+      logger.error(`Workflow run not found: ${runId}`);
+      return EXIT_CODES.NOT_FOUND;
+    }
 
     // Get tenant context (from env or from stored run)
     const tenant = getTenantFromEnv() ?? run._tenant;

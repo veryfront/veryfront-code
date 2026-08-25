@@ -16,7 +16,7 @@ describe("factory", () => {
         slug: "config-not-found",
         title: "Configuration file not found",
         message: "Veryfront could not find veryfront.config.js",
-        docs: "https://veryfront.com/docs/errors/config-not-found",
+        docs: "https://veryfront.com/docs/code/guides/errors#config-not-found",
       });
     });
 
@@ -33,7 +33,7 @@ describe("factory", () => {
         "Fix TypeScript errors",
         "Run build again",
       ]);
-      expect(solution.docs).toBe("https://veryfront.com/docs/errors/build-failed");
+      expect(solution.docs).toBe("https://veryfront.com/docs/code/guides/errors#build-failed");
     });
 
     it("should detach and freeze mutable configuration arrays", () => {
@@ -65,7 +65,7 @@ describe("factory", () => {
       });
 
       expect(solution.example).toBe(example);
-      expect(solution.docs).toBe("https://veryfront.com/docs/errors/config-invalid");
+      expect(solution.docs).toBe("https://veryfront.com/docs/code/guides/errors#config-invalid");
     });
 
     it("should create error solution with tips", () => {
@@ -76,7 +76,7 @@ describe("factory", () => {
       });
 
       expect(solution.tips).toEqual(["Use a different port", "Stop the other process"]);
-      expect(solution.docs).toBe("https://veryfront.com/docs/errors/port-in-use");
+      expect(solution.docs).toBe("https://veryfront.com/docs/code/guides/errors#port-in-use");
     });
 
     it("should create error solution with relatedErrors", () => {
@@ -87,7 +87,9 @@ describe("factory", () => {
       });
 
       expect(solution.relatedErrors).toEqual(["render-error", "component-error"]);
-      expect(solution.docs).toBe("https://veryfront.com/docs/errors/hydration-mismatch");
+      expect(solution.docs).toBe(
+        "https://veryfront.com/docs/code/guides/errors#hydration-mismatch",
+      );
     });
 
     it("should auto-generate docs URL from error slug", () => {
@@ -96,7 +98,7 @@ describe("factory", () => {
         message: "The requested module could not be found",
       });
 
-      expect(solution.docs).toBe("https://veryfront.com/docs/errors/module-not-found");
+      expect(solution.docs).toBe("https://veryfront.com/docs/code/guides/errors#module-not-found");
     });
 
     it("should allow custom docs URL override", () => {
@@ -128,7 +130,7 @@ describe("factory", () => {
         example: 'fetch("/api/data")',
         tips: ["Use correct HTTP method"],
         relatedErrors: ["request-error"],
-        docs: "https://veryfront.com/docs/errors/api-error",
+        docs: "https://veryfront.com/docs/code/guides/errors#api-error",
       });
     });
 
@@ -164,19 +166,19 @@ describe("factory", () => {
 
     it("should work with different error slug categories", () => {
       const cases: Array<[ErrorSlug, string]> = [
-        ["config-not-found", "https://veryfront.com/docs/errors/config-not-found"],
-        ["build-failed", "https://veryfront.com/docs/errors/build-failed"],
-        ["render-error", "https://veryfront.com/docs/errors/render-error"],
-        ["route-conflict", "https://veryfront.com/docs/errors/route-conflict"],
-        ["module-not-found", "https://veryfront.com/docs/errors/module-not-found"],
-        ["port-in-use", "https://veryfront.com/docs/errors/port-in-use"],
+        ["config-not-found", "https://veryfront.com/docs/code/guides/errors#config-not-found"],
+        ["build-failed", "https://veryfront.com/docs/code/guides/errors#build-failed"],
+        ["render-error", "https://veryfront.com/docs/code/guides/errors#render-error"],
+        ["route-conflict", "https://veryfront.com/docs/code/guides/errors#route-conflict"],
+        ["module-not-found", "https://veryfront.com/docs/code/guides/errors#module-not-found"],
+        ["port-in-use", "https://veryfront.com/docs/code/guides/errors#port-in-use"],
         [
           "client-boundary-violation",
-          "https://veryfront.com/docs/errors/client-boundary-violation",
+          "https://veryfront.com/docs/code/guides/errors#client-boundary-violation",
         ],
-        ["dev-server-error", "https://veryfront.com/docs/errors/dev-server-error"],
-        ["deployment-error", "https://veryfront.com/docs/errors/deployment-error"],
-        ["unknown-error", "https://veryfront.com/docs/errors/unknown-error"],
+        ["dev-server-error", "https://veryfront.com/docs/code/guides/errors#dev-server-error"],
+        ["deployment-error", "https://veryfront.com/docs/code/guides/errors#deployment-error"],
+        ["unknown-error", "https://veryfront.com/docs/code/guides/errors#unknown-error"],
       ];
 
       for (const [slug, docs] of cases) {
@@ -225,7 +227,7 @@ describe("factory", () => {
         title: "Build failed",
         message: "The build process encountered errors",
         steps: ["Check error messages", "Fix TypeScript errors"],
-        docs: "https://veryfront.com/docs/errors/build-failed",
+        docs: "https://veryfront.com/docs/code/guides/errors#build-failed",
       });
     });
 
@@ -237,7 +239,7 @@ describe("factory", () => {
         ["Create config file"],
       );
 
-      expect(solution.docs).toBe("https://veryfront.com/docs/errors/config-not-found");
+      expect(solution.docs).toBe("https://veryfront.com/docs/code/guides/errors#config-not-found");
     });
 
     it("should handle empty steps array", () => {
@@ -284,16 +286,22 @@ describe("factory", () => {
 
     it("should work with all error slug categories", () => {
       const cases: Array<[ErrorSlug, string]> = [
-        ["config-invalid", "https://veryfront.com/docs/errors/config-invalid"],
-        ["bundle-error", "https://veryfront.com/docs/errors/bundle-error"],
-        ["hydration-mismatch", "https://veryfront.com/docs/errors/hydration-mismatch"],
-        ["invalid-route-file", "https://veryfront.com/docs/errors/invalid-route-file"],
-        ["import-resolution-error", "https://veryfront.com/docs/errors/import-resolution-error"],
-        ["hmr-error", "https://veryfront.com/docs/errors/hmr-error"],
-        ["server-only-in-client", "https://veryfront.com/docs/errors/server-only-in-client"],
-        ["fast-refresh-error", "https://veryfront.com/docs/errors/fast-refresh-error"],
-        ["platform-error", "https://veryfront.com/docs/errors/platform-error"],
-        ["invalid-argument", "https://veryfront.com/docs/errors/invalid-argument"],
+        ["config-invalid", "https://veryfront.com/docs/code/guides/errors#config-invalid"],
+        ["bundle-error", "https://veryfront.com/docs/code/guides/errors#bundle-error"],
+        ["hydration-mismatch", "https://veryfront.com/docs/code/guides/errors#hydration-mismatch"],
+        ["invalid-route-file", "https://veryfront.com/docs/code/guides/errors#invalid-route-file"],
+        [
+          "import-resolution-error",
+          "https://veryfront.com/docs/code/guides/errors#import-resolution-error",
+        ],
+        ["hmr-error", "https://veryfront.com/docs/code/guides/errors#hmr-error"],
+        [
+          "server-only-in-client",
+          "https://veryfront.com/docs/code/guides/errors#server-only-in-client",
+        ],
+        ["fast-refresh-error", "https://veryfront.com/docs/code/guides/errors#fast-refresh-error"],
+        ["platform-error", "https://veryfront.com/docs/code/guides/errors#platform-error"],
+        ["invalid-argument", "https://veryfront.com/docs/code/guides/errors#invalid-argument"],
       ];
 
       for (const [slug, docs] of cases) {
@@ -386,8 +394,8 @@ describe("factory", () => {
         message: "Config missing",
       });
 
-      expect(simple.docs).toBe("https://veryfront.com/docs/errors/config-not-found");
-      expect(full.docs).toBe("https://veryfront.com/docs/errors/config-not-found");
+      expect(simple.docs).toBe("https://veryfront.com/docs/code/guides/errors#config-not-found");
+      expect(full.docs).toBe("https://veryfront.com/docs/code/guides/errors#config-not-found");
       expect(simple.docs).toBe(full.docs);
     });
 
@@ -427,12 +435,12 @@ describe("factory", () => {
           "Use useEffect for client-only code",
         ],
         relatedErrors: ["render-error", "component-error"],
-        docs: "https://veryfront.com/docs/errors/hydration-mismatch#hydration",
+        docs: "https://veryfront.com/docs/code/guides/errors#hydration-mismatch",
       });
 
       expect(runtimeError.relatedErrors?.length).toBe(2);
       expect(runtimeError.docs).toBe(
-        "https://veryfront.com/docs/errors/hydration-mismatch#hydration",
+        "https://veryfront.com/docs/code/guides/errors#hydration-mismatch",
       );
     });
   });

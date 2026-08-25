@@ -1,0 +1,171 @@
+import "#veryfront/schemas/_test-setup.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createAgUiFinalizeTracker } from "#veryfront/agent/ag-ui/finalize-tracker.ts";
+
+describe("agent/ag-ui-finalize-tracker", () => {
+  it("builds a final response from observed chunk metadata", () => {
+    const tracker = createAgUiFinalizeTracker<{
+      usage?: {
+        inputTokens?: number;
+        outputTokens?: number;
+        billableInputTokens?: number;
+        billableOutputTokens?: number;
+        cachedInputTokens?: number;
+        cacheCreationInputTokens?: number;
+        cacheReadInputTokens?: number;
+        reasoningTokens?: number;
+      };
+      providerCostUsd?: number;
+      providerInputCostUsd?: number;
+      providerOutputCostUsd?: number;
+      veryfrontChargeUsd?: number;
+      veryfrontInputChargeUsd?: number;
+      veryfrontOutputChargeUsd?: number;
+      veryfrontBilledUsd?: number;
+      costCredits?: number;
+      finishReason?: string;
+    }>({
+      getMetadataFromChunk: (chunk) => ({
+        inputTokens: chunk.usage?.inputTokens,
+        outputTokens: chunk.usage?.outputTokens,
+        billableInputTokens: chunk.usage?.billableInputTokens,
+        billableOutputTokens: chunk.usage?.billableOutputTokens,
+        cachedInputTokens: chunk.usage?.cachedInputTokens,
+        cacheCreationInputTokens: chunk.usage?.cacheCreationInputTokens,
+        cacheReadInputTokens: chunk.usage?.cacheReadInputTokens,
+        reasoningTokens: chunk.usage?.reasoningTokens,
+        providerCostUsd: chunk.providerCostUsd,
+        providerInputCostUsd: chunk.providerInputCostUsd,
+        providerOutputCostUsd: chunk.providerOutputCostUsd,
+        veryfrontChargeUsd: chunk.veryfrontChargeUsd,
+        veryfrontInputChargeUsd: chunk.veryfrontInputChargeUsd,
+        veryfrontOutputChargeUsd: chunk.veryfrontOutputChargeUsd,
+        veryfrontBilledUsd: chunk.veryfrontBilledUsd,
+        costCredits: chunk.costCredits,
+        costSource: "gateway",
+        finishReason: chunk.finishReason,
+      }),
+    });
+
+    tracker.observeChunk({
+      usage: {
+        inputTokens: 3,
+        outputTokens: 5,
+        billableInputTokens: 3,
+        billableOutputTokens: 6,
+        cachedInputTokens: 2,
+        cacheCreationInputTokens: 4,
+        cacheReadInputTokens: 2,
+        reasoningTokens: 1,
+      },
+      providerCostUsd: 0.001,
+      providerInputCostUsd: 0.0004,
+      providerOutputCostUsd: 0.0006,
+      veryfrontChargeUsd: 0.0025,
+      veryfrontInputChargeUsd: 0.001,
+      veryfrontOutputChargeUsd: 0.0015,
+      veryfrontBilledUsd: 0.1,
+      costCredits: 1,
+      finishReason: "stop",
+    });
+
+    assertEquals(tracker.getFinalResponse(), {
+      text: "",
+      messages: [],
+      toolCalls: [],
+      status: "completed",
+      usage: {
+        promptTokens: 3,
+        completionTokens: 5,
+        totalTokens: 8,
+        billableInputTokens: 3,
+        billableOutputTokens: 6,
+        cachedInputTokens: 2,
+        cacheCreationInputTokens: 4,
+        cacheReadInputTokens: 2,
+        reasoningTokens: 1,
+        providerInputCostUsd: 0.0004,
+        providerOutputCostUsd: 0.0006,
+        providerCostUsd: 0.001,
+        veryfrontInputChargeUsd: 0.001,
+        veryfrontOutputChargeUsd: 0.0015,
+        veryfrontChargeUsd: 0.0025,
+        veryfrontBilledUsd: 0.1,
+        costCredits: 1,
+        costSource: "gateway",
+      },
+      metadata: {
+        billableInputTokens: 3,
+        billableOutputTokens: 6,
+        cachedInputTokens: 2,
+        cacheCreationInputTokens: 4,
+        cacheReadInputTokens: 2,
+        costCredits: 1,
+        costSource: "gateway",
+        finishReason: "stop",
+        providerInputCostUsd: 0.0004,
+        providerOutputCostUsd: 0.0006,
+        providerCostUsd: 0.001,
+        reasoningTokens: 1,
+        veryfrontBilledUsd: 0.1,
+        veryfrontInputChargeUsd: 0.001,
+        veryfrontOutputChargeUsd: 0.0015,
+        veryfrontChargeUsd: 0.0025,
+      },
+    });
+  });
+
+  it("keeps deferred billing sticky across later chunks", () => {
+    const tracker = createAgUiFinalizeTracker<{
+      billingMode?: "direct" | "deferred";
+      usageCaptureStatus?: "complete" | "partial" | "missing";
+      costUsd?: number;
+    }>({
+      getMetadataFromChunk: (chunk) => ({
+        billingMode: chunk.billingMode,
+        usageCaptureStatus: chunk.usageCaptureStatus,
+        costUsd: chunk.costUsd,
+      }),
+    });
+
+    tracker.observeChunk({
+      billingMode: "deferred",
+      usageCaptureStatus: "partial",
+      costUsd: 0.02,
+    });
+    tracker.observeChunk({ billingMode: "direct" });
+
+    const response = tracker.getFinalResponse();
+    assertEquals(
+      response?.metadata?.billingMode,
+      "deferred",
+      "a deferred billing chunk must keep the run deferred even when a later chunk reports direct",
+    );
+    assertEquals(
+      response?.metadata?.usageCaptureStatus,
+      "partial",
+      "the observed usage capture status must survive later chunks that omit it",
+    );
+    assertEquals(
+      response?.metadata?.costUsd,
+      0.02,
+      "the observed cost must survive later chunks that omit it",
+    );
+  });
+
+  it("suppresses the final response after a RunError event", () => {
+    const tracker = createAgUiFinalizeTracker<{
+      finishReason?: string;
+    }>({
+      getMetadataFromChunk: (chunk) => ({
+        finishReason: chunk.finishReason,
+      }),
+    });
+
+    tracker.observeChunk({ finishReason: "stop" });
+    tracker.observeEncodedEvents([{ event: "RunError", payload: { message: "boom" } }]);
+
+    assertEquals(tracker.getFinalResponse(), null);
+  });
+});

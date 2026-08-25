@@ -5,7 +5,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { TransformOptions } from "#veryfront/transforms/esm-transform.ts";
 import { serverLogger, VERSION } from "#veryfront/utils";
-import { HTTP_BAD_REQUEST, HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "#veryfront/utils";
+import { HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "#veryfront/utils";
 import { getContentTypeForPath } from "#veryfront/server/handlers/utils/content-types.ts";
 import { createSecureFs } from "#veryfront/security";
 import { getErrorMessage } from "#veryfront/errors";
@@ -32,12 +32,16 @@ import {
 } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { getReactUrls, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { readLimitedCrossProjectSource } from "./cross-project-source-limit.ts";
+import { readBoundedModuleSource } from "./module-source-reader.ts";
 import { sha256Short } from "#veryfront/cache/hash.ts";
 import {
   getReleaseDependencyRewriteManifestState,
   hasReleaseDependencyImportSpecifiers,
 } from "#veryfront/release-assets/module-consumption.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import {
+  getReadyManifestForBrowserModuleAdmission,
+} from "#veryfront/release-assets/manifest-cache.ts";
 import {
   DEPENDENCY_PINNING_ENV_FLAG,
   RELEASE_ASSET_IMMUTABLE_MAX_AGE_SECONDS,
@@ -56,25 +60,56 @@ import {
   rememberReleaseModuleResponse,
 } from "./module-response-cache.ts";
 import { findFirstExistingFile } from "./fs-probe.ts";
+import {
+  moduleBadRequest,
+  moduleMethodNotAllowed,
+  moduleNotFound,
+  moduleRejected,
+  moduleServiceUnavailable,
+  unknownDependencySnapshot,
+} from "./module-response.ts";
 import { ensureFilenameDefaultExport } from "#veryfront/modules/loader-shared/filename-default-export.ts";
 import { classifyModuleRequest, DEV_MODULE_PREFIX } from "./classify.ts";
 import { transformModuleToServable } from "./module-transform.ts";
 import {
   createDependencyPinningSource,
+  type DependencyPinningSnapshot,
   type DependencyPinningSourceInput,
+  getRememberedDependencyPinningSnapshot,
   resolveProjectReactVersion,
   resolveRequestedDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
+import { isProjectInDependencyPinningCohort } from "#veryfront/transforms/esm/dependency-pinning-cohort.ts";
 import {
   appendDependencyPinningPathKey,
   extractDependencyPinningPathKey,
 } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { HttpStatus } from "#veryfront/http/responses";
+import {
+  describeBrowserModuleBoundaryViolation,
+  inspectBrowserModuleBoundary,
+} from "#veryfront/server/shared/browser-module-boundary.ts";
+import {
+  BrowserModuleBoundaryError,
+  type BrowserModuleBundle,
+  BrowserModuleBundleError,
+  type BrowserModuleBundleLimitOverrides,
+  BrowserModuleDependencySnapshotError,
+  BrowserModuleEntryRejectedError,
+  bundleBrowserModuleWithMetadata,
+} from "#veryfront/server/shared/browser-module-bundler.ts";
+import { ensureDefaultParserContracts } from "#veryfront/extensions/parser/defaults.ts";
+import {
+  classifyBrowserModuleAbsoluteSourcePath,
+  isProtectedBrowserModulePath,
+} from "./browser-module-admission.ts";
+import { isRSCEnabled } from "#veryfront/utils/feature-flags.ts";
+import { isCanonicalDependencyPinningCacheKey } from "#veryfront/cache/keys/dependency-pinning.ts";
 
 const logger = serverLogger.component("module-server");
 const PROJECT_FALLBACK_EMBEDDED_POLYFILLS = new Set(["deno"]);
-const DEPENDENCY_PIN_PATTERN = /^on:[A-Za-z0-9._-]+$/;
 
 /**
  * Embedded polyfills for compiled Deno binaries.
@@ -172,9 +207,74 @@ function shouldCacheReleaseVersionedModule(
     url.searchParams.get(RELEASE_MODULE_RUNTIME_VERSION_PARAM) === VERSION;
 }
 
-function isSSRModuleRequest(req: Request, url: URL): boolean {
+function isSSRModuleRequest(
+  req: Request,
+  url: URL,
+  options: ModuleServerOptions,
+): boolean {
+  // Query parameters and user-agent strings are attacker-controlled. Only an
+  // in-process caller that has explicitly admitted a local project may enable
+  // the legacy SSR module transport.
+  if (options.allowSSRModuleMode !== true || options.isLocalProject !== true) return false;
   const userAgent = req.headers.get("user-agent") ?? "";
   return url.searchParams.get("ssr") === "true" || userAgent.startsWith("Deno/");
+}
+
+function isReservedFrameworkModulePath(modulePathWithoutJsExtension: string): boolean {
+  return modulePathWithoutJsExtension.startsWith("_veryfront/") ||
+    modulePathWithoutJsExtension.startsWith("react/") ||
+    modulePathWithoutJsExtension.startsWith("deps/") ||
+    modulePathWithoutJsExtension.startsWith("_dnt.") ||
+    modulePathWithoutJsExtension === "deno";
+}
+
+function validateBundledClientDependencies(
+  bundle: BrowserModuleBundle,
+  options: {
+    projectDir: string;
+    config?: VeryfrontConfig;
+    admissionManifest?: ReleaseAssetManifest | null;
+  },
+): { valid: true } | { valid: false; path: string | null; reason: string } {
+  for (const dependency of bundle.dependencies) {
+    const policy = classifyBrowserModuleAbsoluteSourcePath(
+      dependency.path,
+      options.projectDir,
+      {
+        config: options.config,
+        rscEnabled: true,
+      },
+    );
+    const path = policy.canonicalPath;
+    if (!path) {
+      return { valid: false, path: null, reason: "outside-project" };
+    }
+    if (policy.protectionReason) {
+      return { valid: false, path, reason: policy.protectionReason };
+    }
+
+    if (
+      options.admissionManifest &&
+      !Object.hasOwn(options.admissionManifest.modules, path)
+    ) {
+      return { valid: false, path, reason: "absent-from-release-manifest" };
+    }
+  }
+
+  return { valid: true };
+}
+
+function isScriptModuleSource(path: string): boolean {
+  return /\.(?:[cm]?[jt]sx?)$/i.test(path);
+}
+
+async function inspectBrowserSourceBoundary(
+  source: string,
+  sourceFile: string,
+): Promise<string | null> {
+  await ensureDefaultParserContracts();
+  const violation = await inspectBrowserModuleBoundary(source, sourceFile);
+  return violation ? describeBrowserModuleBoundaryViolation(violation) : null;
 }
 
 async function addReleaseVersionToFallbackImports(
@@ -214,6 +314,12 @@ interface SourceLookupContext {
   branch?: string | null;
   releaseId?: string | null;
   reactVersion?: string;
+  /**
+   * Whether a reserved framework request may fall back to project-owned source.
+   * Production browser requests disable this so a missing framework asset
+   * cannot silently change provenance to tenant code.
+   */
+  allowReservedProjectFallback?: boolean;
 }
 
 export interface ModuleServerOptions {
@@ -223,7 +329,8 @@ export interface ModuleServerOptions {
   projectDir: string;
   /** Runtime adapter */
   adapter: RuntimeAdapter;
-  /** Development mode */
+  /** Development mode. Defaults to `false`: an omitted flag must not serve
+   * unminified modules or leak raw transform errors to a browser. */
   dev?: boolean;
   /** Project UUID for multi-project mode (from domain lookup) */
   projectUUID?: string;
@@ -238,6 +345,17 @@ export interface ModuleServerOptions {
   /** Explicitly selects host FS for local projects and adapter FS for proxy projects. */
   isLocalProject?: boolean;
   /**
+   * Whether modules are being served by the shared multi-project runtime.
+   * Production release admission fails closed when this is omitted; only an
+   * explicitly standalone runtime may bypass the hosted release manifest.
+   */
+  isProxyMode?: boolean;
+  /**
+   * Enables the legacy SSR transform only for an explicitly admitted local
+   * project. Never derive this capability from request headers or query data.
+   */
+  allowSSRModuleMode?: boolean;
+  /**
    * Restrict module imports to specific directories (opt-in security).
    * When not set, users can import from any directory in the project.
    */
@@ -250,6 +368,14 @@ export interface ModuleServerOptions {
   dependencyPinningSource?: DependencyPinningSourceInput;
   /** Request mode ("preview" | "production") for studio features like node positions */
   mode?: string;
+  /** Optional operator tightening for request-triggered browser graph compilation. */
+  browserModuleBundleLimits?: BrowserModuleBundleLimitOverrides;
+}
+
+interface ModuleDependencyState {
+  dependencyPinningCacheKey: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  reactVersion: string;
 }
 
 /** Serve transformed module at /_vf_modules/* path */
@@ -271,7 +397,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         projectId,
         projectDir,
         adapter,
-        dev = true,
+        dev = false,
         projectUUID,
         allowedImportDirs,
         reactVersion: explicitReactVersion,
@@ -281,10 +407,33 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
       const effectiveProjectId = projectUUID ?? projectId;
       const method = req.method.toUpperCase();
       const isHeadRequest = method === "HEAD";
+      if (method !== "GET" && method !== "HEAD") {
+        return moduleMethodNotAllowed(method);
+      }
       const queryPinValues = url.searchParams.getAll("pins");
       const requestedPinKey = pathPin.found ? pathPin.cacheKey : queryPinValues[0];
       const requestedPinCount = queryPinValues.length + (pathPin.found ? 1 : 0);
       const hasRequestedPinKey = requestedPinCount > 0;
+      const dependencyPinningEnabled = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG) === "1";
+      if (
+        pathPin.malformed ||
+        requestedPinCount > 1 ||
+        (hasRequestedPinKey &&
+          (!requestedPinKey || !isCanonicalDependencyPinningCacheKey(requestedPinKey))) ||
+        // The flag arms the rollout; the cohort decides who is in it. Gating on
+        // the flag alone conflicted every module of every project while the
+        // rollout sat at 0%, because an out-of-cohort document correctly emits
+        // no key -- so the armed flag was never inert, which is the property it
+        // is supposed to have.
+        // effectiveProjectId, not options.projectId: the UUID is the identity a
+        // hosted multi-project request is pinned under, and it is what the
+        // snapshot resolve below uses. Bucketing on the directory-path id would
+        // put this check in a different cohort than the snapshot it guards.
+        (!hasRequestedPinKey && dependencyPinningEnabled &&
+          isProjectInDependencyPinningCohort(effectiveProjectId))
+      ) {
+        return unknownDependencySnapshot(method);
+      }
       const dependencySource = options.dependencyPinningSource ??
         createDependencyPinningSource({
           projectDir,
@@ -297,35 +446,46 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           branch: options.branch,
           config,
         });
-      const dependencySnapshot = pathPin.malformed ||
-          requestedPinCount > 1 ||
-          (hasRequestedPinKey &&
-            (!requestedPinKey || !DEPENDENCY_PIN_PATTERN.test(requestedPinKey)))
-        ? undefined
-        : await resolveRequestedDependencyPinningSnapshot(
-          dependencySource,
-          requestedPinKey,
-        );
-      if (
-        !dependencySnapshot ||
-        (!requestedPinKey && dependencySnapshot.cacheKey.startsWith("on:"))
-      ) {
-        return createModuleResponse(method, "Unknown dependency snapshot", 409, {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Cache-Control": "no-store",
+      const rememberedDependencySnapshot = requestedPinKey
+        ? getRememberedDependencyPinningSnapshot(dependencySource, requestedPinKey)
+        : undefined;
+      let dependencyStatePromise: Promise<ModuleDependencyState | undefined> | undefined;
+      const dependencyStateFromSnapshot = async (
+        snapshot: DependencyPinningSnapshot,
+      ): Promise<ModuleDependencyState> => {
+        const dependencyPinningCacheKey = snapshot.cacheKey;
+        const dependencyPinningDependencies = snapshot.dependencies;
+        const snapshotReactVersion = await resolveProjectReactVersion({
+          projectDir,
+          config,
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
         });
-      }
-      const dependencyPinningCacheKey = dependencySnapshot.cacheKey;
-      const dependencyPinningDependencies = dependencySnapshot.dependencies;
-      const snapshotReactVersion = await resolveProjectReactVersion({
-        projectDir,
-        config,
-        dependencyPinningCacheKey,
-        dependencyPinningDependencies,
-      });
-      const reactVersion = dependencyPinningCacheKey.startsWith("on:")
-        ? snapshotReactVersion
-        : explicitReactVersion ?? snapshotReactVersion;
+        return {
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
+          reactVersion: dependencyPinningCacheKey.startsWith("on:")
+            ? snapshotReactVersion
+            : explicitReactVersion ?? snapshotReactVersion,
+        };
+      };
+      const resolveDependencyState = (): Promise<ModuleDependencyState | undefined> => {
+        dependencyStatePromise ??= (async () => {
+          const snapshot = rememberedDependencySnapshot ??
+            await resolveRequestedDependencyPinningSnapshot(
+              dependencySource,
+              requestedPinKey,
+            );
+          if (
+            !snapshot ||
+            (requestedPinKey
+              ? snapshot.cacheKey !== requestedPinKey
+              : snapshot.cacheKey.startsWith("on:"))
+          ) return undefined;
+          return await dependencyStateFromSnapshot(snapshot);
+        })();
+        return dependencyStatePromise;
+      };
 
       const secureFs = createSecureFs({
         baseDir: projectDir,
@@ -353,10 +513,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
       const kind = classifyModuleRequest(url);
 
       if (kind.kind === "not-module") {
-        return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Cache-Control": "no-cache",
-        });
+        return moduleNotFound(method);
       }
 
       if (kind.kind === "invalid-module") {
@@ -364,20 +521,21 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           namespace: kind.namespace,
           path: url.pathname,
         });
-        return createModuleResponse(method, "Invalid module path", HTTP_BAD_REQUEST, {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Cache-Control": "no-cache",
-        });
+        return moduleBadRequest(method, "Invalid module path");
       }
 
       if (kind.kind === "snippet") {
         const { hash } = kind;
         if (!hash) {
-          return createModuleResponse(method, "Missing snippet hash", HTTP_NOT_FOUND, {
-            "Content-Type": "text/plain; charset=utf-8",
-            "Cache-Control": "no-cache",
-          });
+          return moduleNotFound(method, "Missing snippet hash");
         }
+        const dependencyState = await resolveDependencyState();
+        if (!dependencyState) return unknownDependencySnapshot(method);
+        const {
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
+          reactVersion,
+        } = dependencyState;
 
         const { getCompiledSnippetAsync } = await import(
           "#veryfront/rendering/snippet-renderer.ts"
@@ -386,15 +544,26 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
 
         if (!snippetCode) {
           logger.warn("Snippet not found in cache", { hash });
-          return createModuleResponse(method, "Snippet not found", HTTP_NOT_FOUND, {
-            "Content-Type": "text/plain; charset=utf-8",
-            "Cache-Control": "no-cache",
-          });
+          return moduleNotFound(method, "Snippet not found");
         }
 
         const { slug: snippetProjectSlug, branch: snippetBranch } = parseProjectDomain(url.host);
 
-        const isSSR = isSSRModuleRequest(req, url);
+        const isSSR = isSSRModuleRequest(req, url, options);
+
+        if (!isSSR) {
+          const boundaryReason = await inspectBrowserSourceBoundary(
+            snippetCode,
+            `_snippets/${hash}.tsx`,
+          );
+          if (boundaryReason) {
+            logger.warn("Rejected server-only snippet from browser module endpoint", {
+              hash,
+              reason: boundaryReason,
+            });
+            return moduleRejected(method);
+          }
+        }
 
         logger.debug("Transforming snippet", {
           hash,
@@ -423,6 +592,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               dependencyPinningCacheKey,
               dependencyPinningDependencies,
               dependencyPinningSource: dependencySource,
+              serverExternalPackages: config?.build?.serverExternalPackages,
             },
             isSSR,
             ssrRewriteOptions: {
@@ -481,11 +651,25 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         const crossPath = kind.path;
 
         if (!crossProjectSlug || !crossPath) {
-          return createModuleResponse(method, "Invalid cross-project import path", HTTP_NOT_FOUND, {
-            "Content-Type": "text/plain; charset=utf-8",
-            "Cache-Control": "no-cache",
-          });
+          return moduleNotFound(method, "Invalid cross-project import path");
         }
+
+        // The remote project's configuration is unavailable here, so enforce
+        // the framework-owned default private roots before any registry fetch.
+        if (isProtectedBrowserModulePath(crossPath)) {
+          logger.warn("Rejected protected cross-project browser module path", {
+            project: crossProjectSlug,
+            path: crossPath,
+          });
+          return moduleRejected(method);
+        }
+        const dependencyState = await resolveDependencyState();
+        if (!dependencyState) return unknownDependencySnapshot(method);
+        const {
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
+          reactVersion,
+        } = dependencyState;
 
         const projectRef = crossVersion === "latest"
           ? crossProjectSlug
@@ -500,18 +684,24 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         try {
           const source = await fetchCrossProjectSource(projectRef, crossPath);
           if (!source) {
-            return createModuleResponse(
+            return moduleNotFound(
               method,
               `Cross-project module not found: ${projectRef}/@/${crossPath}`,
-              HTTP_NOT_FOUND,
-              {
-                "Content-Type": "text/plain; charset=utf-8",
-                "Cache-Control": "no-cache",
-              },
             );
           }
 
-          const isSSR = isSSRModuleRequest(req, url);
+          const isSSR = isSSRModuleRequest(req, url, options);
+          if (!isSSR && isScriptModuleSource(crossPath)) {
+            const boundaryReason = await inspectBrowserSourceBoundary(source, crossPath);
+            if (boundaryReason) {
+              logger.warn("Rejected server-only cross-project source from browser endpoint", {
+                projectRef,
+                path: crossPath,
+                reason: boundaryReason,
+              });
+              return moduleRejected(method);
+            }
+          }
           const crossProjectModuleServerUrl = `/_vf_modules/_cross/${projectRef}/@`;
           const browserCrossProjectModuleServerUrl = dependencyPinningCacheKey.startsWith("on:")
             ? pathPin.found ? undefined : `/_vf_modules/_cross/${projectRef}/@`
@@ -534,6 +724,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               dependencyPinningCacheKey,
               dependencyPinningDependencies,
               dependencyPinningSource: dependencySource,
+              serverExternalPackages: config?.build?.serverExternalPackages,
             },
             isSSR,
             ssrRewriteOptions: {
@@ -597,7 +788,38 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         branch ??= parsedHost.branch;
       }
 
-      const isSSR = isSSRModuleRequest(req, url);
+      const isSSR = isSSRModuleRequest(req, url, options);
+      if (isProtectedBrowserModulePath(modulePath, options.config)) {
+        logger.warn("Rejected protected project path from browser module endpoint", {
+          modulePath,
+        });
+        return moduleRejected(method);
+      }
+
+      const requiresProductionManifestAdmission = !isSSR &&
+        options.mode === "production" &&
+        options.isLocalProject !== true &&
+        options.isProxyMode !== false;
+      const resolveBeforeSourceLookup = !dependencyPinningEnabled ||
+        rememberedDependencySnapshot !== undefined ||
+        isSSR ||
+        isReservedFrameworkModulePath(filePathWithoutExt);
+      let dependencyState = resolveBeforeSourceLookup ? await resolveDependencyState() : undefined;
+      if (resolveBeforeSourceLookup && !dependencyState) {
+        return unknownDependencySnapshot(method);
+      }
+
+      if (
+        requiresProductionManifestAdmission &&
+        !options.releaseId &&
+        !isReservedFrameworkModulePath(filePathWithoutExt)
+      ) {
+        logger.warn("Rejected hosted production browser module without a release", {
+          modulePath,
+        });
+        return moduleRejected(method);
+      }
+
       const canUseReleaseModuleResponseCache = method === "GET" || method === "HEAD";
       const canCacheReleaseVersionedModule = canUseReleaseModuleResponseCache &&
         shouldCacheReleaseVersionedModule(url, options, isSSR);
@@ -614,24 +836,36 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           releaseDependencyManifestVersion = manifestState.manifest?.manifestVersion ?? null;
         }
       }
-      const releaseModuleResponseCacheKey = canCacheReleaseVersionedModule
-        ? buildReleaseModuleResponseCacheKey({
-          projectIdentity: effectiveProjectId,
-          projectDir,
-          projectSlug,
-          branch,
-          releaseId: options.releaseId!,
-          runtimeVersion: VERSION,
-          reactVersion,
-          dependencyPinningCacheKey,
-          moduleServerOrigin: url.origin,
-          releaseDependencyManifestVersion,
-          modulePath,
-        })
-        : null;
+      let releaseModuleResponseCacheKey: string | null | undefined;
+      const getReleaseModuleResponseCacheKey = (
+        state: ModuleDependencyState,
+      ): string | null => {
+        releaseModuleResponseCacheKey ??= canCacheReleaseVersionedModule
+          ? buildReleaseModuleResponseCacheKey({
+            projectIdentity: effectiveProjectId,
+            projectDir,
+            projectSlug,
+            branch,
+            releaseId: options.releaseId!,
+            runtimeVersion: VERSION,
+            reactVersion: state.reactVersion,
+            dependencyPinningCacheKey: state.dependencyPinningCacheKey,
+            moduleServerOrigin: url.origin,
+            serverExternalPackages: config?.build?.serverExternalPackages,
+            releaseDependencyManifestVersion,
+            modulePath,
+          })
+          : null;
+        return releaseModuleResponseCacheKey;
+      };
 
-      if (releaseModuleResponseCacheKey) {
-        const cachedResponse = await getReleaseModuleResponse(releaseModuleResponseCacheKey);
+      const readCachedReleaseModule = async (
+        state: ModuleDependencyState,
+      ): Promise<Response | null> => {
+        const cacheKey = getReleaseModuleResponseCacheKey(state);
+        if (!cacheKey) return null;
+
+        const cachedResponse = await getReleaseModuleResponse(cacheKey);
         if (cachedResponse?.entry) {
           const canUseCachedResponse = !releaseDependencyRewriteEnabled ||
             !(await hasReleaseDependencyImportSpecifiers(cachedResponse.entry.body));
@@ -650,6 +884,12 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           markRequestProfilePhase("module.response_cache_dependency_blocked");
         }
         markRequestProfilePhase("module.response_cache_miss");
+        return null;
+      };
+
+      if (!requiresProductionManifestAdmission && dependencyState) {
+        const cachedResponse = await readCachedReleaseModule(dependencyState);
+        if (cachedResponse) return cachedResponse;
       }
 
       try {
@@ -665,7 +905,9 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
                 projectSlug,
                 branch,
                 releaseId: options.releaseId,
-                reactVersion,
+                reactVersion: dependencyState?.reactVersion ??
+                  explicitReactVersion ?? REACT_DEFAULT_VERSION,
+                allowReservedProjectFallback: !requiresProductionManifestAdmission,
               },
               modulePath,
             ),
@@ -677,106 +919,277 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             projectSlug,
             projectDir,
           });
-          return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
-            "Content-Type": "text/plain",
-          });
+          // no-store, not no-cache: this miss is probed against the tenant's projectDir
+          // after admission, so a cacheable answer would leak project layout (see #3290).
+          return moduleRejected(method);
         }
 
         const { path: sourceFile, isFrameworkFile, embeddedContent } = findResult;
+        const sourcePolicy = isFrameworkFile
+          ? null
+          : classifyBrowserModuleAbsoluteSourcePath(sourceFile, projectDir, {
+            config: options.config,
+            rscEnabled: isRSCEnabled(options.config),
+            isLocalProject: options.isLocalProject,
+          });
+        const exactSourceKey = sourcePolicy?.canonicalPath ?? null;
+
+        if (!isFrameworkFile && (!exactSourceKey || sourcePolicy?.protectionReason)) {
+          logger.warn("Rejected protected resolved source from browser module endpoint", {
+            modulePath,
+            sourceFile,
+            exactSourceKey,
+            reason: sourcePolicy?.protectionReason ?? "outside-project",
+          });
+          return moduleRejected(method);
+        }
+
+        let productionAdmissionManifest: ReleaseAssetManifest | null = null;
+        if (requiresProductionManifestAdmission && !isFrameworkFile) {
+          if (!options.releaseId) {
+            logger.warn("Rejected hosted production browser module without a release", {
+              modulePath,
+              sourceFile,
+            });
+            return moduleRejected(method);
+          }
+          const admissionManifest = await getReadyManifestForBrowserModuleAdmission(
+            options.releaseId,
+            { refreshCachedNull: true },
+          );
+          if (!admissionManifest) {
+            logger.error("Production browser module manifest is unavailable", {
+              modulePath,
+              sourceFile,
+              releaseId: options.releaseId,
+            });
+            return moduleServiceUnavailable(method, "Browser module manifest unavailable");
+          }
+          if (!exactSourceKey || !Object.hasOwn(admissionManifest.modules, exactSourceKey)) {
+            logger.warn("Rejected production browser source absent from release manifest", {
+              modulePath,
+              sourceFile,
+              exactSourceKey,
+              releaseId: options.releaseId,
+              manifestVersion: admissionManifest.manifestVersion,
+            });
+            return moduleRejected(method);
+          }
+          productionAdmissionManifest = admissionManifest;
+        }
+
+        if (requiresProductionManifestAdmission && dependencyState) {
+          const cachedResponse = await readCachedReleaseModule(dependencyState);
+          if (cachedResponse) return cachedResponse;
+        }
 
         let code = "";
+        let inspectedBrowserSource: string | undefined;
+        let bundledClientBoundary: BrowserModuleBundle | undefined;
 
-        if (!isHeadRequest) {
-          // Use embedded content for compiled polyfills (no filesystem I/O needed)
-          let source: string;
-          if (embeddedContent) {
-            source = embeddedContent;
-            logger.debug("Using embedded polyfill content", {
-              path: sourceFile,
-              contentLength: embeddedContent.length,
-            });
-          } else {
-            source = isFrameworkFile
-              ? await platformFs.readTextFile(sourceFile)
-              : await secureFs.readFile(sourceFile);
-          }
-
-          const userAgent = req.headers.get("user-agent") ?? "";
-
-          const studioEmbed = url.searchParams.get("studio_embed") === "true";
-          const shouldInjectPositions = dev || options.mode === "preview";
-          const isJsxFile = /\.(tsx|jsx)$/i.test(sourceFile);
-          if (shouldInjectPositions && !isFrameworkFile && isJsxFile) {
-            const relativeFilePath = sourceFile.startsWith(projectDir)
-              ? sourceFile.slice(projectDir.length).replace(/^\/+/, "")
-              : sourceFile;
-            source = injectNodePositions(source, { filePath: relativeFilePath });
-          }
-
-          logger.debug("SSR mode check", {
-            isSSR,
-            isDenoRequest: userAgent.startsWith("Deno/"),
-            hasSSRParam: url.searchParams.get("ssr") === "true",
-            userAgent: userAgent.slice(0, 30),
-          });
-
-          const transformOpts: TransformOptions = {
-            projectId: effectiveProjectId,
-            dev,
-            ssr: isSSR,
-            moduleServerUrl: !isSSR &&
-                dependencyPinningCacheKey.startsWith("on:") &&
-                !pathPin.found
-              ? "/_vf_modules"
-              : undefined,
-            moduleServerOrigin: url.origin,
-            studioEmbed,
-            reactVersion,
-            dependencyPinningCacheKey,
-            dependencyPinningDependencies,
-            dependencyPinningSource: dependencySource,
-          };
-
-          // The dev-module path has two post-steps that stay outside
-          // transformModuleToServable to keep its API small:
-          //   - HMR timestamp injection: runs after the full shared sequence
-          //     (originally between the SSR rewrite and the non-SSR release
-          //     rewrite; reordering is safe because they touch disjoint
-          //     specifiers)
-          //   - addReleaseVersionToFallbackImports: runs after the release rewrite
-          code = await transformModuleToServable({
-            source,
-            sourceFile,
-            projectDir,
-            adapter,
-            transformOpts,
-            isSSR,
-            postTransform: (c) => ensureFilenameDefaultExport(modulePath, c),
-            ssrRewriteOptions: {
-              projectSlug,
-              branch,
+        if (!isSSR && !isFrameworkFile && isScriptModuleSource(sourceFile)) {
+          // `use client` marks a graph boundary, not every file in that graph.
+          // Bundle the boundary so ordinary transitive helpers never become
+          // independently addressable browser entrypoints. The bundler applies
+          // admission before reading the entry, then applies server-only checks
+          // to every dependency. The post-build pass below additionally enforces
+          // project path policy and release membership.
+          if (sourcePolicy?.requiresClientBoundary === true) {
+            const dependencyPinningOptions = dependencyState
+              ? {
+                dependencyPinningCacheKey: dependencyState.dependencyPinningCacheKey,
+                dependencyPinningDependencies: dependencyState.dependencyPinningDependencies,
+              }
+              : requestedPinKey
+              ? { requestedDependencyPinningCacheKey: requestedPinKey }
+              : undefined;
+            if (!dependencyPinningOptions) {
+              return unknownDependencySnapshot(method);
+            }
+            await ensureDefaultParserContracts();
+            bundledClientBoundary = await bundleBrowserModuleWithMetadata(sourceFile, {
+              adapter,
               projectDir,
               projectId: effectiveProjectId,
-              resolveCacheBuster: createSSRTargetCacheBusterResolver({
-                secureFs,
+              projectSlug: projectSlug ?? undefined,
+              config: options.config,
+              moduleServerOrigin: url.origin,
+              ...dependencyPinningOptions,
+              dependencyPinningSource: dependencySource,
+              signal: req.signal,
+              requireClientBoundary: true,
+              limits: options.browserModuleBundleLimits,
+              ...(requiresProductionManifestAdmission && options.releaseId
+                ? {
+                  singleflightKey: [
+                    effectiveProjectId,
+                    options.releaseId,
+                    dependencyState?.dependencyPinningCacheKey ?? requestedPinKey,
+                    url.origin,
+                    sourceFile,
+                  ].join("\0"),
+                }
+                : {}),
+            });
+            if (!dependencyState) {
+              const resolvedCacheKey = bundledClientBoundary.dependencyPinningCacheKey;
+              const resolvedDependencies = bundledClientBoundary.dependencyPinningDependencies;
+              if (
+                typeof resolvedCacheKey !== "string" ||
+                resolvedCacheKey !== requestedPinKey ||
+                resolvedDependencies === undefined
+              ) {
+                throw new BrowserModuleDependencySnapshotError();
+              }
+              dependencyState = await dependencyStateFromSnapshot(
+                Object.freeze({
+                  cacheKey: resolvedCacheKey,
+                  dependencies: resolvedDependencies,
+                }),
+              );
+            }
+            const dependencyAdmission = validateBundledClientDependencies(
+              bundledClientBoundary,
+              {
                 projectDir,
-                currentModulePath: modulePath,
-                projectId: effectiveProjectId,
+                config: options.config,
+                admissionManifest: productionAdmissionManifest,
+              },
+            );
+            if (!dependencyAdmission.valid) {
+              logger.warn("Rejected protected RSC client dependency", {
+                modulePath,
+                dependencyPath: dependencyAdmission.path,
+                reason: dependencyAdmission.reason,
+              });
+              return moduleRejected(method);
+            }
+          } else {
+            inspectedBrowserSource = await readSourceFileForVersion(secureFs, findResult);
+            const boundaryReason = await inspectBrowserSourceBoundary(
+              inspectedBrowserSource,
+              sourceFile,
+            );
+            if (boundaryReason) {
+              logger.warn("Rejected server-only source from browser module endpoint", {
+                modulePath,
+                reason: boundaryReason,
+              });
+              return moduleRejected(method);
+            }
+          }
+        }
+
+        dependencyState ??= await resolveDependencyState();
+        if (!dependencyState) return unknownDependencySnapshot(method);
+        const {
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
+          reactVersion,
+        } = dependencyState;
+        releaseModuleResponseCacheKey = getReleaseModuleResponseCacheKey(dependencyState);
+
+        if (!isHeadRequest) {
+          if (bundledClientBoundary) {
+            code = ensureFilenameDefaultExport(modulePath, bundledClientBoundary.source);
+          } else {
+            // Use embedded content for compiled polyfills (no filesystem I/O needed)
+            let source: string;
+            if (inspectedBrowserSource !== undefined) {
+              source = inspectedBrowserSource;
+            } else if (embeddedContent !== undefined) {
+              source = embeddedContent;
+              logger.debug("Using embedded polyfill content", {
+                path: sourceFile,
+                contentLength: embeddedContent.length,
+              });
+            } else {
+              source = isFrameworkFile
+                ? await platformFs.readTextFile(sourceFile)
+                : await readBoundedModuleSource(
+                  secureFs.readFileBytesWithinLimit,
+                  sourceFile,
+                );
+            }
+
+            const userAgent = req.headers.get("user-agent") ?? "";
+
+            const studioEmbed = url.searchParams.get("studio_embed") === "true";
+            const shouldInjectPositions = dev || options.mode === "preview";
+            const isJsxFile = /\.(tsx|jsx)$/i.test(sourceFile);
+            if (shouldInjectPositions && !isFrameworkFile && isJsxFile) {
+              const relativeFilePath = sourceFile.startsWith(projectDir)
+                ? sourceFile.slice(projectDir.length).replace(/^\/+/, "")
+                : sourceFile;
+              source = injectNodePositions(source, { filePath: relativeFilePath });
+            }
+
+            logger.debug("SSR mode check", {
+              isSSR,
+              isDenoRequest: userAgent.startsWith("Deno/"),
+              hasSSRParam: url.searchParams.get("ssr") === "true",
+              userAgent: userAgent.slice(0, 30),
+            });
+
+            const transformOpts: TransformOptions = {
+              projectId: effectiveProjectId,
+              dev,
+              ssr: isSSR,
+              moduleServerUrl: !isSSR &&
+                  dependencyPinningCacheKey.startsWith("on:") &&
+                  !pathPin.found
+                ? "/_vf_modules"
+                : undefined,
+              moduleServerOrigin: url.origin,
+              studioEmbed,
+              reactVersion,
+              dependencyPinningCacheKey,
+              dependencyPinningDependencies,
+              dependencyPinningSource: dependencySource,
+              serverExternalPackages: config?.build?.serverExternalPackages,
+            };
+
+            // The dev-module path has two post-steps that stay outside
+            // transformModuleToServable to keep its API small:
+            //   - HMR timestamp injection: runs after the full shared sequence
+            //     (originally between the SSR rewrite and the non-SSR release
+            //     rewrite; reordering is safe because they touch disjoint
+            //     specifiers)
+            //   - addReleaseVersionToFallbackImports: runs after the release rewrite
+            code = await transformModuleToServable({
+              source,
+              sourceFile,
+              projectDir,
+              adapter,
+              transformOpts,
+              isSSR,
+              postTransform: (c) => ensureFilenameDefaultExport(modulePath, c),
+              ssrRewriteOptions: {
                 projectSlug,
                 branch,
+                projectDir,
+                projectId: effectiveProjectId,
+                resolveCacheBuster: createSSRTargetCacheBusterResolver({
+                  secureFs,
+                  projectDir,
+                  currentModulePath: modulePath,
+                  projectId: effectiveProjectId,
+                  projectSlug,
+                  branch,
+                  releaseId: options.releaseId,
+                  reactVersion,
+                }),
+              },
+              releaseRewriteOptions: {
                 releaseId: options.releaseId,
-                reactVersion,
-              }),
-            },
-            releaseRewriteOptions: {
-              releaseId: options.releaseId,
-              manifest: releaseDependencyRewriteEnabled ? releaseDependencyManifest : undefined,
-              manifestReadOptions: { refreshCachedNull: true },
-              dependencyCacheRoot,
-              readDependencySource: (path) => platformFs.readTextFile(path),
-            },
-            profile: true,
-          });
+                manifest: releaseDependencyRewriteEnabled ? releaseDependencyManifest : undefined,
+                manifestReadOptions: { refreshCachedNull: true },
+                dependencyCacheRoot,
+                readDependencySource: (path) => platformFs.readTextFile(path),
+              },
+              profile: true,
+            });
+          }
 
           const hmrTimestamp = url.searchParams.get("t");
           if (hmrTimestamp) {
@@ -799,7 +1212,8 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
 
         const hasUnrewrittenReleaseDependencyImports = releaseDependencyRewriteEnabled &&
           await hasReleaseDependencyImportSpecifiers(code);
-        const canCacheModuleResponse = releaseModuleResponseCacheKey !== null &&
+        const responseCacheKey = releaseModuleResponseCacheKey;
+        const canCacheModuleResponse = typeof responseCacheKey === "string" &&
           !hasUnrewrittenReleaseDependencyImports;
         if (hasUnrewrittenReleaseDependencyImports) {
           markRequestProfilePhase("module.response_cache_dependency_blocked");
@@ -813,7 +1227,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         });
 
         if (canCacheModuleResponse && method === "GET") {
-          void rememberReleaseModuleResponse(releaseModuleResponseCacheKey, {
+          void rememberReleaseModuleResponse(responseCacheKey, {
             body: code,
             status: HTTP_OK,
             headers: Object.entries(headers),
@@ -823,16 +1237,32 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
 
         return createModuleResponse(method, code, HTTP_OK, headers);
       } catch (error) {
+        if (error instanceof BrowserModuleDependencySnapshotError) {
+          return unknownDependencySnapshot(method);
+        }
+        if (
+          error instanceof BrowserModuleEntryRejectedError ||
+          error instanceof BrowserModuleBoundaryError
+        ) {
+          return moduleRejected(method);
+        }
         const errorMsg = getErrorMessage(error);
         logger.error("Module transform error", { modulePath, error: errorMsg });
 
         const headers = getModuleHeaders(modulePath);
+        const status = error instanceof BrowserModuleBundleError
+          ? error.kind === "limit"
+            ? HttpStatus.PAYLOAD_TOO_LARGE
+            : error.kind === "deadline"
+            ? HttpStatus.GATEWAY_TIMEOUT
+            : HttpStatus.SERVICE_UNAVAILABLE
+          : HTTP_SERVER_ERROR;
         const errorBody = createModuleErrorBody(
           modulePath,
           getClientModuleError(dev, errorMsg),
         );
 
-        return createModuleResponse(method, errorBody, HTTP_SERVER_ERROR, headers);
+        return createModuleResponse(method, errorBody, status, headers);
       }
     },
     { "modules.path": url.pathname, "modules.projectSlug": options.projectSlug || "unknown" },
@@ -855,7 +1285,10 @@ async function readSourceFileForVersion(
   const platformFs = createFileSystem();
   return findResult.isFrameworkFile
     ? await platformFs.readTextFile(findResult.path)
-    : await secureFs.readFile(findResult.path);
+    : await readBoundedModuleSource(
+      secureFs.readFileBytesWithinLimit,
+      findResult.path,
+    );
 }
 
 function createSSRTargetCacheBusterResolver(options: {
@@ -960,6 +1393,7 @@ async function findSourceFile(
   requestedModulePath = basePath,
 ): Promise<FindSourceFileResult | null> {
   const { reactVersion } = context;
+  const allowReservedProjectFallback = context.allowReservedProjectFallback !== false;
   // Extensions including .src for compiled binary embedded sources
   const extensions = [
     ".json",
@@ -1015,7 +1449,8 @@ async function findSourceFile(
   // Note: checked before isFrameworkPath guard because relative imports from
   // deeply nested modules (e.g. ../../../../_dnt.shims.js) resolve outside
   // the _veryfront/ prefix.
-  const embeddedContent = PROJECT_FALLBACK_EMBEDDED_POLYFILLS.has(basePathWithoutExt)
+  const embeddedContent = allowReservedProjectFallback &&
+      PROJECT_FALLBACK_EMBEDDED_POLYFILLS.has(basePathWithoutExt)
     ? undefined
     : EMBEDDED_POLYFILLS[basePathWithoutExt];
   if (embeddedContent) {
@@ -1049,13 +1484,15 @@ async function findSourceFile(
     if (packageAssetPath) {
       return { path: packageAssetPath, isFrameworkFile: true };
     }
+
+    if (!allowReservedProjectFallback) return null;
   }
 
   if (isFrameworkPath) {
     const frameworkResult = await resolveFrameworkSourcePath(
       basePathWithoutExt.slice("_veryfront/".length),
       {
-        extraLookupDirs: [join(projectDir, "src")],
+        extraLookupDirs: allowReservedProjectFallback ? [join(projectDir, "src")] : [],
         extensions,
       },
     );
@@ -1068,12 +1505,19 @@ async function findSourceFile(
       return { path: frameworkResult.path, isFrameworkFile: true };
     }
 
-    // Framework path not found locally - log warning and fall back to project lookups
+    // A production browser request must not silently change provenance from
+    // a reserved framework namespace to tenant source.
     logger.warn("Framework file not found locally", {
       basePath: basePathWithoutExt,
       frameworkRoot: FRAMEWORK_ROOT,
     });
+    if (!allowReservedProjectFallback) return null;
   }
+
+  if (
+    !allowReservedProjectFallback &&
+    isReservedFrameworkModulePath(basePathWithoutExt)
+  ) return null;
 
   if (hasKnownExt) {
     const fullPath = join(projectDir, basePath);

@@ -1,9 +1,27 @@
 import { logger as baseLogger } from "#veryfront/utils";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { Checkpoint, NodeState, WorkflowContext, WorkflowNode } from "../types.ts";
 import { generateId } from "../types.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
+import { buildGraph, getReadyNodes, updateInDegreesForCompletedNodes } from "./dag/graph.ts";
 
 const logger = baseLogger.component("checkpoint-manager");
+const numberIsSafeInteger = Number.isSafeInteger;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwn = Object.hasOwn;
+
+function getOwnDataProperty(value: unknown, key: PropertyKey): unknown {
+  if (
+    (typeof value !== "object" && typeof value !== "function") ||
+    value === null
+  ) return undefined;
+  try {
+    const descriptor = objectGetOwnPropertyDescriptor(value, key);
+    return descriptor && objectHasOwn(descriptor, "value") ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export interface CheckpointManagerConfig {
   backend: WorkflowBackend;
@@ -77,8 +95,8 @@ export class CheckpointManager {
   }
 
   async getAll(runId: string): Promise<Checkpoint[]> {
-    const { getCheckpoints } = this.config.backend;
-    if (getCheckpoints) return getCheckpoints(runId);
+    const { backend } = this.config;
+    if (backend.getCheckpoints) return backend.getCheckpoints(runId);
 
     const latest = await this.getLatest(runId);
     return latest ? [latest] : [];
@@ -108,41 +126,45 @@ export class CheckpointManager {
 
   private findNextNode(nodes: WorkflowNode[], checkpoint: Checkpoint): string | null {
     const { nodeId: completedNodeId, nodeStates } = checkpoint;
-
-    const nodeIndex = new Map<string, number>();
-    for (let i = 0; i < nodes.length; i++) {
-      const node = nodes[i];
-      if (node) nodeIndex.set(node.id, i);
-    }
-
-    const checkpointIndex = nodeIndex.get(completedNodeId);
-    if (checkpointIndex === undefined) return nodes[0]?.id ?? null;
-
-    for (let i = checkpointIndex + 1; i < nodes.length; i++) {
-      const node = nodes[i];
-      if (!node) continue;
-
-      const state = nodeStates[node.id];
-      if (!state || state.status === "pending") return node.id;
-    }
-
-    for (const node of nodes) {
-      if (!node.dependsOn?.includes(completedNodeId)) continue;
-
-      const state = nodeStates[node.id];
-      if (!state || state.status === "pending") return node.id;
-    }
-
-    return null;
+    const { adjList, inDegree } = buildGraph(nodes);
+    const existingCompletedState = nodeStates[completedNodeId];
+    const completedState: NodeState = existingCompletedState
+      ? {
+        ...existingCompletedState,
+        status: "completed",
+        completedAt: existingCompletedState.completedAt ?? checkpoint.timestamp,
+      }
+      : {
+        nodeId: completedNodeId,
+        status: "completed",
+        attempt: 1,
+        startedAt: checkpoint.timestamp,
+        completedAt: checkpoint.timestamp,
+      };
+    const readinessStates = {
+      ...nodeStates,
+      [completedNodeId]: completedState,
+    };
+    updateInDegreesForCompletedNodes(readinessStates, adjList, inDegree);
+    return getReadyNodes(inDegree, readinessStates)[0] ?? null;
   }
 
+  /**
+   * @deprecated Node checkpoint policy is owned by the DAG executor. This
+   * compatibility wrapper preserves the historical public API until the next
+   * breaking release.
+   */
   shouldCheckpoint(node: WorkflowNode): boolean {
     const { config } = node;
+    const explicitCheckpoint = getOwnDataProperty(config, "checkpoint");
 
-    if (config.checkpoint !== undefined) return config.checkpoint;
+    if (explicitCheckpoint !== undefined) return explicitCheckpoint === true;
 
-    if (config.type === "step") {
-      return "agent" in config && !!config.agent;
+    const configType = getOwnDataProperty(config, "type");
+    if (typeof configType !== "string") return false;
+
+    if (configType === "step") {
+      return !!getOwnDataProperty(config, "agent");
     }
 
     const checkpointDefaults: Record<string, boolean> = {
@@ -152,16 +174,23 @@ export class CheckpointManager {
       branch: false,
     };
 
-    return checkpointDefaults[config.type] ?? false;
+    return checkpointDefaults[configType] === true;
   }
 
+  /**
+   * @deprecated Checkpoint retention is enforced by built-in backends. This
+   * compatibility wrapper remains for callers that prune checkpoints manually.
+   */
   async cleanup(runId: string, keepCount: number = 5): Promise<void> {
+    if (!numberIsSafeInteger(keepCount) || keepCount < 0) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Checkpoint keepCount must be a non-negative safe integer",
+      });
+    }
     const all = await this.getAll(runId);
     if (all.length <= keepCount) return;
 
-    all.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-
-    const idsToDelete = all.slice(keepCount).map((c) => c.id);
+    const idsToDelete = all.slice(0, all.length - keepCount).map((checkpoint) => checkpoint.id);
     if (idsToDelete.length === 0) return;
 
     logger.debug("Cleaning up old checkpoints", {

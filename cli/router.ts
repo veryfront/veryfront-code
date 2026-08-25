@@ -13,6 +13,7 @@ import { ensureCliSchemaValidator } from "./shared/default-contracts.ts";
 import {
   createErrorEnvelope,
   createSuccessEnvelope,
+  type ErrorEnvelope,
   isJsonMode,
   outputJson,
   setJsonMode,
@@ -46,40 +47,45 @@ const commands: Record<string, CommandLoader> = {
   "g": async () => (await import("./commands/generate/handler.ts")).handleGenerateCommand,
   "pull": async () => (await import("./commands/pull/index.ts")).handlePullCommand,
   "push": async () => (await import("./commands/push/index.ts")).handlePushCommand,
+  "project": async () => (await import("./commands/project/index.ts")).handleProjectCommand,
+  "projects": async () => (await import("./commands/project/index.ts")).handleProjectCommand,
   "uploads": async () => (await import("./commands/uploads/index.ts")).handleUploadsCommand,
   "files": async () => (await import("./commands/files/index.ts")).handleFilesCommand,
   "knowledge": async () => (await import("./commands/knowledge/index.ts")).handleKnowledgeCommand,
   "merge": async () => (await import("./commands/merge/handler.ts")).handleMergeCommand,
   "deploy": async () => (await import("./commands/deploy/handler.ts")).handleDeployCommand,
+  "env": async () => (await import("./commands/env/handler.ts")).handleEnvCommand,
   "up": async () => (await import("./commands/up/index.ts")).handleUpCommand,
   "schedule": async () => (await import("./commands/schedule/handler.ts")).handleScheduleCommand,
   "schedules": async () => (await import("./commands/schedules/handler.ts")).handleSchedulesCommand,
   "login": async () => async (args) => {
-    const { parseLoginMethod, parseProvider } = await import("./auth/utils.ts");
-    const provider = parseProvider(args);
-    if (provider === "anthropic") {
-      const { loginAnthropic } = await import("./auth/providers/anthropic.ts");
-      await loginAnthropic();
+    const { hasProviderFlag, parseLoginMethod, reportRemovedProviderFlag } = await import(
+      "./auth/utils.ts"
+    );
+    const method = parseLoginMethod(args);
+    // --json keeps its structured usage error, including for the removed
+    // --provider flag: machine-readable output must never become prose.
+    if (isJsonMode() && (hasProviderFlag(args) || method)) {
+      await outputCliJsonError("login", {
+        code: "USAGE_ERROR",
+        slug: "invalid-arguments",
+        registrySlug: "invalid-argument",
+        message: "Explicit login methods are not supported with --json.",
+      });
+      exitProcess(2);
       return;
     }
-    if (provider === "openai") {
-      const { loginOpenAI } = await import("./auth/providers/openai.ts");
-      await loginOpenAI(args["base-url"] as string | undefined);
+    if (await reportRemovedProviderFlag("login", args)) {
+      exitProcess(2);
       return;
     }
     const { login } = await import("./auth/index.ts");
-    await login(parseLoginMethod(args));
+    if (!await login(method)) exitProcess(1);
   },
   "logout": async () => async (args) => {
-    const { parseProvider } = await import("./auth/utils.ts");
-    const provider = parseProvider(args);
-    if (provider) {
-      const { deleteProviderToken } = await import(
-        "./auth/provider-store.ts"
-      );
-      await deleteProviderToken(provider);
-      const { logSuccess } = await import("./utils/index.ts");
-      logSuccess(`${provider} API key removed`);
+    const { reportRemovedProviderFlag } = await import("./auth/utils.ts");
+    if (await reportRemovedProviderFlag("logout", args)) {
+      exitProcess(2);
       return;
     }
     const { logout } = await import("./auth/index.ts");
@@ -87,7 +93,8 @@ const commands: Record<string, CommandLoader> = {
   },
   "whoami": async () => async () => {
     const { whoami } = await import("./auth/index.ts");
-    await whoami();
+    // The exit code is the machine-readable answer: 0 authenticated, 1 not.
+    if (!await whoami()) exitProcess(1);
   },
   "install": async () => (await import("./commands/install/handler.ts")).handleInstallCommand,
   "uninstall": async () => (await import("./commands/install/handler.ts")).handleUninstallCommand,
@@ -130,12 +137,7 @@ function commandNameForJson(args: ParsedArgs): string {
 
 async function outputCliJsonError(
   command: string,
-  error: {
-    code: string;
-    slug: string;
-    message: string;
-    context?: Record<string, unknown>;
-  },
+  error: ErrorEnvelope["error"],
 ): Promise<void> {
   await outputJson(createErrorEnvelope(command, error));
 }
@@ -198,8 +200,14 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
   }
 
   const command = args._[0] as string | undefined;
+  const secondCommand = args._[1];
+  const duplicatedBinaryTarget = command === "veryfront" &&
+      typeof secondCommand === "string" &&
+      (secondCommand === "help" || Object.hasOwn(commands, secondCommand))
+    ? secondCommand
+    : undefined;
 
-  if (args.help || args.h) {
+  if ((args.help || args.h) && !duplicatedBinaryTarget) {
     showHelp(command, args.all === true);
     await updateCheck;
     exitProcess(0);
@@ -221,7 +229,9 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
     const { COMMANDS } = await import("./help/command-definitions.ts");
     // Use canonical command names from help registry (excludes aliases like "g", "preview")
     const canonicalNames = Object.keys(COMMANDS);
-    const suggestions = suggestCommand(command, canonicalNames);
+    const suggestions = duplicatedBinaryTarget
+      ? [duplicatedBinaryTarget]
+      : suggestCommand(command, canonicalNames);
     if (isJsonMode()) {
       await outputCliJsonError(command, {
         code: "USAGE_ERROR",
@@ -233,7 +243,11 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
       return;
     }
     cliLogger.error(`Unknown command: ${command}\n`);
-    if (suggestions.length > 0) {
+    if (duplicatedBinaryTarget) {
+      cliLogger.info(
+        '  You already included "veryfront". Remove the extra "veryfront" argument and run the command again.',
+      );
+    } else if (suggestions.length > 0) {
       cliLogger.info(`  Did you mean?`);
       for (const s of suggestions) {
         const desc = COMMANDS[s]?.description ?? "";
@@ -242,7 +256,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
     } else {
       showHelp();
     }
-    exitProcess(1);
+    exitProcess(2);
     return;
   }
 
@@ -268,9 +282,8 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
       const isUsageError = vfError.exitCode === 2 || message.startsWith("Invalid ");
       await outputCliJsonError(commandNameForJson(args), {
         code: isUsageError ? "USAGE_ERROR" : "RUNTIME_ERROR",
-        slug: vfError.slug !== "unknown-error"
-          ? vfError.slug
-          : (isUsageError ? "invalid-argument" : "command-failed"),
+        slug: isUsageError ? "invalid-arguments" : "command-failed",
+        registrySlug: vfError.slug,
         message: vfError.detail ?? message,
       });
     },

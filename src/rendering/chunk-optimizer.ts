@@ -1,159 +1,78 @@
-import { join } from "#veryfront/compat/path/index.ts";
-import { bundlerLogger as logger } from "#veryfront/utils";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { DEFAULT_MAX_FILE_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
+import type {
+  ChunkAnalysis,
+  ChunkOptimizerFileSystem,
+  PageImports,
+} from "./chunk-optimizer/contracts.ts";
+import { discoverPageFiles } from "./chunk-optimizer/file-discovery.ts";
+import { snapshotChunkOptimizerFileSystem } from "./chunk-optimizer/filesystem.ts";
+import { MAX_TOTAL_SOURCE_BYTES } from "./chunk-optimizer/limits.ts";
+import { analyzePageImports, utf8ByteLength } from "./chunk-optimizer/source-imports.ts";
+import { generateChunkSuggestions } from "./chunk-optimizer/suggestions.ts";
 
-/** Directories within .veryfront that should be excluded from scanning */
-const VERYFRONT_EXCLUDED_DIRS = new Set([
-  "cache",
-  "compiled",
-  "tmp",
-  "temp",
-  "output",
-  "optimized-images",
-  "css",
-]);
+export type {
+  ChunkAnalysis,
+  ChunkManifest,
+  ChunkOptimizerFileSystem,
+  ChunkSuggestion,
+  PageImports,
+} from "./chunk-optimizer/contracts.ts";
+export { generateChunkManifest } from "./chunk-optimizer/manifest.ts";
 
-/** Check if a directory should be skipped during scanning */
-function shouldSkipDir(name: string, parentPath?: string): boolean {
-  if (name === ".veryfront") return false; // Allow .veryfront directory itself
-  if (name.startsWith(".")) return true; // Skip other hidden directories
-  return Boolean(parentPath?.includes(".veryfront") && VERYFRONT_EXCLUDED_DIRS.has(name));
-}
-
-const SIZE_LIMITS = {
-  DEP_SIZE_ESTIMATE: 25_000,
-  UI_LIB_SIZE_ESTIMATE: 150_000,
-  REACT_SIZE_ESTIMATE: 200_000,
-};
-
-function analyzeImports(content: string): {
-  local: { path: string }[];
-  remote: { url: string }[];
-  shared: { pkg: string }[];
-} {
-  const importRegex = /import\s+[^'"\n]+from\s+['"]([^'"]+)['"];?/g;
-  const local: { path: string }[] = [];
-  const remote: { url: string }[] = [];
-  const shared: { pkg: string }[] = [];
-
-  let match: RegExpExecArray | null;
-  while ((match = importRegex.exec(content)) !== null) {
-    const spec = match[1];
-    if (!spec) continue;
-
-    if (spec.startsWith(".") || spec.startsWith("/")) {
-      local.push({ path: spec });
-      continue;
-    }
-
-    if (spec.startsWith("http://") || spec.startsWith("https://")) {
-      remote.push({ url: spec });
-      continue;
-    }
-
-    shared.push({ pkg: spec });
-  }
-
-  return { local, remote, shared };
-}
-
-export interface ChunkAnalysis {
-  pages: Map<string, PageImports>;
-  sharedDeps: Map<string, number>; // dep -> usage count
-  suggestedChunks: ChunkSuggestion[];
-}
-
-export interface PageImports {
-  path: string;
-  local: string[];
-  remote: string[];
-  shared: string[];
-}
-
-export interface ChunkSuggestion {
-  name: string;
-  deps: string[];
-  pages: string[];
-  benefit: number; // estimated bytes saved
-}
-
-export interface ChunkManifest {
-  version: string;
-  chunks: Record<
-    string,
-    {
-      deps: string[];
-      size: number;
-    }
-  >;
-  pages: Record<
-    string,
-    {
-      chunks: string[];
-      deps: {
-        local: string[];
-        remote: string[];
-        shared: string[];
-      };
-    }
-  >;
-}
-
-type FSLike = {
-  readDir(path: string): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }>;
-  readTextFile(path: string): Promise<string>;
-};
-
+/**
+ * Analyze authored Markdown and MDX pages and recommend reusable vendor chunks.
+ *
+ * Results are deterministic for a stable filesystem snapshot. Operational
+ * errors reject instead of returning a partial dependency graph.
+ */
 export async function analyzeProjectChunks(
   projectDir: string,
-  fs?: FSLike,
+  fs?: ChunkOptimizerFileSystem,
 ): Promise<ChunkAnalysis> {
-  const fsAdapter = fs ?? createFileSystem();
+  const fileSystem = snapshotChunkOptimizerFileSystem(
+    fs ?? createFileSystem(),
+  );
+  const discoveredPaths = await discoverPageFiles(projectDir, fileSystem);
   const pages = new Map<string, PageImports>();
   const sharedDeps = new Map<string, number>();
-  const mdxFiles: string[] = [];
+  let totalSourceBytes = 0;
 
-  async function findMDX(dir: string): Promise<void> {
-    try {
-      for await (const entry of fsAdapter.readDir(dir)) {
-        const path = join(dir, entry.name);
-
-        if (entry.isFile && (entry.name.endsWith(".mdx") || entry.name.endsWith(".md"))) {
-          mdxFiles.push(path);
-          continue;
-        }
-
-        if (entry.isDirectory && !shouldSkipDir(entry.name, dir)) {
-          await findMDX(path);
-        }
-      }
-    } catch (error) {
-      logger.debug(`Directory not accessible: ${dir}`, error);
+  for (const path of discoveredPaths) {
+    const content = await fileSystem.readTextFile(path);
+    if (typeof content !== "string") {
+      throw new TypeError(
+        `Chunk analysis filesystem returned non-text content for ${path}`,
+      );
     }
-  }
+    const sourceBytes = utf8ByteLength(content);
+    if (sourceBytes > DEFAULT_MAX_FILE_SIZE_BYTES) {
+      throw new RangeError(
+        `Chunk analysis source ${path} exceeds ${DEFAULT_MAX_FILE_SIZE_BYTES} bytes`,
+      );
+    }
+    if (sourceBytes > MAX_TOTAL_SOURCE_BYTES - totalSourceBytes) {
+      throw new RangeError(
+        `Chunk analysis total source limit of ${MAX_TOTAL_SOURCE_BYTES} bytes was exceeded`,
+      );
+    }
+    totalSourceBytes += sourceBytes;
 
-  await findMDX(join(projectDir, "pages"));
-  await findMDX(join(projectDir, ".veryfront"));
-
-  for (const mdxPath of mdxFiles) {
-    try {
-      const content = await fsAdapter.readTextFile(mdxPath);
-      const imports = analyzeImports(content);
-
-      const pageImports: PageImports = {
-        path: mdxPath,
-        local: imports.local.map((i) => i.path),
-        remote: imports.remote.map((i) => i.url),
-        shared: imports.shared.map((i) => i.pkg),
-      };
-
-      pages.set(mdxPath, pageImports);
-
-      for (const dep of getExternalDeps(pageImports)) {
-        sharedDeps.set(dep, (sharedDeps.get(dep) ?? 0) + 1);
-      }
-    } catch (error) {
-      logger.error(`Failed to analyze ${mdxPath}:`, error);
+    const imports = analyzePageImports(content);
+    const pageImports: PageImports = {
+      path,
+      local: imports.local,
+      remote: imports.remote,
+      shared: imports.shared,
+    };
+    pages.set(path, pageImports);
+    for (
+      const dependency of new Set([
+        ...pageImports.remote,
+        ...pageImports.shared,
+      ])
+    ) {
+      sharedDeps.set(dependency, (sharedDeps.get(dependency) ?? 0) + 1);
     }
   }
 
@@ -162,112 +81,4 @@ export async function analyzeProjectChunks(
     sharedDeps,
     suggestedChunks: generateChunkSuggestions(pages, sharedDeps),
   };
-}
-
-/** Get all external dependencies (remote URLs and shared packages) from imports */
-function getExternalDeps(imports: PageImports): string[] {
-  return [...imports.remote, ...imports.shared];
-}
-
-/** Find all pages that use any of the given dependencies */
-function findPagesUsingDeps(pages: Map<string, PageImports>, deps: string[]): string[] {
-  const depSet = new Set(deps);
-  const result: string[] = [];
-
-  for (const [path, imports] of pages) {
-    if (getExternalDeps(imports).some((dep) => depSet.has(dep))) result.push(path);
-  }
-
-  return result;
-}
-
-interface ChunkConfig {
-  name: string;
-  getDeps: (sharedDeps: Map<string, number>) => string[];
-  calculateBenefit: (deps: string[], pages: string[]) => number;
-}
-
-const CHUNK_CONFIGS: ChunkConfig[] = [
-  {
-    name: "common",
-    getDeps: (sharedDeps) =>
-      Array.from(sharedDeps.entries())
-        .filter(([, count]) => count >= 2)
-        .map(([dep]) => dep),
-    calculateBenefit: (deps, pages) => deps.length * pages.length * SIZE_LIMITS.DEP_SIZE_ESTIMATE,
-  },
-  {
-    name: "react-vendor",
-    getDeps: (sharedDeps) =>
-      Array.from(sharedDeps.keys()).filter(
-        (dep) => dep.includes("react") || dep.includes("jsx-runtime"),
-      ),
-    calculateBenefit: () => SIZE_LIMITS.REACT_SIZE_ESTIMATE,
-  },
-  {
-    name: "ui-vendor",
-    getDeps: (sharedDeps) =>
-      Array.from(sharedDeps.keys()).filter(
-        (dep) =>
-          dep.includes("@mui/") || dep.includes("framer-motion") || dep.includes("@headlessui/"),
-      ),
-    calculateBenefit: (deps) => deps.length * SIZE_LIMITS.UI_LIB_SIZE_ESTIMATE,
-  },
-];
-
-function generateChunkSuggestions(
-  pages: Map<string, PageImports>,
-  sharedDeps: Map<string, number>,
-): ChunkSuggestion[] {
-  const suggestions: ChunkSuggestion[] = [];
-
-  for (const config of CHUNK_CONFIGS) {
-    const deps = config.getDeps(sharedDeps);
-    if (!deps.length) continue;
-
-    const pagesUsingDeps = findPagesUsingDeps(pages, deps);
-    suggestions.push({
-      name: config.name,
-      deps,
-      pages: pagesUsingDeps,
-      benefit: config.calculateBenefit(deps, pagesUsingDeps),
-    });
-  }
-
-  return suggestions.sort((a, b) => b.benefit - a.benefit);
-}
-
-export function generateChunkManifest(analysis: ChunkAnalysis): ChunkManifest {
-  const manifest: ChunkManifest = {
-    version: "1.0",
-    chunks: {},
-    pages: {},
-  };
-
-  for (const suggestion of analysis.suggestedChunks) {
-    manifest.chunks[suggestion.name] = {
-      deps: suggestion.deps,
-      size: suggestion.benefit,
-    };
-  }
-
-  for (const [pagePath, imports] of analysis.pages) {
-    const pageDepSet = new Set(getExternalDeps(imports));
-
-    const pageChunks: string[] = [];
-    for (const chunk of analysis.suggestedChunks) {
-      if (chunk.deps.some((dep) => pageDepSet.has(dep))) pageChunks.push(chunk.name);
-    }
-
-    manifest.pages[pagePath] = {
-      chunks: pageChunks,
-      deps: {
-        local: imports.local,
-        remote: imports.remote,
-        shared: imports.shared,
-      },
-    };
-  }
-
-  return manifest;
 }

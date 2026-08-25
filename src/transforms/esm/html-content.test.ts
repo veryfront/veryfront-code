@@ -24,9 +24,10 @@ describe("transforms/esm/html-content", () => {
     it("returns true for esm.sh error page with ESM title", () => {
       assertEquals(
         looksLikeHtmlContent(
-          "<html><head><title>ESM Build Error</title></head></html>",
+          "<!-- esm.sh -->\n<head><title>ESM Build Error</title></head>",
         ),
         true,
+        "an ESM title inside the first 500 chars marks HTML even when the payload does not start with <html or <!DOCTYPE",
       );
     });
 

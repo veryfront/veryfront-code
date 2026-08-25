@@ -5,6 +5,7 @@ import type { CacheBackend } from "#veryfront/cache/types.ts";
 import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
+import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
 
 const RELEASE_MODULE_RESPONSE_CACHE_MAX_ENTRIES = 10_000;
 const RELEASE_MODULE_RESPONSE_CACHE_MAX_BYTES = 64 * 1024 * 1024;
@@ -30,6 +31,7 @@ export interface ReleaseModuleResponseCacheKeyOptions {
   dependencyPinningCacheKey?: string;
   moduleServerOrigin?: string;
   releaseDependencyManifestVersion?: number | null;
+  serverExternalPackages?: readonly string[];
   modulePath: string;
 }
 
@@ -138,6 +140,9 @@ export function buildReleaseModuleResponseCacheKey(
     options.dependencyPinningCacheKey,
     options.moduleServerOrigin,
   );
+  const serverExternalPackagesIdentity = buildServerExternalPackagesIdentity(
+    options.serverExternalPackages,
+  );
   return [
     "module-server-release-response",
     hashString(projectScope),
@@ -145,6 +150,9 @@ export function buildReleaseModuleResponseCacheKey(
     options.runtimeVersion,
     options.reactVersion ?? "",
     ...(cacheVariant ? [`pins:${cacheVariant}`] : []),
+    ...(serverExternalPackagesIdentity
+      ? [`server-externals:${hashString(serverExternalPackagesIdentity)}`]
+      : []),
     options.releaseDependencyManifestVersion == null
       ? ""
       : `release-dependency-manifest:${options.releaseDependencyManifestVersion}`,

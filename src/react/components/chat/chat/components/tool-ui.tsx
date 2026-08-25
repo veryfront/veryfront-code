@@ -14,12 +14,23 @@ import {
   XCircleIcon,
 } from "../../../ui/icons/index.ts";
 import { Alert, AlertContent, AlertIcon } from "../../../ui/alert.tsx";
+import { Avatar } from "../../../ui/avatar.tsx";
+import { Status } from "../../../ui/status.tsx";
 import { createStrictContext } from "../../../create-strict-context.ts";
-import type { ChatDynamicToolPart, ChatToolPart } from "#veryfront/agent/react";
+import type { ChatDynamicToolPart, ChatStatus, ChatToolPart } from "#veryfront/agent/react";
 import { type ChatJsonValue, toChatJsonValue } from "#veryfront/chat/json-value.ts";
 import { escapeHtml } from "#veryfront/utils/html-escape.ts";
 import { isSkillToolPart } from "../utils/message-parts.ts";
-import { getSkillToolProps, SkillTool } from "./skill-tool.tsx";
+import { CHILD_TOOL_STOPPED_STATE, getSkillToolProps, SkillTool } from "./skill-tool.tsx";
+import { Reasoning } from "./reasoning.tsx";
+import { useMessageContextOptional } from "../contexts/message-context.tsx";
+import { useChatContextOptional } from "../contexts/chat-context.tsx";
+import {
+  getInvokeAgentStreamEvents,
+  getInvokeAgentStreamIdentity,
+  INVOKE_AGENT_STREAM_EVENT_NAME,
+} from "#veryfront/chat/invoke-agent-stream.ts";
+import { ChatMarkdown } from "../../chat-markdown.tsx";
 
 const TOOL_VALUE_LIMITS = Object.freeze({
   maxContainerEntries: 500,
@@ -60,6 +71,11 @@ const TOOL_STATUS_CONFIG: Record<
   "output-denied": {
     label: "Denied",
     icon: <XCircleIcon className="size-3.5 text-orange-600" />,
+  },
+  // Synthetic: a still-running child tool frozen once the turn was stopped.
+  [CHILD_TOOL_STOPPED_STATE]: {
+    label: "Stopped",
+    icon: <CircleIcon className="size-3.5 text-[var(--faint)]" />,
   },
   // Legacy states
   call: {
@@ -222,21 +238,425 @@ function hasVisibleToolOutput(output: unknown): boolean {
 
 /** Per-tool state shared with `ToolCall.*` sub-parts. */
 export interface ToolCallContextValue {
+  /** The tool part being rendered (its name, state, input, output, error). */
   tool: ChatToolPart | ChatDynamicToolPart;
+  /** Whether the collapsible body is currently open. */
   isExpanded: boolean;
+  /** Toggle the expanded state; fires the `onToggle` prop with the next state. */
   toggle: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  /** Whether the tool produced a non-nullish `output`. */
   hasOutput: boolean;
+  /** Whether the tool carries `errorText`. */
   hasError: boolean;
 }
 
-const [ToolCallContext, useToolCall] = createStrictContext<ToolCallContextValue>(
+const [ToolCallContext, useToolCallContext] = createStrictContext<ToolCallContextValue>(
   "useToolCall",
   "a ToolCall",
 );
-export { useToolCall };
+
+/**
+ * Read the current `ToolCall`'s state from a `ToolCall.*` sub-part.
+ * Throws when called outside a `ToolCall` / `ToolCall.Root`.
+ *
+ * @example
+ * ```tsx
+ * function ExpandLabel() {
+ *   const { isExpanded, toggle } = useToolCall();
+ *   return <button onClick={toggle}>{isExpanded ? "Hide" : "Show"}</button>;
+ * }
+ * // <ToolCall.Root tool={part}><ExpandLabel /></ToolCall.Root>
+ * ```
+ */
+export const useToolCall = useToolCallContext;
+
+type JsonRecord = Record<string, ChatJsonValue>;
+
+function jsonRecord(value: unknown): JsonRecord | undefined {
+  const json = toChatJsonValue(value, TOOL_VALUE_LIMITS);
+  return typeof json === "object" && json !== null && !Array.isArray(json)
+    ? json as JsonRecord
+    : undefined;
+}
+
+function stringValue(record: JsonRecord | undefined, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function isInvokeAgentTool(tool: ChatToolPart | ChatDynamicToolPart): boolean {
+  return tool.toolName === "invoke_agent";
+}
+
+function isToolRunning(tool: ChatToolPart | ChatDynamicToolPart): boolean {
+  return tool.state === "input-streaming" || tool.state === "input-available" ||
+    tool.state === "output-streaming";
+}
+
+type InvokeAgentChildTool = ChatDynamicToolPart & { inputText?: string };
+
+interface InvokeAgentStreamView {
+  reasoning: string;
+  reasoningActive: boolean;
+  /** Child agent display name streamed from the runtime (falls back to the id). */
+  agentName?: string;
+  /** Child agent avatar URL streamed from the runtime. */
+  avatarUrl?: string;
+  items: Array<
+    | { type: "text"; text: string }
+    | { type: "tool"; toolCallId: string }
+  >;
+  tools: Map<string, InvokeAgentChildTool>;
+}
+
+function childEventString(event: Record<string, unknown>, key: string): string {
+  const value = event[key];
+  return typeof value === "string" ? value : "";
+}
+
+/**
+ * Tool states that mean "waiting on a person", not "running". A turn that ends
+ * while one of these is pending is paused, never stopped.
+ */
+const AWAITING_HUMAN_STATES: ReadonlySet<string> = new Set([
+  "approval-requested",
+  "approval-responded",
+]);
+
+/**
+ * How an unfinished `invoke_agent` card reads once its turn stops streaming.
+ *
+ * The client gets no explicit "this child was cancelled" event, so the state is
+ * inferred. Infer it only where the inference holds:
+ * - outside a live transcript (a standalone card) infer nothing;
+ * - while the chat is still `submitted`/`streaming` the turn has only moved on
+ *   to another message, so the child is still running;
+ * - a turn that ended in `error` killed the child, so the card reports the
+ *   failure rather than claiming the user stopped it;
+ * - an approval-gated tool is paused on the user, so it keeps its own state.
+ *
+ * A provider that omits `status` (a hand-built `ChatContext`) falls back to the
+ * message's own streaming flag.
+ */
+function resolveInterruption(input: {
+  toolState: string;
+  isInTranscript: boolean;
+  isMessageStreaming: boolean;
+  chatStatus: ChatStatus | undefined;
+}): "none" | "stopped" | "failed" {
+  const { toolState, isInTranscript, isMessageStreaming, chatStatus } = input;
+  if (!isInTranscript || isMessageStreaming) return "none";
+  if (AWAITING_HUMAN_STATES.has(toolState)) return "none";
+  if (chatStatus === "error") return "failed";
+  if (chatStatus === "submitted" || chatStatus === "streaming") return "none";
+  return "stopped";
+}
+
+/**
+ * Best-effort parse of a streamed `inputText` JSON string into an object, so a
+ * child tool's `Parameters` block highlights the same way the top-level tool
+ * card does even when the runtime only streamed the raw input text.
+ */
+function parseChildInputText(inputText: string | undefined): unknown {
+  if (!inputText || !inputText.trim()) return undefined;
+  try {
+    return JSON.parse(inputText);
+  } catch {
+    return undefined;
+  }
+}
+
+function reduceInvokeAgentStream(
+  events: Array<Record<string, unknown> & { type: string }>,
+): InvokeAgentStreamView {
+  const view: InvokeAgentStreamView = {
+    reasoning: "",
+    reasoningActive: false,
+    items: [],
+    tools: new Map(),
+  };
+
+  function appendText(text: string): void {
+    if (!text) return;
+    const lastItem = view.items.at(-1);
+    if (lastItem?.type === "text") {
+      lastItem.text += text;
+      return;
+    }
+    view.items.push({ type: "text", text });
+  }
+
+  function addTool(toolCallId: string): void {
+    if (!view.items.some((item) => item.type === "tool" && item.toolCallId === toolCallId)) {
+      view.items.push({ type: "tool", toolCallId });
+    }
+  }
+
+  for (const event of events) {
+    if (event.type === "reasoning-start") {
+      view.reasoningActive = true;
+      continue;
+    }
+    if (event.type === "reasoning-delta") {
+      view.reasoningActive = true;
+      view.reasoning += childEventString(event, "delta");
+      continue;
+    }
+    if (event.type === "reasoning-end") {
+      view.reasoningActive = false;
+      continue;
+    }
+    if (event.type === "text-delta") {
+      appendText(childEventString(event, "delta"));
+      continue;
+    }
+
+    const toolCallId = childEventString(event, "toolCallId");
+    if (!toolCallId) continue;
+    const existing = view.tools.get(toolCallId);
+    if (event.type === "tool-input-start") {
+      addTool(toolCallId);
+      view.tools.set(toolCallId, {
+        type: "dynamic-tool",
+        toolCallId,
+        toolName: childEventString(event, "toolName") || "tool",
+        state: "input-streaming",
+        input: {},
+        inputText: "",
+      });
+      continue;
+    }
+    if (event.type === "tool-input-delta" && existing) {
+      existing.inputText = `${existing.inputText ?? ""}${
+        childEventString(event, "inputTextDelta")
+      }`;
+      continue;
+    }
+    if (event.type === "tool-input-available") {
+      addTool(toolCallId);
+      view.tools.set(toolCallId, {
+        type: "dynamic-tool",
+        toolCallId,
+        toolName: childEventString(event, "toolName") || existing?.toolName || "tool",
+        state: "input-available",
+        input: Object.hasOwn(event, "input")
+          ? event.input
+          : parseChildInputText(existing?.inputText) ?? existing?.input ?? {},
+      });
+      continue;
+    }
+    if (event.type === "tool-output-available") {
+      addTool(toolCallId);
+      view.tools.set(toolCallId, {
+        type: "dynamic-tool",
+        toolCallId,
+        toolName: existing?.toolName ?? "tool",
+        state: "output-available",
+        // Prefer parsed streamed input over the `{}` placeholder set by
+        // `tool-input-start` when no `tool-input-available` event arrived.
+        input: parseChildInputText(existing?.inputText) ?? existing?.input ?? {},
+        output: Object.hasOwn(event, "output") ? event.output : null,
+      });
+      continue;
+    }
+    if (event.type === "tool-output-error" || event.type === "tool-input-error") {
+      addTool(toolCallId);
+      view.tools.set(toolCallId, {
+        type: "dynamic-tool",
+        toolCallId,
+        toolName: existing?.toolName ?? "tool",
+        state: "output-error",
+        input: existing?.input ?? {},
+        errorText: childEventString(event, "errorText") || childEventString(event, "error") ||
+          "Tool execution failed",
+      });
+    }
+  }
+
+  return view;
+}
+
+function useInvokeAgentStreamView(toolCallId: string): InvokeAgentStreamView {
+  const message = useMessageContextOptional()?.message;
+  return React.useMemo(() => {
+    let agentName: string | undefined;
+    let avatarUrl: string | undefined;
+    const events = (message?.parts ?? []).flatMap((part) => {
+      if (part.type !== `data-${INVOKE_AGENT_STREAM_EVENT_NAME}`) return [];
+      if (!part.data || typeof part.data !== "object") return [];
+      if ((part.data as Record<string, unknown>).toolCallId !== toolCallId) return [];
+      const identity = getInvokeAgentStreamIdentity(part.data);
+      agentName = identity.agentName ?? agentName;
+      avatarUrl = identity.avatarUrl ?? avatarUrl;
+      return getInvokeAgentStreamEvents(part.data);
+    });
+    const view = reduceInvokeAgentStream(events);
+    view.agentName = agentName;
+    view.avatarUrl = avatarUrl;
+    return view;
+  }, [message?.parts, toolCallId]);
+}
+
+/** Studio-style child-agent card used by the automatic `invoke_agent` renderer. */
+function InvokeAgentToolCall(
+  { className, icon, ref }: Pick<ToolCallProps, "className" | "icon" | "ref">,
+): React.ReactElement {
+  const { tool, isExpanded, toggle } = useToolCall();
+  const messageContext = useMessageContextOptional();
+  const chat = useChatContextOptional();
+  const childStream = useInvokeAgentStreamView(tool.toolCallId);
+  const input = jsonRecord(tool.input);
+  const rawOutput = jsonRecord(tool.output);
+  const output = jsonRecord(rawOutput?.structuredContent) ?? rawOutput;
+  const status = stringValue(output, "status")?.toLowerCase();
+  const failed = tool.state === "output-error" || status === "failed" || status === "error" ||
+    output?.ok === false;
+  const explicitStopped = status === "cancelled" || status === "canceled" ||
+    status === "stopped";
+  const completed = tool.state === "output-available" || status === "completed" ||
+    output?.ok === true;
+  // The turn ended before this child produced a terminal result. Freeze the
+  // card (and its live child rows) instead of leaving a forever-"Running" card.
+  const interruption = completed || failed || explicitStopped ? "none" : resolveInterruption({
+    toolState: tool.state,
+    isInTranscript: messageContext != null,
+    isMessageStreaming: messageContext?.isStreaming ?? false,
+    chatStatus: chat?.status,
+  });
+  const stopped = explicitStopped || interruption === "stopped";
+  const statusProps = failed || interruption === "failed"
+    ? { label: "Failed", color: "red" as const }
+    : stopped
+    ? { label: "Stopped", color: "gray" as const }
+    : completed
+    ? { label: "Completed", color: "green" as const }
+    : { label: "Running", color: "blue" as const, pulse: true };
+  const agentId = stringValue(input, "agent_id") ?? stringValue(output, "agentId");
+  const humanizedId = agentId
+    ? agentId.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())
+    : "Child agent";
+  // Prefer the runtime-streamed display name; fall back to a humanized id.
+  const title = childStream.agentName ?? humanizedId;
+  const avatarUrl = childStream.avatarUrl ?? stringValue(output, "avatarUrl");
+  const summary = jsonRecord(output?.summary);
+  const result = tool.errorText ?? stringValue(output, "text") ?? stringValue(output, "error") ??
+    stringValue(output, "terminalErrorMessage") ?? stringValue(summary, "text");
+  const reportsFailure = failed || interruption === "failed";
+  const fallbackResponse = reportsFailure
+    ? (result ?? "The child agent run failed before returning a usable result.")
+    : result;
+  const instructions = stringValue(input, "prompt") ?? stringValue(input, "description");
+  const hasStreamedText = childStream.items.some((item) => item.type === "text");
+  const response = hasStreamedText && !reportsFailure ? undefined : fallbackResponse;
+  const phase = completed || reportsFailure || stopped
+    ? "result"
+    : childStream.items.length > 0
+    ? "working"
+    : childStream.reasoning
+    ? "reasoning"
+    : "instructions";
+  const [instructionsOpen, setInstructionsOpen] = React.useState(phase === "instructions");
+  const previousPhaseRef = React.useRef(phase);
+  if (previousPhaseRef.current !== phase) {
+    previousPhaseRef.current = phase;
+    setInstructionsOpen(phase === "instructions");
+  }
+  const showBody = isExpanded && Boolean(
+    instructions || childStream.reasoning || response || childStream.items.length,
+  );
+
+  return (
+    <div
+      ref={ref}
+      className={cn(
+        "not-prose w-full rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-transparent p-4",
+        className,
+      )}
+    >
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={isExpanded}
+        className="flex w-full items-center justify-between gap-3 text-left"
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          {icon
+            ? (
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-sm font-medium text-[var(--foreground)]">
+                {icon}
+              </span>
+            )
+            : <Avatar name={title} avatarSrc={avatarUrl} tone="muted" className="size-8" />}
+          <span className="min-w-0 truncate text-sm font-medium text-[var(--foreground)]">
+            {title}
+          </span>
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          <Status {...statusProps} />
+          <ChevronDownIcon
+            className={cn(
+              "size-3.5 text-[var(--faint)] transition-transform",
+              isExpanded ? "rotate-180" : "-rotate-90",
+            )}
+          />
+        </span>
+      </button>
+      {showBody && (
+        <div className="mt-3 space-y-3 border-t border-[var(--edge)] pt-3">
+          {instructions && (
+            // Reuse the main chat's reasoning disclosure so the child card's
+            // "Instructions" reads identically to a "Thought process" toggle.
+            <Reasoning.Root
+              text={instructions}
+              open={instructionsOpen}
+              onOpenChange={setInstructionsOpen}
+            >
+              <Reasoning.Trigger labels={{ thinking: "Instructions", thought: "Instructions" }} />
+              <Reasoning.Content className="whitespace-pre-wrap">
+                {instructions}
+              </Reasoning.Content>
+            </Reasoning.Root>
+          )}
+          {childStream.reasoning && (
+            <Reasoning
+              text={childStream.reasoning}
+              isStreaming={childStream.reasoningActive}
+            />
+          )}
+          {childStream.items.map((item, index) => {
+            if (item.type === "text") {
+              return (
+                <ChatMarkdown
+                  key={`text-${index}`}
+                  className="text-sm leading-6 text-[var(--foreground)]"
+                >
+                  {item.text}
+                </ChatMarkdown>
+              );
+            }
+            const childTool = childStream.tools.get(item.toolCallId);
+            if (!childTool) return null;
+            // Freeze a child tool that was still running when the turn ended,
+            // so its row (or skill shimmer) doesn't claim to be running forever.
+            const frozen = (stopped || reportsFailure) && isToolRunning(childTool)
+              ? { ...childTool, state: CHILD_TOOL_STOPPED_STATE as ChatDynamicToolPart["state"] }
+              : childTool;
+            return <ToolCallRoot key={childTool.toolCallId} tool={frozen} />;
+          })}
+          {response && (
+            <ChatMarkdown className="text-sm leading-6 text-[var(--foreground)]">
+              {response}
+            </ChatMarkdown>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** Props accepted by `ToolCall` / `ToolCall.Root`. */
 export interface ToolCallProps {
+  /** The tool part to render (invocation name, state, input, output, error). */
   tool: ChatToolPart | ChatDynamicToolPart;
   className?: string;
   /** Override the leading tool icon (card variant). */
@@ -267,15 +687,25 @@ function ToolCallRoot(
 ): React.ReactElement {
   const hasOutput = hasVisibleToolOutput(tool.output);
   const hasError = Boolean(tool.errorText);
+  const usesDefaultInvokeRenderer = variant === undefined && children === undefined &&
+    isInvokeAgentTool(tool);
   // Collapse tool cards by default. Fast server-side tools (e.g.
   // `search_knowledge`) resolve near-instantly and otherwise stack up
   // expanded, burying the assistant's actual reply. The trigger row still
   // shows the tool name + status badge, and the chevron expands on demand.
   // Errors stay open so failures aren't hidden behind a click.
-  const shouldExpandByDefault = hasError;
+  const shouldExpandByDefault = hasError || (usesDefaultInvokeRenderer && isToolRunning(tool));
   const [isExpanded, setIsExpanded] = React.useState(
     defaultExpanded ?? shouldExpandByDefault,
   );
+  const previousAutoExpandRef = React.useRef(shouldExpandByDefault);
+  if (
+    defaultExpanded === undefined &&
+    previousAutoExpandRef.current !== shouldExpandByDefault
+  ) {
+    previousAutoExpandRef.current = shouldExpandByDefault;
+    setIsExpanded(shouldExpandByDefault);
+  }
 
   const toggle = (e: React.MouseEvent<HTMLButtonElement>) => {
     const next = !isExpanded;
@@ -290,6 +720,14 @@ function ToolCallRoot(
     hasOutput,
     hasError,
   };
+
+  if (usesDefaultInvokeRenderer) {
+    return (
+      <ToolCallContext.Provider value={context}>
+        <InvokeAgentToolCall className={className} icon={icon} ref={ref} />
+      </ToolCallContext.Provider>
+    );
+  }
 
   // Compact row for skill tools (or when forced), a presentation variant.
   const isCompact = variant === "compact" ||
@@ -313,7 +751,7 @@ function ToolCallRoot(
       >
         {children ?? (
           <>
-            <ToolCallTrigger icon={icon} />
+            <ToolCallTrigger>{icon}</ToolCallTrigger>
             <ToolCallBody />
           </>
         )}
@@ -325,18 +763,22 @@ ToolCallRoot.displayName = "ToolCall.Root";
 
 /** Props for `ToolCall.Trigger` — the header button. */
 export interface ToolCallTriggerProps {
-  /** Override the leading tool icon. */
-  icon?: React.ReactNode;
+  /** Replace the default glyph. The canonical path (RFC 2980: a leaf renders its
+   * default icon when childless; pass children to replace it). */
+  children?: React.ReactNode;
   className?: string;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLButtonElement>;
 }
 
 /** The header row: tool icon + name + status badge + expand chevron. */
 function ToolCallTrigger(
-  { icon, className }: ToolCallTriggerProps,
+  { children, className, ref }: ToolCallTriggerProps,
 ): React.JSX.Element {
   const { tool, isExpanded, toggle } = useToolCall();
   return (
     <button
+      ref={ref}
       type="button"
       onClick={toggle}
       className={cn(
@@ -345,7 +787,7 @@ function ToolCallTrigger(
       )}
     >
       <div className="flex min-w-0 items-center gap-2">
-        {icon ?? <WrenchIcon className="size-3.5 shrink-0 text-[var(--foreground)]" />}
+        {children ?? <WrenchIcon className="size-3.5 shrink-0 text-[var(--foreground)]" />}
         <span className="min-w-0 truncate text-sm font-medium leading-tight text-[var(--foreground)]">
           {tool.toolName}
         </span>
@@ -364,12 +806,14 @@ ToolCallTrigger.displayName = "ToolCall.Trigger";
 
 /** The collapsible region below the trigger. Renders only when expanded. */
 function ToolCallBody(
-  { className, children }: { className?: string; children?: React.ReactNode },
+  { className, children, ref, ...props }:
+    & React.HTMLAttributes<HTMLDivElement>
+    & { ref?: React.Ref<HTMLDivElement> },
 ): React.JSX.Element | null {
   const { isExpanded } = useToolCall();
   if (!isExpanded) return null;
   return (
-    <div className={cn("mt-3 border-t border-[var(--edge)] pt-3", className)}>
+    <div {...props} ref={ref} className={cn("mt-3 border-t border-[var(--edge)] pt-3", className)}>
       {children ?? (
         <>
           <ToolCallInput />
@@ -384,12 +828,14 @@ ToolCallBody.displayName = "ToolCall.Body";
 
 /** The `Parameters` block. Pass children to replace the highlighted JSON. */
 function ToolCallInput(
-  { className, children }: { className?: string; children?: React.ReactNode },
+  { className, children, ref, ...props }:
+    & React.HTMLAttributes<HTMLDivElement>
+    & { ref?: React.Ref<HTMLDivElement> },
 ): React.JSX.Element | null {
   const { tool } = useToolCall();
   if (tool.input === undefined) return null;
   return (
-    <div className={cn("space-y-2 overflow-hidden", className)}>
+    <div {...props} ref={ref} className={cn("space-y-2 overflow-hidden", className)}>
       <h4 className="text-xs font-medium text-[var(--faint)]">
         Parameters
       </h4>
@@ -403,7 +849,9 @@ ToolCallInput.displayName = "ToolCall.Input";
 
 /** The `Result` block. Pass children to replace the JSON / auto-table output. */
 function ToolCallOutput(
-  { className, children }: { className?: string; children?: React.ReactNode },
+  { className, children, ref, ...props }:
+    & React.HTMLAttributes<HTMLDivElement>
+    & { ref?: React.Ref<HTMLDivElement> },
 ): React.JSX.Element | null {
   const { tool, hasOutput } = useToolCall();
   if (!hasOutput) return null;
@@ -411,6 +859,8 @@ function ToolCallOutput(
   const tableOutput = renderOutputAsTable(output);
   return (
     <div
+      {...props}
+      ref={ref}
       className={cn(
         "mt-3 space-y-2 border-t border-[var(--edge)] pt-3",
         className,
@@ -433,12 +883,14 @@ ToolCallOutput.displayName = "ToolCall.Output";
 
 /** The error `Alert`. Renders only when the tool carries `errorText`. */
 function ToolCallError(
-  { className }: { className?: string },
+  { className, ref, ...props }:
+    & Omit<React.HTMLAttributes<HTMLDivElement>, "children">
+    & { ref?: React.Ref<HTMLDivElement> },
 ): React.JSX.Element | null {
   const { tool } = useToolCall();
   if (!tool.errorText) return null;
   return (
-    <div className={cn("mt-3 border-t border-[var(--edge)] pt-3", className)}>
+    <div {...props} ref={ref} className={cn("mt-3 border-t border-[var(--edge)] pt-3", className)}>
       <Alert variant="error">
         <AlertIcon>
           <XCircleIcon className="size-4" />
@@ -451,9 +903,10 @@ function ToolCallError(
 ToolCallError.displayName = "ToolCall.Error";
 
 /**
- * ToolCall — render `<ToolCall tool={part} />` for the default card, or compose
- * `ToolCall.Trigger` / `Body` / `Input` / `Output` / `Error` for a custom
- * layout. Mirrors the `Message` compound: render it, or compose it.
+ * ToolCall — render `<ToolCall tool={part} />` for the default card. `invoke_agent`
+ * calls use a child-agent card by default. Pass children to replace the default,
+ * or compose `ToolCall.Trigger` / `Body` / `Input` / `Output` / `Error` for a
+ * custom layout. Mirrors the `Message` compound: render it, or compose it.
  */
 export const ToolCall = Object.assign(ToolCallRoot, {
   Root: ToolCallRoot,

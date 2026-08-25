@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, remove, writeTextFile } from "../fs.ts";
 import { basename, fromFileUrl, join, relative, toFileUrl } from "../path/index.ts";
@@ -198,6 +198,21 @@ describe("platform/compat/std/fs", () => {
         }),
       ),
       [],
+    );
+  });
+
+  it("rejects non-file URLs and encoded path separators", async () => {
+    assertThrows(
+      () => existsSync(new URL("file:///tmp/a%2fb")),
+      TypeError,
+      "File URL path must not contain encoded path separators",
+      "a percent-encoded separator must not decode into a real one",
+    );
+    await assertRejects(
+      () => Array.fromAsync(walk(new URL("https://example.com/tmp"))),
+      TypeError,
+      "Expected a file URL",
+      "only file: URLs are accepted as paths",
     );
   });
 

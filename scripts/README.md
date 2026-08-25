@@ -30,7 +30,6 @@ the task against an application checkout.
 | Script                           | Task        | Purpose                                             |
 | -------------------------------- | ----------- | --------------------------------------------------- |
 | `generate-templates-manifest.ts` | `build`     | Generates template manifest for CLI scaffolding     |
-| `generate-dev-ui-manifest.ts`    | `build`     | Generates dev UI asset manifest                     |
 | `prepare-framework-sources.ts`   | `build`     | Prepares framework `.src` files for SSR transforms  |
 | `build-all.js`                   | n/a         | Cross-compiles CLI binary for all platforms         |
 | `build-npm-dnt.ts`               | `build:npm` | Builds the root npm package via dnt and emits generated extension packages |
@@ -45,6 +44,11 @@ leaf packages with narrower dependency sets and without a `veryfront` peer.
 Use `veryfront.npm.stagedSources` when a leaf package must bundle a canonical
 repository source file without adding the root framework as a dependency.
 
+The React development UI owns its generator under
+`extensions/ext-dev-ui-react/scripts/`. Its checked-in browser bundle embeds
+the generated stylesheet so JavaScript and CSS are always shipped as one
+immutable artifact.
+
 ## lint/
 
 | Script                           | Task                             | Purpose                                                                                    |
@@ -57,6 +61,7 @@ repository source file without adding the root framework as a dependency.
 | `ban-internal-root-imports.ts`   | `lint:ban-internal-root-imports` | Prevents root-level imports in internal modules                                            |
 | `check-module-boundaries.ts`     | `lint:module-boundaries`         | Ratchets broad imports in sensitive layers and dependency edges that participate in cycles |
 | `check-unawaited-promises.ts`    | `lint:check-awaits`              | Detects unawaited async cleanup calls                                                      |
+| `ratchet.ts`                     | (library)                        | Shared engine behind the baseline ratchets: walk, predicates, baseline compare, CLI        |
 | `find-duplicate-functions.ts`    | `dupes`                          | Finds exact and near-duplicate functions, plus semantic AST-based matches via `--semantic` |
 | `lint-platform-agnostic.ts`      | `lint:platform`                  | Checks platform-agnostic code boundaries                                                   |
 | `validate-architecture.ts`       | `validate:architecture`          | Validates module dependency boundaries                                                     |
@@ -98,3 +103,7 @@ explicit capability metadata for sensitive extension boundaries.
 | `install.sh` / `install.ps1` | n/a         | Binary installer (curl/PowerShell)             |
 | `postinstall.js`             | n/a         | npm postinstall hook (copied into npm package) |
 | `update-homebrew-formula.sh` | n/a         | Updates Homebrew formula after release         |
+
+Release jobs run `build/report-artifact-sizes.ts` after npm package and binary
+builds. The command writes a Markdown size table to the job summary and does not
+enforce a size limit.

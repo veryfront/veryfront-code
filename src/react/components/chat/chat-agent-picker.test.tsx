@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { agentsToPickerOptions, ChatAgentPicker } from "./chat-agent-picker.tsx";
@@ -109,7 +110,7 @@ describe("react/components/chat/chat-agent-picker: connected", () => {
       assert(trigger, "picker trigger renders after the agents resolve");
       assertStringIncludes(trigger.textContent ?? "", "Select agent");
 
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await settle();
     } finally {
       restoreFetch();
@@ -134,7 +135,7 @@ describe("react/components/chat/chat-agent-picker: connected", () => {
       assert(trigger, "picker trigger renders");
       assertStringIncludes(trigger.textContent ?? "", "Sales Agent");
 
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await settle();
     } finally {
       restoreFetch();
@@ -155,7 +156,7 @@ describe("react/components/chat/chat-agent-picker: connected", () => {
       assertEquals(rootElement.querySelector("button"), null);
       assertEquals(rootElement.textContent, "");
 
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await settle();
     } finally {
       restoreFetch();
@@ -181,7 +182,7 @@ describe("react/components/chat/chat-agent-picker: connected", () => {
       assertEquals(fetches, 0);
       assertEquals(rootElement.querySelector("button"), null);
 
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await settle();
     } finally {
       globalThis.fetch = previousFetch;

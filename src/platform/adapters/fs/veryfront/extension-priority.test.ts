@@ -29,25 +29,19 @@ describe("platform/adapters/fs/veryfront/extension-priority", () => {
   });
 
   describe("STAT_OPERATION_EXTENSION_PRIORITY", () => {
-    it("should have 6 extensions", () => {
-      assertEquals(STAT_OPERATION_EXTENSION_PRIORITY.length, 6);
-    });
-
-    it("should prioritize mdx first", () => {
-      assertEquals(STAT_OPERATION_EXTENSION_PRIORITY[0], ".mdx");
+    it("should pin the exact stat resolution precedence", () => {
+      const expected = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"];
+      assertEquals(
+        [...STAT_OPERATION_EXTENSION_PRIORITY],
+        expected,
+        "stat resolution precedence is a contract",
+      );
     });
 
     it("should contain the same extensions as READ_OPERATION_EXTENSION_PRIORITY", () => {
       const readSorted = [...READ_OPERATION_EXTENSION_PRIORITY].sort();
       const statSorted = [...STAT_OPERATION_EXTENSION_PRIORITY].sort();
       assertEquals(readSorted, statSorted);
-    });
-
-    it("should have a different order from READ_OPERATION_EXTENSION_PRIORITY", () => {
-      const isSameOrder = READ_OPERATION_EXTENSION_PRIORITY.every(
-        (ext, i) => ext === STAT_OPERATION_EXTENSION_PRIORITY[i],
-      );
-      assertEquals(isSameOrder, false);
     });
   });
 });

@@ -15,21 +15,27 @@ import {
   HEAD_PROVENANCE_ATTRIBUTE,
   HEAD_SHELL_PROVENANCE_ATTRIBUTE,
   headMetaSingletonKeyFromRecord,
+  serializeManagedHeadPayload,
 } from "#veryfront/html/managed-head-protocol.ts";
 import type { MDXFrontmatter } from "#veryfront/transforms/mdx/types.ts";
 import type { RenderMetadata } from "#veryfront/types";
 import { DEFAULT_DASHBOARD_PORT, rendererLogger } from "#veryfront/utils";
-import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
 import { injectElementSelectors } from "#veryfront/studio/element-selector-injector.ts";
 import { computeSourceHash } from "#veryfront/studio/hash-utils.ts";
 import { extractRelativePath } from "#veryfront/utils/route-path-utils.ts";
 import { hasUseClientDirective } from "#veryfront/rendering/rsc/page-island.ts";
+import type { RenderEnvironment } from "#veryfront/rendering/context/render-context.ts";
 import { getReadyManifestForRenderAsync } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
-import { resolveAppComponentPath } from "../layouts/utils/app-resolver.ts";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
-import { StreamTimeoutError, streamToString } from "../utils/stream-utils.ts";
 import { profilePhase, profileSyncPhase } from "#veryfront/observability";
+import { NOT_SUPPORTED } from "#veryfront/errors";
+import {
+  hasImmutableReleaseHydrationRuntime,
+  resolveProdHydrationModulePath,
+} from "#veryfront/html/hydration-script-builder/prod-runtime-selection.ts";
+import { resolveAppComponentPath } from "../layouts/utils/app-resolver.ts";
+import { StreamTimeoutError, streamToString } from "../utils/stream-utils.ts";
 import {
   extractProjectClassesForRoute,
   type ProjectCSSResult,
@@ -37,17 +43,59 @@ import {
   startProjectCSSPreparation,
 } from "./html-project-css.ts";
 import {
+  buildCollectedHeadDescriptors,
   buildHeadElements as buildCollectedHeadElements,
-  extractCommittedHeadFromHTML,
   mergeCollectedHeadWithShell,
   mergeFrontmatter as mergeCollectedFrontmatter,
+  resolveCommittedHeadFromHTML,
 } from "./html-head.ts";
 import { mergeImportedCSS as mergeImportedProjectCss } from "./html-imported-css.ts";
 import type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
-import { NOT_SUPPORTED } from "#veryfront/errors";
+
 export type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
 
 const logger = rendererLogger.component("html-generator");
+
+export function resolveRenderEnvironment(
+  requestEnvironment?: RenderEnvironment,
+  configuredEnvironment?: RenderEnvironment,
+): RenderEnvironment {
+  return requestEnvironment ?? configuredEnvironment ?? "production";
+}
+
+export function resolveErrorContentSourceEnvironment(
+  isLocalProject: boolean,
+  environment: RenderEnvironment,
+  releaseId?: string,
+): RenderEnvironment {
+  if (!isLocalProject && environment === "production" && !releaseId) {
+    return "preview";
+  }
+  return environment;
+}
+
+export function resolveErrorContentSourceParameters(
+  isLocalProject: boolean,
+  requestEnvironment: RenderEnvironment | undefined,
+  configuredEnvironment: RenderEnvironment | undefined,
+  options: { releaseId?: string; contentSourceId?: string } | undefined,
+): {
+  environment: RenderEnvironment;
+  contentSourceEnvironment: RenderEnvironment;
+  releaseId?: string;
+} {
+  const environment = resolveRenderEnvironment(requestEnvironment, configuredEnvironment);
+  const releaseId = resolveReleaseId(options);
+  return {
+    environment,
+    contentSourceEnvironment: resolveErrorContentSourceEnvironment(
+      isLocalProject,
+      environment,
+      releaseId,
+    ),
+    releaseId,
+  };
+}
 
 function hasCollectedHeadEntries(
   head: HTMLGenerationContext["collectedHead"],
@@ -69,7 +117,8 @@ function toShellFrontmatter(
   // frontmatter index, while the HTML pipeline supports structured meta/link/
   // script/style fields. This boundary narrows only the type view; the shell
   // immediately validates and snapshots every structured value before use.
-  return frontmatter as unknown as NonNullable<RenderMetadata["frontmatter"]>;
+  const record: Record<string, unknown> = frontmatter;
+  return record as NonNullable<RenderMetadata["frontmatter"]>;
 }
 
 function injectHeadScriptsAfterImportMap(html: string, scripts: string): string {
@@ -236,8 +285,21 @@ export class HTMLGenerator {
   }
 
   async generateFullHTML(context: HTMLGenerationContext): Promise<string> {
-    const committedHead = extractCommittedHeadFromHTML(context.html);
-    const effectiveContext = committedHead ? { ...context, collectedHead: committedHead } : context;
+    // Configured preview must reach every HTML path. Omitted production keeps
+    // legacy behavior; an explicit production request still enables project CSS.
+    const environment = context.options?.environment ??
+      (this.config.environment === "preview" ? "preview" : undefined);
+    const resolvedContext = environment === undefined ? context : {
+      ...context,
+      options: { ...context.options, environment },
+    };
+    const committedHead = resolveCommittedHeadFromHTML(
+      resolvedContext.html,
+      resolvedContext.collectedHead,
+    );
+    const effectiveContext = committedHead
+      ? { ...resolvedContext, collectedHead: committedHead }
+      : resolvedContext;
     let html: string;
     if (isFullHTMLDocument(effectiveContext.html)) {
       html = await this.handleFullHTMLDocument(effectiveContext);
@@ -250,7 +312,7 @@ export class HTMLGenerator {
       logger.debug("Injected element selectors for Studio");
     }
 
-    return addNonceToHtmlTags(finalHtml, effectiveContext.options?.nonce);
+    return finalHtml;
   }
 
   async generateHTMLStream(
@@ -269,21 +331,22 @@ export class HTMLGenerator {
       throw error;
     }
 
-    const committedHead = extractCommittedHeadFromHTML(reactContent);
+    const committedHead = resolveCommittedHeadFromHTML(reactContent, context.collectedHead);
+    // Match generateFullHTML: inherit only the positive preview signal.
+    const environment = context.options?.environment ??
+      (this.config.environment === "preview" ? "preview" : undefined);
     const fullContext = {
       ...context,
+      ...(environment === undefined ? {} : { options: { ...context.options, environment } }),
       html: reactContent,
       ...(committedHead ? { collectedHead: committedHead } : {}),
     } as HTMLGenerationContext;
 
     if (isFullHTMLDocument(reactContent)) {
       const encoder = new TextEncoder();
-      const fullHtml = addNonceToHtmlTags(
-        await this.handleFullHTMLDocument({
-          ...fullContext,
-        }),
-        context.options?.nonce,
-      );
+      const fullHtml = await this.handleFullHTMLDocument({
+        ...fullContext,
+      });
 
       return new ReadableStream({
         start(controller) {
@@ -296,7 +359,7 @@ export class HTMLGenerator {
     const mergedFrontmatter = mergeCollectedFrontmatter(fullContext);
     const htmlOptions = await profilePhase(
       "html.build_options",
-      () => this.buildHTMLOptions(fullContext, mergedFrontmatter),
+      () => this.buildHTMLOptions(fullContext, mergedFrontmatter, true),
     );
     const projectCSSPromise = startProjectCSSPreparation(fullContext, htmlOptions);
     startPreparedCSSWarmup(this.config, fullContext, htmlOptions);
@@ -314,10 +377,7 @@ export class HTMLGenerator {
     );
 
     const encoder = new TextEncoder();
-    const fullHtml = addNonceToHtmlTags(
-      `${start}${reactContent}${end}`,
-      context.options?.nonce,
-    );
+    const fullHtml = `${start}${reactContent}${end}`;
 
     return new ReadableStream({
       start(controller) {
@@ -337,9 +397,12 @@ export class HTMLGenerator {
       });
     }
     const mergedFrontmatter = mergeCollectedFrontmatter(context);
+    const hasReleaseIdentity = hasImmutableReleaseHydrationRuntime(
+      resolveReleaseId(context.options),
+    );
     const htmlOptions = await profilePhase(
       "html.build_options",
-      () => this.buildHTMLOptions(context, mergedFrontmatter),
+      () => this.buildHTMLOptions(context, mergedFrontmatter, hasReleaseIdentity),
     );
     const projectCSSPromise = startProjectCSSPreparation(context, htmlOptions);
     const metadata = extractHTMLMetadata(
@@ -396,6 +459,7 @@ export class HTMLGenerator {
       projectStylesheetHref,
       dependencyPinningCacheKey: context.options?.dependencyPinningCacheKey,
       releaseAssetManifest,
+      prodHydrationModulePath: htmlOptions.prodHydrationModulePath,
       directories: this.config.config.directories,
     });
 
@@ -444,7 +508,7 @@ export class HTMLGenerator {
     const mergedFrontmatter = mergeCollectedFrontmatter(context);
     const htmlOptions = await profilePhase(
       "html.build_options",
-      () => this.buildHTMLOptions(context, mergedFrontmatter),
+      () => this.buildHTMLOptions(context, mergedFrontmatter, true),
     );
     const projectCSSPromise = startProjectCSSPreparation(context, htmlOptions);
     startPreparedCSSWarmup(this.config, context, htmlOptions);
@@ -484,6 +548,14 @@ export class HTMLGenerator {
       head,
     );
 
+    const completeManagedHeadPayload = serializeManagedHeadPayload([
+      ...buildStructuredManagedHeadDescriptors(
+        extractHTMLMetadata(enrichedFrontmatter, layoutFrontmatter),
+        enrichedFrontmatter.title || "Veryfront App",
+      ),
+      ...buildCollectedHeadDescriptors(emissionHead),
+    ]);
+
     const { start, end } = await generateHTMLShellParts(
       {
         title: enrichedFrontmatter.title || "Veryfront App",
@@ -498,6 +570,7 @@ export class HTMLGenerator {
       context.options?.props,
       reactContent,
       projectCSSPromise,
+      { managedHeadPayload: completeManagedHeadPayload },
     );
 
     let modifiedStart = start;
@@ -542,7 +615,10 @@ export class HTMLGenerator {
       );
     }
 
-    const { scripts, other } = buildCollectedHeadElements(emissionHead);
+    const { scripts, other } = buildCollectedHeadElements(
+      emissionHead,
+      context.options?.nonce,
+    );
     if (!scripts && !other) return { start: modifiedStart, end };
 
     // The framework import map must precede every module script. Keep collected
@@ -644,17 +720,28 @@ export class HTMLGenerator {
         dependencyPinningSource: context.options?.dependencyPinningSource,
       });
       const { computeContentSourceId } = await import("#veryfront/cache/keys.ts");
+      const { environment, contentSourceEnvironment, releaseId } =
+        resolveErrorContentSourceParameters(
+          this.config.isLocalProject === true,
+          context.options?.environment,
+          this.config.environment,
+          context.options,
+        );
       const contentSourceId = computeContentSourceId(
         this.config.isLocalProject === true,
-        context.options?.environment ?? "preview",
+        contentSourceEnvironment,
         null,
-        context.options?.releaseId,
+        releaseId,
       );
+      // The loader always receives the resolved request environment. A
+      // release-less hosted production render keeps the legacy preview content
+      // identity only so content-source validation cannot hide its error
+      // boundary; it does not enable preview instrumentation.
       const loaded = await loadReservedWithPath(
         dirs,
         "error",
         this.config.projectDir,
-        this.config.mode,
+        { compileMode: this.config.mode, environment },
         this.config.adapter,
         context.options?.projectId,
         contentSourceId,
@@ -663,6 +750,7 @@ export class HTMLGenerator {
         context.options?.dependencyPinningDependencies,
         context.options?.dependencyPinningSource,
         context.options?.url?.origin,
+        this.config.config?.build?.serverExternalPackages,
       );
       if (!loaded) return null;
 
@@ -693,6 +781,7 @@ export class HTMLGenerator {
   private async buildHTMLOptions(
     context: HTMLGenerationContext,
     mergedFrontmatter: MDXFrontmatter,
+    includeProdHydrationRuntime: boolean,
   ): Promise<HTMLGenerationOptions> {
     const stylesheetPath = this.config.config?.tailwind?.stylesheet || "globals.css";
     const [appComponentPathOrNull, globalCSS] = await Promise.all([
@@ -760,6 +849,21 @@ export class HTMLGenerator {
     const sourceHash = context.options?.studioEmbed && context.pageInfo.entity.content
       ? computeSourceHash(context.pageInfo.entity.content)
       : undefined;
+    const releaseId = resolveReleaseId(context.options);
+    const usesProductionScripts = context.options?.forceProductionScripts === true ||
+      !(this.config.isLocalProject === true || context.options?.environment === "preview");
+    const prodHydrationModulePath = includeProdHydrationRuntime && usesProductionScripts
+      ? await profilePhase(
+        "html.release_hydration_runtime",
+        () =>
+          resolveProdHydrationModulePath({
+            fs: this.config.adapter.fs,
+            projectDir: this.config.projectDir,
+            buildOutDir: this.config.config?.build?.outDir,
+            releaseId,
+          }),
+      )
+      : undefined;
     return profileSyncPhase("html.build_options.finalize", () => ({
       mode: this.config.mode,
       config: this.config.config,
@@ -784,7 +888,8 @@ export class HTMLGenerator {
       studioEmbed: context.options?.studioEmbed,
       projectId: context.options?.projectId,
       projectSlug: context.options?.projectSlug,
-      releaseId: resolveReleaseId(context.options),
+      releaseId,
+      prodHydrationModulePath,
       pageId: context.options?.pageId,
       sourceHash,
       colorScheme: context.options?.colorScheme,

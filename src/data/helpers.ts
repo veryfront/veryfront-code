@@ -1,4 +1,4 @@
-import type { DataResult } from "./types.ts";
+import type { DataResponseMetadata, DataResult, StaticDataResult } from "./types.ts";
 
 /**
  * Brand marking an object as produced by {@link notFound} or {@link redirect}.
@@ -20,7 +20,7 @@ const DATA_CONTROL_RESULT = Symbol.for("veryfront.dataControlResult");
  * `JSON.stringify`, and the `DataResult` schema. A returned control result
  * behaves exactly as it did before the brand existed.
  */
-function brandDataControlResult(result: DataResult): DataResult {
+function brandDataControlResult<T extends DataResult>(result: T): T {
   Object.defineProperty(result, DATA_CONTROL_RESULT, { value: true });
   return result;
 }
@@ -31,8 +31,26 @@ function brandDataControlResult(result: DataResult): DataResult {
  * Return it or throw it. `throw redirect("/login")` behaves exactly like
  * `return redirect("/login")`.
  */
-export function redirect(destination: string, permanent = false): DataResult {
-  return brandDataControlResult({ redirect: { destination, permanent } });
+export function redirect(
+  destination: string,
+  permanent?: boolean,
+  response?: undefined,
+): StaticDataResult;
+export function redirect(
+  destination: string,
+  permanent: boolean | undefined,
+  response: DataResponseMetadata,
+): DataResult;
+export function redirect(
+  destination: string,
+  permanent = false,
+  response?: DataResponseMetadata,
+): DataResult {
+  return brandDataControlResult({
+    redirect: { destination, permanent },
+    ...(response?.headers !== undefined ? { headers: response.headers } : {}),
+    ...(response?.cookies !== undefined ? { cookies: response.cookies } : {}),
+  });
 }
 
 /**
@@ -42,8 +60,14 @@ export function redirect(destination: string, permanent = false): DataResult {
  * `return notFound()`, which is useful deep inside a helper that has no clean
  * way to return to the loader.
  */
-export function notFound(): DataResult {
-  return brandDataControlResult({ notFound: true });
+export function notFound(response?: undefined): StaticDataResult;
+export function notFound(response: DataResponseMetadata): DataResult;
+export function notFound(response?: DataResponseMetadata): DataResult {
+  return brandDataControlResult({
+    notFound: true,
+    ...(response?.headers !== undefined ? { headers: response.headers } : {}),
+    ...(response?.cookies !== undefined ? { cookies: response.cookies } : {}),
+  });
 }
 
 /**
@@ -78,6 +102,16 @@ export function isDataControlResult(value: unknown): value is DataResult {
  * for the project.
  */
 export function toDataControlResult(result: DataResult): DataResult {
-  if (result.redirect) return { redirect: result.redirect };
-  return { notFound: true };
+  if (result.redirect) {
+    return {
+      redirect: result.redirect,
+      ...(result.headers ? { headers: result.headers } : {}),
+      ...(result.cookies ? { cookies: result.cookies } : {}),
+    };
+  }
+  return {
+    notFound: true,
+    ...(result.headers ? { headers: result.headers } : {}),
+    ...(result.cookies ? { cookies: result.cookies } : {}),
+  };
 }

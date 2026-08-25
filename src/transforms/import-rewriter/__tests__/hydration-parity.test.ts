@@ -9,7 +9,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import { type RewriteContext, rewriteImports } from "../index.ts";
-import { DEFAULT_REACT_VERSION } from "../url-builder.ts";
+import { CSSTYPE_VERSION, DEFAULT_REACT_VERSION } from "../url-builder.ts";
 
 function createContext(overrides: Partial<RewriteContext>): RewriteContext {
   return {
@@ -38,11 +38,21 @@ describe("Hydration Parity", () => {
       expect(ssrResult).toContain(`https://esm.sh/react@${DEFAULT_REACT_VERSION}`);
       expect(browserResult).toContain(`https://esm.sh/react@${DEFAULT_REACT_VERSION}`);
 
-      const reactUrlPattern = /https:\/\/esm\.sh\/react@[\d.]+\?[^"']+/;
-      const ssrReactUrl = ssrResult.match(reactUrlPattern)?.[0];
-      const browserReactUrl = browserResult.match(reactUrlPattern)?.[0];
+      // Compare every emitted esm.sh URL, not just the first: a divergence in
+      // any single React entry (react/jsx-runtime especially) is a dual-React
+      // hydration break.
+      const esmShUrlPattern = /https:\/\/esm\.sh\/[^"']+/g;
+      const ssrReactUrls = [...ssrResult.matchAll(esmShUrlPattern)].map((match) => match[0]);
+      const browserReactUrls = [...browserResult.matchAll(esmShUrlPattern)].map(
+        (match) => match[0],
+      );
 
-      expect(ssrReactUrl).toBe(browserReactUrl);
+      expect(ssrReactUrls).toEqual([
+        `https://esm.sh/react@${DEFAULT_REACT_VERSION}?target=es2022&deps=csstype@${CSSTYPE_VERSION}`,
+        `https://esm.sh/react@${DEFAULT_REACT_VERSION}?target=es2022&deps=csstype@${CSSTYPE_VERSION}`,
+        `https://esm.sh/react@${DEFAULT_REACT_VERSION}/jsx-runtime?external=react&target=es2022&deps=csstype@${CSSTYPE_VERSION}`,
+      ]);
+      expect(browserReactUrls).toEqual(ssrReactUrls);
     });
 
     it("should use same query params for React packages", async () => {
@@ -253,10 +263,10 @@ describe("Hydration Parity", () => {
         /\n(function (__veryfrontPinDynamicImport_*)[\s\S]+)\n$/,
       );
       expect(result).toContain(
-        `from "https://app.example/_vf_modules/shared/StaticAbsolute.js?ssr=true&pins=on%3Asnapshot-a"`,
+        `from "/_vf_modules/_pins/on%3Asnapshot-a/shared/StaticAbsolute.js?ssr=true"`,
       );
       expect(result).toContain(
-        `from "https://app.example/_vf_modules/shared/StaticProtocol.js?ssr=true&pins=on%3Asnapshot-a"`,
+        `from "/_vf_modules/_pins/on%3Asnapshot-a/shared/StaticProtocol.js?ssr=true"`,
       );
       expect(result).toContain(
         `from "https://cdn.example/_vf_modules/shared/StaticForeign.js"`,

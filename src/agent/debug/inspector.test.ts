@@ -5,6 +5,8 @@ import { type ModelRuntime } from "#veryfront/provider";
 import { agent } from "../index.ts";
 import type { MemoryConfig } from "../schemas/index.ts";
 import { inspectAgent } from "./inspector.ts";
+import { tool } from "#veryfront/tool";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 
 function stubModel(modelId: string): ModelRuntime {
   return {
@@ -61,5 +63,57 @@ describe("inspectAgent memoryType reporting", () => {
       "hi",
     );
     assertEquals(report.agent.memoryType, "buffer");
+  });
+});
+
+describe("inspectAgent report body", () => {
+  it("carries the execution, tool and memory sections of the report", async () => {
+    const inspected = inspectableAgent("inspect-report-body", {
+      type: "buffer",
+      maxMessages: 10,
+    });
+    const report = await inspectAgent(inspected, "hi");
+
+    assertEquals(report.execution.output, "ok", "the report carries the agent's generated text");
+    assertEquals(report.execution.status, "completed", "the report carries the run status");
+    assertEquals(report.execution.steps, 1, "a response with no tool calls is one step");
+    assertEquals(report.agent.maxSteps, 1, "the report carries the configured step budget");
+    assertEquals(report.tools.called, [], "a run without tool calls reports none");
+    assertEquals(
+      report.memory.messagesCount,
+      2,
+      "the buffer store holds the prompt and the reply after one turn",
+    );
+    assertEquals(report.usage, {
+      promptTokens: 1,
+      completionTokens: 1,
+      totalTokens: 2,
+    }, "the report carries the model's reported token usage");
+  });
+
+  it("lists the agent's configured tools", async () => {
+    const echo = tool({
+      id: "inspector_echo",
+      description: "Echo the input back",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => "echoed",
+    });
+    const inspected = agent({
+      id: "inspect-with-tools",
+      model: "hosted/inspect-with-tools",
+      system: "test",
+      maxSteps: 1,
+      tools: { inspector_echo: echo },
+      resolveModelTransport: () =>
+        Promise.resolve({ model: stubModel("hosted/inspect-with-tools") }),
+    });
+
+    const report = await inspectAgent(inspected, "hi");
+
+    assertEquals(
+      report.tools.available,
+      ["inspector_echo"],
+      "the report lists the agent's configured tools",
+    );
   });
 });

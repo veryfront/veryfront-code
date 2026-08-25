@@ -3,7 +3,10 @@ import { LRUNode } from "./lru-node.ts";
 import type { LRUListManager } from "./lru-list-manager.ts";
 
 export class EntryManager {
-  constructor(private readonly estimateSizeOf: (value: unknown) => number) {}
+  constructor(
+    private readonly estimateSizeOf: (value: unknown) => number,
+    private readonly now: () => number = Date.now,
+  ) {}
 
   updateExistingEntry<T>(
     node: LRUNode<unknown>,
@@ -26,7 +29,7 @@ export class EntryManager {
       size: newSize,
       expiry,
       tags,
-      lastAccessed: Date.now(),
+      lastAccessed: this.now(),
     };
 
     listManager.moveToFront(node);
@@ -51,7 +54,7 @@ export class EntryManager {
       size,
       expiry,
       tags,
-      lastAccessed: Date.now(),
+      lastAccessed: this.now(),
     };
 
     const node = new LRUNode(key, entry);
@@ -91,8 +94,8 @@ export class EntryManager {
     ttlMs: number | undefined,
     defaultTtlMs: number | undefined,
   ): number | undefined {
-    if (typeof ttlMs === "number") return Date.now() + ttlMs;
-    if (typeof defaultTtlMs === "number") return Date.now() + defaultTtlMs;
+    if (typeof ttlMs === "number") return this.now() + ttlMs;
+    if (typeof defaultTtlMs === "number") return this.now() + defaultTtlMs;
     return undefined;
   }
 }

@@ -5,10 +5,10 @@
  * including remote project registration and local scaffolding.
  */
 
-import { cwd } from "veryfront/platform";
+import { createFileSystem, cwd } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import type { AppState } from "../state.ts";
-import { addLog, setProjects, updateRemote } from "../state.ts";
+import { addLog, setProjects, setRemoteProjects } from "../state.ts";
 import { readToken } from "../../auth/token-store.ts";
 import { fetchRemoteProjects } from "../../sync/index.ts";
 import { getLocalProjectsFromState } from "../utils.ts";
@@ -24,6 +24,8 @@ import type { InitTemplate } from "../../commands/init/types.ts";
 export interface ProjectCreationContext {
   state: AppState;
   render: () => void;
+  /** Directory whose `projects/` folder receives the new project. Defaults to the working directory. */
+  baseDir?: string;
 }
 
 /**
@@ -37,6 +39,7 @@ export async function createProject(
   let { state } = ctx;
 
   try {
+    const baseDir = ctx.baseDir ?? cwd();
     state = addLog("info", "Creating project...")(state);
     ctx.render();
 
@@ -49,12 +52,24 @@ export async function createProject(
     const reserved = await reserveProjectSlug(normalizedSlug, token);
     const slug = reserved.slug;
 
+    // `veryfront init` deliberately scaffolds into a directory that is already
+    // there. This caller must not: it has just reserved a brand new remote
+    // slug, and `resolveOrCreateProject` below writes the link for it. Adopting
+    // an existing `projects/<slug>` would point a directory that is already
+    // someone else's project at the project just reserved.
+    const projectDir = join(baseDir, "projects", slug);
+    if (await createFileSystem().exists(projectDir)) {
+      return addLog(
+        "error",
+        `projects/${slug} already exists. Remove it or choose a different name.`,
+      )(state);
+    }
+
     const creation = await createSharedProject({
       name: slug,
-      parentDir: join(cwd(), "projects"),
+      parentDir: join(baseDir, "projects"),
       template,
       runtime: "node",
-      features: [],
       integrations: [],
       environmentValues: {},
       conflictPolicy: "fail",
@@ -89,13 +104,7 @@ export async function createProject(
     state = setProjects(currentProjects)(state);
 
     const result = await fetchRemoteProjects();
-    state = updateRemote({
-      projects: result.projects.map((p) => ({
-        id: p.id,
-        name: p.name,
-        slug: p.slug,
-      })),
-    })(state);
+    state = setRemoteProjects(result.projects, baseDir)(state);
 
     return addLog("info", `Created ${slug}`)(state);
   } catch (error) {

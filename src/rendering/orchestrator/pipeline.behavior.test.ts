@@ -1,10 +1,23 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import { RenderPipeline, type RenderPipelineConfig } from "./pipeline.ts";
-import type { RenderOptions } from "./types.ts";
-import { markBuildFailure } from "./module-loader/build-failure.ts";
+import type { RenderOptions, RenderResult } from "./types.ts";
+import { isTenantBuildFailure, markBuildFailure } from "./module-loader/build-failure.ts";
+import {
+  COMPILATION_ERROR,
+  createError,
+  FILE_NOT_FOUND,
+  SSG_GENERATION_ERROR,
+  toError,
+  VeryfrontError,
+} from "#veryfront/errors";
 import { cachePageCss, getPageCssCacheKey } from "./css-cache.ts";
 import { cacheCSSAsync, hashCSS } from "#veryfront/html/styles-builder/index.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
@@ -14,7 +27,7 @@ import {
   registerManifestFetcherForRelease,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
-import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import {
   finalizeRequestProfiling,
   resetRequestProfiles,
@@ -26,6 +39,20 @@ import {
   globalModuleCache,
 } from "#veryfront/modules/react-loader/ssr-module-loader/cache/index.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
+import { resolveSSRControlOutcome } from "#veryfront/rendering/ssr-outcome.ts";
+import {
+  getAttachedDataResponseMetadata,
+  unwrapDataResponseMetadataError,
+} from "#veryfront/data/response-metadata.ts";
+import { notFound } from "#veryfront/data/helpers.ts";
+import { createNotFoundLikeError } from "#veryfront/platform/adapters/fs/veryfront/read-operations-helpers.ts";
+import { isMissingProjectSourceError } from "#veryfront/rendering/ssr-outcome.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLoggerConfigForTests,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 
 const RELEASE_CSS_HASH = "c".repeat(64);
 
@@ -98,6 +125,7 @@ function createPipeline(
     } as any,
     mode: "production",
     projectDir: "/project",
+    isLocalProject: true,
     ...overrides,
   };
 
@@ -145,14 +173,227 @@ async function primeReadyReleaseCssManifest(): Promise<void> {
   await new Promise((r) => setTimeout(r, 0));
 }
 
+/** Collect the warn-and-above log records emitted while a test runs. Reset by the suite's afterEach. */
+function captureLogs(): LogEntry[] {
+  const entries: LogEntry[] = [];
+  setEnv("LOG_LEVEL", "WARN");
+  __resetLoggerConfigForTests();
+  __registerLogRecordEmitter((entry) => entries.push(entry));
+  return entries;
+}
+
+/** The record reporting that `path` failed to load, ignoring surrounding progress logs. */
+function findModuleFailureLog(entries: LogEntry[], path: string): LogEntry | undefined {
+  return entries.find((entry) =>
+    entry.context?.path === path && typeof entry.context?.error === "string"
+  );
+}
+
 describe("RenderPipeline behavior", () => {
   const originalManifestFlag = getHostEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG);
+  const originalLogLevel = getHostEnv("LOG_LEVEL");
 
   afterEach(() => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, originalManifestFlag ?? "");
     Deno.env.delete("VERYFRONT_ENABLE_SERVER_TIMING");
     resetRequestProfiles();
     clearReleaseAssetManifestCache();
+    if (originalLogLevel === undefined) deleteEnv("LOG_LEVEL");
+    else setEnv("LOG_LEVEL", originalLogLevel);
+    __resetLoggerConfigForTests();
+    __resetLogRecordEmitterForTests();
+  });
+
+  it("threads render cancellation through layout preload and application", async () => {
+    const controller = new AbortController();
+    let preloadSignal: AbortSignal | undefined;
+    let applySignal: AbortSignal | undefined;
+    const pipeline = createPipeline("/project/pages/cancel-layout.tsx", {
+      layoutOrchestrator: {
+        collectLayouts: async () => ({
+          layoutBundle: undefined,
+          nestedLayouts: [{ kind: "tsx", componentPath: "/project/layout.tsx" }],
+        }),
+        preloadLayoutModules: async (
+          _layouts: unknown,
+          _pinKey: unknown,
+          _dependencies: unknown,
+          _source: unknown,
+          _origin: unknown,
+          signal: AbortSignal | undefined,
+        ) => {
+          preloadSignal = signal;
+          return {
+            tsxTotal: 1,
+            tsxSuccess: 1,
+            tsxFailures: [],
+            mdxTotal: 0,
+            mdxSuccess: 0,
+            mdxFailures: [],
+            importMapSuccess: true,
+            durationMs: 0,
+            allSuccess: true,
+          };
+        },
+        applyLayoutsAndWrappers: async (...args: unknown[]) => {
+          applySignal = args[15] as AbortSignal | undefined;
+          return args[0];
+        },
+      } as any,
+    });
+
+    await pipeline.renderPage("/cancel-layout", {
+      delivery: "string",
+      abortSignal: controller.signal,
+    });
+
+    assertEquals(preloadSignal, controller.signal);
+    assertEquals(applySignal, controller.signal);
+  });
+
+  /** Build a pipeline whose single TSX layout fails to load with `error`. */
+  function createPipelineWithFailingLayout(error: Error): RenderPipeline {
+    const pipeline = createPipeline("/project/pages/index.tsx", {
+      layoutOrchestrator: {
+        collectLayouts: async () => ({
+          layoutBundle: undefined,
+          nestedLayouts: [{ kind: "tsx", componentPath: "/project/app/layout.tsx" }],
+        }),
+        preloadLayoutModules: async () => ({
+          tsxTotal: 1,
+          tsxSuccess: 0,
+          tsxFailures: ["/project/app/layout.tsx"],
+          mdxTotal: 0,
+          mdxSuccess: 0,
+          mdxFailures: [],
+          importMapSuccess: true,
+          durationMs: 0,
+          allSuccess: false,
+        }),
+        applyLayoutsAndWrappers: async (element: unknown) => element,
+      },
+    } as unknown as Partial<RenderPipelineConfig>);
+
+    (pipeline as unknown as { loadModule: (path: string) => Promise<unknown> }).loadModule = (
+      path: string,
+    ) => path === "/project/app/layout.tsx" ? Promise.reject(error) : Promise.resolve({});
+
+    return pipeline;
+  }
+
+  it("does not call a terminal layout failure non-critical", async () => {
+    // The apply phase reloads the layout from the same source. When that source
+    // is gone the reload fails identically and the render is over, so a warning
+    // labelled "non-critical" misleads anyone triaging by severity.
+    const entries = captureLogs();
+    const pipeline = createPipelineWithFailingLayout(
+      createNotFoundLikeError("app/layout.tsx"),
+    );
+
+    await pipeline.resolvePageData("/", {
+      request: new Request("http://localhost/"),
+      url: new URL("http://localhost/"),
+    });
+
+    const entry = findModuleFailureLog(entries, "/project/app/layout.tsx");
+    assert(entry, "expected a log entry for the failed layout module");
+    assertEquals(entry.level, "error", "a failure about to be terminal is not a warning");
+    assertEquals(
+      entry.message.includes("non-critical"),
+      false,
+      "the message must not claim non-critical for a terminal failure",
+    );
+  });
+
+  it("still treats a recoverable layout load failure as a warning", async () => {
+    const entries = captureLogs();
+    const pipeline = createPipelineWithFailingLayout(new Error("connection reset"));
+
+    await pipeline.resolvePageData("/", {
+      request: new Request("http://localhost/"),
+      url: new URL("http://localhost/"),
+    });
+
+    const entry = findModuleFailureLog(entries, "/project/app/layout.tsx");
+    assert(entry, "expected a log entry for the failed layout module");
+    assertEquals(entry.level, "warn", "the apply phase can still recover this one");
+  });
+
+  it("keeps the file-not-found identity of an unretrievable page module", async () => {
+    // The page module reads the same unreachable source as the layout. A
+    // render-error wrapper would drop that identity and answer 500 for the very
+    // deletion the layout path already answers 404 for.
+    const pipeline = createPipeline("/project/pages/index.tsx");
+    (pipeline as unknown as { loadModule: () => Promise<unknown> }).loadModule = () =>
+      Promise.reject(createNotFoundLikeError("pages/index.tsx"));
+
+    const error = await assertRejects(() =>
+      pipeline.resolvePageData("/", {
+        request: new Request("http://localhost/"),
+        url: new URL("http://localhost/"),
+      })
+    );
+
+    assertEquals(
+      (error as VeryfrontError).slug,
+      "file-not-found",
+      "resolveSSRFailure reads this slug to answer 404",
+    );
+    assertEquals(
+      isMissingProjectSourceError(error),
+      true,
+      "the absent-source identity must survive the re-raise intact",
+    );
+  });
+
+  it("keeps a render-error identity for an infrastructure file-not-found", async () => {
+    // http-cache raises `file-not-found` when a bundle write reports success and
+    // the file still is not there. That is a server fault reachable from
+    // loadModule, and routing it to 404 would page nobody.
+    const pipeline = createPipeline("/project/pages/index.tsx");
+    (pipeline as unknown as { loadModule: () => Promise<unknown> }).loadModule = () =>
+      Promise.reject(
+        FILE_NOT_FOUND.create({
+          detail: "[HTTP-CACHE] INVARIANT VIOLATION: File write succeeded but file does not exist",
+        }),
+      );
+
+    const error = await assertRejects(() =>
+      pipeline.resolvePageData("/", {
+        request: new Request("http://localhost/"),
+        url: new URL("http://localhost/"),
+      })
+    );
+
+    assertEquals(
+      (error as VeryfrontError).slug,
+      "render-error",
+      "an infrastructure fault must keep a 500 identity",
+    );
+  });
+
+  it("keeps a render-error identity for a page module that loaded and threw", async () => {
+    const pipeline = createPipeline("/project/pages/index.tsx");
+    (pipeline as unknown as { loadModule: () => Promise<unknown> }).loadModule = () =>
+      Promise.reject(new Error("Cannot read properties of undefined (reading 'map')"));
+
+    const error = await assertRejects(() =>
+      pipeline.resolvePageData("/", {
+        request: new Request("http://localhost/"),
+        url: new URL("http://localhost/"),
+      })
+    );
+
+    assertEquals(
+      isMissingProjectSourceError(error),
+      false,
+      "a genuine fault must not be downgraded to a 404",
+    );
+    assertEquals(
+      (error as VeryfrontError).slug,
+      "render-error",
+      "the existing render-error identity is unchanged",
+    );
   });
 
   it("resolves request-scoped module loader identity and the configured React version", async () => {
@@ -340,7 +581,7 @@ describe("RenderPipeline behavior", () => {
             phase: "framework:module-transformed",
             filePath: "/framework/repeating.js",
           });
-        }, 5_000);
+        }, 1_000);
       });
     };
 
@@ -354,7 +595,7 @@ describe("RenderPipeline behavior", () => {
       "Module loading for /repeating-graph timed out",
     );
     await started;
-    await time.tickAsync(45_000);
+    await time.tickAsync(41_000);
 
     assertEquals((await rejected as Error & { timeoutKind?: string }).timeoutKind, "idle");
   });
@@ -413,11 +654,174 @@ describe("RenderPipeline behavior", () => {
 
     await pipeline.renderPage("", { delivery: "string" });
 
-    assertEquals(checks, [{ slug: "", cacheKey: "index" }]);
-    assertEquals(persists, [{ slug: "", cacheKey: "index" }]);
+    assertEquals(checks, [{ slug: "", cacheKey: "index:environment-production" }]);
+    assertEquals(persists, [{ slug: "", cacheKey: "index:environment-production" }]);
   });
 
-  it("bounds the complete API render key while preserving the flag-off override", () => {
+  it("returns the cached render without re-resolving or re-rendering the page", async () => {
+    let resolveCalls = 0;
+    let ssrCalls = 0;
+    let persists = 0;
+    const cachedResult = {
+      html: "<html>cached</html>",
+      frontmatter: {},
+      headings: [],
+      stream: null,
+      ssrHash: "cached-hash",
+    };
+    const pipeline = createPipeline("/project/pages/index.mdx", {
+      pageResolver: {
+        resolvePage: async () => {
+          resolveCalls += 1;
+          return {
+            entity: { path: "/project/pages/index.mdx", frontmatter: {} },
+          } as any;
+        },
+      } as any,
+      ssrOrchestrator: {
+        performSSRRendering: async () => {
+          ssrCalls += 1;
+          return {
+            fullHtml: "<html>fresh</html>",
+            finalStream: null,
+            ssrHash: "fresh-hash",
+          };
+        },
+        resolveErrorComponentPath: async () => null,
+      } as any,
+      cacheCoordinator: {
+        checkCache: async () => ({
+          cachedResult,
+          cacheStatus: "hit",
+          depAwareSlug: "",
+          moduleCacheKey: "index:environment-production",
+          lookupDurationMs: 0,
+        }),
+        persistResult: async () => {
+          persists += 1;
+        },
+      } as any,
+    } as Partial<RenderPipelineConfig>);
+
+    const result = await pipeline.renderPage("", { delivery: "string" });
+
+    assertEquals(result.html, "<html>cached</html>", "a cache hit must be served verbatim");
+    assertEquals(resolveCalls, 0, "a cache hit must not resolve the page");
+    assertEquals(ssrCalls, 0, "a cache hit must not re-render");
+    assertEquals(persists, 0, "a cache hit must not persist a new entry");
+
+    const bypassed = await pipeline.renderPage("", {
+      delivery: "string",
+      skipCacheCheck: true,
+    });
+
+    assertEquals(bypassed.html, "<html>fresh</html>", "skipCacheCheck must bypass the cache hit");
+    assertEquals(ssrCalls, 1, "skipCacheCheck must re-render the page");
+  });
+
+  it("isolates preview HTML from the production render cache", () => {
+    const pipeline = createPipeline("/project/pages/index.mdx");
+    const buildCacheKey = (pipeline as unknown as {
+      buildCacheKey(
+        slug: string,
+        options: RenderOptions | undefined,
+        dependencyPinningCacheKey: string,
+      ): string | null;
+    }).buildCacheKey.bind(pipeline);
+
+    assertEquals(
+      buildCacheKey("", { environment: "production" }, "off"),
+      "index:environment-production",
+    );
+    assertEquals(buildCacheKey("", undefined, "off"), "index:environment-production");
+    assertEquals(
+      buildCacheKey("", { environment: "preview" }, "off"),
+      "index:environment-preview",
+    );
+    assertEquals(
+      buildCacheKey("", { cacheKey: "custom", environment: "preview" }, "off"),
+      "custom:environment-preview",
+    );
+    assertEquals(
+      buildCacheKey("", { cacheKey: "custom", environment: "production" }, "off"),
+      "custom:environment-production",
+    );
+    assert(
+      buildCacheKey("", { cacheKey: "custom", environment: "preview" }, "off") !==
+        buildCacheKey(
+          "",
+          { cacheKey: "custom:environment-preview", environment: "production" },
+          "off",
+        ),
+      "preview and production custom cache identities must not collide",
+    );
+    assert(
+      buildCacheKey("foo", { environment: "preview" }, "off") !==
+        buildCacheKey("foo:environment-preview", { environment: "production" }, "off"),
+      "preview and production route cache identities must not collide",
+    );
+
+    assertEquals(
+      buildCacheKey("", {
+        request: new Request("http://localhost/", {
+          headers: { authorization: "Bearer x" },
+        }),
+      }, "off"),
+      null,
+      "a request carrying credentials must not produce a shared render cache key",
+    );
+    assertEquals(
+      buildCacheKey("", {
+        request: new Request("http://localhost/", {
+          headers: { cookie: "vf_session=abc" },
+        }),
+      }, "off"),
+      null,
+      "a request carrying a session cookie must not produce a shared render cache key",
+    );
+    assert(
+      buildCacheKey("", {
+        cacheKey: "custom",
+        request: new Request("http://localhost/", {
+          headers: { authorization: "Bearer x" },
+        }),
+      }, "off") !== null,
+      "an explicit cacheKey override stays authoritative",
+    );
+  });
+
+  it("never caches HTML rendered for a request that carries credentials", async () => {
+    const checks: Array<string | undefined> = [];
+    const persists: Array<string | undefined> = [];
+    const pipeline = createPipeline("/project/pages/index.mdx", {
+      cacheCoordinator: {
+        checkCache: async (slug, cacheKey) => {
+          checks.push(cacheKey);
+          return {
+            depAwareSlug: slug,
+            moduleCacheKey: cacheKey ?? slug,
+            cacheStatus: "miss",
+            lookupDurationMs: 0,
+          };
+        },
+        persistResult: async (_result, _slug, cacheKey) => {
+          persists.push(cacheKey);
+        },
+      },
+    } as Partial<RenderPipelineConfig>);
+
+    await pipeline.renderPage("", {
+      delivery: "string",
+      request: new Request("http://localhost/", {
+        headers: { authorization: "Bearer x" },
+      }),
+    });
+
+    assertEquals(checks, [], "personalized HTML must never be read from the shared render cache");
+    assertEquals(persists, [], "personalized HTML must never be persisted");
+  });
+
+  it("bounds the complete API render key for a flag-off override", () => {
     const cachePrefix = "project:preview:branch:v1";
     const pipeline = createPipeline("/project/pages/index.mdx", {
       renderCacheKeyComposition: {
@@ -445,7 +849,10 @@ describe("RenderPipeline behavior", () => {
     const completeKey = `render:${cachePrefix}:page:${cacheKey}:theme-dark`;
     assert(completeKey.length <= 512);
     assert(/^[a-zA-Z0-9_:.\-/*]+$/.test(completeKey));
-    assertEquals(buildCacheKey("/", options, "off"), legacyKey);
+    assertEquals(
+      buildCacheKey("/", options, "off"),
+      `${legacyKey}:environment-production`,
+    );
   });
 
   it("renderPage preserves active SSR transforms during development cache freshness clears", async () => {
@@ -550,6 +957,305 @@ describe("RenderPipeline behavior", () => {
 
     assertEquals(hydrationLayoutProps, {
       "layouts/root.tsx": { theme: "docs" },
+    });
+  });
+
+  it("merges layout and page response metadata and does not cache cookies", async () => {
+    const pagePath = "/project/pages/response-metadata.tsx";
+    const rootLayoutPath = "/project/layouts/root.tsx";
+    const nestedLayoutPath = "/project/layouts/docs.tsx";
+    let cacheWrites = 0;
+    const pipeline = createPipeline(pagePath, {
+      cacheCoordinator: {
+        checkCache: async () => null,
+        persistResult: async () => {
+          cacheWrites++;
+        },
+      } as any,
+      layoutOrchestrator: {
+        collectLayouts: async () => ({
+          layoutBundle: undefined,
+          nestedLayouts: [
+            { kind: "tsx", componentPath: rootLayoutPath },
+            { kind: "tsx", componentPath: nestedLayoutPath },
+          ],
+        }),
+        preloadLayoutModules: async () => ({
+          tsxTotal: 2,
+          tsxSuccess: 2,
+          tsxFailures: [],
+          mdxTotal: 0,
+          mdxSuccess: 0,
+          mdxFailures: [],
+          importMapSuccess: true,
+          durationMs: 0,
+          allSuccess: true,
+        }),
+        applyLayoutsAndWrappers: async (element: unknown) => element,
+      } as any,
+    });
+
+    (pipeline as any).loadModule = async (path: string) => ({
+      getServerData: () => {
+        if (path === rootLayoutPath) {
+          return {
+            props: {},
+            headers: { "x-owner": "root", "x-root": "yes" },
+            cookies: [{ name: "root", value: "1", path: "/" }],
+          };
+        }
+        if (path === nestedLayoutPath) {
+          return {
+            props: {},
+            headers: { "x-owner": "nested", "x-nested": "yes" },
+            cookies: [{ name: "nested", value: "2", path: "/" }],
+          };
+        }
+        return {
+          props: {},
+          headers: { "x-owner": "page", "x-page": "yes" },
+          cookies: [{ name: "page", value: "3", path: "/" }],
+        };
+      },
+    });
+
+    const result = await pipeline.renderPage("/response-metadata", {
+      request: new Request("http://localhost/response-metadata"),
+      url: new URL("http://localhost/response-metadata"),
+    }) as RenderResult;
+
+    assertEquals(result.headers, {
+      "x-owner": "page",
+      "x-root": "yes",
+      "x-nested": "yes",
+      "x-page": "yes",
+    });
+    assertEquals(result.cookies?.map((cookie) => cookie.name), ["root", "nested", "page"]);
+    assertEquals(cacheWrites, 0);
+  });
+
+  it("merges response metadata into script page results", async () => {
+    const pagePath = "/project/pages/response-metadata.ts";
+    const pipeline = createPipeline(pagePath, {
+      pageRenderer: {
+        preparePageBundles: async () => ({
+          collectedMetadata: {},
+          scriptResult: {
+            html: "<!doctype html><html><body>script</body></html>",
+            frontmatter: {},
+            stream: null,
+          },
+        }),
+      } as any,
+    });
+
+    (pipeline as any).loadModule = async () => ({
+      getServerData: () => ({
+        props: {},
+        headers: { "x-script-state": "resolved" },
+        cookies: [{ name: "script-seen", value: "1", path: "/" }],
+      }),
+    });
+
+    const result = await pipeline.renderPage("/response-metadata", {
+      request: new Request("http://localhost/response-metadata"),
+      url: new URL("http://localhost/response-metadata"),
+    });
+
+    assertEquals(result.headers, { "x-script-state": "resolved" });
+    assertEquals(result.cookies, [{ name: "script-seen", value: "1", path: "/" }]);
+  });
+
+  it("preserves successful layout metadata when page data fails", async () => {
+    const pagePath = "/project/pages/response-metadata-data-error.tsx";
+    const layoutPath = "/project/layouts/root.tsx";
+    const pageError = new Error("Page data failed");
+    const pipeline = createPipeline(pagePath, {
+      layoutOrchestrator: {
+        collectLayouts: async () => ({
+          layoutBundle: undefined,
+          nestedLayouts: [{ kind: "tsx", componentPath: layoutPath }],
+        }),
+        preloadLayoutModules: async () => ({
+          tsxTotal: 1,
+          tsxSuccess: 1,
+          tsxFailures: [],
+          mdxTotal: 0,
+          mdxSuccess: 0,
+          mdxFailures: [],
+          importMapSuccess: true,
+          durationMs: 0,
+          allSuccess: true,
+        }),
+        applyLayoutsAndWrappers: async (element: unknown) => element,
+      } as any,
+    });
+    (pipeline as any).loadModule = async (path: string) => ({
+      getServerData: () => {
+        if (path === layoutPath) {
+          return {
+            props: {},
+            headers: { "x-layout-state": "resolved" },
+            cookies: [{ name: "layout-seen", value: "1", path: "/" }],
+          };
+        }
+        throw pageError;
+      },
+    });
+
+    let thrown: unknown;
+    try {
+      await pipeline.renderPage("/response-metadata-data-error", {
+        request: new Request("http://localhost/response-metadata-data-error"),
+        url: new URL("http://localhost/response-metadata-data-error"),
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    assert(thrown instanceof Error);
+    assertEquals(unwrapDataResponseMetadataError(thrown), pageError);
+    assertEquals(getAttachedDataResponseMetadata(thrown), {
+      headers: { "x-layout-state": "resolved" },
+      cookies: [{ name: "layout-seen", value: "1", path: "/" }],
+    });
+  });
+
+  it("preserves an earlier page control when later layout data fails", async () => {
+    const pagePath = "/project/pages/page-control-before-layout-error.tsx";
+    const layoutPath = "/project/layouts/root.tsx";
+    const pipeline = createPipeline(pagePath, {
+      layoutOrchestrator: {
+        collectLayouts: async () => ({
+          layoutBundle: undefined,
+          nestedLayouts: [{ kind: "tsx", componentPath: layoutPath }],
+        }),
+        preloadLayoutModules: async () => ({
+          tsxTotal: 1,
+          tsxSuccess: 1,
+          tsxFailures: [],
+          mdxTotal: 0,
+          mdxSuccess: 0,
+          mdxFailures: [],
+          importMapSuccess: true,
+          durationMs: 0,
+          allSuccess: true,
+        }),
+        applyLayoutsAndWrappers: async (element: unknown) => element,
+      } as any,
+    });
+    (pipeline as any).loadModule = async (path: string) => ({
+      getServerData: () => {
+        if (path === pagePath) {
+          return {
+            notFound: true,
+            headers: { "x-missing-reason": "page-control" },
+          };
+        }
+        throw new Error("Layout data failed after page control");
+      },
+    });
+
+    const error = await assertRejects(
+      () =>
+        pipeline.resolvePageData("/page-control-before-layout-error", {
+          request: new Request("http://localhost/page-control-before-layout-error"),
+          url: new URL("http://localhost/page-control-before-layout-error"),
+        }),
+      Error,
+      "Page/Layout returned notFound",
+    );
+
+    assertEquals(resolveSSRControlOutcome(error), {
+      kind: "not-found",
+      headers: { "x-missing-reason": "page-control" },
+    });
+  });
+
+  it("attaches resolved response metadata when SSR later fails", async () => {
+    const pagePath = "/project/pages/response-metadata-error.tsx";
+    const sharedRenderError = new Error("SSR failed after data resolution");
+    let dataCalls = 0;
+    const pipeline = createPipeline(pagePath, {
+      ssrOrchestrator: {
+        performSSRRendering: async () => {
+          throw sharedRenderError;
+        },
+        resolveErrorComponentPath: async () => null,
+      } as any,
+    });
+    (pipeline as any).loadModule = async () => ({
+      getServerData: () => {
+        dataCalls++;
+        return dataCalls === 1
+          ? {
+            props: {},
+            headers: { "x-page-state": "resolved" },
+            cookies: [{ name: "session", value: "request-specific", path: "/" }],
+          }
+          : { props: {} };
+      },
+    });
+
+    const thrown: unknown[] = [];
+    for (let requestIndex = 0; requestIndex < 2; requestIndex++) {
+      try {
+        await pipeline.renderPage("/response-metadata-error", {
+          request: new Request("http://localhost/response-metadata-error"),
+          url: new URL("http://localhost/response-metadata-error"),
+        });
+      } catch (error) {
+        thrown.push(error);
+      }
+    }
+
+    assert(thrown[0] instanceof Error);
+    assertEquals(getAttachedDataResponseMetadata(thrown[0]), {
+      headers: { "x-page-state": "resolved" },
+      cookies: [{ name: "session", value: "request-specific", path: "/" }],
+    });
+    assert(thrown[1] instanceof Error);
+    assertEquals(
+      getAttachedDataResponseMetadata(thrown[1]),
+      {},
+      "a reused project Error cannot retain another request's response metadata",
+    );
+  });
+
+  it("carries resolved metadata through a non-Error SSR control", async () => {
+    const pagePath = "/project/pages/response-metadata-control.tsx";
+    const control = notFound({ headers: { "x-control": "missing" } });
+    const pipeline = createPipeline(pagePath, {
+      ssrOrchestrator: {
+        performSSRRendering: async () => {
+          throw control;
+        },
+        resolveErrorComponentPath: async () => null,
+      } as any,
+    });
+    (pipeline as any).loadModule = async () => ({
+      getServerData: () => ({
+        props: {},
+        headers: { "x-page-state": "resolved" },
+        cookies: [{ name: "page-seen", value: "1", path: "/" }],
+      }),
+    });
+
+    let thrown: unknown;
+    try {
+      await pipeline.renderPage("/response-metadata-control", {
+        request: new Request("http://localhost/response-metadata-control"),
+        url: new URL("http://localhost/response-metadata-control"),
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    assert(thrown instanceof Error);
+    assertEquals(unwrapDataResponseMetadataError(thrown), control);
+    assertEquals(getAttachedDataResponseMetadata(thrown), {
+      headers: { "x-page-state": "resolved" },
+      cookies: [{ name: "page-seen", value: "1", path: "/" }],
     });
   });
 
@@ -699,12 +1405,54 @@ describe("RenderPipeline behavior", () => {
       return context?.buildFailure;
     }
 
-    it("reports a build failure as one", async () => {
+    function tenantBuildFailureFlag(error: unknown): unknown {
+      const context = (error as { context?: { tenantBuildFailure?: unknown } }).context;
+      return context?.tenantBuildFailure;
+    }
+
+    it("reports a source compilation failure as tenant-owned", async () => {
       const error = await rejectLoad(pipelineWithFailingPageModule(() => {
-        throw markBuildFailure(new Error("Cannot import the static asset"));
+        throw markBuildFailure(COMPILATION_ERROR.create({
+          detail: "Cannot import the static asset",
+          context: { tenantBuildFailure: true },
+        }));
       }));
 
       assertEquals(buildFailureFlag(error), true);
+      assertEquals(tenantBuildFailureFlag(error), true);
+    });
+
+    it("keeps generic compilation failures at framework severity", () => {
+      const infrastructureError = markBuildFailure(COMPILATION_ERROR.create({
+        detail: "esbuild service exited unexpectedly",
+      }));
+
+      assertEquals(isTenantBuildFailure(infrastructureError), false);
+    });
+
+    it("keeps framework failures inside the transform phase distinct", async () => {
+      const frameworkError = markBuildFailure(toError(createError({
+        type: "build",
+        message: "cache write failed",
+      })));
+      assertEquals(isTenantBuildFailure(frameworkError), false);
+
+      const error = await rejectLoad(pipelineWithFailingPageModule(() => {
+        throw frameworkError;
+      }));
+
+      assertEquals(buildFailureFlag(error), true);
+      assertEquals(tenantBuildFailureFlag(error), false);
+    });
+
+    it("does not infer tenant source from an SSG wrapper", () => {
+      const infrastructureError = markBuildFailure(SSG_GENERATION_ERROR.create({
+        detail: "Failed to write generated page output",
+        cause: Object.assign(new Error("No space left on device"), { code: "ENOSPC" }),
+        context: { route: "/" },
+      }));
+
+      assertEquals(isTenantBuildFailure(infrastructureError), false);
     });
 
     it("does not report a module-scope runtime throw as a build failure", async () => {
@@ -713,6 +1461,7 @@ describe("RenderPipeline behavior", () => {
       }));
 
       assertEquals(buildFailureFlag(error), false);
+      assertEquals(tenantBuildFailureFlag(error), false);
     });
   });
 
@@ -724,10 +1473,13 @@ describe("RenderPipeline behavior", () => {
 
     (pipeline as any).loadModule = async () => ({ getServerData: () => ({}) });
     (pipeline as any).dataFetcher = {
-      fetchData: async () => ({ notFound: true }),
+      fetchData: async () => ({
+        notFound: true,
+        headers: { "x-missing-reason": "gone" },
+      }),
     };
 
-    await assertRejects(
+    const error = await assertRejects(
       () =>
         pipeline.resolvePageData(slug, {
           projectId,
@@ -737,6 +1489,12 @@ describe("RenderPipeline behavior", () => {
       Error,
       "Page/Layout returned notFound",
     );
+    assertEquals((error as { context?: { headers?: unknown } }).context?.headers, undefined);
+    assertEquals(JSON.stringify(error).includes("gone"), false);
+    assertEquals(resolveSSRControlOutcome(error), {
+      kind: "not-found",
+      headers: { "x-missing-reason": "gone" },
+    });
   });
 
   it("runs data hooks and extracts params for configured page roots", async () => {
@@ -810,10 +1568,14 @@ describe("RenderPipeline behavior", () => {
 
     (pipeline as any).loadModule = async () => ({ getServerData: () => ({}) });
     (pipeline as any).dataFetcher = {
-      fetchData: async () => ({ redirect: { destination: "/login", permanent: false } }),
+      fetchData: async () => ({
+        redirect: { destination: "/login", permanent: false },
+        headers: { "x-auth-result": "required" },
+        cookies: [{ name: "return-to", value: "/private", path: "/" }],
+      }),
     };
 
-    await assertRejects(
+    const error = await assertRejects(
       () =>
         pipeline.resolvePageData(slug, {
           projectId,
@@ -823,6 +1585,16 @@ describe("RenderPipeline behavior", () => {
       Error,
       "Redirect to /login",
     );
+    assertEquals((error as { context?: { headers?: unknown } }).context?.headers, undefined);
+    assertEquals((error as { context?: { cookies?: unknown } }).context?.cookies, undefined);
+    assertEquals(JSON.stringify(error).includes("/private"), false);
+    assertEquals(resolveSSRControlOutcome(error), {
+      kind: "redirect",
+      location: "/login",
+      permanent: false,
+      headers: { "x-auth-result": "required" },
+      cookies: [{ name: "return-to", value: "/private", path: "/" }],
+    });
   });
 
   it("resolvePageData fails when a page module cannot be loaded", async () => {
@@ -1043,6 +1815,9 @@ describe("RenderPipeline behavior", () => {
       [nestedClientLayoutPath, "'use client';\nexport default function GuidesLayout() {}"],
     ]);
     const pipeline = createPipeline(pagePath, {
+      // Server-owned page islands use the hosted module transport rather than
+      // the local filesystem transport exercised by the default fixture.
+      isLocalProject: false,
       pageResolver: {
         resolvePage: async () => ({
           entity: {
@@ -1295,40 +2070,64 @@ describe("RenderPipeline behavior", () => {
     assertEquals(pageData.cssError, undefined);
   });
 
-  it("resolvePageData falls back to candidate extraction when no CSS link in HTML", async () => {
+  it("resolvePageData falls back to generated CSS when no CSS link in HTML", async () => {
+    const slug = "/behavior-css-fallback";
+    const projectId = "proj-css-fallback";
     const pipeline = createPipeline("/project/pages/behavior-css-fallback.tsx");
+    const renderedHtml =
+      `<!DOCTYPE html><html><head></head><body><div class="fallback">hello</div></body></html>`;
+    let seenHtml = "";
 
     (pipeline as any).loadModule = async () => ({});
-    (pipeline as any).renderPage = async () => ({
-      html:
-        `<!DOCTYPE html><html><head></head><body><div class="fallback">hello</div></body></html>`,
-    });
-
-    // Intercept resolveCssFromRenderedHtml to confirm it returns undefined (no hash in HTML)
-    const originalResolve = (pipeline as any).resolveCssFromRenderedHtml.bind(pipeline);
-    (pipeline as any).resolveCssFromRenderedHtml = async (html: string) => {
-      const result = await originalResolve(html);
-      assertEquals(result, undefined, "Should not find CSS hash in HTML without /_vf/css/ link");
-      return result;
+    (pipeline as any).renderPage = async () => ({ html: renderedHtml });
+    (pipeline as any).resolveCssFromRenderedHtml = async () => undefined;
+    (pipeline as any).generatePageCssFromHtml = async (_slug: string, html: string) => {
+      seenHtml = html;
+      return ".fallback{display:block}";
     };
 
-    // Pre-cache the CSS that generateTailwindCSS would produce for our candidates
-    // so we don't depend on the Tailwind compiler actually working in CI
-    const { extractCandidates } = await import("#veryfront/html/styles-builder/index.ts");
-    const html =
-      `<!DOCTYPE html><html><head></head><body><div class="fallback">hello</div></body></html>`;
-    const candidatesReceived = extractCandidates(html);
+    const pageData = await pipeline.resolvePageData(slug, {
+      projectId,
+      request: new Request(`http://localhost${slug}`),
+      url: new URL(`http://localhost${slug}`),
+      environment: "production",
+    });
 
-    // Verify candidates were actually extracted from the HTML
     assertEquals(
-      Array.isArray(candidatesReceived),
-      true,
-      "extractCandidates should return an array",
+      pageData.css,
+      ".fallback{display:block}",
+      "page data falls back to generated CSS when the HTML carries no /_vf/css link",
     );
+    assertEquals(pageData.cssAction, undefined, "the fallback path must not clear client CSS");
+    assertEquals(pageData.cssError, undefined, "a successful fallback reports no CSS error");
+    assertStringIncludes(
+      seenHtml,
+      'class="fallback"',
+      "the fallback generator receives the rendered HTML",
+    );
+  });
+
+  it("resolvePageData reports a CSS generation failure instead of swallowing it", async () => {
+    const slug = "/behavior-css-error";
+    const projectId = "proj-css-error";
+    const pipeline = createPipeline("/project/pages/behavior-css-error.tsx");
+
+    (pipeline as any).loadModule = async () => ({});
+    (pipeline as any).renderPage = () => Promise.reject(new Error("css ssr blew up"));
+
+    const pageData = await pipeline.resolvePageData(slug, {
+      projectId,
+      request: new Request(`http://localhost${slug}`),
+      url: new URL(`http://localhost${slug}`),
+      environment: "production",
+    });
+
     assertEquals(
-      candidatesReceived!.length > 0,
-      true,
-      "Should extract at least one candidate from HTML",
+      pageData.cssError,
+      "CSS generation failed: css ssr blew up",
+      "clients must be able to distinguish a CSS failure from no CSS",
     );
+    assertEquals(pageData.css, undefined, "a failed CSS render must not report CSS");
+    assertEquals(pageData.cssAction, undefined, "a failed CSS render must not clear client CSS");
   });
 });

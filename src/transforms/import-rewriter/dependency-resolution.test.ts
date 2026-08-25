@@ -14,7 +14,11 @@ import {
   _pendingResolutions,
   _setDependencyResolutionPosterForTest,
 } from "../esm/npm-registry-client.ts";
-import { resolveDependencyPinForImport } from "./dependency-resolution.ts";
+import {
+  isPinningEnabledForRewrite,
+  resolveDependencyPinForImport,
+  validateDependencyResolutionObservations,
+} from "./dependency-resolution.ts";
 
 interface MemoryPackageState {
   content: string;
@@ -425,5 +429,191 @@ describe("dependency resolution write-back authority", () => {
     const request = requests[0]!;
     assertEquals(request.specifiers, ["__proto__@^1.2.3"]);
     assertEquals(request.expected["__proto__"], "^1.2.3");
+  });
+});
+
+describe("validateDependencyResolutionObservations", () => {
+  const dependencies: Readonly<Record<string, string>> = { zod: "^3", lodash: "4.17.21" };
+
+  it("replays observations that match the current dependency map", () => {
+    assertEquals(
+      validateDependencyResolutionObservations(
+        [
+          { packageName: "zod", declaration: "^3" },
+          { packageName: "undeclared", declaration: null },
+        ],
+        dependencies,
+      ),
+      [
+        { packageName: "zod", declaration: "^3" },
+        { packageName: "undeclared", declaration: null },
+      ],
+      "observations agreeing with the current snapshot must replay unchanged",
+    );
+  });
+
+  it("rejects a duplicate package observation", () => {
+    assertEquals(
+      validateDependencyResolutionObservations(
+        [
+          { packageName: "zod", declaration: "^3" },
+          { packageName: "zod", declaration: "^3" },
+        ],
+        dependencies,
+      ),
+      null,
+      "a duplicate package name must not replay",
+    );
+  });
+
+  it("rejects a declaration captured under another snapshot", () => {
+    assertEquals(
+      validateDependencyResolutionObservations(
+        [{ packageName: "zod", declaration: "^4" }],
+        dependencies,
+      ),
+      null,
+      "a declaration that disagrees with the current map must not replay",
+    );
+  });
+
+  it("rejects an undeclared package claimed as declared", () => {
+    assertEquals(
+      validateDependencyResolutionObservations(
+        [{ packageName: "undeclared", declaration: "^1" }],
+        dependencies,
+      ),
+      null,
+      "an undeclared package must observe a null declaration",
+    );
+  });
+
+  it("rejects observations when the dependency map is unknown", () => {
+    assertEquals(
+      validateDependencyResolutionObservations(
+        [{ packageName: "zod", declaration: "^3" }],
+        undefined,
+      ),
+      null,
+      "an unverified dependency map must not authorize a replay",
+    );
+    assertEquals(
+      validateDependencyResolutionObservations([], undefined),
+      [],
+      "an empty observation list stays safe without a dependency map",
+    );
+  });
+
+  it("rejects malformed observation metadata", () => {
+    assertEquals(
+      validateDependencyResolutionObservations("not-an-array", dependencies),
+      null,
+      "a non-array value must not replay",
+    );
+    assertEquals(
+      validateDependencyResolutionObservations([null], dependencies),
+      null,
+      "a null entry must not replay",
+    );
+    assertEquals(
+      validateDependencyResolutionObservations(
+        [{ packageName: 7, declaration: null }],
+        dependencies,
+      ),
+      null,
+      "a non-string package name must not replay",
+    );
+    assertEquals(
+      validateDependencyResolutionObservations(
+        [{ packageName: "", declaration: null }],
+        dependencies,
+      ),
+      null,
+      "an empty package name must not replay",
+    );
+    assertEquals(
+      validateDependencyResolutionObservations(
+        [{ packageName: "zod", declaration: 3 }],
+        dependencies,
+      ),
+      null,
+      "a non-string declaration must not replay",
+    );
+  });
+});
+
+describe("isPinningEnabledForRewrite", () => {
+  const PERCENT_ENV = "VERYFRONT_DEPENDENCY_PINNING_ROLLOUT_PERCENT";
+  const PROJECTS_ENV = "VERYFRONT_DEPENDENCY_PINNING_PROJECTS";
+  let originalFlag: string | undefined;
+  let originalPercent: string | undefined;
+  let originalProjects: string | undefined;
+
+  beforeEach(() => {
+    originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    originalPercent = getHostEnv(PERCENT_ENV);
+    originalProjects = getHostEnv(PROJECTS_ENV);
+  });
+
+  afterEach(() => {
+    if (originalFlag === undefined) deleteEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    else setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
+    if (originalPercent === undefined) deleteEnv(PERCENT_ENV);
+    else setEnv(PERCENT_ENV, originalPercent);
+    if (originalProjects === undefined) deleteEnv(PROJECTS_ENV);
+    else setEnv(PROJECTS_ENV, originalProjects);
+  });
+
+  it("should trust an on cache key without consulting the cohort", () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    setEnv(PERCENT_ENV, "0");
+    deleteEnv(PROJECTS_ENV);
+    // The snapshot already decided. Re-deciding here would let a mid-render
+    // configuration change split one render across two policies.
+    assertEquals(
+      isPinningEnabledForRewrite({
+        dependencyPinningCacheKey: "on:abc",
+        projectId: "project-abc",
+      }),
+      true,
+    );
+  });
+
+  it("should reject the unknown snapshot key", () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    setEnv(PERCENT_ENV, "100");
+    assertEquals(
+      isPinningEnabledForRewrite({
+        dependencyPinningCacheKey: "on:unknown",
+        projectId: "project-abc",
+      }),
+      false,
+    );
+  });
+
+  it("should treat an off cache key as disabled", () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    setEnv(PERCENT_ENV, "100");
+    assertEquals(
+      isPinningEnabledForRewrite({
+        dependencyPinningCacheKey: "off",
+        projectId: "project-abc",
+      }),
+      false,
+    );
+  });
+
+  it("should apply the cohort when no cache key is present", () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    setEnv(PERCENT_ENV, "0");
+    setEnv(PROJECTS_ENV, "project-abc");
+    assertEquals(isPinningEnabledForRewrite({ projectId: "project-abc" }), true);
+    assertEquals(isPinningEnabledForRewrite({ projectId: "project-other" }), false);
+  });
+
+  it("should stay disabled with no cache key when the flag is off", () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "");
+    setEnv(PERCENT_ENV, "100");
+    assertEquals(isPinningEnabledForRewrite({ projectId: "project-abc" }), false);
   });
 });

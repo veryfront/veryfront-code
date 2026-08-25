@@ -13,6 +13,31 @@ describe("detectEntityType", () => {
     );
   });
 
+  it("classifies PascalCase files as components and lowercase files as pages", () => {
+    const button = detectEntityType("Button.tsx");
+
+    assertEquals(
+      button.type,
+      "component",
+      "PascalCase non-layout files classify as components",
+    );
+    assertEquals(
+      button.isComponent,
+      true,
+      "PascalCase files set isComponent",
+    );
+    assertEquals(button.isPage, false, "components are not routable pages");
+
+    const about = detectEntityType("about.tsx");
+
+    assertEquals(about.type, "page", "lowercase files classify as pages");
+    assertEquals(
+      about.isComponent,
+      false,
+      "lowercase files are not components",
+    );
+  });
+
   it("treats dynamic routes as pages instead of components", () => {
     const result = detectEntityType("[slug].tsx");
 

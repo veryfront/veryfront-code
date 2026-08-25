@@ -13,57 +13,26 @@ import type { AppState } from "../state.ts";
  * Render the dashboard view
  */
 export function renderDashboard(state: AppState): string {
-  const termWidth = Math.min(getTerminalWidth() - 4, 80);
-  const maxListWidth = termWidth - 4;
+  const termWidth = Math.max(0, Math.min(getTerminalWidth() - 4, 80));
+  const maxListWidth = Math.max(0, termWidth - 4);
   const lines: string[] = [];
 
   lines.push(renderStatus(state), "");
 
-  const hasProjects = state.projects.items.length > 0;
-  const hasRemoteProjects = !!state.remote.user && state.remote.projects.length > 0;
-
-  if (hasProjects) {
-    const isActive = state.activeList === "projects";
-    lines.push(renderSection("Local", isActive));
-    lines.push(
-      renderList(state.projects, {
-        maxWidth: maxListWidth,
-        visibleCount: 5,
-        showNumbers: true,
-        showSelection: isActive,
-      }),
-      "",
-    );
+  if (state.projects.items.length > 0) {
+    lines.push(...renderProjectSection("Local", state.projects, "projects", state, maxListWidth));
   }
 
-  if (hasRemoteProjects) {
-    const isActive = state.activeList === "remoteProjects";
-    const visibleCount = 5;
-    const start = state.remote.scrollOffset;
-    const end = Math.min(start + visibleCount, state.remote.projects.length);
-    const visibleProjects = state.remote.projects.slice(start, end);
-
-    lines.push(renderSection("Remote", isActive));
-
-    if (start > 0) {
-      lines.push(`   ${dim("↑")}  ${dim("more above")}`);
-    }
-
-    visibleProjects.forEach((p, i) => {
-      const actualIndex = start + i;
-      const isFocused = isActive && actualIndex === state.remote.focusedIndex;
-      const cursor = isFocused ? brand("›") : " ";
-      const shortcut = getShortcut(actualIndex + 1);
-      const num = isFocused ? brand(`[${shortcut}]`) : dim(`[${shortcut}]`);
-      const label = isFocused ? p.slug : dim(p.slug);
-      lines.push(`${cursor} ${num} ${label}`);
-    });
-
-    if (end < state.remote.projects.length) {
-      lines.push(`   ${dim("↓")}  ${dim("more below")}`);
-    }
-
-    lines.push("");
+  if (hasRemoteProjects(state)) {
+    lines.push(
+      ...renderProjectSection(
+        "Remote",
+        state.remoteProjects,
+        "remoteProjects",
+        state,
+        maxListWidth,
+      ),
+    );
   }
 
   lines.push(renderHelpBar(state));
@@ -71,17 +40,35 @@ export function renderDashboard(state: AppState): string {
   return lines.join("\n");
 }
 
-function getShortcut(displayNum: number): string {
-  if (displayNum <= 9) return String(displayNum);
-  // 10='a', 11='b', etc.
-  return String.fromCharCode(96 + displayNum - 9);
+function renderProjectSection(
+  title: string,
+  list: AppState["projects"],
+  key: AppState["activeList"],
+  state: AppState,
+  maxWidth: number,
+): string[] {
+  const isActive = state.activeList === key;
+  return [
+    renderSection(title, isActive),
+    renderList(list, {
+      maxWidth,
+      visibleCount: 5,
+      showNumbers: true,
+      showSelection: isActive,
+    }),
+    "",
+  ];
+}
+
+function hasRemoteProjects(state: AppState): boolean {
+  return !!state.remote.user && state.remoteProjects.items.length > 0;
 }
 
 function renderStatus(state: AppState): string {
   const lines = [`  ✓ Server ready at ${brand(state.server.url)}`];
 
   if (state.mcp.enabled && state.mcp.transport === "http" && state.mcp.httpPort !== undefined) {
-    lines.push(`  ✓ MCP ready at ${brand(`http://veryfront.me:${state.mcp.httpPort}/mcp`)}`);
+    lines.push(`  ✓ MCP ready at ${brand(`http://localhost:${state.mcp.httpPort}/mcp`)}`);
   }
 
   const { errors, warnings } = state.server;
@@ -108,8 +95,7 @@ function renderSection(title: string, isActive = true): string {
  * Render the help bar at the bottom
  */
 function renderHelpBar(state: AppState): string {
-  const hasItems = state.projects.items.length > 0 ||
-    (!!state.remote.user && state.remote.projects.length > 0);
+  const hasItems = state.projects.items.length > 0 || hasRemoteProjects(state);
 
   if (!state.showHelp) {
     const userInfo = state.remote.user ? `  ${dim("-")}  ${dim(state.remote.user.email)}` : "";

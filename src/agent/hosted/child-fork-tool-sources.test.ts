@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "@std/assert";
+import { assertEquals, assertRejects, assertStrictEquals, assertThrows } from "@std/assert";
 import type {
   AgentServiceSandboxToolsOptions,
   AgentServiceSandboxToolsResult,
@@ -130,7 +130,9 @@ function createSandboxToolsResult(input: {
 
 Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and global tools", async () => {
   const fixtures = createRemoteSourceFixtures();
-  const switchedProjects: string[] = [];
+  const switchedProjectIds: string[] = [];
+  const switchedProjects: Array<{ projectId: string; projectSlug?: string }> = [];
+  let activeProjectId = "project-1";
 
   const result = await prepareDefaultHostedChildForkToolSources({
     authToken: "token-1",
@@ -138,7 +140,7 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
     mcpServers: [{ kind: "veryfront-api" }, { kind: "veryfront-studio" }],
     studioMcpUrl: "https://studio.example/mcp",
     clientProfile: trustedStudioProfile,
-    getProjectId: () => "project-1",
+    getProjectId: () => activeProjectId,
     conversationId: "conversation-1",
     globalTools: {
       sleep: {
@@ -146,8 +148,12 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
         execute: () => ({ ok: true }),
       },
     },
-    onConfirmedStudioProjectSwitch: (projectId) => {
-      switchedProjects.push(projectId);
+    onConfirmedStudioProjectSwitch: (projectId, confirmedProject) => {
+      activeProjectId = projectId;
+      switchedProjectIds.push(projectId);
+      if (confirmedProject) {
+        switchedProjects.push(confirmedProject);
+      }
     },
     createRemoteToolSource: fixtures.createRemoteToolSource,
   });
@@ -159,16 +165,27 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
 
   assertEquals(Object.keys(result.forkTools), ["sleep", "studio_open_project", "update_file"]);
   assertEquals(
-    fixtures.createdConfigs.map((config) => [config.id, config.endpoint]),
+    await Promise.all(
+      fixtures.createdConfigs.map(async (config) => [
+        config.id,
+        typeof config.endpoint === "function" ? await config.endpoint() : config.endpoint,
+      ]),
+    ),
     [
-      ["veryfront-mcp-fork", "https://api.example/mcp"],
+      ["veryfront-mcp-fork", "https://api.example/projects/project-1/mcp"],
       ["studio-mcp-live-tools", "https://studio.example/mcp"],
     ],
   );
 
   await result.forkTools.studio_open_project?.execute?.({ project_reference: "project-two" });
 
-  assertEquals(switchedProjects, ["project-2"]);
+  assertEquals(switchedProjectIds, ["project-2"]);
+  assertEquals(switchedProjects, [{ projectId: "project-2", projectSlug: "project-two" }]);
+  const apiConfig = fixtures.createdConfigs.find((config) => config.id === "veryfront-mcp-fork");
+  assertEquals(
+    typeof apiConfig?.endpoint === "function" ? await apiConfig.endpoint() : apiConfig?.endpoint,
+    "https://api.example/projects/project-2/mcp",
+  );
   assertEquals(fixtures.executeCalls, [
     {
       sourceId: "veryfront-mcp-fork",
@@ -489,6 +506,64 @@ Deno.test("prepareDefaultHostedChildForkToolSources rethrows abort errors", asyn
   );
 });
 
+Deno.test("prepareDefaultHostedChildForkToolSources rethrows aborts raised during MCP setup", async () => {
+  const abortController = new AbortController();
+  const abortError = new DOMException("fork aborted", "AbortError");
+  const logged: Array<{ message: string; metadata?: Record<string, unknown> }> = [];
+
+  const rejection = await assertRejects(
+    () =>
+      prepareDefaultHostedChildForkToolSources({
+        authToken: "token-1",
+        apiMcpUrl: "https://api.example/mcp",
+        mcpServers: [{ kind: "veryfront-studio" }],
+        getProjectId: () => "project-1",
+        abortSignal: abortController.signal,
+        isAbortError: (error) => error === abortError,
+        createLiveStudioTools: () => {
+          throw abortError;
+        },
+        logger: {
+          error: (message, metadata) => {
+            logged.push({ message, metadata });
+          },
+        },
+      }),
+  );
+
+  assertStrictEquals(rejection, abortError, "abort raised during setup must propagate unchanged");
+  assertEquals(logged.length, 0, "aborts must not be logged as MCP setup failures");
+});
+
+Deno.test("prepareDefaultHostedChildForkToolSources rethrows setup errors once the signal is aborted", async () => {
+  const abortController = new AbortController();
+  const setupError = new Error("studio unavailable");
+  const logged: Array<{ message: string; metadata?: Record<string, unknown> }> = [];
+
+  const rejection = await assertRejects(
+    () =>
+      prepareDefaultHostedChildForkToolSources({
+        authToken: "token-1",
+        apiMcpUrl: "https://api.example/mcp",
+        mcpServers: [{ kind: "veryfront-studio" }],
+        getProjectId: () => "project-1",
+        abortSignal: abortController.signal,
+        createLiveStudioTools: () => {
+          abortController.abort(new Error("fork aborted"));
+          throw setupError;
+        },
+        logger: {
+          error: (message, metadata) => {
+            logged.push({ message, metadata });
+          },
+        },
+      }),
+  );
+
+  assertStrictEquals(rejection, setupError, "error raised after abort must propagate unchanged");
+  assertEquals(logged.length, 0, "aborted setups must not be logged as MCP setup failures");
+});
+
 Deno.test("prepareDefaultHostedChildForkSandboxToolSources merges sandbox tools and returns runtime cleanup", async () => {
   const fixtures = createRemoteSourceFixtures();
   const sandboxToolInputs: AgentServiceSandboxToolsOptions[] = [];
@@ -581,6 +656,40 @@ Deno.test("prepareDefaultHostedChildForkSandboxToolSources closes sandbox when s
     errorMessage: "MCP tool setup failed: studio unavailable",
   });
   assertEquals(sandboxClosed, true);
+});
+
+Deno.test("prepareDefaultHostedChildForkSandboxToolSources closes sandbox when source setup throws", async () => {
+  let closeCalls = 0;
+  const abortController = new AbortController();
+  abortController.abort(new Error("fork aborted"));
+  const createBashTool: CreateSandboxBashTool = () => Promise.resolve({ tools: {} });
+
+  await assertRejects(
+    () =>
+      prepareDefaultHostedChildForkSandboxToolSources({
+        authToken: "token-1",
+        apiUrl: "https://api.example",
+        apiMcpUrl: "https://api.example/mcp",
+        mcpServers: [],
+        getProjectId: () => "project-1",
+        abortSignal: abortController.signal,
+        createBashTool,
+        createAgentServiceSandboxTools: () =>
+          Promise.resolve(
+            createSandboxToolsResult({
+              closeSandbox: () => {
+                closeCalls++;
+                return Promise.resolve();
+              },
+            }),
+          ),
+      }),
+    Error,
+    "fork aborted",
+    "abort must propagate out of the sandbox wrapper",
+  );
+
+  assertEquals(closeCalls, 1, "sandbox must be closed exactly once when tool source setup throws");
 });
 
 Deno.test("prepareDefaultHostedChildForkSandboxToolSources sanitizes cleanup failures", async () => {

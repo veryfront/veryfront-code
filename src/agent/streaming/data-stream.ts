@@ -1,5 +1,5 @@
 import { serverLogger } from "#veryfront/utils";
-import type { AgUiRuntimeStreamEvent } from "../ag-ui/browser-encoder.ts";
+import type { AgUiRuntimeStreamEvent } from "../ag-ui/encoder.ts";
 
 export {
   mergeToolCallInput,

@@ -17,7 +17,10 @@ import { getRuntimeAgentMarkdownDefinitionSchema } from "#veryfront/agent/runtim
 import {
   getRuntimeAgentCredentialsSchema,
   getRuntimeAgentSourceContextSchema,
+  getRuntimeAgentTargetKindSchema,
   type RuntimeAgentSourceContext,
+  validateRuntimeAgentSourceTargetBinding,
+  validateRuntimeAgentTargetSelection,
 } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
@@ -46,7 +49,11 @@ export const getRuntimeInjectedToolSchema = getAgUiRuntimeInjectedToolSchema;
 export const getRuntimeContextItemSchema = getAgUiRuntimeContextItemSchema;
 export const getRuntimeMessageSchema = getAgUiRuntimeMessageSchema;
 export const getRuntimeContextSchema = getAgUiRuntimeContextSchema;
-export const getRuntimeRunAgentInputSchema = getAgUiRuntimeRequestSchema;
+export const getRuntimeRunAgentInputSchema = defineSchema((v) =>
+  getAgUiRuntimeRequestSchema().extend({
+    allowDelegation: v.boolean().optional(),
+  })
+);
 
 export const getInternalAgentCompatibilityMessageSchema = defineSchema((v) =>
   v.object({
@@ -73,6 +80,9 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
       (value) => isWithinJsonSizeLimit(value, 65_536),
       { message: "context must be less than 64 KB total" },
     ),
+    allowDelegation: v.boolean().optional(),
+    runtimeTargetKind: getRuntimeAgentTargetKindSchema(),
+    runtimeTargetEnvironmentId: v.string().uuid().nullable().optional(),
     runtimeTargetBranchId: v.string().uuid().nullable().optional(),
     agentSource: getRuntimeAgentSourceContextSchema(),
     agentConfig: getRuntimeAgentMarkdownDefinitionSchema().optional().refine(
@@ -85,6 +95,9 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
       { message: "forwardedProps must be less than 192 KB" },
     ),
   }).strict().superRefine((input, ctx) => {
+    validateRuntimeAgentTargetSelection(input, ctx);
+    validateRuntimeAgentSourceTargetBinding(input, ctx);
+
     if (input.agentConfig && input.agentConfig.id !== input.agentId) {
       ctx.addIssue({
         code: "custom",
@@ -172,18 +185,12 @@ function extractToolArgs(
         return parsed;
       }
     } catch {
-      throw new SyntaxError(
-        `Malformed streamed tool input for tool call "${
-          getPartString(part, "toolCallId", "tool_call_id", "id") ?? "unknown"
-        }"`,
-      );
+      // This converter only replays persisted thread history, so a tool call
+      // truncated by an interrupted stream is already in the record. Throwing
+      // here would poison the thread permanently: every later turn would fail
+      // during request conversion, before the run even starts.
+      return {};
     }
-
-    throw new SyntaxError(
-      `Malformed streamed tool input for tool call "${
-        getPartString(part, "toolCallId", "tool_call_id", "id") ?? "unknown"
-      }"`,
-    );
   }
 
   if (isRecordObject(args)) {
@@ -391,17 +398,18 @@ function toRuntimeMessage(
 
 export function toRuntimeRunAgentInput(
   input: InferSchema<ReturnType<typeof getInternalAgentStreamRequestSchema>>,
-): AgUiRuntimeRequest {
+): RuntimeRunAgentInput {
   return {
     threadId: input.threadId,
     runId: input.runId,
     ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
     ...(input.state !== undefined ? { state: input.state } : {}),
+    ...(input.allowDelegation !== undefined ? { allowDelegation: input.allowDelegation } : {}),
     messages: input.messages.map(toRuntimeMessage),
     tools: input.tools,
     context: input.context,
     ...(input.forwardedProps ? { forwardedProps: input.forwardedProps } : {}),
-  } as AgUiRuntimeRequest;
+  } as RuntimeRunAgentInput;
 }
 
 export const getResumeSignalSchema = defineSchema((v) =>
@@ -422,7 +430,9 @@ export { getRuntimeAgentSourceContextSchema };
 export type { RuntimeAgentSourceContext };
 export type RuntimeInjectedTool = InferSchema<ReturnType<typeof getRuntimeInjectedToolSchema>>;
 export type RuntimeContextItem = AgUiRuntimeContextItem;
-export type RuntimeRunAgentInput = AgUiRuntimeRequest;
+export type RuntimeRunAgentInput = AgUiRuntimeRequest & {
+  allowDelegation?: boolean;
+};
 export type InternalAgentStreamRequest = InferSchema<
   ReturnType<typeof getInternalAgentStreamRequestSchema>
 >;

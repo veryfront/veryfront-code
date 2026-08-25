@@ -15,6 +15,8 @@ import { createWebSocketUpgradeResponse } from "../../base.ts";
 import { createNodeServer, createNodeServerWithStartupOwner, NodeServer } from "./http-server.ts";
 import type { NodeHttpServer } from "./types.ts";
 import { NodeServerAdapter } from "./websocket-adapter.ts";
+import { getRequestPeerProvenance } from "../shared/request-peer.ts";
+import { isTrustedLocalControlRequest } from "#veryfront/security/http/local-control-request.ts";
 import { WsNodeWebSocketServerProvider } from "../../../../../extensions/ext-node-websocket-ws/src/index.ts";
 import { NODE_WEBSOCKET_SERVER_PROVIDER_PACKAGE } from "#veryfront/extensions/websocket";
 
@@ -62,6 +64,92 @@ function createDeferred<T>(): {
 }
 
 describe("NodeServer lifecycle", () => {
+  it("accepts the lowest and highest valid listener ports", async () => {
+    if (!isNode) return;
+    const listenDescriptor = Object.getOwnPropertyDescriptor(
+      NativeHttpServer.prototype,
+      "listen",
+    );
+    const addressDescriptor = Object.getOwnPropertyDescriptor(
+      NativeHttpServer.prototype,
+      "address",
+    );
+    const closeDescriptor = Object.getOwnPropertyDescriptor(
+      NativeHttpServer.prototype,
+      "close",
+    );
+    const originalListen = NativeHttpServer.prototype.listen;
+    const originalAddress = NativeHttpServer.prototype.address;
+    const originalClose = NativeHttpServer.prototype.close;
+    const listenedPorts: number[] = [];
+    let currentPort = 0;
+
+    NativeHttpServer.prototype.listen = function (
+      this: NativeHttpServer,
+      port?: number,
+    ): NativeHttpServer {
+      currentPort = port ?? 0;
+      listenedPorts.push(currentPort);
+      queueMicrotask(() => this.emit("listening"));
+      return this;
+    } as typeof originalListen;
+    NativeHttpServer.prototype.address = function () {
+      return { address: "127.0.0.1", family: "IPv4", port: currentPort };
+    } as typeof originalAddress;
+    NativeHttpServer.prototype.close = function (
+      this: NativeHttpServer,
+      callback?: (error?: Error) => void,
+    ): NativeHttpServer {
+      queueMicrotask(() => {
+        this.emit("close");
+        callback?.();
+      });
+      return this;
+    } as typeof originalClose;
+
+    try {
+      for (const port of [0, 65_535]) {
+        const server = await createNodeServer(() => new Response("ok"), {
+          hostname: "127.0.0.1",
+          port,
+        });
+        assertEquals(server.addr.port, port);
+        await server.stop();
+      }
+    } finally {
+      if (listenDescriptor) {
+        Object.defineProperty(NativeHttpServer.prototype, "listen", listenDescriptor);
+      } else {
+        Reflect.deleteProperty(NativeHttpServer.prototype, "listen");
+      }
+      if (addressDescriptor) {
+        Object.defineProperty(NativeHttpServer.prototype, "address", addressDescriptor);
+      } else {
+        Reflect.deleteProperty(NativeHttpServer.prototype, "address");
+      }
+      if (closeDescriptor) {
+        Object.defineProperty(NativeHttpServer.prototype, "close", closeDescriptor);
+      } else {
+        Reflect.deleteProperty(NativeHttpServer.prototype, "close");
+      }
+    }
+    assertEquals(listenedPorts, [0, 65_535]);
+  });
+
+  it("rejects invalid listener ports with the exact validation message", async () => {
+    for (const port of [-1, 65_536, 1.5]) {
+      await assertRejects(
+        () =>
+          createNodeServer(() => new Response("unreachable"), {
+            hostname: "127.0.0.1",
+            port,
+          }),
+        RangeError,
+        `Node server port must be an integer from 0 to 65535, got ${port}`,
+      );
+    }
+  });
+
   it("shares shutdown and retries only the failed HTTP close phase", async () => {
     let upgradeDisposeCalls = 0;
     let closeCalls = 0;
@@ -216,6 +304,32 @@ describe("NodeServer lifecycle", () => {
     });
 
     assertEquals(outcome, "stopped");
+  });
+
+  it("accepts Bun's inherited not-running close result after binding", async () => {
+    const prototype = Object.create(Error.prototype, {
+      code: {
+        value: "ERR_SERVER_NOT_RUNNING",
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      },
+    });
+    const notRunning = Object.create(prototype) as Error;
+    Object.defineProperty(notRunning, "message", {
+      value: "Server is not running.",
+      writable: true,
+      configurable: true,
+    });
+    const server = new NodeServer(
+      createHttpServer((callback) => callback(notRunning)),
+      "127.0.0.1",
+      3_000,
+    );
+    server.setListeningPort(3_000);
+
+    await server.stop();
+    await server.stop();
   });
 
   it("rejects startup without listening when the signal is already aborted", async () => {
@@ -1186,6 +1300,91 @@ describe("NodeServer lifecycle", () => {
       await bodyCancelled.promise;
     } finally {
       client.destroy();
+      await server.stop();
+    }
+  });
+
+  it("records the native TCP peer of a request instead of a caller-supplied header", async () => {
+    if (!isNode) return;
+    const observed: Array<{
+      path: string;
+      provenance: ReturnType<typeof getRequestPeerProvenance>;
+      trusted: boolean;
+    }> = [];
+    const server = await createNodeServer((request) => {
+      observed.push({
+        path: new URL(request.url).pathname,
+        provenance: getRequestPeerProvenance(request),
+        trusted: isTrustedLocalControlRequest(request, { proxyTopologyTrusted: false }),
+      });
+      return new Response(null, { status: 204 });
+    }, {
+      hostname: "127.0.0.1",
+      port: 0,
+    });
+
+    try {
+      const forwarded = await fetch(`http://127.0.0.1:${server.addr.port}/_dev-forwarded`, {
+        headers: { "x-forwarded-for": "10.0.0.9" },
+      });
+      assertEquals(forwarded.status, 204, "the listener must serve the forwarded-header request");
+      const direct = await fetch(`http://127.0.0.1:${server.addr.port}/_dev-direct`);
+      assertEquals(direct.status, 204, "the listener must serve the direct loopback request");
+
+      assertEquals(
+        observed,
+        [
+          {
+            path: "/_dev-forwarded",
+            provenance: { runtime: "node", transport: "tcp", hostname: "127.0.0.1" },
+            trusted: false,
+          },
+          {
+            path: "/_dev-direct",
+            provenance: { runtime: "node", transport: "tcp", hostname: "127.0.0.1" },
+            trusted: true,
+          },
+        ],
+        "the Node listener must record the native TCP peer, not a caller-supplied header",
+      );
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("records the native TCP peer on the synthesized WebSocket upgrade request", async () => {
+    if (!isNode) return;
+    const adapter = new NodeServerAdapter();
+    let observed: ReturnType<typeof getRequestPeerProvenance>;
+    let observedCalls = 0;
+    const server = await createNodeServer((request) => {
+      observedCalls++;
+      observed = getRequestPeerProvenance(request);
+      return adapter.upgradeWebSocket(request).response;
+    }, {
+      hostname: "127.0.0.1",
+      port: 0,
+      nodeWebSocketServerProvider: WsNodeWebSocketServerProvider,
+    });
+    const { WebSocket } = await import("ws");
+    const client = new WebSocket(`ws://127.0.0.1:${server.addr.port}/_ws`, {
+      headers: { "x-forwarded-for": "10.0.0.9" },
+    });
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        client.once("open", resolve);
+        client.once("error", reject);
+      });
+
+      assertEquals(observedCalls, 1, "the upgrade must run through the request handler once");
+      assertEquals(
+        observed,
+        { runtime: "node", transport: "tcp", hostname: "127.0.0.1" },
+        "the Node upgrade path must record the native TCP peer, not a caller-supplied header",
+      );
+    } finally {
+      if (client.readyState !== WebSocket.CLOSED) client.terminate();
       await server.stop();
     }
   });

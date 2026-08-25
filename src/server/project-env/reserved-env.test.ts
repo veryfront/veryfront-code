@@ -28,6 +28,53 @@ describe("server/project-env/reserved-env", () => {
     });
   });
 
+  it("strips telemetry exporter routing on a shared runtime", async () => {
+    // withEnv can only set, never unset; an empty value is falsy to isDedicatedRuntime.
+    await withEnv({ SERVER_ID: "", ENVIRONMENT_IDS: "" }, async () => {
+      const filtered = filterRuntimeProjectEnv({
+        OTEL_EXPORTER_OTLP_ENDPOINT: "https://tenant-collector.example/otlp",
+        OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Basic tenant-token",
+        OPENAI_API_KEY: "project-openai-key",
+      });
+
+      assertEquals(
+        filtered,
+        { OPENAI_API_KEY: "project-openai-key" },
+        "a shared runtime must not let tenant OTLP routing reach the runtime env",
+      );
+    });
+  });
+
+  it("still strips telemetry routing when only SERVER_ID marks the runtime", async () => {
+    await withEnv({ SERVER_ID: "server-1", ENVIRONMENT_IDS: "" }, async () => {
+      const filtered = filterRuntimeProjectEnv({
+        OTEL_EXPORTER_OTLP_ENDPOINT: "https://tenant-collector.example/otlp",
+        OPENAI_API_KEY: "project-openai-key",
+      });
+
+      assertEquals(
+        filtered,
+        { OPENAI_API_KEY: "project-openai-key" },
+        "the dedicated check requires both SERVER_ID and ENVIRONMENT_IDS",
+      );
+    });
+  });
+
+  it("still strips telemetry routing when only ENVIRONMENT_IDS marks the runtime", async () => {
+    await withEnv({ SERVER_ID: "", ENVIRONMENT_IDS: "env-1" }, async () => {
+      const filtered = filterRuntimeProjectEnv({
+        OTEL_EXPORTER_OTLP_ENDPOINT: "https://tenant-collector.example/otlp",
+        OPENAI_API_KEY: "project-openai-key",
+      });
+
+      assertEquals(
+        filtered,
+        { OPENAI_API_KEY: "project-openai-key" },
+        "the dedicated check requires both SERVER_ID and ENVIRONMENT_IDS",
+      );
+    });
+  });
+
   it("keeps customer telemetry env vars for dedicated runtimes", async () => {
     await withEnv({
       SERVER_ID: "server-1",

@@ -27,16 +27,38 @@ veryfront schema --json
 veryfront mcp
 
 # Run the full test suite
-VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 \
-  NODE_ENV=production LOG_FORMAT=text \
-  deno test --no-check --allow-all --unstable-worker-options --unstable-net
+deno task test
 
 # Unit tests only, parallel, excluding integration suites
-deno test --no-check --allow-all --parallel \
-  '--ignore=tests,src/workflow/__tests__,cli/commands/*.integration.test.ts'
+deno task test:unit
+
+# A single file or directory
+deno task test:file src/workflow/executor/dag/index.test.ts
 ```
 
-For targeted changes, run the narrowest relevant `deno test` command first, then broaden only when the change touches shared runtime, public APIs, or cross-cutting behavior.
+For targeted changes, run the narrowest relevant task first (`deno task test:file <path>`), then
+broaden only when the change touches shared runtime, public APIs, or cross-cutting behavior.
+
+This repository pins its Deno version in `.tool-versions`, and `mise` or `asdf`
+will select it automatically. Match it before regenerating anything: generated
+files embed declaration line numbers in padded columns, so a different Deno
+rewrites them even when nothing changed, and committing that output turns CI red
+for everyone. `deno task docs` refuses to run on the wrong version rather than
+producing a plausible-looking diff.
+
+Use these tasks rather than a hand-written `deno test` command; they deny network access to
+the LLM provider origins.
+
+To control outbound HTTP in a test, use `src/testing/mock-fetch.ts` -- `withMockFetch(mock, fn)`
+where the stub has a callback to scope, or the `installMockFetch` / `restoreMockFetch` pair for
+suites that install per test and tear down in `afterEach`. Both move `globalThis.fetch`, the
+host transport in `src/security/http/outbound-fetch.ts`, and the egress guard's host resolver
+together, so a stubbed request performs no DNS at all. Supplying only a transport is not enough:
+the guard resolves the destination before any transport sees the request.
+
+Assigning `globalThis.fetch` by hand controls only code that calls `fetch` directly. Anything
+routed through `guardedOutboundFetch` reads the host transport instead, so a hand-assigned stub
+is ignored there and the request reaches the live endpoint, failing with a confusing 401 or 405.
 
 ## Public copy rules
 
@@ -128,6 +150,7 @@ Use the JSON envelope pattern for commands that support structured output.
   "error": {
     "code": "PERMISSION_ERROR",
     "slug": "deploy-not-authorized",
+    "registrySlug": "deploy-not-authorized",
     "message": "...",
     "context": {}
   }
@@ -135,6 +158,9 @@ Use the JSON envelope pattern for commands that support structured output.
 ```
 
 - Keep machine-readable output stable and schema-valid.
+- `slug` is the stable classification consumers key on. Router failures emit only
+  `invalid-arguments` or `command-failed` there; finer error-registry classification
+  goes in the optional additive `registrySlug`.
 - Do not mix human prose into JSON mode.
 - Redact sensitive values before writing logs, errors, or telemetry.
 - Put user-actionable messages in `message`. Put sanitized technical detail in structured fields.
@@ -194,6 +220,25 @@ Build and release loop:
 3. Run lint or format checks: `vf_run_lint()`.
 4. Run a dry build when build output changes: `vf_build({ dryRun: true })`.
 5. Run the production build when release behavior changes: `vf_build()`.
+
+### Pull request merge queue policy
+
+Treat a completed review as an attestation for the exact pull request head SHA. The merge queue
+validates that reviewed head against the latest `main` and the pull requests ahead of it by running
+the required checks on the generated `merge_group` commit.
+
+- Do not update, rebase, or re-review a clean pull request only because `main` advanced.
+- Do not rerun successful pull request checks manually only because `main` advanced. If a pull
+  request check fails, diagnose it and rerun the unchanged head after an infrastructure flake;
+  change the head and re-review when the failure exposes a real defect.
+- Re-review when the pull request head SHA changes, including after a conflict resolution or fix.
+- If a merge-group check fails without a code change, diagnose the failure. Requeue the same reviewed
+  head after an infrastructure flake. Change the head and re-review it when the failure exposes a real
+  incompatibility.
+- Do not jump a pull request ahead of other queued entries. Reordering invalidates generated queue
+  prefixes and forces GitHub to rebuild them.
+- Before queueing, ensure the exact head has the required review, all review threads are resolved, and
+  pull request checks pass. Do not mutate the pull request branch while it is queued.
 
 ## Architecture map
 

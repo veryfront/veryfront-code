@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   buildInputRequestLifecycleDataEvent,
   createInputRequest,
@@ -16,7 +17,6 @@ const TOOL_CALL_ID = "tool-call-1";
 const INPUT_REQUEST_ID = "11111111-1111-4111-a111-111111111111";
 const CREATED_AT = "2026-04-04T00:00:00.000Z";
 const EXPIRES_AT = "2026-04-04T00:05:00.000Z";
-const originalFetch = globalThis.fetch;
 
 function jsonResponse(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), {
@@ -75,12 +75,12 @@ function createInputRequestRecord(overrides: Record<string, unknown> = {}) {
 function stubFetchWithRecorder(
   handler: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> | Response,
 ) {
-  globalThis.fetch = async (input, init) => handler(input, init);
+  installMockFetch(async (input, init) => handler(input, init));
 }
 
 describe("agent/input-request-protocol", () => {
   afterEach(() => {
-    globalThis.fetch = originalFetch;
+    restoreMockFetch();
   });
 
   it("creates durable form input requests through the conversation endpoint", async () => {
@@ -164,8 +164,146 @@ describe("agent/input-request-protocol", () => {
       inputRequestId: INPUT_REQUEST_ID,
     });
 
-    assertEquals(result.status, "submitted");
-    assertEquals(result.latestResponse?.values, { confirmed: true });
+    assertEquals(result, {
+      id: INPUT_REQUEST_ID,
+      conversationId: CONVERSATION_ID,
+      runId: RUN_ID,
+      toolCallId: TOOL_CALL_ID,
+      kind: "form",
+      status: "submitted",
+      requestedResponderType: "human",
+      title: "Choose one",
+      description: "Pick",
+      fields: [
+        {
+          type: "confirm",
+          name: "confirmed",
+          label: "Confirm?",
+          required: false,
+          secret: false,
+          confirmLabel: "Yes",
+          denyLabel: "No",
+        },
+      ],
+      recommendations: null,
+      metadata: null,
+      createdAt: CREATED_AT,
+      expiresAt: EXPIRES_AT,
+      submittedAt: null,
+      cancelledAt: null,
+      expiredAt: null,
+      latestResponse: {
+        id: "33333333-3333-4333-a333-333333333333",
+        inputRequestId: INPUT_REQUEST_ID,
+        conversationId: CONVERSATION_ID,
+        runId: RUN_ID,
+        actorType: "human",
+        actorId: "user-1",
+        values: { confirmed: true },
+        createdAt: CREATED_AT,
+      },
+    }, "every snake_case snapshot key must normalize to its camelCase counterpart");
+  });
+
+  it("normalizes omitted optional snapshot keys to null", () => {
+    const record = createInputRequestRecord();
+    for (
+      const key of [
+        "recommendations",
+        "metadata",
+        "submitted_at",
+        "cancelled_at",
+        "expired_at",
+        "latest_response",
+      ]
+    ) {
+      delete (record as Record<string, unknown>)[key];
+    }
+
+    assertEquals(
+      getCreateInputRequestResponseSchema().parse(record),
+      {
+        id: INPUT_REQUEST_ID,
+        conversationId: CONVERSATION_ID,
+        runId: RUN_ID,
+        toolCallId: TOOL_CALL_ID,
+        kind: "form",
+        status: "open",
+        requestedResponderType: "human",
+        title: "Choose one",
+        description: "Pick",
+        fields: [
+          {
+            type: "confirm",
+            name: "confirmed",
+            label: "Confirm?",
+            required: false,
+            secret: false,
+            confirmLabel: "Yes",
+            denyLabel: "No",
+          },
+        ],
+        recommendations: null,
+        metadata: null,
+        createdAt: CREATED_AT,
+        expiresAt: EXPIRES_AT,
+        submittedAt: null,
+        cancelledAt: null,
+        expiredAt: null,
+        latestResponse: null,
+      },
+      "absent optional REST keys must normalize to null, not undefined, per InputRequestRestOutput",
+    );
+  });
+
+  it("surfaces create failures with response text", async () => {
+    stubFetchWithRecorder(() => new Response("create failed", { status: 500 }));
+
+    await assertRejects(
+      () =>
+        createInputRequest({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          runId: RUN_ID,
+          toolCallId: TOOL_CALL_ID,
+          form: {
+            title: "Choose one",
+            description: "Pick",
+            submitLabel: "Send",
+            fields: [{ type: "confirm", name: "confirmed", label: "Confirm?" }],
+          } as unknown as Parameters<typeof createInputRequest>[0]["form"],
+          expiresAt: EXPIRES_AT,
+        }),
+      Error,
+      "create failed",
+      "a failed create must surface the server explanation, not a schema parse error",
+    );
+  });
+
+  it("falls back to a status-coded detail when a failed create has no body", async () => {
+    stubFetchWithRecorder(() => new Response("", { status: 500 }));
+
+    await assertRejects(
+      () =>
+        createInputRequest({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          runId: RUN_ID,
+          toolCallId: TOOL_CALL_ID,
+          form: {
+            title: "Choose one",
+            description: "Pick",
+            submitLabel: "Send",
+            fields: [{ type: "confirm", name: "confirmed", label: "Confirm?" }],
+          } as unknown as Parameters<typeof createInputRequest>[0]["form"],
+          expiresAt: EXPIRES_AT,
+        }),
+      Error,
+      "Failed to create durable input request (HTTP 500)",
+      "an empty failure body must fall back to a status-coded detail",
+    );
   });
 
   it("builds input request lifecycle data events", () => {

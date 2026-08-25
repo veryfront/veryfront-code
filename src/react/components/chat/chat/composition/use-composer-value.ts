@@ -1,5 +1,5 @@
 /**
- * `useComposerValue` — builds the `ComposerContext` value from composer state
+ * `useComposerValue` builds the `ChatInputContext` value from composer state
  * props. Shared by `ChatInput` (batteries) and `ChatInput.Root` (composed).
  *
  * @module react/components/chat/composition/use-composer-value
@@ -7,34 +7,21 @@
 
 import * as React from "react";
 import type { ChatFilePart } from "#veryfront/agent/react";
-import type { ComposerContextValue } from "../contexts/composer-context.tsx";
+import { useChatContextOptional } from "../contexts/chat-context.tsx";
+import type { ChatInputContextValue } from "../contexts/composer-context.tsx";
 import type { ModelOption } from "../../model-selector.tsx";
 import type { AttachmentInfo } from "../components/attachment-pill.tsx";
 import { attachmentsToFileParts, hasPendingAttachments } from "../chat-attachments.ts";
 
-/** Composer state the context is built from (shared by `ChatInput` + `ChatInput.Root`). */
-export interface ComposerStateProps {
-  input: string;
-  onChange: (
+/** State shared by controlled and composer-owned submit modes. */
+interface ComposerStateBaseProps {
+  /** Falls back to the surrounding `ChatContext` input when omitted. */
+  input?: string;
+  /** Falls back to `ChatContext.setInput` when omitted. */
+  onChange?: (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
   ) => void;
-  /**
-   * Explicit submit handler. Optional when `sendMessage` is provided — the
-   * composer then owns submit (fold attachments → file parts, guard in-flight
-   * uploads, clear input + attachments) so a composed consumer calls nothing.
-   */
-  onSubmit?: (e?: React.FormEvent) => void;
-  /**
-   * Send a message directly. When set, the composer builds `onSubmit` itself:
-   * it trims the input, waits while any upload is still in flight, folds the
-   * resolved attachments into `file` parts, sends, then clears via `setInput`
-   * and `onClearAttachments`. Provide this (with `setInput`) instead of wiring
-   * the submit glue in userland.
-   */
-  sendMessage?: (message: { text: string; files?: ChatFilePart[] }) => void;
-  /** Clear the input after the composer-owned submit sends. */
-  setInput?: (value: string) => void;
-  /** Clear pending attachments after the composer-owned submit sends. */
+  /** Clear pending attachments after a composer-owned submit sends. */
   onClearAttachments?: () => void;
   isLoading?: boolean;
   stop?: () => void;
@@ -51,40 +38,126 @@ export interface ComposerStateProps {
   onRemoveAttachment?: (id: string) => void;
 }
 
-/** Build the ComposerContext value from composer state props. */
-export function useComposerValue(p: ComposerStateProps): ComposerContextValue {
+/**
+ * Submit props accepted during the additive ChatInput migration.
+ *
+ * `sendMessage` takes precedence when both handlers are supplied, matching the
+ * legacy runtime. `setInput` remains optional for source and runtime
+ * compatibility; when present, it clears the controlled value after sending.
+ */
+interface ComposerSubmitProps {
+  /**
+   * Explicit submit handler. The caller owns sending and clearing in this mode.
+   */
+  onSubmit?: (e?: React.FormEvent) => void;
+  /**
+   * Send directly through composer-owned submission. When supplied, `setInput`
+   * clears the controlled input after this handler runs.
+   */
+  sendMessage?: (message: { text: string; files?: ChatFilePart[]; model?: string }) => void;
+  /** Update the controlled input value for headless context consumers. */
+  setInput?: (value: string) => void;
+}
+
+/** Composer state the context is built from (shared by `ChatInput` + `ChatInput.Root`). */
+export type ComposerStateProps =
+  & ComposerStateBaseProps
+  & ComposerSubmitProps;
+
+/** Build the ChatInputContext value from composer state props. */
+function missingSetInput(): never {
+  throw new Error(
+    "ChatInput cannot update its controlled value because setInput was not provided. " +
+      "Pass setInput to <ChatInput> or <ChatInput.Root>.",
+  );
+}
+
+export function useComposerValue(props: ComposerStateProps): ChatInputContextValue {
+  // One shared chat context (issue #69): when a `<Chat.Root>` is above,
+  // omitted props fall back to its `ChatContext` (the shared session), so a
+  // propless `<ChatInput.Root>` wires itself. Explicit props always win, and a
+  // standalone composer (no ChatContext) keeps the props-only behavior.
+  const chat = useChatContextOptional();
+  const resolvedSetInput = props.setInput ?? chat?.setInput;
+  const fallbackOnChange = React.useCallback(
+    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+      resolvedSetInput?.(e.target.value),
+    [resolvedSetInput],
+  );
+  const hasExplicitSubmitState = props.input !== undefined ||
+    props.setInput !== undefined || props.attachments !== undefined ||
+    props.onRemoveAttachment !== undefined || props.onClearAttachments !== undefined ||
+    props.isLoading !== undefined || props.model !== undefined;
+  const p = {
+    ...props,
+    input: props.input ?? chat?.input ?? "",
+    onChange: props.onChange ?? fallbackOnChange,
+    setInput: resolvedSetInput,
+    onSubmit: props.onSubmit ?? chat?.onSubmit,
+    sendMessage: props.sendMessage ??
+      (props.onSubmit === undefined && hasExplicitSubmitState ? chat?.sendMessage : undefined),
+    isLoading: props.isLoading ?? chat?.isLoading,
+    stop: props.stop ?? chat?.onStop,
+    model: props.model ?? chat?.model,
+    models: props.models ?? chat?.models,
+    onModelChange: props.onModelChange ?? chat?.onModelChange,
+    attachments: props.attachments ?? chat?.attachments,
+    onAttach: props.onAttach ?? chat?.onAttach,
+    onRemoveAttachment: props.onRemoveAttachment ?? chat?.onRemoveAttachment,
+  };
   const hasResolvedAttachment = p.attachments?.some((attachment) =>
     Boolean(attachment.url) &&
     attachment.state !== "uploading" &&
     attachment.state !== "processing" &&
     attachment.state !== "error"
   ) ?? false;
+  const hasPendingAttachment = hasPendingAttachments(p.attachments ?? []);
+  const canSubmit = !p.isLoading && !hasPendingAttachment &&
+    (p.input.trim().length > 0 || hasResolvedAttachment);
 
   // When `sendMessage` is supplied the composer owns submit: trim, wait for
   // in-flight uploads, fold resolved attachments into file parts, send, clear.
   // Otherwise fall back to the caller's explicit `onSubmit` (controlled mode).
-  const { sendMessage, setInput, onClearAttachments, onSubmit } = p;
+  const { sendMessage, setInput, onClearAttachments, onSubmit, onRemoveAttachment } = p;
   const onSubmitEffective = React.useCallback((e?: React.FormEvent) => {
     if (!sendMessage) {
       onSubmit?.(e);
       return;
     }
     e?.preventDefault();
-    if (p.isLoading) return;
+    if (!canSubmit) return;
     const attachments = p.attachments ?? [];
-    // Sending now would carry only the resolved files and drop the in-flight one.
-    if (hasPendingAttachments(attachments)) return;
     const text = p.input.trim();
     const files = attachmentsToFileParts(attachments);
     if (!text && files.length === 0) return;
-    sendMessage({ text, ...(files.length > 0 ? { files } : {}) });
+    sendMessage({
+      text,
+      ...(files.length > 0 ? { files } : {}),
+      ...(p.model !== undefined ? { model: p.model } : {}),
+    });
     setInput?.("");
-    onClearAttachments?.();
-  }, [sendMessage, onSubmit, setInput, onClearAttachments, p.isLoading, p.input, p.attachments]);
+    if (onClearAttachments) {
+      onClearAttachments();
+    } else {
+      for (const attachment of attachments) {
+        if (attachment.url) onRemoveAttachment?.(attachment.id);
+      }
+    }
+  }, [
+    canSubmit,
+    sendMessage,
+    onSubmit,
+    setInput,
+    onClearAttachments,
+    onRemoveAttachment,
+    p.input,
+    p.attachments,
+    p.model,
+  ]);
 
-  return React.useMemo<ComposerContextValue>(() => ({
+  return React.useMemo<ChatInputContextValue>(() => ({
     input: p.input,
-    setInput: p.setInput ?? (() => {}),
+    setInput: p.setInput ?? missingSetInput,
     onChange: p.onChange,
     attachments: p.attachments ?? [],
     onAttach: p.onAttach,
@@ -93,7 +166,7 @@ export function useComposerValue(p: ComposerStateProps): ComposerContextValue {
     attachAccept: p.attachAccept,
     onSubmit: onSubmitEffective,
     isLoading: p.isLoading ?? false,
-    canSubmit: p.input.trim().length > 0 || hasResolvedAttachment,
+    canSubmit,
     onStop: p.stop,
     onVoice: p.onVoice,
     isListening: p.isListening ?? false,
@@ -112,7 +185,7 @@ export function useComposerValue(p: ComposerStateProps): ComposerContextValue {
     p.attachAccept,
     onSubmitEffective,
     p.isLoading,
-    hasResolvedAttachment,
+    canSubmit,
     p.stop,
     p.onVoice,
     p.isListening,

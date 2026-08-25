@@ -97,7 +97,7 @@ function createColorFormatters(useColor = shouldUseColor()): ColorFormatter {
  * Format: [slug] title
  *   Detail: {detail}
  *   Suggestion: {suggestion}
- *   Docs: https://veryfront.com/docs/errors/{slug}
+ *   Docs: https://veryfront.com/docs/code/guides/errors#{slug}
  *   (Stack trace in dev mode)
  */
 export interface CLIErrorFormatOptions {

@@ -62,6 +62,51 @@ function createMockHandler(
   return mock;
 }
 
+/**
+ * Every handler the runtime must serve. A name removed from HANDLER_NAMES stops
+ * serving its endpoint while the count assertion below shrinks with it, so the
+ * membership is pinned here independently of the list the factory maps over.
+ */
+const EXPECTED_HANDLER_NAMES = [
+  "AuthHandler",
+  "CsrfHandler",
+  "HMRHandler",
+  "CorsHandler",
+  "HealthHandler",
+  "MetricsHandler",
+  "MemoryDebugHandler",
+  "ClientLogHandler",
+  "DevEndpointsHandler",
+  "StylesCSSHandler",
+  "DebugContextHandler",
+  "OpenAPIHandler",
+  "OpenAPIDocsHandler",
+  "InternalAgentsListHandler",
+  "PublicAgentsListHandler",
+  "PublicAgentMetadataHandler",
+  "AgentStreamHandler",
+  "AgentRunResumeHandler",
+  "AgentRunCancelHandler",
+  "ProjectRunExecuteHandler",
+  "ChannelInvokeHandler",
+  "DevDashboardHandler",
+  "ProjectsHandler",
+  "StudioBridgeModulesHandler",
+  "ProdHydrationModuleHandler",
+  "CSSHandler",
+  "DevFileHandler",
+  "SnippetHandler",
+  "CspReportHandler",
+  "StaticHandler",
+  "LibModulesHandler",
+  "RSCHandler",
+  "ModuleHandler",
+  "ApiHandlerWrapper",
+  "MarkdownPreviewHandler",
+  "SSRHandler",
+  "NotFoundHandler",
+] as const;
+
 describe("server/runtime-handler/createHandlerRegistry", () => {
   const adapter = createMockAdapter();
   const projectDir = "/tmp/test-project";
@@ -73,17 +118,13 @@ describe("server/runtime-handler/createHandlerRegistry", () => {
     // Should have all handlers from HANDLER_NAMES registered
     assertEquals(stats.totalHandlers, HANDLER_NAMES.length);
 
-    // Verify key handlers are present
-    const names = stats.handlerNames;
-    assertEquals(names.includes("AuthHandler"), true);
-    assertEquals(names.includes("CsrfHandler"), true);
-    assertEquals(names.includes("CorsHandler"), true);
-    assertEquals(names.includes("HealthHandler"), true);
-    assertEquals(names.includes("SSRHandler"), true);
-    assertEquals(names.includes("NotFoundHandler"), true);
-    assertEquals(names.includes("ApiHandlerWrapper"), true);
-    assertEquals(names.includes("HMRHandler"), true);
-    assertEquals(names.includes("InternalAgentsListHandler"), true);
+    // Membership is compared as a sorted set; chain order is owned by the
+    // priority sort test below and dispatch-exemption-ordering.test.ts.
+    assertEquals(
+      [...stats.handlerNames].sort(),
+      [...EXPECTED_HANDLER_NAMES].sort(),
+      "a handler removed from HANDLER_NAMES stops serving its endpoint; add or remove it here deliberately",
+    );
   });
 
   it("returns handlers sorted by priority (lowest number = highest priority)", () => {
@@ -188,7 +229,6 @@ describe("server/runtime-handler/createHandlerRegistry", () => {
       projectDir,
       adapter,
       securityConfig: null,
-      cspUserHeader: null,
     };
 
     const req = new Request("http://localhost/__/health");

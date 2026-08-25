@@ -22,7 +22,7 @@
  * @example Custom layout (composition)
  * ```tsx
  * <Chat.Root messages={messages} input={input}>
- *   <Chat.Empty title="Ask anything" />
+ *   <Chat.If condition={(ctx) => ctx.isEmpty}><Chat.Empty title="Ask anything" /></Chat.If>
  *   <Chat.MessageList messages={messages} />
  *   <Chat.Input input={input} onChange={onChange} />
  * </Chat.Root>
@@ -118,7 +118,6 @@ export {
   type AttachmentPillProps,
   useAttachmentPill,
 } from "./components/attachment-pill.tsx";
-export { type CodeBlockProps, RichCodeBlock } from "./components/code-block.tsx";
 export {
   StepIndicator,
   type StepIndicatorContextValue,
@@ -139,6 +138,7 @@ export {
   type ChatSidebarItemMenuProps,
   type ChatSidebarItemProps,
   type ChatSidebarItemRenderOptions,
+  type ChatSidebarItemTitleProps,
   type ChatSidebarListProps,
   type ChatSidebarNewButtonProps,
   type ChatSidebarProps,
@@ -210,12 +210,6 @@ export {
   type UseAttachmentsStorageState,
 } from "./hooks/use-uploads-registry.ts";
 export {
-  useStickToBottom,
-  type UseStickToBottomOptions,
-  type UseStickToBottomResult,
-} from "./hooks/use-stick-to-bottom.ts";
-
-export {
   extractSourcesFromParts,
   getTextContent,
   groupPartsInOrder,
@@ -240,8 +234,6 @@ export {
   ChatIf,
   type ChatIfProps,
   ChatInput,
-  type ChatInputExportProps,
-  type ChatInputProps,
   ChatMessageList,
   type ChatMessageListContentProps,
   type ChatMessageListProps,
@@ -257,24 +249,26 @@ export {
   type ModelAvatarProps,
   type TokenRowProps,
 } from "./composition/api.tsx";
+export type * from "./composition/chat-composer.types.ts";
 
 export {
   ChatContextProvider,
   type ChatContextValue,
-  ComposerContextProvider,
-  type ComposerContextValue,
+  ChatInputContextProvider,
+  type ChatInputContextValue,
   MessageContextProvider,
   type MessageContextValue,
   type MessagePartsData,
   useChatContext,
   useChatContextOptional,
-  useComposerContext,
-  useComposerContextOptional,
+  useChatInputContext,
+  useChatInputContextOptional,
+  useMessageBranches,
+  type UseMessageBranchesResult,
   useMessageContext,
   useMessageContextOptional,
   useMessageParts,
 } from "./contexts/index.ts";
 
-// ChatProps: preset interface, re-exported here to preserve the public surface.
 export type { ChatAgentInfo, ChatProps } from "./chat-props.ts";
 export { Chat } from "./chat-preset.tsx";

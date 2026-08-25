@@ -55,7 +55,7 @@ export interface ExtJwtConfig {
 }
 
 function defaultJwksResolverFactory(jwksUrl: string): JwksResolver {
-  return createRemoteJWKSet(new URL(jwksUrl)) as unknown as JwksResolver;
+  return createRemoteJWKSet(new URL(jwksUrl));
 }
 
 function toUint8Array(secret: string | Uint8Array): Uint8Array {
@@ -140,8 +140,8 @@ function createAuthProvider(config: ExtJwtConfig): AuthProvider {
       if (algorithms) verifyOpts.algorithms = algorithms;
       const { payload } = await jwtVerify(
         token,
-        resolver as unknown as KeyLike,
-        verifyOpts,
+        resolver,
+        verifyOpts as Parameters<typeof jwtVerify>[2],
       );
       return payload as TokenPayload;
     },

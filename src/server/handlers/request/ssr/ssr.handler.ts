@@ -33,6 +33,7 @@ import { ErrorPages } from "../../../utils/error-html.ts";
 import { isSSRBuildFailure } from "#veryfront/rendering/ssr-outcome.ts";
 import { buildSSRResponse } from "./ssr-response-builder.ts";
 import { type DependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
+import { createApplicationRequestHeaders } from "#veryfront/security/http/application-request.ts";
 import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
 import {
   applySnapshotResponseHeaders,
@@ -41,20 +42,16 @@ import {
   snapshotConflictResponse,
   stripSnapshotHeader,
 } from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
+import { isProductionMode, shouldHideRouteInProduction } from "../route-visibility-policy.ts";
+import {
+  createErrorResponseFromDefinition,
+  PROJECT_EXECUTION_UNAVAILABLE,
+} from "#veryfront/errors";
+import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
+import { appendDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
+import { ensurePreviewSourceSnapshotFresh } from "../source-snapshot-freshness.ts";
 
 const logger = serverLogger.component("ssr");
-
-/**
- * Determine if request should serve production (released) content.
- * Uses resolvedEnvironment (from domain lookup) with fallback to requestContext.mode.
- * Config override (PRODUCTION_MODE) takes precedence.
- */
-export function isProductionMode(ctx: HandlerContext, _url?: URL): boolean {
-  if (ctx.config?.fs?.veryfront?.productionMode === true) return true;
-
-  const environment = ctx.resolvedEnvironment ?? ctx.requestContext?.mode;
-  return environment === "production";
-}
 
 /**
  * SSR Handler - Thin orchestration layer
@@ -99,15 +96,37 @@ export class SSRHandler extends BaseHandler {
 
     const slug = pathname === "/" ? "" : pathname.replace(/^\//, "").replace(/\/$/, "");
     const requestId = `${slug || "index"}-${Date.now()}`;
-    startRequest(requestId);
 
-    const hasDotSegment = slug.split("/").some((segment) => segment.startsWith("."));
-    if (hasDotSegment && isProductionMode(ctx, url)) {
+    if (shouldHideRouteInProduction(ctx, slug)) {
       this.logDebug("Dot path blocked in production", { slug }, ctx);
       return Promise.resolve(this.continue());
     }
 
+    if (requiresIsolatedProjectRuntime(ctx)) {
+      const problem = createErrorResponseFromDefinition(
+        PROJECT_EXECUTION_UNAVAILABLE,
+        {
+          detail:
+            "Shared runtimes require a dedicated isolated project runtime for server rendering",
+          instance: pathname,
+        },
+      );
+      const body = req.method === "HEAD" ? null : problem.body;
+      const response = this.createResponseBuilder(ctx, generateNonce())
+        .withSecurity(ctx.securityConfig ?? undefined, req)
+        .withCache("no-store")
+        .withHeaders(problem.headers)
+        .build(body, problem.status);
+      return Promise.resolve(this.respond(response));
+    }
+
     this.logDebug("SSR attempt", { pathname, slug }, ctx);
+
+    // Allocated only once the request is certain to be rendered. `startRequest`
+    // registers a timings entry that `endRequest` removes, but `endRequest`
+    // returns early when no timer ever ran, so an entry allocated before the
+    // guards above would survive on every hidden-route or fail-closed request.
+    startRequest(requestId);
 
     return this.setupContextAndRender(req, ctx, slug, requestId, url);
   }
@@ -124,7 +143,7 @@ export class SSRHandler extends BaseHandler {
       const isExtended = isExtendedFSAdapter(fsAdapter);
 
       if (ctx.projectSlug && isExtended && fsAdapter.isMultiProjectMode()) {
-        const prodMode = isProductionMode(ctx, url);
+        const prodMode = isProductionMode(ctx);
         const branch = ctx.parsedDomain?.branch ?? null;
         // Framework-owned token: bypass project env overlay so proxy mode works
         // when a remote project overlay is active.
@@ -169,7 +188,7 @@ export class SSRHandler extends BaseHandler {
         // the failure at warn (rather than swallowing it) so a genuinely broken
         // production-mode setup is visible instead of silently serving draft content.
         try {
-          const prodMode = isProductionMode(ctx, url);
+          const prodMode = isProductionMode(ctx);
           fsAdapter.setProductionMode(prodMode, ctx.releaseId);
         } catch (e) {
           logger.warn("Adapter setProductionMode failed", {
@@ -205,6 +224,22 @@ export class SSRHandler extends BaseHandler {
     return withSpan(
       "ssr.handleWithContext",
       async () => {
+        // Establish one current draft generation before route resolution and
+        // rendering. If freshness cannot be established, fail the request
+        // rather than serving an older SSR snapshot that hydration replaces.
+        try {
+          await ensurePreviewSourceSnapshotFresh(
+            ctx,
+            {
+              ensure: "preview-ssr-render",
+              refreshFallback: "preview-ssr-render",
+            },
+          );
+        } catch (error) {
+          endRequest(requestId);
+          throw error;
+        }
+
         const dependencySource = createHandlerDependencyPinningSource(ctx);
         // The document request is where the client learns the current snapshot
         // key, so an unpinned request adopts it instead of conflicting.
@@ -220,7 +255,9 @@ export class SSRHandler extends BaseHandler {
         const dependencySnapshot = resolution.snapshot;
 
         const applicationUrl = new URL(url);
-        const applicationHeaders = stripSnapshotHeader(req.headers);
+        const applicationHeaders = createApplicationRequestHeaders(
+          stripSnapshotHeader(req.headers),
+        );
         const applicationRequest = new Request(applicationUrl, {
           method: req.method,
           headers: applicationHeaders,
@@ -284,6 +321,7 @@ export class SSRHandler extends BaseHandler {
               slug,
               nonce,
               dependencySnapshot,
+              rendered,
             );
           case "overloaded":
           case "runtime":
@@ -320,7 +358,7 @@ export class SSRHandler extends BaseHandler {
     location: string,
     nonce: string,
   ): HandlerResult {
-    const response = this.createSnapshotResponseBuilder(
+    const builder = this.createSnapshotResponseBuilder(
       ctx,
       nonce,
       result.dependencyPinningCacheKey,
@@ -328,8 +366,9 @@ export class SSRHandler extends BaseHandler {
       .withCORS(req, ctx.securityConfig?.cors)
       .withSecurity(ctx.securityConfig ?? undefined, req)
       .withCache(result.cacheStrategy)
-      .withHeaders({ Location: location })
-      .build(null, result.status);
+      .withHeaders({ Location: location });
+    appendDataResponseMetadata(builder.headers, result);
+    const response = builder.build(null, result.status);
 
     return this.respond(response);
   }
@@ -340,6 +379,7 @@ export class SSRHandler extends BaseHandler {
     slug: string,
     nonce: string,
     dependencySnapshot: DependencyPinningSnapshot,
+    result: SSRRenderResult,
   ): Promise<HandlerResult> {
     const builder = this.createSnapshotResponseBuilder(
       ctx,
@@ -354,25 +394,35 @@ export class SSRHandler extends BaseHandler {
       builder,
       dependencySnapshot,
     );
-    if (notFoundResponse) return this.respond(notFoundResponse);
+    if (notFoundResponse) {
+      appendDataResponseMetadata(notFoundResponse.headers, result);
+      return this.respond(notFoundResponse);
+    }
 
     const customResponse = await tryErrorPageFallback(req, ctx, builder, {
       statusCode: 404,
       pathname: slug || "/",
     }, dependencySnapshot);
-    if (customResponse) return this.respond(customResponse);
+    if (customResponse) {
+      appendDataResponseMetadata(customResponse.headers, result);
+      return this.respond(customResponse);
+    }
 
-    const result: SSRRenderResult = {
+    const fallbackResult: SSRRenderResult = {
       status: 404,
       html: ErrorPages.notFound(slug || "/"),
+      htmlProvenance: "framework",
       isStreaming: false,
       cacheStrategy: "no-cache",
       failure: { kind: "not-found" },
       slug,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+      ...(result.headers ? { headers: result.headers } : {}),
+      ...(result.cookies ? { cookies: result.cookies } : {}),
     };
 
-    return this.buildResponse(req, ctx, result, nonce);
+    const response = await buildSSRResponse(req, ctx, fallbackResult, builder);
+    return this.respond(response);
   }
 
   private async tryCustomErrorFallback(
@@ -394,7 +444,9 @@ export class SSRHandler extends BaseHandler {
       pathname: result.slug || "/",
     }, dependencySnapshot);
 
-    return customResponse ? this.respond(customResponse) : null;
+    if (!customResponse) return null;
+    appendDataResponseMetadata(customResponse.headers, result);
+    return this.respond(customResponse);
   }
 
   private async buildResponse(

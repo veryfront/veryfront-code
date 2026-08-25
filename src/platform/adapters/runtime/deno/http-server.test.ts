@@ -156,6 +156,34 @@ describe("Deno HTTP server lifecycle", () => {
     await server.stop();
   });
 
+  it("contains a throwing application handler in a 500 response", async () => {
+    const native = new FakeNativeServer();
+    const fake = createRuntime(native);
+    const server = await createDenoServerWithRuntime(
+      fake.runtime,
+      () => {
+        throw new Error("boom");
+      },
+      { hostname: "localhost", port: 0 },
+    );
+
+    try {
+      const response = await fake.getOptions().handler(new Request("http://localhost/boom"));
+      assertEquals(
+        response.status,
+        500,
+        "a throwing handler must be contained in a 500 response",
+      );
+      assertEquals(
+        await response.text(),
+        "Internal Server Error",
+        "the contained failure must not leak handler detail",
+      );
+    } finally {
+      await server.stop();
+    }
+  });
+
   it("shares concurrent stop calls, remains idempotent, and aborts owned work", async () => {
     const native = new FakeNativeServer();
     let release!: () => void;

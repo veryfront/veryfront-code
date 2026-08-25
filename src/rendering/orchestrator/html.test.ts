@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import "../../html/styles-builder/__tests__/css-processor-setup.ts";
+import { registerTailwindExtension } from "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
 import {
   assertEquals,
   assertExists,
@@ -9,6 +9,8 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { unregister } from "#veryfront/extensions/contracts.ts";
+import { CSSProcessorName } from "#veryfront/extensions/css/index.ts";
 import {
   RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
   RELEASE_ASSET_MANIFEST_ENV_FLAG,
@@ -20,10 +22,21 @@ import {
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { clearCSSCache, getCSSByHash } from "#veryfront/html/styles-builder/index.ts";
-import { HTMLGenerator, type HTMLGeneratorConfig } from "./html.ts";
+import {
+  HTMLGenerator,
+  type HTMLGeneratorConfig,
+  resolveErrorContentSourceEnvironment,
+  resolveErrorContentSourceParameters,
+  resolveRenderEnvironment,
+} from "./html.ts";
 import { buildHeadElements, mergeFrontmatter } from "./html-head.ts";
+import {
+  deserializeManagedHeadPayload,
+  managedHeadDescriptorToTransportEntry,
+} from "#veryfront/html/managed-head-protocol.ts";
 import { mergeImportedCSS } from "./html-imported-css.ts";
 import { StreamTimeoutError } from "../utils/stream-utils.ts";
+import { getProdHydrationModulePath } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
 import {
   createHTMLContext,
   createHTMLGenerator,
@@ -76,6 +89,42 @@ describe("HTMLGenerator helpers", () => {
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, originalDependencyFlag ?? "");
     clearReleaseAssetManifestCache();
     clearCSSCache();
+  });
+
+  it("uses the configured production environment when a request omits it", () => {
+    assertEquals(resolveRenderEnvironment(undefined, "production"), "production");
+    assertEquals(resolveRenderEnvironment("preview", "production"), "preview");
+  });
+
+  it("uses a valid preview content identity for release-less hosted production errors", () => {
+    assertEquals(
+      resolveErrorContentSourceEnvironment(false, "production", undefined),
+      "preview",
+    );
+    assertEquals(
+      resolveErrorContentSourceEnvironment(false, "production", "release-1"),
+      "production",
+    );
+    assertEquals(
+      resolveErrorContentSourceEnvironment(true, "production", undefined),
+      "production",
+    );
+  });
+
+  it("derives hosted production error identity from a release content source", () => {
+    assertEquals(
+      resolveErrorContentSourceParameters(
+        false,
+        "production",
+        undefined,
+        { contentSourceId: "release-release-123" },
+      ),
+      {
+        environment: "production",
+        contentSourceEnvironment: "production",
+        releaseId: "release-123",
+      },
+    );
   });
 
   describe("buildHeadElements", () => {
@@ -285,6 +334,91 @@ describe("HTMLGenerator helpers", () => {
   });
 
   describe("generateFullHTML", () => {
+    it("uses the hydration runtime baked into an aged release", async () => {
+      const agedRuntimePath = "/_veryfront/hydration-runtime.1a2b3c4d.js";
+      const adapter = createMockAdapter(async (path: string) =>
+        path.endsWith("/app/page.tsx") ? "'use client';" : ""
+      );
+      adapter.fs.readDir = async function* (path: string) {
+        if (path !== "/project/custom-output/_veryfront") return;
+        yield {
+          name: agedRuntimePath.slice("/_veryfront/".length),
+          isFile: true,
+          isDirectory: false,
+          isSymlink: false,
+        };
+      };
+      const generator = new HTMLGenerator({
+        projectDir: "/project",
+        adapter: adapter as any,
+        config: { build: { outDir: "custom-output" } } as any,
+        mode: "production",
+        isLocalProject: false,
+      });
+
+      const html = await generator.generateFullHTML(createHTMLContext({
+        html: "<main>Existing release</main>",
+        options: {
+          environment: "production",
+          releaseId: "release-aged",
+        },
+      }));
+
+      assertStringIncludes(html, `src="${agedRuntimePath}"`);
+      assertStringIncludes(html, `rel="modulepreload" href="${agedRuntimePath}"`);
+      assertEquals(html.includes(getProdHydrationModulePath()), false);
+    });
+
+    it("uses the hydration runtime baked into an aged release for full documents", async () => {
+      const agedRuntimePath = "/_veryfront/hydration-runtime.2b3c4d5e.js";
+      const adapter = createMockAdapter(async (path: string) =>
+        path.endsWith("/app/page.tsx") ? "'use client';" : ""
+      );
+      adapter.fs.readDir = async function* (path: string) {
+        if (path !== "/project/custom-output/_veryfront") return;
+        yield {
+          name: agedRuntimePath.slice("/_veryfront/".length),
+          isFile: true,
+          isDirectory: false,
+          isSymlink: false,
+        };
+      };
+      const generator = new HTMLGenerator({
+        projectDir: "/project",
+        adapter: adapter as any,
+        config: { build: { outDir: "custom-output" } } as any,
+        mode: "production",
+        isLocalProject: false,
+      });
+
+      const html = await generator.generateFullHTML(createHTMLContext({
+        options: {
+          environment: "production",
+          releaseId: "release-aged",
+        },
+      }));
+
+      assertStringIncludes(html, `src="${agedRuntimePath}"`);
+      assertEquals(html.includes(getProdHydrationModulePath()), false);
+    });
+
+    it("keeps the RSC boot script for standalone production full documents", async () => {
+      const generator = createHTMLGenerator({
+        mode: "production",
+        readFile: async (path) => path.endsWith("/app/page.tsx") ? "'use client';" : "",
+      });
+
+      const html = await generator.generateFullHTML(createHTMLContext({
+        options: {
+          environment: "production",
+          releaseId: "standalone-dev",
+        },
+      }));
+
+      assertStringIncludes(html, 'src="/_veryfront/rsc/client.js"');
+      assertEquals(html.includes(getProdHydrationModulePath()), false);
+    });
+
     it("fails closed when a full-document component also declares React Head", async () => {
       const generator = createHTMLGenerator();
 
@@ -457,6 +591,14 @@ describe("HTMLGenerator helpers", () => {
       );
       const generator = createHTMLGenerator({
         readFile: async (path: string) => path.endsWith("/app/page.tsx") ? `'use client';` : "",
+        readDir: async function* () {
+          yield {
+            name: getProdHydrationModulePath().slice("/_veryfront/".length),
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+          };
+        },
       });
 
       const html = await generator.generateFullHTML(createHTMLContext({
@@ -481,8 +623,37 @@ describe("HTMLGenerator helpers", () => {
         options: { environment: "preview" },
       }));
 
-      assertEquals(html.includes('id="vf-tailwind-css"'), true);
-      assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
+      assertEquals(html.includes('id="vf-project-css"'), true);
+      assertEquals(html.includes('/_vf_styles/styles.css"'), true);
+    });
+
+    it("uses configured preview rendering for full HTML when the request omits it", async () => {
+      const generator = createHTMLGenerator({
+        environment: "preview",
+        readFile: async () => `'use client';`,
+      });
+
+      const html = await generator.generateFullHTML(createHTMLContext());
+
+      assertEquals(html.includes('id="vf-project-css"'), true);
+      assertEquals(html.includes('/_vf_styles/styles.css"'), true);
+    });
+
+    it("does not activate production CSS when a legacy request omits its environment", async () => {
+      unregister(CSSProcessorName);
+      try {
+        const generator = createHTMLGenerator({
+          environment: "production",
+          readFile: async (path: string) => path.endsWith("/app/page.tsx") ? `'use client';` : "",
+        });
+
+        const html = await generator.generateFullHTML(createHTMLContext());
+
+        assertEquals(html.includes('id="vf-project-css"'), false);
+        assertEquals(html.includes("/_vf/css/"), false);
+      } finally {
+        await registerTailwindExtension();
+      }
     });
 
     it("injects production project stylesheet links into full HTML documents", async () => {
@@ -624,6 +795,115 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes(`localStorage.setItem('theme','dark')`), true);
     });
 
+    it("keeps a quoted > inside the html opening tag out of the theme injection", async () => {
+      const mockAdapter = createMockAdapter(async () => `'use client';`);
+
+      const generator = createHTMLGenerator({
+        readFile: mockAdapter.fs.readFile,
+      });
+
+      const html = await generator.generateFullHTML(createHTMLContext({
+        html:
+          '<!DOCTYPE html><html lang="en" data-x="a>b"><head><title>Layout Title</title></head><body><main>Hello</main></body></html>',
+        options: {
+          colorScheme: "dark",
+          colorSchemeFromParam: true,
+        },
+      }));
+
+      assertStringIncludes(
+        html,
+        'data-x="a>b"',
+        "a quoted > must not truncate the html opening tag",
+      );
+      assertEquals(
+        (html.match(/data-theme="dark"/g) ?? []).length,
+        1,
+        "theme is injected exactly once",
+      );
+      assertEquals(
+        html.includes('data-x="a data-theme'),
+        false,
+        "attributes must not be spliced mid-value",
+      );
+    });
+
+    it("replaces a layout's own data-theme and color-scheme declarations", async () => {
+      const mockAdapter = createMockAdapter(async () => `'use client';`);
+
+      const generator = createHTMLGenerator({
+        readFile: mockAdapter.fs.readFile,
+      });
+
+      const html = await generator.generateFullHTML(createHTMLContext({
+        html:
+          '<!DOCTYPE html><html lang="en" data-theme="light" style="color-scheme: light"><head><title>Layout Title</title></head><body><main>Hello</main></body></html>',
+        options: {
+          colorScheme: "dark",
+          colorSchemeFromParam: true,
+        },
+      }));
+
+      assertEquals(
+        (html.match(/data-theme="/g) ?? []).length,
+        1,
+        "the layout's own data-theme must be replaced, not duplicated",
+      );
+      assertStringIncludes(html, 'data-theme="dark"', "the requested theme wins");
+      assertEquals(
+        html.includes('data-theme="light"'),
+        false,
+        "the stale light declaration must not survive",
+      );
+      assertEquals(
+        (html.match(/color-scheme:\s*/g) ?? []).length,
+        1,
+        "the layout's own color-scheme must be replaced, not duplicated",
+      );
+      assertStringIncludes(
+        html,
+        "color-scheme: dark",
+        "the requested color scheme wins",
+      );
+      assertEquals(
+        html.includes("color-scheme: light"),
+        false,
+        "the stale light color scheme must not survive",
+      );
+    });
+
+    it("injects dev scripts only for a development-mode generator", async () => {
+      const devHtml = await createHTMLGenerator({
+        mode: "development",
+        readFile: async () => "",
+      }).generateFullHTML(createHTMLContext());
+      const prodHtml = await createHTMLGenerator({
+        mode: "production",
+        readFile: async () => "",
+      }).generateFullHTML(createHTMLContext());
+
+      assertStringIncludes(
+        devHtml,
+        '<script type="module" src="/_veryfront/hmr.js"></script>',
+        "development shells carry the HMR client",
+      );
+      assertStringIncludes(
+        devHtml,
+        ".dev-indicator",
+        "development shells carry the dev overlay styles",
+      );
+      assertEquals(
+        prodHtml.includes("/_veryfront/hmr.js"),
+        false,
+        "production shells must not carry development instrumentation",
+      );
+      assertEquals(
+        prodHtml.includes(".dev-indicator"),
+        false,
+        "production shells must not carry development overlay styles",
+      );
+    });
+
     it("escapes nonce values before injecting theme persistence scripts", async () => {
       const mockAdapter = createMockAdapter(async () => `'use client';`);
 
@@ -657,7 +937,7 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes(`localStorage.setItem('theme','dark')`), true);
     });
 
-    it("adds nonce to inline style and script tags in rendered HTML", async () => {
+    it("does not grant the response nonce to rendered application markup", async () => {
       const mockAdapter = createMockAdapter(async () => "");
 
       const generator = createHTMLGenerator({
@@ -682,11 +962,11 @@ describe("HTMLGenerator helpers", () => {
         options: { nonce: "nonce-123" },
       });
 
-      assertEquals(html.includes('<style nonce="nonce-123">.chat{color:red}</style>'), true);
-      assertEquals(
-        html.includes('<script nonce="nonce-123">window.__vf=1</script>'),
-        true,
-      );
+      assertEquals(html.includes('<style nonce="nonce-123">.chat{color:red}</style>'), false);
+      assertEquals(html.includes('<script nonce="nonce-123">window.__vf=1</script>'), false);
+      assertEquals(html.includes("<style>.chat{color:red}</style>"), true);
+      assertEquals(html.includes("<script>window.__vf=1</script>"), true);
+      assertEquals(html.includes('<script type="importmap" nonce="nonce-123">'), true);
     });
 
     it("adds nonce to collected head style and script tags", async () => {
@@ -856,6 +1136,78 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes("data-vf-shell-head"), false);
     });
 
+    it("publishes the complete committed React head through the server-owned payload", async () => {
+      const generator = createHTMLGenerator();
+      const html = await generator.generateFullHTML({
+        html: "<main>Complete head</main>",
+        pageInfo: {
+          entity: { path: "/project/app/page.tsx", frontmatter: {} },
+        } as any,
+        pageBundle: {} as any,
+        layoutBundle: undefined,
+        nestedLayouts: [],
+        collectedMetadata: {},
+        slug: "complete-head",
+        ssrHash: "head-hash",
+        collectedHead: {
+          title: "Committed title",
+          metas: [
+            { property: "og:image", content: "https://cdn.example/a.png" },
+            { property: "og:image", content: "https://cdn.example/b.png" },
+          ],
+          links: [
+            { rel: "preload", href: "/font-a.woff2", as: "font" },
+            { rel: "preload", href: "/font-b.woff2", as: "font" },
+          ],
+          styles: [{ id: "route-style", content: ".route{}" }],
+          scripts: [{ id: "route-script", src: "/route.js" }],
+        },
+      });
+
+      const hydrationMatch = html.match(
+        /<body\b[^>]*>\s*<!--[^]*?-->\s*<script id="veryfront-hydration-data" type="application\/json"[^>]*>([^]*?)<\/script>/i,
+      );
+      assertExists(hydrationMatch?.[1]);
+      const hydrationData = JSON.parse(hydrationMatch[1]) as {
+        managedHeadPayload: string;
+      };
+      const entries = deserializeManagedHeadPayload(hydrationData.managedHeadPayload)
+        .map(managedHeadDescriptorToTransportEntry);
+
+      assertEquals(
+        entries.some((entry) => entry.tagName === "title" && entry.content === "Committed title"),
+        true,
+      );
+      assertEquals(
+        entries.filter((entry) =>
+          entry.tagName === "meta" &&
+          entry.attributes.some(([name, value]) => name === "property" && value === "og:image")
+        ).map((entry) => entry.attributes.find(([name]) => name === "content")?.[1]),
+        ["https://cdn.example/a.png", "https://cdn.example/b.png"],
+      );
+      assertEquals(
+        entries.filter((entry) =>
+          entry.tagName === "link" &&
+          entry.attributes.some(([name, value]) => name === "rel" && value === "preload")
+        ).map((entry) => entry.attributes.find(([name]) => name === "href")?.[1]),
+        ["/font-a.woff2", "/font-b.woff2"],
+      );
+      assertEquals(
+        entries.some((entry) =>
+          entry.tagName === "style" && entry.content === ".route{}" &&
+          entry.attributes.some(([name, value]) => name === "id" && value === "route-style")
+        ),
+        true,
+      );
+      assertEquals(
+        entries.some((entry) =>
+          entry.tagName === "script" &&
+          entry.attributes.some(([name, value]) => name === "src" && value === "/route.js")
+        ),
+        true,
+      );
+    });
+
     it("preserves empty collected metadata and exact viewport attributes", async () => {
       const mockAdapter = createMockAdapter(async () => "");
       const generator = createHTMLGenerator({
@@ -928,7 +1280,7 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes("data-vf-shell-head"), false);
     });
 
-    it("replaces existing nonce attributes with the response nonce without duplication", async () => {
+    it("does not rewrite application-owned nonce attributes", async () => {
       const mockAdapter = createMockAdapter(async () => "");
 
       const generator = createHTMLGenerator({
@@ -953,19 +1305,16 @@ describe("HTMLGenerator helpers", () => {
         options: { nonce: "nonce-123" },
       });
 
+      assertEquals(html.includes('<style nonce="existing-nonce">.chat{color:red}</style>'), true);
       assertEquals(
-        html.includes('<style nonce="nonce-123">.chat{color:red}</style>'),
+        html.includes('<script nonce="existing-nonce">window.__vf=1</script>'),
         true,
       );
-      assertEquals(
-        html.includes('<script nonce="nonce-123">window.__vf=1</script>'),
-        true,
-      );
-      assertEquals(html.includes('nonce="existing-nonce"'), false);
+      assertEquals(html.includes('nonce="existing-nonce"'), true);
       assertEquals(html.includes('nonce="nonce-123" nonce="existing-nonce"'), false);
     });
 
-    it("escapes nonce values before injecting rendered tags", async () => {
+    it("escapes nonce values only on framework-generated tags", async () => {
       const mockAdapter = createMockAdapter(async () => "");
 
       const generator = createHTMLGenerator({
@@ -989,14 +1338,13 @@ describe("HTMLGenerator helpers", () => {
         options: { nonce: `nonce-"<&'` },
       });
 
-      assertEquals(
-        html.includes('<style nonce="nonce-&quot;&lt;&amp;&#39;">.chat{color:red}</style>'),
-        true,
-      );
+      assertEquals(html.includes('<style nonce="nonce-&quot;&lt;&amp;&#39;">'), false);
       assertEquals(
         html.includes('<script nonce="nonce-&quot;&lt;&amp;&#39;">window.__vf=1</script>'),
-        true,
+        false,
       );
+      assertEquals(html.includes("<style>.chat{color:red}</style>"), true);
+      assertEquals(html.includes("<script>window.__vf=1</script>"), true);
       assertEquals(
         html.includes('<script type="importmap" nonce="nonce-&quot;&lt;&amp;&#39;">'),
         true,
@@ -1004,7 +1352,7 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes('nonce="nonce-"<&\'"'), false);
     });
 
-    it("does not inject nonce markup into script or style literals inside inline scripts", async () => {
+    it("leaves application script and style markup byte-for-byte unprivileged", async () => {
       const mockAdapter = createMockAdapter(async () => "");
 
       const generator = createHTMLGenerator({
@@ -1031,11 +1379,11 @@ describe("HTMLGenerator helpers", () => {
 
       assertEquals(
         html.includes(
-          '<script nonce="nonce-123">window.tpl="<script>alert(1)";window.css="<style>.x{color:red}";</script>',
+          '<script>window.tpl="<script>alert(1)";window.css="<style>.x{color:red}";</script>',
         ),
         true,
       );
-      assertEquals(html.includes('<style nonce="nonce-123">.chat{color:red}</style>'), true);
+      assertEquals(html.includes("<style>.chat{color:red}</style>"), true);
       assertEquals(html.includes('<script nonce="nonce-123">alert(1)'), false);
       assertEquals(html.includes('<style nonce="nonce-123">.x{color:red}'), false);
     });
@@ -1100,8 +1448,27 @@ describe("HTMLGenerator helpers", () => {
         true,
       );
       assertEquals(html.includes('data-theme="dark"'), true);
-      assertEquals(html.includes('id="vf-tailwind-css"'), true);
+      assertEquals(html.includes('id="vf-project-css"'), true);
       assertEquals(html.includes(`localStorage.setItem('theme','dark')`), true);
+    });
+
+    it("uses configured preview rendering for streams when the request omits it", async () => {
+      const generator = createHTMLGenerator({
+        environment: "preview",
+        readFile: async () => `'use client';`,
+      });
+      const stream = createSingleChunkStream(
+        "<!DOCTYPE html><html><head></head><body><main>Hello</main></body></html>",
+      );
+
+      const responseStream = await generator.generateHTMLStream(
+        stream,
+        createHTMLContext(),
+      );
+      const html = await new Response(responseStream).text();
+
+      assertEquals(html.includes('id="vf-project-css"'), true);
+      assertEquals(html.includes('/_vf_styles/styles.css"'), true);
     });
 
     it("keeps production project stylesheet links for streamed full-document pages", async () => {

@@ -8,6 +8,10 @@ import {
 import { serverLogger } from "#veryfront/utils";
 import { HTTP_OK, PRIORITY_HIGH_CLIENT_LOG } from "#veryfront/utils/constants/index.ts";
 import { getErrorMessage } from "#veryfront/errors";
+import {
+  createLocalControlAccessDeniedResponse,
+  isTrustedLocalControlRequest,
+} from "#veryfront/security/http/local-control-request.ts";
 
 const logger = serverLogger.component("client-log-handler");
 
@@ -62,6 +66,11 @@ export class ClientLogHandler extends BaseHandler {
 
     if (pathname !== "/_veryfront/log" || req.method !== "POST") {
       return this.continue();
+    }
+    if (!isTrustedLocalControlRequest(req)) {
+      return this.respond(
+        createLocalControlAccessDeniedResponse(req, "Client log request rejected"),
+      );
     }
 
     let body = "";

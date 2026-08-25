@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import type { ModelRuntime } from "#veryfront/provider";
 import { getCurrentVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import type { RuntimeGenerateTextResult } from "../runtime/runtime-tool-types.ts";
@@ -140,4 +140,77 @@ Deno.test("createVeryfrontCloudContextSummaryGenerator redacts sensitive tool da
   assertEquals(prompt.includes("access_token=[REDACTED]"), true);
   assertEquals(prompt.includes("postgres://user:[REDACTED]@db.example.test:5432/app"), true);
   assertEquals(prompt.includes('"query":"status"'), true);
+});
+
+Deno.test("createVeryfrontCloudContextSummaryGenerator bounds oversized parts and tolerates unserializable results", async () => {
+  const prompts: string[] = [];
+  const generator = createVeryfrontCloudContextSummaryGenerator({
+    apiUrl: "https://api.example.com",
+    authToken: "token-1",
+    model: "openai/gpt-5.2",
+    maxOutputTokens: 500,
+    maxInputTokens: 100_000,
+    resolveModel: () => createModel(),
+    generateText: (options): PromiseLike<RuntimeGenerateTextResult> => {
+      const message = options.messages.find((candidate) => candidate.role === "user");
+      prompts.push(typeof message?.content === "string" ? message.content : "");
+      return Promise.resolve({
+        text: "bounded summary",
+        usage: { inputTokens: 1, outputTokens: 1 },
+        finishReason: "stop",
+      });
+    },
+  });
+
+  await generator({
+    messagesToSummarize: [
+      {
+        id: "message-1",
+        role: "tool",
+        timestamp: 1,
+        parts: [{
+          type: "tool-result",
+          toolName: "read_file",
+          toolCallId: "tool-1",
+          result: "x".repeat(25_000),
+        }],
+      },
+    ],
+    retainedMessages: [],
+  });
+
+  assertEquals(prompts.length, 1, "a single bounded message must produce one summary prompt");
+  assertStringIncludes(
+    prompts[0] ?? "",
+    "[truncated 5002 characters]",
+    "a part over 20,000 characters must carry the truncation marker",
+  );
+  assertEquals(
+    prompts[0]?.includes("x".repeat(20_001)),
+    false,
+    "the serialized part must be capped at the 20,000 character limit",
+  );
+
+  await generator({
+    messagesToSummarize: [
+      {
+        id: "message-2",
+        role: "tool",
+        timestamp: 2,
+        parts: [{
+          type: "tool-result",
+          toolName: "read_file",
+          toolCallId: "tool-2",
+          result: { count: 1n },
+        }],
+      },
+    ],
+    retainedMessages: [],
+  });
+
+  assertStringIncludes(
+    prompts[1] ?? "",
+    "[unserializable]",
+    "tool results that cannot be JSON serialized must use the unserializable placeholder",
+  );
 });

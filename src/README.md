@@ -72,7 +72,7 @@
 | **`task/`**            | `#veryfront/task`        | Task definitions and runner                       |
 | **`sandbox/`**         | `veryfront/sandbox`      | Ephemeral compute environments                    |
 | **`channels/`**        | `#veryfront/channels`    | Control-plane agent routing                       |
-| **`integrations/`**    | `veryfront/integrations` | Third-party connector metadata and remote tools   |
+| **`integrations/`**    | `veryfront/integrations` | Connector metadata, local tools, and remote tools |
 | **`internal-agents/`** | -                        | Hosted agent runtime (AG-UI, sessions, auth)      |
 | **`schemas/`**         | `#veryfront/schemas`     | Shared Zod validation schemas and `defineSchema`  |
 | **`registry/`**        | -                        | Project-scoped multi-tenant registry manager      |
@@ -266,7 +266,7 @@
 **Key Features**:
 
 - Input validation with Zod
-- Path traversal protection
+- Lexical path checks (`validateLexicalPath`) and filesystem-aware containment (`validatePath`, `SecureFs`), plus enforced read scopes for sandboxed workers and isolated Pages `ctx.fs`
 - CORS configuration
 - CSP (Content Security Policy)
 - Rate limiting
@@ -638,7 +638,8 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 **Exports**: `veryfront/integrations`
 
 - Integration metadata and SVG icons for all connectors
-- Remote tool definitions for third-party services
+- Exact-grant local tools for supported REST endpoints and project credentials
+- Remote tool definitions and execution through the configured API layer
 - OAuth configuration schemas
 
 #### `internal-agents/` - Hosted Agent Runtime

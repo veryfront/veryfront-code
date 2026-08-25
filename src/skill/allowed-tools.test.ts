@@ -2,234 +2,118 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  filterToolNamesForSkill,
   filterToolsForSkill,
-  isToolAllowedBySkill,
-  matchesAllowedTool,
-  validateAllowedToolPatterns,
+  isSkillToolAvailable,
 } from "./allowed-tools.ts";
 
+const ACTIVE_SKILL_WITH_FILES = {
+  hasActiveSkill: true,
+  references: ["references/guide.md"],
+  scripts: ["scripts/run.sh"],
+};
+
+const ACTIVE_SKILL_WITHOUT_FILES = {
+  hasActiveSkill: true,
+  references: [],
+  scripts: [],
+};
+
+const SKILL_TOOLS = ["load_skill", "load_skill_reference", "execute_skill_script"];
+
 describe("src/skill/allowed-tools", () => {
-  describe("matchesAllowedTool", () => {
-    it("should match exact tool name", () => {
-      assertEquals(matchesAllowedTool("Read", "Read"), true);
-    });
-
-    it("should not match different tool name", () => {
-      assertEquals(matchesAllowedTool("Write", "Read"), false);
-    });
-
-    it("should match prefix wildcard", () => {
-      assertEquals(matchesAllowedTool("api:list-users", "api:*"), true);
-    });
-
-    it("should not match different prefix", () => {
-      assertEquals(matchesAllowedTool("db:query", "api:*"), false);
-    });
-
-    it("should return false for invalid pattern", () => {
-      assertEquals(matchesAllowedTool("Read", "Bash(git:*)"), false);
-    });
-
-    it("should reject double-colon patterns", () => {
-      assertEquals(matchesAllowedTool("api::list", "api::*"), false);
-    });
-
-    it("should reject leading digit patterns", () => {
-      assertEquals(matchesAllowedTool("123tool", "123tool"), false);
-    });
-
-    it("should reject trailing colon patterns", () => {
-      assertEquals(matchesAllowedTool("api:", "api:"), false);
-    });
-  });
-
   describe("filterToolsForSkill", () => {
-    const tools = [
-      { name: "Read", description: "Read", parameters: {} },
-      { name: "Write", description: "Write", parameters: {} },
-      { name: "api:list", description: "API", parameters: {} },
-      { name: "load_skill", description: "Load", parameters: {} },
-      { name: "load_skill_reference", description: "Load reference", parameters: {} },
-      { name: "execute_skill_script", description: "Execute script", parameters: {} },
-    ];
-
-    it("should return all tools when allowedTools is undefined", () => {
-      const result = filterToolsForSkill(tools, undefined);
-      assertEquals(result.length, 6);
+    it("returns every tool untouched when no skill is active", () => {
+      const tools = [{ name: "Read" }, { name: "Write" }, { name: "api:list" }];
+      assertEquals(filterToolsForSkill(tools), tools);
     });
 
-    it("should constrain skill infrastructure tools when allowedTools is undefined", () => {
-      const result = filterToolsForSkill(tools, undefined, {
-        hasActiveSkill: true,
-        references: [],
-        scripts: [],
-      });
-
-      assertEquals(result.map((t) => t.name), [
-        "Read",
-        "Write",
-        "api:list",
-        "load_skill",
-      ]);
-    });
-
-    it("should return only load_skill when allowedTools is empty and no skill files are available", () => {
-      const result = filterToolsForSkill(tools, []);
-      assertEquals(result.length, 1);
-      assertEquals(result.map((t) => t.name), ["load_skill"]);
-    });
-
-    it("should filter to allowed tools plus load_skill when no skill files are available", () => {
-      const result = filterToolsForSkill(tools, ["Read"]);
-      assertEquals(result.length, 2); // Read + load_skill
-      assertEquals(result.map((t) => t.name).sort(), ["Read", "load_skill"]);
-    });
-
-    it("should expose load_skill_reference only when the active skill has references", () => {
-      const result = filterToolsForSkill(tools, ["Read"], {
-        hasActiveSkill: true,
-        references: ["references/guide.md"],
-        scripts: [],
-      });
-
-      assertEquals(result.map((t) => t.name).sort(), [
-        "Read",
-        "load_skill",
-        "load_skill_reference",
-      ]);
-    });
-
-    it("should expose execute_skill_script only when the active skill has scripts", () => {
-      const result = filterToolsForSkill(tools, ["Read"], {
-        hasActiveSkill: true,
-        references: [],
-        scripts: ["scripts/run.sh"],
-      });
-
-      assertEquals(result.map((t) => t.name).sort(), [
-        "Read",
-        "execute_skill_script",
-        "load_skill",
-      ]);
-    });
-
-    it("should support prefix wildcards", () => {
-      const result = filterToolsForSkill(tools, ["api:*"]);
-      assertEquals(result.length, 2); // api:list + load_skill
-    });
-
-    it("should always include load_skill", () => {
-      const result = filterToolsForSkill(tools, ["Write"]);
-      assertEquals(result.some((t) => t.name === "load_skill"), true);
-      assertEquals(result.some((t) => t.name === "load_skill_reference"), false);
-      assertEquals(result.some((t) => t.name === "execute_skill_script"), false);
-    });
-  });
-
-  describe("isToolAllowedBySkill", () => {
-    it("should allow all tools when no policy", () => {
-      assertEquals(isToolAllowedBySkill("anything", undefined), true);
-    });
-
-    it("should still constrain skill infrastructure tools when no policy", () => {
+    it("never filters ordinary tools, whatever the active skill advertises", () => {
+      const tools = [{ name: "Read" }, { name: "Write" }, { name: "api:list" }];
       assertEquals(
-        isToolAllowedBySkill("load_skill_reference", undefined, {
-          hasActiveSkill: true,
-          references: [],
-          scripts: [],
-        }),
-        false,
-      );
-      assertEquals(
-        isToolAllowedBySkill("Read", undefined, {
-          hasActiveSkill: true,
-          references: [],
-          scripts: [],
-        }),
-        true,
+        filterToolsForSkill(tools, ACTIVE_SKILL_WITHOUT_FILES),
+        tools,
       );
     });
 
-    it("should deny non-skill tools when empty policy", () => {
-      assertEquals(isToolAllowedBySkill("anything", []), false);
-    });
-
-    it("should allow only load_skill when empty policy and no active skill files are available", () => {
-      assertEquals(isToolAllowedBySkill("load_skill", []), true);
-      assertEquals(isToolAllowedBySkill("load_skill_reference", []), false);
-      assertEquals(isToolAllowedBySkill("execute_skill_script", []), false);
-    });
-
-    it("should allow matching tool", () => {
-      assertEquals(isToolAllowedBySkill("Read", ["Read", "Write"]), true);
-    });
-
-    it("should reject non-matching tool", () => {
-      assertEquals(isToolAllowedBySkill("Bash", ["Read", "Write"]), false);
-    });
-
-    it("should always allow load_skill", () => {
-      assertEquals(isToolAllowedBySkill("load_skill", ["Read"]), true);
-      assertEquals(isToolAllowedBySkill("load_skill_reference", ["Read"]), false);
-      assertEquals(isToolAllowedBySkill("execute_skill_script", ["Read"]), false);
-    });
-
-    it("should allow load_skill_reference only when the active skill has references", () => {
+    it("advertises file-backed skill tools only when the skill declares the files", () => {
+      const tools = SKILL_TOOLS.map((name) => ({ name }));
       assertEquals(
-        isToolAllowedBySkill("load_skill_reference", ["Read"], {
-          hasActiveSkill: true,
-          references: ["references/guide.md"],
-          scripts: [],
-        }),
-        true,
+        filterToolsForSkill(tools, ACTIVE_SKILL_WITH_FILES).map((tool) => tool.name),
+        SKILL_TOOLS,
       );
       assertEquals(
-        isToolAllowedBySkill("load_skill_reference", ["Read"], {
-          hasActiveSkill: true,
-          references: [],
-          scripts: [],
-        }),
-        false,
+        filterToolsForSkill(tools, ACTIVE_SKILL_WITHOUT_FILES).map((tool) => tool.name),
+        ["load_skill"],
       );
     });
 
-    it("should allow execute_skill_script only when the active skill has scripts", () => {
+    it("keeps load_skill available with no skill active so navigation still works", () => {
       assertEquals(
-        isToolAllowedBySkill("execute_skill_script", ["Read"], {
-          hasActiveSkill: true,
-          references: [],
-          scripts: ["scripts/run.sh"],
-        }),
-        true,
-      );
-      assertEquals(
-        isToolAllowedBySkill("execute_skill_script", ["Read"], {
-          hasActiveSkill: true,
-          references: [],
-          scripts: [],
-        }),
-        false,
+        filterToolsForSkill(SKILL_TOOLS.map((name) => ({ name })), {
+          hasActiveSkill: false,
+        }).map((tool) => tool.name),
+        ["load_skill"],
       );
     });
   });
 
-  describe("validateAllowedToolPatterns", () => {
-    it("should accept valid patterns", () => {
-      const result = validateAllowedToolPatterns(["Read", "api:*", "Write"]);
-      assertEquals(result, ["Read", "api:*", "Write"]);
+  describe("filterToolNamesForSkill", () => {
+    it("preserves name-only inventories when no skill is active", () => {
+      assertEquals(
+        filterToolNamesForSkill(["web_search", "web_fetch"], undefined),
+        ["web_search", "web_fetch"],
+      );
     });
 
-    it("should reject invalid patterns", () => {
-      try {
-        validateAllowedToolPatterns(["Bash(git:*)"]);
-        throw new Error("Should have thrown");
-      } catch (e) {
-        assertEquals((e as Error).message.includes("Invalid allowed-tools pattern"), true);
-      }
+    it("applies the same file-backed gate to name-only inventories", () => {
+      assertEquals(
+        filterToolNamesForSkill(SKILL_TOOLS, ACTIVE_SKILL_WITH_FILES),
+        SKILL_TOOLS,
+      );
+      assertEquals(
+        filterToolNamesForSkill(SKILL_TOOLS, ACTIVE_SKILL_WITHOUT_FILES),
+        ["load_skill"],
+      );
+    });
+  });
+
+  describe("isSkillToolAvailable", () => {
+    it("allows any ordinary tool regardless of what the skill declares", () => {
+      // `allowed-tools` is spec pre-approval metadata, not an authorization
+      // boundary, so no declaration can deny an ordinary tool.
+      assertEquals(isSkillToolAvailable("Write", ACTIVE_SKILL_WITHOUT_FILES), true);
+      assertEquals(isSkillToolAvailable("api:list", ACTIVE_SKILL_WITH_FILES), true);
+      assertEquals(isSkillToolAvailable("Write"), true);
     });
 
-    it("should accept empty array", () => {
-      assertEquals(validateAllowedToolPatterns([]), []);
+    it("allows load_skill unconditionally", () => {
+      assertEquals(isSkillToolAvailable("load_skill"), true);
+      assertEquals(isSkillToolAvailable("load_skill", ACTIVE_SKILL_WITHOUT_FILES), true);
+    });
+
+    it("denies file-backed skill tools when the skill advertises no such file", () => {
+      assertEquals(
+        isSkillToolAvailable("load_skill_reference", ACTIVE_SKILL_WITHOUT_FILES),
+        false,
+      );
+      assertEquals(
+        isSkillToolAvailable("execute_skill_script", ACTIVE_SKILL_WITHOUT_FILES),
+        false,
+      );
+      assertEquals(
+        isSkillToolAvailable("load_skill_reference", ACTIVE_SKILL_WITH_FILES),
+        true,
+      );
+      assertEquals(
+        isSkillToolAvailable("execute_skill_script", ACTIVE_SKILL_WITH_FILES),
+        true,
+      );
+    });
+
+    it("denies file-backed skill tools when no skill is active", () => {
+      assertEquals(isSkillToolAvailable("load_skill_reference"), false);
+      assertEquals(isSkillToolAvailable("execute_skill_script"), false);
     });
   });
 });

@@ -4,14 +4,29 @@
  * Project workers need outbound network access for public API calls, but user
  * code must not reach host-internal networks or cloud metadata endpoints.
  *
+ * Self-hosted deployments can open narrow exceptions:
+ *
+ * - `VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS` (or the `allowedInternalHosts`
+ *   option, which takes precedence) holds a comma-separated list of DNS
+ *   hostnames that may resolve to internal addresses. Entries and the
+ *   requested host are both normalized (trimmed, lowercased, IPv6 brackets
+ *   stripped) before an exact-match comparison; only the listed hosts bypass
+ *   the guard. IP literals and localhost names are ignored on the allowlist
+ *   and never bypass the guard through it.
+ * - `VERYFRONT_WORKER_ALLOW_INTERNAL_EGRESS` (or the `allowInternalEgress`
+ *   option) disables internal-address blocking entirely and should be reserved
+ *   for fully trusted self-hosted environments.
+ *
  * @module security/sandbox/worker-egress-guard
  */
 
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { resolveHostAddresses } from "#veryfront/platform/compat/dns.ts";
-import { getDenoRuntime } from "#veryfront/platform/compat/runtime.ts";
+import { getDenoRuntime, isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import { fetchWithPinnedAddresses } from "#veryfront/platform/compat/http/pinned-fetch.ts";
 
 export const WORKER_INTERNAL_EGRESS_OVERRIDE_ENV = "VERYFRONT_WORKER_ALLOW_INTERNAL_EGRESS";
+export const WORKER_INTERNAL_EGRESS_ALLOWED_HOSTS_ENV = "VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS";
 
 export class WorkerEgressBlockedError extends Error {
   override name = "WorkerEgressBlockedError";
@@ -33,10 +48,15 @@ export interface WorkerEgressHttpBrokerConfig {
 
 export interface WorkerEgressGuardOptions {
   allowInternalEgress?: boolean;
+  allowedInternalHosts?: readonly string[];
   resolveHost?: ResolveWorkerHost;
   socksProxy?: WorkerEgressSocksProxyConfig;
   httpBroker?: WorkerEgressHttpBrokerConfig;
 }
+
+export type InstalledWorkerEgressGuardOptions = WorkerEgressGuardOptions & {
+  allowInternalEgress: boolean;
+};
 
 export type WorkerEgressTcpConnect = (options: Deno.ConnectOptions) => Promise<Deno.TcpConn>;
 export type WorkerEgressTcpListen = (options: Deno.ListenOptions) => Deno.TcpListener;
@@ -222,6 +242,37 @@ function isLocalhostName(hostname: string): boolean {
   return normalized === "localhost" || normalized.endsWith(".localhost");
 }
 
+function normalizeInternalHost(hostname: string): string {
+  return stripIpv6Brackets(hostname.trim().toLowerCase());
+}
+
+function parseAllowedInternalHosts(value: string | undefined): string[] {
+  if (!value) return [];
+
+  const parsed = value.split(",").map((host) => normalizeInternalHost(host)).filter((host) =>
+    host.length > 0
+  );
+  return [...new Set(parsed)];
+}
+
+function getAllowedInternalHosts(): string[] {
+  return parseAllowedInternalHosts(getHostEnv(WORKER_INTERNAL_EGRESS_ALLOWED_HOSTS_ENV));
+}
+
+function isAllowedInternalHost(hostname: string, options: WorkerEgressGuardOptions): boolean {
+  const entries = options.allowedInternalHosts ?? getAllowedInternalHosts();
+  // Only DNS hostnames may be allowlisted: IP literals and localhost names in
+  // the allowlist would bypass the metadata/loopback guard without the
+  // explicit allowInternalEgress override.
+  const allowlist = entries.map((host) => normalizeInternalHost(host)).filter((host) =>
+    host.length > 0 && !isIpLiteral(host) && !isLocalhostName(host)
+  );
+  if (allowlist.length === 0) return false;
+  const host = normalizeInternalHost(hostname);
+  if (isIpLiteral(host) || isLocalhostName(host)) return false;
+  return allowlist.includes(host);
+}
+
 async function defaultResolveHost(hostname: string): Promise<string[]> {
   return await resolveHostAddresses(hostname);
 }
@@ -268,7 +319,11 @@ async function resolveWorkerHostEgressAddresses(
   const allowInternalEgress = options.allowInternalEgress === true;
 
   const host = stripIpv6Brackets(hostname.trim().toLowerCase());
-  if (!allowInternalEgress && (isLocalhostName(host) || isInternalEgressIp(host))) {
+  const allowedInternalHost = isAllowedInternalHost(host, options);
+  if (
+    !allowInternalEgress && !allowedInternalHost &&
+    (isLocalhostName(host) || isInternalEgressIp(host))
+  ) {
     throw new WorkerEgressBlockedError(
       `Worker network egress blocked for internal host: ${hostname}`,
     );
@@ -291,7 +346,7 @@ async function resolveWorkerHostEgressAddresses(
         `Worker network egress blocked: resolver returned an invalid address for host ${hostname}`,
       );
     }
-    if (!allowInternalEgress && isInternalEgressIp(normalizedAddress)) {
+    if (!allowInternalEgress && !allowedInternalHost && isInternalEgressIp(normalizedAddress)) {
       throw new WorkerEgressBlockedError(
         `Worker network egress blocked for host: ${hostname}`,
       );
@@ -309,10 +364,6 @@ function getConnectHostname(options: unknown): string | null {
   if (transport !== undefined && transport !== "tcp") return null;
   const hostname = options.hostname;
   return typeof hostname === "string" ? hostname : "127.0.0.1";
-}
-
-function getAllowInternalEgress(): boolean {
-  return isInternalEgressOverrideEnabled(getHostEnv(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV));
 }
 
 function getPinnedEgressRuntime(
@@ -340,6 +391,25 @@ function safeClose(connection: { close(): void }): void {
     connection.close();
   } catch {
     // The connection may already be closed by its peer.
+  }
+}
+
+const MAX_WORKER_EGRESS_SOCKS_CONNECTIONS = 32;
+const MAX_WORKER_EGRESS_BROKER_REQUESTS = 32;
+const SOCKS_HANDSHAKE_TIMEOUT_MS = 10_000;
+const SOCKS_RELAY_BUFFER_BYTES = 16 * 1024;
+
+function trackHandler(
+  handlers: Set<Promise<void>>,
+  operation: Promise<void>,
+): void {
+  const tracked = operation.finally(() => handlers.delete(tracked));
+  handlers.add(tracked);
+}
+
+async function drainHandlers(handlers: Set<Promise<void>>): Promise<void> {
+  while (handlers.size > 0) {
+    await Promise.all(handlers);
   }
 }
 
@@ -403,7 +473,7 @@ async function relayTcpConnections(
 
   const relay = async (source: Deno.Conn, destination: Deno.Conn): Promise<void> => {
     try {
-      const buffer = new Uint8Array(16 * 1024);
+      const buffer = new Uint8Array(SOCKS_RELAY_BUFFER_BYTES);
       while (true) {
         const read = await source.read(buffer);
         if (read === null) {
@@ -656,6 +726,7 @@ interface PinnedSocksTunnel {
   client: Deno.HttpClient;
   abort(): void;
   closeListener(): void;
+  closed: Promise<void>;
 }
 
 function randomCredential(): string {
@@ -685,6 +756,7 @@ function startPinnedSocksTunnel(
   const password = encoder.encode(passwordText);
   const controller = new AbortController();
   const connections = new Set<Deno.Conn>();
+  const handlers = new Set<Promise<void>>();
   let accepting = true;
   let claimed = false;
 
@@ -698,7 +770,6 @@ function startPinnedSocksTunnel(
     closeListener();
     controller.abort(new Error("Pinned egress tunnel closed"));
     for (const connection of connections) safeClose(connection);
-    connections.clear();
   };
 
   const handleConnection = async (downstream: Deno.TcpConn): Promise<void> => {
@@ -709,9 +780,10 @@ function startPinnedSocksTunnel(
       handshakeExpired = true;
       handshakeController.abort(new Error("SOCKS proxy handshake timed out"));
       safeClose(downstream);
-    }, 10_000);
+    }, SOCKS_HANDSHAKE_TIMEOUT_MS);
     let upstream: Deno.TcpConn | undefined;
     let responseStarted = false;
+    let ownsClaim = false;
     try {
       const authenticated = await authenticateSocksClient(downstream, username, password);
       if (!authenticated || claimed) return;
@@ -726,7 +798,11 @@ function startPinnedSocksTunnel(
       }
 
       claimed = true;
+      ownsClaim = true;
       closeListener();
+      for (const connection of connections) {
+        if (connection !== downstream) safeClose(connection);
+      }
       clearTimeout(handshakeTimeout);
       if (handshakeExpired) return;
       upstream = await connectFirstAddress(
@@ -758,6 +834,7 @@ function startPinnedSocksTunnel(
         safeClose(upstream);
         connections.delete(upstream);
       }
+      if (ownsClaim) abort();
     }
   };
 
@@ -765,14 +842,23 @@ function startPinnedSocksTunnel(
     while (accepting && !claimed) {
       try {
         const connection = await listener.accept();
-        void handleConnection(connection);
+        if (handlers.size >= MAX_WORKER_EGRESS_SOCKS_CONNECTIONS) {
+          safeClose(connection);
+          continue;
+        }
+        trackHandler(handlers, handleConnection(connection));
       } catch {
         if (accepting) abort();
         return;
       }
     }
   };
-  void acceptLoop();
+  const acceptTask = acceptLoop();
+  const closed = (async () => {
+    await acceptTask;
+    await drainHandlers(handlers);
+    connections.clear();
+  })();
 
   let client: Deno.HttpClient;
   try {
@@ -788,12 +874,14 @@ function startPinnedSocksTunnel(
     throw error;
   }
 
-  return { client, abort, closeListener };
+  return { client, abort, closeListener, closed };
 }
 
 export interface WorkerEgressSocksProxy {
   config: WorkerEgressSocksProxyConfig;
   close(): void;
+  /** Resolves after the listener and every admitted connection have stopped. */
+  closed: Promise<void>;
 }
 
 export function startWorkerEgressSocksProxy(
@@ -819,6 +907,7 @@ export function startWorkerEgressSocksProxy(
   const password = encoder.encode(config.password);
   const controller = new AbortController();
   const connections = new Set<Deno.Conn>();
+  const handlers = new Set<Promise<void>>();
   let open = true;
 
   const close = () => {
@@ -827,7 +916,6 @@ export function startWorkerEgressSocksProxy(
     controller.abort(new Error("Worker egress proxy closed"));
     safeClose(listener);
     for (const connection of connections) safeClose(connection);
-    connections.clear();
   };
 
   const handleConnection = async (downstream: Deno.TcpConn): Promise<void> => {
@@ -838,7 +926,7 @@ export function startWorkerEgressSocksProxy(
       handshakeExpired = true;
       handshakeController.abort(new Error("SOCKS proxy handshake timed out"));
       safeClose(downstream);
-    }, 10_000);
+    }, SOCKS_HANDSHAKE_TIMEOUT_MS);
     let upstream: Deno.TcpConn | undefined;
     let responseStarted = false;
     try {
@@ -891,15 +979,24 @@ export function startWorkerEgressSocksProxy(
     while (open) {
       try {
         const connection = await listener.accept();
-        void handleConnection(connection);
+        if (handlers.size >= MAX_WORKER_EGRESS_SOCKS_CONNECTIONS) {
+          safeClose(connection);
+          continue;
+        }
+        trackHandler(handlers, handleConnection(connection));
       } catch {
         if (open) close();
       }
     }
   };
-  void acceptLoop();
+  const acceptTask = acceptLoop();
+  const closed = (async () => {
+    await acceptTask;
+    await drainHandlers(handlers);
+    connections.clear();
+  })();
 
-  return { config, close };
+  return { config, close, closed };
 }
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
@@ -923,6 +1020,19 @@ const HOP_BY_HOP_HEADERS = [
   "upgrade",
 ] as const;
 
+// Fetch only strips a small set of credentials automatically. Provider SDKs
+// also use API-key headers, so the guard must remove those before a
+// cross-origin redirect can be followed.
+const CROSS_ORIGIN_CREDENTIAL_HEADERS = [
+  "authorization",
+  "cookie",
+  "proxy-authorization",
+  "x-api-key",
+  "api-key",
+  "x-auth-token",
+  "x-goog-api-key",
+] as const;
+
 function stripHopByHopHeaders(headers: Headers): void {
   for (const name of HOP_BY_HOP_HEADERS) headers.delete(name);
 }
@@ -941,7 +1051,7 @@ function createSocksHttpClient(
 }
 
 async function fetchThroughHttpBroker(
-  fetchImpl: typeof fetch,
+  fetchImpl: WorkerEgressFetch,
   broker: WorkerEgressHttpBrokerConfig,
   targetUrl: string,
   init: RequestInit,
@@ -991,12 +1101,44 @@ async function fetchThroughHttpBroker(
   return response;
 }
 
+/** Fetch shape consumed by the worker egress guard. */
+export type WorkerEgressFetch = (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+) => Promise<Response>;
+
+/** DNS-pinned transport seam used after the guard validates every address. */
+export type WorkerEgressPinnedFetch = (
+  url: URL,
+  addresses: readonly string[],
+  init: RequestInit,
+) => Promise<Response>;
+
+/** Redirect hop whose guarded destination request returned a response. */
+export interface WorkerEgressRedirect {
+  status: number;
+  fromUrl: URL;
+  toUrl: URL;
+}
+
 /** Dependencies for {@link guardedEgressFetch} (injectable for tests). */
 export interface GuardedEgressFetchDeps {
   /** Underlying fetch implementation (defaults to the global `fetch`). */
-  fetchImpl?: typeof fetch;
+  fetchImpl?: WorkerEgressFetch;
+  /**
+   * Trusted DNS-pinned transport replacement. The guard still resolves and
+   * validates every address before invoking this seam.
+   */
+  pinnedFetch?: WorkerEgressPinnedFetch;
   /** Egress options applied to the initial URL and every redirect hop. */
   options?: WorkerEgressGuardOptions;
+  /**
+   * Optional caller-owned policy applied to the initial URL and every
+   * redirect destination before a connection is opened.
+   */
+  authorizeUrl?: (url: URL) => void | Promise<void>;
+  /** Observe each redirect after its guarded destination request succeeds. */
+  onRedirect?: (redirect: WorkerEgressRedirect) => void | Promise<void>;
   /** Captured runtime primitives used to establish the DNS-pinned tunnel. */
   runtime?: Partial<PinnedEgressRuntime>;
 }
@@ -1030,6 +1172,7 @@ export async function guardedEgressFetch(
   let resolvedRuntime: PinnedEgressRuntime | undefined;
   const getRuntime = () => resolvedRuntime ??= getPinnedEgressRuntime(deps.runtime);
   let didRedirect = false;
+  let pendingRedirect: WorkerEgressRedirect | undefined;
 
   const requestedRedirect: RequestRedirect = init?.redirect ??
     (input instanceof Request ? input.redirect : "follow");
@@ -1043,11 +1186,21 @@ export async function guardedEgressFetch(
   const headers = new Headers(
     init?.headers ?? (input instanceof Request ? input.headers : undefined),
   );
+  // Following a redirect means resending the body, and a stream cannot replay,
+  // so streams are materialized only when redirects are actually followed --
+  // otherwise isReplayableBody rejects the hop. Callers that pass
+  // `redirect: "error"` or `"manual"` -- every guarded caller today, blob
+  // uploads included -- stream straight through rather than holding the whole
+  // payload in memory, and never reach the replay check because both modes
+  // return or throw first.
+  const mayFollowRedirect = requestedRedirect === "follow";
   let body: BodyInit | undefined;
   if (init?.body != null) {
-    body = init.body as BodyInit;
+    body = mayFollowRedirect && init.body instanceof ReadableStream
+      ? new Uint8Array(await new Response(init.body).arrayBuffer())
+      : init.body as BodyInit;
   } else if (input instanceof Request && input.body) {
-    body = new Uint8Array(await input.arrayBuffer());
+    body = mayFollowRedirect ? new Uint8Array(await input.arrayBuffer()) : input.body;
   }
 
   // Preserve request-level options (notably `signal`, so aborts keep working)
@@ -1066,19 +1219,23 @@ export async function guardedEgressFetch(
 
   for (let hop = 0;; hop++) {
     const parsedUrl = new URL(url);
+    await deps.authorizeUrl?.(parsedUrl);
     const hostname = getUrlHostname(parsedUrl);
     let tunnel: PinnedSocksTunnel | undefined;
     let client: Deno.HttpClient | undefined;
     let response: Response;
+    let pinnedResponse: Promise<Response> | undefined;
     const isNetworkRequest = hostname !== null &&
       (parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:");
-    const requestInit: RequestInit = {
+    const requestInit: RequestInit & { duplex?: "half" } = {
       ...init,
       ...carryInit,
       method,
       headers,
       body,
       redirect: "manual",
+      // Streaming a request body requires the half-duplex opt-in.
+      ...(body instanceof ReadableStream ? { duplex: "half" as const } : {}),
     };
 
     if (options.httpBroker && isNetworkRequest) {
@@ -1098,22 +1255,52 @@ export async function guardedEgressFetch(
             : parsedUrl.protocol === "https:"
             ? 443
             : 80;
-          tunnel = startPinnedSocksTunnel(hostname, addresses, port, getRuntime());
-          client = tunnel.client;
+          if (deps.pinnedFetch || (isNode || isBun) && deps.runtime === undefined) {
+            const pinnedFetch = deps.pinnedFetch ?? fetchWithPinnedAddresses;
+            pinnedResponse = Promise.resolve().then(() =>
+              pinnedFetch(parsedUrl, addresses, requestInit)
+            );
+          } else {
+            tunnel = startPinnedSocksTunnel(hostname, addresses, port, getRuntime());
+            client = tunnel.client;
+          }
         }
       }
 
+      const pendingResponse = pinnedResponse
+        ? pinnedResponse
+        : Promise.resolve().then(() =>
+          doFetch(url, {
+            ...requestInit,
+            ...(client ? { client } : {}),
+          })
+        );
       try {
-        response = await doFetch(url, {
-          ...requestInit,
-          ...(client ? { client } : {}),
-        });
+        response = await waitForOperation(pendingResponse, requestInit.signal ?? undefined);
       } catch (error) {
         tunnel?.abort();
+        // A non-cooperative fetch can resolve after the request has already
+        // timed out. Its body is no longer observable, so release it without
+        // keeping the listener/client alive for the late result.
+        void pendingResponse.then(
+          (lateResponse) => lateResponse.body?.cancel().catch(() => undefined),
+          () => undefined,
+        );
         throw error;
       } finally {
         client?.close();
         tunnel?.closeListener();
+      }
+    }
+
+    if (pendingRedirect) {
+      const followedRedirect = pendingRedirect;
+      pendingRedirect = undefined;
+      try {
+        await deps.onRedirect?.(followedRedirect);
+      } catch (error) {
+        await response.body?.cancel().catch(() => undefined);
+        throw error;
       }
     }
 
@@ -1153,13 +1340,16 @@ export async function guardedEgressFetch(
         `Worker network egress blocked: redirect to non-http(s) scheme ${nextUrl.protocol}`,
       );
     }
+    pendingRedirect = {
+      status: response.status,
+      fromUrl: parsedUrl,
+      toUrl: nextUrl,
+    };
     // Cross-origin redirect: strip credential-bearing headers, matching the
     // platform fetch this guard replaces, so a redirect target cannot receive
     // the caller's Authorization/Cookie.
     if (nextUrl.origin !== new URL(url).origin) {
-      headers.delete("authorization");
-      headers.delete("cookie");
-      headers.delete("proxy-authorization");
+      for (const header of CROSS_ORIGIN_CREDENTIAL_HEADERS) headers.delete(header);
     }
     url = nextUrl.href;
     didRedirect = true;
@@ -1200,6 +1390,100 @@ export interface WorkerEgressBrokerConfig {
 export interface WorkerEgressBroker {
   config: WorkerEgressBrokerConfig;
   close(): void;
+  /** Resolves after both listeners and every admitted request have stopped. */
+  closed: Promise<void>;
+}
+
+interface BrokerRequestLease {
+  readonly signal: AbortSignal;
+  readonly completion: Promise<void>;
+  setBodyCancel(cancel: () => Promise<void>): void;
+  release(): void;
+  abort(reason: Error): void;
+}
+
+function createBrokerRequestLease(onRelease: () => void): BrokerRequestLease {
+  const controller = new AbortController();
+  const { promise: completion, resolve } = Promise.withResolvers<void>();
+  let bodyCancel: (() => Promise<void>) | undefined;
+  let released = false;
+
+  const release = () => {
+    if (released) return;
+    released = true;
+    bodyCancel = undefined;
+    onRelease();
+    resolve();
+  };
+
+  return {
+    signal: controller.signal,
+    completion,
+    setBodyCancel(cancel) {
+      if (released) {
+        void cancel().catch(() => undefined);
+        return;
+      }
+      bodyCancel = cancel;
+    },
+    release,
+    abort(reason) {
+      if (!controller.signal.aborted) controller.abort(reason);
+      if (bodyCancel) {
+        void bodyCancel().then(release, release);
+      }
+    },
+  };
+}
+
+function holdBrokerResponse(
+  response: Response,
+  lease: BrokerRequestLease,
+): Response {
+  if (!response.body) {
+    lease.release();
+    return response;
+  }
+
+  const reader = response.body.getReader();
+  lease.setBodyCancel(() => reader.cancel(new Error("Worker egress broker closed")));
+
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const result = await reader.read();
+        if (result.done) {
+          lease.release();
+          controller.close();
+          return;
+        }
+        controller.enqueue(result.value);
+      } catch (error) {
+        lease.release();
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+      } finally {
+        lease.release();
+      }
+    },
+  });
+
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
+function brokerErrorResponse(message: string, status: number): Response {
+  return Response.json(
+    { message },
+    { status, headers: { [BROKER_ERROR_HEADER]: "1" } },
+  );
 }
 
 export function startWorkerEgressBroker(
@@ -1217,13 +1501,18 @@ export function startWorkerEgressBroker(
   const tokenBytes = new TextEncoder().encode(token);
   const controller = new AbortController();
   const fetchImpl = globalThis.fetch.bind(globalThis);
+  const activeRequests = new Set<BrokerRequestLease>();
+  let open = true;
 
-  const handler = async (request: Request): Promise<Response> => {
+  const handleAdmittedRequest = async (
+    request: Request,
+    signal: AbortSignal,
+  ): Promise<Response> => {
     const receivedToken = new TextEncoder().encode(request.headers.get(BROKER_AUTH_HEADER) ?? "");
     if (!constantTimeEqual(receivedToken, tokenBytes)) {
-      return Response.json(
-        { message: "Worker network egress broker authentication failed" },
-        { status: 403, headers: { [BROKER_ERROR_HEADER]: "1" } },
+      return brokerErrorResponse(
+        "Worker network egress broker authentication failed",
+        403,
       );
     }
 
@@ -1233,9 +1522,9 @@ export function startWorkerEgressBroker(
       targetUrl = new URL(target ?? "");
       if (targetUrl.protocol !== "http:" && targetUrl.protocol !== "https:") throw new Error();
     } catch {
-      return Response.json(
-        { message: "Worker network egress blocked: invalid broker target" },
-        { status: 400, headers: { [BROKER_ERROR_HEADER]: "1" } },
+      return brokerErrorResponse(
+        "Worker network egress blocked: invalid broker target",
+        400,
       );
     }
 
@@ -1256,7 +1545,7 @@ export function startWorkerEgressBroker(
           headers,
           body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
           redirect: "manual",
-          signal: request.signal,
+          signal,
         },
         {
           fetchImpl,
@@ -1295,11 +1584,47 @@ export function startWorkerEgressBroker(
       const message = error instanceof WorkerEgressBlockedError
         ? error.message
         : "Worker network egress blocked or failed";
-      return Response.json(
-        { message },
-        { status: 502, headers: { [BROKER_ERROR_HEADER]: "1" } },
+      return brokerErrorResponse(message, 502);
+    }
+  };
+
+  const runAdmittedRequest = async (
+    request: Request,
+    lease: BrokerRequestLease,
+  ): Promise<Response> => {
+    try {
+      const signal = AbortSignal.any([
+        request.signal,
+        controller.signal,
+        lease.signal,
+      ]);
+      const response = await handleAdmittedRequest(request, signal);
+      if (lease.signal.aborted || controller.signal.aborted) {
+        await response.body?.cancel().catch(() => undefined);
+        lease.release();
+        return brokerErrorResponse("Worker egress broker closed", 503);
+      }
+      return holdBrokerResponse(response, lease);
+    } catch {
+      lease.release();
+      return brokerErrorResponse("Worker network egress blocked or failed", 502);
+    }
+  };
+
+  const handler = (request: Request): Response | Promise<Response> => {
+    if (!open) {
+      return brokerErrorResponse("Worker egress broker closed", 503);
+    }
+    if (activeRequests.size >= MAX_WORKER_EGRESS_BROKER_REQUESTS) {
+      return brokerErrorResponse(
+        "Worker network egress blocked: broker request admission limit reached",
+        429,
       );
     }
+
+    const lease = createBrokerRequestLease(() => activeRequests.delete(lease));
+    activeRequests.add(lease);
+    return runAdmittedRequest(request, lease);
   };
 
   let server: Deno.HttpServer<Deno.NetAddr>;
@@ -1329,9 +1654,28 @@ export function startWorkerEgressBroker(
     token,
   };
   const close = () => {
-    controller.abort();
+    if (!open) return;
+    open = false;
+    const reason = new Error("Worker egress broker closed");
+    controller.abort(reason);
+    for (const request of activeRequests) request.abort(reason);
     socks.close();
   };
+  const serverFinished = server.finished;
+  const closed = (async () => {
+    let serverFailed = false;
+    let serverError: unknown;
+    try {
+      await serverFinished;
+    } catch (error) {
+      serverFailed = true;
+      serverError = error;
+    }
+    close();
+    await Promise.all([...activeRequests].map((request) => request.completion));
+    await socks.closed;
+    if (serverFailed) throw serverError;
+  })();
   return {
     config: {
       socksProxy: socks.config,
@@ -1342,6 +1686,7 @@ export function startWorkerEgressBroker(
       ],
     },
     close,
+    closed,
   };
 }
 
@@ -1416,15 +1761,19 @@ export async function guardedWorkerConnectTls(
   }
 }
 
-export function installWorkerEgressGuard(options: WorkerEgressGuardOptions = {}): void {
+export function installWorkerEgressGuard(
+  options: InstalledWorkerEgressGuardOptions,
+): void {
   const globalRecord = globalThis as typeof globalThis & Record<PropertyKey, unknown>;
   if (globalRecord[guardInstalled]) return;
+  if (typeof options.allowInternalEgress !== "boolean") {
+    throw new TypeError("Worker egress allowInternalEgress must be a boolean");
+  }
 
   const runtime = getPinnedEgressRuntime();
-
   const baseOptions = {
     ...options,
-    allowInternalEgress: options.allowInternalEgress ?? getAllowInternalEgress(),
+    allowedInternalHosts: options.allowedInternalHosts ?? getAllowedInternalHosts(),
   };
 
   const originalFetch = globalThis.fetch.bind(globalThis);
@@ -1452,7 +1801,7 @@ export function installWorkerEgressGuard(options: WorkerEgressGuardOptions = {})
         );
       }
       return await guardedWorkerConnect(
-        options as unknown as Deno.ConnectOptions,
+        options as Deno.ConnectOptions & Record<PropertyKey, unknown>,
         baseOptions,
         runtime,
       );

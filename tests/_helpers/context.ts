@@ -37,14 +37,7 @@ import { startProductionServer } from "../../src/server/production-server.ts";
 import { resetApiHandler } from "../../src/server/handlers/request/api/index.ts";
 import { runWithCacheDir } from "../../src/utils/cache-dir.ts";
 import { resetAllTestState } from "../../src/testing/isolation.ts";
-import { SERVER_CONFIG, TEST_TIMEOUTS } from "./constants.ts";
-import {
-  getHttpServerUrl,
-  pollHttpReadyByAttempts,
-  pollHttpStoppedByAttempts,
-  waitForHttpServerReadySignal,
-} from "./http-polling.ts";
-import type { TestServer } from "./server.ts";
+import { type TestServer, waitForServerReady, waitForServerStopped } from "./server.ts";
 import { getFreePort } from "./utils.ts";
 
 const REPOSITORY_ROOT = fromFileUrl(new URL("../../", import.meta.url));
@@ -136,6 +129,20 @@ export async function registerExtMdxForTests(): Promise<void> {
   }
 }
 
+// Register the ext-css-tailwind CSSProcessor contract. Rendering integration
+// tests use this context after production bootstrap or another test resets the
+// process-wide contract registry, so import-time registration is insufficient.
+export async function registerExtCssForTests(): Promise<void> {
+  try {
+    const { registerTailwindExtension } = await import(
+      "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts"
+    );
+    await registerTailwindExtension();
+  } catch {
+    // Ignore if ext-css-tailwind cannot be loaded.
+  }
+}
+
 export async function registerExtAnthropicForTests(): Promise<void> {
   try {
     const { register, tryResolve } = await import("../../src/extensions/contracts.ts");
@@ -212,6 +219,7 @@ export async function registerExtGoogleForTests(): Promise<void> {
 await registerExtBabelForTests();
 await registerExtOpenAIForTests();
 await registerExtMdxForTests();
+await registerExtCssForTests();
 await registerExtAnthropicForTests();
 await registerExtGoogleForTests();
 
@@ -423,7 +431,7 @@ export class TestContext {
     testServer.hostname = "127.0.0.1";
     this.servers.push(testServer);
 
-    await this.waitForServerReady(testServer);
+    await waitForServerReady(testServer);
     return testServer;
   }
 
@@ -454,7 +462,7 @@ export class TestContext {
     testServer.hostname = hostname;
     this.servers.push(testServer);
 
-    await this.waitForServerReady(testServer);
+    await waitForServerReady(testServer);
     return testServer;
   }
 
@@ -512,7 +520,7 @@ export class TestContext {
     for (const server of this.servers) {
       try {
         await server.stop();
-        await this.waitForServerStopped(server);
+        await waitForServerStopped(server);
       } catch {
         // Ignore stop errors - server may already be stopped
       }
@@ -699,44 +707,6 @@ export class TestContext {
 };`,
     );
   }
-
-  /**
-   * Waits for a server to be ready with exponential backoff
-   */
-  private async waitForServerReady(server: TestServer): Promise<void> {
-    const maxAttempts = SERVER_CONFIG.MAX_READY_ATTEMPTS;
-    const url = getHttpServerUrl(server, { defaultPort: 3000, defaultHostname: "localhost" });
-
-    await waitForHttpServerReadySignal(server, {
-      timeoutMs: TEST_TIMEOUTS.SERVER_STARTUP,
-      timeoutMessage: "Server ready timeout",
-    });
-
-    const ready = await pollHttpReadyByAttempts(url, {
-      maxAttempts,
-      baseDelayMs: SERVER_CONFIG.READY_CHECK_DELAY,
-      maxDelayMs: SERVER_CONFIG.MAX_READY_DELAY,
-      backoffFactor: 1.5,
-      jitterMs: 100,
-      requestTimeoutMs: SERVER_CONFIG.FETCH_TIMEOUT,
-    });
-
-    if (ready) return;
-    throw new Error(`Server at ${url} not ready after ${maxAttempts} attempts`);
-  }
-
-  /**
-   * Waits for a server to stop
-   */
-  private async waitForServerStopped(server: TestServer): Promise<void> {
-    const url = getHttpServerUrl(server, { defaultPort: 3000, defaultHostname: "localhost" });
-
-    await pollHttpStoppedByAttempts(url, {
-      maxAttempts: 10,
-      retryDelayMs: 100,
-      requestTimeoutMs: 100,
-    });
-  }
 }
 
 /**
@@ -760,6 +730,7 @@ export async function withTestContext<T>(
       // wipes the registry via teardownAll().
       await registerExtBabelForTests();
       await registerExtMdxForTests();
+      await registerExtCssForTests();
       await registerExtOpenAIForTests();
       await registerExtAnthropicForTests();
 

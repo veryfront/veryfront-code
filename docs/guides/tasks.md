@@ -48,19 +48,42 @@ interface TaskDefinition {
   description?: string;
   inputSchema?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
+  integrationRequirements?: ScheduleIntegrationRequirementConfig[];
   schedulable?: boolean;
   run: (ctx: TaskContext) => Promise<unknown> | unknown;
 }
 ```
 
-| Field          | Required | Description                                      |
-| -------------- | -------- | ------------------------------------------------ |
-| `name`         | No       | Human-readable name                              |
-| `description`  | No       | What the task does                               |
-| `inputSchema`  | No       | JSON-schema-like input contract for APIs and UIs |
-| `outputSchema` | No       | JSON-schema-like output contract                 |
-| `schedulable`  | No       | Whether it can be used as a schedule target      |
-| `run`          | Yes      | The function to execute                          |
+| Field                     | Required | Description                                      |
+| ------------------------- | -------- | ------------------------------------------------ |
+| `name`                    | No       | Human-readable name                              |
+| `description`             | No       | What the task does                               |
+| `inputSchema`             | No       | JSON-schema-like input contract for APIs and UIs |
+| `outputSchema`            | No       | JSON-schema-like output contract                 |
+| `integrationRequirements` | No       | Integration access required by scheduled runs    |
+| `schedulable`             | No       | Scheduling eligibility metadata for APIs and UIs |
+| `run`                     | Yes      | The function to execute                          |
+
+Use `integrationRequirements` when a scheduled task needs specific provider
+scopes or resources before it can run:
+
+```ts
+export default {
+  name: "Sync Slack channel",
+  schedulable: true,
+  integrationRequirements: [{
+    integration: "slack",
+    requiredScopes: ["channels:read"],
+    resources: [{ kind: "channel", id: "C012345" }],
+  }],
+  async run(ctx) {
+    return { ok: true };
+  },
+};
+```
+
+Veryfront reads this field from task metadata only. It does not infer
+requirements from task source code.
 
 ## Task context
 
@@ -71,24 +94,51 @@ interface TaskContext {
   env: Record<string, string>;
   config: Record<string, unknown>;
   projectId?: string;
+  environmentId?: string;
+  signal?: AbortSignal;
 }
 ```
 
 - **`env`**: filtered environment variables (use `envAllowlist` to restrict)
 - **`config`**: run configuration (passed when run in the cloud)
 - **`projectId`**: project identifier (available in cloud context)
+- **`environmentId`**: runtime-target environment identifier, when selected
+- **`signal`**: optional cooperative cancellation signal
+
+Reserved control variables are never copied into `ctx.env`: every variable
+prefixed `TENANT_` and a fixed set of framework `VERYFRONT_` control keys (API
+token, API URLs, project identity, branch ref, and the injected-payload
+variable itself). Other project-defined `VERYFRONT_` names are not filtered
+solely because of that prefix. Cloud project variables are carried through the
+`VERYFRONT_TASK_ENV_JSON` payload and merged over visible host variables. That
+payload must be a JSON object; if it is malformed, execution fails before the
+task function runs instead of continuing with missing configuration.
+
+`envAllowlist` applies to both visible host variables and injected project
+variables. Without an allowlist, local tasks receive non-reserved host
+variables; use an allowlist when a task should see only a minimal set.
+
+When execution is tied to an HTTP request or another cancellable runtime,
+Veryfront passes that cancellation signal through `ctx.signal`. A signal that
+is already aborted prevents the task from starting. Long-running task code
+should pass the signal to cancellable operations such as `fetch`; JavaScript
+functions that ignore the signal cannot be forcibly terminated by the task
+runner.
 
 ## Discovery
 
 Tasks are discovered automatically from the `tasks/` directory:
 
-```
+```text
 tasks/
   sync-data.ts           → task ID: "sync-data"
-  reports/weekly.ts      → task ID: "reports-weekly"
+  reports/weekly.ts      → task ID: "reports/weekly"
 ```
 
-File extensions `.ts`, `.tsx`, `.js`, `.jsx` are supported. Test files and `node_modules` are ignored.
+Canonical project-runtime discovery supports `.ts` and `.tsx` task modules.
+The deprecated standalone `discoverTasks` helper also accepts `.js` and
+`.jsx` and skips test files and `node_modules`. Task IDs preserve nested path
+segments and use `/` on every supported operating system.
 
 ## Running tasks
 
@@ -102,7 +152,9 @@ Task IDs come from files under `tasks/`.
 
 ### As a cloud run
 
-Tasks with `schedulable: true` can be targeted by runs and schedules:
+Set `schedulable: true` when a task should be presented as eligible for
+schedule targeting. Runs and schedules identify it with the same stable task
+ID:
 
 ```ts
 import { VeryfrontRunsClient } from "veryfront/runs";

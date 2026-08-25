@@ -84,28 +84,158 @@ describe("stream lifecycle shadow", () => {
       { count: 0, categories: [] },
     );
 
+    const legacyToolCalls = () =>
+      new Map([[
+        "tool-1",
+        {
+          id: "tool-1",
+          name: "web_search",
+          arguments: '{"query":"jobs"}',
+          providerExecuted: true,
+          inputAvailable: true,
+        },
+      ]]);
+
     assertEquals(
       shadow.compareLegacySnapshot({
         ...createStreamState(),
-        toolCalls: new Map([[
-          "tool-1",
-          {
-            id: "tool-1",
-            name: "web_search",
-            arguments: '{"query":"jobs"}',
-            providerExecuted: true,
-            inputAvailable: true,
-          },
-        ]]),
+        toolCalls: legacyToolCalls(),
         toolResults: [{
           toolCallId: "tool-1",
-          toolName: "web_lookup",
-          error: { count: 2, entries: ["a", "b"] },
+          toolName: "web_search",
+          output: { count: 2, entries: ["a", "b"] },
           providerExecuted: true,
           preliminary: true,
         }],
       }),
       { count: 1, categories: ["tool_result"] },
+      "preliminary divergence must be reported on its own",
+    );
+
+    assertEquals(
+      shadow.compareLegacySnapshot({
+        ...createStreamState(),
+        toolCalls: legacyToolCalls(),
+        toolResults: [{
+          toolCallId: "tool-1",
+          toolName: "web_search",
+          error: { count: 2, entries: ["a", "b"] },
+          providerExecuted: true,
+          preliminary: false,
+        }],
+      }),
+      { count: 1, categories: ["tool_result"] },
+      "error-instead-of-output divergence must be reported on its own",
+    );
+
+    assertEquals(
+      shadow.compareLegacySnapshot({
+        ...createStreamState(),
+        toolCalls: legacyToolCalls(),
+        toolResults: [{
+          toolCallId: "tool-1",
+          toolName: "web_search",
+          output: { count: 2, entries: ["a", "b"] },
+          providerExecuted: true,
+          preliminary: false,
+          dynamic: true,
+        }],
+      }),
+      { count: 1, categories: ["tool_result"] },
+      "dynamic divergence must be reported on its own",
+    );
+  });
+
+  it("reports a decoder crash as shadow_error instead of claiming agreement", () => {
+    const shadow = createStreamLifecycleShadow({
+      availableToolNames: [],
+      providerExecutedToolNames: [],
+    });
+    shadow.observePart({
+      type: "text-delta",
+      get text(): string {
+        throw new Error("decoder crash");
+      },
+    });
+    const report = shadow.compareLegacySnapshot(createStreamState());
+    assertEquals(
+      report.categories.includes("shadow_error"),
+      true,
+      "a decoder crash must be reported as shadow_error",
+    );
+    assertEquals(report.count >= 1, true, "a crashed shadow must never report zero divergence");
+  });
+
+  it("reports tool input divergence", () => {
+    const shadow = createStreamLifecycleShadow({
+      availableToolNames: ["web_search"],
+      providerExecutedToolNames: ["web_search"],
+    });
+    shadow.observePart({
+      type: "tool-input-start",
+      id: "tool-1",
+      toolName: "web_search",
+    });
+    shadow.observePart({
+      type: "tool-input-available",
+      id: "tool-1",
+      toolName: "web_search",
+      input: { query: "jobs" },
+      providerExecuted: true,
+    });
+    const report = shadow.compareLegacySnapshot({
+      ...createStreamState(),
+      toolCalls: new Map([[
+        "tool-1",
+        {
+          id: "tool-1",
+          name: "web_search",
+          arguments: '{"query":"cats"}',
+          providerExecuted: true,
+          inputAvailable: true,
+        },
+      ]]),
+    });
+    assertEquals(
+      report.categories.includes("tool_input"),
+      true,
+      "differing tool arguments must be reported as tool_input",
+    );
+    assertEquals(
+      JSON.stringify(report).includes("cats"),
+      false,
+      "reports must not leak input text",
+    );
+  });
+
+  it("reports reasoning divergence", () => {
+    const shadow = createStreamLifecycleShadow({
+      availableToolNames: [],
+      providerExecutedToolNames: [],
+    });
+    shadow.observePart({ type: "reasoning-start", id: "r-1" });
+    shadow.observePart({ type: "reasoning-delta", id: "r-1", delta: "shadow secret" });
+    const report = shadow.compareLegacySnapshot({
+      ...createStreamState(),
+      reasoningParts: [{ id: "r-1", text: "different secret" }],
+    });
+    assertEquals(
+      report.categories.includes("reasoning"),
+      true,
+      "differing reasoning text must be reported as reasoning",
+    );
+    assertEquals(
+      JSON.stringify(report).includes("secret"),
+      false,
+      "reports must not leak reasoning text",
+    );
+    assertEquals(
+      shadow.compareLegacySnapshot({
+        ...createStreamState(),
+        reasoningParts: [{ id: "r-1", text: "shadow secret" }],
+      }),
+      { count: 0, categories: [] },
+      "matching reasoning text must not be reported",
     );
   });
 

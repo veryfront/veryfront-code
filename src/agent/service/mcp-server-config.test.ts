@@ -1,24 +1,36 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createAgentServiceRemoteMcpConfig,
+  createProjectScopedMcpUrl,
   defaultAgentServiceMcpServers,
 } from "./mcp-server-config.ts";
 
-Deno.test("defaultAgentServiceMcpServers enables first-party MCP servers", () => {
+it("defaultAgentServiceMcpServers enables first-party MCP servers", () => {
   assertEquals(defaultAgentServiceMcpServers(), [
     { kind: "veryfront-api" },
     { kind: "veryfront-studio" },
   ]);
 });
 
-Deno.test("createAgentServiceRemoteMcpConfig builds Veryfront API MCP config", async () => {
+it("createAgentServiceRemoteMcpConfig builds Veryfront API MCP config", async () => {
+  let projectId = "project-1";
   const config = createAgentServiceRemoteMcpConfig({
     server: { kind: "veryfront-api" },
     authToken: "token-1",
     apiMcpUrl: "https://api.example/mcp",
+    getProjectId: () => projectId,
   });
   assertEquals(config?.id, "veryfront-mcp");
-  assertEquals(config?.endpoint, "https://api.example/mcp");
+  assertEquals(
+    typeof config?.endpoint === "function" ? await config.endpoint() : config?.endpoint,
+    "https://api.example/projects/project-1/mcp",
+  );
+  projectId = "project-2";
+  assertEquals(
+    typeof config?.endpoint === "function" ? await config.endpoint() : config?.endpoint,
+    "https://api.example/projects/project-2/mcp",
+  );
   assertEquals(
     typeof config?.headers === "function" ? await config.headers() : config?.headers,
     {
@@ -45,8 +57,35 @@ Deno.test("createAgentServiceRemoteMcpConfig builds Veryfront API MCP config", a
   );
 });
 
-Deno.test("createAgentServiceRemoteMcpConfig builds generic MCP config without dropping options", () => {
-  const customFetch = () => Promise.resolve(new Response("{}"));
+describe("createProjectScopedMcpUrl", () => {
+  it("normalizes and replaces the project segment", () => {
+    assertEquals(
+      createProjectScopedMcpUrl("https://api.example", " project/1 "),
+      "https://api.example/projects/project%2F1/mcp",
+    );
+    assertEquals(
+      createProjectScopedMcpUrl("https://api.example/projects/old/mcp", "new"),
+      "https://api.example/projects/new/mcp",
+    );
+    assertEquals(
+      createProjectScopedMcpUrl("https://api.example/mcp", "  "),
+      "https://api.example/mcp",
+    );
+    assertEquals(
+      createProjectScopedMcpUrl(
+        "https://api.example/mcp/?environment=staging",
+        "project-1",
+      ),
+      "https://api.example/projects/project-1/mcp?environment=staging",
+    );
+    assertEquals(
+      createProjectScopedMcpUrl("not an absolute URL", "project-1"),
+      "not an absolute URL",
+    );
+  });
+});
+
+it("createAgentServiceRemoteMcpConfig builds generic MCP config without dropping options", () => {
   const headers = { Authorization: "Bearer external-token" };
   assertEquals(
     createAgentServiceRemoteMcpConfig({
@@ -54,7 +93,6 @@ Deno.test("createAgentServiceRemoteMcpConfig builds generic MCP config without d
         id: "linear",
         endpoint: "https://linear.example/mcp",
         headers,
-        fetch: customFetch,
         listMethod: "tools/list",
         callMethod: "tools/call",
       },
@@ -65,14 +103,13 @@ Deno.test("createAgentServiceRemoteMcpConfig builds generic MCP config without d
       id: "linear",
       endpoint: "https://linear.example/mcp",
       headers,
-      fetch: customFetch,
       listMethod: "tools/list",
       callMethod: "tools/call",
     },
   );
 });
 
-Deno.test("createAgentServiceRemoteMcpConfig gates Studio MCP by client profile", async () => {
+it("createAgentServiceRemoteMcpConfig gates Studio MCP by client profile", async () => {
   const blockedConfig = createAgentServiceRemoteMcpConfig({
     server: { kind: "veryfront-studio" },
     authToken: "token-1",

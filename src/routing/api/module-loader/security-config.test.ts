@@ -7,7 +7,24 @@ import { loadSecurityConfig } from "./security-config.ts";
 
 function makeAdapter(): RuntimeAdapter {
   return {
-    env: { get: () => undefined },
+    id: "memory",
+    name: "security-config-test",
+    capabilities: {
+      typescript: false,
+      jsx: false,
+      http2: false,
+      websocket: false,
+      workers: false,
+      fileWatching: false,
+      shell: false,
+      kvStore: false,
+      writableFs: false,
+    },
+    env: {
+      get: () => undefined,
+      set: () => {},
+      toObject: () => ({}),
+    },
     fs: {
       readFile: () => Promise.resolve(""),
       writeFile: () => Promise.resolve(),
@@ -29,6 +46,12 @@ function makeAdapter(): RuntimeAdapter {
         [Symbol.asyncIterator]: async function* () {},
       }),
     },
+    server: {
+      upgradeWebSocket: () => {
+        throw new Error("not supported");
+      },
+    },
+    serve: () => Promise.reject(new Error("not supported")),
   };
 }
 
@@ -48,6 +71,37 @@ describe("routing/api/module-loader/security-config", () => {
     it("should return a non-empty list of allowed hosts", async () => {
       const result = await loadSecurityConfig("/tmp/nonexistent-project", makeAdapter());
       assertEquals(result.length > 0, true);
+    });
+
+    it("uses a supplied config snapshot without broadening an explicit empty allow-list", async () => {
+      const result = await loadSecurityConfig(
+        "/tmp/nonexistent-project",
+        makeAdapter(),
+        { security: { remoteHosts: [] } },
+      );
+      assertEquals(result, []);
+    });
+
+    it("uses defaults only when the supplied config snapshot omits remoteHosts", async () => {
+      const result = await loadSecurityConfig(
+        "/tmp/nonexistent-project",
+        makeAdapter(),
+        { security: {} },
+      );
+      assertEquals(result, DEFAULT_ALLOWED_CDN_HOSTS);
+    });
+
+    it("falls back to the default CDN hosts when config loading fails", async () => {
+      const failingAdapter = makeAdapter();
+      failingAdapter.fs.exists = () => Promise.reject(new Error("config read exploded"));
+      failingAdapter.fs.readFile = () => Promise.reject(new Error("config read exploded"));
+
+      const result = await loadSecurityConfig("/tmp/config-load-failure-project", failingAdapter);
+      assertEquals(
+        result,
+        DEFAULT_ALLOWED_CDN_HOSTS,
+        "a getConfig failure must fall back to the default allow-list, never to a broader or empty one",
+      );
     });
   });
 });

@@ -20,7 +20,7 @@ export const getAgentStatusSchema = defineSchema((v) =>
 
 export const getMemoryConfigSchema = defineSchema((v) =>
   v.object({
-    type: v.enum(["conversation", "buffer", "summary", "redis"] as const),
+    type: v.enum(["conversation", "buffer", "summary"] as const),
     maxTokens: v.number().int().positive().optional(),
     maxMessages: v.number().int().positive().optional(),
     // Persist history across calls on the agent instance. Defaults to true when
@@ -46,6 +46,7 @@ export const getToolCallPartWithArgsSchema = defineSchema((v) =>
     args: v.record(v.string(), v.unknown()),
     inputText: v.string().optional(),
     providerExecuted: v.boolean().optional(),
+    supportsDeferredResults: v.boolean().optional(),
   })
 );
 
@@ -57,6 +58,7 @@ export const getToolCallPartWithInputSchema = defineSchema((v) =>
     input: v.record(v.string(), v.unknown()),
     inputText: v.string().optional(),
     providerExecuted: v.boolean().optional(),
+    supportsDeferredResults: v.boolean().optional(),
   })
 );
 
@@ -191,6 +193,9 @@ export const getAgentResponseSchema = defineSchema((v) =>
     toolCalls: v.array(getToolCallSchema()),
     status: getAgentStatusSchema(),
     thinking: v.string().optional(),
+    // Parsed `outputSchema` value. Typed precisely by `AgentResponse<TOutput>`;
+    // the runtime schema only has to accept it.
+    object: v.unknown().optional(),
     usage: v
       .object({
         promptTokens: v.number().int().nonnegative(),
@@ -256,7 +261,29 @@ export type Message = InferSchema<ReturnType<typeof getMessageSchema>>;
 export type StreamToolCall = InferSchema<ReturnType<typeof getStreamToolCallSchema>>;
 /** Public API contract for tool call. */
 export type ToolCall = InferSchema<ReturnType<typeof getToolCallSchema>>;
-/** Response payload for agent. */
-export type AgentResponse = InferSchema<ReturnType<typeof getAgentResponseSchema>>;
+/** Response payload for agent, before structured-output typing. */
+export type BaseAgentResponse = InferSchema<ReturnType<typeof getAgentResponseSchema>>;
+
+/**
+ * Presence and type of `object` for a given structured-output type.
+ *
+ * `never` is the no-`outputSchema` case and yields no value. `any` is the
+ * erasure used by slots that hold agents of any output type, and has to stay
+ * assignable from both of the other branches.
+ */
+type AgentResponseObject<TOutput> = [TOutput] extends [never] ? { object?: undefined }
+  : 0 extends 1 & TOutput ? { object?: unknown }
+  : { object: TOutput };
+
+/**
+ * Response payload for agent.
+ *
+ * `TOutput` is the type parsed out of the agent's `outputSchema`. Without one,
+ * the response carries no `object`.
+ */
+// deno-lint-ignore no-explicit-any -- generic erasure: must accept any concrete AgentResponse instantiation
+export type AgentResponse<TOutput = any> =
+  & BaseAgentResponse
+  & AgentResponseObject<TOutput>;
 /** Context for agent. */
 export type AgentContext = InferSchema<ReturnType<typeof getAgentContextSchema>>;

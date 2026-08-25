@@ -8,6 +8,7 @@
 import { detectPlatform } from "#veryfront/platform/core-platform.ts";
 import { agentLogger } from "#veryfront/utils";
 import { ensureError } from "#veryfront/errors";
+import { isExplicitHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
 import type {
   DiscoveryConfig,
@@ -34,9 +35,10 @@ import { filenameToId } from "./discovery-utils.ts";
 
 const logger = agentLogger.component("discovery");
 
-type DiscoveryCandidate<T> = {
+type DiscoveryCandidate<Candidate, Prepared> = {
   exportName: string;
-  item: T;
+  item: Candidate;
+  prepared?: Prepared;
 };
 
 function isIndexModule(file: string): boolean {
@@ -56,30 +58,34 @@ function resolveDiscoveryDir(baseDir: string, dir: string): string {
   return `${baseDir}/${dir}`;
 }
 
-function collectDiscoveryCandidates<T>(
+function collectNamedDiscoveryCandidates<T, Candidate, Prepared>(
   module: unknown,
-  handler: DiscoveryHandler<T>,
-): DiscoveryCandidate<T>[] {
-  const defaultItem = (module as { default?: T }).default;
-  if (handler.validate(defaultItem)) {
-    return [{ exportName: "default", item: defaultItem }];
-  }
-
-  const candidates: DiscoveryCandidate<T>[] = [];
+  handler: DiscoveryHandler<T, Candidate, Prepared>,
+  onError: (error: unknown) => void,
+): DiscoveryCandidate<Candidate, Prepared>[] {
+  const candidates: DiscoveryCandidate<Candidate, Prepared>[] = [];
   for (const [exportName, value] of Object.entries(module as Record<string, unknown>)) {
     if (exportName === "default") continue;
-    if (!handler.validate(value)) continue;
-    candidates.push({ exportName, item: value });
+    try {
+      if (!handler.validate(value)) continue;
+      candidates.push({
+        exportName,
+        item: value,
+        prepared: handler.prepare?.(value),
+      });
+    } catch (error) {
+      onError(error);
+    }
   }
 
   return candidates;
 }
 
-function getCandidateId<T>(
-  candidate: DiscoveryCandidate<T>,
+function getCandidateId<T, Candidate, Prepared>(
+  candidate: DiscoveryCandidate<Candidate, Prepared>,
   file: string,
   dir: string,
-  handler: DiscoveryHandler<T>,
+  handler: DiscoveryHandler<T, Candidate, Prepared>,
   useExportNameFallback: boolean,
 ): string {
   const derivedId = handler.getId(candidate.item, file, dir);
@@ -93,11 +99,11 @@ function getCandidateId<T>(
 /**
  * Discover items of a specific type in a directory
  */
-async function discoverItems<T>(
+async function discoverItems<T, Candidate, Prepared>(
   dir: string,
   result: DiscoveryResult,
   context: FileDiscoveryContext,
-  handler: DiscoveryHandler<T>,
+  handler: DiscoveryHandler<T, Candidate, Prepared>,
   verbose?: boolean,
 ): Promise<void> {
   const files = (await findTypeScriptFiles(dir, context)).sort(compareDiscoveryFiles);
@@ -108,18 +114,89 @@ async function discoverItems<T>(
   }
 
   for (const file of files) {
+    let module: unknown;
     try {
-      const module = await importModule(file, context);
-      const candidates = collectDiscoveryCandidates(module, handler);
-      if (candidates.length === 0) {
-        if (verbose) {
-          logger.warn(`${file} does not export a valid ${handler.typeName}`);
-        }
-        continue;
-      }
+      module = await importModule(file, context);
+    } catch (error) {
+      result.errors.push({ file, error: ensureError(error) });
 
-      const useExportNameFallback = candidates.length > 1 || isIndexModule(file);
-      for (const candidate of candidates) {
+      if (verbose) {
+        logger.error(`Error loading ${file}:`, error);
+      }
+      continue;
+    }
+
+    const recordCandidateError = (error: unknown): void => {
+      result.errors.push({ file, error: ensureError(error) });
+      if (verbose) {
+        logger.error(`Error registering ${handler.typeName} from ${file}:`, error);
+      }
+    };
+
+    let defaultCandidate: DiscoveryCandidate<Candidate, Prepared> | undefined;
+    try {
+      const defaultItem = (module as { default?: unknown }).default;
+      if (handler.validate(defaultItem)) {
+        defaultCandidate = {
+          exportName: "default",
+          item: defaultItem,
+          prepared: handler.prepare?.(defaultItem),
+        };
+      }
+    } catch (error) {
+      recordCandidateError(error);
+    }
+
+    if (defaultCandidate !== undefined) {
+      try {
+        const id = getCandidateId(
+          defaultCandidate,
+          file,
+          dir,
+          handler,
+          isIndexModule(file),
+        );
+        if (resultMap.has(id)) {
+          if (verbose) {
+            logger.warn(`Duplicate ${handler.typeName} "${id}" in ${file}; keeping first`);
+          }
+          continue;
+        }
+
+        const registered = handler.register(
+          id,
+          defaultCandidate.item,
+          file,
+          dir,
+          "default",
+          defaultCandidate.prepared,
+        );
+        resultMap.set(id, registered);
+        if (verbose) logger.info(`Registered ${handler.typeName}: ${id}`);
+        continue;
+      } catch (error) {
+        recordCandidateError(error);
+      }
+    }
+
+    let candidates: DiscoveryCandidate<Candidate, Prepared>[];
+    try {
+      candidates = collectNamedDiscoveryCandidates(module, handler, recordCandidateError);
+    } catch (error) {
+      recordCandidateError(error);
+      continue;
+    }
+
+    if (candidates.length === 0) {
+      if (verbose) {
+        logger.warn(`${file} does not export a valid ${handler.typeName}`);
+      }
+      continue;
+    }
+
+    const useExportNameFallback = candidates.length > 1 || isIndexModule(file);
+    for (const candidate of candidates) {
+      try {
         const id = getCandidateId(
           candidate,
           file,
@@ -141,33 +218,27 @@ async function discoverItems<T>(
           file,
           dir,
           candidate.exportName,
+          candidate.prepared,
         );
         resultMap.set(id, registered);
 
         if (verbose) {
-          const exportSuffix = candidate.exportName === "default"
-            ? ""
-            : ` (export: ${candidate.exportName})`;
-          logger.info(`Registered ${handler.typeName}: ${id}${exportSuffix}`);
+          logger.info(`Registered ${handler.typeName}: ${id} (export: ${candidate.exportName})`);
         }
-      }
-    } catch (error) {
-      result.errors.push({ file, error: ensureError(error) });
-
-      if (verbose) {
-        logger.error(`Error loading ${file}:`, error);
+      } catch (error) {
+        recordCandidateError(error);
       }
     }
   }
 }
 
-async function discoverConfiguredItems<T>(
+async function discoverConfiguredItems<T, Candidate, Prepared>(
   dirs: string[] | undefined,
   defaultDirs: string[],
   baseDir: string,
   result: DiscoveryResult,
   context: FileDiscoveryContext,
-  handler: DiscoveryHandler<T>,
+  handler: DiscoveryHandler<T, Candidate, Prepared>,
   verbose?: boolean,
 ): Promise<void> {
   for (const dir of dirs ?? defaultDirs) {
@@ -185,6 +256,12 @@ async function discoverConfiguredItems<T>(
  * Discover all items in configured directories
  */
 export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryResult> {
+  if (!isExplicitHostProjectCodeExecutionAllowed(config)) {
+    throw new TypeError(
+      "Executable project discovery requires explicit trusted-local execution",
+    );
+  }
+
   const baseDir = config.baseDir;
 
   const context: FileDiscoveryContext = {
@@ -192,6 +269,7 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
     fsAdapter: config.fsAdapter,
     cacheNamespace: config.cacheNamespace,
     baseDir,
+    allowHostProjectCodeExecution: true,
   };
 
   const result: DiscoveryResult = {

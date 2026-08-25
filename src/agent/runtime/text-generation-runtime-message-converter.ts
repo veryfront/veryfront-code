@@ -16,8 +16,10 @@ import type {
   TextGenerationRuntimeToolMessage,
   TextGenerationRuntimeToolResultPart,
 } from "./text-generation-runtime-message-types.ts";
+import { assertProviderReachableAttachment } from "./attachment-reachability.ts";
 import { buildDataFileAnnotation } from "#veryfront/chat/types.ts";
 import { getTextFromParts, getToolArguments, type Message, type ToolCallPart } from "../types.ts";
+import { readAttachedProviderMetadata } from "./provider-metadata.ts";
 
 function getStringPartField(part: unknown, key: string): string | undefined {
   if (!part || typeof part !== "object" || Array.isArray(part)) return undefined;
@@ -199,7 +201,10 @@ function getUserTextWithAttachmentContext(parts: Message["parts"]): string {
     : appendReadableAttachmentContext(text, buildAttachmentContextFromParts(parts));
 }
 
-function getUserFileParts(parts: Message["parts"]): TextGenerationRuntimeFilePart[] {
+function getUserFileParts(
+  parts: Message["parts"],
+  requireInternetReachableAttachments: boolean,
+): TextGenerationRuntimeFilePart[] {
   return parts.flatMap((part) => {
     const type = getStringPartField(part, "type");
     if (type !== "file" && type !== "image") return [];
@@ -209,6 +214,18 @@ function getUserFileParts(parts: Message["parts"]): TextGenerationRuntimeFilePar
     // `data:` URLs (inline base64) are kept so the model receives the bytes as a
     // native image/file part (guest / no-project attachments have no fetchable URL).
     if (!mediaType || !url) return [];
+
+    // A remote provider dereferences this URL from its own network. A URL that
+    // can never resolve there comes back as a bare 400 that names nothing, so
+    // it fails here instead, naming the attachment. A server-local runtime
+    // fetches from this machine, where those URLs do resolve, so it is exempt.
+    if (requireInternetReachableAttachments) {
+      assertProviderReachableAttachment({
+        url,
+        filename: getStringPartField(part, "filename"),
+        mediaType,
+      });
+    }
 
     return [{
       type,
@@ -222,13 +239,29 @@ function getUserFileParts(parts: Message["parts"]): TextGenerationRuntimeFilePar
 }
 
 /**
+ * How a converted prompt will reach the model.
+ *
+ * `requireInternetReachableAttachments` says whether the runtime that receives
+ * this prompt fetches attachment URLs from its own network — every remote
+ * provider does, and a `server-local` runtime does not. Defaulting to `true`
+ * keeps the check on for the common case; callers holding the runtime turn it
+ * off (`src/agent/runtime/index.ts`).
+ */
+export interface TextGenerationRuntimeConversionOptions {
+  requireInternetReachableAttachments?: boolean;
+}
+
+/**
  * Convert a veryfront Message to the current text-generation runtime message format.
  */
 export function convertToTextGenerationRuntimeMessage(
   msg: Message,
-  options: { providerExecutedToolCallIds?: Set<string> } = {},
+  options:
+    & { providerExecutedToolCallIds?: Set<string> }
+    & TextGenerationRuntimeConversionOptions = {},
 ): TextGenerationRuntimeMessage {
   const providerExecutedToolCallIds = options.providerExecutedToolCallIds ?? new Set<string>();
+  const requireInternetReachableAttachments = options.requireInternetReachableAttachments ?? true;
 
   switch (msg.role) {
     case "system": {
@@ -237,7 +270,7 @@ export function convertToTextGenerationRuntimeMessage(
     }
 
     case "user": {
-      const fileParts = getUserFileParts(msg.parts);
+      const fileParts = getUserFileParts(msg.parts, requireInternetReachableAttachments);
       if (fileParts.length === 0) {
         const text = getUserTextWithAttachmentContext(msg.parts);
         return { role: "user", content: text };
@@ -286,9 +319,11 @@ export function convertToTextGenerationRuntimeMessage(
         content.push({ type: "text", text: "" });
       }
 
+      const providerMetadata = readAttachedProviderMetadata(msg);
       const assistantMessage: TextGenerationRuntimeAssistantMessage = {
         role: "assistant",
         content,
+        ...(providerMetadata === undefined ? {} : { providerMetadata }),
       };
       return assistantMessage;
     }
@@ -324,6 +359,7 @@ export function convertToTextGenerationRuntimeMessage(
 
 function hasProviderSendableAssistantContent(message: Message): boolean {
   if (message.role !== "assistant") return true;
+  if (readAttachedProviderMetadata(message) !== undefined) return true;
 
   return message.parts.some((part) => {
     if (part.type === "text" && "text" in part) {
@@ -436,6 +472,20 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
   flushToolMessage();
   flushAssistantMessage(deferredAssistantContent);
 
+  const providerMetadata = readAttachedProviderMetadata(message);
+  const assistantMessages = messages.filter((entry) => entry.role === "assistant");
+  // Exact replay metadata describes one provider response. Attaching it after
+  // conversion split that response would pair it with an incomplete projection.
+  if (providerMetadata !== undefined && assistantMessages.length === 1) {
+    assistantMessages[0]!.providerMetadata = providerMetadata;
+  } else if (providerMetadata !== undefined && messages.length === 0) {
+    messages.push({
+      role: "assistant",
+      content: [{ type: "text", text: "" }],
+      providerMetadata,
+    });
+  }
+
   return messages;
 }
 
@@ -444,6 +494,7 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
  */
 export function convertToTextGenerationRuntimeMessages(
   messages: Message[],
+  options: TextGenerationRuntimeConversionOptions = {},
 ): TextGenerationRuntimeMessage[] {
   const textGenerationRuntimeMessages: TextGenerationRuntimeMessage[] = [];
   const providerExecutedToolCallIds = new Set<string>();
@@ -466,7 +517,10 @@ export function convertToTextGenerationRuntimeMessages(
 
     const convertedMessages = message.role === "assistant"
       ? convertAssistantMessageToTextGenerationRuntimeMessages(message, providerExecutedToolCallIds)
-      : [convertToTextGenerationRuntimeMessage(message, { providerExecutedToolCallIds })];
+      : [convertToTextGenerationRuntimeMessage(message, {
+        providerExecutedToolCallIds,
+        ...options,
+      })];
 
     for (const convertedMessage of convertedMessages) {
       if (convertedMessage.role === "tool" && convertedMessage.content.length === 0) {
@@ -497,8 +551,9 @@ export function convertToTextGenerationRuntimeMessages(
  */
 export function convertToTextGenerationRuntimeRequestMessages(
   messages: Message[],
+  options: TextGenerationRuntimeConversionOptions = {},
 ): TextGenerationRuntimeMessage[] {
-  const requestMessages = convertToTextGenerationRuntimeMessages(messages);
+  const requestMessages = convertToTextGenerationRuntimeMessages(messages, options);
 
   while (requestMessages.at(-1)?.role === "assistant") {
     requestMessages.pop();

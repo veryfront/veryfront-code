@@ -137,7 +137,7 @@ export function createErrorHandler() {
  * [ERROR] {slug} ({category}) - {title}
  *   Detail: {detail}
  *   Suggestion: {suggestion}
- *   Docs: https://veryfront.com/docs/errors/{slug}
+ *   Docs: https://veryfront.com/docs/code/guides/errors#{slug}
  */
 export function formatErrorLog(error: VeryfrontError): string {
   const snapshot = snapshotErrorForBoundary(error);

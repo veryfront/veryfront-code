@@ -42,7 +42,7 @@ export async function openKv(path?: string): Promise<Kv> {
       const db = await sqliteStore.openSqliteDatabase(path);
       // Extension SqliteDatabase is structurally identical to SqliteDatabase;
       // cast to satisfy the SqliteKv constructor's nominal type check.
-      return new SqliteKv(db as unknown as SqliteDatabase);
+      return new SqliteKv(db as SqliteDatabase);
     } catch (error) {
       backendFailures.push(error);
       serverLogger.warn(

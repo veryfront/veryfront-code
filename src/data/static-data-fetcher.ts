@@ -1,6 +1,7 @@
 import type { CacheManager } from "./data-fetching-cache.ts";
 import { isDataControlResult, toDataControlResult } from "./helpers.ts";
-import type { DataContext, DataResult, PageWithData } from "./types.ts";
+import { validateDataResult } from "./data-result-validation.ts";
+import type { DataContext, PageWithData, StaticDataResult } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
@@ -72,7 +73,7 @@ export class StaticDataFetcher {
     pageModule: PageWithData,
     context: DataContext,
     options: StaticDataFetchOptions = {},
-  ): Promise<DataResult> {
+  ): Promise<StaticDataResult> {
     const getStaticData = pageModule.getStaticData;
     if (typeof getStaticData !== "function") return { props: {} };
 
@@ -127,25 +128,28 @@ export class StaticDataFetcher {
     context: DataContext,
     timeoutMs: number,
     label: string,
-  ): Promise<DataResult> {
+  ): Promise<StaticDataResult> {
     try {
-      return await withTimeoutThrow(
+      const result = await withTimeoutThrow(
         Promise.resolve(getStaticData(this.createStaticDataContext(context))),
         timeoutMs,
         label,
       );
+      return validateDataResult(result, "getStaticData");
     } catch (error) {
       // `throw notFound()` / `throw redirect(...)`: treat a thrown control
       // result exactly like a returned one. Normalising at the one place every
       // path runs the handler covers the cached path as well as the preview
       // one, and keeps a 404 from counting against the caller's circuit
       // breaker.
-      if (isDataControlResult(error)) return toDataControlResult(error);
+      if (isDataControlResult(error)) {
+        return validateDataResult(toDataControlResult(error), "getStaticData");
+      }
       throw error;
     }
   }
 
-  private storeCacheEntry(cacheKey: string, result: DataResult): void {
+  private storeCacheEntry(cacheKey: string, result: StaticDataResult): void {
     this.cacheManager.set(cacheKey, {
       data: result,
       timestamp: Date.now(),
@@ -156,7 +160,7 @@ export class StaticDataFetcher {
   private async fetchFreshNoCache(
     getStaticData: StaticDataHandler,
     context: DataContext,
-  ): Promise<DataResult> {
+  ): Promise<StaticDataResult> {
     const pathname = context.url?.pathname ?? "unknown";
     const start = performance.now();
 
@@ -188,7 +192,7 @@ export class StaticDataFetcher {
     getStaticData: StaticDataHandler,
     context: DataContext,
     cacheKey: string,
-  ): Promise<DataResult> {
+  ): Promise<StaticDataResult> {
     const pathname = context.url?.pathname ?? "unknown";
     // Extract projectId from request headers (set by proxy) for proper circuit breaker isolation
     const projectId = resolveProjectId(context, "default");

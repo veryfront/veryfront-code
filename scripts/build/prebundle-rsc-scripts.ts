@@ -35,8 +35,10 @@ const importMap: Record<string, string> = denoConfig.imports ?? {};
 // Barrel imports that pull in heavy server-side deps. Redirect to the
 // specific file that actually contains the export the client scripts need.
 const BARREL_OVERRIDES: Record<string, string> = {
-  // html-sanitizer.ts only needs SECURITY_VIOLATION — error-registry.ts
-  // exports it without pulling in tracing, middleware, OpenTelemetry, etc.
+  // The errors barrel drags in tracing, middleware, and OpenTelemetry.
+  // error-registry.ts is the cheapest module that still exports every
+  // definition. Cheaper still is a leaf module under error-registry/, which is
+  // what client code should import; this only catches whatever misses that.
   "#veryfront/errors": "./src/errors/error-registry.ts",
 };
 
@@ -164,6 +166,46 @@ export const CLIENT_BOOT_BUNDLE: string = ${JSON.stringify(clientBootBundle)};
 export const CLIENT_DOM_BUNDLE: string = ${JSON.stringify(clientDomBundle)};
 `;
 
+/** `deno fmt` decides the committed shape, so compare post-format both ways. */
+async function formatTypeScript(source: string): Promise<string> {
+  const formatted = new Deno.Command("deno", {
+    args: ["fmt", "-", "--ext", "ts"],
+    stdin: "piped",
+    stdout: "piped",
+    stderr: "piped",
+  }).spawn();
+
+  const writer = formatted.stdin.getWriter();
+  await writer.write(new TextEncoder().encode(source));
+  await writer.close();
+
+  const result = await formatted.output();
+  if (!result.success) {
+    const err = new TextDecoder().decode(result.stderr).trim();
+    throw new Error(`Failed to format the generated bundle${err ? `: ${err}` : ""}`);
+  }
+  return new TextDecoder().decode(result.stdout);
+}
+
+// --check makes a stale committed bundle fail CI instead of relying on someone
+// noticing it missing from a PR diff.
+if (Deno.args.includes("--check")) {
+  const formatted = await formatTypeScript(output);
+  const committed = await Deno.readTextFile(outputPath).catch(() => null);
+  await esbuild.stop();
+
+  if (committed !== formatted) {
+    console.error(
+      `[prebundle-rsc-scripts] ${outputPath} is stale.\n` +
+        `  The committed bundle does not match src/rendering/rsc/.\n` +
+        `  Run \`deno task generate\` and commit the result.`,
+    );
+    Deno.exit(1);
+  }
+  console.log("[prebundle-rsc-scripts] Committed bundle is up to date");
+  Deno.exit(0);
+}
+
 await Deno.writeTextFile(outputPath, output);
 
 const fmtResult = await new Deno.Command("deno", {
@@ -177,7 +219,7 @@ if (!fmtResult.success) {
   console.warn(`[prebundle-rsc-scripts] Warning: could not format output: ${err}`);
 }
 
-esbuild.stop();
+await esbuild.stop();
 
 console.log(`[prebundle-rsc-scripts] Written to ${outputPath}`);
 console.log(`  client-boot: ${(clientBootBundle.length / 1024).toFixed(1)} KB`);

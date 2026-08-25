@@ -34,6 +34,32 @@ describe("rendering/rsc/dependency-snapshot-recovery", () => {
     assertEquals(reloads, 1);
   });
 
+  it("releases the one-shot marker when the reload is blocked", async () => {
+    assertEquals(
+      await recoverFromDependencySnapshotConflict(
+        new Response("Unknown dependency snapshot", { status: 409 }),
+        () => {
+          throw new Error("blocked");
+        },
+      ),
+      false,
+      "a blocked reload reports no recovery",
+    );
+
+    let reloads = 0;
+    assertEquals(
+      await recoverFromDependencySnapshotConflict(
+        new Response("Unknown dependency snapshot", { status: 409 }),
+        () => {
+          reloads++;
+        },
+      ),
+      true,
+      "recovery is retried after a blocked reload",
+    );
+    assertEquals(reloads, 1, "the marker was released so the retry actually reloads");
+  });
+
   it("recognizes the exact dev fs JavaScript conflict module", async () => {
     let reloads = 0;
 

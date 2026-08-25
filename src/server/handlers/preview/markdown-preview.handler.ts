@@ -16,6 +16,11 @@ import { extract } from "#std/front-matter/yaml.ts";
 import { tryNotFoundFallback } from "../request/ssr/not-found-fallback.ts";
 import { generateMarkdownHtml } from "./markdown-html-generator.ts";
 import { validateLexicalPath, validatePath, ValidationPresets } from "#veryfront/security";
+import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
+import {
+  createErrorResponseFromDefinition,
+  PROJECT_EXECUTION_UNAVAILABLE,
+} from "#veryfront/errors";
 
 const logger = serverLogger.component("markdown-preview-handler");
 
@@ -41,6 +46,23 @@ export class MarkdownPreviewHandler extends BaseHandler {
 
     if (pathname.includes("/pages/") || pathname.includes("/app/") || pathname.startsWith("/_")) {
       return this.continue();
+    }
+
+    if (requiresIsolatedProjectRuntime(ctx)) {
+      const problem = createErrorResponseFromDefinition(
+        PROJECT_EXECUTION_UNAVAILABLE,
+        {
+          detail:
+            "Shared runtimes require a dedicated isolated project runtime for markdown rendering",
+          instance: pathname,
+        },
+      );
+      const response = this.createResponseBuilder(ctx)
+        .withSecurity(ctx.securityConfig ?? undefined, req)
+        .withCache("no-store")
+        .withHeaders(problem.headers)
+        .build(problem.body, problem.status);
+      return Promise.resolve(this.respond(response));
     }
 
     const filePath = pathname.replace(/^\//, "");

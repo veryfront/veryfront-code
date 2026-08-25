@@ -26,7 +26,9 @@ import {
 } from "./command.ts";
 import type { ApiClient } from "#cli/shared/config";
 import { readProjectLink } from "../../shared/project-link.ts";
+import { computeContentDigest, readSyncTarget } from "../../sync/state.ts";
 import { join } from "veryfront/platform/path";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/testing/deno-compat.ts";
 
 function createMockClient(overrides: {
   get?: (url: string, params?: unknown) => Promise<unknown>;
@@ -110,6 +112,7 @@ function expectedBootstrapPackage(name: string): Record<string, unknown> {
       start: "veryfront serve",
       eval: "veryfront eval",
       deploy: "veryfront deploy",
+      typecheck: "tsc --noEmit",
     },
     pnpm: {
       onlyBuiltDependencies: ["esbuild"],
@@ -118,6 +121,11 @@ function expectedBootstrapPackage(name: string): Record<string, unknown> {
       react: "^19.2.4",
       "react-dom": "^19.2.4",
       veryfront: `^${VERSION}`,
+    },
+    devDependencies: {
+      "@types/react": "^19.2.0",
+      "@types/react-dom": "^19.2.0",
+      typescript: "^5.9.0",
     },
   };
 }
@@ -146,6 +154,7 @@ const EXPECTED_BOOTSTRAP_PACKAGE = {
     start: "veryfront serve",
     eval: "veryfront eval",
     deploy: "veryfront deploy",
+    typecheck: "tsc --noEmit",
   },
   pnpm: {
     onlyBuiltDependencies: ["esbuild"],
@@ -154,6 +163,11 @@ const EXPECTED_BOOTSTRAP_PACKAGE = {
     react: "^19.2.4",
     "react-dom": "^19.2.4",
     veryfront: `^${VERSION}`,
+  },
+  devDependencies: {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    typescript: "^5.9.0",
   },
 };
 
@@ -527,6 +541,7 @@ describe("pullCommand", () => {
               data: [{
                 path: "app/page.tsx",
                 content: "export default function Page() { return null; }\n",
+                version_id: "00000000-0000-4000-8000-000000000001",
                 size: 47,
                 type: "file",
                 created_at: "2026-01-01T00:00:00Z",
@@ -560,6 +575,27 @@ describe("pullCommand", () => {
       assertEquals(
         JSON.parse(await Deno.readTextFile(join(tempDir, "tsconfig.json"))),
         EXPECTED_BOOTSTRAP_TSCONFIG,
+      );
+      assertEquals(
+        await readSyncTarget(tempDir, {
+          controlPlane: "https://api.veryfront.com",
+          projectId: "proj_alpha",
+          branch: "main",
+        }),
+        {
+          controlPlane: "https://api.veryfront.com",
+          projectId: "proj_alpha",
+          projectSlug: "alpha-canonical",
+          branch: "main",
+          files: {
+            "app/page.tsx": {
+              digest: await computeContentDigest(
+                "export default function Page() { return null; }\n",
+              ),
+              versionId: "00000000-0000-4000-8000-000000000001",
+            },
+          },
+        },
       );
     } finally {
       globalThis.fetch = originalFetch;
@@ -617,6 +653,60 @@ describe("pullCommand", () => {
       assertEquals(await Deno.readTextFile(join(tempDir, "package.json")), localPackage);
       assertEquals(await Deno.readTextFile(join(tempDir, "tsconfig.json")), remoteTsconfig);
       assertEquals((await readProjectLink(tempDir))?.projectId, "proj_alpha");
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("validates corrupt sync state before overwriting local files", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const originalFetch = globalThis.fetch;
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    const localContent = "export const source = 'local';\n";
+
+    try {
+      await Deno.mkdir(join(tempDir, ".veryfront"));
+      await Deno.writeTextFile(join(tempDir, ".veryfront", "sync-state.json"), "{invalid\n");
+      await Deno.writeTextFile(join(tempDir, "app.ts"), localContent);
+      Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+      _resetEnvironmentConfig();
+
+      globalThis.fetch = ((input: string | URL | Request) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/projects/alpha") {
+          return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha" }));
+        }
+        if (url.pathname === "/projects/alpha/files") {
+          return Promise.resolve(Response.json({
+            data: [{
+              path: "app.ts",
+              content: "export const source = 'remote';\n",
+              version_id: "00000000-0000-4000-8000-000000000010",
+              size: 32,
+              type: "file",
+            }],
+            page_info: {},
+          }));
+        }
+        throw new Error(`Pull made an unexpected request: ${url}`);
+      }) as typeof fetch;
+
+      await assertRejects(
+        () =>
+          pullCommand({
+            projectDir: tempDir,
+            projectSlug: "alpha",
+            force: true,
+            quiet: true,
+          }),
+        Error,
+        "could not read .veryfront/sync-state.json",
+      );
+
+      assertEquals(await Deno.readTextFile(join(tempDir, "app.ts")), localContent);
     } finally {
       globalThis.fetch = originalFetch;
       restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
@@ -1556,13 +1646,16 @@ describe("pullCommand", () => {
       Deno.env.set("VERYFRONT_API_TOKEN", "token");
       _resetEnvironmentConfig();
 
-      globalThis.fetch = (() =>
-        Promise.resolve(
-          new Response(JSON.stringify({ data: [], page_info: {} }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          }),
-        )) as typeof fetch;
+      globalThis.fetch = ((input: string | URL | Request) => {
+        const url = new URL(String(input));
+        return Promise.resolve(
+          Response.json(
+            url.pathname === "/projects/alpha"
+              ? { id: "proj_alpha", slug: "alpha" }
+              : { data: [], page_info: {} },
+          ),
+        );
+      }) as typeof fetch;
 
       await pullCommand({
         projectDir: tempDir,
@@ -1785,6 +1878,86 @@ describe("pullCommand", () => {
     }
   });
 
+  it("allows a pruning pull when only tracked sync metadata changed", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const originalFetch = globalThis.fetch;
+    const originalApiToken = getEnv("VERYFRONT_API_TOKEN");
+
+    try {
+      await runTestGit(tempDir, "init", "--quiet");
+      await runTestGit(tempDir, "config", "user.email", "test@example.com");
+      await runTestGit(tempDir, "config", "user.name", "Test User");
+      await Deno.mkdir(join(tempDir, ".veryfront"));
+      await Deno.writeTextFile(join(tempDir, "app.ts"), "old\n");
+      await Deno.writeTextFile(
+        join(tempDir, ".veryfront", "sync-state.json"),
+        '{"version":1,"targets":[]}\n',
+      );
+      await runTestGit(tempDir, "add", "app.ts", ".veryfront/sync-state.json");
+      await runTestGit(tempDir, "commit", "--quiet", "-m", "initial");
+      await Deno.writeTextFile(
+        join(tempDir, ".veryfront", "sync-state.json"),
+        JSON.stringify({
+          version: 1,
+          targets: [{
+            controlPlane: "https://api.veryfront.com",
+            projectId: "proj_alpha",
+            projectSlug: "alpha",
+            branch: "main",
+            files: {},
+          }],
+        }) + "\n",
+      );
+
+      setEnv("VERYFRONT_API_TOKEN", "token");
+      _resetEnvironmentConfig();
+      globalThis.fetch = ((input: string | URL | Request) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/projects/alpha") {
+          return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha" }));
+        }
+        if (url.pathname === "/projects/alpha/files") {
+          return Promise.resolve(
+            Response.json({
+              data: [{
+                path: "app.ts",
+                content: "new\n",
+                size: 4,
+                type: "file",
+              }],
+              page_info: {},
+            }),
+          );
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      }) as typeof fetch;
+
+      await pullCommand({
+        projectDir: tempDir,
+        projectSlug: "alpha",
+        prune: true,
+        force: true,
+        quiet: true,
+      });
+
+      assertEquals(await Deno.readTextFile(join(tempDir, "app.ts")), "new\n");
+      assertEquals(
+        (await readSyncTarget(tempDir, {
+          controlPlane: "https://api.veryfront.com",
+          projectId: "proj_alpha",
+          branch: "main",
+        }))?.projectSlug,
+        "alpha",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalApiToken === undefined) deleteEnv("VERYFRONT_API_TOKEN");
+      else setEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
   it("checks every nested Git repository before a multi-project prune", async () => {
     const tempDir = await Deno.makeTempDir();
     const projectDir = join(tempDir, "alpha");
@@ -1830,7 +2003,7 @@ describe("pullCommand", () => {
     }
   });
 
-  it("preflights a shared monorepo once and ignores nested push receipts", async () => {
+  it("preflights a shared monorepo once and ignores nested local metadata", async () => {
     const tempDir = await Deno.makeTempDir();
     const originalFetch = globalThis.fetch;
     const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
@@ -1849,6 +2022,10 @@ describe("pullCommand", () => {
         await Deno.writeTextFile(
           join(tempDir, project, ".veryfront", "push-receipt.json"),
           "{}\n",
+        );
+        await Deno.writeTextFile(
+          join(tempDir, project, ".veryfront", "sync-state.json"),
+          '{"version":1,"targets":[]}\n',
         );
       }
 

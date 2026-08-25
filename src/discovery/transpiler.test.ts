@@ -2,12 +2,19 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
-import { clearTranspileCache, importModule } from "./transpiler.ts";
+import { clearTranspileCache, importModule as importModuleRaw } from "./transpiler.ts";
 import type { FileDiscoveryContext } from "./types.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { reset, tryResolve } from "#veryfront/extensions/contracts.ts";
 import * as embeddingMod from "#veryfront/embedding/index.ts";
 import * as knowledgeMod from "#veryfront/knowledge";
+
+function importModule(file: string, context: FileDiscoveryContext) {
+  return importModuleRaw(file, {
+    ...context,
+    allowHostProjectCodeExecution: true,
+  });
+}
 
 /**
  * Creates a mock FileSystemAdapter backed by an in-memory file map.
@@ -120,6 +127,34 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
   });
 
   describe("importModule with fsAdapter", () => {
+    it("rejects untrusted discovery before reading or evaluating project code", async () => {
+      const marker = "__vf_untrusted_discovery_marker__";
+      delete (globalThis as Record<string, unknown>)[marker];
+      let reads = 0;
+      const adapter = createMockAdapter({
+        "/project/tools/untrusted.ts":
+          `globalThis.${marker} = Deno.env.get("VERYFRONT_API_TOKEN"); export default {};`,
+      });
+      const readFile = adapter.readFile.bind(adapter);
+      adapter.readFile = (path) => {
+        reads++;
+        return readFile(path);
+      };
+
+      await assertRejects(
+        () =>
+          importModuleRaw("file:///project/tools/untrusted.ts", {
+            platform: "node",
+            fsAdapter: adapter,
+            baseDir: "/project",
+          }),
+        TypeError,
+        "explicit trusted-local execution",
+      );
+      assertEquals(reads, 0);
+      assertEquals((globalThis as Record<string, unknown>)[marker], undefined);
+    });
+
     it("should transpile a simple module via fsAdapter", async () => {
       const files: Record<string, string> = {
         "/project/agents/assistant.ts": `export default { name: "test-agent" };`,
@@ -278,6 +313,36 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         contextFor(`export default { version: "release-2" };`),
       );
       assertEquals(third === second, true);
+    });
+
+    it("should isolate identical sources by cache namespace", async () => {
+      // Hosted runs address the VFS with baseDir "", so the explicit cache
+      // namespace is the only tenant separator: two projects whose entry
+      // module has byte-identical source must not share a module instance
+      // (and therefore must not share its module-level state).
+      const path = "/project/tools/x.ts";
+      const source = `export default { value: 1 };`;
+      const contextFor = (cacheNamespace: string): FileDiscoveryContext => ({
+        platform: "node",
+        fsAdapter: createMockAdapter({ [path]: source }),
+        baseDir: "",
+        cacheNamespace,
+      });
+
+      const projectA = await importModule(`file://${path}`, contextFor("project-a"));
+      const projectB = await importModule(`file://${path}`, contextFor("project-b"));
+      assertEquals(
+        projectA === projectB,
+        false,
+        "different cache namespaces must not share a module instance",
+      );
+
+      const projectAAgain = await importModule(`file://${path}`, contextFor("project-a"));
+      assertEquals(
+        projectAAgain === projectA,
+        true,
+        "the same cache namespace must reuse the cached module",
+      );
     });
 
     it("should not serve a stale cached module when a bundled dependency changes", async () => {

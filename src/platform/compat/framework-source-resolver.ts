@@ -3,6 +3,7 @@ import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 import { isWithinDirectory } from "#veryfront/utils/path-utils.ts";
 import { isCompiledBinary } from "#veryfront/utils/platform.ts";
 import { createFileSystem, isNotFoundError } from "./fs.ts";
+import { PUBLISHED_RUNTIME_HELPERS } from "./published-runtime-helpers.ts";
 import { getFrameworkRoot, getFrameworkRootFromMeta } from "./vfs-paths.ts";
 
 /**
@@ -228,7 +229,13 @@ export async function resolveRelativeFrameworkSourceImport(
 
   const extensions = options.extensions ?? DEFAULT_FRAMEWORK_SOURCE_EXTENSIONS;
   const basePath = resolve(dirname(fromSourcePath), specifier);
-  if (!isWithinDirectory(containingTree, basePath)) return null;
+  const isPublishedRuntimeHelper = PUBLISHED_RUNTIME_HELPERS.some(
+    (helper) => basePath === join(candidateRoot, helper),
+  );
+  if (!isWithinDirectory(containingTree, basePath) && !isPublishedRuntimeHelper) return null;
+  if (isPublishedRuntimeHelper) {
+    return await findExistingFrameworkCandidate(basePath, options);
+  }
 
   if (/\.(tsx?|jsx?|mjs)$/.test(specifier)) {
     const explicitCandidates = [basePath, `${basePath}.src`];

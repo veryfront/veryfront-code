@@ -186,7 +186,7 @@ export function createScriptedStreamProvider<T>(
       };
     },
     decode(part: T, _snapshot: Readonly<StreamSnapshot>): readonly StreamSignal[] {
-      return [part as unknown as StreamSignal];
+      return [part as StreamSignal];
     },
     classifyError(): StreamProviderError {
       return {

@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { getTransformCacheKey, getVersionedPathCacheKey } from "./cache-keys.ts";
+import {
+  getMdxModuleCacheVariant,
+  getTransformCacheKey,
+  getVersionedPathCacheKey,
+} from "./cache-keys.ts";
 import { MDX_ESM_CACHE_NAMESPACE } from "../cache-format.ts";
 
 describe("transforms/mdx/esm-module-loader/module-fetcher/cache-keys", () => {
@@ -140,6 +144,26 @@ describe("transforms/mdx/esm-module-loader/module-fetcher/cache-keys", () => {
       assertEquals(originA === originB, false);
       assertEquals(flagOffWithOrigin, flagOff);
     });
+
+    it("isolates transforms by the configured server external package set", () => {
+      const base = [
+        "proj",
+        "preview-main",
+        "19.1.1",
+        "lib/utils.ts",
+        "abc123",
+        "off",
+        undefined,
+      ] as const;
+      const baseline = getTransformCacheKey(...base);
+      const knex = getTransformCacheKey(...base, ["knex"]);
+      const combined = getTransformCacheKey(...base, ["knex", "@prisma/client"]);
+      const reordered = getTransformCacheKey(...base, ["@prisma/client", "knex"]);
+
+      assertEquals(knex === baseline, false);
+      assertEquals(combined === knex, false);
+      assertEquals(reordered, combined);
+    });
   });
 
   describe("getVersionedPathCacheKey", () => {
@@ -206,5 +230,111 @@ describe("transforms/mdx/esm-module-loader/module-fetcher/cache-keys", () => {
       assertEquals(originA === originB, false);
       assertEquals(flagOffWithOrigin, flagOff);
     });
+
+    it("isolates local paths by the configured server external package set", () => {
+      const baseline = getVersionedPathCacheKey("lib/utils.ts", "19.1.1");
+      const knex = getVersionedPathCacheKey(
+        "lib/utils.ts",
+        "19.1.1",
+        "off",
+        undefined,
+        ["knex"],
+      );
+      const combined = getVersionedPathCacheKey(
+        "lib/utils.ts",
+        "19.1.1",
+        "off",
+        undefined,
+        ["knex", "@prisma/client"],
+      );
+      const reordered = getVersionedPathCacheKey(
+        "lib/utils.ts",
+        "19.1.1",
+        "off",
+        undefined,
+        ["@prisma/client", "knex"],
+      );
+
+      assertEquals(knex === baseline, false);
+      assertEquals(combined === knex, false);
+      assertEquals(reordered, combined);
+    });
+  });
+});
+
+/**
+ * The compile mode decides minification, tree shaking and inline sourcemaps, so
+ * it is part of every module cache identity. The transform key feeds the
+ * distributed transform cache, whose entries are shared across requests and
+ * across instances, so a key without the compile mode would let one instance
+ * serve development-compiled modules to a hosted production render.
+ */
+describe("transforms/mdx/esm-module-loader/module-fetcher/cache-keys compile mode", () => {
+  const TRANSFORM_BASE = [
+    "proj",
+    "preview-main",
+    "19.1.1",
+    "lib/utils.ts",
+    "abc123",
+    "off",
+    undefined,
+    undefined,
+  ] as const;
+
+  it("gives the two compile modes different distributed transform cache keys", () => {
+    const production = getTransformCacheKey(...TRANSFORM_BASE, false);
+    const dev = getTransformCacheKey(...TRANSFORM_BASE, true);
+
+    assertEquals(production === dev, false);
+    assertEquals(dev.includes(":on:compile-dev:"), true);
+    assertEquals(production.includes("compile-dev"), false);
+  });
+
+  it("treats an unset compile mode as production", () => {
+    assertEquals(
+      getTransformCacheKey(...TRANSFORM_BASE),
+      getTransformCacheKey(...TRANSFORM_BASE, false),
+    );
+    assertEquals(
+      getVersionedPathCacheKey("lib/utils.ts", "19.1.1"),
+      getVersionedPathCacheKey("lib/utils.ts", "19.1.1", undefined, undefined, undefined, false),
+    );
+  });
+
+  it("gives the two compile modes different path cache keys", () => {
+    const production = getVersionedPathCacheKey(
+      "lib/utils.ts",
+      "19.1.1",
+      "off",
+      undefined,
+      undefined,
+      false,
+    );
+    const dev = getVersionedPathCacheKey(
+      "lib/utils.ts",
+      "19.1.1",
+      "off",
+      undefined,
+      undefined,
+      true,
+    );
+
+    assertEquals(production === dev, false);
+    assertEquals(dev.includes("on:compile-dev"), true);
+  });
+
+  it("keeps the compile mode apart from the pin and server-external segments", () => {
+    const variant = getMdxModuleCacheVariant(
+      "on:snapshot",
+      "https://a.example",
+      ["knex"],
+      true,
+    );
+
+    assertEquals(variant?.endsWith(":on:compile-dev"), true);
+    assertEquals(
+      getMdxModuleCacheVariant("on:snapshot", "https://a.example", ["knex"], false),
+      variant?.slice(0, -":on:compile-dev".length),
+    );
   });
 });

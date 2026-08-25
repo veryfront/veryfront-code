@@ -6,13 +6,21 @@ import {
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { constants as nodeFsConstants } from "node:fs";
 import { FileSnapshotChangedError } from "../../file-snapshot-error.ts";
 import { isNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
-import { NodeCompatibleFileSystemAdapter } from "./node-filesystem-adapter.ts";
+import {
+  hasUsableWindowsSnapshotIdentity,
+  NodeCompatibleFileSystemAdapter,
+  readNodeFileSnapshotWithinLimit,
+  resolveNoFollowFlag,
+} from "./node-filesystem-adapter.ts";
 import { setupNodeFsWatcher } from "./shared-watcher.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 type AdapterOptions = {
   noFollow?: number;
+  platform?: "posix" | "windows";
   exclusiveCreate?: boolean;
   operations?: Record<string, unknown>;
 };
@@ -34,9 +42,42 @@ function requireExclusiveCreator(adapter: NodeCompatibleFileSystemAdapter) {
   return adapter.createFileBytesExclusive;
 }
 
+describe("resolveNoFollowFlag", () => {
+  it("does not throw when node:fs constants are unavailable (#3661)", () => {
+    // In a browser bundle `nodeFsConstants` is `undefined`. Reading `.O_NOFOLLOW`
+    // off it must degrade to "unavailable", not throw at construction. Passing
+    // `undefined` for `constants` reproduces the non-Node runtime directly.
+    assertEquals(resolveNoFollowFlag({}, undefined), undefined);
+  });
+
+  it("returns the runtime O_NOFOLLOW when the constants are present", () => {
+    assertEquals(resolveNoFollowFlag({}, { O_NOFOLLOW: 0x20000 }), 0x20000);
+  });
+
+  it("lets an own noFollow option win over the runtime constants (test seam)", () => {
+    assertEquals(resolveNoFollowFlag({ noFollow: 7 }, { O_NOFOLLOW: 0x20000 }), 7);
+    // An own `undefined` means "unavailable" even when constants exist.
+    assertEquals(resolveNoFollowFlag({ noFollow: undefined }, { O_NOFOLLOW: 0x20000 }), undefined);
+  });
+});
+
 describe("NodeCompatibleFileSystemAdapter", () => {
+  it("constructs without exact-snapshot support when node:fs constants are absent (#3661)", () => {
+    // Reproduce the browser path end to end: no runtime O_NOFOLLOW available, so
+    // the adapter must construct (not throw) and simply cannot bind an exact
+    // inode snapshot. `noFollow: undefined` is the documented "unavailable" seam.
+    const adapter = new NodeCompatibleFileSystemAdapter(undefined, {
+      noFollow: undefined,
+      platform: "posix",
+    });
+    assertEquals(
+      (adapter as { readFileSnapshotWithinLimit?: unknown }).readFileSnapshotWithinLimit,
+      undefined,
+    );
+  });
+
   it("reads empty and exact-limit snapshots and rejects invalid or oversized inputs", async () => {
-    const root = await Deno.makeTempDir({ prefix: "veryfront-node-snapshot-" });
+    const root = await makeTempDir({ prefix: "veryfront-node-snapshot-" });
     try {
       const empty = `${root}/empty.bin`;
       const exact = `${root}/exact.bin`;
@@ -64,13 +105,281 @@ describe("NodeCompatibleFileSystemAdapter", () => {
     }
   });
 
-  it("omits snapshot authority when O_NOFOLLOW is absent or zero", () => {
+  it("accepts a canonical candidate beneath a symlinked containment root", async () => {
+    if (Deno.build.os === "windows") return;
+    const workspace = await makeTempDir({ prefix: "veryfront-node-snapshot-root-" });
+    const physicalRoot = `${workspace}/physical`;
+    const linkedRoot = `${workspace}/linked`;
+    try {
+      await Deno.mkdir(physicalRoot);
+      await Deno.writeFile(`${physicalRoot}/asset.bin`, new Uint8Array([1, 2, 3]));
+      await Deno.symlink(physicalRoot, linkedRoot);
+      const canonicalCandidate = await Deno.realPath(`${linkedRoot}/asset.bin`);
+
+      const readSnapshot = requireSnapshotReader(new NodeCompatibleFileSystemAdapter());
+      assertEquals([...await readSnapshot(canonicalCandidate, linkedRoot, 3)], [1, 2, 3]);
+    } finally {
+      await Deno.remove(workspace, { recursive: true });
+    }
+  });
+
+  it("omits snapshot authority on POSIX when O_NOFOLLOW is absent or zero", () => {
     for (const noFollow of [undefined, 0]) {
-      const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, { noFollow });
+      const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
+        noFollow,
+        platform: "posix",
+      });
       assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), false);
       assertEquals(adapter.readFileSnapshotWithinLimit, undefined);
       assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), true);
     }
+  });
+
+  it("reads an exact Windows snapshot through an identity-verified handle", async () => {
+    const source = new Uint8Array([4, 5, 6]);
+    const stat = {
+      dev: 1n,
+      ino: 2n,
+      size: BigInt(source.byteLength),
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+    const openedWith: Array<number | string> = [];
+    const operations = {
+      realpath: (path: string) => Promise.resolve(path),
+      lstat: () => Promise.resolve(stat),
+      open: (_path: string, flags: number | string) => {
+        openedWith.push(flags);
+        return Promise.resolve({
+          stat: () => Promise.resolve(stat),
+          read: (buffer: Uint8Array, offset: number, length: number, position: number) => {
+            buffer.set(source.subarray(position, position + length), offset);
+            return Promise.resolve({ bytesRead: length });
+          },
+          writeFile: () => Promise.resolve(),
+          close: () => Promise.resolve(),
+        });
+      },
+    };
+    assertEquals(
+      [
+        ...await readNodeFileSnapshotWithinLimit(
+          operations,
+          "windows",
+          0,
+          "C:\\root\\file.bin",
+          "C:\\root",
+          3,
+        ),
+      ],
+      [4, 5, 6],
+    );
+    assertEquals(openedWith, ["r"]);
+  });
+
+  it("opens a POSIX snapshot with the runtime no-follow flag", async () => {
+    const source = new Uint8Array([7, 8, 9]);
+    const stat = {
+      dev: 1n,
+      ino: 2n,
+      size: BigInt(source.byteLength),
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+    const openedWith: Array<number | string> = [];
+    const operations = {
+      realpath: (path: string) => Promise.resolve(path),
+      lstat: () => Promise.resolve(stat),
+      open: (_path: string, flags: number | string) => {
+        openedWith.push(flags);
+        return Promise.resolve({
+          stat: () => Promise.resolve(stat),
+          read: (buffer: Uint8Array, offset: number, length: number, position: number) => {
+            buffer.set(source.subarray(position, position + length), offset);
+            return Promise.resolve({ bytesRead: length });
+          },
+          writeFile: () => Promise.resolve(),
+          close: () => Promise.resolve(),
+        });
+      },
+    };
+    assertEquals(
+      [
+        ...await readNodeFileSnapshotWithinLimit(
+          operations,
+          "posix",
+          0x20000,
+          "/root/file.bin",
+          "/root",
+          3,
+        ),
+      ],
+      [7, 8, 9],
+      "a POSIX snapshot must read the exact admitted bytes",
+    );
+    assertEquals(
+      openedWith,
+      [nodeFsConstants.O_RDONLY | 0x20000],
+      "POSIX snapshot opens must carry O_NOFOLLOW",
+    );
+  });
+
+  it("rejects a Windows lexical containment escape before candidate filesystem access", async () => {
+    let operationCalls = 0;
+    const operations = {
+      realpath: () => {
+        operationCalls++;
+        return Promise.resolve("C:/root");
+      },
+      lstat: () => {
+        operationCalls++;
+        throw new Error("outside paths must not be inspected");
+      },
+      open: () => {
+        operationCalls++;
+        throw new Error("outside paths must not be opened");
+      },
+    };
+
+    await assertRejects(
+      () =>
+        readNodeFileSnapshotWithinLimit(
+          operations,
+          "windows",
+          0,
+          "C:\\outside\\file.bin",
+          "C:\\root",
+          1,
+        ),
+      TypeError,
+      "Snapshot path must be contained",
+    );
+    // Canonicalizing the trusted root is required to admit canonical candidates
+    // beneath symlinked roots. The untrusted candidate is never inspected.
+    assertEquals(operationCalls, 1);
+  });
+
+  it("rejects a Windows canonical target outside the containment root", async () => {
+    const source = new Uint8Array([7]);
+    const stat = {
+      dev: 1n,
+      ino: 2n,
+      size: 1n,
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+    let realpathCalls = 0;
+    let closeCalls = 0;
+    const operations = {
+      realpath: () =>
+        Promise.resolve(
+          realpathCalls++ === 0 ? "C:/root" : "C:/outside/file.bin",
+        ),
+      lstat: () => Promise.resolve(stat),
+      open: () =>
+        Promise.resolve({
+          stat: () => Promise.resolve(stat),
+          read: (buffer: Uint8Array) => {
+            buffer.set(source);
+            return Promise.resolve({ bytesRead: source.byteLength });
+          },
+          writeFile: () => Promise.resolve(),
+          close: () => {
+            closeCalls++;
+            return Promise.resolve();
+          },
+        }),
+    };
+
+    await assertRejects(
+      () =>
+        readNodeFileSnapshotWithinLimit(
+          operations,
+          "windows",
+          0,
+          "C:\\root\\linked\\file.bin",
+          "C:\\root",
+          1,
+        ),
+      TypeError,
+      "Snapshot target must be contained",
+    );
+    assertEquals(closeCalls, 1);
+  });
+
+  it("fails closed when Windows cannot provide a stable native file identity", async () => {
+    let opens = 0;
+    const stat = {
+      dev: 0n,
+      ino: 2n,
+      size: 1n,
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+    const operations = {
+      realpath: (path: string) => Promise.resolve(path),
+      lstat: () => Promise.resolve(stat),
+      open: () => {
+        opens++;
+        throw new Error("must not open without an identity");
+      },
+    };
+
+    await assertRejects(
+      () =>
+        readNodeFileSnapshotWithinLimit(
+          operations,
+          "windows",
+          0,
+          "C:\\root\\file.bin",
+          "C:\\root",
+          1,
+        ),
+      FileSnapshotChangedError,
+      "Stable native file identity is unavailable",
+    );
+    assertEquals(opens, 0);
+  });
+
+  it("publishes Windows snapshot authority only for Node's usable identity contract", () => {
+    assertEquals(hasUsableWindowsSnapshotIdentity("node"), true);
+    for (const runtime of ["bun", "deno", "unknown"] as const) {
+      assertEquals(hasUsableWindowsSnapshotIdentity(runtime), false);
+    }
+
+    // This suite runs under Deno, so forcing Windows path semantics must not
+    // turn the shared adapter into a Node-provenance publisher.
+    const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
+      noFollow: 0,
+      platform: "windows",
+      operations: {
+        realpath: (path: string) => Promise.resolve(path),
+        lstat: () =>
+          Promise.resolve({
+            dev: 1n,
+            ino: 2n,
+            size: 0n,
+            mtimeNs: 3n,
+            ctimeNs: 4n,
+            isFile: () => true,
+            isSymbolicLink: () => false,
+          }),
+        open: () => {
+          throw new Error("unpublished capability must not open files");
+        },
+      },
+    });
+    assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), false);
+    assertEquals(adapter.readFileSnapshotWithinLimit, undefined);
+    assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), true);
   });
 
   it("omits exclusive create independently from available snapshot authority", () => {
@@ -650,7 +959,7 @@ describe("NodeCompatibleFileSystemAdapter", () => {
   });
 
   it("creates byte files exclusively and never truncates colliding entries", async () => {
-    const root = await Deno.makeTempDir({ prefix: "veryfront-node-exclusive-" });
+    const root = await makeTempDir({ prefix: "veryfront-node-exclusive-" });
     try {
       const absent = `${root}/created.bin`;
       const existing = `${root}/existing.bin`;
@@ -671,32 +980,43 @@ describe("NodeCompatibleFileSystemAdapter", () => {
   });
 
   it("does not guess ownership by deleting a reserved path after write failure", async () => {
-    let closeCalls = 0;
-    let removeCalls = 0;
-    const failure = new Error("injected write failure");
-    const operations = {
-      open: () =>
-        Promise.resolve({
-          writeFile: () => Promise.reject(failure),
-          close: () => {
-            closeCalls++;
-            return Promise.resolve();
-          },
-        }),
-      remove: () => {
-        removeCalls++;
-        return Promise.resolve();
-      },
-    };
-    const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, { operations });
+    const root = await makeTempDir({ prefix: "veryfront-node-reserved-" });
+    try {
+      const target = `${root}/reserved.bin`;
+      await Deno.writeFile(target, new Uint8Array([9, 8, 7]));
+      let closeCalls = 0;
+      const failure = new Error("injected write failure");
+      const operations = {
+        open: () =>
+          Promise.resolve({
+            writeFile: () => Promise.reject(failure),
+            close: () => {
+              closeCalls++;
+              return Promise.resolve();
+            },
+          }),
+      };
+      const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, { operations });
 
-    const error = await assertRejects(
-      () => requireExclusiveCreator(adapter)("/reserved.bin", new Uint8Array([1])),
-      Error,
-    );
-    assertEquals(error, failure);
-    assertEquals(closeCalls, 1);
-    assertEquals(removeCalls, 0);
+      const error = await assertRejects(
+        () => requireExclusiveCreator(adapter)(target, new Uint8Array([1])),
+        Error,
+      );
+      assertEquals(error, failure);
+      assertEquals(closeCalls, 1);
+      assertEquals(
+        (await Deno.lstat(target)).isFile,
+        true,
+        "a failed exclusive write must not delete a path the adapter does not own",
+      );
+      assertEquals(
+        [...await Deno.readFile(target)],
+        [9, 8, 7],
+        "the pre-existing bytes must survive the failed write",
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
   });
 
   it("preserves exclusive-create write and handle cleanup failures", async () => {
@@ -763,13 +1083,33 @@ describe("NodeCompatibleFileSystemAdapter", () => {
     assertEquals(isNativeFileSystemAdapter(new DerivedAdapter()), false);
   });
 
+  it("refuses a subclass that hides its own prototype.constructor", () => {
+    class ConstructorDeletingAdapter extends NodeCompatibleFileSystemAdapter {}
+    Reflect.deleteProperty(ConstructorDeletingAdapter.prototype, "constructor");
+
+    class ConstructorSpoofingAdapter extends NodeCompatibleFileSystemAdapter {}
+    Object.defineProperty(ConstructorSpoofingAdapter.prototype, "constructor", {
+      configurable: true,
+      value: NodeCompatibleFileSystemAdapter,
+    });
+
+    assertEquals(
+      isNativeFileSystemAdapter(new ConstructorDeletingAdapter()),
+      false,
+    );
+    assertEquals(
+      isNativeFileSystemAdapter(new ConstructorSpoofingAdapter()),
+      false,
+    );
+  });
+
   it("does not disguise invalid paths as missing", async () => {
     const adapter = new NodeCompatibleFileSystemAdapter();
     await assertRejects(() => adapter.exists("\0"), TypeError);
   });
 
   it("provides consistent text, byte, metadata, and symlink operations", async () => {
-    const root = await Deno.makeTempDir({ prefix: "veryfront-node-fs-" });
+    const root = await makeTempDir({ prefix: "veryfront-node-fs-" });
     try {
       const adapter = new NodeCompatibleFileSystemAdapter();
       assertEquals(isNativeFileSystemAdapter(adapter), true);
@@ -832,7 +1172,7 @@ describe("NodeCompatibleFileSystemAdapter", () => {
   });
 
   it("closes watcher resources when iteration returns", async () => {
-    const root = await Deno.makeTempDir({ prefix: "veryfront-node-watch-" });
+    const root = await makeTempDir({ prefix: "veryfront-node-watch-" });
     try {
       const watcher = new NodeCompatibleFileSystemAdapter().watch(root, {
         recursive: false,
@@ -857,7 +1197,7 @@ describe("NodeCompatibleFileSystemAdapter", () => {
   });
 
   it("settles watcher shutdown when the caller aborts", async () => {
-    const root = await Deno.makeTempDir({ prefix: "veryfront-node-watch-abort-" });
+    const root = await makeTempDir({ prefix: "veryfront-node-watch-abort-" });
     try {
       const controller = new AbortController();
       const watcher = new NodeCompatibleFileSystemAdapter().watch(root, {
@@ -877,7 +1217,7 @@ describe("NodeCompatibleFileSystemAdapter", () => {
   });
 
   it("rejects watcher readiness when the requested root cannot be acquired", async () => {
-    const root = await Deno.makeTempDir({ prefix: "veryfront-node-watch-missing-" });
+    const root = await makeTempDir({ prefix: "veryfront-node-watch-missing-" });
     const missingRoot = `${root}/missing`;
     const watcher = new NodeCompatibleFileSystemAdapter().watch(missingRoot, {
       recursive: true,

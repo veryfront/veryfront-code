@@ -16,12 +16,17 @@ import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts"
 import {
   type DependencyPinningSnapshot,
   type DependencyPinningSourceInput,
-  resolveRequestedDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
-import { HttpStatus } from "#veryfront/http/responses";
 import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
-
-const DEPENDENCY_PIN_PATTERN = /^on:[A-Za-z0-9._-]+$/;
+import {
+  readSnapshotQuery,
+  resolveSnapshotForRequest,
+  snapshotConflictResponse,
+} from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
+import {
+  createLocalControlAccessDeniedResponse,
+  isTrustedLocalControlRequest,
+} from "#veryfront/security/http/local-control-request.ts";
 
 type DevFileBundler = (
   absPath: string,
@@ -53,6 +58,11 @@ export class DevFileHandler extends BaseHandler {
     if (req.method !== "GET" || !pathname.startsWith("/_veryfront/fs/")) {
       return this.continue();
     }
+    if (!isTrustedLocalControlRequest(req)) {
+      return this.respond(
+        createLocalControlAccessDeniedResponse(req, "Development file request rejected"),
+      );
+    }
 
     const fsAdapter = ctx.adapter.fs;
     const isExtended = isExtendedFSAdapter(fsAdapter);
@@ -76,44 +86,38 @@ export class DevFileHandler extends BaseHandler {
     ctx: HandlerContext,
   ): Promise<HandlerResult> {
     const encoded = pathname.slice("/_veryfront/fs/".length).replace(/\.js$/, "");
-    const absPath = await validateDevFilePath(encoded, ctx);
+    const validation = await validateDevFilePath(encoded, ctx);
 
-    if (absPath.startsWith("Error:")) {
-      const message = absPath.slice("Error: ".length);
-      this.logDebug("dev fs validation failed", { message }, ctx);
-      return this.respond(this.createErrorModule(message, HTTP_NOT_FOUND));
+    if (validation.kind === "rejected") {
+      this.logDebug("dev fs validation failed", { message: validation.message }, ctx);
+      return this.respond(this.createErrorModule(validation.message, HTTP_NOT_FOUND));
     }
+    const absPath = validation.path;
 
     try {
-      const requestedPinKeys = new URL(req.url).searchParams.getAll("pins");
-      const requestedPinKey = requestedPinKeys[0];
-      if (
-        requestedPinKeys.length > 1 ||
-        (requestedPinKey !== undefined &&
-          (!DEPENDENCY_PIN_PATTERN.test(requestedPinKey) ||
-            requestedPinKey === "on:unknown"))
-      ) {
-        return this.respondDependencyConflict();
-      }
-
+      const requestUrl = new URL(req.url);
       const dependencyPinningSource = createHandlerDependencyPinningSource(ctx);
-      const dependencySnapshot = await resolveRequestedDependencyPinningSnapshot(
+      const resolution = await resolveSnapshotForRequest(
         dependencyPinningSource,
-        requestedPinKey,
+        readSnapshotQuery(requestUrl),
       );
-      if (
-        !dependencySnapshot ||
-        (requestedPinKey === undefined && dependencySnapshot.cacheKey.startsWith("on:"))
-      ) {
-        return this.respondDependencyConflict();
+      if (resolution.kind === "conflict") {
+        return this.respond(
+          snapshotConflictResponse(
+            this.createResponseBuilder(ctx),
+            req,
+            ctx.securityConfig,
+          ),
+        );
       }
+      const dependencySnapshot = resolution.snapshot;
 
       const code = await this.bundleFile(
         absPath,
         ctx,
         dependencySnapshot,
         dependencyPinningSource,
-        new URL(req.url).origin,
+        requestUrl.origin,
       );
       const response = this.createResponseBuilder(ctx)
         .withCORS(req, ctx.securityConfig?.cors)
@@ -124,7 +128,7 @@ export class DevFileHandler extends BaseHandler {
       return this.respond(response);
     } catch (error) {
       const reason = this.getErrorMessage(error);
-      this.logDebug("esbuild failed for dev fs", { path: absPath, reason }, ctx);
+      this.logDebug("dev fs request failed", { path: absPath, reason }, ctx);
       return this.respond(
         this.createErrorModule(
           `Build error: ${reason}`,
@@ -134,23 +138,13 @@ export class DevFileHandler extends BaseHandler {
     }
   }
 
-  private respondDependencyConflict(): HandlerResult {
-    return this.respond(
-      this.createErrorModule(
-        "Unknown dependency snapshot",
-        HttpStatus.CONFLICT,
-      ),
-    );
-  }
-
   private createErrorModule(message: string, status: number): Response {
-    const headers: HeadersInit = {
-      "content-type": "application/javascript",
-      ...(status === HttpStatus.CONFLICT ? { "cache-control": "no-store" } : {}),
-    };
     return new Response(`export default null; // ${message}`, {
       status,
-      headers,
+      headers: {
+        "cache-control": "no-store",
+        "content-type": "application/javascript",
+      },
     });
   }
 }

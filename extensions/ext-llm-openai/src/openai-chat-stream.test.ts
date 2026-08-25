@@ -407,6 +407,384 @@ describe("ext-llm-openai/openai-chat-stream", () => {
     );
   });
 
+  it("accepts repeated post-finish usage events without double counting", async () => {
+    // OpenAI's include_usage chunk uses `choices: []`; aggregators add a bare
+    // `{usage}`. Repeated cumulative totals must merge, not accumulate.
+    const usage = { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 };
+    const finish = data({ choices: [{ delta: {}, finish_reason: "stop" }] });
+    const emptyChoices = data({ choices: [], usage });
+    const bare = data({ usage });
+
+    for (
+      const tail of [[emptyChoices, emptyChoices], [emptyChoices, bare], [bare, bare]]
+    ) {
+      assertEquals(
+        await collectParts(
+          streamFromText([finish, ...tail, "data: [DONE]\r\n\r\n"].join("")),
+        ),
+        [{
+          type: "finish",
+          finishReason: "stop",
+          usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 },
+        }],
+      );
+    }
+  });
+
+  it("treats null reasoning, role, and refusal deltas as absent", async () => {
+    // Verbatim chunk shape from the Veryfront Cloud Moonshot gateway
+    // (`kimi-k2.6`): optional delta fields are encoded as `null` rather than
+    // being omitted, on both the opening chunk and the finish chunk.
+    assertEquals(
+      await collectParts(streamFromText([
+        data({
+          choices: [{
+            index: 0,
+            delta: { reasoning_content: null, role: "assistant", content: "" },
+            logprobs: null,
+            finish_reason: null,
+            matched_stop: null,
+          }],
+        }),
+        data({
+          choices: [{
+            index: 0,
+            delta: { reasoning_content: "weighing it" },
+            finish_reason: null,
+          }],
+        }),
+        data({
+          choices: [{
+            index: 0,
+            delta: { role: null, refusal: null, content: "hi there friend" },
+            finish_reason: null,
+          }],
+        }),
+        data({
+          choices: [{
+            index: 0,
+            delta: { reasoning_content: null },
+            logprobs: null,
+            finish_reason: "stop",
+            matched_stop: null,
+          }],
+        }),
+        "data: [DONE]\r\n\r\n",
+      ].join(""))),
+      [
+        { type: "reasoning-start", id: "reasoning-0" },
+        { type: "reasoning-delta", id: "reasoning-0", delta: "weighing it" },
+        { type: "reasoning-end", id: "reasoning-0" },
+        { type: "text-delta", delta: "hi there friend" },
+        { type: "finish", finishReason: "stop" },
+      ],
+    );
+  });
+
+  it("treats null tool-call id, type, name, and arguments as absent", async () => {
+    // Verbatim tool-call chunk shape from the Veryfront Cloud Moonshot gateway
+    // (`kimi-k2.6`): only the opening fragment carries `id` and `function.name`;
+    // every continuation fragment repeats them as `null`.
+    assertEquals(
+      await collectParts(streamFromText([
+        data({
+          choices: [{
+            index: 0,
+            delta: {
+              tool_calls: [{
+                id: "functions.list_events:0",
+                index: 0,
+                type: "function",
+                function: { name: "list_events", arguments: '{"date":"' },
+              }],
+            },
+            logprobs: null,
+            finish_reason: null,
+            matched_stop: null,
+          }],
+        }),
+        data({
+          choices: [{
+            index: 0,
+            delta: {
+              tool_calls: [{
+                id: null,
+                index: 0,
+                type: "function",
+                function: { name: null, arguments: "2026-08" },
+              }],
+            },
+            finish_reason: null,
+          }],
+        }),
+        data({
+          choices: [{
+            index: 0,
+            delta: {
+              tool_calls: [{
+                id: null,
+                index: 0,
+                type: null,
+                function: { name: null, arguments: '-18"}' },
+              }],
+            },
+            finish_reason: null,
+          }],
+        }),
+        data({
+          choices: [{
+            index: 0,
+            delta: { reasoning_content: null },
+            logprobs: null,
+            finish_reason: "tool_calls",
+            matched_stop: 163586,
+          }],
+        }),
+        "data: [DONE]\r\n\r\n",
+      ].join(""))),
+      [
+        {
+          type: "tool-input-start",
+          id: "functions.list_events:0",
+          toolName: "list_events",
+        },
+        { type: "tool-input-delta", id: "functions.list_events:0", delta: '{"date":"' },
+        { type: "tool-input-delta", id: "functions.list_events:0", delta: "2026-08" },
+        { type: "tool-input-delta", id: "functions.list_events:0", delta: '-18"}' },
+        {
+          type: "tool-call",
+          toolCallId: "functions.list_events:0",
+          toolName: "list_events",
+          input: '{"date":"2026-08-18"}',
+        },
+        {
+          type: "finish",
+          finishReason: { unified: "tool-calls", raw: "tool_calls" },
+        },
+      ],
+    );
+  });
+
+  it("still rejects tool-call fields of a genuinely wrong type", async () => {
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          choices: [{ delta: { tool_calls: [{ index: 0, id: 42 }] } }],
+        }))),
+      ProviderRequestError,
+      "tool call id was malformed",
+    );
+
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          choices: [{
+            delta: {
+              tool_calls: [{ index: 0, id: "call_1", function: { name: 7 } }],
+            },
+          }],
+        }))),
+      ProviderRequestError,
+      "tool call function name was malformed",
+    );
+
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          choices: [{
+            delta: {
+              tool_calls: [{
+                index: 0,
+                id: "call_1",
+                function: { name: "lookup", arguments: 5 },
+              }],
+            },
+          }],
+        }))),
+      ProviderRequestError,
+      "tool call arguments delta was malformed",
+    );
+
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          choices: [{
+            delta: { tool_calls: [{ index: 0, id: "call_1", type: "not_function" }] },
+          }],
+        }))),
+      ProviderRequestError,
+      "tool call type was not function",
+    );
+  });
+
+  it("keeps tool-call identity and ordering guards intact when fields are null", async () => {
+    // Null must behave exactly like an omitted field: it may not let a call
+    // change identity, collide at another index, skip the id/name ordering
+    // rule, or emit a tool call that never received an id, name, or arguments.
+    await assertRejects(
+      () =>
+        collectParts(streamFromText([
+          data({
+            choices: [{
+              delta: {
+                tool_calls: [{
+                  index: 0,
+                  id: null,
+                  type: null,
+                  function: { name: null, arguments: null },
+                }],
+              },
+            }],
+          }),
+          data({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }),
+          "data: [DONE]\r\n\r\n",
+        ].join(""))),
+      ProviderRequestError,
+      "tool call was incomplete",
+    );
+
+    await assertRejects(
+      () =>
+        collectParts(streamFromText([
+          data({
+            choices: [{
+              delta: {
+                tool_calls: [{
+                  index: 0,
+                  id: "call_a",
+                  function: { name: "lookup", arguments: "{}" },
+                }],
+              },
+            }],
+          }),
+          data({
+            choices: [{
+              delta: {
+                tool_calls: [{ index: 0, id: "call_b", function: { arguments: "" } }],
+              },
+            }],
+          }),
+        ].join(""))),
+      ProviderRequestError,
+      "tool call id changed while streaming",
+    );
+
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          choices: [{
+            delta: {
+              tool_calls: [{
+                index: 0,
+                id: null,
+                function: { name: null, arguments: "{}" },
+              }],
+            },
+          }],
+        }))),
+      ProviderRequestError,
+      "tool call arguments arrived before its id and name",
+    );
+
+    // A null fragment must not launder an id into a second index.
+    await assertRejects(
+      () =>
+        collectParts(streamFromText([
+          data({
+            choices: [{
+              delta: {
+                tool_calls: [{
+                  index: 0,
+                  id: "call_dup",
+                  function: { name: "lookup", arguments: "{}" },
+                }],
+              },
+            }],
+          }),
+          data({
+            choices: [{
+              delta: {
+                tool_calls: [{ index: 1, id: null, function: { name: null } }],
+              },
+            }],
+          }),
+          data({
+            choices: [{
+              delta: {
+                tool_calls: [{ index: 1, id: "call_dup", function: { name: "other" } }],
+              },
+            }],
+          }),
+        ].join(""))),
+      ProviderRequestError,
+      "tool call id was reused at another index",
+    );
+  });
+
+  it("still rejects reasoning and role deltas of a genuinely wrong type", async () => {
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          choices: [{ delta: { reasoning_content: 42 } }],
+        }))),
+      ProviderRequestError,
+      "reasoning delta was malformed",
+    );
+
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          choices: [{ delta: { reasoning_content: { text: "think" } } }],
+        }))),
+      ProviderRequestError,
+      "reasoning delta was malformed",
+    );
+
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          choices: [{ delta: { role: "user", content: "hi" } }],
+        }))),
+      ProviderRequestError,
+      "choice delta role was not assistant",
+    );
+  });
+
+  it("skips an Azure content-filter preamble that carries no choices or usage", async () => {
+    // Verbatim opening frame from the Azure OpenAI deployment behind
+    // veryfront-cloud (`gpt-5.4`, `gpt-5.5`): an informational content-filter
+    // report arrives before any content, with an empty `choices` array and no
+    // usage. It is not a protocol violation and must not fail the stream.
+    assertEquals(
+      await collectParts(streamFromText([
+        data({
+          choices: [],
+          created: 0,
+          id: "",
+          model: "",
+          object: "",
+          prompt_filter_results: [{
+            prompt_index: 0,
+            content_filter_results: {
+              hate: { filtered: false, severity: "safe" },
+              jailbreak: { detected: false, filtered: false },
+              self_harm: { filtered: false, severity: "safe" },
+              sexual: { filtered: false, severity: "safe" },
+              violence: { filtered: false, severity: "safe" },
+            },
+          }],
+        }),
+        data({ choices: [{ index: 0, delta: { role: "assistant", content: "Hi" } }] }),
+        data({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }),
+        "data: [DONE]\r\n\r\n",
+      ].join(""))),
+      [
+        { type: "text-delta", delta: "Hi" },
+        { type: "finish", finishReason: "stop" },
+      ],
+    );
+  });
+
   it("rejects structurally empty and unterminated successful streams", async () => {
     await assertRejects(
       () => collectParts(streamFromText(data({}))),

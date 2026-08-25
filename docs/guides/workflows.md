@@ -38,6 +38,11 @@ import { step, workflow } from "veryfront/workflow";
 
 export default workflow({
   id: "content-pipeline",
+  integrationRequirements: [{
+    integration: "slack",
+    requiredScopes: ["channels:read"],
+    resources: [{ kind: "channel", id: "C012345" }],
+  }],
   steps: [
     step("research", { agent: "researcher" }),
     step("write", { agent: "writer" }),
@@ -47,6 +52,9 @@ export default workflow({
 ```
 
 Steps run in order. Each step's output is available to the next step via the workflow context.
+Use `integrationRequirements` only for explicit access that scheduled workflow
+runs require. Veryfront does not infer integration requirements from workflow
+steps, nested workflows, agents, tools, or source text.
 
 ## Start a workflow
 
@@ -146,6 +154,11 @@ export default tool({
 ```
 
 Use `handle.result()` only when the caller should wait for completion. Return the `runId` when the workflow can continue in the background.
+
+`handle.result()` polls the run and resolves with the workflow output once the
+run completes. It throws a timeout error if the run has not reached a terminal
+state after 5 minutes. Set the `resultWaitTimeout` executor option, in
+milliseconds, on `createWorkflowClient` to change that limit.
 
 ## Schedule a workflow
 
@@ -271,6 +284,61 @@ export default workflow({
 
 The workflow pauses at `waitForApproval` and resumes when an approver responds. If the timeout expires, the workflow fails.
 
+### Structured approval responses
+
+Set `responseSchema` when the decision must carry structured data, such as a
+selected option or an edited value:
+
+```ts
+// workflows/publish.ts
+import { defineSchema } from "veryfront/schemas";
+import { step, waitForApproval, workflow } from "veryfront/workflow";
+
+export default workflow({
+  id: "publish",
+  steps: [
+    step("draft", { agent: "writer" }),
+    waitForApproval("editor-review", {
+      message: "Review the draft and choose a channel.",
+      responseSchema: defineSchema((v) =>
+        v.object({
+          channel: v.string().describe("Publish channel"),
+        })
+      )(),
+    }),
+    step("publish", {
+      tool: "publisher",
+      input: (ctx) => ctx["editor-review"],
+    }),
+  ],
+});
+```
+
+Submit the decision through the workflow client. The structured answer is the
+fifth argument to `approve()` and `reject()`, after the optional comment:
+
+```ts
+const [pending] = await workflows.getPendingApprovals(runId);
+
+await workflows.approve(runId, pending.id, "editor@example.com", "Ship it", {
+  channel: "blog",
+});
+```
+
+The submitted `data` is validated against the wait node's `responseSchema`
+before it is persisted. A non-conformant answer is refused with an error and
+the approval stays pending. Validation only covers wait nodes declared in a
+static step list. When a workflow's `steps`, or the `steps` of a nested loop,
+is a function, the node list depends on runtime state, so no schema can be
+resolved for the decision and the answer is accepted unvalidated. After
+approval, the decision lands in the workflow context under the wait node's id,
+so later steps read `ctx["editor-review"]` as
+`{ approved, approver, comment, data, decidedAt }`.
+
+The approval endpoint served by `createWorkflowHandler` accepts the same
+decision as a JSON body of the shape `{ approved, approver, comment?, data? }`.
+See [Workflows: advanced](./workflows-advanced.md) for the handler routes.
+
 ### Wait for events
 
 Pause until an external event arrives:
@@ -279,10 +347,16 @@ Pause until an external event arrives:
 import { waitForEvent } from "veryfront/workflow";
 
 waitForEvent("payment-confirmed", {
-  event: "payment.completed",
+  eventName: "payment.completed",
   timeout: "1h",
 });
 ```
+
+Event delivery is not wired into workflow execution yet. `waitForEvent` pauses
+the run, but nothing resumes it when the named event occurs. The workflow
+backend interface declares optional event delivery methods, but the built-in
+memory and Redis backends do not implement them, and the executor does not
+consume them from a backend that does.
 
 ## Workflow configuration
 
@@ -320,23 +394,63 @@ export default workflow({
 
 ## Verify it worked
 
-Start the workflow from the start route, then poll the run state until it
-reaches a terminal status:
+`createWorkflowClient()` stores runs in memory, private to the client that
+started them. A second client, in another route file or the same file on a
+later request, does not see them. Verify the run from the request that started
+it, and add a persistent backend before reading run state from anywhere else.
 
-```bash
-RUN=$(curl -s http://localhost:3000/api/start-content-workflow \
-  -H "Content-Type: application/json" \
-  -d '{"topic":"AI agents"}' | jq -r .runId)
+Add a route that starts the workflow, waits for it, and reads the finished run
+back through the same client:
 
-while true; do
-  STATE=$(curl -s "http://localhost:3000/api/workflows/runs/$RUN")
-  STATUS=$(echo "$STATE" | jq -r '.status')
-  echo "status=$STATUS"
-  case "$STATUS" in
-    completed|failed|cancelled) break ;;
-  esac
-  sleep 2
-done
+```ts
+// app/api/verify-content-workflow/route.ts
+import { getAgent, getAllAgentIds } from "veryfront/agent";
+import { toolRegistry } from "veryfront/tool";
+import { createWorkflowClient } from "veryfront/workflow";
+import contentPipeline from "../../../workflows/content-pipeline.ts";
+
+const workflows = createWorkflowClient({
+  executor: {
+    stepExecutor: {
+      agentRegistry: { get: getAgent, list: getAllAgentIds },
+      toolRegistry,
+    },
+  },
+});
+
+workflows.register(contentPipeline);
+
+export async function POST(request: Request) {
+  const input = await request.json();
+  const handle = await workflows.start("content-pipeline", input);
+  await handle.settled();
+
+  const run = await workflows.getRun(handle.runId);
+  return Response.json({ status: run?.status, nodeStates: run?.nodeStates });
+}
 ```
 
-A working run reaches `status: "completed"` and exposes a `nodeStates` map with one `completed` entry per step. If `status` ends in `failed`, inspect the matching node entry in `nodeStates` for the underlying error.
+Call it:
+
+```bash
+curl -s http://localhost:3000/api/verify-content-workflow \
+  -H "Content-Type: application/json" \
+  -d '{"topic":"AI agents"}' \
+  | jq '{status, nodes: (.nodeStates | to_entries | map({(.key): .value.status}))}'
+```
+
+A working run reaches `status: "completed"` and exposes a `nodeStates` map with one `completed` entry per step:
+
+```json
+{
+  "status": "completed",
+  "nodes": [{ "research": "completed" }, { "write": "completed" }, { "review": "completed" }]
+}
+```
+
+If `status` ends in `failed`, inspect the matching node entry in `nodeStates` for the underlying error.
+
+To read run state from a different request (a status endpoint, a dashboard, or
+the `useWorkflow` hook), give every client the same persistent backend, such as
+`RedisBackend`, instead of the default in-memory one. Run state written by one
+in-memory client is not readable from any other.

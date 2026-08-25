@@ -33,33 +33,57 @@ const targets = [
     name: "macOS (Intel)",
     target: "x86_64-apple-darwin",
     output: "veryfront-macos-x64",
+    entrypoint: "cli/main.ts",
+    profile: "full",
   },
   {
     name: "macOS (Apple Silicon)",
     target: "aarch64-apple-darwin",
     output: "veryfront-macos-arm64",
+    entrypoint: "cli/main.ts",
+    profile: "full",
   },
   {
     name: "Linux (x64)",
     target: "x86_64-unknown-linux-gnu",
     output: "veryfront-linux-x64",
+    entrypoint: "cli/main.ts",
+    profile: "full",
   },
   {
     name: "Linux (ARM64)",
     target: "aarch64-unknown-linux-gnu",
     output: "veryfront-linux-arm64",
+    entrypoint: "cli/main.ts",
+    profile: "full",
+  },
+  {
+    name: "Linux proxy (x64)",
+    target: "x86_64-unknown-linux-gnu",
+    output: "veryfront-proxy-linux-x64",
+    entrypoint: "cli/proxy-main.ts",
+    profile: "proxy",
+  },
+  {
+    name: "Linux proxy (ARM64)",
+    target: "aarch64-unknown-linux-gnu",
+    output: "veryfront-proxy-linux-arm64",
+    entrypoint: "cli/proxy-main.ts",
+    profile: "proxy",
   },
   {
     name: "Windows (x64)",
     target: "x86_64-pc-windows-msvc",
     output: "veryfront-windows-x64.exe",
+    entrypoint: "cli/main.ts",
+    profile: "full",
   },
 ];
 
 let succeeded = 0;
 let failed = 0;
 
-for (const { name, target, output } of targets) {
+for (const { name, target, output, entrypoint, profile } of targets) {
   const outputPath = join(distDir, output);
 
   try {
@@ -70,6 +94,10 @@ for (const { name, target, output } of targets) {
         "run",
         "-A",
         "scripts/build/compile-binary.ts",
+        "--entrypoint",
+        entrypoint,
+        "--profile",
+        profile,
         "--target",
         target,
         "--output",

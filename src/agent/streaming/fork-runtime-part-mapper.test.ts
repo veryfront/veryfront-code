@@ -184,6 +184,79 @@ describe("agent/fork-runtime-part-mapper", () => {
     ]);
   });
 
+  it("emits a missing tool-call before a streamed tool error", () => {
+    const state = createForkRuntimeStreamMappingState();
+
+    mapAgUiRuntimeEventToForkParts(
+      { type: "tool-input-start", toolCallId: "tool-1", toolName: "create_file" },
+      state,
+    );
+    mapAgUiRuntimeEventToForkParts(
+      { type: "tool-input-delta", toolCallId: "tool-1", inputTextDelta: '{"path":"plan.md"}' },
+      state,
+    );
+
+    const parts = mapAgUiRuntimeEventToForkParts(
+      { type: "tool-output-error", toolCallId: "tool-1", errorText: "disk full" },
+      state,
+    );
+
+    assertEquals(parts.length, 2, "a streamed tool error must recover the missing tool-call part");
+    assertEquals(parts[0], {
+      type: "tool-call",
+      toolCallId: "tool-1",
+      toolName: "create_file",
+      input: { path: "plan.md" },
+    }, "the recovered tool-call must carry the streamed tool name and input");
+    if (parts[1]?.type !== "tool-error") {
+      throw new Error("Expected a tool-error part");
+    }
+    assertEquals(parts[1].toolCallId, "tool-1", "the tool-error must carry the tool call id");
+    assertEquals(
+      parts[1].toolName,
+      "create_file",
+      "the tool-error must carry the streamed tool name",
+    );
+    assertEquals(
+      parts[1].input,
+      { path: "plan.md" },
+      "the tool-error must carry the streamed tool input",
+    );
+    assertEquals(
+      parts[1].error.message,
+      "disk full",
+      "the tool-error must preserve the upstream errorText",
+    );
+  });
+
+  it("skips preliminary tool output", () => {
+    const state = createForkRuntimeStreamMappingState();
+
+    mapAgUiRuntimeEventToForkParts(
+      { type: "tool-input-start", toolCallId: "tool-1", toolName: "create_file" },
+      state,
+    );
+
+    assertEquals(
+      mapAgUiRuntimeEventToForkParts(
+        {
+          type: "tool-output-available",
+          toolCallId: "tool-1",
+          output: { partial: true },
+          preliminary: true,
+        },
+        state,
+      ),
+      [],
+      "a preliminary tool output must not emit fork parts",
+    );
+    assertEquals(
+      state.emittedToolResultIds.has("tool-1"),
+      false,
+      "a preliminary tool output must not mark the tool result as emitted",
+    );
+  });
+
   it("preserves the concrete upstream error when errorText is absent", () => {
     const state = createForkRuntimeStreamMappingState();
 

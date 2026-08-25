@@ -9,12 +9,13 @@
 import type { ExtensionFactory } from "veryfront/extensions";
 import type { SqliteDatabase, SqliteStore } from "veryfront/extensions/compat";
 
+type SqliteDatabaseCtor = new (path: string) => SqliteDatabase;
+
 async function loadSqliteDatabase(path?: string): Promise<SqliteDatabase> {
   const mod = await import("better-sqlite3");
-  // deno-lint-ignore no-explicit-any
-  const DatabaseCtor = (mod as any).default ?? mod;
-  // deno-lint-ignore no-explicit-any
-  return new DatabaseCtor(path ?? ":memory:") as any as SqliteDatabase;
+  const DatabaseCtor = ((mod as { default?: SqliteDatabaseCtor }).default ??
+    mod) as SqliteDatabaseCtor;
+  return new DatabaseCtor(path ?? ":memory:");
 }
 
 export class BetterSqliteStore implements SqliteStore {

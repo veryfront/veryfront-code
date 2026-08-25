@@ -7,6 +7,7 @@ const DEFAULT_IGNORED_ROOTS = [
   "dist",
   "build",
   ".git",
+  ".veryfront-packed-cli",
   "node_modules",
   ".cache",
 ];

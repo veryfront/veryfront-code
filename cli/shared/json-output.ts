@@ -56,7 +56,10 @@ export interface ErrorEnvelope {
   command: string;
   error: {
     code: string;
+    /** Stable classification consumers have keyed on since the first JSON release. */
     slug: string;
+    /** Additive: the error registry slug, for consumers that need finer classification. */
+    registrySlug?: string;
     message: string;
     context?: Record<string, unknown>;
   };
@@ -100,7 +103,7 @@ export function createSuccessEnvelope<T>(
 
 export function createErrorEnvelope(
   command: string,
-  error: { code: string; slug: string; message: string; context?: Record<string, unknown> },
+  error: ErrorEnvelope["error"],
 ): ErrorEnvelope {
   return { success: false, command, error };
 }

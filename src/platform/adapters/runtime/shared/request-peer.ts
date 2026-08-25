@@ -18,6 +18,7 @@ export interface RequestPeerProvenance {
 }
 
 const requestPeerProvenance = new WeakMap<Request, RequestPeerProvenance>();
+const interceptorHandledRequests = new WeakSet<Request>();
 const MAX_PEER_HOSTNAME_CHARACTERS = 255;
 const DECIMAL_OCTET_PATTERN = /^(?:0|[1-9][0-9]{0,2})$/;
 const IPV4_MAPPED_IPV6_PATTERN = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/;
@@ -88,6 +89,99 @@ export function recordRequestPeerFromTransport(
   return true;
 }
 
+/** @internal Record the native peer supplied to a Deno.serve handler. */
+export function recordDenoServeRequestPeer(
+  request: Request,
+  info: unknown,
+): boolean {
+  if (typeof info !== "object" || info === null) return false;
+
+  try {
+    const remoteAddress = (info as {
+      readonly remoteAddr?: {
+        readonly transport?: unknown;
+        readonly hostname?: unknown;
+      };
+    }).remoteAddr;
+    if (
+      remoteAddress?.transport !== "tcp" ||
+      typeof remoteAddress.hostname !== "string"
+    ) {
+      return false;
+    }
+    return recordRequestPeerFromTransport(request, {
+      runtime: "deno",
+      transport: "tcp",
+      hostname: remoteAddress.hostname,
+    });
+  } catch {
+    return false;
+  }
+}
+
+/** @internal Record the native peer supplied by a Node IncomingMessage. */
+export function recordNodeIncomingRequestPeer(
+  request: Request,
+  incoming: unknown,
+): boolean {
+  if (typeof incoming !== "object" || incoming === null) return false;
+
+  try {
+    const socket = (incoming as {
+      readonly socket?: { readonly remoteAddress?: unknown };
+    }).socket;
+    if (typeof socket?.remoteAddress !== "string") return false;
+    return recordRequestPeerFromTransport(request, {
+      runtime: "node",
+      transport: "tcp",
+      hostname: socket.remoteAddress,
+    });
+  } catch {
+    return false;
+  }
+}
+
+/** @internal Record the native peer supplied by a Bun server context. */
+export function recordBunServerRequestPeer(
+  request: Request,
+  server: unknown,
+): boolean {
+  if (typeof server !== "object" || server === null) return false;
+
+  try {
+    const requestIP = (server as {
+      readonly requestIP?: unknown;
+    }).requestIP;
+    if (typeof requestIP !== "function") return false;
+
+    const peer = requestIP.call(server, request) as {
+      readonly address?: unknown;
+    } | null;
+    if (typeof peer?.address !== "string") return false;
+    return recordRequestPeerFromTransport(request, {
+      runtime: "bun",
+      transport: "tcp",
+      hostname: peer.address,
+    });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * @internal Record native peer context passed through a public handler bridge.
+ * Supports Deno.serve handler info, Node IncomingMessage values, and Bun server
+ * context values.
+ */
+export function recordHandlerRequestPeer(
+  request: Request,
+  context: unknown,
+): boolean {
+  return recordDenoServeRequestPeer(request, context) ||
+    recordNodeIncomingRequestPeer(request, context) ||
+    recordBunServerRequestPeer(request, context);
+}
+
 /** @internal Read immutable transport provenance without consulting headers. */
 export function getRequestPeerProvenance(
   request: Request,
@@ -110,6 +204,24 @@ export function inheritRequestPeerProvenance<T extends Request>(
   if (provenance === undefined) requestPeerProvenance.delete(target);
   else requestPeerProvenance.set(target, provenance);
   return target;
+}
+
+/** @internal Run an interceptor without discarding transport peer authority. */
+export async function runRequestInterceptor(
+  request: Request,
+  interceptor: (request: Request) => Request | Promise<Request>,
+): Promise<Request> {
+  interceptorHandledRequests.add(request);
+  const intercepted = await interceptor(request);
+  if (intercepted === request) return request;
+
+  if (interceptorHandledRequests.has(intercepted)) {
+    throw new TypeError(
+      "Request interceptors must return a fresh replacement Request",
+    );
+  }
+  interceptorHandledRequests.add(intercepted);
+  return inheritRequestPeerProvenance(request, intercepted);
 }
 
 /** @internal True for IPv4 127/8, IPv6 ::1, or mapped IPv4 127/8. */

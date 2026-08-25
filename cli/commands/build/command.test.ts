@@ -1,7 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { buildCommand, formatBuildOutputPath, runWithBundlerShutdown } from "./command.ts";
+import {
+  buildCommand,
+  formatBuildOutputPath,
+  releaseBuildExtensions,
+  resolveBuildOutputDir,
+  runWithBundlerShutdown,
+} from "./command.ts";
 import type { BuildOptions } from "./types.ts";
 
 describe("commands/build/command", () => {
@@ -55,6 +66,33 @@ describe("commands/build/command", () => {
     });
   });
 
+  describe("releaseBuildExtensions", () => {
+    it("tears down the composed extensions", async () => {
+      let torndown = 0;
+      await releaseBuildExtensions({
+        teardownAll: () => {
+          torndown++;
+          return Promise.resolve();
+        },
+      });
+      assertEquals(torndown, 1);
+    });
+
+    it("does nothing when no extensions were composed", async () => {
+      // The build can fail before composition, so the release path runs with
+      // nothing to release and must not throw.
+      await releaseBuildExtensions(undefined);
+    });
+
+    it("does not let a teardown failure change the build outcome", async () => {
+      // The build has already produced its result. runWithBundlerShutdown sets
+      // the same precedent by preserving the build error over a shutdown one.
+      await releaseBuildExtensions({
+        teardownAll: () => Promise.reject(new Error("teardown exploded")),
+      });
+    });
+  });
+
   describe("formatBuildOutputPath", () => {
     it("reports the default output relative to the project", () => {
       assertEquals(
@@ -67,6 +105,80 @@ describe("commands/build/command", () => {
       assertEquals(
         formatBuildOutputPath("/workspace/project", "/workspace/shared/dist"),
         "../shared/dist",
+      );
+    });
+  });
+
+  describe("resolveBuildOutputDir", () => {
+    it("honors build.outDir from veryfront.config.ts", () => {
+      // build.outDir was parsed into the config and then ignored: the build
+      // wrote and cleared dist/ anyway, so a project could not move the
+      // framework's output away from its own dist/.
+      assertEquals(
+        resolveBuildOutputDir("/workspace/project", undefined, {
+          build: { outDir: "custom-out" },
+        }),
+        "/workspace/project/custom-out",
+      );
+    });
+
+    it("lets -o/--output override build.outDir", () => {
+      assertEquals(
+        resolveBuildOutputDir("/workspace/project", "flagout", {
+          build: { outDir: "custom-out" },
+        }),
+        "flagout",
+      );
+    });
+
+    it("falls back to dist when no output is configured", () => {
+      assertEquals(
+        resolveBuildOutputDir("/workspace/project", undefined, {}),
+        "/workspace/project/dist",
+      );
+    });
+
+    it("keeps an absolute build.outDir absolute", () => {
+      assertEquals(
+        resolveBuildOutputDir("/workspace/project", undefined, {
+          build: { outDir: "/var/www/site" },
+        }),
+        "/var/www/site",
+      );
+    });
+
+    it("rejects a build.outDir that is the project directory", () => {
+      // The build clears its output directory before writing, so honoring
+      // `outDir: "."` would recursively delete the project's own source.
+      assertThrows(
+        () => resolveBuildOutputDir("/workspace/project", undefined, { build: { outDir: "." } }),
+        Error,
+        "build.outDir",
+      );
+    });
+
+    it("rejects a build.outDir that contains the project directory", () => {
+      assertThrows(
+        () => resolveBuildOutputDir("/workspace/project", undefined, { build: { outDir: ".." } }),
+        Error,
+        "/workspace",
+      );
+    });
+
+    it("rejects an -o/--output that contains the project directory", () => {
+      assertThrows(
+        () => resolveBuildOutputDir("/workspace/project", "..", {}),
+        Error,
+        "-o/--output",
+      );
+    });
+
+    it("allows an output directory beside the project", () => {
+      assertEquals(
+        resolveBuildOutputDir("/workspace/project", undefined, {
+          build: { outDir: "../shared-dist" },
+        }),
+        "/workspace/shared-dist",
       );
     });
   });
@@ -150,5 +262,37 @@ describe("commands/build/command", () => {
       assertExists(mod.handleBuildCommand);
       assertEquals(typeof mod.handleBuildCommand, "function");
     });
+  });
+});
+
+describe("cli/build resolveBuildOutputDir clearsOutputDir", () => {
+  // Raised in review on #3781. The guard exists because the production build
+  // removes its output directory first. The embedded preset only mkdir's and
+  // writes, so applying the guard there rejected `-o .` — a plausible call for
+  // a preset meant to be embedded in a host project — over a hazard that does
+  // not exist on that path.
+  it("rejects an output directory containing the project when the caller clears it", () => {
+    assertThrows(
+      () => resolveBuildOutputDir("/tmp/proj", "/tmp/proj", { build: {} }),
+      Error,
+    );
+  });
+
+  it("allows the same directory when the caller only writes into it", () => {
+    assertEquals(
+      resolveBuildOutputDir("/tmp/proj", "/tmp/proj", { build: {} }, {
+        clearsOutputDir: false,
+      }),
+      "/tmp/proj",
+    );
+  });
+
+  it("still honours build.outDir when the guard is opted out", () => {
+    assertEquals(
+      resolveBuildOutputDir("/tmp/proj", undefined, { build: { outDir: "custom" } }, {
+        clearsOutputDir: false,
+      }),
+      "/tmp/proj/custom",
+    );
   });
 });

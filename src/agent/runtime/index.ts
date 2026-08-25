@@ -17,6 +17,7 @@ import {
   type AgentGenerateToolReplacements,
   type AgentResponse,
   type AgentStatus,
+  type AgentSystem,
   getTextFromParts,
   type Message,
   type MessagePart,
@@ -29,6 +30,10 @@ import {
 import { ensureModelReady, type ModelRuntime, resolveModel } from "#veryfront/provider";
 import { generateId } from "#veryfront/utils/id.ts";
 import { detectPlatform, getPlatformCapabilities } from "#veryfront/platform/core-platform.ts";
+import {
+  canIdentifyProxyWithoutHooks,
+  isProxyWithoutHooks,
+} from "#veryfront/platform/compat/error-introspection.ts";
 import { createAgentMemory, type Memory } from "../memory/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
@@ -39,6 +44,7 @@ import {
 } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { setActiveSpanAttributes as setOtelActiveSpanAttributes } from "#veryfront/observability";
 import { convertToTextGenerationRuntimeRequestMessages } from "./text-generation-runtime-message-converter.ts";
+import { attachProviderMetadata } from "./provider-metadata.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 import {
   bindRuntimeRemoteToolSourcesToCredentialOwner,
@@ -47,16 +53,27 @@ import {
 } from "./mcp-server-tool-sources.ts";
 import { runWithRuntimeRemoteToolSources } from "./remote-tool-source-context.ts";
 import {
+  announceStreamedToolCallInput,
   createStreamState,
   processStream,
+  type StreamingToolCall,
   type StreamingToolResult,
 } from "./chat-stream-handler.ts";
 import { repairToolCall } from "./repair-tool-call.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
-import { isLocalModelRuntime } from "#veryfront/provider/runtime-inspection.ts";
+import {
+  isLocalModelRuntime,
+  supportsModelRuntimeToolCalling,
+} from "#veryfront/provider/runtime-inspection.ts";
 import { generateText, streamText } from "#veryfront/runtime/runtime-bridge.ts";
+import { resolveAgentSystem } from "./effective-agent-system.ts";
+import {
+  attachOutputSchemaParser,
+  resolveAgentOutputSchema,
+  type ResolvedAgentOutputSchema,
+} from "../output-schema.ts";
 import {
   captureStreamedToolCallInput,
   collectFinalStreamToolResults,
@@ -65,24 +82,22 @@ import {
   createToolResultMessage,
   getProviderExecutedToolNames,
   getToolResultError,
+  hasSubstantiveAssistantText,
+  isInterruptedClientToolCall,
   isRecoverablePlaceholderToolCall,
   isStreamedToolCallIncomplete,
   materializeStreamedToolCall,
   shouldContinueAfterStreamStep,
 } from "./tool-result-continuation.ts";
+
 import {
   enforceSkillPolicy,
-  extractSkillId,
-  extractSkillPolicy,
-  extractSkillToolAvailability,
   FORM_INPUT_TOOL_ID,
-  hasSubmittedFormInputResult,
-  hydrateActiveSkillStateFromMessages,
-  INACTIVE_SKILL_TOOL_AVAILABILITY,
   LOAD_SKILL_TOOL_ID,
-  removeFormInputAfterSubmission,
   SUBMITTED_FORM_INPUT_CONTEXT_KEY,
 } from "./skill-policy-enforcement.ts";
+import { AgentLoopSkillState } from "./agent-loop-skill-state.ts";
+import { markRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
 import {
   getRuntimeAllowedRemoteTools,
   getRuntimeForwardedIntegrationToolDefs,
@@ -98,13 +113,27 @@ import {
   applySourceIntegrationPolicy,
   type SourceIntegrationPolicyManifest,
 } from "#veryfront/integrations/source-policy.ts";
-import { prepareAgentRuntimeStep } from "./agent-runtime-step.ts";
-import { buildStreamedAssistantMessage } from "./streamed-assistant-message.ts";
+import { runWithRemoteIntegrationToolDiscoveryScope } from "#veryfront/integrations/remote-tools.ts";
 import {
+  prepareAgentRuntimeStep,
+  withIntegrationToolDiscoveryStatus,
+} from "./agent-runtime-step.ts";
+import {
+  buildStreamedAssistantMessage,
+  isPersistedReasoningPart,
+} from "./streamed-assistant-message.ts";
+import {
+  type DeferredToolSummary,
   flattenSystemInstructions,
   hasRuntimeToolInventory,
   withRuntimeToolInventory,
 } from "./tool-inventory.ts";
+import {
+  type AgentRunRuntimeContext,
+  captureAgentRunRuntimeContext,
+  withAgentRunRuntimeContext,
+  withAgentRunRuntimeContextMetadata,
+} from "./run-runtime-context.ts";
 
 // Re-export from submodules
 export { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
@@ -165,6 +194,8 @@ export {
   type StreamedToolCallMaterialization,
 } from "./tool-result-continuation.ts";
 
+const NativeError = Error;
+
 function resolveRuntimeGenAiProviderName(modelId: string): string | undefined {
   const normalizedModelId = modelId.startsWith("veryfront-cloud/")
     ? modelId.slice("veryfront-cloud/".length)
@@ -186,11 +217,7 @@ function resolveRuntimeGenAiProviderName(modelId: string): string | undefined {
   }
 }
 
-export {
-  enforceSkillPolicy,
-  extractSkillPolicy,
-  type SkillPolicyResult,
-} from "./skill-policy-enforcement.ts";
+export { enforceSkillPolicy, type SkillPolicyResult } from "./skill-policy-enforcement.ts";
 
 import { DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE, getModelMaxOutputTokens } from "./constants.ts";
 import { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
@@ -202,19 +229,18 @@ import {
   type ToolConfigEntry,
 } from "./tool-helpers.ts";
 import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
-import { resolveRuntimeModel } from "./model-resolution.ts";
+import { resolveModelProviderOptionKey, resolveRuntimeModel } from "./model-resolution.ts";
 import type { RuntimeGenerateTextResult, RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
+import { telemetryErrorType } from "#veryfront/observability/telemetry-error.ts";
 import { resolveTemperatureParameter } from "./model-capabilities.ts";
-import {
-  applySkillDelegationOverridesToToolInput,
-  extractSkillDelegationOverrides,
-} from "./skill-delegation-overrides.ts";
+import { applySkillDelegationOverridesToToolInput } from "./skill-delegation-overrides.ts";
 import { resolveAgentModelTransport, type ResolvedModelTransport } from "./model-transport.ts";
 import { buildRuntimeUsageTraceAttributes } from "./trace-usage.ts";
 import {
   createToolExposureCheckpoint,
   createToolExposureState,
+  createToolSearchDefinition,
   searchToolExposure,
   TOOL_SEARCH_TOOL_NAME,
   type ToolExposureCheckpoint,
@@ -223,8 +249,344 @@ import {
   type ToolSearchResult,
 } from "./tool-exposure.ts";
 
+const ArrayIsArray = Array.isArray;
+const cloneStructuredValue = globalThis.structuredClone;
+const IntrinsicWeakMap = WeakMap;
+const ObjectCreate = Object.create;
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectPrototype = Object.prototype;
+const ReflectOwnKeys = Reflect.ownKeys;
 const logger = serverLogger.component("agent");
 const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = ["load_skill", "load_skill_reference"] as const;
+
+function getStructuredCloneFailureFingerprint(error: unknown): string | undefined {
+  if (!(error instanceof DOMException) || error.name !== "DataCloneError") {
+    return undefined;
+  }
+  return `${error.name}\u0000${error.message}`;
+}
+
+function captureOpaqueProxyCloneFailureFingerprints(): readonly string[] {
+  const revokedArrayProxy = Proxy.revocable([], {});
+  revokedArrayProxy.revoke();
+  const probes = [
+    new Proxy({}, {}),
+    new Proxy([], {}),
+    new Proxy(ObjectCreate(null), {}),
+    revokedArrayProxy.proxy,
+  ];
+  const fingerprints: string[] = [];
+  for (const probe of probes) {
+    try {
+      cloneStructuredValue(probe);
+    } catch (error) {
+      const fingerprint = getStructuredCloneFailureFingerprint(error);
+      if (fingerprint !== undefined && !fingerprints.includes(fingerprint)) {
+        fingerprints.push(fingerprint);
+      }
+    }
+  }
+  return fingerprints;
+}
+
+const OPAQUE_PROXY_CLONE_FAILURE_FINGERPRINTS = captureOpaqueProxyCloneFailureFingerprints();
+
+function isOpaqueProxyCloneFailure(error: unknown): boolean {
+  const fingerprint = getStructuredCloneFailureFingerprint(error);
+  return fingerprint !== undefined &&
+    OPAQUE_PROXY_CLONE_FAILURE_FINGERPRINTS.includes(fingerprint);
+}
+
+type RuntimeStateCloneFallback =
+  | "root"
+  | "message"
+  | "provider-options"
+  | "provider-bucket"
+  | "cache-control"
+  | "provider-metadata"
+  | "opaque";
+
+function isArrayWithoutThrowing(value: object): boolean {
+  try {
+    return ArrayIsArray(value);
+  } catch {
+    return false;
+  }
+}
+
+function shouldRecoverOpaqueProxyContainer(
+  value: object,
+  fallback: RuntimeStateCloneFallback,
+): boolean {
+  return fallback === "root"
+    ? isArrayWithoutThrowing(value)
+    : fallback !== "opaque" && fallback !== "provider-metadata";
+}
+
+function getChildRuntimeStateCloneFallback(
+  fallback: RuntimeStateCloneFallback,
+  parentIsArray: boolean,
+  key: PropertyKey,
+  providerOptionKey: string | undefined,
+): RuntimeStateCloneFallback {
+  if (fallback === "root" && parentIsArray) {
+    return "message";
+  }
+  if (fallback === "message" && key === "providerOptions") {
+    return "provider-options";
+  }
+  if (
+    fallback === "provider-options" &&
+    (key === "anthropic" || key === "veryfront-cloud" || key === providerOptionKey)
+  ) {
+    return "provider-bucket";
+  }
+  if (fallback === "provider-bucket") {
+    return key === "cacheControl" ? "cache-control" : "provider-metadata";
+  }
+  if (fallback === "cache-control") {
+    return "provider-metadata";
+  }
+  return "opaque";
+}
+
+function isOrdinaryRecordPrototype(prototype: object | null): boolean {
+  if (prototype === null || prototype === ObjectPrototype) {
+    return true;
+  }
+  if (isProxyWithoutHooks(prototype)) {
+    return false;
+  }
+  try {
+    return ObjectGetPrototypeOf(prototype) === null;
+  } catch {
+    return false;
+  }
+}
+
+function cloneRuntimeStateMutableValue(
+  value: unknown,
+  clones: WeakMap<object, unknown>,
+  proxyDetectionAvailable: boolean,
+  fallback: RuntimeStateCloneFallback,
+  providerOptionKey: string | undefined,
+): unknown {
+  if (typeof value !== "object" || value === null) {
+    return value;
+  }
+  if (proxyDetectionAvailable && isProxyWithoutHooks(value)) {
+    return value;
+  }
+
+  const existing = clones.get(value);
+  if (existing !== undefined) {
+    return existing;
+  }
+
+  const inspectFrameworkContainer = shouldRecoverOpaqueProxyContainer(value, fallback);
+  if (!proxyDetectionAvailable && fallback === "provider-metadata") {
+    // Without host-level Proxy branding, unknown provider metadata cannot be
+    // reflected over safely. Keep it opaque instead of structured-cloning it,
+    // which would evaluate enumerable accessors. Known cacheControl metadata
+    // still follows the descriptor-first framework-container path.
+    return value;
+  }
+  if (!proxyDetectionAvailable && !inspectFrameworkContainer) {
+    try {
+      const clone = cloneStructuredValue(value);
+      clones.set(value, clone);
+      return clone;
+    } catch (error) {
+      // Proxy branding is unavailable on browser and edge hosts. Compare the
+      // failure with trusted, host-local Proxy failures before reflecting over
+      // the value. Unlike matching engine-specific text, this remains valid
+      // across engines and localized exception messages. Framework-owned
+      // structured-system containers are copied from descriptors before this
+      // branch so metadata accessors stay inert. Unknown values still fail
+      // closed without reflective Proxy probes.
+      if (isOpaqueProxyCloneFailure(error)) {
+        return value;
+      }
+      if (getStructuredCloneFailureFingerprint(error) === undefined) {
+        return value;
+      }
+    }
+  }
+
+  const isArray = isArrayWithoutThrowing(value);
+  let prototype: object | null;
+  try {
+    prototype = ObjectGetPrototypeOf(value);
+  } catch {
+    return value;
+  }
+  if (!isArray && !isOrdinaryRecordPrototype(prototype)) {
+    return value;
+  }
+
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = ObjectGetOwnPropertyDescriptors(value);
+  } catch {
+    return value;
+  }
+
+  const clone = isArray ? [] : ObjectCreate(prototype === null ? null : ObjectPrototype);
+  clones.set(value, clone);
+  const lengthDescriptor = isArray ? descriptors.length : undefined;
+  for (const key of ReflectOwnKeys(descriptors)) {
+    if (isArray && key === "length") {
+      continue;
+    }
+    const descriptor = descriptors[key as keyof PropertyDescriptorMap];
+    if (!descriptor) {
+      continue;
+    }
+    if ("value" in descriptor) {
+      descriptor.value = cloneRuntimeStateMutableValue(
+        descriptor.value,
+        clones,
+        proxyDetectionAvailable,
+        getChildRuntimeStateCloneFallback(fallback, isArray, key, providerOptionKey),
+        providerOptionKey,
+      );
+    }
+    ObjectDefineProperty(clone, key, descriptor);
+  }
+  if (lengthDescriptor) {
+    ObjectDefineProperty(clone, "length", lengthDescriptor);
+  }
+  return clone;
+}
+
+export function cloneRuntimeStateMutableData<T>(
+  value: T,
+  proxyDetectionAvailable = canIdentifyProxyWithoutHooks,
+  providerOptionKey?: string,
+): T {
+  return cloneRuntimeStateMutableValue(
+    value,
+    new IntrinsicWeakMap<object, unknown>(),
+    proxyDetectionAvailable,
+    "root",
+    providerOptionKey,
+  ) as T;
+}
+
+type DeferredRecoveryOutput =
+  | { kind: "sse"; chunk: Uint8Array; isTextEvent: boolean }
+  | { kind: "callback"; chunk: string };
+
+function isTextSseChunk(chunk: Uint8Array): boolean {
+  const payload = new TextDecoder().decode(chunk);
+  if (!payload.startsWith("data: ")) {
+    return false;
+  }
+
+  try {
+    const event = JSON.parse(payload.slice("data: ".length)) as { type?: unknown };
+    return event.type === "text-start" || event.type === "text-delta" ||
+      event.type === "text-end";
+  } catch {
+    return false;
+  }
+}
+
+function isTextEndSseChunk(chunk: Uint8Array): boolean {
+  const payload = new TextDecoder().decode(chunk);
+  if (!payload.startsWith("data: ")) {
+    return false;
+  }
+
+  try {
+    const event = JSON.parse(payload.slice("data: ".length)) as { type?: unknown };
+    return event.type === "text-end";
+  } catch {
+    return false;
+  }
+}
+
+function textDeltaFromSseChunk(chunk: Uint8Array): string | undefined {
+  const payload = new TextDecoder().decode(chunk);
+  if (!payload.startsWith("data: ")) {
+    return undefined;
+  }
+
+  try {
+    const event = JSON.parse(payload.slice("data: ".length)) as Record<string, unknown>;
+    return event.type === "text-delta" && typeof event.delta === "string" ? event.delta : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function stripLeadingText(
+  text: string,
+  remainingPrefixLength: number,
+): { text: string; remainingPrefixLength: number } {
+  const consumedLength = Math.min(text.length, remainingPrefixLength);
+  return {
+    text: text.slice(consumedLength),
+    remainingPrefixLength: remainingPrefixLength - consumedLength,
+  };
+}
+
+function stripTextDeltaPrefixFromSseChunk(
+  chunk: Uint8Array,
+  remainingPrefixLength: number,
+  encoder: TextEncoder,
+): { chunk: Uint8Array | undefined; remainingPrefixLength: number } {
+  const payload = new TextDecoder().decode(chunk);
+  if (!payload.startsWith("data: ")) {
+    return { chunk, remainingPrefixLength };
+  }
+
+  try {
+    const event = JSON.parse(payload.slice("data: ".length)) as Record<string, unknown>;
+    if (event.type !== "text-delta" || typeof event.delta !== "string") {
+      return { chunk, remainingPrefixLength };
+    }
+    const stripped = stripLeadingText(event.delta, remainingPrefixLength);
+    if (stripped.text.length === 0) {
+      return { chunk: undefined, remainingPrefixLength: stripped.remainingPrefixLength };
+    }
+    return {
+      chunk: encoder.encode(`data: ${JSON.stringify({ ...event, delta: stripped.text })}\n\n`),
+      remainingPrefixLength: stripped.remainingPrefixLength,
+    };
+  } catch {
+    return { chunk, remainingPrefixLength };
+  }
+}
+
+function rewriteRecoveryTextSseChunkId(
+  chunk: Uint8Array,
+  fallbackId: string,
+  encoder: TextEncoder,
+): Uint8Array {
+  const payload = new TextDecoder().decode(chunk);
+  if (!payload.startsWith("data: ")) {
+    return chunk;
+  }
+
+  try {
+    const event = JSON.parse(payload.slice("data: ".length)) as Record<string, unknown>;
+    if (
+      event.type !== "text-start" && event.type !== "text-delta" &&
+      event.type !== "text-end"
+    ) {
+      return chunk;
+    }
+    const id = typeof event.id === "string" && event.id.length > 0
+      ? `${event.id}:recovery`
+      : fallbackId;
+    return encoder.encode(`data: ${JSON.stringify({ ...event, id })}\n\n`);
+  } catch {
+    return chunk;
+  }
+}
 
 function buildGeneratedAssistantMessage(
   response: RuntimeGenerateTextResult,
@@ -240,11 +602,11 @@ function buildGeneratedAssistantMessage(
       args: toolCall.input as Record<string, unknown>,
     });
   }
-  return {
+  return attachProviderMetadata({
     ...metadata,
     role: "assistant",
     parts,
-  };
+  }, response.providerMetadata);
 }
 
 function executeFrameworkToolSearch(input: {
@@ -385,12 +747,43 @@ function shouldHideProjectToolAfterAgentWriteSuccess(toolName: string): boolean 
   return AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES.has(toolName);
 }
 
-function applyAgentWriteFinalResponseGuard(plan: ToolExposurePlan): ToolExposurePlan {
+function didReloadProjectAgentWriteTool(result: ToolSearchResult): boolean {
+  return result.matches.some((match) =>
+    match.status === "loaded" && shouldHideProjectToolAfterAgentWriteSuccess(match.name)
+  );
+}
+
+function compareToolNames(left: { name: string }, right: { name: string }): number {
+  return left.name < right.name ? -1 : left.name > right.name ? 1 : 0;
+}
+
+function applyAgentWriteFinalResponseGuard(
+  plan: ToolExposurePlan,
+  options: { reloadable: boolean },
+): ToolExposurePlan {
   const keep = (tool: { name: string }) => !shouldHideProjectToolAfterAgentWriteSuccess(tool.name);
   for (const toolName of plan.loadedToolNames) {
     if (shouldHideProjectToolAfterAgentWriteSuccess(toolName)) {
       plan.loadedToolNames.delete(toolName);
     }
+  }
+  if (options.reloadable) {
+    const guardedTools = plan.authorized.filter((tool) => !keep(tool));
+    const visible = plan.visible.filter(keep);
+    const deferredByName = new Map(
+      [...plan.deferred, ...guardedTools].map((tool) => [tool.name, tool]),
+    );
+    if (
+      guardedTools.length > 0 &&
+      !visible.some((tool) => tool.name === TOOL_SEARCH_TOOL_NAME)
+    ) {
+      visible.push(createToolSearchDefinition());
+    }
+    return {
+      ...plan,
+      visible: visible.sort(compareToolNames),
+      deferred: [...deferredByName.values()].sort(compareToolNames),
+    };
   }
   return {
     ...plan,
@@ -401,15 +794,19 @@ function applyAgentWriteFinalResponseGuard(plan: ToolExposurePlan): ToolExposure
 }
 
 function synchronizeRuntimeToolInventory(
-  systemPrompt: string,
+  systemPrompt: AgentSystem,
   runtimeTools: Record<string, unknown> | undefined,
-): string {
+  deferredTools: readonly DeferredToolSummary[] = [],
+): AgentSystem {
   if (!hasRuntimeToolInventory(systemPrompt)) {
     return systemPrompt;
   }
-  return flattenSystemInstructions(
-    withRuntimeToolInventory(systemPrompt, Object.keys(runtimeTools ?? {}).sort()),
+  const instructions = withRuntimeToolInventory(
+    systemPrompt,
+    Object.keys(runtimeTools ?? {}).sort(),
+    deferredTools,
   );
+  return typeof systemPrompt === "string" ? flattenSystemInstructions(instructions) : instructions;
 }
 
 function parseToolResultJson(result: string): unknown {
@@ -470,7 +867,6 @@ function buildRuntimeToolTraceAttributes(input: {
   inputSizeBytes?: number;
   outputSizeBytes?: number;
   errorType?: string;
-  errorMessage?: string;
 }): Record<string, string | number | boolean> {
   return compactRuntimeTraceAttributes({
     "agent.id": input.agentId,
@@ -494,8 +890,10 @@ function buildRuntimeToolTraceAttributes(input: {
     "gen_ai.tool.name": input.toolName,
     "gen_ai.tool.type": "function",
     "gen_ai.tool.call.id": input.toolCallId,
+    // Deliberately no "error.message". Tool and provider error text is
+    // caller-supplied and telemetry leaves the process; "error.type" is the
+    // bounded classification, the same trade the workflow retry events make.
     "error.type": input.errorType,
-    "error.message": input.errorMessage,
   });
 }
 
@@ -552,7 +950,10 @@ async function traceConfiguredToolExecution(input: {
         );
         const resultError = getToolResultError(result);
         if (resultError !== undefined) {
-          setOtelActiveSpanErrorStatus(resultError);
+          // Identify the tool, not the failure text: `resultError` is a raw
+          // string, which reaches the wire unchanged through both the span
+          // status and the recorded exception.
+          setOtelActiveSpanErrorStatus(new NativeError(`Tool "${input.toolName}" failed`));
         }
         setOtelActiveSpanAttributes(
           buildRuntimeToolTraceAttributes({
@@ -566,12 +967,10 @@ async function traceConfiguredToolExecution(input: {
             inputSizeBytes,
             outputSizeBytes: estimateSerializedSizeBytes(result),
             errorType: resultError === undefined ? undefined : "ToolResultError",
-            errorMessage: resultError,
           }),
         );
         return result;
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
         setOtelActiveSpanAttributes({
           ...buildRuntimeToolTraceAttributes({
             mode: input.mode,
@@ -582,8 +981,7 @@ async function traceConfiguredToolExecution(input: {
             status: "failed",
             providerExecuted: false,
             inputSizeBytes,
-            errorType: error instanceof Error ? error.name : "Error",
-            errorMessage,
+            errorType: telemetryErrorType(error),
           }),
         });
         throw error;
@@ -613,12 +1011,12 @@ async function traceProviderExecutedTool(input: {
   isError?: boolean;
 }): Promise<void> {
   const status = input.isError === true ? "failed" : "completed";
-  const errorMessage = input.isError === true ? stringifyToolError(input.result) : undefined;
+  const hasError = input.isError === true;
   await withSpan(
     "agent.tool_execute",
     async () => {
-      if (errorMessage !== undefined) {
-        setOtelActiveSpanErrorStatus(errorMessage);
+      if (hasError) {
+        setOtelActiveSpanErrorStatus(new NativeError(`Tool "${input.toolName}" failed`));
       }
       setOtelActiveSpanAttributes(
         buildRuntimeToolTraceAttributes({
@@ -627,8 +1025,7 @@ async function traceProviderExecutedTool(input: {
           providerExecuted: true,
           inputSizeBytes: estimateSerializedSizeBytes(input.args),
           outputSizeBytes: estimateSerializedSizeBytes(input.result),
-          errorType: input.isError === true ? "ProviderExecutedToolError" : undefined,
-          errorMessage,
+          errorType: hasError ? "ProviderExecutedToolError" : undefined,
         }),
       );
     },
@@ -638,8 +1035,7 @@ async function traceProviderExecutedTool(input: {
       providerExecuted: true,
       inputSizeBytes: estimateSerializedSizeBytes(input.args),
       outputSizeBytes: estimateSerializedSizeBytes(input.result),
-      errorType: input.isError === true ? "ProviderExecutedToolError" : undefined,
-      errorMessage,
+      errorType: hasError ? "ProviderExecutedToolError" : undefined,
     }),
   );
 }
@@ -661,12 +1057,10 @@ function isAbortError(error: unknown, abortSignal?: AbortSignal): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-function warnLocalToolSkipping(agentId: string, modelId: string): void {
+function warnUnsupportedToolCalling(agentId: string, modelId: string): void {
   logger.warn(
-    `Agent "${agentId}" has tools configured but is using local model "${modelId}". ` +
-      "Local models don't support tool calling. Tools will be skipped. " +
-      "Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG, or configure " +
-      "OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for full tool support.",
+    `Agent "${agentId}" has tools configured, but model "${modelId}" does not support ` +
+      "tool calling. Tools will be skipped.",
   );
 }
 
@@ -679,7 +1073,7 @@ function debugRuntimeModelRemap(requestedModel: string, resolvedModelString: str
 }
 
 type RuntimeStepState = {
-  systemPrompt: string;
+  systemPrompt: AgentSystem;
   context?: Record<string, unknown>;
 };
 
@@ -734,19 +1128,30 @@ export class AgentRuntime {
     context: Record<string, unknown> | undefined,
     mode: "generate" | "stream",
     step: number,
-    systemPrompt: string,
+    systemPrompt: AgentSystem,
+    providerOptionKey: string | undefined,
   ): Promise<RuntimeStepState> {
+    const structuredSystem = Array.isArray(systemPrompt) ? systemPrompt : undefined;
     const refreshed: ResolvedRuntimeState | undefined = await this.config.resolveRuntimeState?.({
       agentId: this.id,
       mode,
       step,
-      system: systemPrompt,
+      system: typeof systemPrompt === "string"
+        ? systemPrompt
+        : flattenSystemInstructions(systemPrompt),
+      ...(structuredSystem === undefined ? {} : {
+        structuredSystem: cloneRuntimeStateMutableData(
+          structuredSystem,
+          canIdentifyProxyWithoutHooks,
+          providerOptionKey,
+        ),
+      }),
       messages: [...messages],
       context,
     });
 
     return {
-      systemPrompt: refreshed?.system ?? systemPrompt,
+      systemPrompt: refreshed?.structuredSystem ?? refreshed?.system ?? systemPrompt,
       context: refreshed?.context ?? context,
     };
   }
@@ -787,6 +1192,16 @@ export class AgentRuntime {
   }
 
   /**
+   * Resolve the schema that constrains this request.
+   *
+   * A per-call schema replaces the configured one; without either, the agent
+   * is unconstrained.
+   */
+  private resolveOutputSchema(override: unknown): ResolvedAgentOutputSchema | undefined {
+    return resolveAgentOutputSchema(override ?? this.config.outputSchema, this.id);
+  }
+
+  /**
    * Generate a response (non-streaming)
    */
   async generate(
@@ -798,24 +1213,30 @@ export class AgentRuntime {
     options?: {
       toolReplacements?: AgentGenerateToolReplacements;
       retainSkillLoaderTools?: boolean;
+      outputSchema?: unknown;
     },
   ): Promise<AgentResponse> {
     throwIfAborted(abortSignal);
+    const outputSchema = this.resolveOutputSchema(options?.outputSchema);
+    const runRuntimeContext = captureAgentRunRuntimeContext();
     const transport = await this.resolveModelTransport(context, modelOverride, "generate");
     const requestedModel = transport.requestedModel;
     const resolvedModelString = transport.resolvedModelString;
+    const supportsToolCalling = supportsModelRuntimeToolCalling(transport.languageModel);
     debugRuntimeModelRemap(requestedModel, resolvedModelString);
 
     return withSpan("agent.generate", async (span) => {
       setSpanAttributes(span, {
         "agent.id": this.id,
         "agent.model": resolvedModelString,
+        "run.started_at_utc": runRuntimeContext.runStartedAtUtc,
+        "run.current_date_utc": runRuntimeContext.currentDateUtc,
       });
 
       const inputMessages = normalizeInput(input);
       const messages = await this.prepareTurnMessages(inputMessages);
 
-      const systemPrompt = await this.resolveSystemPrompt();
+      const systemPrompt = await this.resolveSystemPrompt(transport.providerOptionKey);
 
       const agentContext: AgentContext = {
         agentId: this.id,
@@ -829,26 +1250,31 @@ export class AgentRuntime {
       return chain.execute(
         agentContext,
         () =>
-          this.executeAgentLoop(
-            systemPrompt,
-            messages,
-            {
-              agentId: this.id,
-              projectId: tryGetCacheKeyContext()?.projectId,
-            },
-            context,
-            resolvedModelString,
-            transport.languageModel,
-            transport.headers,
-            transport.providerOptions,
-            transport.reasoning,
-            maxOutputTokensOverride,
-            requestedModel,
-            this.createGenerateReplacementTools(
-              options?.toolReplacements,
-              options?.retainSkillLoaderTools,
-            ),
-            abortSignal,
+          runWithRemoteIntegrationToolDiscoveryScope(() =>
+            this.executeAgentLoop(
+              systemPrompt,
+              messages,
+              {
+                agentId: this.id,
+                projectId: tryGetCacheKeyContext()?.projectId,
+              },
+              context,
+              runRuntimeContext,
+              supportsToolCalling,
+              resolvedModelString,
+              transport.languageModel,
+              transport.headers,
+              transport.providerOptions,
+              transport.reasoning,
+              maxOutputTokensOverride,
+              requestedModel,
+              this.createGenerateReplacementTools(
+                options?.toolReplacements,
+                options?.retainSkillLoaderTools,
+              ),
+              abortSignal,
+              outputSchema,
+            )
           ),
       );
     });
@@ -869,7 +1295,14 @@ export class AgentRuntime {
     modelOverride?: string,
     maxOutputTokensOverride?: number,
     abortSignal?: AbortSignal,
+    options?: { outputSchema?: unknown },
   ): Promise<ReadableStream<Uint8Array>> {
+    const runRuntimeContext = captureAgentRunRuntimeContext();
+    const outputSchema = this.resolveOutputSchema(options?.outputSchema);
+    setOtelActiveSpanAttributes({
+      "run.started_at_utc": runRuntimeContext.runStartedAtUtc,
+      "run.current_date_utc": runRuntimeContext.currentDateUtc,
+    });
     const transport = await this.resolveModelTransport(context, modelOverride, "stream");
     const requestedModel = transport.requestedModel;
     const resolvedModelString = transport.resolvedModelString;
@@ -878,7 +1311,7 @@ export class AgentRuntime {
     const inputMessages = normalizeInput(messages);
     const memoryMessages = await this.prepareTurnMessages(inputMessages);
 
-    const systemPrompt = await this.resolveSystemPrompt();
+    const systemPrompt = await this.resolveSystemPrompt(transport.providerOptionKey);
 
     const encoder = new TextEncoder();
     const streamAbortController = new AbortController();
@@ -909,6 +1342,7 @@ export class AgentRuntime {
 
     // Determine inference mode from the resolved model object, not the string.
     const isLocal = isLocalModelRuntime(languageModel);
+    const supportsToolCalling = supportsModelRuntimeToolCalling(languageModel);
 
     // Eagerly verify the model runtime is available. For local models this
     // checks that @huggingface/transformers can be imported. Must happen
@@ -951,26 +1385,35 @@ export class AgentRuntime {
               model: resolvedModelString,
             },
           });
+          sendSSE(controller, encoder, {
+            type: "data-veryfront.runtime_context",
+            data: runRuntimeContext,
+          });
           inFlight = chain.execute(
             agentContext,
             () =>
-              this.executeAgentLoopStreaming(
-                systemPrompt,
-                memoryMessages,
-                controller,
-                encoder,
-                callbacks,
-                textPartId,
-                toolContext,
-                context,
-                resolvedModelString,
-                languageModel,
-                transport.headers,
-                transport.providerOptions,
-                transport.reasoning,
-                maxOutputTokensOverride,
-                streamAbortSignal,
-                requestedModel,
+              runWithRemoteIntegrationToolDiscoveryScope(() =>
+                this.executeAgentLoopStreaming(
+                  systemPrompt,
+                  memoryMessages,
+                  controller,
+                  encoder,
+                  callbacks,
+                  textPartId,
+                  toolContext,
+                  context,
+                  runRuntimeContext,
+                  supportsToolCalling,
+                  resolvedModelString,
+                  languageModel,
+                  transport.headers,
+                  transport.providerOptions,
+                  transport.reasoning,
+                  maxOutputTokensOverride,
+                  streamAbortSignal,
+                  requestedModel,
+                  outputSchema,
+                )
               ),
           );
           const response = await inFlight;
@@ -984,6 +1427,9 @@ export class AgentRuntime {
             type: "message-finish",
             ...(finishReason ? { finishReason } : {}),
             ...(finishUsage ? { totalUsage: finishUsage } : {}),
+            ...("object" in response && response.object !== undefined
+              ? { object: response.object }
+              : {}),
           });
           closeSSEStream(controller);
         } catch (error) {
@@ -1024,10 +1470,12 @@ export class AgentRuntime {
    * Execute agent loop (with tool calling)
    */
   private async executeAgentLoop(
-    systemPrompt: string,
+    systemPrompt: AgentSystem,
     messages: Message[],
-    toolContextBase?: ToolExecutionContext,
-    runtimeContext?: Record<string, unknown>,
+    toolContextBase: ToolExecutionContext | undefined,
+    runtimeContext: Record<string, unknown> | undefined,
+    runRuntimeContext: AgentRunRuntimeContext,
+    supportsToolCalling: boolean,
     modelString?: string,
     resolvedModel?: ModelRuntime,
     headers?: HeadersInit,
@@ -1037,6 +1485,7 @@ export class AgentRuntime {
     temperatureModelString?: string,
     toolReplacements?: AgentGenerateToolReplacements,
     abortSignal?: AbortSignal,
+    outputSchema?: ResolvedAgentOutputSchema,
   ): Promise<AgentResponse> {
     return withSpan("agent.execution_loop", async (loopSpan) => {
       const { maxAgentSteps } = getPlatformCapabilities();
@@ -1048,20 +1497,12 @@ export class AgentRuntime {
       const currentMessages = [...messages];
       const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
-      // Local models can't reliably do function calling, so skip tools gracefully.
-      const isLocal = isLocalModelRuntime(languageModel);
-      if (isLocal && this.config.tools) {
-        warnLocalToolSkipping(this.id, effectiveModel);
+      if (!supportsToolCalling && this.config.tools) {
+        warnUnsupportedToolCalling(this.id, effectiveModel);
       }
 
       // Request-scoped skill policy (not class-level mutable state)
-      const hydratedSkillState = hydrateActiveSkillStateFromMessages(currentMessages);
-      let activeSkillId = hydratedSkillState.activeSkillId;
-      let activeSkillPolicy = hydratedSkillState.activeSkillPolicy;
-      let activeSkillToolAvailability = hydratedSkillState.activeSkillToolAvailability;
-      let activeSkillDelegationOverrides = hydratedSkillState.activeSkillDelegationOverrides;
-      let hasSubmittedFormInputInLoop = hasSubmittedFormInputResult(currentMessages) ||
-        runtimeContext?.[SUBMITTED_FORM_INPUT_CONTEXT_KEY] === true;
+      const skillState = AgentLoopSkillState.hydrate(currentMessages, runtimeContext);
       const hasToolReplacements = toolReplacements !== undefined;
       const initialToolExposureCheckpoint = hasToolReplacements
         ? undefined
@@ -1089,6 +1530,7 @@ export class AgentRuntime {
           sandbox: undefined,
         }
         : runConfig;
+      const runtimeStepToolLoading = resolveRuntimeToolLoading(runtimeStepConfig);
       const allowedRemoteToolNames = hasToolReplacements
         ? undefined
         : getRuntimeAllowedRemoteTools(this.config);
@@ -1115,29 +1557,33 @@ export class AgentRuntime {
         throwIfAborted(abortSignal);
         this.status = "thinking";
         addSpanEvent(loopSpan, "step_start", { step });
-        const stepRuntimeContext = hasSubmittedFormInputInLoop
+        const stepRuntimeContext = skillState.hasSubmittedFormInput
           ? markSubmittedFormInputRuntimeContext(currentRuntimeContext)
           : currentRuntimeContext;
 
         const preparedStep = await prepareAgentRuntimeStep({
           agentId: this.id,
-          activeSkillId: hasToolReplacements ? undefined : activeSkillId,
-          activeSkillPolicy: hasToolReplacements ? undefined : activeSkillPolicy,
+          activeSkillId: hasToolReplacements ? undefined : skillState.activeSkillId,
           activeSkillToolAvailability: hasToolReplacements
             ? undefined
-            : activeSkillToolAvailability,
+            : skillState.activeSkillToolAvailability,
           allowedRemoteToolNames,
           config: runtimeStepConfig,
           effectiveModel,
-          excludedToolNames: agentWriteFinalResponseToolGuardEnabled
+          excludedToolNames: agentWriteFinalResponseToolGuardEnabled &&
+              runtimeStepToolLoading.mode === "eager"
             ? AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES
             : undefined,
           forwardedRemoteToolDefinitions,
           getAvailableTools,
-          isLocalModel: isLocal,
+          supportsToolCalling,
           messages: currentMessages,
           mode: "generate",
-          providerToolNames: agentWriteFinalResponseToolGuardEnabled ? [] : providerTools,
+          modelRuntime: languageModel,
+          providerOptionKey: resolveModelProviderOptionKey(effectiveModel, languageModel),
+          providerToolNames: supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
+            ? providerTools
+            : [],
           remoteToolSources,
           sourceIntegrationPolicy,
           resolveRuntimeState: this.resolveRuntimeState.bind(this),
@@ -1154,18 +1600,23 @@ export class AgentRuntime {
         currentRuntimeContext = preparedStep.runtimeContext;
         const toolContext = preparedStep.toolContext;
         const effectiveToolExposurePlan = agentWriteFinalResponseToolGuardEnabled
-          ? applyAgentWriteFinalResponseGuard(preparedStep.toolExposurePlan)
+          ? applyAgentWriteFinalResponseGuard(preparedStep.toolExposurePlan, {
+            reloadable: runtimeStepToolLoading.mode === "deferred",
+          })
           : preparedStep.toolExposurePlan;
         const tools = effectiveToolExposurePlan.visible;
         setSpanAttributes(loopSpan, {
-          "tool.loading.mode": resolveRuntimeToolLoading(runtimeStepConfig).mode,
+          "tool.loading.mode": runtimeStepToolLoading.mode,
           "tool.loading.provenance": toolLoadingResolution.provenance,
           "tool.catalog.authorized_count": preparedStep.toolExposurePlan.authorized.length,
           "tool.catalog.visible_count": tools.length,
           "tool.catalog.deferred_count": preparedStep.toolExposurePlan.deferred.length,
           "tool.loading.path": "framework-fallback",
         });
-        const stepProviderTools = agentWriteFinalResponseToolGuardEnabled ? [] : providerTools;
+        const visibleToolNames = new Set(tools.map((tool) => tool.name));
+        const stepProviderTools = supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
+          ? providerTools.filter((toolName) => visibleToolNames.has(toolName))
+          : [];
 
         const temperature = this.resolveTemperature(
           temperatureModelString ?? effectiveModel,
@@ -1175,16 +1626,36 @@ export class AgentRuntime {
           model: effectiveModel,
           providerTools: stepProviderTools,
         });
-        currentSystemPrompt = synchronizeRuntimeToolInventory(currentSystemPrompt, runtimeTools);
+        currentSystemPrompt = withIntegrationToolDiscoveryStatus(
+          synchronizeRuntimeToolInventory(
+            currentSystemPrompt,
+            runtimeTools,
+            agentWriteFinalResponseToolGuardEnabled
+              ? effectiveToolExposurePlan.deferred.filter((tool) =>
+                shouldHideProjectToolAfterAgentWriteSuccess(tool.name)
+              )
+              : [],
+          ),
+          preparedStep.integrationToolDiscovery,
+        );
         const response = await withSpan("agent.generate_text", async (span) => {
           setSpanAttributes(span, {
             "model.id": effectiveModel,
             "messages.count": currentMessages.length,
           });
+          const providerSystemPrompt = withAgentRunRuntimeContext(
+            currentSystemPrompt,
+            runRuntimeContext,
+          );
           const result = await generateText({
             model: languageModel,
-            system: currentSystemPrompt,
-            messages: convertToTextGenerationRuntimeRequestMessages(currentMessages),
+            system: providerSystemPrompt,
+            messages: convertToTextGenerationRuntimeRequestMessages(currentMessages, {
+              // A server-local runtime fetches attachments from this machine,
+              // where a loopback or private-network URL resolves; only a remote
+              // provider needs the URL to be reachable from the internet.
+              requireInternetReachableAttachments: !isLocalModelRuntime(languageModel),
+            }),
             tools: runtimeTools,
             experimental_repairToolCall: repairToolCall,
             maxOutputTokens: this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride),
@@ -1192,9 +1663,7 @@ export class AgentRuntime {
             ...(headers ? { headers } : {}),
             ...(providerOptions ? { providerOptions } : {}),
             ...(reasoning ? { reasoning } : {}),
-            ...(this.config.modelCallRecorder
-              ? { modelCallRecorder: this.config.modelCallRecorder }
-              : {}),
+            ...(outputSchema ? { responseFormat: outputSchema.responseFormat } : {}),
             abortSignal,
           });
           setSpanAttributes(span, buildRuntimeUsageTraceAttributes(result.usage));
@@ -1295,20 +1764,22 @@ export class AgentRuntime {
           this.status = "completed";
           addSpanEvent(loopSpan, "loop_complete");
           setSpanAttributes(loopSpan, buildRuntimeUsageTraceAttributes(totalUsage));
-          return {
+          return attachOutputSchemaParser({
             text: response.text,
+            ...(outputSchema ? { object: await outputSchema.parseOutput(response.text) } : {}),
             messages: currentMessages,
             toolCalls,
             status: this.status,
             usage: totalUsage,
-            metadata: response.finishReason ? { finishReason: response.finishReason } : undefined,
-          };
+            metadata: withAgentRunRuntimeContextMetadata(
+              runRuntimeContext,
+              response.finishReason ? { finishReason: response.finishReason } : undefined,
+            ),
+          }, outputSchema);
         }
 
         this.status = "tool_execution";
         addSpanEvent(loopSpan, "tool_execution_start", { count: response.toolCalls.length });
-        const mustLoadSkillFirstForStep = !activeSkillPolicy &&
-          response.toolCalls.some((tc) => tc.toolName === LOAD_SKILL_TOOL_ID);
 
         for (const tc of response.toolCalls) {
           throwIfAborted(abortSignal);
@@ -1352,7 +1823,6 @@ export class AgentRuntime {
                 "tool.status": "blocked",
                 error: true,
                 "error.type": "ToolExposureBlocked",
-                "error.message": toolCall.error,
               });
               const errorMessage = createToolErrorMessage(
                 tc.toolCallId,
@@ -1375,6 +1845,9 @@ export class AgentRuntime {
                   plan: effectiveToolExposurePlan,
                   state: toolExposureState,
                 });
+                if (didReloadProjectAgentWriteTool(search.result)) {
+                  agentWriteFinalResponseToolGuardEnabled = false;
+                }
                 toolCall.status = "completed";
                 toolCall.result = search.result;
                 setSpanAttributes(toolSpan, {
@@ -1413,6 +1886,12 @@ export class AgentRuntime {
               return;
             }
 
+            // Provider-executed tools (web_search/web_fetch) return results without skill-state
+            // transitions. Unlike locally-executed paths, load_skill and form_input are client-side
+            // function tools that the runtime executes itself, so they never appear in
+            // response.toolResults. This branch mirrors the streaming loop's providerExecuted===true
+            // path, not the locally-executed ones. If provider-executed tools expand beyond web_*,
+            // the transitions (skillState.applySuccessfulResult, markFormInputSubmitted) would apply.
             if (generatedToolResult && !hasToolReplacements) {
               if (generatedToolResult.providerExecuted === true) {
                 await traceProviderExecutedTool({
@@ -1437,7 +1916,7 @@ export class AgentRuntime {
                 ? stringifyToolError(generatedToolResult.result)
                 : undefined;
               if (toolCall.error !== undefined) {
-                setOtelActiveSpanErrorStatus(toolCall.error);
+                setOtelActiveSpanErrorStatus(new NativeError(`Tool "${tc.toolName}" failed`));
               }
               if (
                 generatedToolResult.isError !== true &&
@@ -1455,7 +1934,6 @@ export class AgentRuntime {
                     ? {
                       error: true,
                       "error.type": "ProviderExecutedToolError",
-                      "error.message": toolCall.error,
                     }
                     : {}),
                 }),
@@ -1466,11 +1944,11 @@ export class AgentRuntime {
 
             const policyCheck = enforceSkillPolicy(
               tc.toolName,
-              activeSkillPolicy,
-              mustLoadSkillFirstForStep,
               {
-                hasSubmittedFormInput: hasSubmittedFormInputInLoop,
-                skillToolAvailability: activeSkillToolAvailability,
+                activeSkillId: skillState.activeSkillId,
+                hasSubmittedFormInput: skillState.hasSubmittedFormInput,
+                skillToolAvailability: skillState.activeSkillToolAvailability,
+                toolInput: tc.input,
               },
             );
             if (!policyCheck.allowed) {
@@ -1480,7 +1958,6 @@ export class AgentRuntime {
                 "tool.status": "blocked",
                 error: true,
                 "error.type": "ToolPolicyBlocked",
-                "error.message": policyCheck.error,
               });
 
               const errorMessage: Message = {
@@ -1508,7 +1985,11 @@ export class AgentRuntime {
               toolCall.args = applySkillDelegationOverridesToToolInput(
                 tc.toolName,
                 toolCall.args,
-                hasToolReplacements ? undefined : activeSkillDelegationOverrides,
+                hasToolReplacements ? undefined : skillState.activeSkillDelegationOverrides,
+                hasToolReplacements
+                  ? undefined
+                  : resolveConfiguredTool(runtimeToolsConfig, tc.toolName, { agentId: this.id }) ??
+                    undefined,
               );
               const executionContext = {
                 toolCallId: tc.toolCallId,
@@ -1543,7 +2024,7 @@ export class AgentRuntime {
 
               const resultError = getToolResultError(result);
               if (resultError !== undefined) {
-                setOtelActiveSpanErrorStatus(resultError);
+                setOtelActiveSpanErrorStatus(new NativeError(`Tool "${tc.toolName}" failed`));
               }
               toolCall.status = resultError === undefined ? "completed" : "error";
               toolCall.result = result;
@@ -1558,7 +2039,6 @@ export class AgentRuntime {
                   ...(resultError === undefined ? {} : {
                     error: true,
                     "error.type": "ToolResultError",
-                    "error.message": resultError,
                   }),
                 }),
               );
@@ -1569,20 +2049,14 @@ export class AgentRuntime {
                 }
                 // Track skill policy from successful load_skill results
                 if (tc.toolName === LOAD_SKILL_TOOL_ID) {
-                  activeSkillId = extractSkillId(result);
-                  activeSkillPolicy = extractSkillPolicy(result);
-                  activeSkillToolAvailability = extractSkillToolAvailability(result) ??
-                    INACTIVE_SKILL_TOOL_AVAILABILITY;
-                  activeSkillDelegationOverrides = extractSkillDelegationOverrides(result);
+                  skillState.applySuccessfulResult(result);
                 }
-                activeSkillPolicy = removeFormInputAfterSubmission(
+                const submittedFormInput = isSubmittedFormInputExecutionResult(
                   tc.toolName,
                   result,
-                  activeSkillId,
-                  activeSkillPolicy,
                 );
-                if (isSubmittedFormInputExecutionResult(tc.toolName, result)) {
-                  hasSubmittedFormInputInLoop = true;
+                skillState.markFormInputSubmitted(submittedFormInput);
+                if (submittedFormInput) {
                   currentRuntimeContext = markSubmittedFormInputRuntimeContext(
                     currentRuntimeContext,
                   );
@@ -1603,8 +2077,7 @@ export class AgentRuntime {
               setSpanAttributes(toolSpan, {
                 "tool.status": "failed",
                 error: true,
-                "error.type": error instanceof Error ? error.name : "Error",
-                "error.message": toolCall.error,
+                "error.type": telemetryErrorType(error),
               });
 
               const errorMessage = createToolErrorMessage(
@@ -1627,15 +2100,24 @@ export class AgentRuntime {
       addSpanEvent(loopSpan, "max_steps_reached", { maxSteps });
       setSpanAttributes(loopSpan, buildRuntimeUsageTraceAttributes(totalUsage));
 
-      const lastMsg = currentMessages[currentMessages.length - 1];
-      return {
-        text: lastMsg ? getTextFromParts(lastMsg.parts) : "",
+      // The last message on this exit is a tool result, so the response text
+      // and the structured-output candidate come from the final assistant turn.
+      const finalText = getFinalAssistantText(currentMessages);
+      const parsedOutput = await tryParseMaxStepsOutput(finalText, outputSchema);
+      return attachOutputSchemaParser({
+        text: finalText,
+        ...(parsedOutput.parsed ? { object: parsedOutput.object } : {}),
         messages: currentMessages,
         toolCalls,
         status: this.status,
         usage: totalUsage,
-        metadata: { warning: `Max steps (${maxSteps}) reached` },
-      };
+        metadata: withAgentRunRuntimeContextMetadata(runRuntimeContext, {
+          warning: `Max steps (${maxSteps}) reached`,
+          ...(!parsedOutput.parsed && parsedOutput.outputSchemaError !== undefined
+            ? { outputSchemaError: parsedOutput.outputSchemaError }
+            : {}),
+        }),
+      }, outputSchema);
     });
   }
 
@@ -1645,18 +2127,20 @@ export class AgentRuntime {
    * while consuming model-runtime `streamText()` parts internally.
    */
   private async executeAgentLoopStreaming(
-    systemPrompt: string,
+    systemPrompt: AgentSystem,
     messages: Message[],
     controller: ReadableStreamDefaultController,
     encoder: TextEncoder,
-    callbacks?: {
+    callbacks: {
       onToolCall?: (toolCall: ToolCall) => void;
       onChunk?: (chunk: string) => void;
       onFinish?: (response: AgentResponse) => void;
-    },
-    textPartId?: string,
-    toolContextBase?: Record<string, unknown>,
-    runtimeContext?: Record<string, unknown>,
+    } | undefined,
+    textPartId: string | undefined,
+    toolContextBase: Record<string, unknown> | undefined,
+    runtimeContext: Record<string, unknown> | undefined,
+    runRuntimeContext: AgentRunRuntimeContext,
+    supportsToolCalling: boolean,
     modelString?: string,
     resolvedModel?: ModelRuntime,
     headers?: HeadersInit,
@@ -1665,6 +2149,7 @@ export class AgentRuntime {
     maxOutputTokensOverride?: number,
     abortSignal?: AbortSignal,
     temperatureModelString?: string,
+    outputSchema?: ResolvedAgentOutputSchema,
   ): Promise<AgentResponse> {
     const { maxAgentSteps } = getPlatformCapabilities();
     const maxSteps = this.computeMaxSteps(maxAgentSteps);
@@ -1675,22 +2160,15 @@ export class AgentRuntime {
     const currentMessages = [...messages];
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
-    // Local models can't reliably do function calling, so skip tools gracefully.
-    const isLocalStreaming = isLocalModelRuntime(languageModel);
-    if (isLocalStreaming && this.config.tools) {
-      warnLocalToolSkipping(this.id, effectiveModel);
+    if (!supportsToolCalling && this.config.tools) {
+      warnUnsupportedToolCalling(this.id, effectiveModel);
     }
 
     // Request-scoped skill policy (not class-level mutable state)
-    const hydratedSkillState = hydrateActiveSkillStateFromMessages(currentMessages);
-    let activeSkillId = hydratedSkillState.activeSkillId;
-    let activeSkillPolicy = hydratedSkillState.activeSkillPolicy;
-    let activeSkillToolAvailability = hydratedSkillState.activeSkillToolAvailability;
-    let activeSkillDelegationOverrides = hydratedSkillState.activeSkillDelegationOverrides;
-    let hasSubmittedFormInputInLoop = hasSubmittedFormInputResult(currentMessages) ||
-      runtimeContext?.[SUBMITTED_FORM_INPUT_CONTEXT_KEY] === true;
+    const skillState = AgentLoopSkillState.hydrate(currentMessages, runtimeContext);
     let finalFinishReason: string | undefined;
     let latestAssistantText = "";
+    let completedWithinStepBudget = false;
     const initialToolExposureCheckpoint = getRuntimeToolExposureCheckpoint(this.config);
     const toolExposureState = createToolExposureState();
     const persistToolExposureCheckpoint = getRuntimeToolExposureCheckpointPersister(this.config);
@@ -1712,32 +2190,41 @@ export class AgentRuntime {
     let currentSystemPrompt = systemPrompt;
     let currentRuntimeContext = runtimeContext;
     let agentWriteFinalResponseToolGuardEnabled = false;
+    // One retry gives the model a chance to reconstruct a transport-truncated
+    // batch without allowing a repeatedly broken provider stream to loop.
+    let recoveredInterruptedLocalToolBatch = false;
+    let interruptedLocalToolBatchRecoveryStep: number | undefined;
+    let interruptedLocalToolBatchRecoveryText: string | undefined;
 
     for (let step = 0; step < maxSteps; step++) {
       throwIfAborted(abortSignal);
       sendSSE(controller, encoder, { type: "step-start" });
       const currentStepToolResults = new Map<string, ToolResultPart>();
-      const stepRuntimeContext = hasSubmittedFormInputInLoop
+      const stepRuntimeContext = skillState.hasSubmittedFormInput
         ? markSubmittedFormInputRuntimeContext(currentRuntimeContext)
         : currentRuntimeContext;
 
       const preparedStep = await prepareAgentRuntimeStep({
         agentId: this.id,
-        activeSkillId,
-        activeSkillPolicy,
-        activeSkillToolAvailability,
+        activeSkillId: skillState.activeSkillId,
+        activeSkillToolAvailability: skillState.activeSkillToolAvailability,
         allowedRemoteToolNames,
         config: runtimeStepConfig,
         effectiveModel,
-        excludedToolNames: agentWriteFinalResponseToolGuardEnabled
+        excludedToolNames: agentWriteFinalResponseToolGuardEnabled &&
+            toolLoadingResolution.mode === "eager"
           ? AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES
           : undefined,
         forwardedRemoteToolDefinitions,
         getAvailableTools,
-        isLocalModel: isLocalStreaming,
+        supportsToolCalling,
         messages: currentMessages,
         mode: "stream",
-        providerToolNames: agentWriteFinalResponseToolGuardEnabled ? [] : providerTools,
+        modelRuntime: languageModel,
+        providerOptionKey: resolveModelProviderOptionKey(effectiveModel, languageModel),
+        providerToolNames: supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
+          ? providerTools
+          : [],
         remoteToolSources,
         sourceIntegrationPolicy,
         resolveRuntimeState: this.resolveRuntimeState.bind(this),
@@ -1752,7 +2239,9 @@ export class AgentRuntime {
       currentRuntimeContext = preparedStep.runtimeContext;
       const toolContext = preparedStep.toolContext;
       const effectiveToolExposurePlan = agentWriteFinalResponseToolGuardEnabled
-        ? applyAgentWriteFinalResponseGuard(preparedStep.toolExposurePlan)
+        ? applyAgentWriteFinalResponseGuard(preparedStep.toolExposurePlan, {
+          reloadable: toolLoadingResolution.mode === "deferred",
+        })
         : preparedStep.toolExposurePlan;
       const tools = effectiveToolExposurePlan.visible;
       setOtelActiveSpanAttributes({
@@ -1763,13 +2252,27 @@ export class AgentRuntime {
         "tool.catalog.deferred_count": preparedStep.toolExposurePlan.deferred.length,
         "tool.loading.path": "framework-fallback",
       });
-      const stepProviderTools = agentWriteFinalResponseToolGuardEnabled ? [] : providerTools;
+      const visibleToolNames = new Set(tools.map((tool) => tool.name));
+      const stepProviderTools = supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
+        ? providerTools.filter((toolName) => visibleToolNames.has(toolName))
+        : [];
 
       const runtimeTools = convertToolsToRuntimeTools(tools, {
         model: effectiveModel,
         providerTools: stepProviderTools,
       });
-      currentSystemPrompt = synchronizeRuntimeToolInventory(currentSystemPrompt, runtimeTools);
+      currentSystemPrompt = withIntegrationToolDiscoveryStatus(
+        synchronizeRuntimeToolInventory(
+          currentSystemPrompt,
+          runtimeTools,
+          agentWriteFinalResponseToolGuardEnabled
+            ? effectiveToolExposurePlan.deferred.filter((tool) =>
+              shouldHideProjectToolAfterAgentWriteSuccess(tool.name)
+            )
+            : [],
+        ),
+        preparedStep.integrationToolDiscovery,
+      );
       const runtimeToolNames = Object.keys(runtimeTools ?? {}).sort();
 
       const temperature = this.resolveTemperature(
@@ -1778,12 +2281,20 @@ export class AgentRuntime {
       );
       const maxOutputTokens = this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride);
       const genAiProviderName = resolveRuntimeGenAiProviderName(effectiveModel);
+      const providerSystemPrompt = withAgentRunRuntimeContext(
+        currentSystemPrompt,
+        runRuntimeContext,
+      );
       const streamSource = createRuntimeStreamSource((streamSignal) =>
         streamText({
           model: languageModel,
-          system: currentSystemPrompt,
+          system: providerSystemPrompt,
           messages: convertToTextGenerationRuntimeRequestMessages(
             currentMessages,
+            // A server-local runtime fetches attachments from this machine,
+            // where a loopback or private-network URL resolves; only a remote
+            // provider needs the URL to be reachable from the internet.
+            { requireInternetReachableAttachments: !isLocalModelRuntime(languageModel) },
           ),
           tools: runtimeTools,
           experimental_repairToolCall: repairToolCall,
@@ -1792,16 +2303,200 @@ export class AgentRuntime {
           ...(headers ? { headers } : {}),
           ...(providerOptions ? { providerOptions } : {}),
           ...(reasoning ? { reasoning } : {}),
-          ...(this.config.modelCallRecorder
-            ? { modelCallRecorder: this.config.modelCallRecorder }
-            : {}),
+          ...(outputSchema ? { responseFormat: outputSchema.responseFormat } : {}),
           abortSignal: streamSignal,
         })
       );
 
       const state = createStreamState();
-      await processStream(streamSource, state, controller, encoder, textPartId, {
-        onChunk: callbacks?.onChunk,
+      // Hold a possible replay only while it remains a prefix of the text the
+      // client already received. Once it diverges, resume live delivery.
+      const deferInterruptedRecoveryOutput = step === interruptedLocalToolBatchRecoveryStep &&
+        interruptedLocalToolBatchRecoveryText !== undefined;
+      const deferredRecoveryOutput: DeferredRecoveryOutput[] | undefined =
+        deferInterruptedRecoveryOutput ? [] : undefined;
+      const previousRecoveryText = interruptedLocalToolBatchRecoveryText ?? "";
+      let deferredRecoverySseText = "";
+      let deferredRecoveryCallbackText = "";
+      let releasedDeferredRecoveryOutput = false;
+      let releasedRecoveryReplacementTextPartId: string | undefined;
+      let suppressedRecoveryReplayTextLength = 0;
+      const stepTextPartId = textPartId === undefined || step === 0
+        ? textPartId
+        : `${textPartId}:step:${step}`;
+      const replacementRecoveryTextPartId = stepTextPartId === undefined
+        ? `recovery:step:${step}`
+        : `${stepTextPartId}:recovery`;
+      const remainingRecoveryReplayText = () =>
+        previousRecoveryText.slice(suppressedRecoveryReplayTextLength);
+      const flushDeferredRecoveryOutput = (
+        interruptedRecoveryPrefixLength: number,
+        repeatsInterruptedRecoveryText: boolean,
+        useReplacementTextPartId: boolean,
+      ): void => {
+        if (deferredRecoveryOutput === undefined) return;
+
+        let remainingSsePrefixLength = interruptedRecoveryPrefixLength;
+        let remainingCallbackPrefixLength = interruptedRecoveryPrefixLength;
+        for (const output of deferredRecoveryOutput) {
+          if (
+            repeatsInterruptedRecoveryText &&
+            (output.kind === "callback" || output.isTextEvent)
+          ) {
+            continue;
+          }
+          if (output.kind === "callback") {
+            const stripped = stripLeadingText(output.chunk, remainingCallbackPrefixLength);
+            remainingCallbackPrefixLength = stripped.remainingPrefixLength;
+            if (stripped.text.length > 0) {
+              callbacks?.onChunk?.(stripped.text);
+            }
+          } else {
+            const textChunk = useReplacementTextPartId && output.isTextEvent
+              ? rewriteRecoveryTextSseChunkId(
+                output.chunk,
+                replacementRecoveryTextPartId,
+                encoder,
+              )
+              : output.chunk;
+            const stripped = output.isTextEvent
+              ? stripTextDeltaPrefixFromSseChunk(
+                textChunk,
+                remainingSsePrefixLength,
+                encoder,
+              )
+              : { chunk: textChunk, remainingPrefixLength: remainingSsePrefixLength };
+            remainingSsePrefixLength = stripped.remainingPrefixLength;
+            if (stripped.chunk !== undefined) {
+              controller.enqueue(stripped.chunk);
+            }
+          }
+        }
+        deferredRecoveryOutput.length = 0;
+      };
+      const releaseDeferredRecoveryOutputAfterDivergence = (): void => {
+        if (deferredRecoveryOutput === undefined || releasedDeferredRecoveryOutput) return;
+
+        const expectedReplayText = remainingRecoveryReplayText();
+        const sseDiverged = !expectedReplayText.startsWith(deferredRecoverySseText);
+        const callbackDiverged = callbacks?.onChunk === undefined ||
+          !expectedReplayText.startsWith(deferredRecoveryCallbackText);
+        if (!sseDiverged || !callbackDiverged) return;
+
+        const observedRecoveryText = callbacks?.onChunk === undefined
+          ? deferredRecoverySseText
+          : deferredRecoveryCallbackText;
+        const extendsPreviousRecoveryText = observedRecoveryText.startsWith(expectedReplayText);
+        flushDeferredRecoveryOutput(
+          extendsPreviousRecoveryText ? expectedReplayText.length : 0,
+          false,
+          !extendsPreviousRecoveryText && suppressedRecoveryReplayTextLength === 0,
+        );
+        if (extendsPreviousRecoveryText && suppressedRecoveryReplayTextLength > 0) {
+          suppressedRecoveryReplayTextLength += expectedReplayText.length;
+        }
+        if (!extendsPreviousRecoveryText && suppressedRecoveryReplayTextLength === 0) {
+          releasedRecoveryReplacementTextPartId = replacementRecoveryTextPartId;
+        }
+        releasedDeferredRecoveryOutput = true;
+      };
+      const releaseDeferredRecoveryOutputAfterExactReplay = (
+        isTextEvent: boolean,
+      ): void => {
+        if (
+          isTextEvent || deferredRecoveryOutput === undefined || releasedDeferredRecoveryOutput ||
+          deferredRecoverySseText !== remainingRecoveryReplayText() ||
+          (callbacks?.onChunk !== undefined &&
+            deferredRecoveryCallbackText !== remainingRecoveryReplayText())
+        ) {
+          return;
+        }
+
+        flushDeferredRecoveryOutput(remainingRecoveryReplayText().length, false, false);
+        releasedDeferredRecoveryOutput = true;
+      };
+      const releaseDeferredRecoveryNonTextOutput = (
+        isTextEvent: boolean,
+      ): void => {
+        if (
+          isTextEvent || deferredRecoveryOutput === undefined || releasedDeferredRecoveryOutput
+        ) {
+          return;
+        }
+
+        const retainedOutput = deferredRecoveryOutput.filter((output) =>
+          output.kind === "callback" || output.isTextEvent
+        );
+        for (const output of deferredRecoveryOutput) {
+          if (output.kind === "sse" && !output.isTextEvent) {
+            controller.enqueue(output.chunk);
+          }
+        }
+        deferredRecoveryOutput.length = 0;
+        deferredRecoveryOutput.push(...retainedOutput);
+      };
+      const reconcileDeferredRecoveryTextSegment = (
+        isTextEndEvent: boolean,
+      ): void => {
+        if (
+          !isTextEndEvent || deferredRecoveryOutput === undefined ||
+          releasedDeferredRecoveryOutput ||
+          !remainingRecoveryReplayText().startsWith(deferredRecoverySseText) ||
+          (callbacks?.onChunk !== undefined &&
+            !remainingRecoveryReplayText().startsWith(deferredRecoveryCallbackText))
+        ) {
+          return;
+        }
+
+        // A tool or reasoning event closes the current text segment. If that
+        // segment only replayed a prefix the client already received, discard
+        // it now and treat later text as a distinct segment. Otherwise retained
+        // prefix events could be released after the boundary when later text
+        // diverges, duplicating and reordering the replay.
+        suppressedRecoveryReplayTextLength += deferredRecoverySseText.length;
+        deferredRecoveryOutput.length = 0;
+        deferredRecoverySseText = "";
+        deferredRecoveryCallbackText = "";
+      };
+      const stepController = deferredRecoveryOutput === undefined ? controller : {
+        enqueue(chunk: Uint8Array) {
+          if (releasedDeferredRecoveryOutput) {
+            controller.enqueue(
+              releasedRecoveryReplacementTextPartId !== undefined
+                ? rewriteRecoveryTextSseChunkId(
+                  chunk,
+                  releasedRecoveryReplacementTextPartId,
+                  encoder,
+                )
+                : chunk,
+            );
+            return;
+          }
+          deferredRecoverySseText += textDeltaFromSseChunk(chunk) ?? "";
+          const isTextEvent = isTextSseChunk(chunk);
+          deferredRecoveryOutput.push({
+            kind: "sse",
+            chunk,
+            isTextEvent,
+          });
+          releaseDeferredRecoveryOutputAfterDivergence();
+          releaseDeferredRecoveryOutputAfterExactReplay(isTextEvent);
+          releaseDeferredRecoveryNonTextOutput(isTextEvent);
+          reconcileDeferredRecoveryTextSegment(isTextEndSseChunk(chunk));
+        },
+      } as ReadableStreamDefaultController;
+      await processStream(streamSource, state, stepController, encoder, stepTextPartId, {
+        onChunk: deferredRecoveryOutput === undefined ? callbacks?.onChunk : (chunk) => {
+          if (releasedDeferredRecoveryOutput) {
+            callbacks?.onChunk?.(chunk);
+            return;
+          }
+          deferredRecoveryCallbackText += chunk;
+          if (callbacks?.onChunk !== undefined) {
+            deferredRecoveryOutput.push({ kind: "callback", chunk });
+          }
+          releaseDeferredRecoveryOutputAfterDivergence();
+        },
         onUsage: (usage) => accumulateUsage(totalUsage, usage),
         providerExecutedToolNames: getProviderExecutedToolNames(runtimeTools),
         availableToolNames: runtimeToolNames,
@@ -1817,22 +2512,103 @@ export class AgentRuntime {
         },
       }, abortSignal);
       throwIfAborted(abortSignal);
+      const interruptedRecoveryPrefixLength = deferredRecoveryOutput === undefined
+        ? 0
+        : state.accumulatedText.startsWith(previousRecoveryText)
+        ? previousRecoveryText.length
+        : previousRecoveryText.startsWith(state.accumulatedText)
+        ? state.accumulatedText.length
+        : 0;
+      const recoveryPresentationPrefixLength = suppressedRecoveryReplayTextLength > 0
+        ? suppressedRecoveryReplayTextLength
+        : interruptedRecoveryPrefixLength;
+      const recoveryPresentationText = state.accumulatedText.slice(
+        recoveryPresentationPrefixLength,
+      );
+      const repeatsInterruptedRecoveryText = interruptedRecoveryPrefixLength > 0 &&
+        recoveryPresentationText.length === 0;
+      if (deferredRecoveryOutput !== undefined && !releasedDeferredRecoveryOutput) {
+        flushDeferredRecoveryOutput(
+          interruptedRecoveryPrefixLength,
+          repeatsInterruptedRecoveryText,
+          previousRecoveryText.length > 0 && interruptedRecoveryPrefixLength === 0 &&
+            !repeatsInterruptedRecoveryText && state.accumulatedText.length > 0,
+        );
+      }
       finalFinishReason = state.finishReason ?? finalFinishReason;
 
-      const assistantMessage = buildStreamedAssistantMessage(state, {
+      const streamedToolCalls = Array.from(state.toolCalls.values());
+      const finalToolResults = collectFinalStreamToolResults(state);
+      // Recovery replays the whole step, so it also re-emits this step's
+      // reasoning — duplicating it in the live stream and in history, with a
+      // signature that no longer matches the replayed content. Reasoning that
+      // was persisted is reasoning the client already saw, so fail closed.
+      // This is a stopgap: reasoning is default-on across the hosted catalog,
+      // which makes recovery inert on most hosted paths. See #3736 for the
+      // reconciliation protocol that would let it run again.
+      const hasExposedReasoning = state.reasoningParts.some(isPersistedReasoningPart);
+      const canRecoverInterruptedLocalToolBatch = !recoveredInterruptedLocalToolBatch &&
+        step + 1 < maxSteps &&
+        !hasExposedReasoning;
+      const shouldContinue = shouldContinueAfterStreamStep(state, {
+        recoverInterruptedToolCalls: canRecoverInterruptedLocalToolBatch,
+      });
+      const shouldRecoverInterruptedLocalToolBatch = canRecoverInterruptedLocalToolBatch &&
+        shouldContinue &&
+        streamedToolCalls.some(isInterruptedClientToolCall);
+      const exhaustedStepBudgetDuringInterruptedLocalToolRecovery =
+        !recoveredInterruptedLocalToolBatch &&
+        step + 1 >= maxSteps &&
+        !hasExposedReasoning &&
+        streamedToolCalls.some(isInterruptedClientToolCall) &&
+        shouldContinueAfterStreamStep(state, { recoverInterruptedToolCalls: true });
+      // Exactly `shouldRecoverInterruptedLocalToolBatch` with the reasoning
+      // gate lifted: the batch this step would have replayed had it not
+      // already exposed reasoning. Re-asking is what separates "recovery was
+      // declined" from "this step merely carried reasoning";
+      // `shouldContinueAfterStreamStep` only reads state, so asking twice has
+      // no side effects, and the cheap conditions short-circuit ahead of it.
+      const declinedRecoveryForExposedReasoning = hasExposedReasoning &&
+        !recoveredInterruptedLocalToolBatch &&
+        step + 1 < maxSteps &&
+        streamedToolCalls.some(isInterruptedClientToolCall) &&
+        shouldContinueAfterStreamStep(state, { recoverInterruptedToolCalls: true });
+      if (declinedRecoveryForExposedReasoning) {
+        logger.warn("Declined interrupted local tool batch recovery after exposed reasoning", {
+          step,
+          toolName: streamedToolCalls.find(isInterruptedClientToolCall)?.name,
+          reasoningPartCount: state.reasoningParts.filter(isPersistedReasoningPart).length,
+        });
+      }
+      const assistantMessage = buildStreamedAssistantMessage({
+        ...state,
+        accumulatedText: recoveryPresentationText,
+      }, {
         id: `msg_${Date.now()}_${step}`,
         timestamp: Date.now(),
+      }, {
+        preserveRecoverablePlaceholderToolCalls: shouldRecoverInterruptedLocalToolBatch ||
+          !shouldContinue,
       });
+      attachProviderMetadata(
+        assistantMessage,
+        reconcileSuppressedProviderMetadata(
+          languageModel,
+          state.providerMetadata,
+          state.suppressedToolCalls,
+          state.toolCalls.size > 0,
+        ),
+      );
 
       for (const tc of state.toolCalls.values()) {
         const materialized = materializeStreamedToolCall(tc);
 
         if (materialized.kind === "incomplete" && isRecoverablePlaceholderToolCall(tc)) {
           // Provisional empty-object placeholder that never finalized. The
-          // model never committed arguments. The assistant message builder
-          // omits it when final text exists; otherwise it remains transparent
-          // history while the loop recovers by re-calling the model. Surface no
-          // termination warning or error.
+          // model never committed arguments. Preserve it when recovery or
+          // terminalization records a matching tool result; otherwise the
+          // assistant message builder can omit it beside final text. Surface no
+          // input warning or error for the provisional fragment.
           continue;
         }
 
@@ -1866,10 +2642,26 @@ export class AgentRuntime {
         }
       }
 
-      latestAssistantText = getTextFromParts(assistantMessage.parts);
+      const stepAssistantText = getTextFromParts(assistantMessage.parts);
+      if (
+        step === interruptedLocalToolBatchRecoveryStep &&
+        suppressedRecoveryReplayTextLength > 0
+      ) {
+        latestAssistantText = `${previousRecoveryText}${recoveryPresentationText}`;
+      } else if (
+        step === interruptedLocalToolBatchRecoveryStep && interruptedRecoveryPrefixLength > 0
+      ) {
+        latestAssistantText = previousRecoveryText.startsWith(state.accumulatedText)
+          ? previousRecoveryText
+          : state.accumulatedText;
+      } else if (
+        hasSubstantiveAssistantText(stepAssistantText) ||
+        step !== interruptedLocalToolBatchRecoveryStep
+      ) {
+        latestAssistantText = stepAssistantText;
+      }
       currentMessages.push(assistantMessage);
       await this.memory.add(assistantMessage);
-      const finalToolResults = collectFinalStreamToolResults(state);
 
       const persistToolResult = async (toolResult: StreamingToolResult): Promise<void> => {
         if (currentStepToolResults.has(toolResult.toolCallId)) {
@@ -1892,52 +2684,127 @@ export class AgentRuntime {
         );
       };
 
-      if (!shouldContinueAfterStreamStep(state)) {
+      const recordIncompleteLocalToolError = async (
+        toolCall: StreamingToolCall,
+        options: { includeInResponse?: boolean; announceInput?: boolean } = {},
+      ): Promise<boolean> => {
+        if (
+          toolCall.providerExecuted === true ||
+          !isStreamedToolCallIncomplete(toolCall) ||
+          finalToolResults.has(toolCall.id)
+        ) {
+          return false;
+        }
+        if (options.announceInput === true) {
+          // An interrupted call never reached `tool-input-end`, so its
+          // `tool-input-start` is still buffered and `inputAnnounced` is false
+          // — which would suppress the `tool-output-error` below. Every
+          // terminal path passes `announceInput`, because on all of them the
+          // run stops here and the client would otherwise be left with
+          // whatever preceded the truncation and then nothing at all. Which
+          // path declined recovery — exposed reasoning, a spent step budget, a
+          // second interruption, an exposed sibling — is invisible to the
+          // user, so it must not decide whether the failure renders (#3737).
+          //
+          // The name is safe to publish here. `tool-call` is what can supersede
+          // a name, and it also sets `inputAvailable`, which fails the guard
+          // above — so reaching this line means no such event arrived and the
+          // buffered name is the only one this call will ever have. It is the
+          // same name recorded below and in the persisted assistant message,
+          // so the card matches a reload. Announcing is idempotent, so a call
+          // surfaced upstream is not reported twice.
+          announceStreamedToolCallInput(controller, encoder, toolCall);
+        }
+        const incompleteToolCall: ToolCall = {
+          id: toolCall.id,
+          name: toolCall.name,
+          args: {},
+          ...(toolCall.arguments.length > 0 ? { inputText: toolCall.arguments } : {}),
+          status: "pending",
+        };
+        await this.recordToolError(
+          incompleteToolCall,
+          `Stream terminated before tool-call event fired for "${toolCall.name}". ` +
+            `Received ${toolCall.arguments.length} chars of partial tool-input deltas.`,
+          controller,
+          encoder,
+          currentMessages,
+          toolCalls,
+          {
+            emitSse: toolCall.inputAnnounced === true,
+            includeInResponse: options.includeInResponse,
+          },
+        );
+        return true;
+      };
+
+      if (!shouldContinue) {
         for (const toolResult of finalToolResults.values()) {
           await persistToolResult(toolResult);
         }
+        for (const toolCall of streamedToolCalls) {
+          // Terminal. Every incomplete local call recorded here is also
+          // terminalized into history, so announce unconditionally and let the
+          // wire carry the same failure. `recordIncompleteLocalToolError`
+          // guards on `providerExecuted`, completeness and a final result, so
+          // only genuinely truncated local calls are announced, and
+          // `announceStreamedToolCallInput` is idempotent for any already
+          // surfaced upstream.
+          await recordIncompleteLocalToolError(toolCall, { announceInput: true });
+        }
         sendSSE(controller, encoder, { type: "step-end" });
+        completedWithinStepBudget = !exhaustedStepBudgetDuringInterruptedLocalToolRecovery;
         break;
       }
 
       this.status = "tool_execution";
-      const streamedToolCalls = Array.from(state.toolCalls.values());
-      const mustLoadSkillFirstForStep = !activeSkillPolicy &&
-        streamedToolCalls.some((tc) => tc.name === LOAD_SKILL_TOOL_ID);
+      if (shouldRecoverInterruptedLocalToolBatch) {
+        // Treat parallel local calls as one batch. Executing the finalized
+        // prefix here could apply only part of the model's intended mutation.
+        recoveredInterruptedLocalToolBatch = true;
+        interruptedLocalToolBatchRecoveryStep = step + 1;
+        interruptedLocalToolBatchRecoveryText = hasSubstantiveAssistantText(stepAssistantText)
+          ? stepAssistantText
+          : undefined;
+      }
 
       for (const tc of streamedToolCalls) {
         throwIfAborted(abortSignal);
-        if (isRecoverablePlaceholderToolCall(tc)) {
-          // Provisional empty-object placeholder that never finalized. The
-          // model never committed arguments. At this point the continuation
-          // gate has confirmed there is no final assistant text, so the loop
-          // can continue and let the next model call recover the real tool
-          // call without executing or surfacing a stream-termination error.
+        if (shouldRecoverInterruptedLocalToolBatch && tc.providerExecuted !== true) {
+          if (await recordIncompleteLocalToolError(tc, { includeInResponse: false })) {
+            continue;
+          }
+          const capturedInput = captureStreamedToolCallInput(tc);
+          const interruptedBatchToolCall: ToolCall = {
+            id: tc.id,
+            name: tc.name,
+            args: capturedInput.args,
+            ...(capturedInput.inputText ? { inputText: capturedInput.inputText } : {}),
+            status: "pending",
+          };
+          await this.recordToolError(
+            interruptedBatchToolCall,
+            "Tool execution skipped because another tool call in the same model step " +
+              "was interrupted before its input completed.",
+            controller,
+            encoder,
+            currentMessages,
+            toolCalls,
+          );
           continue;
         }
-        if (isStreamedToolCallIncomplete(tc)) {
+        if (isRecoverablePlaceholderToolCall(tc)) {
+          // Provisional empty-object placeholder that never finalized. If the
+          // bounded recovery path was unavailable, do not execute or surface
+          // it as a committed call.
+          continue;
+        }
+        if (await recordIncompleteLocalToolError(tc)) {
           // Stream ended before the provider finalized this tool call. We
           // cannot execute it, so record a distinct stream-termination error
           // (not a tool-argument parse error) so the parent step and any
           // upstream orchestrator (e.g. the child-fork watchdog) see a
           // completed step with a clearly-labelled failure and can recover.
-          const incompleteToolCall: ToolCall = {
-            id: tc.id,
-            name: tc.name,
-            args: {},
-            ...(tc.arguments.length > 0 ? { inputText: tc.arguments } : {}),
-            status: "pending",
-          };
-          await this.recordToolError(
-            incompleteToolCall,
-            `Stream terminated before tool-call event fired for "${tc.name}". ` +
-              `Received ${tc.arguments.length} chars of partial tool-input deltas.`,
-            controller,
-            encoder,
-            currentMessages,
-            toolCalls,
-            { emitSse: tc.inputAnnounced === true },
-          );
           continue;
         }
         const capturedInput = captureStreamedToolCallInput(tc);
@@ -1965,22 +2832,14 @@ export class AgentRuntime {
               agentWriteFinalResponseToolGuardEnabled = true;
             }
             if (tc.name === LOAD_SKILL_TOOL_ID) {
-              activeSkillId = extractSkillId(matchingResult.output);
-              activeSkillPolicy = extractSkillPolicy(matchingResult.output);
-              activeSkillToolAvailability = extractSkillToolAvailability(matchingResult.output) ??
-                INACTIVE_SKILL_TOOL_AVAILABILITY;
-              activeSkillDelegationOverrides = extractSkillDelegationOverrides(
-                matchingResult.output,
-              );
+              skillState.applySuccessfulResult(matchingResult.output);
             }
-            activeSkillPolicy = removeFormInputAfterSubmission(
+            const submittedFormInput = isSubmittedFormInputExecutionResult(
               tc.name,
               matchingResult.output,
-              activeSkillId,
-              activeSkillPolicy,
             );
-            if (isSubmittedFormInputExecutionResult(tc.name, matchingResult.output)) {
-              hasSubmittedFormInputInLoop = true;
+            skillState.markFormInputSubmitted(submittedFormInput);
+            if (submittedFormInput) {
               currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
             }
           }
@@ -1998,22 +2857,14 @@ export class AgentRuntime {
               agentWriteFinalResponseToolGuardEnabled = true;
             }
             if (tc.name === LOAD_SKILL_TOOL_ID) {
-              activeSkillId = extractSkillId(persistedResult.result);
-              activeSkillPolicy = extractSkillPolicy(persistedResult.result);
-              activeSkillToolAvailability = extractSkillToolAvailability(persistedResult.result) ??
-                INACTIVE_SKILL_TOOL_AVAILABILITY;
-              activeSkillDelegationOverrides = extractSkillDelegationOverrides(
-                persistedResult.result,
-              );
+              skillState.applySuccessfulResult(persistedResult.result);
             }
-            activeSkillPolicy = removeFormInputAfterSubmission(
+            const submittedFormInput = isSubmittedFormInputExecutionResult(
               tc.name,
               persistedResult.result,
-              activeSkillId,
-              activeSkillPolicy,
             );
-            if (isSubmittedFormInputExecutionResult(tc.name, persistedResult.result)) {
-              hasSubmittedFormInputInLoop = true;
+            skillState.markFormInputSubmitted(submittedFormInput);
+            if (submittedFormInput) {
               currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
             }
           }
@@ -2072,6 +2923,9 @@ export class AgentRuntime {
               plan: effectiveToolExposurePlan,
               state: toolExposureState,
             });
+            if (didReloadProjectAgentWriteTool(search.result)) {
+              agentWriteFinalResponseToolGuardEnabled = false;
+            }
             toolCall.status = "completed";
             toolCall.result = search.result;
             toolCalls.push(toolCall);
@@ -2126,11 +2980,11 @@ export class AgentRuntime {
         }
         const policyCheck = enforceSkillPolicy(
           tc.name,
-          activeSkillPolicy,
-          mustLoadSkillFirstForStep,
           {
-            hasSubmittedFormInput: hasSubmittedFormInputInLoop,
-            skillToolAvailability: activeSkillToolAvailability,
+            activeSkillId: skillState.activeSkillId,
+            hasSubmittedFormInput: skillState.hasSubmittedFormInput,
+            skillToolAvailability: skillState.activeSkillToolAvailability,
+            toolInput: toolCall.args,
           },
         );
         if (!policyCheck.allowed) {
@@ -2151,7 +3005,8 @@ export class AgentRuntime {
           toolCall.args = applySkillDelegationOverridesToToolInput(
             tc.name,
             toolCall.args,
-            activeSkillDelegationOverrides,
+            skillState.activeSkillDelegationOverrides,
+            resolveConfiguredTool(this.config.tools, tc.name, { agentId: this.id }) ?? undefined,
           );
 
           callbacks?.onToolCall?.(toolCall);
@@ -2195,20 +3050,11 @@ export class AgentRuntime {
           if (resultError === undefined) {
             // Track skill policy from successful load_skill results
             if (tc.name === LOAD_SKILL_TOOL_ID) {
-              activeSkillId = extractSkillId(result);
-              activeSkillPolicy = extractSkillPolicy(result);
-              activeSkillToolAvailability = extractSkillToolAvailability(result) ??
-                INACTIVE_SKILL_TOOL_AVAILABILITY;
-              activeSkillDelegationOverrides = extractSkillDelegationOverrides(result);
+              skillState.applySuccessfulResult(result);
             }
-            activeSkillPolicy = removeFormInputAfterSubmission(
-              tc.name,
-              result,
-              activeSkillId,
-              activeSkillPolicy,
-            );
-            if (isSubmittedFormInputExecutionResult(tc.name, result)) {
-              hasSubmittedFormInputInLoop = true;
+            const submittedFormInput = isSubmittedFormInputExecutionResult(tc.name, result);
+            skillState.markFormInputSubmitted(submittedFormInput);
+            if (submittedFormInput) {
               currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
             }
             if (shouldHideProjectToolAfterAgentWriteSuccess(tc.name)) {
@@ -2260,17 +3106,19 @@ export class AgentRuntime {
         const unavailableNames = [
           ...new Set(state.suppressedToolCalls.map((toolCall) => toolCall.name)),
         ];
-        currentMessages.push({
-          id: `runtime_note_${Date.now()}_${step}`,
-          role: "user",
-          parts: [{
-            type: "text",
-            text: `Runtime recovery: ignored unavailable tool call(s): ${
-              unavailableNames.join(", ")
-            }. Continue using only currently available tools: ${runtimeToolNames.join(", ")}.`,
-          }],
-          timestamp: Date.now(),
-        });
+        currentMessages.push(
+          markRuntimeGeneratedUserMessage({
+            id: `runtime_note_${Date.now()}_${step}`,
+            role: "user",
+            parts: [{
+              type: "text",
+              text: `Runtime recovery: ignored unavailable tool call(s): ${
+                unavailableNames.join(", ")
+              }. Continue using only currently available tools: ${runtimeToolNames.join(", ")}.`,
+            }],
+            timestamp: Date.now(),
+          }),
+        );
       }
 
       throwIfAborted(abortSignal);
@@ -2278,14 +3126,43 @@ export class AgentRuntime {
       this.status = "thinking";
     }
 
-    return {
+    if (!completedWithinStepBudget) {
+      // Step-budget exhaustion mirrors the generate loop's max-steps exit: the
+      // partial result is still returned, so the structured-output parse is
+      // best effort and a failure is surfaced in metadata instead of thrown.
+      const parsedOutput = await tryParseMaxStepsOutput(
+        latestAssistantText,
+        outputSchema,
+      );
+      return attachOutputSchemaParser({
+        text: latestAssistantText,
+        ...(parsedOutput.parsed ? { object: parsedOutput.object } : {}),
+        messages: currentMessages,
+        toolCalls,
+        status: "completed",
+        usage: totalUsage,
+        metadata: withAgentRunRuntimeContextMetadata(runRuntimeContext, {
+          warning: `Max steps (${maxSteps}) reached`,
+          ...(finalFinishReason ? { finishReason: finalFinishReason } : {}),
+          ...(!parsedOutput.parsed && parsedOutput.outputSchemaError !== undefined
+            ? { outputSchemaError: parsedOutput.outputSchemaError }
+            : {}),
+        }),
+      }, outputSchema);
+    }
+
+    return attachOutputSchemaParser({
       text: latestAssistantText,
+      ...(outputSchema ? { object: await outputSchema.parseOutput(latestAssistantText) } : {}),
       messages: currentMessages,
       toolCalls,
       status: "completed",
       usage: totalUsage,
-      metadata: finalFinishReason ? { finishReason: finalFinishReason } : undefined,
-    };
+      metadata: withAgentRunRuntimeContextMetadata(
+        runRuntimeContext,
+        finalFinishReason ? { finishReason: finalFinishReason } : undefined,
+      ),
+    }, outputSchema);
   }
 
   /**
@@ -2298,11 +3175,13 @@ export class AgentRuntime {
     encoder: TextEncoder,
     currentMessages: Message[],
     toolCalls: ToolCall[],
-    options: { emitSse?: boolean } = {},
+    options: { emitSse?: boolean; includeInResponse?: boolean } = {},
   ): Promise<void> {
     toolCall.status = "error";
     toolCall.error = errorStr;
-    toolCalls.push(toolCall);
+    if (options.includeInResponse !== false) {
+      toolCalls.push(toolCall);
+    }
 
     if (options.emitSse !== false) {
       const dynamic = isDynamicTool(toolCall.name);
@@ -2326,11 +3205,10 @@ export class AgentRuntime {
   /**
    * Resolve system prompt (handle string or function)
    */
-  private async resolveSystemPrompt(): Promise<string> {
+  private async resolveSystemPrompt(providerOptionKey?: string): Promise<AgentSystem> {
     const { system } = this.config;
-    if (typeof system === "string") return system;
-    if (typeof system === "function") return system();
-    return "You are a helpful assistant.";
+    if (system === undefined) return "You are a helpful assistant.";
+    return await resolveAgentSystem(system, providerOptionKey);
   }
 
   /**
@@ -2397,4 +3275,94 @@ export class AgentRuntime {
   async clearMemory(): Promise<void> {
     await this.memory.clear();
   }
+}
+
+type ProviderMetadataReconciler = (input: {
+  providerMetadata: Record<string, unknown>;
+  suppressedToolCalls: readonly { id: string; name: string }[];
+}) => Record<string, unknown> | undefined;
+
+/**
+ * Best-effort structured-output parse for the max-steps exit.
+ *
+ * The normal completion path is fail-loud, but a run cut off by the step limit
+ * still returns its partial result. A parse or validation failure here must not
+ * throw that result away, so the failure is captured as `outputSchemaError` for
+ * the response metadata instead of being swallowed.
+ */
+type MaxStepsOutputParse =
+  | {
+    /** The configured schema parsed successfully, even if its transform returned undefined. */
+    parsed: true;
+    object: unknown;
+  }
+  | {
+    /** No schema was configured, or the configured schema rejected the output. */
+    parsed: false;
+    outputSchemaError?: string;
+  };
+
+async function tryParseMaxStepsOutput(
+  finalText: string,
+  outputSchema: ResolvedAgentOutputSchema | undefined,
+): Promise<MaxStepsOutputParse> {
+  if (!outputSchema) return { parsed: false };
+  try {
+    return { parsed: true, object: await outputSchema.parseOutput(finalText) };
+  } catch (error) {
+    return {
+      parsed: false,
+      outputSchemaError: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/** Text of the latest assistant message, or empty when no assistant turn exists. */
+function getFinalAssistantText(messages: Message[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message?.role === "assistant") {
+      return getTextFromParts(message.parts);
+    }
+  }
+  return "";
+}
+
+function reconcileSuppressedProviderMetadata(
+  modelRuntime: ModelRuntime,
+  providerMetadata: Record<string, unknown> | undefined,
+  suppressedToolCalls: readonly { id: string; name: string }[],
+  hasSurvivingToolCalls: boolean,
+): Record<string, unknown> | undefined {
+  if (providerMetadata === undefined || suppressedToolCalls.length === 0) {
+    return providerMetadata;
+  }
+
+  const reconcile = modelRuntime._reconcileProviderMetadata;
+  if (typeof reconcile !== "function") {
+    return undefined;
+  }
+
+  const reconciled = (reconcile as ProviderMetadataReconciler).call(modelRuntime, {
+    providerMetadata,
+    suppressedToolCalls,
+  });
+  if (reconciled === undefined) {
+    if (!hasSurvivingToolCalls) {
+      return undefined;
+    }
+    throw new TypeError(
+      "Model runtime did not preserve provider metadata for surviving tool calls",
+    );
+  }
+  if (
+    reconciled === null ||
+    typeof reconciled !== "object" ||
+    Array.isArray(reconciled)
+  ) {
+    throw new TypeError(
+      "Model runtime returned invalid provider metadata after suppressing a tool call",
+    );
+  }
+  return reconciled;
 }

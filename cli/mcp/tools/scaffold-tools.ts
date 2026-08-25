@@ -224,7 +224,7 @@ export const vfGetConventions: MCPTool<GetConventionsInput, Convention[]> = {
   title: "Get Conventions",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need Veryfront coding conventions and best practices for routing, API, components, AI, or styling. Do not use for project structure — use vf_get_project_context instead.",
+    "Use this when you need Veryfront coding conventions and best practices for routing, API, components, AI, or styling. Do not use for project structure. Use vf_get_project_context instead.",
   inputSchema: getConventionsInput,
   execute: (input) => {
     if (input.topic === "all") return Promise.resolve(Object.values(CONVENTIONS));

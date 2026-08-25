@@ -12,20 +12,27 @@ export interface BranchPickerProps
   /** Compose the controls. The default renders previous, count, and next. */
   children?: React.ReactNode;
   className?: string;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** Props shared by `BranchPicker.Previous` and `BranchPicker.Next`. */
 export interface BranchPickerActionProps {
-  /** Override the chevron glyph. */
-  icon?: React.ReactNode;
+  /** Replace the default glyph. The canonical path (RFC 2980: a leaf renders its
+   * default icon when childless; pass children to replace it). */
+  children?: React.ReactNode;
   className?: string;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLButtonElement>;
 }
 
 /** Props accepted by `BranchPicker.Count`. */
-export interface BranchPickerCountProps {
+export interface BranchPickerCountProps extends React.HTMLAttributes<HTMLSpanElement> {
   /** Override the default `current/total` label. */
   children?: React.ReactNode;
   className?: string;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLSpanElement>;
 }
 
 interface BranchPickerContextValue {
@@ -79,19 +86,21 @@ function NextIcon(): React.ReactElement {
 
 /** Previous-branch control. */
 function BranchPickerPrevious({
-  icon,
+  children,
   className,
+  ref,
 }: BranchPickerActionProps): React.ReactElement {
   const { current, onPrev } = useBranchPicker();
   return (
     <button
+      ref={ref}
       type="button"
       onClick={onPrev}
       disabled={current <= 1}
       className={cn(ACTION_BUTTON, className)}
       aria-label="Previous variant"
     >
-      {icon ?? <PreviousIcon />}
+      {children ?? <PreviousIcon />}
     </button>
   );
 }
@@ -101,10 +110,12 @@ BranchPickerPrevious.displayName = "BranchPicker.Previous";
 function BranchPickerCount({
   children,
   className,
+  ref,
+  ...props
 }: BranchPickerCountProps): React.ReactElement {
   const { current, total } = useBranchPicker();
   return (
-    <span className={cn("tabular-nums min-w-[2ch] text-center", className)}>
+    <span {...props} ref={ref} className={cn("tabular-nums min-w-[2ch] text-center", className)}>
       {children ?? `${current}/${total}`}
     </span>
   );
@@ -113,19 +124,21 @@ BranchPickerCount.displayName = "BranchPicker.Count";
 
 /** Next-branch control. */
 function BranchPickerNext({
-  icon,
+  children,
   className,
+  ref,
 }: BranchPickerActionProps): React.ReactElement {
   const { current, total, onNext } = useBranchPicker();
   return (
     <button
+      ref={ref}
       type="button"
       onClick={onNext}
       disabled={current >= total}
       className={cn(ACTION_BUTTON, className)}
       aria-label="Next variant"
     >
-      {icon ?? <NextIcon />}
+      {children ?? <NextIcon />}
     </button>
   );
 }
@@ -139,6 +152,7 @@ function BranchPickerRoot({
   onNext,
   children,
   className,
+  ref,
   ...props
 }: BranchPickerProps): React.ReactElement | null {
   const context = React.useMemo(
@@ -151,6 +165,7 @@ function BranchPickerRoot({
     <BranchPickerContext.Provider value={context}>
       <div
         {...props}
+        ref={ref}
         className={cn(
           "inline-flex items-center gap-1 text-xs text-[var(--faint)]",
           className,

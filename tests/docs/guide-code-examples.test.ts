@@ -1,5 +1,6 @@
 import "../_helpers/contract-init.ts";
 import React from "react";
+import { renderToString } from "react-dom/server";
 import {
   assert,
   assertEquals,
@@ -7,6 +8,7 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { withEnv } from "#veryfront/testing";
 import {
   agent,
   createAgUiHandler,
@@ -18,18 +20,19 @@ import {
   AttachmentsPanel,
   Chat,
   ChatContextProvider,
+  ChatInputContextProvider,
   ChatThemeScope,
-  ComposerContextProvider,
   Message,
   MessageContextProvider,
   useAgent,
+  useAttachments,
   useChat,
   useChatContextOptional,
   useCompletion,
-  useUploadsRegistry,
 } from "../../src/chat/index.ts";
 import { createUploadHandler, ragStore } from "../../src/embedding/index.ts";
 import { defineConfig } from "../../src/config/index.ts";
+import { buildCSP } from "../../src/security/http/response/security-handler.ts";
 import { datasets, evalAgent, metrics, runEval } from "../../src/eval/index.ts";
 import { metrics as projectMetrics } from "../../src/metrics/index.ts";
 import {
@@ -44,21 +47,30 @@ import { GoogleFonts } from "../../src/react/fonts/index.ts";
 import { Head } from "../../src/react/components/Head.tsx";
 import { PageContextProvider, usePageContext } from "../../src/react/context/index.tsx";
 import { Link, RouterProvider, useRouter } from "../../src/react/router/index.tsx";
+import {
+  createSearchKnowledgeTool,
+  normalizeKnowledgeQuery,
+  projectKnowledge,
+} from "../../src/knowledge/index.ts";
 import { Sandbox } from "../../src/sandbox/index.ts";
 import { schedule } from "../../src/schedule/index.ts";
+import { webhook } from "../../src/webhook/index.ts";
 import { isTaskDefinition } from "../../src/task/types.ts";
 import {
+  createLocalIntegrationToolSource,
   getConnector,
   getIcon,
   getRemoteIntegrationToolDefinitions,
   listConnectors,
 } from "../../src/integrations/index.ts";
+import { HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV } from "../../src/integrations/local-credential-host-policy.ts";
+import { loadRemoteToolsFromSource } from "#veryfront/tool";
 import { parseDeployArgs } from "../../cli/commands/deploy/command.ts";
 import { buildKnowledgeIngestRunResult } from "../../cli/commands/knowledge/result.ts";
 import { parsePullArgs } from "../../cli/commands/pull/command.ts";
 import { parsePushArgs } from "../../cli/commands/push/command.ts";
 import { parseCliArgs } from "../../cli/shared/args.ts";
-import { getTemplate } from "../../cli/templates/index.ts";
+import { getTemplate } from "../../templates/index.ts";
 
 const EXISTING_GUIDE_EXAMPLE_SUITE = [
   "agents.md",
@@ -83,6 +95,8 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "chat-ui.md",
   "cli-knowledge-ingestion.md",
   "coding-agents.md",
+  "cloud-environment-access.md",
+  "cloud-quickstart.md",
   "create-agent.md",
   "deploy-from-ci.md",
   "deploying.md",
@@ -90,23 +104,29 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "extension-authoring.md",
   "extensions.md",
   "head-and-seo.md",
-  "index.md",
   "installation.md",
   "create-frontend.md",
   "create-project.md",
+  "add-to-existing-project.md",
   "create-api.md",
   "deploy-project.md",
   "integrations.md",
+  "integrations/salesforce.md",
   "move-studio-changes-to-git.md",
   "pages-and-routing.md",
+  "project-knowledge.md",
   "project-structure.md",
   "project-metrics.md",
   "quickstart.md",
   "sandbox.md",
   "schedule.md",
+  "webhook.md",
+  "security-headers.md",
+  "self-hosting.md",
   "skills.md",
   "storybook-ui-workbench.md",
   "tasks.md",
+  "ui-components.md",
   "workflows-advanced.md",
   "eval.md",
 ] as const;
@@ -178,6 +198,47 @@ describe("Guide code example coverage", () => {
 });
 
 describe("Guide: concepts/schedule.md", () => {
+  it("addresses the documented scheduled agent conversation", () => {
+    const definition = schedule({
+      id: "triage-new-cases",
+      schedule: "*/10 * * * *",
+      target: { kind: "agent", id: "case-triage", conversationMode: "create_new" },
+      agentMessage: { prompt: "Triage every open case created since the last run." },
+    });
+
+    assertEquals(definition.target, {
+      kind: "agent",
+      id: "case-triage",
+      conversationMode: "create_new",
+    });
+    assertEquals(definition.agentMessage, {
+      prompt: "Triage every open case created since the last run.",
+    });
+  });
+
+  it("accepts the documented dual declaration that spans a platform upgrade", () => {
+    const definition = schedule({
+      id: "triage-new-cases",
+      schedule: "*/10 * * * *",
+      target: { kind: "agent", id: "case-triage", conversationMode: "create_new" },
+      agentMessage: { prompt: "Triage every open case created since the last run." },
+      input: {
+        _schedule_target: { conversationMode: "create_new" },
+        prompt: "Triage every open case created since the last run.",
+      },
+    });
+
+    assertEquals(definition.target, {
+      kind: "agent",
+      id: "case-triage",
+      conversationMode: "create_new",
+    });
+    assertEquals(definition.input, {
+      _schedule_target: { conversationMode: "create_new" },
+      prompt: "Triage every open case created since the last run.",
+    });
+  });
+
   it("defines the documented stale-run health budget", () => {
     const definition = schedule({
       id: "daily-support-triage",
@@ -190,6 +251,68 @@ describe("Guide: concepts/schedule.md", () => {
   });
 });
 
+describe("Guide: concepts/webhook.md", () => {
+  it("normalizes the documented event filter example", () => {
+    const definition = webhook({
+      id: "pull-request-review",
+      target: { kind: "workflow", id: "review-pull-request" },
+      eventFilter: {
+        mode: "all",
+        conditions: [
+          { path: "action", operator: "in", value: ["opened", "reopened"] },
+          { path: "pull_request.draft", operator: "equals", value: false },
+          { path: "pull_request.labels", operator: "contains", value: "backend" },
+        ],
+      },
+    });
+
+    assertEquals(definition.eventFilter?.mode, "all");
+    assertEquals(definition.eventFilter?.conditions.map((c) => c.operator), [
+      "in",
+      "equals",
+      "contains",
+    ]);
+  });
+
+  it("normalizes the documented agent prompt mapping example", () => {
+    const definition = webhook({
+      id: "support-escalation",
+      target: { kind: "agent", id: "support-agent", conversationMode: "create_new" },
+      agentMessage: {
+        promptTemplate: "Triage {{payload.summary}} for account {{payload.account.id}}.",
+      },
+    });
+
+    assertEquals(definition.target, {
+      kind: "agent",
+      id: "support-agent",
+      conversationMode: "create_new",
+    });
+    assertEquals(
+      definition.agentMessage?.promptTemplate,
+      "Triage {{payload.summary}} for account {{payload.account.id}}.",
+    );
+  });
+
+  it("accepts the documented dual declaration that spans a platform upgrade", () => {
+    const definition = webhook({
+      id: "support-escalation",
+      target: { kind: "agent", id: "support-agent", conversationMode: "create_new" },
+      agentMessage: {
+        promptTemplate: "Triage {{payload.summary}} for account {{payload.account.id}}.",
+        conversationMode: "create_new",
+      },
+    });
+
+    assertEquals(definition.target, {
+      kind: "agent",
+      id: "support-agent",
+      conversationMode: "create_new",
+    });
+    assertEquals(definition.agentMessage?.conversationMode, "create_new");
+  });
+});
+
 describe("Guide: agent-service-runtime.md", () => {
   it("uses public agent service helpers that exist and produce documented MCP configs", () => {
     assertEquals(typeof startAgentService, "function");
@@ -199,26 +322,6 @@ describe("Guide: agent-service-runtime.md", () => {
 
     const handler = createAgUiHandler("assistant");
     assertEquals(typeof handler, "function");
-  });
-});
-
-describe("Guide: index.md", () => {
-  it("documents the CLI and coding-agent workflow from the overview", async () => {
-    const guide = await readGuide("index.md");
-
-    for (
-      const snippet of [
-        "npm create veryfront",
-        "cd <PROJECT_NAME>",
-        "veryfront dev",
-        "veryfront generate <type> <name>",
-        "veryfront schema --json",
-        "AGENTS.md",
-        "vf_bootstrap",
-      ]
-    ) {
-      assertStringIncludes(guide, snippet);
-    }
   });
 });
 
@@ -247,6 +350,62 @@ describe("Guide: storybook-ui-workbench.md", () => {
   });
 });
 
+describe("Guide: security-headers.md", () => {
+  it("documents the policy the builder actually emits", async () => {
+    const guide = await readGuide("security-headers.md");
+    // The guide prints the default policy verbatim. Deriving the expectation
+    // from the builder means the page cannot drift from what is served.
+    for (const directive of buildCSP(false, "<generated>").split("; ")) {
+      assertStringIncludes(guide, directive);
+    }
+  });
+
+  it("documents that Google Fonts needs no config, and it actually does not", async () => {
+    const guide = await readGuide("security-headers.md");
+    assertStringIncludes(guide, "Google Fonts therefore works with no configuration");
+
+    // The claim the guide now makes: a project that configures nothing can
+    // still load what `veryfront/fonts` emits.
+    const csp = buildCSP(false, "n", null);
+    const directive = (name: string) =>
+      csp.split("; ").find((part) => part.startsWith(`${name} `)) ?? "";
+
+    assertStringIncludes(directive("style-src"), "https://fonts.googleapis.com");
+    assertStringIncludes(directive("font-src"), "https://fonts.gstatic.com");
+    assertStringIncludes(directive("script-src"), "'nonce-n'");
+    assert(!csp.includes("style-src-elem"), "no directive shadows the documented style-src");
+  });
+
+  it("documents a third-party font service addition that actually admits it", async () => {
+    const guide = await readGuide("security-headers.md");
+    assertStringIncludes(guide, 'styleSrc: ["https://use.typekit.net"]');
+    assertStringIncludes(guide, 'fontSrc: ["https://use.typekit.net"]');
+
+    const csp = buildCSP(false, "n", {
+      csp: {
+        styleSrc: ["https://use.typekit.net"],
+        fontSrc: ["https://use.typekit.net"],
+      },
+    });
+    const directive = (name: string) =>
+      csp.split("; ").find((part) => part.startsWith(`${name} `)) ?? "";
+
+    assertStringIncludes(directive("style-src"), "https://use.typekit.net");
+    assertStringIncludes(directive("font-src"), "https://use.typekit.net");
+    // The guide promises the floor survives an addition.
+    assertStringIncludes(directive("style-src"), "https://fonts.googleapis.com");
+    assertStringIncludes(directive("script-src"), "'nonce-n'");
+  });
+
+  it("documents a null opt-out that keeps the required sources", async () => {
+    const guide = await readGuide("security-headers.md");
+    assertStringIncludes(guide, "styleSrc: null");
+
+    const csp = buildCSP(false, "n", { csp: { styleSrc: null } });
+    assertStringIncludes(csp, "style-src 'self';");
+  });
+});
+
 describe("Guide: chat-ui.md", () => {
   it("uses the preset Chat component with the documented hook and route helper", () => {
     assertEquals(typeof useChat, "function");
@@ -259,7 +418,7 @@ describe("Guide: chat-ui.md", () => {
     assertExists(chatRecord.Input);
     assertExists(messageRecord.Root);
     assertExists(ChatContextProvider);
-    assertExists(ComposerContextProvider);
+    assertExists(ChatInputContextProvider);
     assertExists(MessageContextProvider);
     assertEquals(typeof useChatContextOptional, "function");
 
@@ -281,6 +440,60 @@ describe("Guide: chat-ui.md", () => {
       ),
     );
     assertEquals(element.type, ChatRoot);
+  });
+
+  it("gates the custom layout's empty state so it cannot outlive an empty thread", async () => {
+    const guide = await readGuide("chat-ui.md");
+
+    // `<Chat.Empty>` is prop-driven and never hides itself. A custom layout
+    // that drops it straight into `<Chat.Root>` keeps the hero mounted under
+    // an active conversation, so the sample must gate it on `ctx.isEmpty`.
+    const layout = guide.slice(guide.indexOf("## Compose a custom layout"));
+    const gate = layout.indexOf("<Chat.If condition={(ctx) => ctx.isEmpty}>");
+    const empty = layout.indexOf("<Chat.Empty");
+    assert(gate !== -1, "custom layout sample gates the empty state with <Chat.If>");
+    assert(gate < empty, "the <Chat.If> gate wraps <Chat.Empty>");
+
+    const chatComponents = Chat as unknown as Record<
+      string,
+      React.ComponentType<Record<string, unknown>>
+    >;
+    const Root = chatComponents.Root;
+    const If = chatComponents.If;
+    const Empty = chatComponents.Empty;
+    const MessageList = chatComponents.MessageList;
+    assertExists(Root);
+    assertExists(If);
+    assertExists(Empty);
+    assertExists(MessageList);
+
+    const messages = [
+      { id: "u1", role: "user", parts: [{ type: "text", text: "128 / 8?" }] },
+      { id: "a1", role: "assistant", parts: [{ type: "text", text: "128 / 8 = 16" }] },
+    ];
+    const layoutElement = (msgs: unknown[]) =>
+      React.createElement(
+        Root,
+        { messages: msgs, input: "" },
+        React.createElement(
+          If,
+          { condition: (ctx: { isEmpty: boolean }) => ctx.isEmpty },
+          React.createElement(Empty, {
+            title: "What can I help with?",
+            suggestions: ["Explain React hooks", "Write a regex"],
+          }),
+        ),
+        React.createElement(MessageList, { messages: msgs }),
+      );
+
+    const active = renderToString(layoutElement(messages));
+    assertEquals(active.includes("What can I help with?"), false);
+    assertEquals(active.includes("Explain React hooks"), false);
+    assertStringIncludes(active, "128 / 8 = 16");
+
+    const fresh = renderToString(layoutElement([]));
+    assertStringIncludes(fresh, "What can I help with?");
+    assertStringIncludes(fresh, "Explain React hooks");
   });
 });
 
@@ -309,7 +522,7 @@ describe("Guide: build-a-rag-app.md", () => {
 
     assertEquals(typeof ragStore, "function");
     assertEquals(typeof createUploadHandler, "function");
-    assertEquals(typeof useUploadsRegistry, "function");
+    assertEquals(typeof useAttachments, "function");
     assertExists(AttachmentsPanel.Root);
     assertEquals(typeof useChat, "function");
     assertEquals(typeof ChatThemeScope, "function");
@@ -340,7 +553,7 @@ describe("Guide: build-a-rag-app.md", () => {
       template.some((file) => file.path === "app/uploads/page.tsx"),
       "docs-agent template includes the uploads page",
     );
-    assertStringIncludes(guide, 'useUploadsRegistry({ url: "/api/uploads" })');
+    assertStringIncludes(guide, 'useAttachments({ url: "/api/uploads" })');
     assertStringIncludes(guide, "AttachmentsPanel");
     assertStringIncludes(guide, 'import { store } from "../../../store.ts";');
     assertStringIncludes(guide, "await store.indexContentDir();");
@@ -434,8 +647,8 @@ describe("Guide: deploying.md", () => {
         "veryfront dev",
         "veryfront build",
         "veryfront serve",
-        "npx veryfront deploy",
-        "npx veryfront deploy --branch feature-x --env staging",
+        "npx veryfront@latest deploy",
+        "npx veryfront@latest deploy --branch feature-x --env staging",
         "veryfront open",
       ]
     ) {
@@ -448,22 +661,38 @@ describe("Guide: deploying.md", () => {
 describe("Guide: deploy-from-ci.md", () => {
   it("uses supported Push and Deploy arguments in the required order", async () => {
     const guide = await readGuide("deploy-from-ci.md");
-    const pushCommand = "veryfront push --branch main --prune --yes";
+    const pushCommand = "veryfront push --branch main --prune --force --yes";
     const stagingCommand = "veryfront deploy --branch main --env staging --yes";
     const productionCommand = "veryfront deploy --branch main --env production --yes";
 
-    const dryRunArgs = parseCliArgs(["push", "--branch", "main", "--prune", "--dry-run"]);
+    const dryRunArgs = parseCliArgs([
+      "push",
+      "--branch",
+      "main",
+      "--prune",
+      "--force",
+      "--dry-run",
+    ]);
     const parsedDryRun = parsePushArgs(dryRunArgs);
     assert(parsedDryRun.success);
     assertEquals(parsedDryRun.data.branch, "main");
     assertEquals(parsedDryRun.data.prune, true);
+    assertEquals(parsedDryRun.data.force, true);
     assertEquals(parsedDryRun.data.dryRun, true);
 
-    const pushArgs = parseCliArgs(["push", "--branch", "main", "--prune", "--yes"]);
+    const pushArgs = parseCliArgs([
+      "push",
+      "--branch",
+      "main",
+      "--prune",
+      "--force",
+      "--yes",
+    ]);
     const parsedPush = parsePushArgs(pushArgs);
     assert(parsedPush.success);
     assertEquals(parsedPush.data.branch, "main");
     assertEquals(parsedPush.data.prune, true);
+    assertEquals(parsedPush.data.force, true);
     assertEquals(pushArgs.yes, true);
 
     const deployArgs = parseCliArgs([
@@ -481,7 +710,7 @@ describe("Guide: deploy-from-ci.md", () => {
     assertEquals(deployArgs.yes, true);
 
     assert(
-      guide.indexOf("veryfront push --branch main --prune --dry-run") <
+      guide.indexOf("veryfront push --branch main --prune --force --dry-run") <
         guide.indexOf(pushCommand),
     );
     assert(guide.indexOf(pushCommand) < guide.indexOf(stagingCommand));
@@ -703,6 +932,34 @@ describe("Guide: integrations.md", () => {
     assertExists(githubIcon);
     assertEquals(typeof getRemoteIntegrationToolDefinitions, "function");
   });
+
+  it("loads an exact-grant local integration source with named credentials", async () => {
+    await withEnv({ [HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV]: "1" }, async () => {
+      const credentials = new Map([
+        ["SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID", "client-id"],
+        ["SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET", "client-secret"],
+        [
+          "SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL",
+          "https://acme.my.salesforce.com",
+        ],
+      ]);
+      const source = createLocalIntegrationToolSource({
+        tools: ["salesforce__find_customer"],
+        credentialProvider: (name) => credentials.get(name),
+      });
+
+      const integrationTools = await loadRemoteToolsFromSource(source);
+
+      assertEquals(Object.keys(integrationTools), ["salesforce__find_customer"]);
+    });
+  });
+});
+
+describe("Guide: integrations/salesforce.md", () => {
+  it("uses the public local integration source and remote tool loader", () => {
+    assertEquals(typeof createLocalIntegrationToolSource, "function");
+    assertEquals(typeof loadRemoteToolsFromSource, "function");
+  });
 });
 
 describe("Guide: pages-and-routing.md", () => {
@@ -736,6 +993,31 @@ describe("Guide: project-structure.md", () => {
 
     assertEquals(hello.id, "hello");
     assertEquals(hello.config.system, "Say hi.");
+  });
+});
+
+describe("Guide: project-knowledge.md", () => {
+  it("uses the public manifest and RAG helper contracts", async () => {
+    const guide = await readGuide("project-knowledge.md");
+    const knowledge = projectKnowledge({ projectDir: "." });
+    const searchKnowledge = createSearchKnowledgeTool({
+      id: "search_knowledge",
+      description: "Search the project's reviewed support knowledge.",
+    });
+
+    assertEquals(typeof knowledge.lookup, "function");
+    assertEquals(typeof knowledge.index, "function");
+    assertEquals(typeof knowledge.retrieve, "function");
+    assertEquals(typeof knowledge.search, "function");
+    assertEquals(searchKnowledge.id, "search_knowledge");
+    assertEquals(normalizeKnowledgeQuery("  SSO   recovery  "), "SSO recovery");
+    assertStringIncludes(
+      guide,
+      'import { projectKnowledge } from "veryfront/knowledge"',
+    );
+    assertStringIncludes(guide, "page.mode");
+    assertStringIncludes(guide, "page_info.next");
+    assertStringIncludes(guide, "lookup_target");
   });
 });
 
@@ -792,8 +1074,8 @@ describe("Guide: installation.md", () => {
       "pnpm add -g veryfront",
       "yarn global add veryfront",
       "bun add -g veryfront",
-      "npx veryfront",
-      "veryfront install agents",
+      "npx veryfront@latest",
+      "veryfront install --target agents",
       "veryfront --version",
     ];
 
@@ -823,6 +1105,14 @@ describe("Guide: installation.md", () => {
       assertStringIncludes(guide, heading);
     }
   });
+
+  it("warns emitting projects about the inherited noEmit setting", async () => {
+    const guide = await readGuide("installation.md");
+
+    assertStringIncludes(guide, '"noEmit": true');
+    assertStringIncludes(guide, "stops emitting");
+    assertStringIncludes(guide, "./add-to-existing-project.md");
+  });
 });
 
 describe("Guide: create-project.md", () => {
@@ -833,6 +1123,84 @@ describe("Guide: create-project.md", () => {
     for (const templateId of templateIds) {
       assertStringIncludes(guide, `\`${templateId}\``);
       assertExists(await getTemplate(templateId));
+    }
+  });
+});
+
+describe("Guide: add-to-existing-project.md", () => {
+  it("documents the compiler options the scaffold actually sets", async () => {
+    const guide = await readGuide("add-to-existing-project.md");
+
+    // The page tells an existing-project reader to set by hand what the
+    // scaffolded template already carries. If the template ever drops one of
+    // these, the guidance is wrong and this fails.
+    const template = await getTemplate("ai-agent");
+    assertExists(template);
+    const tsconfig = template.find((file) => file.path === "tsconfig.json");
+    assertExists(tsconfig, "expected the ai-agent template to ship a tsconfig.json");
+
+    for (const option of ['"jsx": "react-jsx"', '"skipLibCheck": true']) {
+      assertStringIncludes(guide, option);
+      assertStringIncludes(tsconfig.content, option);
+    }
+  });
+
+  it("documents a package-exports-aware moduleResolution", async () => {
+    const guide = await readGuide("add-to-existing-project.md");
+
+    // Veryfront's entry points are subpath exports (`veryfront/agent`), which
+    // the older `node`/`classic` modes cannot resolve. The scaffold sets
+    // `bundler`; an adopting project must pick an equivalent mode or the
+    // linked next steps fail to typecheck.
+    assertStringIncludes(guide, '"moduleResolution": "bundler"');
+
+    const template = await getTemplate("ai-agent");
+    assertExists(template);
+    const tsconfig = template.find((file) => file.path === "tsconfig.json");
+    assertExists(tsconfig);
+    assertStringIncludes(tsconfig.content.toLowerCase(), '"moduleresolution": "bundler"');
+  });
+
+  it("points at the base config the package actually publishes", async () => {
+    const guide = await readGuide("add-to-existing-project.md");
+    assertStringIncludes(guide, '"extends": "veryfront/tsconfig.json"');
+
+    // The page's shortest path is extending the shipped config, so the npm
+    // build must keep publishing it under that exact export key. Resolved from
+    // import.meta.url, not the process cwd: test files share one process under
+    // --parallel and a sibling isolate can hold `withCwd` while this runs.
+    const dnt = await Deno.readTextFile(
+      new URL("../../scripts/build/build-npm-dnt.ts", import.meta.url),
+    );
+    assertStringIncludes(dnt, './tsconfig.json"] = "./tsconfig.json"');
+  });
+
+  it("warns that the published base config disables emit", async () => {
+    // The shipped `veryfront/tsconfig.json` sets `noEmit: true`. A host
+    // project whose build is `tsc -p ...` keeps exiting 0 after switching to
+    // `extends` but silently stops emitting to its outDir — the page must
+    // steer emitting projects away from the extends route.
+    const dnt = await Deno.readTextFile(
+      new URL("../../scripts/build/build-npm-dnt.ts", import.meta.url),
+    );
+    assertStringIncludes(dnt, "noEmit: true");
+
+    const guide = await readGuide("add-to-existing-project.md");
+    assertStringIncludes(guide, '"noEmit": true');
+    assertStringIncludes(guide, "stops emitting");
+  });
+
+  it("documents the install command and the entry route the server needs", async () => {
+    const guide = await readGuide("add-to-existing-project.md");
+
+    for (
+      const snippet of [
+        "npm install veryfront",
+        "// app/page.tsx",
+        "npx veryfront dev",
+      ]
+    ) {
+      assertStringIncludes(guide, snippet);
     }
   });
 });
@@ -874,21 +1242,73 @@ describe("Guide: create-frontend.md", () => {
 });
 
 describe("Guide: deploy-project.md", () => {
-  it("documents the build, serve, deploy, and open sequence", async () => {
+  it("documents the focused Push, Deploy, and open sequence", async () => {
     const guide = await readGuide("deploy-project.md");
 
     for (
       const command of [
-        "veryfront build",
-        "veryfront serve",
-        "npx veryfront deploy",
-        "npx veryfront push --branch feature-x",
-        "veryfront open",
+        "veryfront login",
+        "npx veryfront@latest push",
+        "npx veryfront@latest deploy",
+        "veryfront open --site",
       ]
     ) {
       assertStringIncludes(guide, command);
     }
     assertEquals(guide.includes("veryfront start"), false);
+  });
+});
+
+describe("Guide: cloud-quickstart.md", () => {
+  it("keeps the gateway tutorial on one runnable command sequence", async () => {
+    const guide = await readGuide("cloud-quickstart.md");
+
+    for (
+      const command of [
+        "npm create veryfront@latest support-agent -- --template ai-agent",
+        "npx veryfront@latest login",
+        "npx veryfront@latest push",
+        "npm run dev",
+        "npm run eval -- assistant",
+        "npx veryfront@latest deploy --env production",
+      ]
+    ) {
+      assertStringIncludes(guide, command);
+    }
+  });
+});
+
+describe("Guide: self-hosting.md", () => {
+  it("documents a complete container path without Cloud commands", async () => {
+    const guide = await readGuide("self-hosting.md");
+
+    for (
+      const command of [
+        "veryfront build",
+        "veryfront serve",
+        "FROM node:22-slim",
+        "COPY package.json package-lock.json ./",
+        "RUN npm ci",
+        "RUN npm run build",
+        'CMD ["npm", "start"]',
+        "docker build -t veryfront-app .",
+        "docker run --rm -p 3000:3000 --env-file .env veryfront-app",
+      ]
+    ) {
+      assertStringIncludes(guide, command);
+    }
+    assertEquals(guide.includes("veryfront login"), false);
+    assertEquals(guide.includes("FROM denoland/deno"), false);
+  });
+});
+
+describe("Guide: cloud-environment-access.md", () => {
+  it("probes a concrete route and documents both sign-in apexes", async () => {
+    const guide = await readGuide("cloud-environment-access.md");
+
+    assertStringIncludes(guide, "<environment-url>/<route>");
+    assertStringIncludes(guide, "https://veryfront.com/sign-in");
+    assertStringIncludes(guide, "https://veryfront.org/sign-in");
   });
 });
 
@@ -932,11 +1352,14 @@ describe("Guide: workflows-advanced.md", () => {
 
     for (
       const snippet of [
-        'import { delay, doWhile, loop, map, times } from "veryfront/workflow"',
-        'loop("refine"',
-        'doWhile("poll"',
+        'import { delay, doWhile, loop, map, step, times } from "veryfront/workflow"',
+        'loop("refine", {',
+        "while:",
+        'doWhile("poll", {',
+        "until:",
         'times("generate"',
-        'map("process"',
+        'map("process", {',
+        "processor:",
         "blobStorage",
         'import { useWorkflow, useWorkflowStart } from "veryfront/workflow"',
         "useWorkflowStart({",

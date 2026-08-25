@@ -402,7 +402,15 @@ describe("route-discovery.ts - Pages Router Discovery", () => {
 
       const routes = router.listRoutes();
       assertEquals(routes.length, 1);
-      assertEquals(routes[0]?.pattern, "");
+      assertEquals(
+        routes[0]?.pattern,
+        "/",
+        "a root index file under an empty prefix registers the root route",
+      );
+      assertExists(
+        router.match("/"),
+        "the root route must be reachable from a real pathname",
+      );
     });
 
     it("should preserve full file paths correctly", async () => {

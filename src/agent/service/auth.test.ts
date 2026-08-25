@@ -194,6 +194,31 @@ describe("agent/agent-service-auth", () => {
     assertEquals(getHostedServiceTokenFromRequest(request), "cookie-token");
   });
 
+  it("ignores cookies whose name merely ends with authToken", () => {
+    const bearerRequest = new Request("https://agent.test/run", {
+      headers: {
+        authorization: "Bearer bearer-token",
+        cookie: "xauthToken=wrong-token",
+      },
+    });
+
+    assertEquals(
+      getHostedServiceTokenFromRequest(bearerRequest),
+      "bearer-token",
+      "a cookie name suffixed with authToken must not shadow the bearer token",
+    );
+
+    const cookieOnlyRequest = new Request("https://agent.test/run", {
+      headers: { cookie: "myauthToken=wrong-token" },
+    });
+
+    assertStrictEquals(
+      getHostedServiceTokenFromRequest(cookieOnlyRequest),
+      null,
+      "only an exact authToken cookie may supply the token",
+    );
+  });
+
   it("extracts bearer auth tokens when no auth cookie exists", () => {
     const request = new Request("https://agent.test/run", {
       headers: { authorization: "Bearer bearer-token" },
@@ -244,21 +269,76 @@ describe("agent/agent-service-auth", () => {
       }),
     });
 
+    // The verifier reports the token's claims rather than a bare boolean, so
+    // a caller can read the integration grant it carries. The binding itself is
+    // unchanged: `verified` is true only for the exact project and run.
     assertEquals(
-      await auth.verifyRunEventAppendToken({
+      (await auth.verifyRunEventAppendToken({
         token: fixture.token,
         projectId: "11111111-1111-4111-8111-111111111111",
         runId: "run_1",
-      }),
+      })).verified,
       true,
     );
+    const wrongRun = await auth.verifyRunEventAppendToken({
+      token: fixture.token,
+      projectId: "11111111-1111-4111-8111-111111111111",
+      runId: "run_other",
+    });
+    assertEquals(wrongRun.verified, false);
+    // A rejected token must not leak a grant to the caller either.
+    assertEquals(wrongRun.integrationTools, undefined);
+  });
+
+  it("returns the integration tool grant carried by the signed payload", async () => {
+    const grantFixture = await createRs256JwtFixture({
+      ...apiRunEventWriterContract.payload,
+      integrationTools: ["outlook__list_emails"],
+    });
+    const auth = createHostedServiceAuth({
+      authProvider: webCryptoAuthProvider,
+      getConfig: () => ({
+        OAUTH_PUBLIC_KEY: grantFixture.publicKeyPem,
+        SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: apiRunEventWriterContract.payload.serviceAccountId,
+        NODE_ENV: "production",
+        VERYFRONT_API_URL: "https://api.example.test",
+      }),
+    });
+
     assertEquals(
       await auth.verifyRunEventAppendToken({
-        token: fixture.token,
+        token: grantFixture.token,
         projectId: "11111111-1111-4111-8111-111111111111",
-        runId: "run_other",
+        runId: "run_1",
       }),
-      false,
+      { verified: true, integrationTools: ["outlook__list_emails"] },
+      "a verified token returns the grant carried in its signed payload",
+    );
+  });
+
+  it("drops a non-array integration tool grant claim", async () => {
+    const malformedFixture = await createRs256JwtFixture({
+      ...apiRunEventWriterContract.payload,
+      integrationTools: "outlook__list_emails",
+    });
+    const auth = createHostedServiceAuth({
+      authProvider: webCryptoAuthProvider,
+      getConfig: () => ({
+        OAUTH_PUBLIC_KEY: malformedFixture.publicKeyPem,
+        SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: apiRunEventWriterContract.payload.serviceAccountId,
+        NODE_ENV: "production",
+        VERYFRONT_API_URL: "https://api.example.test",
+      }),
+    });
+
+    assertEquals(
+      await auth.verifyRunEventAppendToken({
+        token: malformedFixture.token,
+        projectId: "11111111-1111-4111-8111-111111111111",
+        runId: "run_1",
+      }),
+      { verified: true },
+      "a non-array grant claim is dropped rather than returned",
     );
   });
 
@@ -280,11 +360,11 @@ describe("agent/agent-service-auth", () => {
     });
 
     assertEquals(
-      await auth.verifyRunEventAppendToken({
+      (await auth.verifyRunEventAppendToken({
         token: fixture.token,
         projectId: v1Payload.projectId,
         runId: v1Payload.runId,
-      }),
+      })).verified,
       true,
     );
   });
@@ -363,14 +443,13 @@ describe("agent/agent-service-auth", () => {
           VERYFRONT_API_URL: "https://api.example.test",
         }),
       });
-      assertEquals(
-        await auth.verifyRunEventAppendToken({
-          token: fixture.token,
-          projectId: "11111111-1111-4111-8111-111111111111",
-          runId: "run_1",
-        }),
-        false,
-      );
+      const rejected = await auth.verifyRunEventAppendToken({
+        token: fixture.token,
+        projectId: "11111111-1111-4111-8111-111111111111",
+        runId: "run_1",
+      });
+      assertEquals(rejected.verified, false);
+      assertEquals(rejected.integrationTools, undefined);
     }
   });
 
@@ -598,6 +677,43 @@ describe("agent/agent-service-auth", () => {
     assertEquals(String(call.input), "https://api.example.test/projects/project-1");
     assertEquals(call.init?.method, "GET");
     assertEquals(getAuthorizationHeader(call), "Bearer token-1");
+    assertInstanceOf(
+      call.init?.signal,
+      AbortSignal,
+      "the project-access fetch must carry a timeout signal",
+    );
+  });
+
+  it("fails closed when the project API does not answer before the timeout", async () => {
+    const auth = createHostedServiceAuth({
+      fetch: (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          signal?.addEventListener("abort", () => {
+            reject(signal.reason);
+          });
+        }),
+      projectAccessTimeoutMs: 1,
+      getConfig: () => ({
+        NODE_ENV: "production",
+        VERYFRONT_API_URL: "https://api.example.test",
+      }),
+    });
+
+    const result = await auth.verifyProjectAccess("project-1", "token-1");
+
+    assertEquals(result.success, false, "a hung project API must fail closed");
+    if (result.success) throw new Error("Expected project access to fail");
+    assertEquals(
+      result.error.errorCode,
+      "FORBIDDEN",
+      "a project-access timeout must map to FORBIDDEN",
+    );
+    assertEquals(
+      result.error.statusCode,
+      403,
+      "a project-access timeout must map to 403",
+    );
   });
 
   it("omits authorization on project access checks without a token", async () => {
@@ -649,6 +765,32 @@ describe("agent/agent-service-auth", () => {
     if (result.success) throw new Error("Expected project access to fail");
     assertEquals(result.error.statusCode, 403);
     assertEquals(result.error.errorCode, "FORBIDDEN");
+  });
+
+  it("fails closed when the project API returns a server error", async () => {
+    const fetchMock = createFetchMock(new Response("boom", { status: 500 }));
+    const auth = createHostedServiceAuth({
+      fetch: fetchMock.fetch,
+      getConfig: () => ({
+        NODE_ENV: "production",
+        VERYFRONT_API_URL: "https://api.example.test",
+      }),
+    });
+
+    const result = await auth.verifyProjectAccess("project-1", "token-1");
+
+    assertEquals(result.success, false, "a degraded project API must not grant access");
+    if (result.success) throw new Error("Expected project access to fail");
+    assertEquals(
+      result.error.statusCode,
+      403,
+      "a degraded project API is reported as a 403",
+    );
+    assertEquals(
+      result.error.errorCode,
+      "FORBIDDEN",
+      "a degraded project API is reported as FORBIDDEN",
+    );
   });
 
   it("maps failed project access fetches to FORBIDDEN", async () => {

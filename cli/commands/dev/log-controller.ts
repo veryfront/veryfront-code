@@ -6,14 +6,31 @@ export interface DevLogController {
   toggle(): boolean;
 }
 
-function startsVerbose(): boolean {
-  const level = getEnv("LOG_LEVEL")?.toUpperCase();
-  return level === "DEBUG" || isTruthyEnvValue(getEnv("VERYFRONT_DEBUG"));
+export interface DevLogControllerRuntime {
+  readonly deleteEnv: typeof deleteEnv;
+  readonly getEnv: typeof getEnv;
+  readonly refreshLoggerConfig: typeof refreshLoggerConfig;
+  readonly setEnv: typeof setEnv;
 }
 
-export function createDevLogController(): DevLogController {
-  let verbose = startsVerbose();
-  const initialLevel = getEnv("LOG_LEVEL");
+const hostRuntime: DevLogControllerRuntime = {
+  deleteEnv,
+  getEnv,
+  refreshLoggerConfig,
+  setEnv,
+};
+
+function startsVerbose(runtime: DevLogControllerRuntime): boolean {
+  const level = runtime.getEnv("LOG_LEVEL")?.toUpperCase();
+  return level === "DEBUG" ||
+    isTruthyEnvValue(runtime.getEnv("VERYFRONT_DEBUG"));
+}
+
+export function createDevLogController(
+  runtime: DevLogControllerRuntime = hostRuntime,
+): DevLogController {
+  let verbose = startsVerbose(runtime);
+  const initialLevel = runtime.getEnv("LOG_LEVEL");
   const normalLevel = initialLevel?.toUpperCase() === "DEBUG" ? "INFO" : initialLevel;
 
   return {
@@ -22,17 +39,17 @@ export function createDevLogController(): DevLogController {
       verbose = !verbose;
 
       if (verbose) {
-        setEnv("LOG_LEVEL", "DEBUG");
-        setEnv("VERYFRONT_DEBUG", "1");
+        runtime.setEnv("LOG_LEVEL", "DEBUG");
+        runtime.setEnv("VERYFRONT_DEBUG", "1");
       } else if (normalLevel === undefined) {
-        deleteEnv("LOG_LEVEL");
+        runtime.deleteEnv("LOG_LEVEL");
       } else {
-        setEnv("LOG_LEVEL", normalLevel);
+        runtime.setEnv("LOG_LEVEL", normalLevel);
       }
 
-      if (!verbose) deleteEnv("VERYFRONT_DEBUG");
+      if (!verbose) runtime.deleteEnv("VERYFRONT_DEBUG");
 
-      refreshLoggerConfig();
+      runtime.refreshLoggerConfig();
       return verbose;
     },
   };

@@ -4,6 +4,8 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   isSensitiveKey,
   REDACTED,
+  redactForSerialization,
+  redactPathFromText,
   redactSensitive,
   sanitizeSerializedError,
   sanitizeUrlCredentials,
@@ -32,6 +34,9 @@ describe("logger/redact", () => {
           "accessKey",
           "privateKey",
           "credential",
+          "auth",
+          "authHeader",
+          "auth.header",
           "authorization",
           "Authorization",
           "Cookie",
@@ -53,9 +58,9 @@ describe("logger/redact", () => {
     });
 
     it("does not flag benign keys that merely look similar", () => {
-      // `author` must NOT match (the deny-list deliberately omits bare `auth`),
-      // and short tokens like `dsn`/`sas` are omitted to avoid masking e.g.
-      // `feedsNamespace`.
+      // Exact `auth` is sensitive, but it must not turn ordinary words such as
+      // `author` into sensitive keys. Short tokens like `dsn`/`sas` remain
+      // omitted to avoid masking e.g. `feedsNamespace`.
       for (
         const key of ["author", "count", "userId", "requestId", "url", "domain", "feedsNamespace"]
       ) {
@@ -194,6 +199,37 @@ describe("logger/redact", () => {
       });
     });
 
+    it("fails closed on a cyclic serializer prototype chain", () => {
+      const cyclicPrototype: object = new Proxy({}, {
+        getPrototypeOf: () => cyclicPrototype,
+      });
+
+      assertEquals(redactSensitive({ wrap: cyclicPrototype }) as Record<string, unknown>, {
+        wrap: REDACTED,
+      });
+    });
+
+    it("keeps serializer hook cycle detection stable after the global Set changes", () => {
+      const originalSetConstructor = globalThis.Set;
+      let redacted: unknown;
+
+      try {
+        globalThis.Set = function ReplacementSet() {
+          throw new Error("project code replaced Set");
+        } as unknown as SetConstructor;
+
+        redacted = redactForSerialization({
+          wrap: {
+            toJSON: () => ({ apiKey: "synthetic-opaque-credential" }),
+          },
+        });
+      } finally {
+        globalThis.Set = originalSetConstructor;
+      }
+
+      assertEquals(redacted, { wrap: { apiKey: REDACTED } });
+    });
+
     it("fails closed past the max traversal depth", () => {
       // Build a structure deeper than MAX_DEPTH (16) with a secret at the bottom.
       let node: Record<string, unknown> = { token: "deep-secret" };
@@ -218,6 +254,52 @@ describe("logger/redact", () => {
       const serialized = JSON.stringify(redactSensitive({ obj }));
       assertEquals(serialized.includes("t-1"), false);
       assertEquals(serialized.includes("2"), true);
+    });
+
+    it("ignores intrinsic serialization hooks after global constructors are replaced", () => {
+      const originalObjectConstructor = globalThis.Object;
+      const originalArrayConstructor = globalThis.Array;
+      const originalObjectToJSON = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+      const originalArrayToJSON = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
+      let hookCalls = 0;
+      let redacted: unknown;
+
+      try {
+        Object.defineProperty(Object.prototype, "toJSON", {
+          configurable: true,
+          value() {
+            hookCalls++;
+            return { leaked: "synthetic-intrinsic-secret" };
+          },
+        });
+        Object.defineProperty(Array.prototype, "toJSON", {
+          configurable: true,
+          value() {
+            hookCalls++;
+            return ["synthetic-intrinsic-secret"];
+          },
+        });
+        globalThis.Object = function ReplacementObject() {} as unknown as ObjectConstructor;
+        globalThis.Array = function ReplacementArray() {} as unknown as ArrayConstructor;
+
+        redacted = redactForSerialization({ apiKey: "synthetic-opaque-credential" });
+      } finally {
+        globalThis.Object = originalObjectConstructor;
+        globalThis.Array = originalArrayConstructor;
+        if (originalObjectToJSON) {
+          Object.defineProperty(Object.prototype, "toJSON", originalObjectToJSON);
+        } else {
+          delete (Object.prototype as { toJSON?: unknown }).toJSON;
+        }
+        if (originalArrayToJSON) {
+          Object.defineProperty(Array.prototype, "toJSON", originalArrayToJSON);
+        } else {
+          delete (Array.prototype as { toJSON?: unknown }).toJSON;
+        }
+      }
+
+      assertEquals(hookCalls, 0);
+      assertEquals(redacted, { apiKey: REDACTED });
     });
   });
 
@@ -251,6 +333,292 @@ describe("logger/redact", () => {
 
     it("leaves non-URL strings untouched", () => {
       assertEquals(sanitizeUrlCredentials("just a plain message"), "just a plain message");
+    });
+
+    it("masks whole cookie and set-cookie header lines", () => {
+      const cookieLine = sanitizeUrlCredentials("cookie: theme=dark; _ga=GA1.2.99; sess=SECRET");
+      assertEquals(
+        cookieLine,
+        `cookie: ${REDACTED}`,
+        "the whole cookie header line is masked, not just the first pair",
+      );
+      assertEquals(cookieLine.includes("SECRET"), false);
+
+      const setCookieLine = sanitizeUrlCredentials("set-cookie: sess=SECRET; Path=/; HttpOnly");
+      assertEquals(
+        setCookieLine,
+        `set-cookie: ${REDACTED}`,
+        "set-cookie attributes must not leak past the first delimiter",
+      );
+      assertEquals(setCookieLine.includes("SECRET"), false);
+
+      const embedded = sanitizeUrlCredentials("request headers -> cookie: sess=SECRET; a=b");
+      assertEquals(
+        embedded,
+        `request headers -> cookie: ${REDACTED}`,
+        "a cookie header embedded mid-message is masked from the header name onward",
+      );
+      assertEquals(embedded.includes("SECRET"), false);
+    });
+
+    it("keeps benign assignment-shaped words intact", () => {
+      for (
+        const message of [
+          "mapping: 4 routes resolved",
+          "spinner=ready",
+          "considered: safe",
+          "residual=small",
+          "saltiness=balanced",
+        ]
+      ) {
+        assertEquals(sanitizeUrlCredentials(message), message);
+      }
+    });
+
+    it("bounds oversized assignment-key classification and fails closed", () => {
+      const oversizedKey = `benign_${"segment_".repeat(10_000)}`;
+      assertEquals(
+        sanitizeUrlCredentials(`${oversizedKey}=synthetic-opaque-value`),
+        `${oversizedKey}=${REDACTED}`,
+      );
+    });
+
+    it("keeps assignment redaction fail-closed after prototype methods are replaced", () => {
+      const originalIncludes = String.prototype.includes;
+      const originalSplit = String.prototype.split;
+      const originalFilter = Array.prototype.filter;
+      const originalSome = Array.prototype.some;
+      let sensitive: string;
+      let benign: string;
+
+      try {
+        String.prototype.includes = () => false;
+        String.prototype.split = () => ["mapping"];
+        Array.prototype.filter = () => [];
+        Array.prototype.some = () => false;
+
+        sensitive = sanitizeUrlCredentials("refreshToken=prototype-poison-secret");
+        benign = sanitizeUrlCredentials("mapping: 4 routes resolved");
+      } finally {
+        String.prototype.includes = originalIncludes;
+        String.prototype.split = originalSplit;
+        Array.prototype.filter = originalFilter;
+        Array.prototype.some = originalSome;
+      }
+
+      assertEquals(sensitive, `refreshToken=${REDACTED}`);
+      assertEquals(benign, "mapping: 4 routes resolved");
+    });
+
+    it("keeps regex sanitization fail-closed after RegExp exec is replaced", () => {
+      const originalExec = RegExp.prototype.exec;
+
+      try {
+        RegExp.prototype.exec = () => {
+          throw new Error("project code replaced RegExp.prototype.exec");
+        };
+
+        assertEquals(
+          sanitizeUrlCredentials("Using token sk-proj-abc123456789"),
+          `Using token ${REDACTED}`,
+        );
+        assertEquals(
+          sanitizeUrlCredentials("https://user:password@example.test/path"),
+          `https://user:${REDACTED}@example.test/path`,
+        );
+        assertEquals(
+          sanitizeUrlCredentials("https://example.test/?access_token=secret"),
+          `https://example.test/?access_token=${REDACTED}`,
+        );
+        assertEquals(
+          sanitizeUrlCredentials("Bearer opaque-secret"),
+          `Bearer ${REDACTED}`,
+        );
+        assertEquals(
+          sanitizeUrlCredentials("refreshToken=prototype-poison-secret"),
+          `refreshToken=${REDACTED}`,
+        );
+        assertEquals(
+          sanitizeUrlCredentials("mapping: 4 routes resolved"),
+          "mapping: 4 routes resolved",
+        );
+      } finally {
+        RegExp.prototype.exec = originalExec;
+      }
+    });
+
+    it("does not inherit poisoned property-descriptor fields during regex sanitization", () => {
+      const descriptorFields = [
+        "value",
+        "writable",
+        "get",
+        "set",
+        "enumerable",
+        "configurable",
+      ] as const;
+      const previousDescriptors = descriptorFields.map((field) =>
+        Object.getOwnPropertyDescriptor(Object.prototype, field)
+      );
+      const poisonDescriptors = descriptorFields.map(() => {
+        const descriptor = Object.create(null) as PropertyDescriptor;
+        descriptor.configurable = true;
+        descriptor.get = () => {
+          throw new Error("descriptor prototype must not be read");
+        };
+        descriptor.set = () => {
+          throw new Error("descriptor prototype must not be written");
+        };
+        return descriptor;
+      });
+      let sanitized: string[] | undefined;
+      let failure: unknown;
+
+      try {
+        for (let index = 0; index < descriptorFields.length; index++) {
+          Object.defineProperty(
+            Object.prototype,
+            descriptorFields[index]!,
+            poisonDescriptors[index]!,
+          );
+        }
+        sanitized = [
+          sanitizeUrlCredentials("Using token sk-proj-abc123456789"),
+          sanitizeUrlCredentials("https://user:password@example.test/path"),
+          sanitizeUrlCredentials("https://example.test/?access_token=secret"),
+          sanitizeUrlCredentials("refreshToken=prototype-poison-secret"),
+        ];
+      } catch (error) {
+        failure = error;
+      } finally {
+        for (const field of descriptorFields) {
+          Reflect.deleteProperty(Object.prototype, field);
+        }
+        for (let index = 0; index < descriptorFields.length; index++) {
+          const previous = previousDescriptors[index];
+          if (previous) Object.defineProperty(Object.prototype, descriptorFields[index]!, previous);
+        }
+      }
+
+      if (failure) throw failure;
+      assertEquals(sanitized, [
+        `Using token ${REDACTED}`,
+        `https://user:${REDACTED}@example.test/path`,
+        `https://example.test/?access_token=${REDACTED}`,
+        `refreshToken=${REDACTED}`,
+      ]);
+    });
+
+    it("keeps structured and URL key redaction stable after collection prototypes change", () => {
+      const originalMapGet = Map.prototype.get;
+      const originalSetHas = Set.prototype.has;
+      let structured: unknown;
+      let url: string;
+
+      try {
+        Map.prototype.get = () => false;
+        Set.prototype.has = () => false;
+        structured = redactForSerialization({
+          prototypeMutationApiKeyProbe3325: "synthetic-opaque-credential",
+        });
+        url = sanitizeUrlCredentials(
+          "https://example.test/callback?code=synthetic-oauth-code",
+        );
+      } finally {
+        Map.prototype.get = originalMapGet;
+        Set.prototype.has = originalSetHas;
+      }
+
+      assertEquals(structured, {
+        prototypeMutationApiKeyProbe3325: REDACTED,
+      });
+      assertEquals(
+        url,
+        `https://example.test/callback?code=${REDACTED}`,
+      );
+    });
+
+    it("keeps credential redaction stable after string, array, and URL globals change", () => {
+      const originalIndexOf = String.prototype.indexOf;
+      const originalStartsWith = String.prototype.startsWith;
+      const originalSearch = String.prototype.search;
+      const originalCharCodeAt = String.prototype.charCodeAt;
+      const originalPush = Array.prototype.push;
+      const originalPop = Array.prototype.pop;
+      const originalAt = Array.prototype.at;
+      const originalDecodeURIComponent = globalThis.decodeURIComponent;
+      let sanitizedUserinfo = "";
+      let sanitizedAssignment = "";
+      let sanitizedEncodedParameter = "";
+
+      try {
+        String.prototype.indexOf = () => -1;
+        String.prototype.startsWith = () => false;
+        String.prototype.search = () => -1;
+        String.prototype.charCodeAt = () => 0;
+        Array.prototype.push = () => 0;
+        Array.prototype.pop = () => undefined;
+        Array.prototype.at = () => undefined;
+        globalThis.decodeURIComponent = () => "page";
+
+        sanitizedUserinfo = sanitizeUrlCredentials(
+          "https://user:synthetic-password@example.test/path",
+        );
+        sanitizedAssignment = sanitizeUrlCredentials(
+          "refreshToken='synthetic-token' request continues",
+        );
+        sanitizedEncodedParameter = sanitizeUrlCredentials(
+          "https://example.test/?access%5Ftoken=synthetic-token&page=2",
+        );
+      } finally {
+        String.prototype.indexOf = originalIndexOf;
+        String.prototype.startsWith = originalStartsWith;
+        String.prototype.search = originalSearch;
+        String.prototype.charCodeAt = originalCharCodeAt;
+        Array.prototype.push = originalPush;
+        Array.prototype.pop = originalPop;
+        Array.prototype.at = originalAt;
+        globalThis.decodeURIComponent = originalDecodeURIComponent;
+      }
+
+      assertEquals(
+        sanitizedUserinfo,
+        `https://user:${REDACTED}@example.test/path`,
+      );
+      assertEquals(
+        sanitizedAssignment,
+        `refreshToken='${REDACTED}' request continues`,
+      );
+      assertEquals(
+        sanitizedEncodedParameter,
+        `https://example.test/?access%5Ftoken=${REDACTED}&page=2`,
+      );
+    });
+
+    it("keeps composite auth fields and trailing warning text visible", () => {
+      const warning =
+        "MCP server started with auth.type='none' (allowUnauthenticated) - all requests accepted";
+
+      assertEquals(sanitizeUrlCredentials(warning), warning);
+      assertEquals(
+        sanitizeUrlCredentials("auth='synthetic-secret' warning remains visible"),
+        `auth='${REDACTED}' warning remains visible`,
+      );
+      assertEquals(
+        sanitizeUrlCredentials("authHeader='synthetic-secret' warning remains visible"),
+        `authHeader='${REDACTED}' warning remains visible`,
+      );
+      assertEquals(
+        sanitizeUrlCredentials("auth.header='synthetic-secret' warning remains visible"),
+        `auth.header='${REDACTED}' warning remains visible`,
+      );
+    });
+
+    it("masks common provider token prefixes without assignment syntax", () => {
+      const message = "Using token sk-proj-abc123456789";
+      const sanitized = sanitizeUrlCredentials(message);
+
+      assertEquals(sanitized.includes("sk-proj-abc123456789"), false);
+      assertEquals(sanitized, `Using token ${REDACTED}`);
     });
   });
 
@@ -288,6 +656,44 @@ describe("logger/redact", () => {
 
     it("returns undefined unchanged", () => {
       assertEquals(sanitizeSerializedError(undefined), undefined);
+    });
+  });
+
+  describe("redactPathFromText", () => {
+    it("folds ASCII case and separators for Windows drive paths", () => {
+      assertEquals(
+        redactPathFromText(
+          "ENOENT: no such file 'C:/Users/Me/proj/a.js'",
+          "C:\\Users\\me\\proj",
+          "[path]",
+        ),
+        "ENOENT: no such file '[path]/a.js'",
+        "windows drive paths fold ASCII case and slash/backslash",
+      );
+    });
+
+    it("keeps POSIX paths case sensitive", () => {
+      assertEquals(
+        redactPathFromText("/home/Me/p/a.js", "/home/me/p", "[path]"),
+        "/home/Me/p/a.js",
+        "posix paths must not fold case",
+      );
+    });
+
+    it("replaces every occurrence", () => {
+      assertEquals(
+        redactPathFromText("a /x/y b /x/y c", "/x/y", "[p]"),
+        "a [p] b [p] c",
+        "every occurrence is replaced",
+      );
+    });
+
+    it("returns the input unchanged for an empty path", () => {
+      assertEquals(
+        redactPathFromText("abc", "", "[p]"),
+        "abc",
+        "an empty path returns the input unchanged",
+      );
     });
   });
 });

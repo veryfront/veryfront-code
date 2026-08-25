@@ -27,11 +27,35 @@ import {
 } from "./local-project-discovery.ts";
 import type { ParsedDomain } from "../utils/domain-parser.ts";
 import { isProxyTrusted } from "../utils/proxy-trust.ts";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 const baseLogger = getBaseLogger("SERVER");
 
 const logger = baseLogger.component("adapter-factory");
+
+/**
+ * Which path produced `config`, so a caller that degrades on a missing config
+ * can say why it is missing.
+ *
+ * `config` being `undefined` is reached from four unrelated places -- an
+ * inherited caller config, a deliberate defer, a published project that has no
+ * config file, and a hosted 404 -- and the result alone cannot tell them
+ * apart. Downstream, `resolveProjectRuntimeContext` silently substitutes the
+ * process-wide security config for an absent project config, which serves a
+ * correct-looking 200 carrying the platform-default CSP instead of the
+ * project's. That degradation was undiagnosable from production logs because
+ * every branch that reaches it logs at debug.
+ */
+export type ConfigResolutionOutcome =
+  /** No project-specific load ran; whatever the caller passed through stands. */
+  | "inherited"
+  /** Loaded from a local project directory. */
+  | "local"
+  /** Deliberately skipped: see `shouldDeferConfigLoad`. */
+  | "deferred"
+  /** Loaded from the control plane for this project. */
+  | "hosted"
+  /** The control plane answered 404: the project publishes no config file. */
+  | "hosted-absent";
 
 interface AdapterResolutionResult {
   /** The effective project directory to use */
@@ -40,6 +64,8 @@ interface AdapterResolutionResult {
   adapter: RuntimeAdapter;
   /** The config for this project */
   config: VeryfrontConfig | undefined;
+  /** Which branch produced `config`. */
+  configOutcome: ConfigResolutionOutcome;
   /** Whether this is a local project (filesystem-first) */
   isLocalProject: boolean;
 }
@@ -89,6 +115,37 @@ interface AdapterResolutionOptions {
   ) => Promise<PreparedHostedConfigContext>;
 }
 
+/**
+ * Whether an error carries an own `status` of 404.
+ *
+ * Read through an own-property descriptor rather than plain access: this runs on
+ * a rejection value that may be anything, and a getter on an attacker-shaped
+ * object should not execute during error handling.
+ *
+ * Callers must scope this to the single operation whose 404 means "absent",
+ * never to a block that also performs other requests -- see the config load
+ * below, where only the getHostedConfig call is treated this way.
+ */
+export function hasNotFoundStatus(error: unknown): boolean {
+  // Walks `cause`, because the 404 does not always arrive on the outermost
+  // error. readHostedConfigSource lets a VeryfrontError through untouched but
+  // wraps anything else in CONFIG_PARSE_ERROR, which buries the original status
+  // one level down. Reading only the top object made the fallback fire for one
+  // error shape and not the other, for the same underlying 404.
+  //
+  // Depth-bounded so a self-referential cause cannot spin.
+  let current: unknown = error;
+  for (let depth = 0; depth < 8; depth++) {
+    if (typeof current !== "object" || current === null) return false;
+    const status = Object.getOwnPropertyDescriptor(current, "status");
+    if (status !== undefined && status.value === 404) return true;
+    const cause = Object.getOwnPropertyDescriptor(current, "cause");
+    if (cause === undefined) return false;
+    current = cause.value;
+  }
+  return false;
+}
+
 function usesExactSourceConfig(opts: AdapterResolutionOptions): boolean {
   return opts.isProxyMode &&
     !!opts.projectSlug &&
@@ -133,6 +190,7 @@ export async function resolveAdapter(
   let effectiveProjectDir = opts.projectDir;
   let effectiveAdapter = opts.adapter;
   let effectiveConfig = opts.config;
+  let configOutcome: ConfigResolutionOutcome = "inherited";
 
   // Check if this is a local project.
   // In proxy mode, skip local discovery unless there's an explicit header path override —
@@ -141,15 +199,11 @@ export async function resolveAdapter(
   // SECURITY: `x-project-path` is a client-controlled header. Honouring it from any
   // request would let an attacker reaching the runtime directly aim project discovery
   // (and therefore `/_veryfront/fs/...`) at arbitrary filesystem paths (VULN-SRV-3).
-  // Only read it when the request is proxy-trusted: either the operator opted in via
-  // VERYFRONT_TRUST_FORWARDED_HEADERS=1, or the request carries a dispatch JWS that
-  // verifies against CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY. Mere header presence is
-  // NOT sufficient — a direct-access attacker could otherwise spoof `x-project-path`
-  // by attaching any value in `x-veryfront-dispatch-jws`.
-  const publicKeyPem = opts.adapter.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") ??
-    getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+  // Only read it when the operator explicitly declares a private, sanitising
+  // upstream topology. An operation-scoped dispatch JWS does not bind this path
+  // override and therefore cannot authorize generic proxy headers.
   const proxyTrusted = opts.isProxyMode &&
-    (opts.proxyTrusted ?? await isProxyTrusted(opts.req, { publicKeyPem }));
+    (opts.proxyTrusted ?? await isProxyTrusted(opts.req));
   const trustedHeaderProjectPath = proxyTrusted
     ? opts.req.headers.get("x-project-path")?.trim() || undefined
     : undefined;
@@ -168,20 +222,31 @@ export async function resolveAdapter(
       projectDir: effectiveProjectDir,
     });
 
-    // Get or create local adapter
-    if (!cache.adapters.has(effectiveProjectDir)) {
-      const baseAdapter = await runtime.get();
-      cache.adapters.set(effectiveProjectDir, baseAdapter);
+    // Get or create local adapter.
+    //
+    // Hold the adapter rather than reading it back: the cache is an LRU that
+    // estimates each value's size and can evict an oversized entry as part of
+    // the same set(), so a write is not guaranteed to be readable afterwards.
+    // A RuntimeAdapter crosses that budget under Bun, where set() then leaves
+    // has() === false and size === 0, and the non-null assertion this replaces
+    // turned that miss into an undefined adapter that reached getConfig and
+    // threw "undefined is not an object (evaluating 'adapter.fs')" on every
+    // request. Caching stays best effort; correctness no longer depends on it.
+    let localAdapter = cache.adapters.get(effectiveProjectDir);
+    if (!localAdapter) {
+      localAdapter = await runtime.get();
+      cache.adapters.set(effectiveProjectDir, localAdapter);
       logger.debug("Created local adapter for project", {
         projectSlug: opts.projectSlug,
         projectDir: effectiveProjectDir,
       });
     }
 
-    effectiveAdapter = cache.adapters.get(effectiveProjectDir)!;
+    effectiveAdapter = localAdapter;
 
     if (shouldDeferConfigLoad(opts)) {
       effectiveConfig = undefined;
+      configOutcome = "deferred";
     } else if (opts.isProxyMode) {
       const hosted = await prepareProxyConfigLoad(opts, true);
       effectiveConfig = await timeAsync(
@@ -192,11 +257,13 @@ export async function resolveAdapter(
             signal: opts.req.signal,
           }),
       );
+      configOutcome = "hosted";
     } else {
       effectiveConfig = await timeAsync(
         "config:load-project",
         () => getConfig(effectiveProjectDir, effectiveAdapter),
       );
+      configOutcome = "local";
 
       logger.debug("Loaded project-specific config", {
         projectSlug: opts.projectSlug,
@@ -217,6 +284,7 @@ export async function resolveAdapter(
         projectDir: effectiveProjectDir,
         adapter: effectiveAdapter,
         config: effectiveConfig,
+        configOutcome: "deferred",
         isLocalProject,
       };
     }
@@ -224,6 +292,12 @@ export async function resolveAdapter(
     // Load config via proxy mode with project context.
     // Unlike local projects, proxy mode config loading failures are propagated
     // because proceeding without config causes silent 404s for valid projects.
+    // Set only when getHostedConfig itself reports 404, never when some other
+    // request in this block does. The catch below spans prepareProxyConfigLoad,
+    // the snapshot refresh and runWithContext too, and a 404 from any of those
+    // is a real failure that must not be read as "no config published".
+    let hostedConfigAbsent = false;
+
     try {
       effectiveConfig = await timeAsync("config:load-proxy-project", async () => {
         const hosted = await prepareProxyConfigLoad(opts, false);
@@ -234,6 +308,9 @@ export async function resolveAdapter(
           return await getHostedConfig(effectiveProjectDir, effectiveAdapter, {
             ...hosted,
             signal: opts.req.signal,
+          }).catch((error: unknown) => {
+            if (hasNotFoundStatus(error)) hostedConfigAbsent = true;
+            throw error;
           });
         };
 
@@ -255,6 +332,8 @@ export async function resolveAdapter(
         return loadCurrentConfig();
       });
 
+      configOutcome = "hosted";
+
       logger.debug("Loaded config in proxy mode", {
         projectSlug: opts.projectSlug,
         hasConfig: !!effectiveConfig,
@@ -262,19 +341,46 @@ export async function resolveAdapter(
         router: effectiveConfig?.router,
       });
     } catch (error) {
-      // Log at error level — this is a real failure that will affect rendering.
-      // Config loading failure in proxy mode means the project's routes, layouts,
-      // and settings won't be available, leading to 404s for valid pages.
-      logger.error("Failed to load project config in proxy mode", {
-        projectSlug: opts.projectSlug,
-        projectId: opts.projectId,
-        releaseId: opts.releaseId,
-        proxyEnv: opts.proxyEnv,
-        error: getErrorMessage(error),
-      });
-      // Re-throw so the caller (runtime-handler) can return a proper error response
-      // instead of silently proceeding with broken defaults.
-      throw error;
+      // A release with no config file at all is an ordinary project shape, not
+      // a failure: the API answers 404 because there is nothing to serve. This
+      // used to be re-thrown with everything else, which turned every request
+      // for such a project into a 404. Fall through to defaults instead --
+      // the same outcome as a project whose config resolves to nothing.
+      if (hostedConfigAbsent) {
+        // Defaults, not whatever a caller happened to pass in: a project with no
+        // published config must not silently inherit another config's routes.
+        effectiveConfig = undefined;
+        configOutcome = "hosted-absent";
+        // Warn, not debug. For a project that publishes no config at all this
+        // is routine, but it is indistinguishable here from a project whose
+        // config momentarily 404s -- and the two produce the same silently
+        // degraded response downstream (platform-default security headers in
+        // place of the project's). At debug it was invisible in production
+        // while a preview served the wrong CSP on a third of its renders.
+        logger.warn("No hosted config for this release; using defaults", {
+          projectSlug: opts.projectSlug,
+          projectId: opts.projectId,
+          releaseId: opts.releaseId,
+          proxyEnv: opts.proxyEnv,
+          branch: opts.branch ?? null,
+          environmentName: opts.environmentName ?? null,
+          pathname: opts.pathname ?? null,
+        });
+      } else {
+        // Log at error level — this is a real failure that will affect rendering.
+        // Config loading failure in proxy mode means the project's routes, layouts,
+        // and settings won't be available, leading to 404s for valid pages.
+        logger.error("Failed to load project config in proxy mode", {
+          projectSlug: opts.projectSlug,
+          projectId: opts.projectId,
+          releaseId: opts.releaseId,
+          proxyEnv: opts.proxyEnv,
+          error: getErrorMessage(error),
+        });
+        // Re-throw so the caller (runtime-handler) can return a proper error response
+        // instead of silently proceeding with broken defaults.
+        throw error;
+      }
     }
   }
 
@@ -282,6 +388,7 @@ export async function resolveAdapter(
     projectDir: effectiveProjectDir,
     adapter: effectiveAdapter,
     config: effectiveConfig,
+    configOutcome,
     isLocalProject,
   };
 }

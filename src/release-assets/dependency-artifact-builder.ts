@@ -134,8 +134,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
-  const allowedKeys = new Set(allowed);
+function hasOnlyKeys<K extends string>(
+  value: Record<string, unknown>,
+  allowed: readonly K[],
+): value is { [P in K]?: unknown } {
+  const allowedKeys = new Set<string>(allowed);
   return Object.keys(value).every((key) => allowedKeys.has(key));
 }
 
@@ -183,7 +186,7 @@ function parseIdentity(value: unknown): DependencyArtifactIdentity {
     : value.profile === "standard-v1";
   if (!profileMatches) return invalidTaskInput();
 
-  return value as unknown as DependencyArtifactIdentity;
+  return value as DependencyArtifactIdentity;
 }
 
 function parsePolicy(value: unknown): DependencyArtifactPolicyDecision {

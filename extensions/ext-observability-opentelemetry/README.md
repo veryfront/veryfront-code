@@ -73,3 +73,81 @@ In shared Veryfront runtimes, these variables are platform-owned host env vars. 
 
 - **net `*`:** OTLP exporter reaches the configured collector.
 - **env:** reads the `OTEL_*` variables listed above.
+
+## Workflow spans and map fan-out
+
+With this extension registered, the workflow executor emits a `workflow.run` span per
+execution and a `workflow.node <id>` span per node, and agent spans nest beneath the node
+that produced them.
+
+Node spans are named after the node id so a trace reads at a glance. Map and loop children
+name their spans differently, and the difference decides which problem you get:
+
+- **Map children carry generated ids.** A `map` over N items builds children `<map>_0`,
+  `<map>_1`, and so on, so it emits one span per item _and_ one distinct span name per item.
+  The same generated id also lands in `workflow.node.id`.
+- **Loop children keep their authored ids.** A `loop` re-runs the same authored steps once
+  per iteration, so every iteration emits a span carrying that step's own id as both its
+  name and its `workflow.node.id`. Span names stay bounded no matter how long the loop runs,
+  and nothing on the span says which iteration produced it: only the span id and the start
+  timestamp separate iteration 0 from iteration 5. The `<loop>_iter_N` ids that appear in run
+  state are child-graph run ids, not span names, and no span is ever named after one.
+
+Two consequences worth planning for:
+
+- **Span volume.** A map over 10,000 items yields at least 10,000 node spans in a single
+  trace, before any agent spans nested beneath them. The framework applies no cap on `items`,
+  so the caller is the only bound on how large a map can get. `OTEL_BSP_MAX_QUEUE_SIZE` and
+  `OTEL_BSP_MAX_EXPORT_BATCH_SIZE` govern the SDK's export buffer, not span generation: once
+  the queue fills, further spans are dropped rather than exported. Collector-side tail
+  sampling decides whether to keep or drop an entire trace, not how many spans it contains.
+  Neither control substitutes for keeping map size bounded at the call site.
+- **Name cardinality.** Backends that aggregate by span name, for example Tempo's metrics
+  generator, see one series per map item. Loop iterations add no name cardinality. Drop or
+  rewrite the `workflow.node <id>` span name at the collector if map fan-out matters for your
+  backend; `workflow.node.id` is a separate attribute and rewriting the span name leaves it
+  untouched unless you rewrite it too.
+
+`workflow.run` is always a trace root. Started from an instrumented HTTP handler, webhook,
+or approval callback it does **not** join that request's trace: a run is durable work that
+outlives whatever started it. Parked on an approval it can resume days later, so nesting it
+under the request would leave an open span inside a finished trace, and OpenTelemetry's
+default parent-based sampler would let a sampled-out request silently drop the entire run.
+
+The causal edges survive as span **links** instead. Every `workflow.run` span carries up to
+two, each tagged with `workflow.link.type`:
+
+| `workflow.link.type` | Points at                                                                     |
+| -------------------- | ----------------------------------------------------------------------------- |
+| `caller`             | The span that was active when this execution started, when anything traced it |
+| `previous_execution` | This run's previous `workflow.run` span, when it is resuming                  |
+
+Runs are still traced per execution attempt: a run that pauses at a wait node or a pending
+approval and later resumes produces a _separate_ trace per execution. Those traces are now
+chained by `previous_execution` links, and every span still carries `workflow.run_id`, so
+filtering on that attribute reassembles the whole run as it always did.
+
+The link is built from a W3C `traceparent` persisted on the run record when each execution
+claims it. A run executed with tracing disabled simply stores nothing and the next
+execution links to nothing, so the chain degrades to `workflow.run_id` correlation.
+
+Node spans carry `workflow.node.status`, and a failed node or run sets the span status to
+ERROR, so the usual errored-spans filters in Jaeger, Tempo and Datadog work. A cancelled run
+is not a failure: the in-flight node span ends as ERROR reporting `Node "<id>" failed`, while
+the `workflow.run` span stays unset, so cancellations do not show up in errored-run queries.
+Span statuses never carry the underlying error text, on this path or any other: they name the
+node, or a bounded classification such as `ECONNRESET`. The detail stays in the run record and
+the logs. The `exception` event a failed span records carries no `exception.stacktrace` either,
+because the error the span reports is a classification built where the failure was noticed, so
+its frames would name framework files and the absolute paths they sit at rather than the
+failure. A caller that wants the real stack on a span opts in with an `errorStatus` mapper that
+returns the error it was given.
+
+Retry attempts of a composite node appear as repeated sibling spans sharing one name. Status
+tells them apart only when an attempt eventually succeeds: that one is not ERROR while the
+earlier ones are. When the retries exhaust and every attempt fails, the sibling spans are
+identical in name, status and attributes, and only the span id and the timestamps separate
+them. `workflow.node.attempts` does not help either, because it reads `1` on every child: the
+attempt counter lives on the parent composite span, and each child re-runs from scratch
+counting its own attempts from one. The parent node span carries a `workflow.node.retry` event
+per retry, which is the reliable way to count them.

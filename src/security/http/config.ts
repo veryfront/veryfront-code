@@ -3,14 +3,13 @@ import type { SecurityConfig } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getConfig, validateVeryfrontConfig } from "#veryfront/config";
 import { serverLogger } from "#veryfront/utils";
-import { buildCSP, generateNonce, serializeCSPDirectives } from "./response/security-handler.ts";
+import { buildCSP, generateNonce } from "./response/security-handler.ts";
 import { isProduction } from "#veryfront/platform/environment.ts";
 
 const logger = serverLogger.component("security-config-loader");
 
 export interface DerivedSecurityContext {
   securityConfig: SecurityConfig;
-  cspUserHeader: string | null;
 }
 
 export interface DeriveSecurityContextOptions {
@@ -20,6 +19,11 @@ export interface DeriveSecurityContextOptions {
    * classification may override it explicitly.
    */
   productionDefaults?: boolean;
+  /**
+   * Origins derived from the project's released source. Platform-supplied;
+   * anything a project config carries under this name is discarded.
+   */
+  derivedCsp?: SecurityConfig["derivedCsp"];
 }
 
 const MAX_SECURITY_CONFIG_DEPTH = 32;
@@ -190,8 +194,12 @@ function readProductionDefaults(options: unknown): boolean | undefined {
   try {
     const prototype = Object.getPrototypeOf(options);
     if (prototype !== Object.prototype && prototype !== null) return invalidSecurityConfig();
+    // Allowlisted rather than ignored: this object reaches a security decision,
+    // so an unrecognised key is a caller mistake worth failing on, not a
+    // silently discarded one.
+    const allowed = new Set<PropertyKey>(["productionDefaults", "derivedCsp"]);
     const keys = Reflect.ownKeys(options);
-    if (keys.some((key) => key !== "productionDefaults")) return invalidSecurityConfig();
+    if (keys.some((key) => !allowed.has(key))) return invalidSecurityConfig();
     const descriptor = Object.getOwnPropertyDescriptor(options, "productionDefaults");
     if (!descriptor) return undefined;
     if (!descriptor.enumerable || !("value" in descriptor)) return invalidSecurityConfig();
@@ -264,16 +272,25 @@ export function deriveSecurityContext(
     normalized.csrf = true;
   }
 
+  // Assigned unconditionally, never merged. `SecurityConfig` carries an index
+  // signature, so the clone above would happily copy a `derivedCsp` a project
+  // wrote in its own config; overwriting here makes the platform the only
+  // author of this layer. Deleting when absent keeps a stale project value
+  // from surviving as the derived set.
+  if (options.derivedCsp && Object.keys(options.derivedCsp).length > 0) {
+    normalized.derivedCsp = options.derivedCsp;
+  } else {
+    delete normalized.derivedCsp;
+  }
+
   const securityConfig = Object.freeze(normalized);
   return Object.freeze({
     securityConfig,
-    cspUserHeader: serializeCSPDirectives(securityConfig.csp),
   });
 }
 
 export class SecurityConfigLoader {
   private securityConfig: SecurityConfig | null = null;
-  private cspUserHeader: string | null = null;
   private isLoaded = false;
   private loadPromise: Promise<void> | null = null;
 
@@ -324,7 +341,6 @@ export class SecurityConfigLoader {
     }
 
     this.securityConfig = security;
-    this.cspUserHeader = derived.cspUserHeader;
     this.isLoaded = true;
   }
 
@@ -332,16 +348,12 @@ export class SecurityConfigLoader {
     return this.securityConfig;
   }
 
-  getCspUserHeader(): string | null {
-    return this.cspUserHeader;
-  }
-
   getCorsConfig(): SecurityConfig["cors"] {
     return this.securityConfig?.cors;
   }
 
   buildCsp(isDev: boolean, nonce: string = generateNonce()): string {
-    return buildCSP(isDev, nonce, this.cspUserHeader, this.securityConfig, this.adapter);
+    return buildCSP(isDev, nonce, this.securityConfig, this.adapter);
   }
 
   getSecurityHeader(headerName: string, defaultValue: string): string {

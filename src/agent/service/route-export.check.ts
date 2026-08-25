@@ -2,8 +2,25 @@ import {
   agent,
   type AgentServiceRoute,
   createAgentServiceServerRuntime,
+  type DefaultHostedChatRuntimeCreationOptions,
   defineAgentService,
+  type HostedDurableChildExecutionOptions,
+  type ParsedHostedChatRequest,
+  type PrepareHostedConversationRootRunContextInput,
 } from "../index.ts";
+
+type ForbiddenRunEventAuthorityKey = "runEventAppendToken" | "runEventWriterCapability";
+type HasNoRunEventAuthorityKey<T> = Extract<keyof T, ForbiddenRunEventAuthorityKey> extends never
+  ? true
+  : false;
+
+const publicRunEventAuthorityBoundary: [
+  HasNoRunEventAuthorityKey<ParsedHostedChatRequest>,
+  HasNoRunEventAuthorityKey<PrepareHostedConversationRootRunContextInput>,
+  HasNoRunEventAuthorityKey<DefaultHostedChatRuntimeCreationOptions>,
+  HasNoRunEventAuthorityKey<HostedDurableChildExecutionOptions>,
+] = [true, true, true, true];
+void publicRunEventAuthorityBoundary;
 
 const routes: AgentServiceRoute[] = [
   {

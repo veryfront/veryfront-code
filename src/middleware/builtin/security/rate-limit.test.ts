@@ -1,10 +1,25 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
 import { scaleMs } from "#veryfront/testing/timing.ts";
+import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
+import { MS_PER_MINUTE } from "#veryfront/utils/constants/http.ts";
 import { MiddlewareContext } from "../../core/context.ts";
-import { authRateLimit, MemoryRateLimitStore, rateLimit } from "./rate-limit.ts";
+import { MAX_RATE_LIMIT_KEY_LENGTH } from "./rate-limit-validation.ts";
+import {
+  authRateLimit,
+  MemoryRateLimitStore,
+  rateLimit,
+  type RedisRateLimitOptions,
+  RedisRateLimitStore,
+} from "#veryfront/middleware";
 
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
@@ -47,10 +62,24 @@ describe("MemoryRateLimitStore", () => {
       const entry1 = await store.increment("test-key", shortWindow);
       assertEquals(entry1.count, 1);
 
-      await delay(120);
+      await delay(scaleMs(120));
 
       const entry2 = await store.increment("test-key", shortWindow);
-      assertEquals(entry2.count, 1);
+      assertEquals(entry2.count, 1, "an entry past its window must start a fresh count");
+    });
+
+    it("should not treat an entry inside its window as expired", async () => {
+      const entry1 = await store.increment("boundary-key", 5_000);
+      assertEquals(entry1.count, 1);
+
+      await delay(scaleMs(20));
+
+      const entry2 = await store.increment("boundary-key", 5_000);
+      assertEquals(
+        entry2.count,
+        2,
+        "an entry still inside its window must not be treated as expired",
+      );
     });
   });
 
@@ -66,6 +95,87 @@ describe("MemoryRateLimitStore", () => {
     it("should handle non-existent key", async () => {
       await store.reset("non-existent");
     });
+  });
+
+  it("should reject new identities at capacity without evicting active limits", async () => {
+    const boundedStore = new MemoryRateLimitStore(60000, { maxEntries: 1 });
+
+    try {
+      await boundedStore.increment("existing", 60000);
+
+      const error = await assertRejects(
+        () => boundedStore.increment("overflow", 60000),
+        Error,
+        "capacity",
+      );
+      if (!(error instanceof Error)) throw new Error("Expected a capacity error");
+      assertEquals(error.name, "MemoryRateLimitCapacityError");
+
+      const existing = await boundedStore.increment("existing", 60000);
+      assertEquals(existing.count, 2);
+    } finally {
+      boundedStore.destroy();
+    }
+  });
+
+  it("rejects invalid store options with a stable error", () => {
+    assertThrows(
+      () => new MemoryRateLimitStore(60000, null as never),
+      TypeError,
+      "options",
+    );
+  });
+
+  it("should release retained entries when destroyed", async () => {
+    const boundedStore = new MemoryRateLimitStore(60000, { maxEntries: 1 });
+    await boundedStore.increment("first", 60000);
+
+    boundedStore.destroy();
+
+    const replacement = await boundedStore.increment("second", 60000);
+    assertEquals(replacement.count, 1);
+    boundedStore.destroy();
+  });
+
+  it("should honor the host cleanup-disable flag", () => {
+    const globals = globalThis as Record<string, unknown>;
+    const previousGlobalFlag = globals.__vfDisableLruInterval;
+    const previousHostFlag = getHostEnv("VF_DISABLE_LRU_INTERVAL");
+    globals.__vfDisableLruInterval = false;
+    setEnv("VF_DISABLE_LRU_INTERVAL", "1");
+
+    const disabledStore = new MemoryRateLimitStore(60000);
+    try {
+      const internals = disabledStore as unknown as {
+        cleanupInterval?: ReturnType<typeof setInterval>;
+      };
+      assertEquals(internals.cleanupInterval, undefined);
+    } finally {
+      disabledStore.destroy();
+      if (previousGlobalFlag === undefined) {
+        delete globals.__vfDisableLruInterval;
+      } else {
+        globals.__vfDisableLruInterval = previousGlobalFlag;
+      }
+      if (previousHostFlag === undefined) {
+        deleteEnv("VF_DISABLE_LRU_INTERVAL");
+      } else {
+        setEnv("VF_DISABLE_LRU_INTERVAL", previousHostFlag);
+      }
+    }
+  });
+
+  it("should reject invalid capacity and window configuration", () => {
+    for (const maxEntries of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assertThrows(
+        () => new MemoryRateLimitStore(60000, { maxEntries }),
+        RangeError,
+      );
+    }
+
+    for (const windowMs of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assertThrows(() => new MemoryRateLimitStore(windowMs), RangeError);
+    }
   });
 });
 
@@ -120,6 +230,399 @@ describe("rateLimit middleware", () => {
     const response = await middleware(createContext(), () => Promise.resolve(new Response("OK")));
 
     assertEquals(response?.status, 200);
+  });
+
+  it("should keep the documented default limits at 100 requests per 60s window", async () => {
+    const middleware = rateLimit();
+
+    for (let index = 0; index < 100; index++) {
+      const response = await middleware(
+        createContext(),
+        () => Promise.resolve(new Response("OK")),
+      );
+      assertEquals(response?.status, 200);
+    }
+
+    const blocked = await middleware(
+      createContext(),
+      () => Promise.resolve(new Response("OK")),
+    );
+
+    assertEquals(blocked?.status, 429);
+    const retryAfterSeconds = Number(blocked?.headers.get("Retry-After"));
+    assertEquals(Number.isSafeInteger(retryAfterSeconds), true);
+    assertEquals(retryAfterSeconds >= 1 && retryAfterSeconds <= 60, true);
+  });
+
+  it("should validate numeric configuration before creating middleware", () => {
+    for (
+      const maxRequests of [
+        -1,
+        1.5,
+        Number.NaN,
+        Number.MAX_SAFE_INTEGER,
+        Number.POSITIVE_INFINITY,
+      ]
+    ) {
+      assertThrows(
+        () => rateLimit({ maxRequests }),
+        RangeError,
+        "between 0",
+      );
+    }
+
+    for (const windowMs of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assertThrows(
+        () => rateLimit({ windowMs }),
+        RangeError,
+      );
+    }
+
+    assertThrows(
+      () =>
+        rateLimit({
+          maxEntries: 100,
+          store: {
+            increment: () => Promise.resolve({ count: 1, resetAt: Date.now() + 1_000 }),
+            reset: () => Promise.resolve(),
+          },
+        }),
+      TypeError,
+      "maxEntries",
+    );
+
+    // A non-boolean trustProxy must not be coerced: a truthy string would
+    // silently enable proxy trust and let a rotating X-Forwarded-For header
+    // mint a fresh bucket per request.
+    assertThrows(
+      () => rateLimit({ trustProxy: "false" as never }),
+      TypeError,
+      "trustProxy",
+    );
+    assertThrows(
+      () => rateLimit({ keyGenerator: {} as never }),
+      TypeError,
+      "keyGenerator",
+    );
+    assertThrows(
+      () => rateLimit("5" as never),
+      TypeError,
+      "number or options object",
+    );
+  });
+
+  it("keeps active identities available and fails closed for overflow identities", async () => {
+    const maxEntries = 256;
+    const middleware = rateLimit({
+      maxRequests: 2,
+      windowMs: 60_000,
+      maxEntries,
+      trustProxy: true,
+    });
+
+    for (let index = 0; index < maxEntries; index++) {
+      const response = await middleware(
+        createContext(`198.51.100.${index}`),
+        () => Promise.resolve(new Response("OK")),
+      );
+      assertEquals(response?.status, 200);
+    }
+
+    const overflow = await middleware(
+      createContext("203.0.113.1"),
+      () => Promise.resolve(new Response("unexpected")),
+    );
+    const existing = await middleware(
+      createContext("198.51.100.0"),
+      () => Promise.resolve(new Response("OK")),
+    );
+
+    assertEquals(overflow?.status, 503);
+    assertEquals(existing?.status, 200);
+  });
+
+  it("should fail closed when the rate-limit store is unavailable", async () => {
+    let nextCalled = false;
+    const middleware = rateLimit({
+      store: {
+        increment: () => Promise.reject(new Error("backend unavailable")),
+        reset: () => Promise.resolve(),
+      },
+    });
+
+    const response = await middleware(createContext(), () => {
+      nextCalled = true;
+      return Promise.resolve(new Response("OK"));
+    });
+
+    assertEquals(response?.status, 503);
+    assertEquals(response?.headers.get("Retry-After"), "60");
+    assertEquals(response?.headers.get("Cache-Control"), "no-store");
+    assertEquals(nextCalled, false);
+  });
+
+  it("should throttle repeated rate-limit store failure logs", async () => {
+    const originalConsoleError = console.error;
+    const realNow = performance.now.bind(performance);
+    let loggedFailures = 0;
+    console.error = () => {
+      loggedFailures++;
+    };
+
+    try {
+      const middleware = rateLimit({
+        store: {
+          increment: () => Promise.reject(new Error("backend unavailable")),
+          reset: () => Promise.resolve(),
+        },
+      });
+
+      const first = await middleware(
+        createContext(),
+        () => Promise.resolve(new Response("OK")),
+      );
+      const second = await middleware(
+        createContext(),
+        () => Promise.resolve(new Response("OK")),
+      );
+
+      assertEquals(first?.status, 503);
+      assertEquals(second?.status, 503);
+      assertEquals(loggedFailures, 1);
+
+      // Throttled, not silenced: once the interval elapses the same middleware
+      // must log the recurring outage again.
+      performance.now = () => realNow() + MS_PER_MINUTE + 1_000;
+      const third = await middleware(
+        createContext(),
+        () => Promise.resolve(new Response("OK")),
+      );
+      assertEquals(third?.status, 503);
+      assertEquals(
+        loggedFailures,
+        2,
+        "store-failure logging must resume after the throttle interval",
+      );
+    } finally {
+      performance.now = realNow;
+      console.error = originalConsoleError;
+    }
+  });
+
+  it("logs key, store, and capacity failures as distinct operational signals", async () => {
+    const originalConsoleError = console.error;
+    const logs: string[] = [];
+    console.error = (...values: unknown[]) => {
+      logs.push(values.map((value) => String(value)).join(" "));
+    };
+
+    try {
+      const keyFailure = rateLimit({
+        keyGenerator: () => "x".repeat(MAX_RATE_LIMIT_KEY_LENGTH + 1),
+      });
+      const storeFailure = rateLimit({
+        store: {
+          increment: () => Promise.reject(new Error("unavailable")),
+          reset: () => Promise.resolve(),
+        },
+      });
+      const capacityFailure = rateLimit({ maxEntries: 1, trustProxy: true });
+
+      await keyFailure(createContext(), () => Promise.resolve(new Response("unexpected")));
+      await storeFailure(createContext(), () => Promise.resolve(new Response("unexpected")));
+      await capacityFailure(
+        createContext("198.51.100.1"),
+        () => Promise.resolve(new Response("OK")),
+      );
+      await capacityFailure(
+        createContext("198.51.100.2"),
+        () => Promise.resolve(new Response("unexpected")),
+      );
+
+      const output = logs.join("\n");
+      assertEquals(output.includes("failureKind=key-resolution"), true);
+      assertEquals(output.includes("failureKind=store-unavailable"), true);
+      assertEquals(output.includes("failureKind=capacity-exhausted"), true);
+      assertEquals(output.includes("capacity=1"), true);
+    } finally {
+      console.error = originalConsoleError;
+    }
+  });
+
+  it("should fail closed when a store returns an invalid counter", async () => {
+    const middleware = rateLimit({
+      store: {
+        increment: () => Promise.resolve({ count: Number.NaN, resetAt: Date.now() + 1000 }),
+        reset: () => Promise.resolve(),
+      },
+    });
+
+    const response = await middleware(
+      createContext(),
+      () => Promise.resolve(new Response("OK")),
+    );
+
+    assertEquals(response?.status, 503);
+  });
+
+  it("should keep the legacy Redis rate-limit store export constructible", () => {
+    const options: RedisRateLimitOptions = {
+      keyPrefix: "compat:",
+      connectTimeoutMs: 1_000,
+      operationTimeoutMs: 1_000,
+    };
+    const redisStore = new RedisRateLimitStore(options);
+
+    assertEquals(typeof redisStore.increment, "function");
+    assertEquals(typeof redisStore.reset, "function");
+  });
+
+  it("should fail closed when custom keys are invalid without calling the store", async () => {
+    let incrementCalled = false;
+    const middleware = rateLimit({
+      keyGenerator: () => "x".repeat(MAX_RATE_LIMIT_KEY_LENGTH + 1),
+      store: {
+        increment: () => {
+          incrementCalled = true;
+          return Promise.resolve({ count: 1, resetAt: Date.now() + 1000 });
+        },
+        reset: () => Promise.resolve(),
+      },
+    });
+
+    const response = await middleware(
+      createContext(),
+      () => Promise.resolve(new Response("OK")),
+    );
+
+    assertEquals(response?.status, 503);
+    assertEquals(response?.headers.get("Retry-After"), "60");
+    assertEquals(incrementCalled, false);
+  });
+
+  it("should fail closed when trusted proxy headers generate invalid keys", async () => {
+    let incrementCalled = false;
+    const middleware = rateLimit({
+      trustProxy: true,
+      store: {
+        increment: () => {
+          incrementCalled = true;
+          return Promise.resolve({ count: 1, resetAt: Date.now() + 1000 });
+        },
+        reset: () => Promise.resolve(),
+      },
+    });
+
+    const response = await middleware(
+      createContext("x".repeat(MAX_RATE_LIMIT_KEY_LENGTH + 1)),
+      () => Promise.resolve(new Response("OK")),
+    );
+
+    assertEquals(response?.status, 503);
+    assertEquals(response?.headers.get("Retry-After"), "60");
+    assertEquals(incrementCalled, false);
+  });
+
+  it("should log key resolution failures separately from store failures", async () => {
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+      if (entry.component === "rate-limit") records.push(entry);
+    });
+
+    try {
+      const keyFailure = rateLimit({
+        keyGenerator: () => {
+          throw new Error("custom key failure");
+        },
+        store: {
+          increment: () => Promise.resolve({ count: 1, resetAt: Date.now() + 1000 }),
+          reset: () => Promise.resolve(),
+        },
+      });
+      const storeFailure = rateLimit({
+        store: {
+          increment: () => {
+            const error = new Error("backend unavailable");
+            error.name = "BackendUnavailableError";
+            return Promise.reject(error);
+          },
+          reset: () => Promise.resolve(),
+        },
+      });
+
+      assertEquals(
+        (await keyFailure(createContext(), () => Promise.resolve(new Response("OK"))))
+          ?.status,
+        503,
+      );
+      assertEquals(
+        (await storeFailure(createContext(), () => Promise.resolve(new Response("OK"))))
+          ?.status,
+        503,
+      );
+    } finally {
+      unsubscribe();
+    }
+
+    assertEquals(records.map((record) => record.message), [
+      "Rate limit key resolution failed; request denied",
+      "Rate limit store failed; request denied",
+    ]);
+    assertEquals(records.map((record) => record.context?.stage), [
+      "key-resolution",
+      "store-increment",
+    ]);
+    assertEquals(records.map((record) => record.context?.failureKind), [
+      "key-resolution",
+      "store-unavailable",
+    ]);
+    assertEquals(records.map((record) => record.context?.errorName), [
+      "Error",
+      "BackendUnavailableError",
+    ]);
+  });
+
+  it("should emit a capacity-specific store failure signal", async () => {
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+      if (entry.component === "rate-limit") records.push(entry);
+    });
+    const store = new MemoryRateLimitStore(60000, { maxEntries: 1 });
+    const middleware = rateLimit({
+      maxRequests: 10,
+      windowMs: 60000,
+      store,
+      trustProxy: true,
+    });
+
+    try {
+      assertEquals(
+        (await middleware(
+          createContext("198.51.100.1"),
+          () => Promise.resolve(new Response("OK")),
+        ))?.status,
+        200,
+      );
+      assertEquals(
+        (await middleware(
+          createContext("198.51.100.2"),
+          () => Promise.resolve(new Response("OK")),
+        ))?.status,
+        503,
+      );
+    } finally {
+      unsubscribe();
+      store.destroy();
+    }
+
+    assertEquals(records.length, 1);
+    assertEquals(
+      records[0]?.message,
+      "Rate limit store capacity exhausted; request denied",
+    );
+    assertEquals(records[0]?.context?.stage, "store-increment");
+    assertEquals(records[0]?.context?.failureKind, "capacity-exhausted");
+    assertEquals(records[0]?.context?.capacity, 1);
   });
 
   it("should use custom key generator", async () => {
@@ -206,6 +709,17 @@ describe("rateLimit middleware", () => {
     } finally {
       store.destroy();
     }
+  });
+
+  it("should require direct auth preset stores to implement reset", () => {
+    assertThrows(
+      () =>
+        authRateLimit({
+          increment: () => Promise.resolve({ count: 1, resetAt: Date.now() + 1000 }),
+        } as never),
+      TypeError,
+      "increment() and reset()",
+    );
   });
 
   it("should separate trusted proxy clients in the auth preset", async () => {

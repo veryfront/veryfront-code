@@ -82,5 +82,21 @@ describe("deno-config-generator", () => {
         await Deno.remove(tmpDir, { recursive: true });
       }
     });
+
+    it("overwrites deno.json only when explicitly allowed", async () => {
+      const tmpDir = await Deno.makeTempDir();
+      try {
+        const target = join(tmpDir, "deno.json");
+        await Deno.writeTextFile(target, '{"keep":"old"}\n');
+
+        await createDenoConfig(tmpDir, undefined, { overwrite: true });
+
+        const parsed = JSON.parse(await Deno.readTextFile(target));
+        assertEquals(parsed.keep, undefined);
+        assertEquals(parsed.nodeModulesDir, "auto");
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
   });
 });

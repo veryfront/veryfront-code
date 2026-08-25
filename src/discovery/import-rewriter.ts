@@ -16,6 +16,7 @@ import {
 } from "#veryfront/transforms/import-rewriter/package-resolution.ts";
 
 export const DISCOVERY_GLOBAL_VERYFRONT_MODULES = [
+  "veryfront",
   "veryfront/agent",
   "veryfront/tool",
   "veryfront/platform",
@@ -213,6 +214,28 @@ const resolvedSpecifierCache = new LRUCache<string, string>({
   maxEntries: RESOLVED_SPECIFIER_CACHE_MAX_ENTRIES,
 });
 
+const NODE_MODULES_VERYFRONT_SEGMENT = "/node_modules/veryfront/";
+
+/**
+ * The installed `veryfront` package a resolved framework module belongs to, or
+ * `null` when the running framework is not an npm install (source checkouts,
+ * `jsr:`/`https:` specifiers).
+ */
+function getInstalledVeryfrontPackageUrl(moduleUrl: string): string | null {
+  if (!moduleUrl.startsWith("file://")) return null;
+  const index = moduleUrl.lastIndexOf(NODE_MODULES_VERYFRONT_SEGMENT);
+  if (index === -1) return null;
+  return moduleUrl.slice(0, index + NODE_MODULES_VERYFRONT_SEGMENT.length - 1);
+}
+
+interface DiscoveryRewriteOptions {
+  /**
+   * Resolves a bare specifier against the framework instance executing this
+   * process. Defaults to `import.meta.resolve`; injectable for tests.
+   */
+  resolveSpecifier?: (specifier: string) => string;
+}
+
 /**
  * Rewrite imports for Node.js runtime
  * - Resolves relative imports to file:// URLs
@@ -224,6 +247,7 @@ export async function rewriteDiscoveryImports(
   projectDir: string,
   fs: ReturnType<typeof createFileSystem>,
   fileDir: string,
+  options: DiscoveryRewriteOptions = {},
 ): Promise<string> {
   let transformed = code;
 
@@ -361,9 +385,12 @@ export async function rewriteDiscoveryImports(
       transformed = rewritePackageImports(transformed, pkg, resolvedUrl);
     }
 
+    const resolveSpecifier = options.resolveSpecifier ??
+      ((specifier: string) => import.meta.resolve(specifier));
+
     const resolveRuntimeSpecifierToFileUrl = (specifier: string): string | null => {
       try {
-        const resolved = import.meta.resolve(specifier);
+        const resolved = resolveSpecifier(specifier);
         return resolved && resolved !== specifier ? resolved : null;
       } catch (_) {
         return null;
@@ -467,8 +494,37 @@ export async function rewriteDiscoveryImports(
       return { kind: "resolved", url: pathToFileURL(resolvedPath).href };
     };
 
+    // Discovery modules are emitted outside the project tree, so they must be
+    // bound to the framework instance that is actually executing: registries
+    // that discovered primitives land in (extension contracts, tool registry)
+    // are module-local to that instance. The project's own package is normally
+    // that instance — a project-local CLI launch — and stays preferred.
+    //
+    // A globally installed CLI runs from a *different* npm install. Binding
+    // there would load a second framework instance whose extension contracts
+    // were never bootstrapped, so `defineSchema()` throws
+    // `Missing extension for contract "SchemaValidator"`, tool discovery aborts
+    // for that file, and the project's tools silently never register.
+    const projectVeryfrontPackageUrl = veryfrontExportSource.kind === "present"
+      ? pathToFileURL(veryfrontExportSource.packagePath).href.replace(/\/$/, "")
+      : null;
+
     for (const specifier of veryfrontSpecifiers) {
       if (veryfrontExportSource.kind === "absent") continue;
+
+      const runtimeUrl = resolveRuntimeSpecifierToFileUrl(specifier);
+      const runningPackageUrl = runtimeUrl === null
+        ? null
+        : getInstalledVeryfrontPackageUrl(runtimeUrl);
+      if (
+        runtimeUrl !== null &&
+        runningPackageUrl !== null &&
+        runningPackageUrl !== projectVeryfrontPackageUrl
+      ) {
+        transformed = rewriteResolvedSpecifierImports(transformed, specifier, runtimeUrl);
+        continue;
+      }
+
       const result = resolveVeryfrontExportToFileUrl(specifier);
       if (result.kind === "resolved") {
         transformed = rewriteResolvedSpecifierImports(transformed, specifier, result.url);

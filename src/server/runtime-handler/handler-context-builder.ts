@@ -12,7 +12,6 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import type { SecurityConfig } from "#veryfront/types";
 
 /** CSP user header type (from SecurityConfigLoader, string or null) */
-type CspUserHeader = string | null;
 import type { ParsedDomain } from "../utils/domain-parser.ts";
 import type { HandlerContext } from "../handlers/types.ts";
 import type { RouteRegistry } from "#veryfront/routing/registry/index.ts";
@@ -26,8 +25,9 @@ export interface HandlerContextOptions {
   adapter: RuntimeAdapter;
   /** Security config */
   securityConfig: SecurityConfig | null;
+  /** Browser-visible HTTP(S) origin resolved at the trusted request boundary. */
+  requestOrigin: string | null;
   /** CSP user header */
-  cspUserHeader: CspUserHeader | null;
   /** Debug mode */
   debug: boolean | undefined;
   /** Veryfront config */
@@ -40,6 +40,12 @@ export interface HandlerContextOptions {
   projectId: string | undefined;
   /** Release ID */
   releaseId: string | undefined;
+  /** Canonical branch ID from the trusted proxy boundary. */
+  branchId?: string;
+  /** Canonical branch name from the trusted proxy boundary. */
+  branchName?: string;
+  /** Canonical project default branch name from the trusted proxy boundary. */
+  defaultBranchName?: string;
   /** Proxy token (undefined for local projects) */
   proxyToken: string | undefined;
   /** Environment name */
@@ -52,9 +58,13 @@ export interface HandlerContextOptions {
   routeRegistry: RouteRegistry;
   /** Whether this is a local project */
   isLocalProject: boolean;
+  /** Narrow host-owned capability for project-code execution. */
+  allowHostProjectCodeExecution?: boolean;
+  /** Whether this request is executing in the shared multi-project proxy runtime. */
+  isProxyMode: boolean;
   /** Module server URL */
   moduleServerUrl: string | undefined;
-  /** Environment ID for env var resolution (from proxy x-environment-id header) */
+  /** Canonical environment ID resolved at the operator-authenticated proxy boundary. */
   environmentId: string | undefined;
   /** Skip render-specific enriched context requirements for non-render control-plane routes */
   skipEnrichedContext?: boolean;
@@ -87,6 +97,7 @@ export function buildHandlerContext(opts: HandlerContextOptions): HandlerContext
       environment: opts.resolvedEnvironment,
       branch: opts.requestContext.branch,
       isLocalProject: opts.isLocalProject,
+      allowHostProjectCodeExecution: opts.allowHostProjectCodeExecution,
       contentSourceId,
       parsedDomain: opts.parsedDomain,
       adapter: opts.adapter,
@@ -103,19 +114,24 @@ export function buildHandlerContext(opts: HandlerContextOptions): HandlerContext
     adapter: opts.adapter,
     moduleServerUrl: opts.moduleServerUrl,
     securityConfig: opts.securityConfig,
-    cspUserHeader: opts.cspUserHeader,
+    requestOrigin: opts.requestOrigin,
     debug: opts.debug,
     config: opts.config,
     parsedDomain: opts.parsedDomain,
     projectSlug: opts.projectSlug,
     projectId: opts.projectId,
     releaseId: opts.releaseId,
+    branchId: opts.branchId,
+    branchName: opts.branchName,
+    defaultBranchName: opts.defaultBranchName,
     proxyToken: opts.isLocalProject ? undefined : opts.proxyToken,
     environmentName: opts.environmentName,
     resolvedEnvironment: opts.resolvedEnvironment,
     requestContext: { ...opts.requestContext, mode: opts.resolvedEnvironment },
     routeRegistry: opts.routeRegistry,
     isLocalProject: opts.isLocalProject,
+    allowHostProjectCodeExecution: opts.allowHostProjectCodeExecution,
+    isProxyMode: opts.isProxyMode,
     environmentId: opts.environmentId,
     prepareHostedConfigContext: opts.prepareHostedConfigContext,
     enriched: enrichedContext,
@@ -129,7 +145,6 @@ export function buildMinimalContext(
   projectDir: string,
   adapter: RuntimeAdapter,
   securityConfig: SecurityConfig | null,
-  cspUserHeader: CspUserHeader | null,
   debug: boolean | undefined,
   config: VeryfrontConfig | undefined,
 ): HandlerContext {
@@ -137,7 +152,6 @@ export function buildMinimalContext(
     projectDir,
     adapter,
     securityConfig,
-    cspUserHeader,
     debug,
     config,
   };

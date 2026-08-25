@@ -10,13 +10,17 @@ import type { LayoutComponentCache } from "../layouts/utils/component-loader.ts"
 import { loadTSXComponent, preloadMDXLayoutModule } from "../layouts/utils/component-loader.ts";
 import { clearImportMapCache, preloadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
-import { rendererLogger } from "#veryfront/utils";
+import { awaitAbortable, rendererLogger, throwIfAborted } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
   type DependencyPinningSourceInput,
   resolveProjectReactVersion,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import type { ComponentRegistry } from "../ssr/component-registry.ts";
+import type {
+  RenderEnvironment,
+  RenderModes,
+} from "#veryfront/rendering/context/render-context.ts";
 
 const logger = rendererLogger.component("layout-orchestrator");
 
@@ -27,12 +31,20 @@ export interface LayoutOrchestratorConfig {
   contentSourceId: string;
   adapter: RuntimeAdapter;
   config: VeryfrontConfig;
+  /** Compile vocabulary. Selects minification and tree shaking. */
   mode: "development" | "production";
+  /**
+   * Request vocabulary. Selects preview-only instrumentation. A hosted preview
+   * render is mode "production" with environment "preview".
+   */
+  environment: RenderEnvironment;
   moduleServerUrl?: string;
   layoutCollector: LayoutCollector;
   layoutCompiler: LayoutCompiler;
   layoutCache: LayoutComponentCache;
   componentRegistry: MDXComponents | ComponentRegistry;
+  /** Server-trusted local-project identity. */
+  isLocalProject?: boolean;
 }
 
 function isSnapshotAwareComponentRegistry(
@@ -74,6 +86,10 @@ export class LayoutOrchestrator {
 
   constructor(config: LayoutOrchestratorConfig) {
     this.config = config;
+  }
+
+  private get renderModes(): RenderModes {
+    return { compileMode: this.config.mode, environment: this.config.environment };
   }
 
   private getReactVersion(
@@ -132,10 +148,13 @@ export class LayoutOrchestrator {
     dependencyPinningDependencies?: Readonly<Record<string, string>>,
     dependencyPinningSource?: DependencyPinningSourceInput,
     moduleServerOrigin?: string,
+    signal?: AbortSignal,
+    environment: RenderEnvironment = this.config.environment,
   ): Promise<LayoutPreloadSummary> {
     return withSpan(
       "layout.preloadModules",
       async () => {
+        throwIfAborted(signal);
         const tsxLayouts = nestedLayouts.filter(
           (layout) => layout.kind === "tsx" && layout.componentPath,
         );
@@ -174,14 +193,23 @@ export class LayoutOrchestrator {
           preloadPromises.push(
             (async (): Promise<LayoutPreloadResult> => {
               try {
-                const importMap = await preloadImportMap(
-                  this.config.projectDir,
-                  this.config.adapter,
-                  this.config.projectId,
+                const importMap = await awaitAbortable(
+                  preloadImportMap(
+                    this.config.projectDir,
+                    this.config.adapter,
+                    this.config.projectId,
+                    {
+                      projectDir: this.config.projectDir,
+                      contentSourceId: this.config.contentSourceId,
+                      config: this.config.config,
+                    },
+                  ),
+                  signal,
                 );
                 this._preloadedImportMap = importMap;
                 return { type: "importMap" as const, success: true };
               } catch (error) {
+                throwIfAborted(signal);
                 const errorMsg = error instanceof Error ? error.message : String(error);
                 logger.error("Failed to preload import map", {
                   error: errorMsg,
@@ -207,15 +235,19 @@ export class LayoutOrchestrator {
                   this.config.projectId,
                   this.config.projectSlug,
                   this.config.contentSourceId,
+                  { ...this.renderModes, environment },
                   reactVersion,
                   undefined,
                   dependencyPinningCacheKey,
                   dependencyPinningDependencies,
                   dependencyPinningSource,
                   moduleServerOrigin,
+                  this.config.config.build?.serverExternalPackages,
+                  signal,
                 );
                 return { type: "tsx" as const, path: componentPath, success: true };
               } catch (error) {
+                throwIfAborted(signal);
                 const errorMsg = error instanceof Error ? error.message : String(error);
                 logger.error("Failed to preload TSX layout", {
                   path: componentPath,
@@ -237,21 +269,26 @@ export class LayoutOrchestrator {
           preloadPromises.push(
             (async (): Promise<LayoutPreloadResult> => {
               try {
-                await preloadMDXLayoutModule(
-                  layout.bundle!,
-                  this.config.projectDir,
-                  this.config.adapter,
-                  this.config.projectId,
-                  this.config.projectSlug,
-                  this.config.contentSourceId,
+                await preloadMDXLayoutModule({
+                  bundle: layout.bundle!,
+                  projectDir: this.config.projectDir,
+                  adapter: this.config.adapter,
+                  projectId: this.config.projectId,
+                  projectSlug: this.config.projectSlug,
+                  contentSourceId: this.config.contentSourceId,
+                  modes: { ...this.renderModes, environment },
                   reactVersion,
                   dependencyPinningCacheKey,
                   dependencyPinningDependencies,
                   dependencyPinningSource,
                   moduleServerOrigin,
-                );
+                  config: this.config.config,
+                  isLocalProject: this.config.isLocalProject === true,
+                  signal,
+                });
                 return { type: "mdx" as const, path: layout.path, success: true };
               } catch (error) {
+                throwIfAborted(signal);
                 const errorMsg = error instanceof Error ? error.message : String(error);
                 logger.error("Failed to preload MDX layout", {
                   path: layout.path,
@@ -330,10 +367,19 @@ export class LayoutOrchestrator {
     dependencyPinningCacheKey?: string,
     dependencyPinningDependencies?: Readonly<Record<string, string>>,
     dependencyPinningSource?: DependencyPinningSourceInput,
+    signal?: AbortSignal,
+    /**
+     * Request environment for this render. Takes precedence over the
+     * orchestrator's own, so a reused orchestrator never carries one render's
+     * instrumentation into the next.
+     */
+    environment?: RenderEnvironment,
   ): Promise<React.ReactElement> {
     return withSpan(
       "layout.applyLayoutsAndWrappers",
       async () => {
+        throwIfAborted(signal);
+        const renderEnvironment = environment ?? this.config.environment;
         const reactVersion = await this.getReactVersion(
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
@@ -347,6 +393,8 @@ export class LayoutOrchestrator {
               dependencyPinningDependencies,
               dependencyPinningSource,
               requestUrl?.origin,
+              this.config.config.build?.serverExternalPackages,
+              renderEnvironment,
             ),
           )
           : this.config.componentRegistry;
@@ -366,6 +414,7 @@ export class LayoutOrchestrator {
           layoutCache: this.config.layoutCache,
           mergedComponents,
           mode: this.config.mode,
+          environment: renderEnvironment,
           moduleServerUrl: this.config.moduleServerUrl,
           requestUrl,
           params,
@@ -376,6 +425,8 @@ export class LayoutOrchestrator {
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
           dependencyPinningSource,
+          isLocalProject: this.config.isLocalProject === true,
+          signal,
         });
 
         const pageType = pageElement.type;

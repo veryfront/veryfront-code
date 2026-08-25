@@ -6,10 +6,15 @@ import type {
   ContentProcessingResult,
   ContentProcessor,
 } from "#veryfront/extensions/content/index.ts";
-import { createError, toError } from "#veryfront/errors";
+import { MARKDOWN_COMPILE_ERROR, VeryfrontError } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { isFrontmatterSyntaxError } from "#veryfront/transforms/mdx/compiler/frontmatter-extractor.ts";
 
 const logger = rendererLogger.component("md-compiler");
+
+function isMarkdownSourceCompileError(error: Error): boolean {
+  return isFrontmatterSyntaxError(error);
+}
 
 export function compileMarkdownRuntime(
   mode: CompilationMode,
@@ -45,12 +50,14 @@ export function compileMarkdownRuntime(
           stack: err.stack,
         });
 
-        throw toError(
-          createError({
-            type: "build",
-            message: `Markdown compilation error: ${err.message} | file: ${filePath ?? "<memory>"}`,
-          }),
-        );
+        if (err instanceof VeryfrontError || !isMarkdownSourceCompileError(err)) {
+          throw err;
+        }
+
+        throw MARKDOWN_COMPILE_ERROR.create({
+          detail: `Markdown compilation error: ${err.message} | file: ${filePath ?? "<memory>"}`,
+          cause: err,
+        });
       }
     },
     {

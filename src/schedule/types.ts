@@ -1,4 +1,8 @@
-import type { TriggerTarget } from "#veryfront/trigger/target.ts";
+import type {
+  AgentTriggerTarget,
+  ResolvedTriggerTarget,
+  TriggerTargetConfig,
+} from "#veryfront/trigger/target.ts";
 import { isValidScheduleDefinition } from "./validation.ts";
 
 /** Behavior when a scheduled occurrence overlaps an active run. */
@@ -44,6 +48,12 @@ export interface ScheduleIntegrationRequirementConfig {
   resources?: ScheduleIntegrationResource[];
 }
 
+/** Contains the prompt that a schedule sends to an agent target. */
+export interface ScheduleAgentMessage {
+  /** The schedule sends this prompt. Veryfront generates a default when you omit it. */
+  prompt?: string;
+}
+
 /** Validated, canonical source definition for one recurring schedule. */
 export interface ScheduleDefinition {
   /** Canonical slash-separated source trigger identifier. */
@@ -56,8 +66,10 @@ export interface ScheduleDefinition {
   schedule: string;
   /** Supported IANA timezone name; platform default when omitted. */
   timezone?: string;
-  /** Task, workflow, or agent invoked by each occurrence. */
-  target: TriggerTarget;
+  /** The schedule invokes this task, workflow, or agent on each occurrence. */
+  target: ResolvedTriggerTarget;
+  /** The schedule sends this prompt to an agent target. Other target kinds do not support this field. */
+  agentMessage?: ScheduleAgentMessage;
   /** Bounded JSON object copied into each target run. */
   input?: Record<string, unknown>;
   /** Positive execution timeout in seconds. */
@@ -74,19 +86,36 @@ export interface ScheduleDefinition {
   integrationRequirements?: ScheduleIntegrationRequirement[];
 }
 
+interface ScheduleConfigFields extends
+  Omit<
+    ScheduleDefinition,
+    "schedule" | "integrationRequirements" | "target" | "agentMessage"
+  > {
+  /** Sets a five-field POSIX expression as an alias for `schedule`. */
+  cron?: string;
+  /** Sets the schedule to a five-field POSIX cron expression. */
+  schedule?: string;
+  /** Declares required integration access. Omitted collections default to empty. */
+  integrationRequirements?: ScheduleIntegrationRequirementConfig[];
+}
+
 /**
  * Author-facing recurring schedule configuration.
  *
  * `cron` is an alias for `schedule`; the factory emits only `schedule`.
  */
-export type ScheduleConfig = Omit<ScheduleDefinition, "schedule" | "integrationRequirements"> & {
-  /** Alias for a five-field POSIX `schedule` expression. */
-  cron?: string;
-  /** Five-field POSIX cron expression. */
-  schedule?: string;
-  /** Integration requirements; omitted collections default to empty. */
-  integrationRequirements?: ScheduleIntegrationRequirementConfig[];
-};
+export interface ScheduleConfig extends ScheduleConfigFields {
+  /** The schedule invokes this task, workflow, or agent on each occurrence. */
+  target: TriggerTargetConfig;
+}
+
+/** Configures an agent schedule with an optional prompt. */
+export interface AgentScheduleConfig extends ScheduleConfig {
+  /** The schedule invokes this agent on each occurrence. */
+  target: AgentTriggerTarget;
+  /** The schedule sends this prompt to the agent. */
+  agentMessage?: ScheduleAgentMessage;
+}
 
 /** Return true only when every schedule field and nested invariant is valid. */
 export function isScheduleDefinition(value: unknown): value is ScheduleDefinition {

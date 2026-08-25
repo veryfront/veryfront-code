@@ -1,12 +1,14 @@
-import { createError, toError } from "veryfront/errors";
+import { createError, isVeryfrontError, TIMEOUT_ERROR, toError } from "veryfront/errors";
 import { serverLogger } from "veryfront/utils/logger";
-import { createClient } from "redis";
+import { ClientClosedError, createClient } from "redis";
 import {
   MAX_TIMER_DELAY_MS,
   type RateLimitEntry,
   type RateLimitStore,
+  REDIS_RATE_LIMIT_INCREMENT_WITH_TTL_SCRIPT,
   requireRateLimitKey,
   requireRateLimitWindowMs,
+  unrefTimer,
 } from "veryfront/extensions/distributed/rate-limit-support";
 
 const logger = serverLogger.component("redis-ratelimit");
@@ -37,16 +39,6 @@ type RedisClientFactory = (options: RedisClientFactoryOptions) => RedisClient;
 
 const DEFAULT_REDIS_CONNECT_TIMEOUT_MS = 5_000;
 const DEFAULT_REDIS_OPERATION_TIMEOUT_MS = 5_000;
-
-const INCREMENT_WITH_TTL_SCRIPT = `
-local count = redis.call("INCR", KEYS[1])
-local ttl = redis.call("PTTL", KEYS[1])
-if ttl < 0 then
-  redis.call("PEXPIRE", KEYS[1], ARGV[1])
-  ttl = tonumber(ARGV[1])
-end
-return { count, ttl }
-`;
 
 /** Options accepted by redis rate limit. */
 export interface RedisRateLimitOptions {
@@ -157,6 +149,10 @@ export class RedisRateLimitStore implements RateLimitStore {
     try {
       await this.disconnectClient(client);
     } catch (error) {
+      if (isAlreadyClosedClientError(error)) {
+        this.markDisconnected(client);
+        return;
+      }
       logger.warn("client disconnect failed", {
         errorName: error instanceof Error ? error.name : typeof error,
       });
@@ -180,22 +176,36 @@ export class RedisRateLimitStore implements RateLimitStore {
     try {
       Promise.resolve(client.disconnect()).then(
         () => {
-          this.disconnectPromises.delete(client);
-          this.pendingDisconnectClients.delete(client);
-          this.disconnectedClients.add(client);
+          this.markDisconnected(client);
           resolveDisconnect();
         },
         (error) => {
           this.disconnectPromises.delete(client);
+          if (isAlreadyClosedClientError(error)) {
+            this.markDisconnected(client);
+            resolveDisconnect();
+            return;
+          }
           rejectDisconnect(error);
         },
       );
     } catch (error) {
       this.disconnectPromises.delete(client);
-      rejectDisconnect(error);
+      if (isAlreadyClosedClientError(error)) {
+        this.markDisconnected(client);
+        resolveDisconnect();
+      } else {
+        rejectDisconnect(error);
+      }
     }
 
     return pending;
+  }
+
+  private markDisconnected(client: RedisClient): void {
+    this.disconnectPromises.delete(client);
+    this.pendingDisconnectClients.delete(client);
+    this.disconnectedClients.add(client);
   }
 
   private async withTimeout<T>(
@@ -209,6 +219,7 @@ export class RedisRateLimitStore implements RateLimitStore {
       timeoutId = setTimeout(() => {
         reject(createTimeoutError(operationName, timeoutMs));
       }, timeoutMs);
+      unrefTimer(timeoutId);
     });
 
     try {
@@ -298,7 +309,7 @@ export class RedisRateLimitStore implements RateLimitStore {
     let result: unknown;
     try {
       result = await this.withTimeout(
-        client.eval(INCREMENT_WITH_TTL_SCRIPT, {
+        client.eval(REDIS_RATE_LIMIT_INCREMENT_WITH_TTL_SCRIPT, {
           keys: [redisKey],
           arguments: [String(normalizedWindowMs)],
         }),
@@ -318,11 +329,12 @@ export class RedisRateLimitStore implements RateLimitStore {
   }
 
   async reset(key: string): Promise<void> {
+    const normalizedKey = requireRateLimitKey(key);
     const client = await this.ensureClient();
     const generation = this.clientGeneration;
     try {
       await this.withTimeout(
-        client.del(this.storageKey(requireRateLimitKey(key))),
+        client.del(this.storageKey(normalizedKey)),
         this.operationTimeoutMs,
         "reset",
       );
@@ -338,6 +350,9 @@ export class RedisRateLimitStore implements RateLimitStore {
     const client = this.client;
     const connectingClient = this.connectingClient;
     const pending = this.clientPromise;
+    // Mark the pending connection rejection as observed before cancellation;
+    // disconnect work below may otherwise leave an unhandled-rejection window.
+    pending?.catch(() => {});
     const cancelPendingConnection = this.cancelPendingConnection;
     const clientsToDisconnect = new Set(this.pendingDisconnectClients);
     if (client) clientsToDisconnect.add(client);
@@ -359,8 +374,6 @@ export class RedisRateLimitStore implements RateLimitStore {
         })
       ),
     );
-    pending?.catch(() => {});
-
     if (disconnectFailed) throw disconnectError;
   }
 }
@@ -380,15 +393,17 @@ function requireTimeoutMs(value: unknown, name: string): number {
 }
 
 function createTimeoutError(operationName: string, timeoutMs: number): Error {
-  const error = new Error(
-    `Redis rate limit ${operationName} timed out after ${timeoutMs}ms`,
-  );
-  error.name = "TimeoutError";
-  return error;
+  return TIMEOUT_ERROR.create({
+    detail: `Redis rate limit ${operationName} timed out after ${timeoutMs}ms`,
+  });
 }
 
 function isTimeoutError(error: unknown): boolean {
-  return error instanceof Error && error.name === "TimeoutError";
+  return isVeryfrontError(error) && error.slug === TIMEOUT_ERROR.slug;
+}
+
+function isAlreadyClosedClientError(error: unknown): boolean {
+  return error instanceof ClientClosedError;
 }
 
 function parseIncrementResult(result: unknown): [number, number] {

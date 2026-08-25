@@ -1,5 +1,6 @@
 import type { OnLoadArgs, OnResolveArgs, Plugin, PluginBuild } from "veryfront/extensions/bundler";
-import { NETWORK_ERROR } from "#veryfront/errors";
+import { isVeryfrontError, NETWORK_ERROR, SERVER_ONLY_IN_CLIENT } from "#veryfront/errors";
+import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 // Direct import from base.ts to avoid circular dependency through barrel
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
@@ -13,12 +14,15 @@ import {
 import {
   computeIntegrity,
   createLockfileManager,
+  getLockfileEntryForBuild,
   type LockfileManager,
+  setLockfileEntryForBuild,
 } from "#veryfront/utils/import-lockfile.ts";
 import {
   importMapOwnsSpecifier,
   mergeBrowserImportMapImports,
 } from "#veryfront/utils/import-map.ts";
+import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
   describeBrowserModuleBoundaryViolation,
@@ -29,7 +33,12 @@ import {
   resolveDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { resolveDependencyPinForImport } from "#veryfront/transforms/import-rewriter/dependency-resolution.ts";
+import { assertNoConfiguredCommonJsBrowserImports } from "#veryfront/transforms/import-rewriter/commonjs-policy.ts";
 import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
+import {
+  describeServerExternalBrowserViolation,
+  getConfiguredServerExternalPackage,
+} from "#veryfront/transforms/shared/server-only-packages.ts";
 import { appendSameOriginDependencyPinningPathKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 
 const logger = serverLogger.component("bare-ext");
@@ -55,6 +64,12 @@ interface ProjectFsPluginData {
 
 export interface RelativeFsPluginOptions {
   enforceBrowserBoundaries?: boolean;
+  serverExternalPackages?: readonly string[];
+  /**
+   * Root-bound, symlink-safe, bounded read authority for browser builds. When
+   * supplied, the read itself replaces mutable directory-walk admission.
+   */
+  readBrowserModule?: (path: string) => Promise<string>;
 }
 
 function getLoaderForPath(path: string): EsbuildLoader {
@@ -184,11 +199,13 @@ export function createRelativeFsPlugin(
               const st = await adapter.fs.stat(f);
               if (st.isFile) {
                 if (options.enforceBrowserBoundaries) {
-                  const pathStatus = await inspectBrowserModulePath(projectDir, f, adapter);
-                  if (pathStatus !== "trusted") {
-                    return {
-                      errors: [{ text: dependencyPathError(pathStatus), location: null }],
-                    };
+                  if (!options.readBrowserModule) {
+                    const pathStatus = await inspectBrowserModulePath(projectDir, f, adapter);
+                    if (pathStatus !== "trusted") {
+                      return {
+                        errors: [{ text: dependencyPathError(pathStatus), location: null }],
+                      };
+                    }
                   }
                   return {
                     path: getProjectModuleIdentity(projectDir, f),
@@ -198,8 +215,9 @@ export function createRelativeFsPlugin(
                 }
                 return { path: f };
               }
-            } catch (_) {
-              // expected: candidate path doesn't exist, try next
+            } catch (error) {
+              // Only a genuine missing candidate is a resolution miss.
+              if (!isCanonicalNotFoundError(error)) throw error;
             }
           }
 
@@ -235,7 +253,7 @@ export function createRelativeFsPlugin(
             }],
           };
         }
-        if (enforceBrowserBoundaries) {
+        if (enforceBrowserBoundaries && !options.readBrowserModule) {
           const pathStatus = await inspectBrowserModulePath(projectDir, filePath, adapter);
           if (pathStatus !== "trusted") {
             return {
@@ -244,8 +262,26 @@ export function createRelativeFsPlugin(
           }
         }
         try {
-          const contents = await adapter.fs.readFile(filePath);
+          const contents = enforceBrowserBoundaries && options.readBrowserModule
+            ? await options.readBrowserModule(filePath)
+            : await adapter.fs.readFile(filePath);
           if (enforceBrowserBoundaries) {
+            try {
+              await assertNoConfiguredCommonJsBrowserImports(contents, {
+                filePath,
+                projectDir,
+                serverExternalPackages: options.serverExternalPackages,
+              });
+            } catch (error) {
+              return {
+                errors: [{
+                  text: isVeryfrontError(error)
+                    ? `[${error.slug}] ${error.message}`
+                    : "Browser dependency could not be safely analyzed",
+                  location: null,
+                }],
+              };
+            }
             const violation = await inspectBrowserModuleBoundary(contents, filePath);
             if (violation) {
               return {
@@ -371,6 +407,8 @@ interface BareExternalPluginOptions {
   dependencyPinningSource?: DependencyPinningSourceInput;
   strict?: boolean;
   importMapImports?: Record<string, string>;
+  /** Bare npm package roots explicitly declared as server-only by the project. */
+  serverExternalPackages?: readonly string[];
 }
 
 function isBareImport(path: string): boolean {
@@ -404,7 +442,9 @@ async function loadFromLockfile(
 ): Promise<
   { contents: string; loader: "js" } | { errors: { text: string; location: null }[] } | null
 > {
-  const cached = await lockfile.get(url);
+  // A newer-format lockfile keeps failing the build loudly; an unreadable or
+  // malformed lockfile degrades to a cache miss with a logged remedy.
+  const cached = await getLockfileEntryForBuild(lockfile, url);
   if (!cached) return null;
 
   logger.debug(`lockfile hit: ${url}`);
@@ -437,6 +477,23 @@ async function loadFromLockfile(
   }
 }
 
+function describePersistenceError(error: unknown): string {
+  if (!(error instanceof Error)) return typeof error;
+
+  const code = (error as { code?: unknown }).code;
+  const name = error.name || "Error";
+  return typeof code === "string" && code ? `${name}(${code})` : name;
+}
+
+function isReadOnlyFileSystemError(error: unknown): boolean {
+  if (error == null) return false;
+
+  const message = error instanceof Error ? error.message : String(error);
+  if (/read-only file ?system|os error 30|erofs/i.test(message)) return true;
+
+  return error instanceof Error && isReadOnlyFileSystemError(error.cause);
+}
+
 /** Create bare module external plugin that rewrites npm imports to esm.sh URLs */
 export function createBareExternalPlugin(
   options: BareExternalPluginOptions | boolean = false,
@@ -465,7 +522,9 @@ export function createBareExternalPlugin(
     setup(build: PluginBuild) {
       build.onResolve({ filter: /.*/ }, async (args: OnResolveArgs) => {
         if (!isBareImport(args.path)) return undefined;
-        if (args.kind !== "import-statement" && args.kind !== "dynamic-import") return undefined;
+        const isEsmImport = args.kind === "import-statement" || args.kind === "dynamic-import";
+        const isCommonJsImport = args.kind === "require-call" || args.kind === "require-resolve";
+        if (!isEsmImport && !isCommonJsImport) return undefined;
 
         // Fail closed on Node built-ins. This plugin only runs for browser
         // bundles (platform: "browser"), where a server-only `node:*` import can
@@ -483,6 +542,27 @@ export function createBareExternalPlugin(
           };
         }
 
+        const configuredPackage = getConfiguredServerExternalPackage(
+          args.path,
+          opts.serverExternalPackages,
+        );
+        if (configuredPackage !== undefined) {
+          const violation = describeServerExternalBrowserViolation(
+            args.path,
+            args.importer || undefined,
+            opts.projectDir,
+          );
+          return {
+            errors: [{
+              text: `[${SERVER_ONLY_IN_CLIENT.slug}] ${violation.message}`,
+            }],
+          };
+        }
+
+        // Preserve the existing handling of undeclared CommonJS imports. The
+        // policy only makes explicit server-only declarations fail loudly.
+        if (!isEsmImport) return undefined;
+
         // Ensure the package.json dep cache is warm before consulting it for
         // a version pin. The warmup Promise resolves immediately on warm paths.
         const snapshot = await dependencySnapshot;
@@ -492,6 +572,23 @@ export function createBareExternalPlugin(
         // and Veryfront still need to report their raw declarations before this
         // winning branch returns.
         if (importMapOwnsSpecifier(args.path, importMapImports)) {
+          const mappedSpecifier = resolveImport(args.path, { imports: importMapImports });
+          const mappedConfiguredPackage = getConfiguredServerExternalPackage(
+            mappedSpecifier,
+            opts.serverExternalPackages,
+          );
+          if (mappedConfiguredPackage !== undefined) {
+            const violation = describeServerExternalBrowserViolation(
+              mappedSpecifier,
+              args.importer || undefined,
+              opts.projectDir,
+            );
+            return {
+              errors: [{
+                text: `[${SERVER_ONLY_IN_CLIENT.slug}] ${violation.message}`,
+              }],
+            };
+          }
           observeImportMapDependency(
             args.path,
             opts,
@@ -516,6 +613,37 @@ export function createBareExternalPlugin(
 
       if (!bundle) return;
 
+      let lockfileFlushDisabled = false;
+
+      async function persistLockfileEntry(
+        url: string,
+        entry: {
+          resolved: string;
+          integrity: string;
+          fetchedAt: string;
+        },
+      ): Promise<void> {
+        if (!lockfile) return;
+
+        // An unreadable lockfile skips persistence instead of failing the
+        // refetched load; the file stays intact for `veryfront lock --clear`.
+        const staged = await setLockfileEntryForBuild(lockfile, url, entry);
+        if (!staged || lockfileFlushDisabled) return;
+
+        try {
+          await lockfile.flush();
+          logger.debug(`lockfile updated: ${url} -> ${entry.resolved}`);
+        } catch (error) {
+          if (!isReadOnlyFileSystemError(error)) throw error;
+          lockfileFlushDisabled = true;
+          logger.debug(
+            `lockfile flush disabled on read-only filesystem for ${url}: ${
+              describePersistenceError(error)
+            }`,
+          );
+        }
+      }
+
       build.onLoad({ filter: /.*/, namespace: "https" }, async (args: OnLoadArgs) => {
         if (lockfile) {
           const cachedResult = await loadFromLockfile(lockfile, args.path, strict);
@@ -535,13 +663,11 @@ export function createBareExternalPlugin(
 
           if (lockfile) {
             const integrity = await computeIntegrity(contents);
-            await lockfile.set(args.path, {
+            await persistLockfileEntry(args.path, {
               resolved: resolvedUrl,
               integrity,
               fetchedAt: new Date().toISOString(),
             });
-            await lockfile.flush();
-            logger.debug(`lockfile updated: ${args.path} -> ${resolvedUrl}`);
           }
 
           return { contents, loader: "js" };
@@ -563,6 +689,8 @@ export function createBareExternalPlugin(
 interface HttpExternalPluginOptions {
   moduleServerOrigin?: string;
   dependencyPinningCacheKey?: string;
+  projectDir?: string;
+  serverExternalPackages?: readonly string[];
 }
 
 export function createHttpExternalPlugin(options: HttpExternalPluginOptions = {}): Plugin {
@@ -570,7 +698,26 @@ export function createHttpExternalPlugin(options: HttpExternalPluginOptions = {}
     name: "veryfront-http-ext",
     setup(build: PluginBuild) {
       build.onResolve({ filter: /^(?:https?:)?\/\//i }, (args: OnResolveArgs) => {
-        if (args.kind !== "import-statement" && args.kind !== "dynamic-import") return undefined;
+        const isEsmImport = args.kind === "import-statement" || args.kind === "dynamic-import";
+        const isCommonJsImport = args.kind === "require-call" || args.kind === "require-resolve";
+        if (!isEsmImport && !isCommonJsImport) return undefined;
+        const configuredPackage = getConfiguredServerExternalPackage(
+          args.path,
+          options.serverExternalPackages,
+        );
+        if (configuredPackage !== undefined) {
+          const violation = describeServerExternalBrowserViolation(
+            args.path,
+            args.importer || undefined,
+            options.projectDir,
+          );
+          return {
+            errors: [{
+              text: `[${SERVER_ONLY_IN_CLIENT.slug}] ${violation.message}`,
+            }],
+          };
+        }
+        if (!isEsmImport) return undefined;
         return {
           path: appendSameOriginDependencyPinningPathKey(
             args.path,

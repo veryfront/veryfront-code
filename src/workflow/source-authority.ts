@@ -4,10 +4,25 @@ import { MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS } from "./limits.ts";
 
 const MISSING = Symbol("missing-workflow-source-authority-property");
 type AuthorityProperty = unknown | typeof MISSING;
+const NativeURL = URL;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwn = Object.hasOwn;
+const reflectApply = Reflect.apply;
+const stringCharCodeAt = String.prototype.charCodeAt;
+const stringIndexOf = String.prototype.indexOf;
+const stringNormalize = String.prototype.normalize;
+const stringSlice = String.prototype.slice;
+const stringTrim = String.prototype.trim;
+const urlHashGetter = objectGetOwnPropertyDescriptor(URL.prototype, "hash")!.get!;
+const urlHrefGetter = objectGetOwnPropertyDescriptor(URL.prototype, "href")!.get!;
+const urlPasswordGetter = objectGetOwnPropertyDescriptor(URL.prototype, "password")!.get!;
+const urlProtocolGetter = objectGetOwnPropertyDescriptor(URL.prototype, "protocol")!.get!;
+const urlSearchGetter = objectGetOwnPropertyDescriptor(URL.prototype, "search")!.get!;
+const urlUsernameGetter = objectGetOwnPropertyDescriptor(URL.prototype, "username")!.get!;
 
 function hasControlCharacters(value: string): boolean {
   for (let index = 0; index < value.length; index++) {
-    const code = value.charCodeAt(index);
+    const code = reflectApply(stringCharCodeAt, value, [index]) as number;
     if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true;
   }
   return false;
@@ -16,7 +31,8 @@ function hasControlCharacters(value: string): boolean {
 function isCanonicalSourceIdentifier(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 &&
     value.length <= MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS &&
-    value.trim() === value && value.normalize("NFC") === value &&
+    reflectApply(stringTrim, value, []) === value &&
+    reflectApply(stringNormalize, value, ["NFC"]) === value &&
     !hasControlCharacters(value);
 }
 
@@ -45,9 +61,9 @@ function readAuthorityProperty(
   }
 
   try {
-    const descriptor = Object.getOwnPropertyDescriptor(authority, key);
+    const descriptor = objectGetOwnPropertyDescriptor(authority, key);
     if (descriptor === undefined) return MISSING;
-    if (!("value" in descriptor)) {
+    if (!objectHasOwn(descriptor, "value")) {
       invalidSourceAuthority("Workflow source authority must contain only own data properties");
     }
     return descriptor.value;
@@ -119,7 +135,7 @@ export function requireWorkflowApiBaseUrl(value: string | undefined): string {
   }
   if (
     value.length > MAX_URL_LENGTH_FOR_VALIDATION ||
-    value !== value.trim() ||
+    value !== reflectApply(stringTrim, value, []) ||
     hasControlCharacters(value)
   ) {
     throw CONFIG_INVALID.create({
@@ -129,18 +145,30 @@ export function requireWorkflowApiBaseUrl(value: string | undefined): string {
 
   let parsed: URL;
   try {
-    parsed = new URL(value);
+    parsed = new NativeURL(value);
   } catch {
     throw CONFIG_INVALID.create({ detail: "VERYFRONT_API_URL must be a valid HTTP(S) URL" });
   }
   if (
-    (parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.username ||
-    parsed.password || parsed.search || parsed.hash || value.includes("?") || value.includes("#")
+    (reflectApply(urlProtocolGetter, parsed, []) !== "http:" &&
+      reflectApply(urlProtocolGetter, parsed, []) !== "https:") ||
+    reflectApply(urlUsernameGetter, parsed, []) ||
+    reflectApply(urlPasswordGetter, parsed, []) ||
+    reflectApply(urlSearchGetter, parsed, []) ||
+    reflectApply(urlHashGetter, parsed, []) ||
+    reflectApply(stringIndexOf, value, ["?"]) !== -1 ||
+    reflectApply(stringIndexOf, value, ["#"]) !== -1
   ) {
     throw CONFIG_INVALID.create({ detail: "VERYFRONT_API_URL must be a valid HTTP(S) URL" });
   }
 
-  const canonical = parsed.href.replace(/\/+$/, "");
+  const href = reflectApply(urlHrefGetter, parsed, []) as string;
+  let canonicalLength = href.length;
+  while (
+    canonicalLength > 0 &&
+    reflectApply(stringCharCodeAt, href, [canonicalLength - 1]) === 47
+  ) canonicalLength--;
+  const canonical = reflectApply(stringSlice, href, [0, canonicalLength]) as string;
   if (canonical.length === 0 || canonical.length > MAX_URL_LENGTH_FOR_VALIDATION) {
     throw CONFIG_INVALID.create({
       detail: "VERYFRONT_API_URL must be a bounded canonical HTTP(S) URL",

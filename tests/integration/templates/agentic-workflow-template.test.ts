@@ -3,7 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { dirname, join } from "#veryfront/compat/path";
 import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 
-import { getTemplate } from "../../../cli/templates/index.ts";
+import { getTemplate } from "../../../templates/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { createTestDenoConfig } from "../../_helpers/import-maps.ts";
 

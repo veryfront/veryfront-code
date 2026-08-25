@@ -9,11 +9,12 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { clearSSRModuleCache, SSRModuleLoader } from "./ssr-module-loader/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem, makeTempDir } from "#veryfront/platform/compat/fs.ts";
+import { stop as stopEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { scaleMs } from "#veryfront/testing";
 
@@ -99,19 +100,24 @@ async function removeDir(dir: string): Promise<void> {
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error("TIMEOUT - possible deadlock")), timeoutMs)
-    ),
-  ]);
+  let timerId: number | undefined;
+  const timeout = new Promise<T>((_, reject) => {
+    timerId = setTimeout(() => reject(new Error("TIMEOUT - possible deadlock")), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timerId !== undefined) clearTimeout(timerId);
+  });
 }
 
-describe("SSRModuleLoader Stress Tests", {
-  sanitizeResources: false,
-  sanitizeOps: false,
-  ignore: !isDeno,
-}, () => {
+function isPageComponent(value: unknown, name: string): boolean {
+  return typeof value === "function" && (value as { name: string }).name === name;
+}
+
+describe("SSRModuleLoader Stress Tests", { ignore: !isDeno }, () => {
+  afterAll(async () => {
+    await stopEsbuild();
+  });
+
   denoOnlyIt("concurrent requests for same file should not race", async () => {
     clearSSRModuleCache();
 
@@ -219,6 +225,19 @@ describe("SSRModuleLoader Stress Tests", {
 
       const errors = results.filter(hasErrorResult);
 
+      assertEquals(
+        errors.length,
+        0,
+        `deep dependency tree must load without errors, got: ${
+          JSON.stringify(errors.map(({ error }) => error.message))
+        }`,
+      );
+      assertEquals(
+        results.filter((result) => isPageComponent(result, "App")).length,
+        loaders.length,
+        "every concurrent deep-tree load must resolve the App component",
+      );
+
       console.log(`✓ Deep dependency tree (3 levels) completed in ${elapsed}ms`);
       console.log(`  - 5 concurrent requests, semaphore=3`);
       console.log(`  - No deadlock detected`);
@@ -273,6 +292,22 @@ describe("SSRModuleLoader Stress Tests", {
       const elapsed = Date.now() - startTime;
 
       const errors = results.filter(hasErrorResult);
+
+      assertEquals(
+        errors.length,
+        0,
+        `Expected no errors, got: ${
+          JSON.stringify(errors.map(({ error }) => ({
+            name: error.name,
+            message: error.message,
+          })))
+        }`,
+      );
+      assertEquals(
+        results.filter((result) => isPageComponent(result, "Page")).length,
+        concurrentRequests,
+        "every concurrent load must resolve the Page component",
+      );
 
       console.log(`✓ Wide dependency tree (10 deps) completed in ${elapsed}ms`);
       console.log(`  - ${concurrentRequests} concurrent requests`);

@@ -2,7 +2,58 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
+import {
+  _resetShimForTests,
+  type Context,
+  getTracer,
+  installGlobalTelemetryAPI,
+  type Span,
+  type SpanStartOptions,
+  trace,
+  type Tracer,
+} from "./api-shim.ts";
 import { TracingManager } from "./manager.ts";
+
+interface StartedSpanRecord {
+  name: string;
+  options?: SpanStartOptions;
+  parentContext?: Context;
+}
+
+/** Recording tracer double: captures every startSpan call the SDK layer makes. */
+function createRecordingTracer(started: StartedSpanRecord[]): Tracer {
+  let spanCount = 0;
+  const createSpan = (): Span => {
+    spanCount += 1;
+    const spanId = String(spanCount).padStart(16, "0");
+    const span: Span = {
+      setAttribute: () => span,
+      setAttributes: () => span,
+      setStatus: () => span,
+      recordException: () => {},
+      addEvent: () => span,
+      end: () => {},
+      spanContext: () => ({
+        traceId: "0af7651916cd43dd8448eb211c80319c",
+        spanId,
+        traceFlags: 1,
+        isRemote: false,
+      }),
+      updateName: () => {},
+    };
+    return span;
+  };
+
+  return {
+    startSpan(name: string, options?: SpanStartOptions, parentContext?: Context): Span {
+      started.push({ name, options, parentContext });
+      return createSpan();
+    },
+    startActiveSpan: (() => {
+      throw new Error("startActiveSpan is not used by these tests");
+    }) as Tracer["startActiveSpan"],
+  };
+}
 
 async function importTracingModule(): Promise<Record<string, unknown>> {
   return await import("./index.ts");
@@ -133,8 +184,34 @@ describe("Tracing Module", () => {
     });
 
     it("should skip duplicate initialization attempts", async () => {
-      await manager.initialize({ enabled: false });
-      await manager.initialize({ enabled: true }); // Second init should be skipped
+      const owner = installGlobalTelemetryAPI({
+        tracerProvider: { getTracer: () => getTracer("duplicate-init") },
+      });
+
+      try {
+        await manager.initialize({ enabled: false });
+        await manager.initialize({ enabled: true }); // Second init should be skipped
+
+        assertEquals(
+          manager.getState().api,
+          null,
+          "second initialize must be skipped and must not bring up the SDK",
+        );
+        assertEquals(
+          manager.getSpanOperations(),
+          null,
+          "a skipped initialize must not build span operations",
+        );
+        assertEquals(
+          manager.isEnabled(),
+          false,
+          "the first (disabled) configuration must win",
+        );
+      } finally {
+        manager.shutdown();
+        owner.dispose();
+        _resetShimForTests();
+      }
     });
   });
 
@@ -512,6 +589,49 @@ describe("Tracing Module", () => {
       createChildSpan(child, "grandchild");
 
       assert(true, "Should support nested children");
+    });
+
+    it("should start the child under the parent span context when tracing is enabled", async () => {
+      const started: StartedSpanRecord[] = [];
+      const tracer = createRecordingTracer(started);
+      const owner = installGlobalTelemetryAPI({ tracerProvider: { getTracer: () => tracer } });
+      const { createChildSpan, initTracing, shutdownTracing, startSpan } = await import(
+        "./index.ts"
+      );
+
+      try {
+        await initTracing({ enabled: true, serviceName: "test" });
+
+        const parent = startSpan("parent-span");
+        assertExists(parent, "tracing must be enabled for this case");
+
+        const child = createChildSpan(parent, "child-span", {
+          kind: "client",
+          attributes: { operation: "fetch" },
+        });
+
+        assertExists(child, "createChildSpan must return a span when tracing is enabled");
+        assertEquals(started.length, 2, "the parent and the child must each start one span");
+        assertEquals(started[1]?.name, "child-span", "the child span must be started by name");
+        assertExists(
+          started[1]?.parentContext,
+          "the child span must be started under a parent context",
+        );
+        assertEquals(
+          trace.getSpan(started[1]?.parentContext as Context),
+          parent,
+          "the child span must be started under the parent's context",
+        );
+        assertEquals(
+          started[1]?.options?.attributes,
+          { operation: "fetch" },
+          "the child span must carry the requested attributes",
+        );
+      } finally {
+        shutdownTracing();
+        owner.dispose();
+        _resetShimForTests();
+      }
     });
   });
 

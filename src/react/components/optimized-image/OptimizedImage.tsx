@@ -1,17 +1,27 @@
 import React from "react";
 import {
-  RESPONSIVE_IMAGE_WIDTH_LG,
-  RESPONSIVE_IMAGE_WIDTHS,
-} from "#veryfront/utils/constants/network.ts";
-import { generateSrcSet, getImageExtension, getOptimizedPath } from "./helpers.ts";
+  DEFAULT_OPTIMIZED_IMAGE_FORMATS,
+  generateSrcSet,
+  getImageDimensionAttribute,
+  getImageExtension,
+  getOptimizedImageFormatFallback,
+  getOptimizedImageVariantWidths,
+} from "./helpers.ts";
+
+export type OptimizedImageFormat = "avif" | "webp" | "jpeg" | "png";
 
 export interface OptimizedImageProps {
+  /** App asset path. URL suffixes are ignored when resolving build-emitted variants. */
   src: string;
   alt: string;
+  /** Intrinsic source width. Missing or invalid values use the original asset. */
   width?: number;
   height?: number;
   sizes?: string;
-  formats?: ("avif" | "webp" | "jpeg" | "png")[];
+  /** Must match `assetPipeline.images.sizes` when custom build widths are configured. */
+  targetWidths?: readonly number[];
+  /** Must match `assetPipeline.images.formats` when custom build formats are configured. */
+  formats?: readonly OptimizedImageFormat[];
   quality?: number;
   loading?: "lazy" | "eager";
   priority?: boolean;
@@ -24,16 +34,14 @@ export interface OptimizedImageProps {
   onError?: (event: React.SyntheticEvent<HTMLImageElement>) => void;
 }
 
-const DEFAULT_SIZES = RESPONSIVE_IMAGE_WIDTHS;
-const DEFAULT_FORMATS: ("avif" | "webp" | "jpeg")[] = ["avif", "webp", "jpeg"];
-
 export function OptimizedImage({
   src,
   alt,
   width,
   height,
   sizes = "100vw",
-  formats = DEFAULT_FORMATS,
+  targetWidths,
+  formats = DEFAULT_OPTIMIZED_IMAGE_FORMATS,
   quality = 80,
   loading,
   priority = false,
@@ -47,6 +55,9 @@ export function OptimizedImage({
 }: OptimizedImageProps): React.JSX.Element {
   const loadingStrategy = priority ? "eager" : (loading ?? "lazy");
   const originalFormat = getImageExtension(src);
+  const variantWidths = getOptimizedImageVariantWidths(width, targetWidths, src);
+  const imageWidth = getImageDimensionAttribute(width);
+  const imageHeight = getImageDimensionAttribute(height);
 
   const imgStyle: React.CSSProperties = {
     ...style,
@@ -57,20 +68,26 @@ export function OptimizedImage({
 
   return (
     <picture>
-      {formats.map((format) => (
+      {variantWidths.length > 0 && formats.map((format) => (
         <source
           key={format}
           type={`image/${format}`}
-          srcSet={generateSrcSet(src, format, DEFAULT_SIZES, quality)}
+          srcSet={generateSrcSet(src, format, variantWidths, quality)}
           sizes={sizes}
         />
       ))}
 
       <img
-        src={getOptimizedPath(src, originalFormat, width ?? RESPONSIVE_IMAGE_WIDTH_LG, quality)}
+        src={getOptimizedImageFormatFallback(
+          src,
+          originalFormat,
+          formats,
+          variantWidths,
+          quality,
+        )}
         alt={alt}
-        width={width}
-        height={height}
+        width={imageWidth}
+        height={imageHeight}
         loading={loadingStrategy}
         decoding="async"
         className={className}

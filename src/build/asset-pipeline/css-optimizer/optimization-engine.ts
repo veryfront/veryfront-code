@@ -554,14 +554,14 @@ function validateResult(
   }
 
   const descriptors = ownDescriptors(value, "CSSOptimizationEngine result");
-  rejectUnknownProperties(
-    descriptors,
-    RESULT_PROPERTIES,
-    "CSSOptimizationEngine result",
-  );
   const css = readDataProperty(
     descriptors,
     "css",
+    "CSSOptimizationEngine result",
+  );
+  rejectUnknownProperties(
+    descriptors,
+    RESULT_PROPERTIES,
     "CSSOptimizationEngine result",
   );
   const sourceMap = readDataProperty(

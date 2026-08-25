@@ -1,4 +1,4 @@
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 
 const RESERVED_SHARED_RUNTIME_TELEMETRY_ENV_KEYS = new Set([
   "VERYFRONT_OTEL",

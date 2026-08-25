@@ -31,6 +31,7 @@ import {
 } from "./host-support.ts";
 import { extractRequest } from "./request-shared.ts";
 import { type AgUiResumeValue, buildMergedAgUiTools } from "./tool-shared.ts";
+import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
 
 export {
   type AgUiContextItem,
@@ -142,10 +143,18 @@ function buildStreamContext(
   threadId: string,
   runId: string,
 ): Record<string, unknown> {
+  const configuredRunIdBinding = baseContext.runIdBindsToolAuthorization;
   return {
     ...baseContext,
     threadId,
     runId,
+    // A trusted server context can mark locally generated client IDs, such as
+    // eval IDs, as non-binding. Other client-supplied IDs keep existing behavior.
+    runIdBindsToolAuthorization: typeof configuredRunIdBinding === "boolean"
+      ? configuredRunIdBinding
+      : request.runId === undefined
+      ? false
+      : undefined,
     agUi: {
       context: request.context,
       forwardedProps: request.forwardedProps,
@@ -337,7 +346,11 @@ async function createAgUiDirectStreamResponse(
   if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
 
   messages = applyBeforeStreamResult(messages, beforeStreamResult ?? undefined);
-  const finalContext = beforeStreamResult?.context ?? context;
+  // beforeStream may return a fresh context, dropping the generated-run marker.
+  const finalContext = {
+    ...(beforeStreamResult?.context ?? context),
+    runIdBindsToolAuthorization: context.runIdBindsToolAuthorization,
+  };
 
   await agent.clearMemory();
 
@@ -408,7 +421,11 @@ async function createAgUiInjectedToolsStreamResponse(
   if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
 
   messages = applyBeforeStreamResult(messages, beforeStreamResult ?? undefined);
-  const finalContext = beforeStreamResult?.context ?? context;
+  // beforeStream may return a fresh context, dropping the generated-run marker.
+  const finalContext = {
+    ...(beforeStreamResult?.context ?? context),
+    runIdBindsToolAuthorization: context.runIdBindsToolAuthorization,
+  };
 
   try {
     sessionManager.startRun({ runId, threadId });
@@ -523,6 +540,7 @@ export function createAgUiHandler(
 ) {
   return async function POST(requestOrCtx: unknown): Promise<Response> {
     const request = extractRequest(requestOrCtx);
+    const applicationRequest = createApplicationRequest(request);
 
     let agent: Agent | undefined;
 
@@ -548,7 +566,7 @@ export function createAgUiHandler(
     }
 
     try {
-      const parsed = await parseAgUiRequestOrError(request);
+      const parsed = await parseAgUiRequestOrError(applicationRequest);
       if (isResponseLike(parsed)) {
         return parsed;
       }
@@ -565,13 +583,13 @@ export function createAgUiHandler(
         }
 
         const context = typeof options?.context === "function"
-          ? await options.context(request)
+          ? await options.context(applicationRequest)
           : options?.context ?? {};
 
         return await createAgUiInjectedToolsStreamResponse(
           agent,
           parsed,
-          request,
+          applicationRequest,
           context,
           options.sessionManager,
           options?.beforeStream,
@@ -580,13 +598,13 @@ export function createAgUiHandler(
       }
 
       const context = typeof options?.context === "function"
-        ? await options.context(request)
+        ? await options.context(applicationRequest)
         : options?.context ?? {};
 
       return await createAgUiDirectStreamResponse(
         agent,
         parsed,
-        request,
+        applicationRequest,
         context,
         options?.beforeStream,
         options?.onComplete,

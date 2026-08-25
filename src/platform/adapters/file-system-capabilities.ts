@@ -128,7 +128,7 @@ export interface CapturedStaticReaders {
   };
 }
 
-function hasOwn(value: object, key: PropertyKey): boolean {
+function hasOwn(value: PropertyDescriptor, key: PropertyKey): boolean {
   return apply(objectHasOwnProperty, value, [key]) as boolean;
 }
 
@@ -698,12 +698,26 @@ export function captureExclusiveCreateCapability(
   return freezeObject(captured);
 }
 
+/**
+ * Capture snapshot and virtual read authority from a filesystem.
+ *
+ * `allowExplicitUndefined` stays strict by default, matching
+ * {@link captureSnapshotReadCapability}: for a raw adapter, a capability key
+ * present with the value `undefined` is a defect worth surfacing.
+ *
+ * Callers handed an `FSAdapterWrapper` must opt in, because that wrapper
+ * publishes every optional capability as a frozen own property, `undefined`
+ * included, so project code cannot inject one later. Without the opt-in this
+ * threw, and its only caller wraps it in a catch, so wrapper-backed
+ * filesystems silently lost virtual snapshot authority instead of failing.
+ */
 export function captureStaticReadCapabilities(
   value: unknown,
   label = "Filesystem",
+  allowExplicitUndefined = false,
 ): CapturedStaticReaders {
   requireCapabilityObject(value, label);
-  const snapshot = captureSnapshotReadCapability(value, label);
+  const snapshot = captureSnapshotReadCapability(value, label, allowExplicitUndefined);
   const captured = createObject(null) as CapturedStaticReaders;
   if (snapshot !== undefined) captured.snapshot = snapshot;
 
@@ -727,7 +741,7 @@ export function captureStaticReadCapabilities(
     generationProperties.getSourceSnapshotVersion,
     label,
     "getSourceSnapshotVersion",
-    false,
+    allowExplicitUndefined,
   );
   if (rawGeneration === undefined) return freezeObject(captured);
 
@@ -740,7 +754,7 @@ export function captureStaticReadCapabilities(
     readerProperties.readFileBytesWithinLimit,
     label,
     "readFileBytesWithinLimit",
-    false,
+    allowExplicitUndefined,
   );
   const whole = captureWholeFileReader(value, readerProperties, label, true, false);
   const virtual = createObject(null) as NonNullable<CapturedStaticReaders["virtual"]>;

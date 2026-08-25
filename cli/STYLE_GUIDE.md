@@ -283,8 +283,8 @@ tasks.start(deployIdx);
 ### Screen Layout
 
 ```
-  ✓ Server ready at http://veryfront.me:3000
-  ✓ MCP ready at http://veryfront.me:3001/mcp
+  ✓ Server ready at http://localhost:3000
+  ✓ MCP ready at http://localhost:3001/mcp
 
   Projects
   ❯ my-agent

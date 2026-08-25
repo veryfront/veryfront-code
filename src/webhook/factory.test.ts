@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { webhook } from "./factory.ts";
@@ -31,6 +31,28 @@ describe("webhook/factory", () => {
       },
     });
     assertEquals(isWebhookDefinition(definition), true);
+  });
+
+  it("treats undefined non-agent conversation fields as omitted", () => {
+    const taskDefinition = webhook({
+      id: "conditional-task",
+      target: {
+        kind: "task",
+        id: "sync-helpdesk",
+        conversationMode: undefined,
+      },
+    });
+    const workflowDefinition = webhook({
+      id: "conditional-workflow",
+      target: {
+        kind: "workflow",
+        id: "billing/sync",
+        conversationId: undefined,
+      },
+    });
+
+    assertEquals(taskDefinition.target, { kind: "task", id: "sync-helpdesk" });
+    assertEquals(workflowDefinition.target, { kind: "workflow", id: "billing/sync" });
   });
 
   it("copies caller-owned filter values before retaining a webhook definition", () => {
@@ -108,6 +130,51 @@ describe("webhook/factory", () => {
       ["equals", "not_equals", "in", "exists", "contains"],
     );
     assertEquals(matchAll.eventFilter, { mode: "any", conditions: [] });
+  });
+
+  it("rejects unsupported filter modes and operators", () => {
+    assertThrows(
+      () =>
+        webhook({
+          id: "ticket-created",
+          target: { kind: "task", id: "process-ticket" },
+          eventFilter: {
+            mode: "ANY",
+            conditions: [{ path: "action", operator: "exists" }],
+          },
+        } as never),
+      VeryfrontError,
+      "Webhook eventFilter mode must be all or any.",
+      "an unrecognized filter mode must be rejected instead of silently meaning all",
+    );
+    assertThrows(
+      () =>
+        webhook({
+          id: "ticket-created",
+          target: { kind: "task", id: "process-ticket" },
+          eventFilter: {
+            mode: "all",
+            conditions: [{ path: "count", operator: "gt", value: 1 }],
+          },
+        } as never),
+      VeryfrontError,
+      "Webhook eventFilter condition 0 operator is not supported.",
+      "an operator outside the hosted allowlist must be rejected at definition time",
+    );
+  });
+
+  it("accepts a multi-line webhook description", () => {
+    const definition = webhook({
+      id: "ticket-created",
+      description: "Line one.\nLine two.",
+      target: { kind: "task", id: "process-ticket" },
+    });
+
+    assertEquals(
+      definition.description,
+      "Line one.\nLine two.",
+      "a multi-line description must round-trip verbatim",
+    );
   });
 
   it("trims filter paths before enforcing the hosted length bound", () => {
@@ -383,6 +450,14 @@ describe("webhook/factory", () => {
           },
           "Webhook agentMessage.promptTemplate must be at most 20000 characters.",
         ],
+        [
+          {
+            id: "ticket-created",
+            description: "d".repeat(4_097),
+            target: { kind: "task", id: "process-ticket" },
+          },
+          "Webhook description must be at most 4096 characters.",
+        ],
       ] as const
     ) {
       assertThrows(
@@ -527,5 +602,198 @@ describe("webhook/factory", () => {
         conversationMode: "none",
       },
     });
+  });
+});
+
+describe("webhook/factory agent targets", () => {
+  const conversationId = "11111111-1111-4111-8111-111111111111";
+
+  it("carries agent conversation addressing on the target", () => {
+    const definition = webhook({
+      id: "support-escalation",
+      target: { kind: "agent", id: "support-agent", conversationMode: "create_new" },
+      agentMessage: { promptTemplate: "Triage {{payload.summary}}" },
+    });
+
+    assertEquals(definition, {
+      id: "support-escalation",
+      target: { kind: "agent", id: "support-agent", conversationMode: "create_new" },
+      agentMessage: { promptTemplate: "Triage {{payload.summary}}" },
+    });
+    assertEquals(isWebhookDefinition(definition), true);
+  });
+
+  it("keeps the legacy agentMessage conversation mapping working", () => {
+    const definition = webhook({
+      id: "support-escalation",
+      target: { kind: "agent", id: "support-agent" },
+      agentMessage: {
+        promptTemplate: "Triage {{payload.summary}}",
+        conversationMode: "existing",
+        conversationId,
+      },
+    });
+
+    assertEquals(definition.target, { kind: "agent", id: "support-agent" });
+    assertEquals(definition.agentMessage, {
+      promptTemplate: "Triage {{payload.summary}}",
+      conversationMode: "existing",
+      conversationId,
+    });
+  });
+
+  it("accepts the same conversation pair declared on target and agentMessage", () => {
+    const definition = webhook({
+      id: "support-escalation",
+      target: {
+        kind: "agent",
+        id: "support-agent",
+        conversationMode: "existing",
+        conversationId,
+      },
+      agentMessage: {
+        promptTemplate: "Triage {{payload.summary}}",
+        conversationMode: "existing",
+        conversationId,
+      },
+    });
+
+    assertEquals(definition.target, {
+      kind: "agent",
+      id: "support-agent",
+      conversationMode: "existing",
+      conversationId,
+    });
+    assertEquals(definition.agentMessage, {
+      promptTemplate: "Triage {{payload.summary}}",
+      conversationMode: "existing",
+      conversationId,
+    });
+    assertEquals(isWebhookDefinition(definition), true);
+  });
+
+  it("rejects a conversation mode that disagrees with agentMessage", () => {
+    assertThrows(
+      () =>
+        webhook({
+          id: "support-escalation",
+          target: { kind: "agent", id: "support-agent", conversationMode: "create_new" },
+          agentMessage: {
+            promptTemplate: "Triage {{payload.summary}}",
+            conversationMode: "existing",
+            conversationId,
+          },
+        }),
+      VeryfrontError,
+      "Webhook target.conversationMode and agentMessage.conversationMode are both set to different values. Declare it in one place.",
+    );
+  });
+
+  it("rejects a conversation id that disagrees with agentMessage", () => {
+    assertThrows(
+      () =>
+        webhook({
+          id: "support-escalation",
+          target: {
+            kind: "agent",
+            id: "support-agent",
+            conversationMode: "existing",
+            conversationId,
+          },
+          agentMessage: {
+            promptTemplate: "Triage {{payload.summary}}",
+            conversationMode: "existing",
+            conversationId: "22222222-2222-4222-8222-222222222222",
+          },
+        }),
+      VeryfrontError,
+      "Webhook target.conversationId and agentMessage.conversationId are both set to different values. Declare it in one place.",
+    );
+  });
+
+  it("reports the conflict with the webhook-config-invalid slug", () => {
+    const error = assertThrows(
+      () =>
+        webhook({
+          id: "support-escalation",
+          target: { kind: "agent", id: "support-agent", conversationMode: "none" },
+          agentMessage: {
+            promptTemplate: "Triage {{payload.summary}}",
+            conversationMode: "create_new",
+          },
+        }),
+      VeryfrontError,
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "webhook-config-invalid");
+  });
+
+  it("rejects unsupported target keys instead of dropping them", () => {
+    for (
+      const [target, message] of [
+        [
+          { kind: "agent", id: "support-agent", conversationmode: "create_new" },
+          "Webhook target.conversationmode is not supported.",
+        ],
+        [
+          { kind: "workflow", id: "escalate-ticket", conversationMode: "create_new" },
+          "Webhook target.conversationMode is not supported.",
+        ],
+      ] as const
+    ) {
+      assertThrows(
+        () =>
+          webhook(
+            {
+              id: "support-escalation",
+              target,
+              agentMessage: { promptTemplate: "Triage." },
+            } as never,
+          ),
+        VeryfrontError,
+        message,
+      );
+    }
+  });
+
+  it("rejects invalid agent conversation relationships on the target", () => {
+    for (
+      const [target, message] of [
+        [
+          { kind: "agent", id: "support-agent", conversationMode: "resume" },
+          "Webhook target.conversationMode must be create_new, existing, or none.",
+        ],
+        [
+          { kind: "agent", id: "support-agent", conversationMode: "existing" },
+          "Webhook target.conversationId is required when conversationMode is existing.",
+        ],
+        [
+          { kind: "agent", id: "support-agent", conversationMode: "none", conversationId },
+          "Webhook target.conversationId is allowed only when conversationMode is existing.",
+        ],
+        [
+          {
+            kind: "agent",
+            id: "support-agent",
+            conversationMode: "existing",
+            conversationId: "not-a-uuid",
+          },
+          "Webhook target.conversationId must be a UUID or null.",
+        ],
+      ] as const
+    ) {
+      assertThrows(
+        () =>
+          webhook(
+            {
+              id: "support-escalation",
+              target,
+              agentMessage: { promptTemplate: "Triage." },
+            } as never,
+          ),
+        VeryfrontError,
+        message,
+      );
+    }
   });
 });

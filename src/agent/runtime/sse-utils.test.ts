@@ -49,6 +49,17 @@ describe("sse-utils", () => {
       sendSSE(controller, encoder, { type: "test" });
     });
 
+    it("ignores Deno closed stream controller enqueue errors", () => {
+      const controller = {
+        enqueue() {
+          throw new TypeError("Invalid state: Controller is already closed");
+        },
+      } as unknown as ReadableStreamDefaultController;
+      const encoder = new TextEncoder();
+
+      sendSSE(controller, encoder, { type: "test" });
+    });
+
     it("rethrows unrelated enqueue errors", () => {
       const expected = new TypeError("boom");
       const controller = {
@@ -75,6 +86,16 @@ describe("sse-utils", () => {
       const controller = {
         close() {
           throw new TypeError("The stream controller cannot close or enqueue");
+        },
+      } as unknown as ReadableStreamDefaultController;
+
+      closeSSEStream(controller);
+    });
+
+    it("ignores Deno closed stream controller close errors", () => {
+      const controller = {
+        close() {
+          throw new TypeError("Invalid state: Controller is already closed");
         },
       } as unknown as ReadableStreamDefaultController;
 

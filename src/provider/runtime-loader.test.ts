@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { fromError } from "#veryfront/errors";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { assertGreaterOrEqual } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
@@ -103,6 +108,108 @@ function readRequestBody(init: RequestInit | undefined): string | null {
 }
 
 describe("provider/runtime-loader", () => {
+  it("merges adjacent system layers for OpenAI-compatible providers", () => {
+    assertEquals(
+      toOpenAICompatibleMessages([{
+        role: "system",
+        content: "You are a helpful local assistant.",
+      }, {
+        role: "system",
+        content: "<runtime_context>current_date_utc: 2026-08-20</runtime_context>",
+      }, {
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      }]),
+      [{
+        role: "system",
+        content:
+          "You are a helpful local assistant.\n\n<runtime_context>current_date_utc: 2026-08-20</runtime_context>",
+      }, {
+        role: "user",
+        content: "Hello",
+      }],
+    );
+  });
+
+  it("omits empty system layers without adding blank separators", () => {
+    assertEquals(
+      toOpenAICompatibleMessages([{
+        role: "system",
+        content: "Base instructions",
+      }, {
+        role: "system",
+        content: "",
+      }, {
+        role: "system",
+        content: "Runtime context",
+      }]),
+      [{
+        role: "system",
+        content: "Base instructions\n\nRuntime context",
+      }],
+    );
+  });
+
+  it("does not merge system messages across conversation roles", () => {
+    assertEquals(
+      toOpenAICompatibleMessages([{
+        role: "system",
+        content: "Initial instructions",
+      }, {
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      }, {
+        role: "system",
+        content: "Follow-up instructions",
+      }]),
+      [{
+        role: "system",
+        content: "Initial instructions",
+      }, {
+        role: "user",
+        content: "Hello",
+      }, {
+        role: "system",
+        content: "Follow-up instructions",
+      }],
+    );
+  });
+
+  it("serializes tool-call arguments as JSON objects without changing string tool results", () => {
+    assertEquals(
+      toOpenAICompatibleMessages([{
+        role: "assistant",
+        content: [{
+          type: "tool-call",
+          toolCallId: "tool-1",
+          toolName: "lookup",
+          input: { query: "Veryfront" },
+        }],
+      }, {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "tool-1",
+          toolName: "lookup",
+          output: { type: "json", value: "plain result" },
+        }],
+      }]),
+      [{
+        role: "assistant",
+        content: null,
+        tool_calls: [{
+          id: "tool-1",
+          type: "function",
+          function: { name: "lookup", arguments: '{"query":"Veryfront"}' },
+        }],
+      }, {
+        role: "tool",
+        tool_call_id: "tool-1",
+        content: "plain result",
+      }],
+    );
+  });
+
   it("classifies incompatible provider-executed replay as a configuration error", () => {
     for (
       const testCase of [
@@ -523,7 +630,13 @@ describe("provider/runtime-loader", () => {
 
       await openai.doGenerate({ prompt: [userPrompt] });
 
-      assertEquals("user" in (openaiBody ?? {}), false);
+      const capturedBody = openaiBody as Record<string, unknown> | null;
+      assertExists(capturedBody, "expected the OpenAI request body to be captured");
+      assertEquals(
+        "user" in capturedBody,
+        false,
+        "no userId must mean no user field on the OpenAI request",
+      );
     });
   });
 });

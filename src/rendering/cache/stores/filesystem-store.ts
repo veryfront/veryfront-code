@@ -2,6 +2,7 @@ import { dirname, join } from "#veryfront/compat/path";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { CachePayload, CacheStore } from "../types.ts";
+import { parseSerializedCachePayload, serializeCachePayload } from "../cache-payload.ts";
 
 export interface FilesystemCacheStoreOptions {
   baseDir: string;
@@ -25,12 +26,7 @@ export class FilesystemCacheStore implements CacheStore {
     const file = await this.readFileForKey(key);
     if (!file) return undefined;
 
-    try {
-      return JSON.parse(file) as CachePayload;
-    } catch (_) {
-      /* expected: cached file may contain malformed JSON */
-      return undefined;
-    }
+    return parseSerializedCachePayload(file);
   }
 
   async set(key: string, value: CachePayload): Promise<void> {
@@ -38,7 +34,7 @@ export class FilesystemCacheStore implements CacheStore {
     await this.ensureDir(dirname(filePath));
 
     const fs = await this.getLocalFS();
-    await fs.writeFile(filePath, JSON.stringify(value));
+    await fs.writeFile(filePath, serializeCachePayload(value));
   }
 
   async delete(key: string): Promise<void> {

@@ -8,6 +8,17 @@ import {
   toRuntimeRunAgentInput,
 } from "./schema.ts";
 
+const MAIN_BRANCH_TARGET = {
+  runtimeTargetKind: "main_branch",
+  runtimeTargetEnvironmentId: null,
+  runtimeTargetBranchId: null,
+} as const;
+const ENVIRONMENT_TARGET = {
+  runtimeTargetKind: "environment",
+  runtimeTargetEnvironmentId: "10000000-1000-4000-8000-100000000009",
+  runtimeTargetBranchId: null,
+} as const;
+
 describe("internal-agents/schema", () => {
   it("applies defaults for optional runtime collections", () => {
     const parsed = getRuntimeRunAgentInputSchema().parse({
@@ -87,12 +98,34 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
       agentSource: { type: "branch", branch: "main" },
       messages: [],
       forwardedProps,
     });
 
     assertEquals(parsed.forwardedProps, forwardedProps);
+  });
+
+  it("preserves environment targets on control-plane stream requests", () => {
+    const runtimeTargetEnvironmentId = "10000000-1000-4000-8000-100000000005";
+    const parsed = getInternalAgentStreamRequestSchema().parse({
+      agentId: "agent_1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      runtimeTargetKind: "environment",
+      agentSource: {
+        type: "environment",
+        environmentName: "staging",
+        releaseId: "release_1",
+      },
+      messages: [],
+      runtimeTargetEnvironmentId,
+      runtimeTargetBranchId: null,
+    });
+
+    assertEquals(parsed.runtimeTargetEnvironmentId, runtimeTargetEnvironmentId);
+    assertEquals(parsed.runtimeTargetBranchId, null);
   });
 
   it("rejects forwarded props above the 192 KB runtime budget", () => {
@@ -102,6 +135,7 @@ describe("internal-agents/schema", () => {
           agentId: "agent_1",
           threadId: "10000000-1000-4000-8000-100000000001",
           runId: "run_1",
+          ...MAIN_BRANCH_TARGET,
           agentSource: { type: "branch", branch: "main" },
           messages: [],
           forwardedProps: {
@@ -127,6 +161,7 @@ describe("internal-agents/schema", () => {
             agentId: "agent_1",
             threadId: "10000000-1000-4000-8000-100000000001",
             runId: "run_1",
+            ...MAIN_BRANCH_TARGET,
             agentSource: { type: "branch", branch: "main" },
             messages: [],
             forwardedProps: { maxOutputTokens },
@@ -144,6 +179,7 @@ describe("internal-agents/schema", () => {
           agentId: "agent_1",
           threadId: "10000000-1000-4000-8000-100000000001",
           runId: "run_1",
+          ...MAIN_BRANCH_TARGET,
           agentSource: { type: "branch", branch: "main" },
           messages: [],
           tools: [
@@ -178,6 +214,7 @@ describe("internal-agents/schema", () => {
         agentId: "agent_1",
         threadId: "10000000-1000-4000-8000-100000000001",
         runId: "run_1",
+        ...MAIN_BRANCH_TARGET,
         messages: [],
       })
     );
@@ -186,6 +223,7 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      ...ENVIRONMENT_TARGET,
       messages: [],
       agentSource: {
         type: "environment",
@@ -199,17 +237,35 @@ describe("internal-agents/schema", () => {
       environmentName: "staging",
       releaseId: "release_1",
     });
+    assertEquals(parsed.runtimeTargetEnvironmentId, ENVIRONMENT_TARGET.runtimeTargetEnvironmentId);
     assertThrows(
       () =>
         getInternalAgentStreamRequestSchema().parse({
           agentId: "agent_1",
           threadId: "10000000-1000-4000-8000-100000000001",
           runId: "run_1",
+          ...MAIN_BRANCH_TARGET,
           messages: [],
           agentSource: { type: "branch", branch: "" },
         }),
       Error,
       "Too small: expected string to have >=1 characters",
+    );
+  });
+
+  it("rejects a signed target whose kind does not match the exact source", () => {
+    assertThrows(
+      () =>
+        getInternalAgentStreamRequestSchema().parse({
+          agentId: "agent_1",
+          threadId: "10000000-1000-4000-8000-100000000001",
+          runId: "run_1",
+          ...ENVIRONMENT_TARGET,
+          agentSource: { type: "branch", branch: "main" },
+          messages: [],
+        }),
+      Error,
+      "environment runtime target requires an environment agent source",
     );
   });
 
@@ -318,6 +374,90 @@ describe("internal-agents/schema", () => {
     );
   });
 
+  it("caps runtime collections on control-plane stream requests", () => {
+    const base = {
+      agentId: "agent_1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
+      agentSource: { type: "branch", branch: "main" },
+      messages: [],
+    };
+    const messages = (count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        id: `m${index}`,
+        role: "user" as const,
+        parts: [],
+      }));
+    const tools = (count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        name: `tool_${index}`,
+        parameters: {},
+      }));
+    const context = (count: number) =>
+      Array.from({ length: count }, () => ({ type: "text" as const, text: "x" }));
+
+    assertEquals(
+      getInternalAgentStreamRequestSchema().parse({ ...base, messages: messages(100) })
+        .messages.length,
+      100,
+      "the message cap itself must still parse",
+    );
+    assertThrows(
+      () => getInternalAgentStreamRequestSchema().parse({ ...base, messages: messages(101) }),
+      Error,
+      "expected array to have <=100 items",
+    );
+
+    assertEquals(
+      getInternalAgentStreamRequestSchema().parse({ ...base, tools: tools(50) }).tools.length,
+      50,
+      "the injected tool cap itself must still parse",
+    );
+    assertThrows(
+      () => getInternalAgentStreamRequestSchema().parse({ ...base, tools: tools(51) }),
+      Error,
+      "expected array to have <=50 items",
+    );
+
+    assertEquals(
+      getInternalAgentStreamRequestSchema().parse({ ...base, context: context(10) })
+        .context.length,
+      10,
+      "the context cap itself must still parse",
+    );
+    assertThrows(
+      () => getInternalAgentStreamRequestSchema().parse({ ...base, context: context(11) }),
+      Error,
+      "expected array to have <=10 items",
+    );
+  });
+
+  it("rejects agent ids outside the id character and length contract", () => {
+    const base = {
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
+      agentSource: { type: "branch", branch: "main" },
+      messages: [],
+    };
+
+    for (const agentId of ["../escape", "agents/one", "agent id", "", "a".repeat(129)]) {
+      assertThrows(
+        () => getInternalAgentStreamRequestSchema().parse({ ...base, agentId }),
+        Error,
+        undefined,
+        `agentId ${JSON.stringify(agentId)} must be rejected`,
+      );
+    }
+
+    assertEquals(
+      getInternalAgentStreamRequestSchema().parse({ ...base, agentId: "agent_1-2" }).agentId,
+      "agent_1-2",
+      "ids inside the contract must still parse",
+    );
+  });
+
   it("rejects mismatched agent config on control-plane stream payloads", () => {
     assertThrows(
       () =>
@@ -325,6 +465,7 @@ describe("internal-agents/schema", () => {
           agentId: "agent_1",
           threadId: "10000000-1000-4000-8000-100000000001",
           runId: "run_1",
+          ...MAIN_BRANCH_TARGET,
           agentSource: { type: "branch", branch: "main" },
           messages: [],
           agentConfig: {
@@ -344,7 +485,9 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
       agentSource: { type: "branch", branch: "main" },
+      allowDelegation: false,
       messages: [
         {
           id: "user_1",
@@ -371,6 +514,7 @@ describe("internal-agents/schema", () => {
     assertEquals(toRuntimeRunAgentInput(internalRequest) as unknown, {
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      allowDelegation: false,
       messages: [
         {
           id: "user_1",
@@ -401,6 +545,7 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
       agentSource: { type: "branch", branch: "main" },
       messages: [
         {
@@ -446,6 +591,7 @@ describe("internal-agents/schema", () => {
         agentId: "agent_1",
         threadId: "10000000-1000-4000-8000-100000000001",
         runId: "run_1",
+        ...MAIN_BRANCH_TARGET,
         agentSource: { type: "branch", branch: "main" },
         endUserId: "10000000-1000-4000-8000-100000000004",
         messages: [],
@@ -492,6 +638,7 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
       agentSource: { type: "branch", branch: "main" },
       messages: [
         {
@@ -540,6 +687,7 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
       agentSource: { type: "branch", branch: "main" },
       messages: [
         {
@@ -581,35 +729,101 @@ describe("internal-agents/schema", () => {
     );
   });
 
-  it("rejects malformed streamed tool input instead of executing with empty arguments", () => {
-    const internalRequest = getInternalAgentStreamRequestSchema().parse({
-      agentId: "agent_1",
-      threadId: "10000000-1000-4000-8000-100000000001",
-      runId: "run_1",
-      agentSource: { type: "branch", branch: "main" },
-      messages: [
-        {
-          id: "assistant_1",
-          role: "assistant",
-          parts: [
-            {
-              type: "tool-call",
-              toolCallId: "tool_1",
-              toolName: "create_file",
-              args: {},
-              inputText: '{"path":"plans/report.md"',
-            },
-          ],
-        },
-      ],
-      context: [],
-    });
+  it("degrades malformed streamed tool input to empty arguments when replaying history", () => {
+    for (const inputText of ['{"path":"plans/report.md"', '"just a string"', "42"]) {
+      const internalRequest = getInternalAgentStreamRequestSchema().parse({
+        agentId: "agent_1",
+        threadId: "10000000-1000-4000-8000-100000000001",
+        runId: "run_1",
+        ...MAIN_BRANCH_TARGET,
+        agentSource: { type: "branch", branch: "main" },
+        messages: [
+          {
+            id: "assistant_1",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-call",
+                toolCallId: "tool_1",
+                toolName: "create_file",
+                args: {},
+                inputText,
+              },
+            ],
+          },
+        ],
+        context: [],
+      });
 
-    assertThrows(
-      () => toRuntimeRunAgentInput(internalRequest),
-      SyntaxError,
-      "Malformed streamed tool input for tool call",
-    );
+      assertEquals(
+        (toRuntimeRunAgentInput(internalRequest) as unknown as { messages: unknown }).messages,
+        [
+          {
+            id: "assistant_1",
+            role: "assistant",
+            toolCalls: [{
+              id: "tool_1",
+              type: "function",
+              function: {
+                name: "create_file",
+                arguments: "{}",
+              },
+            }],
+          },
+        ],
+      );
+    }
+  });
+
+  it("preserves well-formed streamed tool input when replaying history", () => {
+    for (
+      const [inputText, expected] of [
+        ["{}", {}],
+        ['{"path":"plans/report.md"}', { path: "plans/report.md" }],
+      ] as const
+    ) {
+      const internalRequest = getInternalAgentStreamRequestSchema().parse({
+        agentId: "agent_1",
+        threadId: "10000000-1000-4000-8000-100000000001",
+        runId: "run_1",
+        ...MAIN_BRANCH_TARGET,
+        agentSource: { type: "branch", branch: "main" },
+        messages: [
+          {
+            id: "assistant_1",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-call",
+                toolCallId: "tool_1",
+                toolName: "create_file",
+                args: {},
+                inputText,
+              },
+            ],
+          },
+        ],
+        context: [],
+      });
+
+      assertEquals(
+        (toRuntimeRunAgentInput(internalRequest) as unknown as { messages: unknown }).messages,
+        [
+          {
+            id: "assistant_1",
+            role: "assistant",
+            toolCalls: [{
+              id: "tool_1",
+              type: "function",
+              function: {
+                name: "create_file",
+                arguments: JSON.stringify(expected),
+              },
+            }],
+          },
+        ],
+      );
+    }
   });
 
   it("preserves canonical runtime messages on the compatibility route", () => {
@@ -617,6 +831,7 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
       agentSource: { type: "branch", branch: "main" },
       messages: [
         {
@@ -673,6 +888,7 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
       agentSource: { type: "branch", branch: "main" },
       messages: [
         {

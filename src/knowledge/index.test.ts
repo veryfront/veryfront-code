@@ -7,6 +7,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, mkdir, withTempDir, writeTextFile } from "#veryfront/testing/deno-compat.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { join } from "#veryfront/compat/path";
 import { clearEmbeddingProviders, registerEmbeddingProvider } from "#veryfront/embedding/index.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
@@ -16,8 +17,6 @@ import {
   projectKnowledge,
   searchProjectKnowledge,
 } from "./index.ts";
-
-const originalFetch = globalThis.fetch;
 
 function registerTestEmbeddingProvider(): void {
   registerEmbeddingProvider("test", () =>
@@ -46,7 +45,6 @@ function registerTestEmbeddingProvider(): void {
 describe("projectKnowledge", () => {
   afterEach(() => {
     clearEmbeddingProviders();
-    globalThis.fetch = originalFetch;
   });
 
   it("retrieves source-controlled project knowledge with default paths", async () => {
@@ -176,6 +174,91 @@ describe("projectKnowledge", () => {
         "2026-06-26",
       );
       assertEquals(result.shard, { shard_index: 0, shard_count: 1, total_items: 2 });
+    });
+  });
+
+  it("partitions the local knowledge manifest across lookup shards", async () => {
+    await withTempDir(async (projectDir) => {
+      await mkdir(join(projectDir, "knowledge"), { recursive: true });
+      const allPaths: string[] = [];
+      for (const name of ["alpha", "beta", "gamma", "delta"]) {
+        await writeTextFile(
+          join(projectDir, "knowledge", `${name}.md`),
+          [
+            "---",
+            "type: runbook",
+            `title: ${name}`,
+            "---",
+            "",
+            `${name} content.`,
+          ].join("\n"),
+        );
+        allPaths.push(`knowledge/${name}.md`);
+      }
+
+      const knowledge = projectKnowledge({ projectDir });
+      const firstShard = await knowledge.lookup({
+        query: "zxqv yjkp",
+        limit: 100,
+        shard_count: 2,
+        shard_index: 0,
+      });
+      const secondShard = await knowledge.lookup({
+        query: "zxqv yjkp",
+        limit: 100,
+        shard_count: 2,
+        shard_index: 1,
+      });
+
+      const pathsA = firstShard.data.map((item) => item.path);
+      const pathsB = secondShard.data.map((item) => item.path);
+
+      assertEquals(
+        [...pathsA, ...pathsB].sort(),
+        [...allPaths].sort(),
+        "shards partition the manifest without loss",
+      );
+      assertEquals(
+        pathsA.some((path) => pathsB.includes(path)),
+        false,
+        "shards do not overlap",
+      );
+      assertEquals(
+        firstShard.shard.total_items + secondShard.shard.total_items,
+        allPaths.length,
+        "shard.total_items reports the shard size, not the whole manifest",
+      );
+    });
+  });
+
+  it("clamps lookup limits to the supported page range", async () => {
+    await withTempDir(async (projectDir) => {
+      await mkdir(join(projectDir, "knowledge"), { recursive: true });
+      for (let index = 0; index < 13; index++) {
+        await writeTextFile(
+          join(projectDir, "knowledge", `doc-${index.toString().padStart(2, "0")}.md`),
+          [
+            "---",
+            "type: runbook",
+            `title: Doc ${index}`,
+            "---",
+            "",
+            "Doc content.",
+          ].join("\n"),
+        );
+      }
+
+      const knowledge = projectKnowledge({ projectDir });
+      const capped = await knowledge.lookup({ query: "zxqv yjkp", limit: 100 });
+      const floored = await knowledge.lookup({ query: "zxqv yjkp", limit: 0 });
+
+      assertEquals(capped.returned, 12, "lookup limits are capped at MAX_LOOKUP_LIMIT");
+      assertEquals(floored.returned, 1, "a non-positive limit clamps up to one entry");
+      assertEquals(
+        typeof floored.page_info.next,
+        "string",
+        "a clamped page still advances its cursor",
+      );
     });
   });
 
@@ -384,7 +467,7 @@ describe("projectKnowledge", () => {
 
   it("looks up hosted OKF knowledge from the request-scoped project context", async () => {
     const requestedUrls: string[] = [];
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const result = await withMockFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input instanceof Request ? input.url : String(input);
       requestedUrls.push(url);
       assertEquals(new Headers(init?.headers).get("Authorization"), "Bearer tenant-token");
@@ -443,19 +526,17 @@ describe("projectKnowledge", () => {
         status: 404,
         headers: { "Content-Type": "application/json" },
       });
-    }) as typeof fetch;
-
-    const searchKnowledge = createSearchKnowledgeTool();
-    const result = await runWithRequestContext(
-      {
-        projectSlug: "acme",
-        projectId: "project-1",
-        token: "tenant-token",
-        productionMode: true,
-        releaseId: "release-1",
-      },
-      () => searchKnowledge.execute({ query: "sso release" }),
-    );
+    }, () =>
+      runWithRequestContext(
+        {
+          projectSlug: "acme",
+          projectId: "project-1",
+          token: "tenant-token",
+          productionMode: true,
+          releaseId: "release-1",
+        },
+        () => createSearchKnowledgeTool().execute({ query: "sso release" }),
+      ));
 
     assertEquals(result.mode, "search");
     assertEquals(result.returned, 1);
@@ -467,6 +548,135 @@ describe("projectKnowledge", () => {
     assertEquals(requestedUrls.length, 1);
     assertStringIncludes(requestedUrls[0] ?? "", "/projects/acme/releases/release-1/files");
     assertStringIncludes(requestedUrls[0] ?? "", "path=knowledge%2F");
+  });
+
+  it("looks up hosted OKF knowledge from the request-scoped environment context", async () => {
+    const requestedUrls: string[] = [];
+    const result = await withMockFetch(async (input: RequestInfo | URL) => {
+      const url = input instanceof Request ? input.url : String(input);
+      requestedUrls.push(url);
+
+      const parsed = new URL(url);
+      if (parsed.pathname === "/projects/acme/environments/Production/files") {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: "file-1",
+                version_id: "version-1",
+                path: "knowledge/login-troubleshooting.md",
+                content: [
+                  "---",
+                  "type: runbook",
+                  "title: Login troubleshooting",
+                  "description: Diagnose SSO failures after releases.",
+                  "---",
+                  "",
+                  "# Login troubleshooting",
+                ].join("\n"),
+                type: "file",
+                size: 128,
+                updated_at: "2026-06-26T00:00:00.000Z",
+              },
+            ],
+            page_info: { self: null, first: null, next: null, prev: null },
+            environment_id: "environment-1",
+            environment_name: "Production",
+            release_id: "release-1",
+            release_version: "1",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      return new Response(JSON.stringify({ error: "unexpected request", url }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    }, () =>
+      runWithRequestContext(
+        {
+          projectSlug: "acme",
+          projectId: "project-1",
+          token: "tenant-token",
+          productionMode: true,
+          environmentName: "Production",
+        },
+        () => createSearchKnowledgeTool().execute({ query: "sso release" }),
+      ));
+
+    assertEquals(result.returned, 1, "the environment manifest yields the matching document");
+    assertEquals(requestedUrls.length, 1, "the environment context issues a single files request");
+    assertStringIncludes(
+      requestedUrls[0] ?? "",
+      "/projects/acme/environments/Production/files",
+      "a production request without a release reads the requested environment",
+    );
+  });
+
+  it("looks up hosted OKF knowledge from the request-scoped branch context", async () => {
+    const requestedUrls: string[] = [];
+    const result = await withMockFetch(async (input: RequestInfo | URL) => {
+      const url = input instanceof Request ? input.url : String(input);
+      requestedUrls.push(url);
+
+      const parsed = new URL(url);
+      if (parsed.pathname === "/projects/acme/files") {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: "file-1",
+                version_id: "version-1",
+                path: "knowledge/login-troubleshooting.md",
+                content: [
+                  "---",
+                  "type: runbook",
+                  "title: Login troubleshooting",
+                  "description: Diagnose SSO failures after releases.",
+                  "---",
+                  "",
+                  "# Login troubleshooting",
+                ].join("\n"),
+                type: "file",
+                size: 128,
+                updated_at: "2026-06-26T00:00:00.000Z",
+              },
+            ],
+            page_info: { self: null, first: null, next: null, prev: null },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      return new Response(JSON.stringify({ error: "unexpected request", url }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    }, () =>
+      runWithRequestContext(
+        {
+          projectSlug: "acme",
+          projectId: "project-1",
+          token: "tenant-token",
+          productionMode: false,
+          branch: "feature-x",
+        },
+        () => createSearchKnowledgeTool().execute({ query: "sso release" }),
+      ));
+
+    assertEquals(result.returned, 1, "the branch manifest yields the matching document");
+    assertEquals(requestedUrls.length, 1, "the branch context issues a single files request");
+    assertStringIncludes(
+      requestedUrls[0] ?? "",
+      "/projects/acme/files",
+      "a non-production request reads the branch files endpoint",
+    );
+    assertStringIncludes(
+      requestedUrls[0] ?? "",
+      "branch=feature-x",
+      "a non-production request reads the requested branch",
+    );
   });
 
   it("indexes project knowledge when requested explicitly", async () => {

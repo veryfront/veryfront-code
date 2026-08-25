@@ -18,7 +18,7 @@ export const normalizeChild = (() => {
 
     const keys = Object.keys(child);
     const result = keys.length === 1 && keys[0] === "children"
-      ? (child as unknown as { children: React.ReactNode }).children
+      ? (child as { children?: React.ReactNode }).children
       : child;
 
     cache.set(child, result);

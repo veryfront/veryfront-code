@@ -126,6 +126,23 @@ describe("html/html-injection", () => {
       assertEquals(html.includes("my-slug"), false);
     });
 
+    it("injects a previously selected production hydration runtime", () => {
+      const agedRuntimePath = "/_veryfront/hydration-runtime.1a2b3c4d.js";
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          slug: "test",
+          prodHydrationModulePath: agedRuntimePath,
+        },
+      );
+
+      assertEquals(html.includes(`src="${agedRuntimePath}"`), true);
+      assertEquals(html.includes("/_veryfront/rsc/client.js"), false);
+    });
+
     it("should escape script-closing sequences in prebuilt import maps", () => {
       const hostileImportMap = JSON.stringify({
         imports: {
@@ -140,11 +157,17 @@ describe("html/html-injection", () => {
           mode: "production",
           slug: "test",
           importMapJson: hostileImportMap,
+          nonce: "nonce-123",
         },
       );
 
       assertEquals(html.includes("</script><script>"), false);
       assertEquals(html.includes("\\u003c/script"), true);
+      assertEquals(
+        html.includes('<script type="importmap" nonce="nonce-123">'),
+        true,
+        "the import map must carry the CSP nonce or a nonce-enforcing policy blocks module resolution",
+      );
     });
 
     it("should clear dev placeholders in production mode", () => {
@@ -175,6 +198,10 @@ describe("html/html-injection", () => {
       const hydrationData = extractHydrationData(html);
       assertEquals(hydrationData.pagePath, "app/page.tsx");
       assertEquals(hydrationData.clientModuleStrategy, "rsc-module");
+      assertEquals(
+        html.indexOf('id="veryfront-hydration-data"') < html.indexOf("<p>content</p>"),
+        true,
+      );
     });
 
     it("injects a minimal dependency snapshot for non-client full documents", () => {
@@ -451,8 +478,8 @@ describe("html/html-injection", () => {
         },
       );
 
-      assertEquals(html.includes('id="vf-tailwind-css"'), true);
-      assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
+      assertEquals(html.includes('id="vf-project-css"'), true);
+      assertEquals(html.includes('/_vf_styles/styles.css"'), true);
     });
 
     it("injects production project stylesheet links for full HTML documents", () => {
@@ -469,6 +496,93 @@ describe("html/html-injection", () => {
       );
 
       assertEquals(html.includes('<link rel="stylesheet" href="/_vf/css/abc123.css">'), true);
+    });
+
+    it("skips stylesheet injection only for real stylesheet markup", () => {
+      const alreadyLinked = `<!DOCTYPE html>
+<html><head><link id="vf-project-css" rel="stylesheet" href="/_vf_styles/styles.css"></head>
+<body>{{ content }}</body></html>`;
+
+      const deduped = injectHTMLContent(alreadyLinked, "<p>content</p>", minMeta, {
+        mode: "production",
+        environment: "preview",
+        slug: "test",
+        projectStylesheetHref: "/_vf/css/abc123.css",
+      });
+      assertEquals(deduped.includes("/_vf/css/abc123.css"), false);
+      // The markup already links the project stylesheet, so it is left alone
+      // and no second link is injected alongside it.
+      assertEquals(deduped.split("/_vf_styles/styles.css").length - 1, 1);
+
+      // Lookalike substrings — data-* attributes, non-link CSS URLs, and the
+      // id in ordinary text — must not suppress the required injection.
+      const lookalikes = `<!DOCTYPE html>
+<html><head><meta data-id="vf-project-css" data-href="/_vf_styles/styles.css">
+<a href="/_vf/css/decoy.css">id="vf-tailwind-css"</a></head>
+<body>{{ content }}</body></html>`;
+
+      const injected = injectHTMLContent(lookalikes, "<p>content</p>", minMeta, {
+        mode: "production",
+        environment: "preview",
+        slug: "test",
+        projectStylesheetHref: "/_vf/css/abc123.css",
+      });
+      assertEquals(
+        injected.includes('<link rel="stylesheet" href="/_vf/css/abc123.css">'),
+        true,
+      );
+    });
+
+    it("does not treat preload or data attributes as an applied project stylesheet", () => {
+      for (
+        const lookalike of [
+          '<link rel="preload" href="/_vf/css/decoy.css">',
+          '<link rel="preload" id="vf-project-css" href="/decoy.css">',
+          '<link rel="stylesheet" data-href="/_vf/css/decoy.css" href="/decoy.css">',
+          '<style data-id="vf-project-css">body { color: red; }</style>',
+        ]
+      ) {
+        const html = injectHTMLContent(
+          `<!DOCTYPE html><html><head>${lookalike}</head><body>{{ content }}</body></html>`,
+          "<p>content</p>",
+          minMeta,
+          {
+            mode: "production",
+            environment: "production",
+            slug: "test",
+            projectStylesheetHref: "/_vf/css/required.css",
+          },
+        );
+
+        assertEquals(
+          html.includes('<link rel="stylesheet" href="/_vf/css/required.css">'),
+          true,
+          lookalike,
+        );
+      }
+    });
+
+    it("recognizes mixed-case stylesheet rel tokens and genuine project style elements", () => {
+      for (
+        const existingStylesheet of [
+          '<link rel="preload StyleSheet" href="/_vf/css/existing.css">',
+          '<style id = "vf-project-css">body { color: red; }</style>',
+        ]
+      ) {
+        const html = injectHTMLContent(
+          `<!DOCTYPE html><html><head>${existingStylesheet}</head><body>{{ content }}</body></html>`,
+          "<p>content</p>",
+          minMeta,
+          {
+            mode: "production",
+            environment: "production",
+            slug: "test",
+            projectStylesheetHref: "/_vf/css/duplicate.css",
+          },
+        );
+
+        assertEquals(html.includes("/_vf/css/duplicate.css"), false, existingStylesheet);
+      }
     });
   });
 });

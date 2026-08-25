@@ -17,6 +17,13 @@ describe("react-imports", () => {
       );
     });
 
+    it("should resolve React to the caller-supplied version", async () => {
+      const code = 'import React from "react"';
+      const result = await resolveReactImports(code, false, "18.3.1");
+      expect(result).toContain("react@18.3.1");
+      expect(result).not.toContain("react@19.2.4");
+    });
+
     it("should resolve bare React import with single quotes", async () => {
       const code = "import React from 'react'";
       const result = await resolveReactImports(code);
@@ -386,6 +393,11 @@ import { Button } from "some-ui-lib"`;
       );
       expect(code).not.toContain("?deps");
     });
+
+    it("skips a URL already pinned to the caller-supplied React version", async () => {
+      const code = 'import React from "https://esm.sh/react@18.3.1"';
+      expect(await addDepsToEsmShUrls(code, false, "18.3.1")).toBe(code);
+    });
   });
 
   describe("rewriteVendorImports", () => {
@@ -404,6 +416,23 @@ import { Button } from "some-ui-lib"`;
       );
       expect(result).toContain(`export * from "https://modules/_vendor.js?v=abc123"`);
       expect(result.includes("const {")).toBe(false);
+    });
+
+    it("routes a static default React import to the vendor bundle", async () => {
+      const result = await rewriteVendorImports(
+        'import React from "react";\n',
+        "https://modules",
+        "abc123",
+      );
+
+      expect(result).toBe(
+        "import { react as React } from 'https://modules/_vendor.js?v=abc123';\n",
+      );
+    });
+
+    it("leaves a non-React dynamic import alone", async () => {
+      const code = 'const p = import("./lazy.js");';
+      expect(await rewriteVendorImports(code, "https://modules", "abc123")).toBe(code);
     });
   });
 });

@@ -92,6 +92,21 @@ function createMockClient() {
         },
       ]);
     },
+    xRead(
+      streams: Array<{ key: string; id: string }>,
+      options?: { BLOCK?: number; COUNT?: number },
+    ): Promise<
+      | Array<{ name: string; messages: Array<{ id: string; message: Record<string, string> }> }>
+      | null
+    > {
+      calls.push({ method: "xRead", args: [streams, options] });
+      return Promise.resolve([
+        {
+          name: "stream1",
+          messages: [{ id: "2-0", message: { revision: "2", status: "running" } }],
+        },
+      ]);
+    },
     set(key: string, value: string, options?: { NX?: true; PX?: number; EX?: number }) {
       calls.push({ method: "set", args: [key, value, options] });
       return Promise.resolve("OK");
@@ -201,6 +216,32 @@ describe("platform/adapters/redis/node", () => {
         { group: "g", consumer: "c" },
       );
       assertEquals(result, []);
+    });
+
+    it("should reshape xread streams and responses without a consumer group", async () => {
+      const { client, calls } = createMockClient();
+      const adapter = new NodeRedisAdapter(client as never);
+      const result = await adapter.xread(
+        [{ key: "stream1", xid: "1-0" }],
+        { block: 25, count: 8 },
+      );
+
+      assertEquals(firstCall(calls).method, "xRead");
+      assertEquals(firstCall(calls).args, [
+        [{ key: "stream1", id: "1-0" }],
+        { BLOCK: 25, COUNT: 8 },
+      ]);
+      assertEquals(result, [{
+        key: "stream1",
+        messages: [{ id: "2-0", data: { revision: "2", status: "running" } }],
+      }]);
+    });
+
+    it("should return an empty array when xread yields null", async () => {
+      const { client } = createMockClient();
+      client.xRead = () => Promise.resolve(null);
+      const adapter = new NodeRedisAdapter(client as never);
+      assertEquals(await adapter.xread([{ key: "s", xid: "0-0" }]), []);
     });
 
     it("should map lowercase set options to redis NX/PX/EX", async () => {

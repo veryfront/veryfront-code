@@ -1,7 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { addNonceToHtmlStream, addNonceToHtmlTags } from "./nonce-injection.ts";
+import {
+  addNonceToHtmlStream,
+  addNonceToHtmlTags,
+  bindHtmlNonceFromCache,
+  isHtmlNonceCacheCompatible,
+  sealHtmlNonceForCache,
+} from "./nonce-injection.ts";
 
 async function readUtf8Stream(stream: ReadableStream<Uint8Array>): Promise<string> {
   const reader = stream.getReader();
@@ -16,6 +22,30 @@ async function readUtf8Stream(stream: ReadableStream<Uint8Array>): Promise<strin
 }
 
 describe("html/nonce-injection", () => {
+  it("rebinds only previously authorized inline cache nonce slots", () => {
+    const html = '<script nonce="nonce-a">framework()</script>' +
+      '<style nonce="nonce-a">.framework{}</style>' +
+      '<script type="module" src="/_veryfront/hydration-runtime.1234abcd.js" nonce="nonce-a"></script>' +
+      '<script src="https://app.example/owned.js" nonce="nonce-a"></script>' +
+      '<script nonce="app-owned">application()</script>';
+
+    const sealed = sealHtmlNonceForCache(html, "nonce-a");
+    assertEquals(sealed.html.includes('nonce="nonce-a">framework()'), false);
+    const rebound = bindHtmlNonceFromCache(sealed.html, sealed.placeholder, "nonce-b");
+
+    assertEquals(rebound.includes('nonce="nonce-b">framework()'), true);
+    assertEquals(rebound.includes('nonce="nonce-b">.framework{}'), true);
+    assertEquals(
+      rebound.includes(
+        'src="/_veryfront/hydration-runtime.1234abcd.js" nonce="nonce-b"',
+      ),
+      true,
+    );
+    assertEquals(rebound.includes('src="https://app.example/owned.js" nonce="nonce-a"'), true);
+    assertEquals(rebound.includes('nonce="app-owned">application()'), true);
+    assertEquals(rebound.includes(sealed.placeholder!), false);
+  });
+
   it("adds a nonce to inline script and style tags", () => {
     const html = addNonceToHtmlTags(
       `<style>.chat{color:red}</style><script>window.__vf=1</script>`,
@@ -24,6 +54,35 @@ describe("html/nonce-injection", () => {
 
     assertEquals(html.includes('<style nonce="nonce-123">.chat{color:red}</style>'), true);
     assertEquals(html.includes('<script nonce="nonce-123">window.__vf=1</script>'), true);
+  });
+
+  it("leaves external scripts to the CSP source allowlist", () => {
+    const html = addNonceToHtmlTags(
+      `<script src="https://cdn.example/app.js"></script><script src=""></script>`,
+      "nonce-123",
+    );
+
+    assertEquals(html.includes("nonce="), false);
+  });
+
+  it("adds a nonce only to exact framework-owned external scripts", () => {
+    const html = addNonceToHtmlTags(
+      '<script src="/_veryfront/rsc/client.js"></script>' +
+        '<script src="/_veryfront/hydration-runtime.1234abcd.js"></script>' +
+        '<script src="/_veryfront/hydration-runtime.js"></script>' +
+        '<script src="/_veryfront/rsc/client.js?variant=app"></script>' +
+        '<script src="https://app.example/_veryfront/rsc/client.js"></script>',
+      "nonce-123",
+    );
+
+    assertEquals(
+      html,
+      '<script src="/_veryfront/rsc/client.js" nonce="nonce-123"></script>' +
+        '<script src="/_veryfront/hydration-runtime.1234abcd.js" nonce="nonce-123"></script>' +
+        '<script src="/_veryfront/hydration-runtime.js" nonce="nonce-123"></script>' +
+        '<script src="/_veryfront/rsc/client.js?variant=app"></script>' +
+        '<script src="https://app.example/_veryfront/rsc/client.js"></script>',
+    );
   });
 
   it("replaces an existing nonce attribute with the response nonce", () => {
@@ -199,5 +258,30 @@ describe("html/nonce-injection", () => {
         value: originalToLowerCase,
       });
     }
+  });
+
+  it("rejects unsealed cache entries when the response enforces a nonce", () => {
+    assertEquals(
+      isHtmlNonceCacheCompatible(undefined, "nonce-a"),
+      false,
+      "a legacy entry with no placeholder must not be served to a nonce-enforcing response",
+    );
+    assertEquals(
+      isHtmlNonceCacheCompatible("not-a-placeholder", "nonce-a"),
+      false,
+      "only an internally minted placeholder may opt an entry into nonce rebinding",
+    );
+
+    const sealed = sealHtmlNonceForCache('<script nonce="nonce-a">f()</script>', "nonce-a");
+    assertEquals(
+      isHtmlNonceCacheCompatible(sealed.placeholder, "nonce-b"),
+      true,
+      "a sealed entry must be rebindable to a new response nonce",
+    );
+    assertEquals(
+      isHtmlNonceCacheCompatible(undefined, undefined),
+      true,
+      "responses without a nonce must still hit the cache",
+    );
   });
 });

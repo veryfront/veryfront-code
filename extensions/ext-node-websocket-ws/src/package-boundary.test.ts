@@ -3,12 +3,12 @@ import rootConfig from "../../../deno.json" with { type: "json" };
 import * as rootExtensions from "../../../src/extensions/index.ts";
 import extensionConfig from "../deno.json" with { type: "json" };
 
-Deno.test("ws extension is explicit and owns every third-party dependency", async () => {
+Deno.test("ws extension is auto-activated and owns every third-party dependency", async () => {
   const manifest = JSON.parse(
     await Deno.readTextFile(new URL("../deno.json", import.meta.url)),
   );
 
-  assertEquals(manifest.veryfront.activation, "explicit");
+  assertEquals(manifest.veryfront.activation, "auto");
   assertEquals(manifest.veryfront.contracts.provides, [
     "NodeWebSocketServerProvider",
   ]);

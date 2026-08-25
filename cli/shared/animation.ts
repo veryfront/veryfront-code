@@ -7,7 +7,7 @@
  * @module cli/shared/animation
  */
 
-import { getEnv } from "veryfront/platform";
+import { type HostRuntime, liveHostRuntime } from "veryfront/platform";
 
 let _animationDisabled = false;
 
@@ -15,7 +15,7 @@ export function setAnimationDisabled(disabled: boolean): void {
   _animationDisabled = disabled;
 }
 
-export function isAnimationDisabled(): boolean {
+export function isAnimationDisabled(host: HostRuntime = liveHostRuntime()): boolean {
   if (_animationDisabled) return true;
-  return getEnv("TERM") === "dumb";
+  return host.env.get("TERM") === "dumb";
 }

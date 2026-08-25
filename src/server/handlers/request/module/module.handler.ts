@@ -12,9 +12,21 @@ import { handlePageDataEndpoint } from "./page-data-endpoint-handler.ts";
 import { handleVirtualModule } from "./virtual-module-handler.ts";
 import { handleBatchModuleEndpoint } from "./batch-module-handler.ts";
 import { HTTP_METHOD_NOT_ALLOWED, PRIORITY_MEDIUM } from "#veryfront/utils/constants/index.ts";
+import {
+  createErrorResponseFromDefinition,
+  PROJECT_EXECUTION_UNAVAILABLE,
+} from "#veryfront/errors";
+import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 
 const MODULE_ENDPOINT_PREFIXES = [
   "/_vf_modules/",
+  "/_veryfront/modules/",
+  "/_veryfront/pages/",
+  "/_veryfront/data/",
+  "/_veryfront/page-data/",
+] as const;
+
+const HOST_RENDERER_ENDPOINT_PREFIXES = [
   "/_veryfront/modules/",
   "/_veryfront/pages/",
   "/_veryfront/data/",
@@ -52,6 +64,41 @@ export class ModuleHandler extends BaseHandler {
               "Content-Type": "text/plain; charset=utf-8",
             },
           }),
+        ),
+      );
+    }
+
+    // These endpoints delegate to the legacy renderer, whose module loader
+    // imports page and layout code in the host process rather than through a
+    // generation-owned prepared module graph.
+    //
+    // That is a renderer-architecture concern, not a policy one, so it does not
+    // decide who may execute tenant code: the host-execution capability does.
+    // A host that grants the capability is asserting it is a suitable executor,
+    // and this surface honours that like every other. `rsc/endpoints/
+    // endpoint-router.ts` already resolved the identical tension the same way.
+    if (
+      requiresIsolatedProjectRuntime(ctx) &&
+      HOST_RENDERER_ENDPOINT_PREFIXES.some((prefix) => pathname.startsWith(prefix))
+    ) {
+      const problem = createErrorResponseFromDefinition(
+        PROJECT_EXECUTION_UNAVAILABLE,
+        {
+          detail:
+            "Shared runtimes require a dedicated isolated project runtime for module rendering",
+          instance: pathname,
+        },
+      );
+      problem.headers.set("Cache-Control", "no-store");
+      return Promise.resolve(
+        respond(
+          method === "HEAD"
+            ? new Response(null, {
+              status: problem.status,
+              statusText: problem.statusText,
+              headers: problem.headers,
+            })
+            : problem,
         ),
       );
     }

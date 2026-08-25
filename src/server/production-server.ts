@@ -1,4 +1,5 @@
 import { serverLogger as logger } from "#veryfront/utils";
+import { installUnhandledRejectionGuard } from "#veryfront/server/unhandled-rejection-guard.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { createVeryfrontHandler } from "./runtime-handler/index.ts";
@@ -32,6 +33,14 @@ import {
 } from "#veryfront/rendering/ssr-globals.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { snapshotNodeWebSocketServerProvider } from "#veryfront/extensions/websocket";
+import {
+  HOST_PROJECT_EXECUTION_OVERRIDE_ENV,
+  isHostProjectExecutionOverrideEnabled,
+} from "#veryfront/security/host-execution-policy.ts";
+import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
+import { getIsolationPosture } from "#veryfront/security/sandbox/worker-pool.ts";
+import { runStartupDiscovery } from "./startup-discovery.ts";
+import { runRequestInterceptor } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
 const serverLog = logger.component("server");
 const globalLog = logger.component("global");
@@ -156,6 +165,17 @@ export interface StartProductionServerOptions extends ServerOptions {
   adapter?: RuntimeAdapter;
   /** Pre-computed bootstrap result to skip internal bootstrap (avoids double initialization) */
   bootstrapResult?: BootstrapResult;
+  /**
+   * Contain unhandled promise rejections instead of letting them terminate the
+   * process. Defaults to true.
+   *
+   * The hosted runtime serves many projects per process, where one project's
+   * dropped promise otherwise takes down every other project on the pod. Set
+   * this to false when embedding the server in a process you own and would
+   * rather have a rejection stay fatal, so a bug outside the server is not
+   * masked. Rejections are reported at error level either way.
+   */
+  unhandledRejectionGuard?: boolean;
 }
 
 /** Starts production server. */
@@ -189,6 +209,13 @@ export function startProductionServer(
       const baseAdapter = options.adapter ?? (await runtime.get());
       const memoryMonitoringConfig = startConfiguredMemoryMonitoring(baseAdapter.env);
       const ownsMemoryMonitoring = memoryMonitoringConfig.enabled;
+      // Installed before bootstrap so a rejection during startup is contained
+      // too. This process serves every project on the pod, so one dropped
+      // promise must not take the others down with it. Embedders that own the
+      // process can opt out and keep rejections fatal.
+      const rejectionGuard = options.unhandledRejectionGuard === false
+        ? undefined
+        : installUnhandledRejectionGuard();
 
       try {
         // Use pre-computed bootstrap result if provided, otherwise bootstrap here
@@ -220,6 +247,18 @@ export function startProductionServer(
         // the actual data client-side after hydration.
         enableSSRClientOnlyFetching();
 
+        // A dedicated single-project runtime carries the capability implicitly.
+        // A shared runtime intended to be the executor must be granted it by an
+        // operator, deliberately and visibly.
+        //
+        // Computed before discovery so startup and request handling share one
+        // value. They disagreed before issue-inbox#363: discovery hardcoded a
+        // grant while the handler computed the real posture.
+        const isolatedRuntimeGrant = bootstrap.config.fs?.veryfront?.proxyMode !== true &&
+          !isSharedProjectRuntime({ adapter });
+        const operatorGrant = isHostProjectExecutionOverrideEnabled();
+        const allowHostProjectCodeExecution = isolatedRuntimeGrant || operatorGrant;
+
         // Run primitive discovery before serving (registries must be populated before first request)
         if (discoveryConfig) {
           try {
@@ -228,28 +267,15 @@ export function startProductionServer(
               "#veryfront/platform/adapters/fs/wrapper.ts"
             );
 
-            if (
-              discoveryConfig.projectSlug && discoveryConfig.apiToken &&
-              discoveryConfig.fsAdapter && isExtendedFSAdapter(discoveryConfig.fsAdapter) &&
-              discoveryConfig.fsAdapter.isMultiProjectMode()
-            ) {
-              // Multi-project proxy: scope discovery to specific project
-              await discoveryConfig.fsAdapter.runWithContext(
-                discoveryConfig.projectSlug,
-                discoveryConfig.apiToken,
-                () =>
-                  discoverAll({
-                    baseDir: discoveryConfig.baseDir,
-                    fsAdapter: discoveryConfig.fsAdapter,
-                    verbose: discoveryConfig.verbose ?? false,
-                  }),
-              );
-            } else {
-              await discoverAll({
-                baseDir: discoveryConfig.baseDir,
-                fsAdapter: discoveryConfig.fsAdapter,
-                verbose: discoveryConfig.verbose ?? false,
-              });
+            const outcome = await runStartupDiscovery({
+              config: discoveryConfig,
+              allowHostProjectCodeExecution,
+              discoverAll,
+              isExtendedFSAdapter,
+            });
+
+            if (!outcome.ran) {
+              serverLog.info("Primitive discovery skipped", { reason: outcome.reason });
             }
           } catch (error) {
             serverLog.error("Primitive discovery failed", {
@@ -260,6 +286,19 @@ export function startProductionServer(
 
         logger.info("Starting production server", { projectDir, port, bindAddress });
 
+        // Resolve the isolation flags here rather than leaving them to the
+        // first request, so the posture (including the warning for a master
+        // switch that enables no surface) lands in the startup log where an
+        // operator looks for it.
+        getIsolationPosture();
+
+        if (operatorGrant && !isolatedRuntimeGrant) {
+          logger.warn("Shared runtime is executing tenant project code by operator grant", {
+            overrideEnv: HOST_PROJECT_EXECUTION_OVERRIDE_ENV,
+            proxyMode: bootstrap.config.fs?.veryfront?.proxyMode === true,
+          });
+        }
+
         const baseHandler = createVeryfrontHandler(projectDir, adapter, {
           projectDir,
           debug,
@@ -269,6 +308,7 @@ export function startProductionServer(
           defaultReleaseId,
           defaultEnvironment,
           localProjects,
+          allowHostProjectCodeExecution,
         });
 
         const coreHandler = baseHandler;
@@ -281,7 +321,7 @@ export function startProductionServer(
             async (req: Request) => {
               const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
               if (isWebSocketUpgrade) return coreHandler(req);
-              return coreHandler(await requestInterceptor(req));
+              return coreHandler(await runRequestInterceptor(req, requestInterceptor));
             },
             { ready: coreHandler.ready },
           )
@@ -312,6 +352,7 @@ export function startProductionServer(
         const stop = async (): Promise<void> => {
           setServerInitialized(false);
           if (ownsMemoryMonitoring) stopMemoryMonitoring();
+          rejectionGuard?.dispose();
 
           try {
             await server.stop();
@@ -323,6 +364,7 @@ export function startProductionServer(
         return { ready, stop };
       } catch (error) {
         if (ownsMemoryMonitoring) stopMemoryMonitoring();
+        rejectionGuard?.dispose();
         throw error;
       }
     },

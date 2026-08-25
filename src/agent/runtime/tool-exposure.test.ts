@@ -36,6 +36,23 @@ const catalog = [
   definition("load_skill", "Load a configured skill"),
 ];
 
+function withPollutedDescriptorPrototypeValue<T>(value: unknown, fn: () => T): T {
+  const original = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+  Object.defineProperty(Object.prototype, "value", {
+    configurable: true,
+    value,
+  });
+  try {
+    return fn();
+  } finally {
+    if (original) {
+      Object.defineProperty(Object.prototype, "value", original);
+    } else {
+      delete (Object.prototype as Record<string, unknown>).value;
+    }
+  }
+}
+
 it("tool exposure plans eager and deferred visibility deterministically", () => {
   const eager = createToolExposurePlan({
     authorized: catalog,
@@ -52,15 +69,15 @@ it("tool exposure plans eager and deferred visibility deterministically", () => 
   });
   assertEquals(
     deferred.visible.map((tool) => tool.name),
-    ["form_input", "load_skill", TOOL_SEARCH_TOOL_NAME],
+    ["load_skill", TOOL_SEARCH_TOOL_NAME],
   );
   assertEquals(
     deferred.deferred.map((tool) => tool.name),
-    ["archive_release", "create_release", "get_release"],
+    ["archive_release", "create_release", "form_input", "get_release"],
   );
 });
 
-it("deferred exposure omits tool_search when only bootstrap tools are authorized", () => {
+it("deferred exposure keeps form_input searchable and omits search for load_skill alone", () => {
   const deferred = createToolExposurePlan({
     authorized: [
       definition("form_input", "Ask the user for structured input"),
@@ -72,9 +89,17 @@ it("deferred exposure omits tool_search when only bootstrap tools are authorized
 
   assertEquals(
     deferred.visible.map((tool) => tool.name),
-    ["form_input", "load_skill"],
+    ["load_skill", TOOL_SEARCH_TOOL_NAME],
   );
-  assertEquals(deferred.deferred, []);
+  assertEquals(deferred.deferred.map((tool) => tool.name), ["form_input"]);
+
+  const loadSkillOnly = createToolExposurePlan({
+    authorized: [definition("load_skill", "Load a configured skill")],
+    mode: "deferred",
+    state: createToolExposureState(),
+  });
+  assertEquals(loadSkillOnly.visible.map((tool) => tool.name), ["load_skill"]);
+  assertEquals(loadSkillOnly.deferred, []);
 });
 
 it("deferred exposure keeps injected tool_search in visible ASCII order", () => {
@@ -185,20 +210,58 @@ it("tool search normalizes ASCII case and underscores as spaces", () => {
   );
 });
 
-it("tool search falls back to deterministic whitespace terms after a phrase miss", () => {
+it("tool search scores fallback terms by selectivity after a phrase miss", () => {
   const fileCatalog = [
     definition("create_file", "Create a project file"),
     definition("update_file", "Update a project file"),
     definition("sandbox_write_file", "Write only inside the sandbox filesystem"),
   ];
 
+  // `file` matches every candidate and therefore says nothing about which one the
+  // caller meant; `create` and `update` each match exactly one. `sandbox_write_file`
+  // matches no term but `file`, so returning it would be filler, not a result.
   assertEquals(
     searchToolExposure({
       query: "create_file update_file project file",
       authorized: fileCatalog,
       state: createToolExposureState(),
     }).matches.map((match) => match.name),
-    ["create_file", "update_file", "sandbox_write_file"],
+    ["create_file", "update_file"],
+  );
+});
+
+it("tool search misses when a common verb is the only match in a realistic catalog", () => {
+  const realisticCatalog = [
+    ...Array.from(
+      { length: 30 },
+      (_, index) =>
+        definition(
+          `list_catalog_${String(index).padStart(3, "0")}`,
+          `List catalog item ${String(index).padStart(3, "0")}`,
+        ),
+    ),
+    ...Array.from(
+      { length: 100 },
+      (_, index) =>
+        definition(
+          `catalog_tool_${String(index + 30).padStart(3, "0")}`,
+          "Catalog tool",
+        ),
+    ),
+  ];
+
+  assertEquals(
+    searchToolExposure({
+      query: "list emails",
+      authorized: realisticCatalog,
+      state: createToolExposureState(),
+    }),
+    {
+      matches: [],
+      resultCount: 0,
+      loadedCount: 0,
+      miss: true,
+    },
   );
 });
 
@@ -343,6 +406,50 @@ it("tool search never invokes schema accessors and contains throwing proxy refle
   assertEquals(proxyReads, 1);
 });
 
+it("tool search rejects accessors and revoked proxies despite inherited descriptor values", () => {
+  let toolNameReads = 0;
+  let schemaDescriptionReads = 0;
+  const accessorTool = {
+    description: "Unrelated",
+    parameters: {},
+  } as ToolDefinition;
+  Object.defineProperty(accessorTool, "name", {
+    enumerable: true,
+    get() {
+      toolNameReads += 1;
+      return "accessor_tool";
+    },
+  });
+  const accessorSchema = Object.defineProperty({}, "description", {
+    enumerable: true,
+    get() {
+      schemaDescriptionReads += 1;
+      return "polluted capability";
+    },
+  });
+  const revokedTool = Proxy.revocable(definition("revoked", "Polluted capability"), {});
+  revokedTool.revoke();
+
+  const result = withPollutedDescriptorPrototypeValue(
+    "polluted capability",
+    () =>
+      searchToolExposure({
+        query: "polluted capability",
+        authorized: [
+          accessorTool,
+          { name: "schema_accessor", description: "Unrelated", parameters: accessorSchema },
+          revokedTool.proxy as ToolDefinition,
+        ],
+        state: createToolExposureState(),
+      }),
+  );
+
+  assertEquals(result.matches, []);
+  assertEquals(result.miss, true);
+  assertEquals(toolNameReads, 0);
+  assertEquals(schemaDescriptionReads, 0);
+});
+
 it("tool search bounds catalog traversal and returned description bytes", () => {
   const within = Array.from(
     { length: 4_096 },
@@ -417,8 +524,41 @@ it("authorized search matches load for the next step", () => {
   const next = createToolExposurePlan({ authorized: catalog, mode: "deferred", state });
   assertEquals(
     next.visible.map((tool) => tool.name),
-    ["form_input", "get_release", "load_skill", TOOL_SEARCH_TOOL_NAME],
+    ["get_release", "load_skill", TOOL_SEARCH_TOOL_NAME],
   );
+});
+
+it("form_input activation survives a private checkpoint and current-authorization restore", () => {
+  const authorized = [
+    definition("form_input", "Ask the user for structured input"),
+    definition("load_skill", "Load a configured skill"),
+  ];
+  const state = createToolExposureState();
+  const initial = createToolExposurePlan({
+    authorized,
+    mode: "deferred",
+    state,
+  });
+  assertEquals(initial.visible.map((tool) => tool.name), ["load_skill", TOOL_SEARCH_TOOL_NAME]);
+
+  const search = searchToolExposure({
+    query: "form_input",
+    authorized: initial.deferred,
+    state,
+  });
+  assertEquals(search.matches.map((match) => match.name), ["form_input"]);
+
+  const restored = restoreToolExposureState(
+    createToolExposureCheckpoint(authorized, state),
+    authorized,
+  );
+  const resumed = createToolExposurePlan({
+    authorized,
+    mode: "deferred",
+    state: restored,
+  });
+  assertEquals(resumed.visible.map((tool) => tool.name), ["form_input", "load_skill"]);
+  assertEquals(resumed.deferred, []);
 });
 
 it("deferred exposure reserves bootstrap and search inside the provider tool budget", () => {
@@ -443,11 +583,11 @@ it("deferred exposure reserves bootstrap and search inside the provider tool bud
   });
 
   assertEquals(plan.visible.length, 128);
-  assertEquals(plan.visible.some((tool) => tool.name === "form_input"), true);
+  assertEquals(plan.visible.some((tool) => tool.name === "form_input"), false);
   assertEquals(plan.visible.some((tool) => tool.name === "load_skill"), true);
   assertEquals(plan.visible.some((tool) => tool.name === TOOL_SEARCH_TOOL_NAME), true);
-  assertEquals(plan.maxLoadedTools, 125);
-  assertEquals(state.loadedToolNames.size, 125);
+  assertEquals(plan.maxLoadedTools, 126);
+  assertEquals(state.loadedToolNames.size, 126);
   assertEquals(state.loadedToolNames.has("catalog_tool_000"), false);
   assertEquals(state.loadedToolNames.has("catalog_tool_129"), true);
 });
@@ -462,7 +602,10 @@ it("deferred exposure uses the full provider budget once the exact-fit catalog i
     definition("load_skill", "Load a configured skill"),
     ...remoteCatalog,
   ];
-  const state = createToolExposureState(remoteCatalog.map((tool) => tool.name));
+  const state = createToolExposureState([
+    "form_input",
+    ...remoteCatalog.map((tool) => tool.name),
+  ]);
 
   const plan = createToolExposurePlan({
     authorized,
@@ -474,8 +617,8 @@ it("deferred exposure uses the full provider budget once the exact-fit catalog i
   assertEquals(plan.visible.length, 128);
   assertEquals(plan.visible.some((tool) => tool.name === TOOL_SEARCH_TOOL_NAME), false);
   assertEquals(plan.deferred, []);
-  assertEquals(plan.maxLoadedTools, 126);
-  assertEquals(state.loadedToolNames.size, 126);
+  assertEquals(plan.maxLoadedTools, 127);
+  assertEquals(state.loadedToolNames.size, 127);
 });
 
 it("exact-fit deferred exposure loads the final schema without exceeding the provider budget", () => {
@@ -488,7 +631,10 @@ it("exact-fit deferred exposure loads the final schema without exceeding the pro
     definition("load_skill", "Load a configured skill"),
     ...remoteCatalog,
   ];
-  const state = createToolExposureState(remoteCatalog.slice(0, 125).map((tool) => tool.name));
+  const state = createToolExposureState([
+    "form_input",
+    ...remoteCatalog.slice(0, 125).map((tool) => tool.name),
+  ]);
 
   const searchStep = createToolExposurePlan({
     authorized,
@@ -498,7 +644,7 @@ it("exact-fit deferred exposure loads the final schema without exceeding the pro
   });
   assertEquals(searchStep.visible.length, 128);
   assertEquals(searchStep.deferred.map((tool) => tool.name), ["catalog_tool_125"]);
-  assertEquals(searchStep.maxLoadedTools, 126);
+  assertEquals(searchStep.maxLoadedTools, 127);
 
   const search = searchToolExposure({
     query: "catalog_tool_125",
@@ -507,7 +653,7 @@ it("exact-fit deferred exposure loads the final schema without exceeding the pro
     maxLoadedTools: searchStep.maxLoadedTools,
   });
   assertEquals(search.loadedCount, 1);
-  assertEquals(state.loadedToolNames.size, 126);
+  assertEquals(state.loadedToolNames.size, 127);
 
   const loadedStep = createToolExposurePlan({
     authorized,
@@ -532,6 +678,7 @@ it("deferred exposure prunes revoked and bootstrap names before budget eviction"
     retained.name,
     "revoked_tool",
     "form_input",
+    "load_skill",
   ]);
 
   const plan = createToolExposurePlan({
@@ -541,7 +688,7 @@ it("deferred exposure prunes revoked and bootstrap names before budget eviction"
     maxVisibleTools: 4,
   });
 
-  assertEquals([...state.loadedToolNames], [retained.name]);
+  assertEquals([...state.loadedToolNames], [retained.name, "form_input"]);
   assertEquals(
     plan.visible.map((tool) => tool.name),
     ["form_input", "load_skill", retained.name, TOOL_SEARCH_TOOL_NAME],
@@ -755,4 +902,213 @@ it("tool_search is reserved only when deferred framework search is injected", ()
     message = error instanceof Error ? error.message : String(error);
   }
   assert(message.includes("reserved"));
+});
+
+const VERYFRONT_LIST_TOOL_NAMES = [
+  "list_accessible_agents",
+  "list_agent_runs",
+  "list_agent_templates",
+  "list_agent_tool_references",
+  "list_agent_workers",
+  "list_agents",
+  "list_child_agent_runs",
+  "list_child_agent_runs_by_parent_conversation",
+  "list_eval_runs",
+  "list_evals",
+  "list_external_files",
+  "list_files",
+  "list_input_requests",
+  "list_integrations",
+  "list_models",
+  "list_projects",
+  "list_prompts",
+  "list_releases",
+  "list_resources",
+  "list_sandbox_background_commands",
+  "list_sandbox_sessions",
+  "list_schedules",
+  "list_skills",
+  "list_tasks",
+  "list_tools",
+  "list_uploads",
+  "list_workflows",
+];
+
+const CATALOG_NAMESPACE_DESCRIPTION =
+  "Get detailed configuration, available tool IDs, and input schemas for an integration. " +
+  "Use this for integration tool IDs in these namespaces: confluence, github, jira, salesforce.";
+
+function integrationDiscoveryCatalog(): ToolDefinition[] {
+  return [
+    ...VERYFRONT_LIST_TOOL_NAMES.map((name) =>
+      definition(name, `List ${name.slice("list_".length).replaceAll("_", " ")}`)
+    ),
+    definition("get_integration", CATALOG_NAMESPACE_DESCRIPTION, "integration namespace name"),
+  ];
+}
+
+it("tool search ranks a rare description term above a common name term", () => {
+  const matches = searchToolExposure({
+    query: "list github issues",
+    authorized: integrationDiscoveryCatalog(),
+    state: createToolExposureState(),
+  }).matches.map((match) => match.name);
+
+  assertEquals(matches[0], "get_integration");
+  assertEquals(matches.filter((name) => name.startsWith("list_agent")), []);
+});
+
+it("tool search resolves a canonical integration tool id to its namespace", () => {
+  // Every one of these word-splits onto a platform tool that would otherwise win:
+  // `list_projects`, `list_...`, and the `search_*` family all share the generic
+  // half of the id. Resolving the namespace is what keeps the wrong tool out.
+  for (
+    const query of [
+      "jira__list_projects",
+      "jira__list_comments",
+      "jira__list_sites",
+      "jira__search_users",
+      "github__list_repos",
+    ]
+  ) {
+    assertEquals(
+      searchToolExposure({
+        query,
+        authorized: integrationDiscoveryCatalog(),
+        state: createToolExposureState(),
+      }).matches.map((match) => match.name),
+      ["get_integration"],
+      `canonical id ${query} must resolve to its namespace`,
+    );
+  }
+});
+
+it("tool search prefers an authorized integration tool over its namespace catalog entry", () => {
+  const result = searchToolExposure({
+    query: "jira__list_projects",
+    authorized: [
+      ...integrationDiscoveryCatalog(),
+      definition("jira__list_projects", "List Jira projects on a site"),
+    ],
+    state: createToolExposureState(),
+  });
+
+  assertEquals(result.matches[0]?.name, "jira__list_projects");
+});
+
+it("tool search does not let a same-named local tool satisfy a canonical id", () => {
+  // `jira__list_projects` and the local id `jira_list_projects` normalize to the
+  // same text, and the registry permits any local id without `__`. A phrase match
+  // must not hand back the local tool for a canonical query.
+  const result = searchToolExposure({
+    query: "jira__list_projects",
+    authorized: [
+      ...integrationDiscoveryCatalog(),
+      definition("jira_list_projects", "A project-local tool that is not the Jira integration"),
+    ],
+    state: createToolExposureState(),
+  });
+
+  assertEquals(result.matches.map((match) => match.name), ["get_integration"]);
+});
+
+it("tool search keeps a malformed namespace-shaped query off local tools", () => {
+  // `jira__list__projects` is not a valid canonical id, but `__` is reserved for
+  // the integration namespace and local ids may not contain it. Normalization
+  // collapses it onto the local `jira_list_projects`, which must not win.
+  const authorized = [
+    ...integrationDiscoveryCatalog(),
+    definition("jira_list_projects", "A project-local tool that is not the Jira integration"),
+  ];
+
+  for (const query of ["jira__list__projects", "JIRA__LIST_PROJECTS", "jira__list_projects "]) {
+    assertEquals(
+      searchToolExposure({ query, authorized, state: createToolExposureState() }).matches.map((
+        match,
+      ) => match.name),
+      ["get_integration"],
+      `namespace-shaped query ${JSON.stringify(query)} must not resolve to a local tool`,
+    );
+  }
+});
+
+it("tool search resolves a namespace that itself contains an underscore", () => {
+  // The grammar permits `_` inside a namespace segment, but candidate text has
+  // underscores rewritten to spaces, so an un-normalized namespace never matches.
+  assertEquals(
+    searchToolExposure({
+      query: "foo_bar__list_items",
+      authorized: [
+        definition("get_integration", "Tool ids and schemas. Namespaces: foo_bar, jira."),
+        definition("list_items", "List items in this project"),
+      ],
+      state: createToolExposureState(),
+    }).matches.map((match) => match.name),
+    ["get_integration"],
+  );
+});
+
+it("tool search matches a canonical namespace as a whole token", () => {
+  // `exa` is a real integration name. Substring evidence would admit anything
+  // whose text merely contains `example`, which is most of a catalog.
+  assertEquals(
+    searchToolExposure({
+      query: "exa__search",
+      authorized: [
+        definition("get_integration", "Tool ids and schemas. Namespaces: exa, jira."),
+        definition("run_sample", "Runs the example workflow", "an example value"),
+      ],
+      state: createToolExposureState(),
+    }).matches.map((match) => match.name),
+    ["get_integration"],
+  );
+});
+
+it("tool search accepts canonical ids with the authorization layer's segment grammar", () => {
+  // The authoritative grammar allows consecutive and trailing separators; search
+  // must not be stricter, or it disagrees with authorization about what an id is.
+  assertEquals(
+    searchToolExposure({
+      query: "github__list-issues-",
+      authorized: integrationDiscoveryCatalog(),
+      state: createToolExposureState(),
+    }).matches.map((match) => match.name),
+    ["get_integration"],
+  );
+});
+
+it("tool search matches a full-coverage candidate in a single-tool catalog", () => {
+  // With one candidate every term matches everything, so no term can clear the
+  // selectivity floor. Full term coverage is its own evidence: there is no
+  // competing candidate for the floor to protect against.
+  assertEquals(
+    searchToolExposure({
+      query: "create project",
+      authorized: [definition("create_file", "Create a project file")],
+      state: createToolExposureState(),
+    }).matches.map((match) => match.name),
+    ["create_file"],
+  );
+});
+
+it("tool search reports a miss when no candidate matches a selective term", () => {
+  assertEquals(
+    searchToolExposure({
+      query: "list spreadsheet macros",
+      authorized: integrationDiscoveryCatalog(),
+      state: createToolExposureState(),
+    }),
+    { matches: [], resultCount: 0, loadedCount: 0, miss: true },
+  );
+});
+
+it("tool search still resolves a bare platform tool id to its exact name match", () => {
+  assertEquals(
+    searchToolExposure({
+      query: "list_projects",
+      authorized: integrationDiscoveryCatalog(),
+      state: createToolExposureState(),
+    }).matches[0]?.name,
+    "list_projects",
+  );
 });

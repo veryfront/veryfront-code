@@ -1,6 +1,6 @@
 /** Provider-agnostic message supplied to a model runtime. */
 export type ModelCallMessage =
-  | { role: "system"; content: string }
+  | { role: "system"; content: string; providerOptions?: Record<string, unknown> }
   | {
     role: "user";
     content: Array<
@@ -46,11 +46,130 @@ export type ModelCallTool =
     args: Record<string, unknown>;
   };
 
-/** Exact provider-agnostic input supplied at one model dispatch boundary. */
-export interface ModelCallContext {
-  messages: ModelCallMessage[];
-  tools?: ModelCallTool[];
+/** Resolved model identity for one dispatched model call. */
+export interface ModelCallModel {
+  id: string;
+  modelProvider?: string;
 }
 
-/** Records the exact provider-agnostic input before model dispatch. */
-export type ModelCallRecorder = (context: ModelCallContext) => void | Promise<void>;
+/** Provider-neutral generation controls that materially affect one model call. */
+export interface ModelCallRequest {
+  maxOutputTokens?: number;
+  temperature?: number;
+  topP?: number;
+  topK?: number;
+  stopSequences?: string[];
+  seed?: number;
+  presencePenalty?: number;
+  frequencyPenalty?: number;
+  reasoning?: {
+    enabled?: boolean;
+    effort?: "low" | "medium" | "high" | "max";
+    budgetTokens?: number;
+  };
+}
+
+/**
+ * Provider-agnostic input persisted before one model dispatch. System-message
+ * provider options contain only validated prompt-cache metadata. Other
+ * provider-specific values are excluded because run events are durable.
+ */
+export type AgentRunModelCallContextEvent = {
+  type: "AGENT_RUN_MODEL_CALL_CONTEXT";
+  model?: ModelCallModel;
+  request?: ModelCallRequest;
+  messages: ModelCallMessage[];
+  tools?: ModelCallTool[];
+  elapsedMs?: number;
+  emittedAt?: number;
+};
+
+/** Event produced by an agent run runtime boundary. */
+export type AgentRunEvent = AgentRunModelCallContextEvent;
+
+/** Receives events produced within one scoped agent run execution. */
+export type AgentRunEventSink = (event: AgentRunEvent) => void | Promise<void>;
+
+/** Shared run clock used by public and private event producers. */
+export interface AgentRunEventTimingOptions {
+  nowMs?: () => number;
+  epochMs?: () => number;
+  startedMs?: number;
+}
+
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwn = Object.hasOwn;
+const reflectApply = Reflect.apply;
+
+/** Create one timing anchor for every event family belonging to a run. */
+export function createAgentRunEventTimingAnchor(
+  options: Omit<AgentRunEventTimingOptions, "startedMs"> = {},
+): AgentRunEventTimingOptions {
+  const nowMs = options.nowMs ?? (() => performance.now());
+  return {
+    nowMs,
+    epochMs: options.epochMs ?? (() => Date.now()),
+    startedMs: nowMs(),
+  };
+}
+
+/** Stamp producer timing at the persistence boundary. */
+export function createTimedAgentRunEventSink(
+  sink: AgentRunEventSink,
+  options: AgentRunEventTimingOptions = {},
+): AgentRunEventSink {
+  const nowMs = options.nowMs ?? (() => performance.now());
+  const epochMs = options.epochMs ?? (() => Date.now());
+  const startedMs = options.startedMs ?? nowMs();
+  return (event) => {
+    const elapsed = readOptionalTiming(event, "elapsedMs");
+    const emitted = readOptionalTiming(event, "emittedAt");
+    if (elapsed.present) assertValidElapsedMs(elapsed.value);
+    if (emitted.present) assertValidEmittedAt(emitted.value);
+
+    const elapsedMs = elapsed.present
+      ? elapsed.value
+      : Math.max(0, Math.round(nowMs() - startedMs));
+    const emittedAt = emitted.present ? emitted.value : Math.round(epochMs());
+    assertValidElapsedMs(elapsedMs);
+    assertValidEmittedAt(emittedAt);
+
+    return sink({
+      ...event,
+      elapsedMs,
+      emittedAt,
+    });
+  };
+}
+
+function readOptionalTiming(
+  event: AgentRunEvent,
+  key: "elapsedMs" | "emittedAt",
+): { present: false } | { present: true; value: unknown } {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = reflectApply(objectGetOwnPropertyDescriptor, undefined, [
+      event,
+      key,
+    ]) as PropertyDescriptor | undefined;
+  } catch {
+    throw new TypeError(`${key} must be an own enumerable data property`);
+  }
+  if (descriptor === undefined) return { present: false };
+  if (descriptor.enumerable !== true || !objectHasOwn(descriptor, "value")) {
+    throw new TypeError(`${key} must be an own enumerable data property`);
+  }
+  return { present: true, value: descriptor.value };
+}
+
+function assertValidElapsedMs(value: unknown): asserts value is number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new TypeError("elapsedMs must be a finite non-negative number");
+  }
+}
+
+function assertValidEmittedAt(value: unknown): asserts value is number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new TypeError("emittedAt must be a non-negative integer");
+  }
+}

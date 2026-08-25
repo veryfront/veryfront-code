@@ -1,8 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
-import { HTTP_OK } from "#veryfront/utils";
 import type { HandlerContext } from "#veryfront/types";
 import {
   __injectDepsForTests,
@@ -10,14 +9,22 @@ import {
   APIRouteHandler,
   sanitizeLoadErrorForResponse,
 } from "./handler.ts";
+import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
+import { __setCompiledBinaryForTests } from "#veryfront/security/sandbox/isolation-capability.ts";
+import { HOST_PROJECT_EXECUTION_OVERRIDE_ENV } from "#veryfront/security/host-execution-policy.ts";
+import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 
 const handlers: APIRouteHandler[] = [];
+
+type HandlerConfig = ConstructorParameters<typeof APIRouteHandler>[2];
 
 function createHandler(
   projectDir: string,
   adapter?: ReturnType<typeof createMockAdapter>,
+  config?: HandlerConfig,
 ): APIRouteHandler {
-  const handler = new APIRouteHandler(projectDir, adapter);
+  const handler = new APIRouteHandler(projectDir, adapter, config);
   handlers.push(handler);
   return handler;
 }
@@ -25,15 +32,48 @@ function createHandler(
 async function createInitializedHandler(
   projectDir: string,
   adapter: ReturnType<typeof createMockAdapter>,
+  config?: HandlerConfig,
 ): Promise<APIRouteHandler> {
-  const handler = createHandler(projectDir, adapter);
+  const handler = createHandler(projectDir, adapter, config);
   await handler.initialize();
   return handler;
 }
 
-afterEach((): void => {
+function localContext(adapter: ReturnType<typeof createMockAdapter>): HandlerContext {
+  return {
+    projectDir: "/test/project",
+    adapter,
+    securityConfig: null,
+    isLocalProject: true,
+  };
+}
+
+/** App routes receive (request, ctx); Pages routes receive (ctx). */
+function routeParamsOf(first: unknown, second?: unknown): unknown {
+  const candidate = second ?? first;
+  if (candidate && typeof candidate === "object" && "params" in candidate) {
+    return (candidate as { params?: unknown }).params ?? null;
+  }
+  return null;
+}
+
+/** Serve every discovered route from a module that echoes the matched params. */
+function injectParamEchoModule(): void {
+  __injectDepsForTests({
+    loadHandlerModule: () =>
+      Promise.resolve({
+        GET: (first: unknown, second?: unknown) =>
+          Response.json({ params: routeParamsOf(first, second) }),
+      }),
+  });
+}
+
+afterEach(async (): Promise<void> => {
   while (handlers.length) handlers.pop()?.destroy();
   __injectDepsForTests(null);
+  await __resetPoolForTests();
+  Deno.env.delete("WORKER_ISOLATION_ENABLED");
+  Deno.env.delete("WORKER_ISOLATION_API");
 });
 
 describe("APIRouteHandler", () => {
@@ -115,6 +155,370 @@ describe("APIRouteHandler", () => {
     });
   });
 
+  describe("remote execution isolation", () => {
+    it("rejects shared-runtime API execution before preparing or starting a Worker", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/app/api/isolation/route.ts",
+        "export function GET() { return new Response('must-not-run'); }",
+      );
+      let hostLoads = 0;
+      let preparations = 0;
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          hostLoads++;
+          throw new Error("shared tenant reached host import");
+        },
+        prepareHandlerModule: () => {
+          preparations++;
+          throw new Error("shared tenant reached same-process worker preparation");
+        },
+      });
+
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const response = await handler.handle(
+        new Request("http://localhost/api/isolation"),
+        {
+          projectDir: "/test/project",
+          adapter,
+          securityConfig: null,
+          isLocalProject: false,
+          prepareHostedConfigContext: () =>
+            Promise.reject(new Error("hosted config must not be evaluated")),
+        },
+      );
+
+      assertEquals(response?.status, 503);
+      assertEquals(response?.headers.get("cache-control"), "no-store");
+      assertEquals(hostLoads, 0);
+      assertEquals(preparations, 0);
+    });
+
+    it("prepares without host import and executes top-level code in an env-denied worker", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/app/api/isolation/route.ts",
+        "export function GET() { return new Response('discovery-only'); }",
+      );
+
+      const marker = "__vf_remote_route_isolation_test__";
+      delete (globalThis as Record<string, unknown>)[marker];
+      const source = [
+        `import "data:text/javascript,globalThis.${marker}%3D%27worker-imported%27";`,
+        "let envAccess = 'allowed';",
+        "try { Deno.env.get('VF_TEST_HOST_ONLY_SECRET'); } catch { envAccess = 'blocked'; }",
+        "export function GET(request) {",
+        `  return Response.json({`,
+        `    envAccess,`,
+        `    marker: globalThis.${marker},`,
+        `    applicationAuthorization: request.headers.get("authorization"),`,
+        `    applicationCookie: request.headers.get("cookie"),`,
+        `    infrastructureToken: request.headers.get("x-token"),`,
+        `    projectSlug: request.headers.get("x-project-slug"),`,
+        `  });`,
+        "}",
+      ].join("\n");
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(source));
+      let hostLoads = 0;
+      let preparations = 0;
+
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          hostLoads++;
+          throw new Error("remote project module reached host import");
+        },
+        prepareHandlerModule: () => {
+          preparations++;
+          return Promise.resolve({
+            source,
+            sha256: new Uint8Array(digest).toHex(),
+          });
+        },
+      });
+
+      Deno.env.delete("WORKER_ISOLATION_ENABLED");
+      Deno.env.delete("WORKER_ISOLATION_API");
+      await __resetPoolForTests();
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const remoteCtx = {
+        projectDir: "/test/project",
+        adapter,
+        securityConfig: null,
+        isLocalProject: false,
+      } satisfies HandlerContext;
+
+      const response = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          handler.handle(
+            new Request("http://localhost/api/isolation", {
+              headers: {
+                authorization: "Bearer application-user-token",
+                cookie: "session=application-cookie",
+                "x-project-slug": "tenant-project",
+                "x-token": "platform-service-token",
+              },
+            }),
+            remoteCtx,
+          ),
+      );
+
+      assertExists(response);
+      assertEquals(response.status, 200);
+      assertEquals(await response.json(), {
+        applicationAuthorization: "Bearer application-user-token",
+        applicationCookie: "session=application-cookie",
+        envAccess: "blocked",
+        infrastructureToken: null,
+        marker: "worker-imported",
+        projectSlug: null,
+      });
+      assertEquals(hostLoads, 0);
+      assertEquals(preparations, 1);
+      assertEquals((globalThis as Record<string, unknown>)[marker], undefined);
+      assert(
+        Deno.env.get("VF_TEST_HOST_ONLY_SECRET") === undefined,
+        "the test must not depend on a real host secret",
+      );
+    });
+
+    it("keeps local development on the host-compatible route path", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/local.ts",
+        "export function GET() { return new Response('local'); }",
+      );
+      let hostLoads = 0;
+      let preparations = 0;
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          hostLoads++;
+          return Promise.resolve({
+            GET: (request: Request) =>
+              Response.json({
+                authorization: request.headers.get("authorization"),
+                infrastructureToken: request.headers.get("x-token"),
+              }),
+          });
+        },
+        prepareHandlerModule: () => {
+          preparations++;
+          throw new Error("local development should not prepare a worker module");
+        },
+      });
+
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const response = await handler.handle(
+        new Request("http://localhost/api/local", {
+          headers: {
+            authorization: "Bearer local-application-token",
+            "x-token": "local-infrastructure-token",
+          },
+        }),
+        {
+          projectDir: "/test/project",
+          adapter,
+          securityConfig: null,
+          isLocalProject: true,
+        },
+      );
+
+      assertEquals(response?.status, 200);
+      assertEquals(await response?.json(), {
+        authorization: "Bearer local-application-token",
+        infrastructureToken: null,
+      });
+      assertEquals(hostLoads, 1);
+      assertEquals(preparations, 0);
+    });
+
+    it("allows an explicitly capable dedicated runtime to use the host route path", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/dedicated.ts",
+        "export function GET() { return new Response('dedicated'); }",
+      );
+      let hostLoads = 0;
+      let preparations = 0;
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          hostLoads++;
+          return Promise.resolve({
+            GET: () => new Response("dedicated"),
+          });
+        },
+        prepareHandlerModule: () => {
+          preparations++;
+          throw new Error("dedicated runtime should not prepare a worker module");
+        },
+      });
+
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const response = await handler.handle(
+        new Request("http://localhost/api/dedicated"),
+        {
+          projectDir: "/test/project",
+          adapter,
+          securityConfig: null,
+          isLocalProject: false,
+          allowHostProjectCodeExecution: true,
+        },
+      );
+
+      assertEquals(response?.status, 200);
+      assertEquals(await response?.text(), "dedicated");
+      assertEquals(hostLoads, 1);
+      assertEquals(preparations, 0);
+    });
+
+    it("prepares local routes before execution when API isolation is enabled", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/local-isolated.ts",
+        "export function GET() { return new Response('discovery-only'); }",
+      );
+      const source = `export function GET() { return new Response("local-isolated"); }`;
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(source));
+      let hostLoads = 0;
+      let preparations = 0;
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          hostLoads++;
+          throw new Error("isolated local route reached host import");
+        },
+        prepareHandlerModule: () => {
+          preparations++;
+          return Promise.resolve({
+            source,
+            sha256: new Uint8Array(digest).toHex(),
+          });
+        },
+      });
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const response = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          handler.handle(
+            new Request("http://localhost/api/local-isolated"),
+            {
+              projectDir: "/test/project",
+              adapter,
+              securityConfig: null,
+              isLocalProject: true,
+            },
+          ),
+      );
+
+      assertEquals(response?.status, 200);
+      assertEquals(await response?.text(), "local-isolated");
+      assertEquals(hostLoads, 0);
+      assertEquals(preparations, 1);
+    });
+
+    describe("when the runtime cannot prepare an isolated module", () => {
+      afterEach(() => {
+        __setCompiledBinaryForTests(undefined);
+        Deno.env.delete(HOST_PROJECT_EXECUTION_OVERRIDE_ENV);
+      });
+
+      it("serves through the host realm when the operator has granted host execution", async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set(
+          "/test/project/pages/api/hosted.ts",
+          "export function GET() { return new Response('discovery-only'); }",
+        );
+        let hostLoads = 0;
+        let preparations = 0;
+        __injectDepsForTests({
+          loadHandlerModule: () => {
+            hostLoads++;
+            return Promise.resolve({
+              GET: () => new Response("hosted"),
+            });
+          },
+          prepareHandlerModule: () => {
+            preparations++;
+            throw new Error("prepared an isolated module this runtime cannot link");
+          },
+        });
+        Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+        Deno.env.set("WORKER_ISOLATION_API", "1");
+        Deno.env.set(HOST_PROJECT_EXECUTION_OVERRIDE_ENV, "1");
+        __setCompiledBinaryForTests(true);
+        await __resetPoolForTests();
+
+        const handler = await createInitializedHandler("/test/project", adapter);
+        const response = await handler.handle(
+          new Request("http://localhost/api/hosted"),
+          {
+            projectDir: "/test/project",
+            adapter,
+            securityConfig: null,
+            isLocalProject: false,
+            allowHostProjectCodeExecution: true,
+          },
+        );
+
+        assertEquals(response?.status, 200);
+        assertEquals(await response?.text(), "hosted");
+        // Must reach route execution too, not just the handler.
+        assertEquals(hostLoads, 1);
+        assertEquals(preparations, 0);
+      });
+
+      it("fails closed with a typed 503 when host execution is not granted", async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set(
+          "/test/project/pages/api/hosted.ts",
+          "export function GET() { return new Response('discovery-only'); }",
+        );
+        let hostLoads = 0;
+        let preparations = 0;
+        __injectDepsForTests({
+          loadHandlerModule: () => {
+            hostLoads++;
+            throw new Error("host fallback under an ungranted isolation posture");
+          },
+          prepareHandlerModule: () => {
+            preparations++;
+            throw new Error("unreachable");
+          },
+        });
+        Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+        Deno.env.set("WORKER_ISOLATION_API", "1");
+        // Deliberately no VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION.
+        __setCompiledBinaryForTests(true);
+        await __resetPoolForTests();
+
+        const handler = await createInitializedHandler("/test/project", adapter);
+        const response = await handler.handle(
+          new Request("http://localhost/api/hosted"),
+          {
+            projectDir: "/test/project",
+            adapter,
+            securityConfig: null,
+            isLocalProject: false,
+            // Dedicated runtime capability, but no operator grant.
+            allowHostProjectCodeExecution: true,
+          },
+        );
+
+        assertEquals(response?.status, 503);
+        assert(
+          response?.headers.get("content-type")?.includes("application/problem+json"),
+        );
+        const body = await response?.json();
+        assert(String(body.detail).includes("WORKER_ISOLATION_API"));
+        assertEquals(hostLoads, 0); // no silent host-realm fallback
+        assertEquals(preparations, 0); // and no masked 500 from the loader
+      });
+    });
+  });
+
   describe("OPTIONS/CORS handling", () => {
     it("should handle OPTIONS preflight requests with secure-by-default CORS", async () => {
       const adapter = createMockAdapter();
@@ -158,6 +562,71 @@ describe("APIRouteHandler", () => {
 
       assertEquals(response?.status, 204);
     });
+
+    it("should echo a configured origin on preflight", async () => {
+      const adapter = createMockAdapter();
+      const handler = await createInitializedHandler(
+        "/test/project",
+        adapter,
+        { security: { cors: { origin: ["https://example.com"] } } } as HandlerConfig,
+      );
+
+      const response = await handler.handle(
+        new Request("http://localhost/api/test", {
+          method: "OPTIONS",
+          headers: { origin: "https://example.com" },
+        }),
+      );
+
+      assertEquals(response?.status, 204, "preflight still answers 204");
+      assertEquals(
+        response?.headers.get("Access-Control-Allow-Origin"),
+        "https://example.com",
+        "a configured origin must be echoed on preflight",
+      );
+    });
+
+    it("should keep configured CORS headers on the success path", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/cors.ts",
+        "export function GET() { return new Response('ok'); }",
+      );
+      __injectDepsForTests({
+        loadHandlerModule: () => Promise.resolve({ GET: () => new Response("ok") }),
+      });
+
+      const handler = await createInitializedHandler(
+        "/test/project",
+        adapter,
+        { security: { cors: { origin: ["https://example.com"] } } } as HandlerConfig,
+      );
+
+      const allowed = await handler.handle(
+        new Request("http://localhost/api/cors", {
+          headers: { origin: "https://example.com" },
+        }),
+        localContext(adapter),
+      );
+      assertEquals(allowed?.status, 200, "the configured route still answers");
+      assertEquals(
+        allowed?.headers.get("Access-Control-Allow-Origin"),
+        "https://example.com",
+        "configured CORS headers must survive on the success path",
+      );
+
+      const rejected = await handler.handle(
+        new Request("http://localhost/api/cors", {
+          headers: { origin: "https://evil.example" },
+        }),
+        localContext(adapter),
+      );
+      assertEquals(
+        rejected?.headers.get("Access-Control-Allow-Origin"),
+        null,
+        "a disallowed origin gets no CORS header",
+      );
+    });
   });
 
   describe("route discovery", () => {
@@ -169,11 +638,20 @@ describe("APIRouteHandler", () => {
         "/test/project/pages/api/users.ts",
         "export async function GET() { return Response.json({ users: [] }); }",
       );
+      injectParamEchoModule();
 
-      const handler = createHandler(projectDir, adapter);
-      await handler.initialize();
+      const handler = await createInitializedHandler(projectDir, adapter);
+      const response = await handler.handle(
+        new Request("http://localhost/api/users"),
+        localContext(adapter),
+      );
 
-      assertExists(handler);
+      assertEquals(response?.status, 200, "a discovered Pages Router route must match");
+      assertEquals(
+        await response?.json(),
+        { params: {} },
+        "a static Pages Router route matches with no params",
+      );
     });
 
     it("should discover App Router routes", async () => {
@@ -184,11 +662,20 @@ describe("APIRouteHandler", () => {
         "/test/project/app/api/posts/route.ts",
         "export async function GET() { return Response.json({ posts: [] }); }",
       );
+      injectParamEchoModule();
 
-      const handler = createHandler(projectDir, adapter);
-      await handler.initialize();
+      const handler = await createInitializedHandler(projectDir, adapter);
+      const response = await handler.handle(
+        new Request("http://localhost/api/posts"),
+        localContext(adapter),
+      );
 
-      assertExists(handler);
+      assertEquals(response?.status, 200, "a discovered App Router route must match");
+      assertEquals(
+        await response?.json(),
+        { params: {} },
+        "a static App Router route matches with no params",
+      );
     });
 
     it("should discover nested App Router routes", async () => {
@@ -199,11 +686,20 @@ describe("APIRouteHandler", () => {
         "/test/project/app/api/users/[id]/posts/route.ts",
         "export async function GET() { return Response.json({ posts: [] }); }",
       );
+      injectParamEchoModule();
 
-      const handler = createHandler(projectDir, adapter);
-      await handler.initialize();
+      const handler = await createInitializedHandler(projectDir, adapter);
+      const response = await handler.handle(
+        new Request("http://localhost/api/users/7/posts"),
+        localContext(adapter),
+      );
 
-      assertExists(handler);
+      assertEquals(response?.status, 200, "a nested dynamic App Router route must match");
+      assertEquals(
+        await response?.json(),
+        { params: { id: "7" } },
+        "the nested dynamic segment must be extracted",
+      );
     });
 
     it("should discover multiple routes in both routers", async () => {
@@ -217,11 +713,34 @@ describe("APIRouteHandler", () => {
         "/test/project/app/api/data/route.ts",
         "export async function GET() { return Response.json({ data: [] }); }",
       );
+      __injectDepsForTests({
+        loadHandlerModule: (options) =>
+          Promise.resolve({
+            GET: () => Response.json({ modulePath: options.modulePath }),
+            POST: () => Response.json({ modulePath: options.modulePath }),
+          }),
+      });
 
-      const handler = createHandler("/test/project", adapter);
-      await handler.initialize();
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const pagesResponse = await handler.handle(
+        new Request("http://localhost/api/auth", { method: "POST" }),
+        localContext(adapter),
+      );
+      const appResponse = await handler.handle(
+        new Request("http://localhost/api/data"),
+        localContext(adapter),
+      );
 
-      assertExists(handler);
+      assertEquals(
+        await pagesResponse?.json(),
+        { modulePath: "/test/project/pages/api/auth.ts" },
+        "the Pages Router route must resolve to its own module",
+      );
+      assertEquals(
+        await appResponse?.json(),
+        { modulePath: "/test/project/app/api/data/route.ts" },
+        "the App Router route must resolve to its own module",
+      );
     });
   });
 
@@ -241,13 +760,31 @@ describe("APIRouteHandler", () => {
         "/test/project/app/api/test/route.ts",
         "export async function GET() { return Response.json({}); }",
       );
+      __injectDepsForTests({
+        loadHandlerModule: () => Promise.resolve({ GET: () => new Response("v1") }),
+      });
 
-      const handler = createHandler("/test/project", adapter);
-      await handler.initialize();
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const first = await handler.handle(
+        new Request("http://localhost/api/test"),
+        localContext(adapter),
+      );
+      assertEquals(await first?.text(), "v1", "the first request serves the loaded module");
 
+      __injectDepsForTests({
+        loadHandlerModule: () => Promise.resolve({ GET: () => new Response("v2") }),
+      });
       handler.clearCache();
 
-      assertExists(handler);
+      const second = await handler.handle(
+        new Request("http://localhost/api/test"),
+        localContext(adapter),
+      );
+      assertEquals(
+        await second?.text(),
+        "v2",
+        "clearCache must evict the cached route module so an edited route is reloaded",
+      );
     });
 
     it("should allow re-initialization after cache clear", async () => {
@@ -275,7 +812,16 @@ describe("APIRouteHandler", () => {
       });
       const handler = await createInitializedHandler("/test/project", adapter);
 
-      const responsePromise = handler.handle(new Request("http://localhost/api/status"));
+      const localCtx = {
+        projectDir: "/test/project",
+        adapter,
+        securityConfig: null,
+        isLocalProject: true,
+      } satisfies HandlerContext;
+      const responsePromise = handler.handle(
+        new Request("http://localhost/api/status"),
+        localCtx,
+      );
       handler.destroy();
 
       const response = await responsePromise;
@@ -284,6 +830,7 @@ describe("APIRouteHandler", () => {
 
       const responseAfterDestroy = await handler.handle(
         new Request("http://localhost/api/status"),
+        localCtx,
       );
       assertEquals(responseAfterDestroy?.status, 404);
     });
@@ -339,11 +886,20 @@ describe("APIRouteHandler", () => {
         "/test/project/pages/api/users/[id].ts",
         "export async function GET() { return Response.json({}); }",
       );
+      injectParamEchoModule();
 
-      const handler = createHandler("/test/project", adapter);
-      await handler.initialize();
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const response = await handler.handle(
+        new Request("http://localhost/api/users/123"),
+        localContext(adapter),
+      );
 
-      assertExists(handler);
+      assertEquals(response?.status, 200, "a discovered dynamic route must match");
+      assertEquals(
+        await response?.json(),
+        { params: { id: "123" } },
+        "the dynamic segment must be extracted",
+      );
     });
 
     it("should handle catch-all routes", async () => {
@@ -352,11 +908,20 @@ describe("APIRouteHandler", () => {
         "/test/project/pages/api/files/[...path].ts",
         "export async function GET() { return Response.json({}); }",
       );
+      injectParamEchoModule();
 
-      const handler = createHandler("/test/project", adapter);
-      await handler.initialize();
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const response = await handler.handle(
+        new Request("http://localhost/api/files/a/b"),
+        localContext(adapter),
+      );
 
-      assertExists(handler);
+      assertEquals(response?.status, 200, "a discovered catch-all route must match");
+      assertEquals(
+        await response?.json(),
+        { params: { path: ["a", "b"] } },
+        "every catch-all segment must be extracted",
+      );
     });
 
     it("should handle optional catch-all routes", async () => {
@@ -365,11 +930,20 @@ describe("APIRouteHandler", () => {
         "/test/project/app/api/[[...slug]]/route.ts",
         "export async function GET() { return Response.json({}); }",
       );
+      injectParamEchoModule();
 
-      const handler = createHandler("/test/project", adapter);
-      await handler.initialize();
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const response = await handler.handle(
+        new Request("http://localhost/api/docs/intro"),
+        localContext(adapter),
+      );
 
-      assertExists(handler);
+      assertEquals(response?.status, 200, "a discovered optional catch-all route must match");
+      assertEquals(
+        await response?.json(),
+        { params: { slug: "docs/intro" } },
+        "the optional catch-all segments must be extracted",
+      );
     });
   });
 
@@ -384,11 +958,32 @@ describe("APIRouteHandler", () => {
          export async function DELETE() { return Response.json({ method: 'DELETE' }); }
          export async function PATCH() { return Response.json({ method: 'PATCH' }); }`,
       );
+      __injectDepsForTests({
+        loadHandlerModule: () =>
+          Promise.resolve({
+            GET: () => Response.json({ method: "GET" }),
+            POST: () => Response.json({ method: "POST" }),
+            PUT: () => Response.json({ method: "PUT" }),
+            DELETE: () => Response.json({ method: "DELETE" }),
+            PATCH: () => Response.json({ method: "PATCH" }),
+          }),
+      });
 
-      const handler = createHandler("/test/project", adapter);
-      await handler.initialize();
+      const handler = await createInitializedHandler("/test/project", adapter);
 
-      assertExists(handler);
+      for (const method of ["GET", "POST", "PUT", "DELETE", "PATCH"]) {
+        const response = await handler.handle(
+          new Request("http://localhost/api/resource", { method }),
+          localContext(adapter),
+        );
+
+        assertEquals(response?.status, 200, `the discovered route must accept ${method}`);
+        assertEquals(
+          await response?.json(),
+          { method },
+          `${method} must reach its own method export`,
+        );
+      }
     });
 
     it("should support HEAD method", async () => {
@@ -397,11 +992,21 @@ describe("APIRouteHandler", () => {
         "/test/project/app/api/head/route.ts",
         "export async function HEAD() { return new Response(null, { status: 200 }); }",
       );
+      __injectDepsForTests({
+        loadHandlerModule: () =>
+          Promise.resolve({
+            HEAD: () => new Response(null, { status: 200 }),
+          }),
+      });
 
-      const handler = createHandler("/test/project", adapter);
-      await handler.initialize();
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const response = await handler.handle(
+        new Request("http://localhost/api/head", { method: "HEAD" }),
+        localContext(adapter),
+      );
 
-      assertExists(handler);
+      assertEquals(response?.status, 200, "a discovered HEAD route must match");
+      assertEquals(response?.body, null, "a HEAD response carries no body");
     });
 
     it("should support default handler", async () => {
@@ -410,11 +1015,29 @@ describe("APIRouteHandler", () => {
         "/test/project/app/api/default/route.ts",
         'export async function default() { return Response.json({ method: "default" }); }',
       );
+      __injectDepsForTests({
+        loadHandlerModule: () =>
+          Promise.resolve({
+            default: () => Response.json({ method: "default" }),
+          }),
+      });
 
-      const handler = createHandler("/test/project", adapter);
-      await handler.initialize();
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const response = await handler.handle(
+        new Request("http://localhost/api/default"),
+        localContext(adapter),
+      );
 
-      assertExists(handler);
+      assertEquals(
+        response?.status,
+        200,
+        "a discovered route must fall back to its default export",
+      );
+      assertEquals(
+        await response?.json(),
+        { method: "default" },
+        "the default export must serve a method it does not export",
+      );
     });
   });
 
@@ -440,47 +1063,6 @@ describe("APIRouteHandler", () => {
     });
   });
 
-  describe("HTTP_OK constant usage", () => {
-    it("should verify HTTP_OK equals 200", () => {
-      assertEquals(HTTP_OK, 200, "HTTP_OK constant should equal 200");
-    });
-
-    it("should import HTTP_OK from shared constants", () => {
-      assertExists(HTTP_OK, "HTTP_OK should be imported and available");
-      assertEquals(typeof HTTP_OK, "number", "HTTP_OK should be a number");
-    });
-
-    it("should use HTTP_OK for default status in HEAD shim logic", () => {
-      const mockResponse = { status: undefined as number | undefined, headers: {} };
-      const defaultStatus = mockResponse.status ?? HTTP_OK;
-
-      assertEquals(defaultStatus, HTTP_OK, "Should default to HTTP_OK when status is undefined");
-      assertEquals(defaultStatus, 200, "Default status should be 200");
-    });
-
-    it("should preserve custom status when available", () => {
-      const mockResponse = { status: 201, headers: {} };
-      const finalStatus = mockResponse.status ?? HTTP_OK;
-
-      assertEquals(finalStatus, 201, "Should preserve custom status when provided");
-    });
-
-    it("should use HTTP_OK when status is null or undefined", () => {
-      const cases: Array<{ status: number | null | undefined; expected: number }> = [
-        { status: undefined, expected: HTTP_OK },
-        { status: null, expected: HTTP_OK },
-        { status: 0, expected: 0 },
-        { status: 200, expected: 200 },
-        { status: 404, expected: 404 },
-      ];
-
-      cases.forEach(({ status, expected }) => {
-        const finalStatus = status ?? HTTP_OK;
-        assertEquals(finalStatus, expected, `Status ${status} should result in ${expected}`);
-      });
-    });
-  });
-
   // A load failure belongs to the attempt that produced it. Held on the
   // instance, it outlived the request and the next route to fail for its own
   // reason reported someone else's error.
@@ -498,7 +1080,21 @@ describe("APIRouteHandler", () => {
         "export const notAMethod = 1;",
       );
 
-      __injectDepsForTests({ loadHandlerModule: ({ modulePath }) => onLoad(modulePath) });
+      __injectDepsForTests({
+        loadHandlerModule: ({ modulePath }) => onLoad(modulePath),
+        prepareHandlerModule: async ({ modulePath }) => {
+          const route = await onLoad(modulePath);
+          if (!route || Object.keys(route).length === 0) {
+            throw new Error("Handler not found");
+          }
+          const source = "export function GET() { return new Response('prepared'); }";
+          const digest = await crypto.subtle.digest(
+            "SHA-256",
+            new TextEncoder().encode(source),
+          );
+          return { source, sha256: new Uint8Array(digest).toHex() };
+        },
+      });
 
       return {
         handler: await createInitializedHandler("/test/project", adapter),
@@ -506,7 +1102,6 @@ describe("APIRouteHandler", () => {
           projectDir: "/test/project",
           adapter,
           securityConfig: null,
-          cspUserHeader: null,
           isLocalProject: true,
         },
       };

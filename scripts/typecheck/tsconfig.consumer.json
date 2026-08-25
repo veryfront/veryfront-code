@@ -15,11 +15,13 @@
     "moduleResolution": "Bundler",
     "noEmit": true,
     "strict": true,
+    "exactOptionalPropertyTypes": true,
     "skipLibCheck": true,
     "target": "ES2022",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "baseUrl": "../..",
     "paths": {
+      "veryfront": ["./npm/esm/src/index.d.ts"],
       "react": ["./storybook/node_modules/@types/react"],
       "react/jsx-runtime": ["./storybook/node_modules/@types/react/jsx-runtime"],
       "react/jsx-dev-runtime": ["./storybook/node_modules/@types/react/jsx-dev-runtime"],
@@ -30,6 +32,9 @@
       "veryfront/chat": ["./npm/esm/src/chat/index.d.ts"],
       "veryfront/chat/types": ["./npm/esm/src/chat/types.d.ts"],
       "veryfront/chat/uploads": ["./npm/esm/src/chat/upload-handler.d.ts"],
+      "veryfront/schedule": ["./npm/esm/src/schedule/index.d.ts"],
+      "veryfront/trigger": ["./npm/esm/src/trigger/index.d.ts"],
+      "veryfront/webhook": ["./npm/esm/src/webhook/index.d.ts"],
       "veryfront/observability/sentry": ["./npm/esm/src/observability/sentry.d.ts"],
       "@veryfront/ext-observability-sentry/node": [
         "./npm/extensions/ext-observability-sentry/esm/node.d.ts"
@@ -39,5 +44,8 @@
   "include": [
     "./fixtures/**/*.ts",
     "./fixtures/**/*.tsx"
+  ],
+  "exclude": [
+    "./fixtures/trigger-target-default-optional.ts"
   ]
 }

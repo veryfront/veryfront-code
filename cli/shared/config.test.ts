@@ -8,6 +8,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createApiClient,
+  isRetryableApiReadError,
   readConfigFile,
   resolveConfig,
   resolveConfigWithAuth,
@@ -18,6 +19,26 @@ import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts"
 import { join } from "veryfront/platform/path";
 import { __resetEnvLoaderForTests, loadEnv } from "veryfront/utils/env-loader";
 import { deleteToken, saveToken } from "../auth/token-store.ts";
+
+describe("isRetryableApiReadError", () => {
+  it("retries gateway and connection failures but not authoritative client statuses", () => {
+    assertEquals(isRetryableApiReadError({ status: 503 }), true);
+    assertEquals(
+      isRetryableApiReadError(Object.assign(new Error("connection reset"), {
+        code: "ECONNRESET",
+      })),
+      true,
+    );
+    assertEquals(
+      isRetryableApiReadError(Object.assign(new Error("unauthorized"), {
+        cause: Object.assign(new Error("connection reset"), { code: "ECONNRESET" }),
+        status: 401,
+      })),
+      false,
+    );
+    assertEquals(isRetryableApiReadError(new DOMException("cancelled", "AbortError")), false);
+  });
+});
 
 function createMockEnv(overrides: Partial<EnvironmentConfig> = {}): EnvironmentConfig {
   return {
@@ -766,6 +787,30 @@ describe("createApiClient", () => {
         const result = await client.put<{ updated: boolean }>("/test", { content: "same" });
         assertEquals(result.updated, true);
         assertEquals(callCount, 2);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("does not retry PUT when the caller disables retries", async () => {
+      let callCount = 0;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = ((_input: unknown, _init?: RequestInit) => {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.resolve(new Response("bad gateway", { status: 502 }));
+        }
+        return Promise.resolve(new Response(JSON.stringify({ updated: true }), { status: 200 }));
+      }) as typeof fetch;
+
+      try {
+        const client = createApiClient(makeConfig());
+        await assertRejects(
+          () => client.put("/test", { content: "same" }, { retryPolicy: "none" }),
+          Error,
+          "502",
+        );
+        assertEquals(callCount, 1);
       } finally {
         globalThis.fetch = originalFetch;
       }

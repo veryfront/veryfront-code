@@ -1,6 +1,6 @@
 /** Parse a cookie header string into key-value pairs */
 export function parseCookies(cookieHeader: string): Record<string, string> {
-  const cookies: Record<string, string> = {};
+  const cookies = Object.create(null) as Record<string, string>;
   if (!cookieHeader) return cookies;
 
   for (const part of cookieHeader.split(";")) {
@@ -13,7 +13,21 @@ export function parseCookies(cookieHeader: string): Record<string, string> {
     const name = trimmed.slice(0, separatorIndex).trim();
     if (!name) continue;
 
-    cookies[name] = decodeURIComponent(trimmed.slice(separatorIndex + 1));
+    let rawValue = trimmed.slice(separatorIndex + 1).trim();
+    // RFC 6265 permits a cookie value to be wrapped in double quotes.
+    if (rawValue.length >= 2 && rawValue.startsWith('"') && rawValue.endsWith('"')) {
+      rawValue = rawValue.slice(1, -1);
+    }
+
+    let value: string;
+    try {
+      value = decodeURIComponent(rawValue);
+    } catch {
+      // Treat only the malformed cookie as absent so valid siblings remain usable.
+      continue;
+    }
+
+    cookies[name] = value;
   }
 
   return cookies;

@@ -216,6 +216,13 @@ context values do not replace application control flow.
 for timeout, rejection, exceptions, or an invalid timeout; it never waits for a
 non-cooperative reporter after the deadline.
 
+Reporter context is sanitized before capture. Public fields include
+`boundary`, `method`, `processRole`, `requestId`, `spanId`, `traceId`,
+`errorClass`, `level`, and scalar `attributes`. Tenant-authored build and
+content compile failures are still captured, but Veryfront tags them with
+`errorClass: "tenant-build"` and downgrades the default `level` to `"warning"`.
+Sentry integrations consume that class as the `veryfront.error_class` tag.
+
 Concrete reporters are separate extension packages. Sentry configuration and
 runtime setup are documented by `@veryfront/ext-observability-sentry`.
 

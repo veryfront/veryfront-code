@@ -4,6 +4,8 @@ interface CronField {
   readonly names?: ReadonlyMap<string, number>;
 }
 
+const DateTimeFormat = Intl.DateTimeFormat;
+
 const MONTHS = new Map([
   ["JAN", 1],
   ["FEB", 2],
@@ -139,7 +141,7 @@ export function normalizeCronExpression(value: string): string | null {
 export function isSupportedIanaTimezone(value: string): boolean {
   if (value !== "UTC" && !IANA_TIMEZONE_PATTERN.test(value)) return false;
   try {
-    new Intl.DateTimeFormat("en-US", { timeZone: value }).format(0);
+    new DateTimeFormat("en-US", { timeZone: value });
     return true;
   } catch {
     return false;

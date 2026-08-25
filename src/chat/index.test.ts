@@ -9,7 +9,7 @@ import type {
   UseConversationChatOptions as ComponentsChatOptions,
   UseConversationChatResult as ComponentsChatResult,
 } from "veryfront/components/chat";
-import type { ConversationStorageLimits } from "./index.ts";
+import type { ChatSidebarItemTitleProps, ConversationStorageLimits } from "./index.ts";
 import type {
   UseConversationChatOptions as ReactComponentsChatOptions,
   UseConversationChatResult as ReactComponentsChatResult,
@@ -28,9 +28,11 @@ const _reactComponentsChatOptions: ReactComponentsChatOptions = _componentsChatO
 const _componentsChatResult = null as unknown as ComponentsChatResult;
 const _reactComponentsChatResult: ReactComponentsChatResult = _componentsChatResult;
 const _storageLimits: ConversationStorageLimits = chatModule.CONVERSATION_STORAGE_LIMITS;
+const _sidebarTitleProps: ChatSidebarItemTitleProps = { id: "conversation-title" };
 void _reactComponentsChatOptions;
 void _reactComponentsChatResult;
 void _storageLimits;
+void _sidebarTitleProps;
 
 const expectedRuntimeExports = [
   // Canonical component names.
@@ -40,6 +42,16 @@ const expectedRuntimeExports = [
   "useToolCall",
   "useReasoning",
   "ChatInput",
+  "ChatInputAttach",
+  "ChatInputExport",
+  "ChatInputField",
+  "ChatInputModel",
+  "ChatInputRoot",
+  "ChatInputSend",
+  "ChatInputStop",
+  "ChatInputSubmit",
+  "ChatInputToolbar",
+  "ChatInputVoice",
   "AgentAvatar",
   "AgentPicker",
   "ChatActions",
@@ -73,7 +85,6 @@ const expectedRuntimeExports = [
   "DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS",
   "DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS",
   "ChatStreamIdleTimeoutError",
-  "ComposerContextProvider",
   "ConversationEmptyState",
   "ConversationScrollButton",
   "DropZoneOverlay",
@@ -90,7 +101,6 @@ const expectedRuntimeExports = [
   "ModelAvatar",
   "ModelSelector",
   "QuickActions",
-  "RichCodeBlock",
   "Shimmer",
   "SkillBadge",
   "SourcePill",
@@ -106,6 +116,7 @@ const expectedRuntimeExports = [
   "isLongRunningToolRunning",
   "isHeartbeatOnlyMetadataChunk",
   "getNextChatStreamWatchdogState",
+  "getAgentPromptSuggestionItems",
   "getAgentPromptSuggestions",
   "createChatStreamWatchdogState",
   "createChatStreamWatchdog",
@@ -142,16 +153,14 @@ const expectedRuntimeExports = [
   "useChatContext",
   "useChatContextOptional",
   "useCompletion",
-  "useComposerContext",
-  "useStickToBottom",
-  "useComposerContextOptional",
+  "useChatInputContext",
+  "useChatInputContextOptional",
   "useMessageContext",
   "useMessageContextOptional",
   "useMessageParts",
   "useStreaming",
   "useAttachments",
   "useUpload",
-  "useUploadsRegistry",
   "useVoiceInput",
   // Compound sub-part hooks (each throws outside its provider).
   "useAgentCard",
@@ -161,6 +170,13 @@ const expectedRuntimeExports = [
   "useModelSelector",
   "useStepIndicator",
   "useAttachmentsPanel",
+  // RFC 2980 canonical hook + context surface (additive).
+  "ChatInputContextProvider",
+  "mergeProps",
+  "useChatInput",
+  "useChatScroll",
+  "useChatSidebarItem",
+  "useMessageBranches",
 ].sort();
 
 describe("chat/index.ts exports", () => {
@@ -180,6 +196,10 @@ describe("chat/index.ts exports", () => {
       chatModule.getAgentPromptSuggestions,
       useAgentMetadataModule.getAgentPromptSuggestions,
     );
+    assertEquals(
+      chatModule.getAgentPromptSuggestionItems,
+      useAgentMetadataModule.getAgentPromptSuggestionItems,
+    );
     assertEquals(chatModule.useCompletion, useCompletionModule.useCompletion);
     assertEquals(chatModule.useStreaming, useStreamingModule.useStreaming);
     assertEquals(chatModule.useVoiceInput, useVoiceInputModule.useVoiceInput);
@@ -195,9 +215,44 @@ describe("chat/index.ts exports", () => {
     );
   });
 
-  it("exports conversation chat through both component chat aliases", () => {
+  it("exports each ChatInput leaf as the same function through every chat barrel", () => {
+    const parts = [
+      ["ChatInputRoot", "Root"],
+      ["ChatInputField", "Field"],
+      ["ChatInputSend", "Send"],
+      ["ChatInputStop", "Stop"],
+      ["ChatInputSubmit", "Submit"],
+      ["ChatInputVoice", "Voice"],
+      ["ChatInputModel", "Model"],
+      ["ChatInputAttach", "Attach"],
+      ["ChatInputExport", "Export"],
+      ["ChatInputToolbar", "Toolbar"],
+    ] as const;
+    for (const [flatName, partName] of parts) {
+      assertEquals(chatModule[flatName], chatModule.ChatInput[partName]);
+      assertEquals(chatModule[flatName], chatUI[flatName]);
+      assertEquals(chatModule[flatName], componentsChatModule[flatName]);
+      assertEquals(chatModule[flatName], reactComponentsChatModule[flatName]);
+    }
+  });
+
+  it("exports conversation chat and canonical hooks through both component aliases", () => {
     assertEquals(componentsChatModule.useConversationChat, chatUI.useConversationChat);
     assertEquals(reactComponentsChatModule.useConversationChat, chatUI.useConversationChat);
+    for (
+      const name of [
+        "ChatInputContextProvider",
+        "mergeProps",
+        "useChatInput",
+        "useChatInputContext",
+        "useChatInputContextOptional",
+        "useChatScroll",
+        "useMessageBranches",
+      ] as const
+    ) {
+      assertEquals(componentsChatModule[name], chatUI[name]);
+      assertEquals(reactComponentsChatModule[name], chatUI[name]);
+    }
   });
 
   it("exposes only canonical render-or-compose component names", () => {

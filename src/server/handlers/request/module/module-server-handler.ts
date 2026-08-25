@@ -37,6 +37,8 @@ export function handleModuleServer(
             contentSourceId: dependencyIdentity.contentSourceId,
             dependencyPinningSource,
             isLocalProject: ctx.isLocalProject,
+            isProxyMode: ctx.isProxyMode,
+            allowSSRModuleMode: ctx.isLocalProject === true,
             allowedImportDirs: ctx.config?.security?.allowedImportDirs,
             config: ctx.config,
             mode: ctx.requestContext?.mode,

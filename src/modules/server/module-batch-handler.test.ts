@@ -3,6 +3,7 @@ import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   type BatchHandlerOptions,
+  buildBatchCacheProjectKey,
   buildBatchTransformCacheKey,
   clearBatchCache,
   getBatchCacheStats,
@@ -113,6 +114,48 @@ describe(
           buildModuleTransformCacheKey("project", "pages/index.js", false),
         );
       });
+
+      it("isolates transforms by the configured server external package set", () => {
+        const args = [
+          "project",
+          "pages/index.js",
+          false,
+          "off",
+          "release-a",
+          "content-a",
+          "https://app.example",
+        ] as const;
+        const baseline = buildBatchTransformCacheKey(...args);
+        const knex = buildBatchTransformCacheKey(...args, ["knex"]);
+        const prismaAndKnex = buildBatchTransformCacheKey(...args, ["@prisma/client", "knex"]);
+        const reordered = buildBatchTransformCacheKey(...args, ["knex", "@prisma/client"]);
+
+        assertEquals(knex === baseline, false);
+        assertEquals(prismaAndKnex === knex, false);
+        assertEquals(reordered, prismaAndKnex);
+      });
+    });
+
+    describe("buildBatchCacheProjectKey", () => {
+      it("prefers the projectId over the slug", () => {
+        assertEquals(
+          buildBatchCacheProjectKey({ projectId: "id-1", projectSlug: "slug-1" }),
+          "id-1",
+          "the id identifies a project across slug renames, so it wins",
+        );
+      });
+
+      it("uses the slug when no projectId is supplied", () => {
+        assertEquals(buildBatchCacheProjectKey({ projectSlug: "slug-1" }), "slug-1");
+      });
+
+      it("falls back to a shared default when neither is supplied", () => {
+        assertEquals(
+          buildBatchCacheProjectKey({}),
+          "default",
+          "an unidentified project must still land under a stable, clearable namespace",
+        );
+      });
     });
 
     describe("clearBatchCache / getBatchCacheStats", () => {
@@ -128,9 +171,90 @@ describe(
         assertEquals(getBatchCacheStats().size, 0);
       });
 
-      it("should clear cache for specific project slug", () => {
-        clearBatchCache("my-project");
-        assertEquals(getBatchCacheStats().size, 0);
+      it("should clear cache for specific project slug", async () => {
+        clearBatchCache();
+
+        async function cacheOneTransform(projectSlug: string): Promise<void> {
+          const adapter = createMockAdapter();
+          adapter.fs.files.set(`/test-project/${projectSlug}.tsx`, "export const value = 1;");
+          const url = new URL("/_vf_modules/_batch", "http://localhost:8080");
+          url.searchParams.set("paths", `${projectSlug}.js`);
+          const response = await handleModuleBatch(new Request(url.toString()), {
+            projectDir: "/test-project",
+            adapter,
+            projectSlug,
+            releaseId: `rel-${projectSlug}`,
+            dev: false,
+          });
+          assertEquals(response.status, 200, `project ${projectSlug} must serve its module`);
+          await response.text();
+        }
+
+        await cacheOneTransform("a");
+        await cacheOneTransform("b");
+        assertEquals(getBatchCacheStats().size, 2, "both projects cached a transform");
+
+        clearBatchCache("a");
+
+        const stats = getBatchCacheStats();
+        assertEquals(stats.size, 1, "clearing project a must leave project b's entry");
+        assertEquals(
+          stats.keys.every((key) => key.startsWith("b:")),
+          true,
+          "clearing project a must leave only project b entries",
+        );
+
+        clearBatchCache();
+      });
+
+      it("clears entries for a project that supplies a projectId", async () => {
+        clearBatchCache();
+
+        async function cacheOneTransform(
+          identity: { projectSlug: string; projectId?: string },
+        ): Promise<void> {
+          const adapter = createMockAdapter();
+          adapter.fs.files.set(
+            `/test-project/${identity.projectSlug}.tsx`,
+            "export const value = 1;",
+          );
+          const url = new URL("/_vf_modules/_batch", "http://localhost:8080");
+          url.searchParams.set("paths", `${identity.projectSlug}.js`);
+          const response = await handleModuleBatch(new Request(url.toString()), {
+            projectDir: "/test-project",
+            adapter,
+            projectSlug: identity.projectSlug,
+            projectId: identity.projectId,
+            releaseId: `rel-${identity.projectSlug}`,
+            dev: false,
+          });
+          assertEquals(
+            response.status,
+            200,
+            `project ${identity.projectSlug} must serve its module`,
+          );
+          await response.text();
+        }
+
+        await cacheOneTransform({ projectSlug: "slug-a", projectId: "id-a" });
+        await cacheOneTransform({ projectSlug: "slug-b", projectId: "id-b" });
+        assertEquals(getBatchCacheStats().size, 2, "both projects cached a transform");
+
+        clearBatchCache({ projectSlug: "slug-a", projectId: "id-a" });
+
+        const stats = getBatchCacheStats();
+        assertEquals(
+          stats.size,
+          1,
+          "clearing a project that supplies a projectId must delete its entry, not silently match nothing",
+        );
+        assertEquals(
+          stats.keys.every((key) => key.startsWith("id-b:")),
+          true,
+          "only the other project's entries may survive the invalidation",
+        );
+
+        clearBatchCache();
       });
     });
 
@@ -362,6 +486,65 @@ describe(
         const code = await response.text();
         assertEquals(code.includes("exists.js"), true);
         assertEquals(code.includes("Failed: missing.js"), true);
+      });
+
+      it("escapes module paths in the batch bundle", async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set("/test-project/exists.tsx", "export const x = 1;");
+        const attackPath = 'evil");globalThis.__pwned=1;//';
+
+        const response = await handleModuleBatch(
+          createBatchRequest(`exists.js,${attackPath}`),
+          createOptions({ adapter }),
+        );
+
+        assertEquals(response.status, 200);
+        const code = await response.text();
+        assertStringIncludes(
+          code,
+          `__vf_batch_modules.set(${JSON.stringify(attackPath)}`,
+          "the failing path must be emitted as a JSON-escaped literal",
+        );
+        assertEquals(
+          code.includes('set("evil");'),
+          false,
+          "an attacker-supplied path must not close the string literal",
+        );
+      });
+
+      it("escapes transform error text in the batch bundle", async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set("/test-project/exists.tsx", "export const x = 1;");
+        adapter.fs.files.set("/test-project/broken.tsx", "export const b = 1;");
+        const errorMessage = 'boom "quoted" \\ backslash\nnewline';
+        const readFile = adapter.fs.readFile;
+        adapter.fs.readFile = (path: string) =>
+          path.includes("broken") ? Promise.reject(new Error(errorMessage)) : readFile(path);
+
+        const response = await handleModuleBatch(
+          createBatchRequest("exists.js,broken.js"),
+          createOptions({ adapter }),
+        );
+
+        assertEquals(response.status, 200);
+        const code = await response.text();
+        assertStringIncludes(
+          code,
+          `{ __vf_error: ${JSON.stringify(errorMessage)} }`,
+          "the transform error must be emitted as a JSON-escaped literal",
+        );
+        assertEquals(
+          code.includes('__vf_error: "boom "'),
+          false,
+          "a quote in the error message must not close the string literal",
+        );
+        for (const line of code.split("\n")) {
+          assertEquals(
+            line.trimStart().startsWith("newline"),
+            false,
+            "a newline in the error message must not start a new statement",
+          );
+        }
       });
 
       it("should set immutable cache headers for non-dev mode", async () => {

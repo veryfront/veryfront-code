@@ -4,13 +4,14 @@
  */
 import { createAgentServiceSandboxTools } from "#veryfront/sandbox";
 import {
-  createRemoteMCPToolSource,
   createToolsFromRemoteDefinitions,
   type HostToolSet,
   isToolVisibleTo,
+  type RemoteMCPToolSourceConfig,
+  type RemoteToolSource,
   toolRegistry,
 } from "#veryfront/tool";
-import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
+import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
 import { parseProviderError } from "../../chat/provider-errors.ts";
 import {
   getVeryfrontCloudProviderFromModelId,
@@ -35,7 +36,6 @@ import type { ResolvedSkillSelectorSnapshot } from "#veryfront/skill/selector.ts
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import { buildAgentDelegateTools } from "../runtime/agent-delegation.ts";
 import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
-import { flattenSystemInstructions } from "../runtime/tool-inventory.ts";
 import { createDefaultHostedInvokeAgentTool } from "./default-invoke-agent-tool.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
 import type {
@@ -50,6 +50,7 @@ import { createLiveStudioMcpTools } from "../project/live-studio-mcp-tools.ts";
 import {
   getProjectAgentRuntime,
   getProjectSteering,
+  getRemoteToolSourceFactory,
   type NodeVeryfrontCloudAgentServiceContext,
   resolveAgentConfig,
 } from "./cloud-agent-config.ts";
@@ -84,15 +85,25 @@ export type ChildRunContext =
  * with optional per-agent overrides.
  */
 export function resolveMcpServers(
-  options: { mcpServers?: readonly AgentServiceMcpServerConfig[] },
+  options: {
+    mcpServers?: readonly AgentServiceMcpServerConfig[];
+    createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
+  },
   agentConfig?: Pick<RuntimeAgentMarkdownDefinition, "mcpServers">,
 ): readonly AgentServiceMcpServerConfig[] {
-  if (options.mcpServers !== undefined) {
+  // A deployment-owned transport is a privileged capability. When present,
+  // omitting mcpServers locks the service to first-party defaults as its
+  // authority ceiling, so tenant configuration cannot bind that transport to
+  // arbitrary endpoints.
+  const serviceMcpServers = options.mcpServers ??
+    (options.createRemoteToolSource === undefined ? undefined : defaultAgentServiceMcpServers());
+
+  if (serviceMcpServers !== undefined) {
     if (agentConfig?.mcpServers === undefined) {
-      return options.mcpServers;
+      return serviceMcpServers;
     }
     return agentConfig.mcpServers.flatMap((agentServer) => {
-      const hostServer = options.mcpServers?.find((server) =>
+      const hostServer = serviceMcpServers.find((server) =>
         server.kind === agentServer.kind && server.id === agentServer.id
       );
       if (!hostServer) {
@@ -159,7 +170,7 @@ export function getDiscoveredHostTools(scope?: { agentId?: string }): HostToolSe
   return Object.fromEntries(
     [...toolRegistry.getAll()]
       .filter(([toolId, registryTool]) =>
-        !SKILL_TOOL_IDS.has(toolId) && isToolVisibleTo(registryTool, scope)
+        !isSkillInfrastructureToolId(toolId) && isToolVisibleTo(registryTool, scope)
       )
       .sort(([left], [right]) => left.localeCompare(right)),
   );
@@ -351,14 +362,14 @@ export async function resolveHostedChildAgentExecutionConfig(
   const thinking = agentConfig.thinking?.enabled === false ? 0 : agentConfig.thinking?.budgetTokens;
 
   return {
-    system: flattenSystemInstructions(buildVeryfrontCloudRuntimeInstructions({
+    system: buildVeryfrontCloudRuntimeInstructions({
       agentConfig,
       projectId: projectId || null,
       branchId,
       instructions: steering.instructions,
       skills: skillSelectorSnapshot.definitions,
       availableToolNames: toolNames,
-    })),
+    }),
     ...(agentConfig.model ? { model: agentConfig.model } : {}),
     ...(agentConfig.temperature === undefined ? {} : { temperature: agentConfig.temperature }),
     ...(agentConfig.maxSteps === undefined ? {} : { maxSteps: agentConfig.maxSteps }),
@@ -412,7 +423,7 @@ export function createInvokeAgentTool(
       refreshProjectSkillIds(context, projectSkillContext),
     createAgentServiceSandboxTools,
     createLiveStudioTools: createLiveStudioMcpTools,
-    createRemoteToolSource: createRemoteMCPToolSource,
+    createRemoteToolSource: getRemoteToolSourceFactory(context),
     createToolsFromRemoteDefinitions,
     requireDurableInvokeAgent: options?.requireDurable,
   });
@@ -441,14 +452,14 @@ export function buildHostedDelegateTools(
   });
 }
 
-/** The shape of a hosted delegation binding (scoped vs. legacy). */
+/** The shape of a hosted delegation binding (fixed-target vs. generic). */
 export type HostedDelegationBinding =
   | { kind: "scoped"; delegateIds: string[] }
-  | { kind: "legacy" };
+  | { kind: "generic" };
 
 /**
  * Resolves the delegation binding from an agent config. Agents with an explicit
- * `delegates` list use scoped delegation; all others fall back to legacy invoke_agent.
+ * `delegates` list use scoped delegation; all others use generic invoke_agent.
  */
 export function resolveHostedDelegationBinding(
   agentConfig: RuntimeAgentMarkdownDefinition | undefined,
@@ -456,5 +467,5 @@ export function resolveHostedDelegationBinding(
   if (agentConfig?.delegates !== undefined) {
     return { kind: "scoped", delegateIds: agentConfig.delegates };
   }
-  return { kind: "legacy" };
+  return { kind: "generic" };
 }

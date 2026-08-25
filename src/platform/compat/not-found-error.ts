@@ -16,7 +16,7 @@ const reflectApply = Reflect.apply;
 const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
 
-function hasOwn(value: object, key: PropertyKey): boolean {
+function hasOwn(value: PropertyDescriptor, key: PropertyKey): boolean {
   return reflectApply(hasOwnProperty, value, [key]) as boolean;
 }
 

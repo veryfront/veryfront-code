@@ -1,6 +1,7 @@
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { AgentMetadata, PromptSuggestion } from "#veryfront/agent/react";
@@ -61,12 +62,22 @@ describe("getAgentPromptSuggestionItems", () => {
   });
 
   it("returns [] for a null agent or missing suggestions", () => {
-    assertEquals(getAgentPromptSuggestionItems(null), []);
+    assertEquals(getAgentPromptSuggestionItems(null), [], "null agent yields []");
+    const bare: AgentMetadata = { id: "a", name: "A", description: null, avatarUrl: null };
+    assertEquals(getAgentPromptSuggestionItems(bare), [], "agent without suggestions yields []");
+    assertEquals(
+      getAgentPromptSuggestionItems({
+        ...bare,
+        suggestions: { suggestions: undefined } as unknown as AgentMetadata["suggestions"],
+      }),
+      [],
+      "agent with an empty suggestions container yields []",
+    );
   });
 });
 
 describe("ChatEmpty suggestions", () => {
-  it("renders labels and hands the { label, prompt } object to onSuggestionSelect", () => {
+  it("renders labels and hands the { label, prompt } object to onSuggestionSelect", async () => {
     const restoreDom = installDom();
     const clicked: PromptSuggestion[] = [];
     try {
@@ -90,33 +101,35 @@ describe("ChatEmpty suggestions", () => {
         { label: "Triage login", prompt: "Triage a user who cannot sign in." },
       ], "click sends the full { label, prompt } — no .find needed");
 
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
     } finally {
       restoreDom();
     }
   });
 
-  it("keeps legacy onSuggestionClick handlers receiving prompt text", () => {
+  it("normalizes a plain string suggestion to { label, prompt }", async () => {
     const restoreDom = installDom();
-    const clicked: string[] = [];
+    const clicked: PromptSuggestion[] = [];
     try {
       const root = createRoot(document.getElementById("root")!);
       flushSync(() => {
         root.render(
           <ChatEmpty
-            suggestions={[{ label: "Triage login", prompt: "Triage the login incident." }]}
-            onSuggestionClick={(value) => clicked.push(value)}
+            suggestions={["Ask anything"]}
+            onSuggestionSelect={(value) => clicked.push(value)}
           />,
         );
       });
 
       const button = Array.from(document.querySelectorAll("button")).find((candidate) =>
-        candidate.textContent?.includes("Triage login")
+        candidate.textContent?.includes("Ask anything")
       );
-      assert(button, "renders the legacy suggestion chip");
+      assert(button, "renders the string suggestion chip");
       flushSync(() => button.click());
-      assertEquals(clicked, ["Triage the login incident."]);
-      flushSync(() => root.unmount());
+      assertEquals(clicked, [
+        { label: "Ask anything", prompt: "Ask anything" },
+      ], "a string suggestion becomes both label and prompt");
+      await unmountReactRoot(root);
     } finally {
       restoreDom();
     }

@@ -22,7 +22,6 @@ function createMockContext(isLocalProject = false): HandlerContext {
     projectDir: "/test/project",
     adapter: {} as HandlerContext["adapter"],
     securityConfig: null,
-    cspUserHeader: null,
     isLocalProject,
   };
 }
@@ -59,7 +58,7 @@ describe("http-error-boundary", () => {
       assertEquals(result.response.headers.get("Content-Type"), PROBLEM_JSON_CONTENT_TYPE);
 
       const body = await result.response.json();
-      assertEquals(body.type, "https://veryfront.com/docs/errors/config-not-found");
+      assertEquals(body.type, "https://veryfront.com/docs/code/guides/errors#config-not-found");
       assertEquals(body.title, "Configuration file not found");
       assertEquals(body.status, 404);
       assertEquals(body.category, "CONFIG");
@@ -89,7 +88,7 @@ describe("http-error-boundary", () => {
       assertEquals(result.response.status, 500);
       const body = await result.response.json();
       assertEquals(body.status, 500);
-      assertEquals(body.type, "https://veryfront.com/docs/errors/unknown-error");
+      assertEquals(body.type, "https://veryfront.com/docs/code/guides/errors#unknown-error");
       assertEquals(statusReads, 0);
     });
 
@@ -108,7 +107,7 @@ describe("http-error-boundary", () => {
       assertEquals(result.response.headers.get("Content-Type"), PROBLEM_JSON_CONTENT_TYPE);
 
       const body = await result.response.json();
-      assertEquals(body.type, "https://veryfront.com/docs/errors/unknown-error");
+      assertEquals(body.type, "https://veryfront.com/docs/code/guides/errors#unknown-error");
       assertEquals(body.status, 500);
       assertEquals(body.category, "GENERAL");
       assertEquals(body.detail, "Something went wrong");
@@ -131,7 +130,7 @@ describe("http-error-boundary", () => {
         assertExists(result.response);
         assertEquals(result.response.status, 500);
         const body = await result.response.json();
-        assertEquals(body.type, "https://veryfront.com/docs/errors/unknown-error");
+        assertEquals(body.type, "https://veryfront.com/docs/code/guides/errors#unknown-error");
       } finally {
         recorder.recordError = originalRecordError;
       }
@@ -152,7 +151,7 @@ describe("http-error-boundary", () => {
         assertExists(result.response);
         assertEquals(result.response.status, 500);
         const body = await result.response.json();
-        assertEquals(body.type, "https://veryfront.com/docs/errors/unknown-error");
+        assertEquals(body.type, "https://veryfront.com/docs/code/guides/errors#unknown-error");
       } finally {
         trace.getActiveSpan = originalGetActiveSpan;
       }
@@ -289,7 +288,7 @@ describe("http-error-boundary", () => {
       assertExists(result.response);
       assertEquals(result.response.status, 404);
       const body = await result.response.json();
-      assertEquals(body.type, "https://veryfront.com/docs/errors/config-not-found");
+      assertEquals(body.type, "https://veryfront.com/docs/code/guides/errors#config-not-found");
       assertEquals(body.instance, undefined);
       assertEquals(urlReads, 0);
     });
@@ -451,7 +450,7 @@ describe("http-error-boundary", () => {
       assertExists(result.response);
       assertEquals(result.response.status, 500);
       const body = await result.response.json();
-      assertEquals(body.type, "https://veryfront.com/docs/errors/unknown-error");
+      assertEquals(body.type, "https://veryfront.com/docs/code/guides/errors#unknown-error");
       assertEquals(JSON.stringify(body).includes("source-secret"), false);
     });
 
@@ -501,7 +500,7 @@ describe("http-error-boundary", () => {
       assertExists(result.response);
       assertEquals(result.response.status, 500);
       const body = await result.response.json();
-      assertEquals(body.type, "https://veryfront.com/docs/errors/unknown-error");
+      assertEquals(body.type, "https://veryfront.com/docs/code/guides/errors#unknown-error");
     });
 
     it("should preserve handler metadata", async () => {

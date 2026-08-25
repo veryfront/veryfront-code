@@ -310,6 +310,34 @@ describe("server/build-routes", () => {
       assertEquals(routes, []);
     });
 
+    it("propagates app directory access failures", async () => {
+      const adapter = createMockAdapter({});
+      adapter.fs.stat = () => Promise.reject(new Error("app permission denied"));
+
+      await assertRejects(
+        () => collectAppRoutes(adapter, "/project"),
+        Error,
+        "app permission denied",
+      );
+    });
+
+    it("propagates non-ENOENT page-candidate stat failures", async () => {
+      const adapter = createMockAdapter({
+        "/project/app/page.tsx": "export default function Home() {}",
+      });
+      const statDirectory = adapter.fs.stat.bind(adapter.fs);
+      adapter.fs.stat = (path: string) =>
+        path === "/project/app"
+          ? statDirectory(path)
+          : Promise.reject(new Error(`EACCES: ${path}`));
+
+      await assertRejects(
+        () => collectAppRoutes(adapter, "/project"),
+        Error,
+        "EACCES: /project/app/page.mdx",
+      );
+    });
+
     it("propagates app route source read failures", async () => {
       const adapter = createMockAdapter({
         "/project/app/page.tsx": "export default function Home() {}",

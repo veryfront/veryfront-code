@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createOAuthStatusHandler } from "./handlers/init-handler.ts";
 import { MemoryTokenStore } from "./token-store/memory.ts";
 import type { OAuthServiceConfig, StoredOAuthState, TokenStore } from "./types.ts";
+import { MAX_OAUTH_URL_LENGTH } from "./limits.ts";
 import { isOAuthRedirectUrl, isSecureOAuthEndpointUrl } from "./url-validation.ts";
 
 const TEST_CONFIG: OAuthServiceConfig = {
@@ -29,6 +30,29 @@ describe("OAuth cross-runtime contracts", () => {
     assertEquals(isOAuthRedirectUrl("http://127.0.0.1:8787/oauth/callback"), true);
     assertEquals(isOAuthRedirectUrl("http://localhost:8787/oauth/callback"), true);
     assertEquals(isOAuthRedirectUrl("http://app.test/oauth/callback"), false);
+
+    // Text the WHATWG parser silently rewrites must be refused before parsing,
+    // so validation never depends on parser normalization.
+    for (
+      const value of [
+        "https://provider.test\\@evil.test/token",
+        "https://prov\nider.test/token",
+        "https://provider.test/to\tken",
+        " https://provider.test/token",
+        `https://provider.test/${"x".repeat(MAX_OAUTH_URL_LENGTH)}`,
+      ]
+    ) {
+      assertEquals(
+        isSecureOAuthEndpointUrl(value),
+        false,
+        `endpoint validation must reject ${JSON.stringify(value)}`,
+      );
+      assertEquals(
+        isOAuthRedirectUrl(value),
+        false,
+        `redirect validation must reject ${JSON.stringify(value)}`,
+      );
+    }
   });
 
   it("keeps in-memory tokens detached and consumes OAuth state exactly once", async () => {

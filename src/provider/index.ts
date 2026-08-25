@@ -19,7 +19,7 @@ export {
   registerModelProvider,
   resolveModel,
 } from "./model-registry.ts";
-export type { ModelProviderFactory } from "./model-registry.ts";
+export type { ModelProviderFactory, ModelProviderRegistrationDisposer } from "./model-registry.ts";
 export type { ModelRuntime } from "./types.ts";
 export {
   getCurrentVeryfrontCloudContext,

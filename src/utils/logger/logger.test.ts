@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __registerLogRecordEmitter,
+  __registerRequestContextGetter,
   __registerTraceContextGetter,
   __resetLoggerConfigForTests,
   __resetLogRecordEmitterForTests,
@@ -12,11 +13,17 @@ import {
   getBaseLogger,
   getDefaultLevel,
   type LogEntry,
+  type Logger,
   LogLevel,
   refreshLoggerConfig,
   serverLogger,
 } from "./logger.ts";
-import { type RequestContext, runWithRequestContextAsync } from "./request-context.ts";
+import {
+  getRequestContext,
+  type RequestContext,
+  requestContextStore,
+  runWithRequestContextAsync,
+} from "./request-context.ts";
 import { runWithProjectEnv } from "../../server/project-env/storage.ts";
 import { VERSION } from "../version.ts";
 
@@ -103,6 +110,152 @@ describe("logger", () => {
       __resetLogRecordEmitterForTests();
       console.error = originalError;
     }
+  });
+
+  it("contains throwing console access inside the logging boundary", () => {
+    const originalLog = Object.getOwnPropertyDescriptor(console, "log")!;
+    let threw = false;
+
+    Object.defineProperty(console, "log", {
+      configurable: true,
+      get() {
+        throw new Error("project code replaced the console sink");
+      },
+    });
+    try {
+      try {
+        getBaseLogger("SERVER").info("contained console getter");
+      } catch {
+        threw = true;
+      }
+    } finally {
+      Object.defineProperty(console, "log", originalLog);
+    }
+
+    assertEquals(threw, false);
+  });
+
+  it("uses captured subscriber iteration after the Set iterator changes", () => {
+    const originalIterator = Object.getOwnPropertyDescriptor(Set.prototype, Symbol.iterator)!;
+    const messages: string[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => messages.push(entry.message));
+    let threw = false;
+
+    Object.defineProperty(Set.prototype, Symbol.iterator, {
+      configurable: true,
+      value() {
+        throw new Error("project code replaced Set iteration");
+      },
+    });
+    try {
+      try {
+        getBaseLogger("SERVER").info("captured subscriber iteration");
+      } catch {
+        threw = true;
+      }
+    } finally {
+      Object.defineProperty(Set.prototype, Symbol.iterator, originalIterator);
+      unsubscribe();
+    }
+
+    assertEquals(threw, false);
+    assertEquals(messages, ["captured subscriber iteration"]);
+  });
+
+  it("delivers one record once when a subscriber reinserts itself", () => {
+    const originalLog = console.log;
+    let calls = 0;
+    let unsubscribe = () => {};
+    const subscriber = () => {
+      calls++;
+      unsubscribe();
+      unsubscribe = __subscribeLogRecordEmitter(subscriber);
+    };
+
+    console.log = () => {};
+    unsubscribe = __subscribeLogRecordEmitter(subscriber);
+    try {
+      getBaseLogger("SERVER").info("single delivery");
+    } finally {
+      unsubscribe();
+      console.log = originalLog;
+    }
+
+    assertEquals(calls, 1);
+  });
+
+  it("keeps emitting after the Date constructor and prototype method change", () => {
+    const { getOutput, restore } = captureConsoleLog();
+    const OriginalDate = globalThis.Date;
+    const originalToISOString = OriginalDate.prototype.toISOString;
+
+    try {
+      withJsonLogFormat(() => {
+        globalThis.Date = function ReplacementDate() {
+          throw new Error("project code replaced Date");
+        } as unknown as DateConstructor;
+        OriginalDate.prototype.toISOString = () => {
+          throw new Error("project code replaced Date serialization");
+        };
+        getBaseLogger("SERVER").info("captured timestamp intrinsics");
+      });
+    } finally {
+      globalThis.Date = OriginalDate;
+      OriginalDate.prototype.toISOString = originalToISOString;
+      restore();
+    }
+
+    const entry = JSON.parse(getOutput()) as LogEntry;
+    assertEquals(entry.message, "captured timestamp intrinsics");
+  });
+
+  it("uses captured case conversion in normal and emergency logging", () => {
+    const { getOutput, restore } = captureConsoleLog();
+    const originalToLowerCase = String.prototype.toLowerCase;
+    let threw = false;
+
+    try {
+      withJsonLogFormat(() => {
+        String.prototype.toLowerCase = () => {
+          throw new Error("project code replaced lowercase conversion");
+        };
+        try {
+          getBaseLogger("SERVER").info("captured lowercase conversion");
+        } catch {
+          threw = true;
+        } finally {
+          String.prototype.toLowerCase = originalToLowerCase;
+        }
+      });
+    } finally {
+      String.prototype.toLowerCase = originalToLowerCase;
+      restore();
+    }
+
+    assertEquals(threw, false);
+    const entry = JSON.parse(getOutput()) as LogEntry;
+    assertEquals(entry.message, "captured lowercase conversion");
+  });
+
+  it("omits empty component names in emergency JSON entries", () => {
+    const { getOutput, restore } = captureConsoleLog();
+    const originalKeys = Object.keys;
+
+    try {
+      withJsonLogFormat(() => {
+        Object.keys = () => {
+          throw new Error("project code replaced Object.keys");
+        };
+        getBaseLogger("SERVER").component("").info("emergency component");
+      });
+    } finally {
+      Object.keys = originalKeys;
+      restore();
+    }
+
+    const entry = JSON.parse(getOutput()) as LogEntry;
+    assertEquals(entry.message, "[REDACTED]");
+    assertEquals(entry.component, undefined);
   });
 
   describe("getDefaultLevel", () => {
@@ -306,6 +459,205 @@ describe("logger", () => {
         restore();
       }
     });
+
+    it("falls back when the request-context provider or logger accessor throws", () => {
+      const { getOutput, restore } = captureConsoleLog();
+      const hostileContext = Object.create(null) as { logger: Logger };
+      Object.defineProperty(hostileContext, "logger", {
+        get() {
+          throw new Error("unreadable request logger");
+        },
+      });
+
+      try {
+        withJsonLogFormat(() => {
+          __registerRequestContextGetter(() => {
+            throw new Error("request context unavailable");
+          });
+          serverLogger.info("provider fallback");
+          assertEquals((JSON.parse(getOutput()) as LogEntry).message, "provider fallback");
+
+          __registerRequestContextGetter(() => hostileContext);
+          serverLogger.info("accessor fallback");
+          assertEquals((JSON.parse(getOutput()) as LogEntry).message, "accessor fallback");
+        });
+      } finally {
+        __registerRequestContextGetter(getRequestContext);
+        restore();
+      }
+    });
+
+    it("falls back when request logger dispatch or AsyncLocalStorage lookup throws", () => {
+      const { getOutput, restore } = captureConsoleLog();
+      const hostileLogger = new Proxy({} as Logger, {
+        get(_target, property) {
+          if (property === "info") throw new Error("unreadable logger method");
+          return undefined;
+        },
+      });
+      const storagePrototype = Object.getPrototypeOf(requestContextStore);
+      const originalGetStore = Object.getOwnPropertyDescriptor(storagePrototype, "getStore")!;
+
+      try {
+        withJsonLogFormat(() => {
+          __registerRequestContextGetter(() => ({ logger: hostileLogger }));
+          serverLogger.info("dispatch fallback");
+          assertEquals((JSON.parse(getOutput()) as LogEntry).message, "dispatch fallback");
+
+          __registerRequestContextGetter(getRequestContext);
+          Object.defineProperty(storagePrototype, "getStore", {
+            configurable: true,
+            value() {
+              throw new Error("project code replaced AsyncLocalStorage.getStore");
+            },
+          });
+          try {
+            serverLogger.info("storage fallback");
+          } finally {
+            Object.defineProperty(storagePrototype, "getStore", originalGetStore);
+          }
+          assertEquals((JSON.parse(getOutput()) as LogEntry).message, "storage fallback");
+        });
+      } finally {
+        Object.defineProperty(storagePrototype, "getStore", originalGetStore);
+        __registerRequestContextGetter(getRequestContext);
+        restore();
+      }
+    });
+
+    it("contains hostile request logger timing and child composition", async () => {
+      const { getOutput, restore } = captureConsoleLog();
+      const originalError = console.error;
+      const hostileLogger = new Proxy({} as Logger, {
+        get() {
+          throw new Error("unreadable logger operation");
+        },
+      });
+      let executions = 0;
+
+      Deno.env.set("LOG_FORMAT", "json");
+      console.error = () => {};
+      __resetLoggerConfigForTests();
+      __registerRequestContextGetter(() => ({ logger: hostileLogger }));
+      try {
+        const directResult = await serverLogger.time("direct timer", () => {
+          executions++;
+          return Promise.resolve("direct result");
+        });
+        assertEquals(directResult, "direct result");
+        assertEquals(executions, 1);
+
+        serverLogger.child({ scope: "direct" }).info("direct child fallback");
+        assertEquals((JSON.parse(getOutput()) as LogEntry).message, "direct child fallback");
+
+        const componentLogger = serverLogger.component("request");
+        const componentResult = await componentLogger.time("component timer", () => {
+          executions++;
+          return Promise.resolve("component result");
+        });
+        assertEquals(componentResult, "component result");
+        assertEquals(executions, 2);
+
+        componentLogger.child({ scope: "component" }).info("component child fallback");
+        const componentEntry = JSON.parse(getOutput()) as LogEntry;
+        assertEquals(componentEntry.message, "component child fallback");
+        assertEquals(componentEntry.component, "request");
+
+        const applicationError = new Error("application failure");
+        let caught: unknown;
+        try {
+          await serverLogger.time("rejected timer", () => {
+            executions++;
+            return Promise.reject(applicationError);
+          });
+        } catch (error) {
+          caught = error;
+        }
+        assertEquals(caught, applicationError);
+        assertEquals(executions, 3);
+
+        const returnedHostileLogger = new Proxy({} as Logger, {
+          get() {
+            throw new Error("unreadable returned child logger");
+          },
+        });
+        const hostileChildFactory = {
+          child() {
+            return returnedHostileLogger;
+          },
+          component() {
+            return hostileChildFactory;
+          },
+        } as unknown as Logger;
+        __registerRequestContextGetter(() => ({ logger: hostileChildFactory }));
+
+        const guardedChild = serverLogger.child({ scope: "returned" });
+        guardedChild.info("returned child fallback");
+        assertEquals((JSON.parse(getOutput()) as LogEntry).message, "returned child fallback");
+        assertEquals(
+          await guardedChild.time("returned child timer", () => Promise.resolve("timed")),
+          "timed",
+        );
+        guardedChild.child({ nested: true }).info("nested child fallback");
+        assertEquals((JSON.parse(getOutput()) as LogEntry).message, "nested child fallback");
+        guardedChild.component("nested").info("nested component fallback");
+        assertEquals((JSON.parse(getOutput()) as LogEntry).message, "nested component fallback");
+
+        serverLogger.component("request").child({ scope: "component" }).info(
+          "returned component child fallback",
+        );
+        const returnedComponentEntry = JSON.parse(getOutput()) as LogEntry;
+        assertEquals(returnedComponentEntry.message, "returned component child fallback");
+        assertEquals(returnedComponentEntry.component, "request");
+      } finally {
+        __registerRequestContextGetter(getRequestContext);
+        Deno.env.delete("LOG_FORMAT");
+        __resetLoggerConfigForTests();
+        console.error = originalError;
+        restore();
+      }
+    });
+
+    it("preserves timer outcomes when label coercion throws", async () => {
+      const originalError = console.error;
+      const hostileLabel = {
+        [Symbol.toPrimitive]() {
+          throw new Error("unreadable timer label");
+        },
+      } as unknown as string;
+      const loggers: Logger[] = [
+        getBaseLogger("timer"),
+        serverLogger,
+        serverLogger.component("timer"),
+      ];
+      let executions = 0;
+
+      console.error = () => {};
+      try {
+        for (const timerLogger of loggers) {
+          const result = await timerLogger.time(hostileLabel, () => {
+            executions++;
+            return Promise.resolve("application result");
+          });
+          assertEquals(result, "application result");
+
+          const applicationError = new Error("application rejection");
+          let caught: unknown;
+          try {
+            await timerLogger.time(hostileLabel, () => {
+              executions++;
+              return Promise.reject(applicationError);
+            });
+          } catch (error) {
+            caught = error;
+          }
+          assertEquals(caught, applicationError);
+        }
+        assertEquals(executions, 6);
+      } finally {
+        console.error = originalError;
+      }
+    });
   });
 
   describe("JSON output format", () => {
@@ -337,10 +689,39 @@ describe("logger", () => {
 
           assertEquals(typeof entry.timestamp, "string");
           assertEquals(entry.level, "info");
-          assertEquals(typeof entry.service, "string");
+          assertEquals(
+            entry.service,
+            "server",
+            "SERVER prefix must emit service=server for Loki queries",
+          );
           assertEquals(entry.veryfrontVersion, VERSION);
           assertEquals(entry.message, "Test message");
           assertEquals(entry.context?.extra, "data");
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("resolves a base logger prefix to its own service name", () => {
+      const { getOutput, reset, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          getBaseLogger("server").info("x");
+          assertEquals(
+            (JSON.parse(getOutput()) as LogEntry).service,
+            "server",
+            "a lowercase prefix must resolve to the SERVER base logger",
+          );
+
+          reset();
+          getBaseLogger("timer").info("x");
+          assertEquals(
+            (JSON.parse(getOutput()) as LogEntry).service,
+            "veryfront",
+            "an unknown prefix must fall back to the veryfront base logger",
+          );
         });
       } finally {
         restore();
@@ -494,6 +875,204 @@ describe("logger", () => {
         restore();
       }
     });
+
+    it("scrubs credentials embedded in the log message", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info(
+            "Fetching https://user:password@example.com/cb?access_token=secret",
+          );
+
+          const line = getOutput();
+          const entry = JSON.parse(line) as LogEntry;
+          assertEquals(line.includes("password"), false);
+          assertEquals(line.includes("secret"), false);
+          assertEquals(entry.message.includes("[REDACTED]"), true);
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("keeps benign assignment-shaped log messages intact", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info("mapping: 4 routes resolved");
+        });
+
+        const entry = JSON.parse(getOutput()) as LogEntry;
+        assertEquals(entry.message, "mapping: 4 routes resolved");
+      } finally {
+        restore();
+      }
+    });
+
+    it("serializes BigInt and hostile toJSON getters without throwing", () => {
+      const { getOutput, restore } = captureConsoleLog();
+      const hostile: Record<string, unknown> = {};
+      Object.defineProperty(hostile, "toJSON", {
+        get() {
+          throw new Error("hostile serializer getter");
+        },
+      });
+
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info("Unusual values", { count: 42n, hostile });
+        });
+
+        const entry = JSON.parse(getOutput()) as LogEntry;
+        assertEquals(entry.context?.count, "42");
+        assertEquals(entry.context?.hostile, "[REDACTED]");
+      } finally {
+        restore();
+      }
+    });
+
+    it("contains hostile child context, component, and message values", () => {
+      const { getOutput, restore } = captureConsoleLog();
+      const hostileValue = new Proxy({}, {
+        get() {
+          throw new Error("hostile value read");
+        },
+        ownKeys() {
+          throw new Error("hostile keys read");
+        },
+      });
+
+      try {
+        withJsonLogFormat(() => {
+          const hostileContext = hostileValue as Record<string, unknown>;
+          const hostileString = hostileValue as unknown as string;
+          getBaseLogger("SERVER")
+            .child(hostileContext)
+            .component(hostileString)
+            .info(hostileString, hostileContext);
+        });
+
+        const entry = JSON.parse(getOutput()) as LogEntry;
+        assertEquals(entry.message, "[REDACTED]");
+        assertEquals(entry.component, "[REDACTED]");
+      } finally {
+        restore();
+      }
+    });
+
+    it("ignores inherited serialization hooks and preserves component fields", () => {
+      const { getOutput, restore } = captureConsoleLog();
+      const objectToJson = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+      const arrayToJson = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
+      let hookCalls = 0;
+
+      Object.defineProperty(Object.prototype, "toJSON", {
+        configurable: true,
+        value() {
+          hookCalls += 1;
+          throw new Error("inherited object serializer must not run");
+        },
+      });
+      Object.defineProperty(Array.prototype, "toJSON", {
+        configurable: true,
+        value() {
+          hookCalls += 1;
+          throw new Error("inherited array serializer must not run");
+        },
+      });
+
+      try {
+        withJsonLogFormat(() => {
+          getBaseLogger("SERVER").component("routing").info("Routes", {
+            values: ["one", "two"],
+          });
+        });
+      } finally {
+        if (objectToJson) {
+          Object.defineProperty(Object.prototype, "toJSON", objectToJson);
+        } else {
+          delete (Object.prototype as { toJSON?: unknown }).toJSON;
+        }
+        if (arrayToJson) {
+          Object.defineProperty(Array.prototype, "toJSON", arrayToJson);
+        } else {
+          delete (Array.prototype as { toJSON?: unknown }).toJSON;
+        }
+        restore();
+      }
+
+      assertEquals(hookCalls, 0);
+      const entry = JSON.parse(getOutput()) as LogEntry;
+      assertEquals(entry.component, "routing");
+      assertEquals(entry.context?.values, ["one", "two"]);
+    });
+
+    it("ignores hooks added through the intrinsic array prototype chain", () => {
+      const { getOutput, restore } = captureConsoleLog();
+      const originalArrayPrototypeParent = Object.getPrototypeOf(Array.prototype);
+      let hookCalls = 0;
+      const hostileParent = Object.create(originalArrayPrototypeParent) as {
+        toJSON?: () => unknown;
+      };
+      hostileParent.toJSON = () => {
+        hookCalls += 1;
+        return "polluted-array";
+      };
+
+      Object.setPrototypeOf(Array.prototype, hostileParent);
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info("Routes", {
+            values: [{ apiKey: "secret", ok: true }],
+          });
+        });
+      } finally {
+        Object.setPrototypeOf(Array.prototype, originalArrayPrototypeParent);
+        restore();
+      }
+
+      assertEquals(hookCalls, 0);
+      const entry = JSON.parse(getOutput()) as LogEntry;
+      assertEquals(entry.context?.values, [{ apiKey: "[REDACTED]", ok: true }]);
+    });
+
+    it("preserves non-callable own toJSON fields", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info("Metadata", { toJSON: "plain metadata" });
+        });
+
+        const entry = JSON.parse(getOutput()) as LogEntry;
+        assertEquals(entry.context?.toJSON, "plain metadata");
+      } finally {
+        restore();
+      }
+    });
+
+    it("uses the captured JSON serializer when the global is replaced", () => {
+      const { getOutput, restore } = captureConsoleLog();
+      const originalStringify = JSON.stringify;
+
+      try {
+        withJsonLogFormat(() => {
+          JSON.stringify = () => {
+            throw new Error("project code replaced JSON.stringify");
+          };
+          serverLogger.info("Protected serializer", { apiKey: "sk-project-secret" });
+        });
+      } finally {
+        JSON.stringify = originalStringify;
+        restore();
+      }
+
+      const entry = JSON.parse(getOutput()) as LogEntry;
+      assertEquals(entry.message, "Protected serializer");
+      assertEquals(entry.context?.apiKey, "[REDACTED]");
+    });
   });
 
   describe("text output format", () => {
@@ -537,6 +1116,26 @@ describe("logger", () => {
 
         const output = getOutput();
         assertEquals(output.includes("p4ss"), false);
+        assertEquals(output.includes("[REDACTED]"), true);
+      } finally {
+        restore();
+        Deno.env.delete("LOG_FORMAT");
+        Deno.env.delete("NO_COLOR");
+        __resetLoggerConfigForTests();
+      }
+    });
+
+    it("scrubs credentials embedded in the rendered message", () => {
+      Deno.env.set("LOG_FORMAT", "text");
+      Deno.env.set("NO_COLOR", "1");
+      __resetLoggerConfigForTests();
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        serverLogger.info("Fetching https://user:password@example.com?token=secret");
+        const output = getOutput();
+        assertEquals(output.includes("password"), false);
+        assertEquals(output.includes("secret"), false);
         assertEquals(output.includes("[REDACTED]"), true);
       } finally {
         restore();

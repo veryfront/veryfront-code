@@ -10,8 +10,13 @@ describe("modules/react-loader/extract-component", () => {
   });
 
   it("should fallback to first named export if no default", () => {
-    const Named = () => null;
-    assertEquals(extractComponent({ Named }, "test.tsx"), Named);
+    const First = () => null;
+    const Second = () => null;
+    assertEquals(
+      extractComponent({ First, Second }, "test.tsx"),
+      First,
+      "the first named export must win when there is no default export",
+    );
   });
 
   it("should prefer default over named exports", () => {

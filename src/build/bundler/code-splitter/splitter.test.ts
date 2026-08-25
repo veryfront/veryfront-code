@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
@@ -13,6 +13,7 @@ import {
 } from "#veryfront/testing/deno-compat.ts";
 import { type BuildContext, stop } from "veryfront/extensions/bundler";
 import { CodeSplitter, rebuildAndDispose } from "./splitter.ts";
+import { generatePreloadLinks } from "./index.ts";
 
 async function readJsOutputs(dir: string): Promise<string> {
   let contents = "";
@@ -149,6 +150,7 @@ describe("build/bundler/code-splitter/splitter", () => {
           pagePath,
           [
             `import { notFound } from "veryfront";`,
+            `import "vf-external-probe";`,
             `import { hashSecret } from "./server-helper.ts";`,
             `export async function getServerData() {`,
             `  if (!hashSecret("candidate")) notFound();`,
@@ -173,17 +175,121 @@ describe("build/bundler/code-splitter/splitter", () => {
           mode: "production",
           routes: [{ path: "/", file: pagePath, name: "index" }],
           moduleResolution: "bundled",
+          external: ["vf-external-probe"],
         });
 
-        await splitter.split();
+        const result = await splitter.split();
         assertEquals(tryResolve("CodeParser") !== undefined, true);
         const browserOutputs = await readJsOutputs(outDir);
 
+        const routeEntries = Object.entries(result.manifest.routes);
+        assertEquals(
+          routeEntries.map(([routePath]) => routePath),
+          ["/"],
+          "the split must map the built route under its route path, not its source filename",
+        );
+        const route = routeEntries[0]?.[1];
+        assertExists(route, "the mapped route must carry chunk metadata");
+        assertExists(
+          result.manifest.chunks[route.entry],
+          "the route entry must be one of the emitted chunks",
+        );
+        assertEquals(
+          result.entries.has(route.entry),
+          true,
+          "the route entry chunk must be reported as an entry, not a shared chunk",
+        );
+        assertEquals(
+          result.shared.has(route.entry),
+          false,
+          "the route entry chunk must not also be reported as shared",
+        );
+        assertEquals(
+          browserOutputs.includes("vf-external-probe"),
+          true,
+          "externals declared on SplitOptions stay unbundled",
+        );
         assertEquals(browserOutputs.includes("browser page"), true);
         assertEquals(browserOutputs.includes("node:crypto"), false);
         assertEquals(browserOutputs.includes("createHash"), false);
         assertEquals(browserOutputs.includes("hashSecret"), false);
         assertEquals(browserOutputs.includes("notFound"), false);
+      } finally {
+        await stop();
+        if (previousCodeParser) register("CodeParser", previousCodeParser);
+        else unregister("CodeParser");
+        await remove(projectDir, { recursive: true });
+        await remove(outDir, { recursive: true });
+      }
+    });
+
+    it("keys App Router and nested routes by route path so preload hints resolve", async () => {
+      const projectDir = await makeTempDir({ prefix: "vf-splitter-routes-" });
+      const outDir = await makeTempDir({ prefix: "vf-splitter-routes-out-" });
+      const previousCodeParser = tryResolve<unknown>("CodeParser");
+      unregister("CodeParser");
+
+      try {
+        await mkdir(join(projectDir, "app/blog"), { recursive: true });
+        await mkdir(join(projectDir, "app/docs"), { recursive: true });
+        await writeTextFile(
+          join(projectDir, "app/page.tsx"),
+          `export default function Page() { return "home"; }`,
+        );
+        await writeTextFile(
+          join(projectDir, "app/blog/page.tsx"),
+          `export default function BlogPage() { return "blog"; }`,
+        );
+        await writeTextFile(
+          join(projectDir, "app/docs/page.tsx"),
+          `export default function DocsPage() { return "docs"; }`,
+        );
+        await writeTextFile(
+          join(projectDir, "app/blog/post.tsx"),
+          `export default function Post() { return "post"; }`,
+        );
+
+        const splitter = new CodeSplitter({
+          projectDir,
+          outDir,
+          mode: "production",
+          moduleResolution: "bundled",
+          routes: [
+            // Three App Router pages whose source basenames all reduce to "page",
+            // plus a nested route whose entry name is dashed rather than nested.
+            { path: "/", file: join(projectDir, "app/page.tsx"), name: "index" },
+            { path: "/blog", file: join(projectDir, "app/blog/page.tsx"), name: "blog" },
+            { path: "/docs", file: join(projectDir, "app/docs/page.tsx"), name: "docs" },
+            { path: "/blog/post", file: join(projectDir, "app/blog/post.tsx"), name: "blog-post" },
+          ],
+        });
+
+        const { manifest } = await splitter.split();
+
+        assertEquals(
+          Object.keys(manifest.routes).sort(),
+          ["/", "/blog", "/blog/post", "/docs"],
+          "each route must be keyed by its own path; App Router pages must not collapse onto a single /page key",
+        );
+        assertEquals(
+          manifest.routes["/blog"]?.entry,
+          "blog.js",
+          "a route must point at the chunk built from its own entry",
+        );
+        assertEquals(
+          manifest.routes["/blog/post"]?.entry,
+          "blog-post.js",
+          "a nested route must point at the chunk built from its own entry",
+        );
+
+        for (const routePath of ["/", "/blog", "/blog/post", "/docs"]) {
+          const links = generatePreloadLinks(manifest, routePath, "/_veryfront/chunks");
+          assertEquals(
+            links.includes("modulepreload"),
+            true,
+            `route ${routePath} must ship a modulepreload hint rather than resolving to an empty string`,
+          );
+        }
       } finally {
         await stop();
         if (previousCodeParser) register("CodeParser", previousCodeParser);

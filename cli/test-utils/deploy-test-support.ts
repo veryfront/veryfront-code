@@ -9,7 +9,12 @@
 
 import { assertEquals } from "veryfront/testing/assert";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import type { ReleaseAssetManifestResponse } from "veryfront/release-assets";
+import {
+  RELEASE_ASSET_BASE_PATH,
+  RELEASE_ASSET_CONTENT_TYPES,
+  RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
+  type ReleaseAssetManifestResponse,
+} from "veryfront/release-assets";
 import { computeSourceDigest, writePushReceipt } from "../shared/deployment-provenance.ts";
 import type {
   DeployControlPlane,
@@ -18,6 +23,7 @@ import type {
   DeployProjectRecord,
   DeployRelease,
   DeployReleaseFile,
+  EnvironmentAccessToken,
 } from "../shared/deployment/control-plane.ts";
 
 export const CONTROL_PLANE = "https://control.example.test/api";
@@ -134,26 +140,26 @@ export function readyManifest(routes: Record<string, { modules: string[]; css: s
     state: "ready",
     manifest_version: 1,
     manifest: {
-      schemaVersion: 1,
+      schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
       projectId: PROJECT_ID,
       releaseId: "release-1",
       releaseVersion: 1,
       manifestVersion: 1,
       builderVersion: "test",
-      sourceContentHash: "sha256:test",
+      sourceContentHash: "a".repeat(64),
       createdAt: "2026-07-30T00:00:00.000Z",
-      assetBasePath: "/_vf/assets/release-1/",
+      assetBasePath: RELEASE_ASSET_BASE_PATH,
       modules: {
         "app/page.js": {
-          contentHash: "sha256:module",
+          contentHash: "b".repeat(64),
           size: 12,
-          contentType: "application/javascript",
+          contentType: RELEASE_ASSET_CONTENT_TYPES.js,
         },
       },
       css: [],
       routes,
+      dependencyMode: "immutable",
       dependencies: {},
-      fallback: { mode: "jit", gaps: [] },
     },
   };
 }
@@ -196,6 +202,19 @@ export class InMemoryDeployControlPlane implements DeployControlPlane {
   readonly projectLookups: string[] = [];
   getProjectError: unknown;
   environment: DeployEnvironment | null | undefined;
+  /**
+   * Custom domains the environment reports. Set to `[]` to make the CLI fall
+   * back to synthesising the `{slug}.{environment}.veryfront.com` hosted URL.
+   */
+  environmentDomains: string[] = ["https://my-project.production.veryfront.com"];
+  /** Whether the default environment sits behind the platform access gate. */
+  environmentProtected = false;
+  /** What the API hands back for the stored API key; null means the exchange fails. */
+  environmentAccessToken: string | null = null;
+  /** HTTP status the failed exchange reports, as the CLI API client attaches it. */
+  environmentAccessTokenFailureStatus = 404;
+  readonly environmentAccessTokenRequests: Array<{ projectId: string; environmentName: string }> =
+    [];
   releaseVersion: string | null = "2026.07.30-1";
   releaseProjectId = PROJECT_ID;
   releaseFiles: DeployReleaseFile[] = [
@@ -222,7 +241,7 @@ export class InMemoryDeployControlPlane implements DeployControlPlane {
     return {
       id: ENVIRONMENT_ID,
       name,
-      protected: false,
+      protected: this.environmentProtected,
       projectId: PROJECT_ID,
       deployment: this.deploymentReadCount > 0 && this.deployment && this.release
         ? {
@@ -230,7 +249,7 @@ export class InMemoryDeployControlPlane implements DeployControlPlane {
           release: { id: this.release.id, name: this.release.name },
         }
         : null,
-      domains: ["https://my-project.production.veryfront.com"],
+      domains: this.environmentDomains,
     };
   }
 
@@ -286,6 +305,23 @@ export class InMemoryDeployControlPlane implements DeployControlPlane {
     this.deployment = deployment;
     this.createdDeployments.push(deployment);
     return deployment;
+  }
+
+  async createEnvironmentAccessToken(
+    target: { projectId: string; environmentName: string },
+  ): Promise<EnvironmentAccessToken> {
+    this.environmentAccessTokenRequests.push({ ...target });
+    if (this.environmentAccessToken === null) {
+      // Shaped like the CLI API client's error: a status, and a message that
+      // carries whatever the server said, which must never reach a warning.
+      throw Object.assign(
+        new Error(
+          `API request failed: ${this.environmentAccessTokenFailureStatus} server detail: internal-host-10.0.0.7`,
+        ),
+        { status: this.environmentAccessTokenFailureStatus },
+      );
+    }
+    return { accessToken: this.environmentAccessToken, expiresIn: 300 };
   }
 
   async getDeployment(_reference: string, deploymentId: string): Promise<DeployDeployment> {

@@ -3,9 +3,22 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "../types.ts";
 import { MemoryDebugHandler } from "./memory.handler.ts";
+import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
 function createHandler(): MemoryDebugHandler {
   return new MemoryDebugHandler();
+}
+
+function createLoopbackRequest(input: string | URL, init?: RequestInit): Request {
+  const headers = new Headers(init?.headers);
+  headers.set("host", new URL(input).host);
+  const request = new Request(input, { ...init, headers });
+  recordRequestPeerFromTransport(request, {
+    runtime: "deno",
+    transport: "tcp",
+    hostname: "127.0.0.1",
+  });
+  return request;
 }
 
 const localCtx = { securityConfig: undefined, isLocalProject: true } as unknown as HandlerContext;
@@ -45,7 +58,7 @@ describe("server/handlers/monitoring/memory-debug", () => {
   describe("MemoryDebugHandler.handle", () => {
     it("should return continue for remote projects", async () => {
       const handler = createHandler();
-      const req = new Request("http://localhost/_debug/memory");
+      const req = createLoopbackRequest("http://localhost/_debug/memory");
       const result = await handler.handle(req, remoteCtx);
       assertEquals(result.continue, true);
       assertEquals(result.response, undefined);
@@ -53,7 +66,7 @@ describe("server/handlers/monitoring/memory-debug", () => {
 
     it("should return continue for non-matching pathname", async () => {
       const handler = createHandler();
-      const req = new Request("http://localhost/other-path");
+      const req = createLoopbackRequest("http://localhost/other-path");
       const result = await handler.handle(req, localCtx);
       assertEquals(result.continue, true);
       assertEquals(result.response, undefined);
@@ -61,7 +74,7 @@ describe("server/handlers/monitoring/memory-debug", () => {
 
     it("should return memory snapshot for local projects", async () => {
       const handler = createHandler();
-      const req = new Request("http://localhost/_debug/memory");
+      const req = createLoopbackRequest("http://localhost/_debug/memory");
       const result = await handler.handle(req, localCtx);
 
       assertExists(result.response);
@@ -70,7 +83,7 @@ describe("server/handlers/monitoring/memory-debug", () => {
 
     it("should return heap stats for /heap sub-path", async () => {
       const handler = createHandler();
-      const req = new Request("http://localhost/_debug/memory/heap");
+      const req = createLoopbackRequest("http://localhost/_debug/memory/heap");
       const result = await handler.handle(req, localCtx);
 
       assertExists(result.response);
@@ -81,7 +94,7 @@ describe("server/handlers/monitoring/memory-debug", () => {
 
     it("should return cache stats for /caches sub-path", async () => {
       const handler = createHandler();
-      const req = new Request("http://localhost/_debug/memory/caches");
+      const req = createLoopbackRequest("http://localhost/_debug/memory/caches");
       const result = await handler.handle(req, localCtx);
 
       assertExists(result.response);
@@ -92,7 +105,7 @@ describe("server/handlers/monitoring/memory-debug", () => {
 
     it("should handle GC trigger for /gc sub-path", async () => {
       const handler = createHandler();
-      const req = new Request("http://localhost/_debug/memory/gc");
+      const req = createLoopbackRequest("http://localhost/_debug/memory/gc");
       const result = await handler.handle(req, localCtx);
 
       assertExists(result.response);
@@ -105,7 +118,7 @@ describe("server/handlers/monitoring/memory-debug", () => {
 
     it("should return pressure check for /pressure sub-path", async () => {
       const handler = createHandler();
-      const req = new Request("http://localhost/_debug/memory/pressure");
+      const req = createLoopbackRequest("http://localhost/_debug/memory/pressure");
       const result = await handler.handle(req, localCtx);
 
       assertExists(result.response);

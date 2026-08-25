@@ -98,11 +98,24 @@ describe("model-tool-converter", () => {
         description: "Get current weather",
         parameters: { type: "object", properties: {} },
       },
+      {
+        name: "forecast",
+        description: "Get a five day forecast",
+        parameters: { type: "object", properties: {} },
+      },
     ];
 
     const result = convertToolsToRuntimeTools(tools)!;
-    // The runtime tool entry should preserve the execute handler.
-    assertEquals("weather" in result, true);
+    assertEquals(
+      (result.weather as { description?: string }).description,
+      "Get current weather",
+      "converted runtime tool must keep the source tool description",
+    );
+    assertEquals(
+      (result.forecast as { description?: string }).description,
+      "Get a five day forecast",
+      "each converted runtime tool must keep its own description",
+    );
   });
 
   it("handles tools with complex schemas", () => {
@@ -178,6 +191,54 @@ describe("model-tool-converter", () => {
       properties: { query: { type: "string" } },
       required: ["query"],
     });
+  });
+
+  it("removes top-level composition from a 198-tool Anthropic child set", () => {
+    const tools: ToolDefinition[] = [
+      ...Array.from({ length: 197 }, (_, index) => ({
+        name: `child_tool_${index}`,
+        description: `Child tool ${index}`,
+        parameters: { type: "object" as const, properties: {} },
+      })),
+      {
+        name: "load_skill",
+        description: "Load a skill body or one of its advertised references",
+        parameters: {
+          anyOf: [
+            {
+              type: "object",
+              properties: {
+                skillId: { type: "string", enum: ["unloaded"] },
+                file: { type: "string" },
+              },
+              required: ["skillId"],
+            },
+            {
+              type: "object",
+              properties: {
+                skillId: { type: "string", enum: ["loaded"] },
+                file: { type: "string" },
+              },
+              required: ["skillId", "file"],
+            },
+          ],
+        } as never,
+      },
+    ];
+
+    const result = convertToolsToRuntimeTools(tools, {
+      model: "veryfront-cloud/anthropic/claude-opus-4-6",
+    });
+    const schema = getRuntimeToolSchema(result?.load_skill) as Record<string, unknown>;
+    const properties = schema.properties as Record<string, Record<string, unknown>>;
+
+    assertEquals(Object.keys(result ?? {}).length, 198);
+    assertEquals(schema.type, "object");
+    assertEquals(Object.hasOwn(schema, "anyOf"), false);
+    assertEquals(Object.hasOwn(schema, "oneOf"), false);
+    assertEquals(Object.hasOwn(schema, "allOf"), false);
+    assertEquals(Object.keys(properties), ["skillId", "file"]);
+    assertEquals(schema.required, ["skillId"]);
   });
 
   it("adds provider-native web_search for anthropic models when explicitly configured", () => {

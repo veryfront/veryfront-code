@@ -23,6 +23,7 @@
  * @module react/components/chat/hooks/use-uploads-registry
  */
 import * as React from "react";
+import { csrfMutationHeaders } from "#veryfront/security/csrf/browser-mutation-headers.ts";
 import { isBrowserEnvironment } from "#veryfront/platform/compat/runtime.ts";
 import type { UploadedFile } from "../components/attachments-panel.tsx";
 import { isSafeUploadId, isSafeUploadUrl } from "../upload-url.ts";
@@ -38,8 +39,6 @@ export interface UseAttachmentsOptions {
    * removes. Usually {@link createChatUploadHandler}'s route. @default "/api/uploads"
    */
   url?: string;
-  /** @deprecated Renamed to `url`. */
-  api?: string;
   /** localStorage key for the persisted list. @default "vf-uploads" */
   storageKey?: string;
   /** Extra headers sent with upload / delete requests. */
@@ -353,8 +352,7 @@ export function useAttachments(
   options: UseAttachmentsOptions = {},
 ): UseAttachmentsResult & UseAttachmentsStorageState & UseAttachmentsRequestState {
   const { storageKey = "vf-uploads", headers } = options;
-  // `url` is canonical; `api` is the deprecated alias.
-  const endpoint = options.url ?? options.api ?? "/api/uploads";
+  const endpoint = options.url ?? "/api/uploads";
   const headersKey = stableHeadersKey(headers);
   const headersRef = React.useRef(headers);
   useIsomorphicLayoutEffect(() => {
@@ -506,7 +504,9 @@ export function useAttachments(
             const response = await fetch(endpoint, {
               method: "POST",
               body: form,
-              headers: headersRef.current,
+              // Production enables CSRF by default, so this POST has to echo
+              // the `__Host-vf_csrf` cookie or the server answers 403.
+              headers: csrfMutationHeaders(endpoint, { headers: headersRef.current }),
               signal: controller.signal,
             });
             if (!response.ok) throw new Error(`Upload failed: ${response.status}`);
@@ -549,9 +549,12 @@ export function useAttachments(
       activeRemovalsRef.current.set(id, active);
       controllersRef.current.add(controller);
       try {
-        const response = await fetch(setQueryParameter(endpoint, "id", id), {
+        const target = setQueryParameter(endpoint, "id", id);
+        const response = await fetch(target, {
           method: "DELETE",
-          headers: headersRef.current,
+          // Same CSRF requirement as the upload POST above. The token is keyed
+          // off the request target, so pass the `?id=` URL actually being hit.
+          headers: csrfMutationHeaders(target, { headers: headersRef.current }),
           signal: controller.signal,
         });
         if (!response.ok) {
@@ -740,16 +743,3 @@ export function useAttachments(
     refresh,
   };
 }
-
-/**
- * @deprecated Renamed to {@link useAttachments}. The registry is the headless
- * attachments primitive; the new name matches the `Attachment*` components.
- * Kept as an alias for back-compat.
- */
-export const useUploadsRegistry = useAttachments;
-
-/** @deprecated Renamed to {@link UseAttachmentsOptions}. */
-export type UseUploadsRegistryOptions = UseAttachmentsOptions;
-
-/** @deprecated Renamed to {@link UseAttachmentsResult}. */
-export type UseUploadsRegistryResult = UseAttachmentsResult;

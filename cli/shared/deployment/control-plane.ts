@@ -5,7 +5,6 @@ import {
   normalizeControlPlane,
   type ProjectTarget,
 } from "../deployment-provenance.ts";
-import type { ReleaseAssetManifestResponse } from "veryfront/release-assets";
 import { DEPLOYMENT_ERROR } from "veryfront/errors";
 
 export interface DeployProjectRecord {
@@ -49,6 +48,12 @@ export interface DeployReleaseFile {
   content: string;
 }
 
+export type DeployReleaseAssetManifestBody = object | string | number | boolean;
+
+export interface DeployReleaseAssetManifestReadOptions {
+  signal?: AbortSignal;
+}
+
 export interface DeployControlPlane {
   readonly controlPlane: string;
   getProject(reference: string): Promise<DeployProjectRecord>;
@@ -62,15 +67,43 @@ export interface DeployControlPlane {
     reference: string,
     releaseId: string,
   ): AsyncIterable<DeployReleaseFile>;
+  /**
+   * Performs one manifest read and returns null only while it does not exist.
+   * The caller owns polling and retry timing.
+   */
   getReleaseAssetManifest(
     projectSlug: string,
     releaseId: string,
-  ): Promise<ReleaseAssetManifestResponse | null>;
+    options?: DeployReleaseAssetManifestReadOptions,
+  ): Promise<DeployReleaseAssetManifestBody | null>;
   createDeployment(
     reference: string,
     input: { releaseId: string; environmentId: string },
   ): Promise<DeployDeployment>;
   getDeployment(reference: string, deploymentId: string): Promise<DeployDeployment>;
+  /**
+   * Exchanges the stored API key for a short-lived token bound to one protected
+   * environment. The API authorizes the key for that target and refuses the
+   * token as a session.
+   */
+  createEnvironmentAccessToken(
+    target: EnvironmentAccessTarget,
+  ): Promise<EnvironmentAccessToken>;
+}
+
+export interface EnvironmentAccessTarget {
+  projectId: string;
+  environmentName: string;
+}
+
+export interface EnvironmentAccessToken {
+  accessToken: string;
+  expiresIn: number;
+}
+
+interface WireEnvironmentAccessToken {
+  access_token: string;
+  expires_in: number;
 }
 
 interface WireEnvironmentDeployment {
@@ -285,15 +318,22 @@ export function createHttpDeployControlPlane(
       } while (cursor);
     },
 
-    async getReleaseAssetManifest(projectSlug, releaseId) {
+    async getReleaseAssetManifest(projectSlug, releaseId, options) {
+      let response: unknown;
       try {
-        return await client.get<ReleaseAssetManifestResponse>(
+        response = await client.get<unknown>(
           `/projects/${projectSlug}/releases/${releaseId}/asset-manifest`,
+          undefined,
+          { retryPolicy: "none", signal: options?.signal },
         );
       } catch (error) {
         if (getErrorStatus(error) === 404) return null;
         throw error;
       }
+      if (response == null) {
+        throw new Error(`Release assets for ${releaseId} returned an empty manifest response`);
+      }
+      return response as DeployReleaseAssetManifestBody;
     },
 
     async createDeployment(reference, input) {
@@ -309,6 +349,22 @@ export function createHttpDeployControlPlane(
       return normalizeDeployment(
         await client.get<WireDeployment>(`/projects/${reference}/deployments/${deploymentId}`),
       );
+    },
+
+    async createEnvironmentAccessToken(target) {
+      const response = await client.post<WireEnvironmentAccessToken>("/auth/environment-token", {
+        project_reference: target.projectId,
+        environment_name: target.environmentName,
+      });
+      const token = response?.access_token;
+      if (typeof token !== "string" || token.length === 0) {
+        throw new Error("The API did not return an environment access token");
+      }
+      const expiresIn = response?.expires_in;
+      if (typeof expiresIn !== "number" || !Number.isInteger(expiresIn) || expiresIn <= 0) {
+        throw new Error("The API did not return a positive integer expiry");
+      }
+      return { accessToken: token, expiresIn };
     },
   };
 }

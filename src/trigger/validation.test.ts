@@ -2,17 +2,34 @@ import "#veryfront/schemas/_test-setup.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isTriggerTarget } from "./target.ts";
+import type { TriggerTarget } from "./target.ts";
+import { isTriggerTarget, snapshotTriggerTarget } from "./target.ts";
 import { assertSerializable, isTriggerId, snapshotSerializable } from "./validation.ts";
 
 describe("trigger validation", () => {
+  it("keeps the public TriggerTarget contract extendable", () => {
+    interface CustomTarget extends TriggerTarget {
+      metadata: string;
+    }
+
+    const target: CustomTarget = {
+      kind: "agent",
+      id: "support-agent",
+      metadata: "owned-by-consumer",
+    };
+
+    assertEquals(target.metadata, "owned-by-consumer");
+  });
+
   it("recognizes only canonical trigger identifiers", () => {
     for (const id of ["daily-triage", "billing.sync/v2", "0_internal"]) {
       assertEquals(isTriggerId(id), true);
     }
+    assertEquals(isTriggerId("a".repeat(256)), true, "a 256-character id is accepted");
     for (
       const id of [
         "",
+        "Daily-Triage",
         "Daily Triage",
         " leading",
         "trailing ",
@@ -52,6 +69,74 @@ describe("trigger validation", () => {
         hostileProxy,
         { kind: "queue", id: "daily-triage" },
         { kind: "task", id: "daily/../triage" },
+      ]
+    ) {
+      assertEquals(isTriggerTarget(target), false);
+    }
+  });
+
+  it("carries agent conversation addressing on canonical targets", () => {
+    assertEquals(
+      snapshotTriggerTarget({
+        kind: "agent",
+        id: "support-agent",
+        conversationMode: "create_new",
+      }),
+      { kind: "agent", id: "support-agent", conversationMode: "create_new" },
+    );
+    assertEquals(
+      snapshotTriggerTarget({
+        kind: "agent",
+        id: "support-agent",
+        conversationMode: "existing",
+        conversationId: "11111111-1111-4111-8111-111111111111",
+      }),
+      {
+        kind: "agent",
+        id: "support-agent",
+        conversationMode: "existing",
+        conversationId: "11111111-1111-4111-8111-111111111111",
+      },
+    );
+    assertEquals(snapshotTriggerTarget({ kind: "task", id: "sync-helpdesk" }), {
+      kind: "task",
+      id: "sync-helpdesk",
+    });
+  });
+
+  it("drops extension fields when snapshotting canonical targets", () => {
+    assertEquals(isTriggerTarget({ kind: "agent", id: "support-agent", metadata: true }), true);
+    assertEquals(
+      snapshotTriggerTarget({
+        kind: "agent",
+        id: "support-agent",
+        metadata: "owned-by-consumer",
+      }),
+      { kind: "agent", id: "support-agent" },
+    );
+  });
+
+  it("rejects broken agent conversation invariants", () => {
+    const conversationId = "11111111-1111-4111-8111-111111111111";
+    const accessorMode = Object.defineProperties(
+      { kind: "agent", id: "support-agent" },
+      { conversationMode: { enumerable: true, get: () => "create_new" } },
+    );
+
+    for (
+      const target of [
+        { kind: "task", id: "sync-helpdesk", conversationMode: "create_new" },
+        { kind: "workflow", id: "billing/sync", conversationId },
+        { kind: "agent", id: "support-agent", conversationMode: "resume" },
+        { kind: "agent", id: "support-agent", conversationMode: "existing" },
+        { kind: "agent", id: "support-agent", conversationMode: "create_new", conversationId },
+        {
+          kind: "agent",
+          id: "support-agent",
+          conversationMode: "existing",
+          conversationId: "not-a-uuid",
+        },
+        accessorMode,
       ]
     ) {
       assertEquals(isTriggerTarget(target), false);
@@ -102,6 +187,8 @@ describe("trigger validation", () => {
       tooDeep.next = child;
       tooDeep = child;
     }
+    const tooManyNodes = new Array(100_001).fill(0);
+    const oversizedKey = { ["k".repeat(16 * 1024 + 1)]: true };
 
     for (
       const value of [
@@ -115,6 +202,8 @@ describe("trigger validation", () => {
         customArray,
         symbolProperty,
         deepRoot,
+        tooManyNodes,
+        oversizedKey,
       ]
     ) {
       assertThrows(

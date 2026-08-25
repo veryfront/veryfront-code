@@ -6,7 +6,7 @@
  * or compose your own from the sub-parts (`ChatInput.Field`, `ChatInput.Send`,
  * `ChatInput.Stop`, `ChatInput.Voice`, `ChatInput.Model`, `ChatInput.Attach`,
  * `ChatInput.Export`): each reads its state/handlers from
- * `useComposerContext`, which `ChatInput` provides.
+ * `useChatInputContext`, which `ChatInput` provides.
  *
  * @module react/components/chat/composition/chat-composer
  */
@@ -14,76 +14,47 @@
 import * as React from "react";
 import { InputBox } from "#veryfront/react/primitives/index.ts";
 import { cn } from "../../theme.ts";
-import {
-  ArrowDownIcon,
-  ArrowUpIcon,
-  FileTextIcon,
-  PaperclipIcon,
-  PlusIcon,
-  StopIcon,
-} from "../../../ui/icons/index.ts";
-import { Button } from "../../../ui/button.tsx";
+import { ArrowDownIcon } from "../../../ui/icons/index.ts";
 import { IconButton } from "../../../ui/icon-button.tsx";
-import { Slot } from "../../../ui/slot.tsx";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "../../../ui/dropdown-menu.tsx";
-import { type ModelOption, ModelSelector } from "../../model-selector.tsx";
-import type { ChatTheme } from "../../theme.ts";
+import { ModelSelector } from "../../model-selector.tsx";
 import { AttachmentPill } from "../components/attachment-pill.tsx";
-import type { AttachmentInfo } from "../components/attachment-pill.tsx";
 import { DropZoneOverlay } from "../components/drop-zone.tsx";
 import { useDropZone } from "../hooks/use-drop-zone.ts";
 import { downloadMarkdown } from "../utils/export.ts";
-import type { ChatMessage } from "#veryfront/agent/react";
-import { ComposerContextProvider, useComposerContext } from "../contexts/composer-context.tsx";
-import { type ComposerStateProps, useComposerValue } from "./use-composer-value.ts";
+import { ChatInputContextProvider, useChatInputContext } from "../contexts/composer-context.tsx";
+import { useChatInputAttachmentPicker } from "./chat-input-attachment-picker.tsx";
+import { ChatInputForm } from "./chat-input-form.tsx";
+import { ChatInputSend, ChatInputStop, ChatInputVoice } from "./chat-input-actions.tsx";
+import { ChatInputSubmit } from "./chat-input-submit.tsx";
+import { ChatInputAttach } from "./chat-input-attach.tsx";
+import { useComposerValue } from "./use-composer-value.ts";
+import type {
+  ChatInputExportProps,
+  ChatInputFieldProps,
+  ChatInputModelProps,
+  ChatInputProps,
+  ChatInputRootProps,
+  ChatInputToolbarProps,
+} from "./chat-composer.types.ts";
 
-/** Microphone glyph for the idle-composer voice button (not in the barrel). */
-function MicGlyph(): React.ReactElement {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-      <line x1="12" x2="12" y1="19" y2="22" />
-    </svg>
-  );
-}
-
-/** Wrap-signature onClick shared by the interactive `ChatInput` sub-parts. */
-type WrapClick = (event: React.MouseEvent<HTMLElement>, next: () => void) => void;
+export type * from "./chat-composer.types.ts";
+export { ChatInputAttach, ChatInputSend, ChatInputStop, ChatInputSubmit, ChatInputVoice };
 
 // ---------------------------------------------------------------------------
-// Sub-parts — each reads from ComposerContext (provided by ChatInput)
+// Sub-parts — each reads from ChatInputContext (provided by ChatInput)
 // ---------------------------------------------------------------------------
-
-/** Props accepted by `<ChatInput.Field>`. */
-export interface ChatInputFieldProps {
-  placeholder?: string;
-  className?: string;
-  "aria-label"?: string;
-}
 
 /** The multiline text editor. */
 export function ChatInputField(
-  { placeholder = "Type a message...", className, ...props }: ChatInputFieldProps,
+  { placeholder = "Type a message...", className, ref, ...props }: ChatInputFieldProps,
 ): React.ReactElement {
-  const c = useComposerContext();
+  const c = useChatInputContext();
   const value = c.isListening ? c.transcript || c.input : c.input;
   const label = props["aria-label"] ?? placeholder ?? "Message";
   return (
     <InputBox
+      ref={ref as React.Ref<HTMLInputElement | HTMLTextAreaElement>}
+      {...props}
       value={value}
       onChange={c.onChange}
       onSubmit={() => c.onSubmit()}
@@ -99,127 +70,11 @@ export function ChatInputField(
   );
 }
 
-/** Props shared by the icon action sub-parts. */
-export interface ChatInputActionProps {
-  icon?: React.ReactNode;
-  className?: string;
-  asChild?: boolean;
-  onClick?: WrapClick;
-  /** React 19: ref is a regular prop. */
-  ref?: React.Ref<HTMLButtonElement>;
-}
-
-/** Send button — shows when there is input (and not streaming). */
-export function ChatInputSend(
-  { icon, className, asChild, onClick, ref }: ChatInputActionProps,
-): React.ReactElement | null {
-  const c = useComposerContext();
-  if (c.isLoading) return null;
-  if (!c.canSubmit && c.onVoice) return null;
-  const run = () => c.onSubmit();
-  const Comp = asChild ? Slot : Button;
-  return (
-    <Comp
-      ref={ref}
-      type="button"
-      variant="icon-primary"
-      on="card"
-      size="icon-lg"
-      aria-label="Send"
-      disabled={!c.canSubmit}
-      onClick={(e: React.MouseEvent<HTMLElement>) => (onClick ? onClick(e, run) : run())}
-      className={cn("shrink-0", className)}
-    >
-      {icon ?? <ArrowUpIcon />}
-    </Comp>
-  );
-}
-ChatInputSend.displayName = "ChatInput.Send";
-
-/** Stop button — shows while streaming. */
-export function ChatInputStop(
-  { icon, className, asChild, onClick, ref }: ChatInputActionProps,
-): React.ReactElement | null {
-  const c = useComposerContext();
-  if (!c.isLoading) return null;
-  const run = () => c.onStop?.();
-  const Comp = asChild ? Slot : Button;
-  return (
-    <Comp
-      ref={ref}
-      type="button"
-      variant="icon-ghost"
-      size="icon-lg"
-      aria-label="Stop"
-      onClick={(e: React.MouseEvent<HTMLElement>) => (onClick ? onClick(e, run) : run())}
-      className={cn("shrink-0", className)}
-    >
-      {icon ?? <StopIcon />}
-    </Comp>
-  );
-}
-ChatInputStop.displayName = "ChatInput.Stop";
-
-/** Props for the unified {@link ChatInputSubmit} control. */
-export interface ChatInputSubmitProps extends ChatInputActionProps {
-  /**
-   * Icon shown while streaming. Defaults to the stop glyph. The `icon` prop
-   * applies to the idle/send state.
-   */
-  stopIcon?: React.ReactNode;
-}
-
-/**
- * Unified submit control: renders {@link ChatInputStop} while a turn is
- * streaming and {@link ChatInputSend} otherwise, so the common case needs one
- * control instead of wiring `Send` + `Stop` and relying on their internal
- * visibility. `Send`/`Stop` remain available as low-level escapes.
- */
-export function ChatInputSubmit(
-  { icon, stopIcon, ...rest }: ChatInputSubmitProps,
-): React.ReactElement | null {
-  const c = useComposerContext();
-  return c.isLoading
-    ? <ChatInputStop icon={stopIcon} {...rest} />
-    : <ChatInputSend icon={icon} {...rest} />;
-}
-ChatInputSubmit.displayName = "ChatInput.Submit";
-
-/** Voice button — shows when the field is empty and voice is available. */
-export function ChatInputVoice(
-  { icon, className, asChild, onClick, ref }: ChatInputActionProps,
-): React.ReactElement | null {
-  const c = useComposerContext();
-  if (c.isLoading || c.canSubmit || !c.onVoice) return null;
-  const run = () => c.onVoice?.();
-  const Comp = asChild ? Slot : Button;
-  return (
-    <Comp
-      ref={ref}
-      type="button"
-      variant="icon-ghost"
-      on="card"
-      size="icon-lg"
-      aria-label="Voice input"
-      aria-pressed={c.isListening}
-      onClick={(e: React.MouseEvent<HTMLElement>) => (onClick ? onClick(e, run) : run())}
-      className={cn(
-        "shrink-0",
-        c.isListening && "bg-[var(--primary)] text-[var(--secondary)]",
-        className,
-      )}
-    >
-      {icon ?? <MicGlyph />}
-    </Comp>
-  );
-}
-ChatInputVoice.displayName = "ChatInput.Voice";
-
 /** Model selector — shows when models are configured. */
 export function ChatInputModel(
-  { className }: { className?: string },
+  { className }: ChatInputModelProps,
 ): React.ReactElement | null {
-  const c = useComposerContext();
+  const c = useChatInputContext();
   if (!c.models || c.models.length === 0 || !c.onModelChange) return null;
   return (
     <ModelSelector
@@ -233,98 +88,9 @@ export function ChatInputModel(
   );
 }
 
-/**
- * Attachment `+` control — a portalled `+` menu (Studio `PromptForm`'s
- * `PlusMenu`). The menu leads with "Attach files to chat" (opens the file
- * dialog) and adds "Select document" when `onSelectAttachment` is set.
- */
-export function ChatInputAttach(
-  { icon, onClick }: { icon?: React.ReactNode; onClick?: WrapClick },
-): React.ReactElement | null {
-  const c = useComposerContext();
-  const fileInputRef = React.useRef<HTMLInputElement>(null!);
-  const [menuOpen, setMenuOpen] = React.useState(false);
-  if (!c.onAttach && !c.onSelectAttachment) return null;
-
-  const openDialog = () => fileInputRef.current?.click();
-  // Menu selection carries no mouse event; pass a stub so the `onClick` wrap
-  // (e.g. `onAttachClick`) still gets its `next()` continuation.
-  const runUpload = () =>
-    onClick ? onClick({} as React.MouseEvent<HTMLElement>, openDialog) : openDialog();
-
-  return (
-    <div className="relative flex shrink-0 items-center">
-      {c.onAttach && (
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept={c.attachAccept}
-          multiple
-          aria-label="Upload file"
-          onChange={(e) => {
-            if (e.target.files?.length) c.onAttach?.(e.target.files);
-            e.target.value = "";
-          }}
-          style={{
-            position: "absolute",
-            width: 1,
-            height: 1,
-            padding: 0,
-            margin: -1,
-            overflow: "hidden",
-            clip: "rect(0,0,0,0)",
-            whiteSpace: "nowrap",
-            border: 0,
-          }}
-        />
-      )}
-      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant="icon-tertiary"
-            size="icon-lg"
-            aria-label="Add document"
-            className="shrink-0"
-          >
-            {icon ?? <PlusIcon />}
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start">
-          {c.onAttach && (
-            <DropdownMenuItem onSelect={runUpload}>
-              <PaperclipIcon />
-              Attach files to chat
-            </DropdownMenuItem>
-          )}
-          {c.onSelectAttachment && (
-            <DropdownMenuItem onSelect={c.onSelectAttachment}>
-              <FileTextIcon />
-              Select document
-            </DropdownMenuItem>
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
-  );
-}
-
-/** Props accepted by `<ChatInput.Export>`. */
-export interface ChatInputExportProps {
-  /** Messages included in the downloaded Markdown document. */
-  messages: ChatMessage[];
-  /** Override the download glyph. */
-  icon?: React.ReactNode;
-  className?: string;
-  /** Wrap the download action; call `next()` to continue. */
-  onClick?: WrapClick;
-  /** React 19: ref is a regular prop. */
-  ref?: React.Ref<HTMLButtonElement>;
-}
-
 /** Download the supplied conversation as Markdown. */
 export function ChatInputExport(
-  { messages, icon, className, onClick, ref }: ChatInputExportProps,
+  { messages, children, className, onClick, ref }: ChatInputExportProps,
 ): React.ReactElement | null {
   if (messages.length === 0) return null;
   const download = () => downloadMarkdown(messages);
@@ -341,32 +107,28 @@ export function ChatInputExport(
       tooltipSide="top"
       className={cn("shrink-0", className)}
     >
-      {icon ?? <ArrowDownIcon />}
+      {children ?? <ArrowDownIcon />}
     </IconButton>
   );
 }
 ChatInputExport.displayName = "ChatInput.Export";
 
-/** Props accepted by `<ChatInput.Toolbar>`. */
-export interface ChatInputToolbarProps {
-  className?: string;
-  children?: React.ReactNode;
-}
-
 /**
  * `ChatInput.Toolbar` — a semantic layout slot for the composer's action row.
  * Group/reorder the action sub-parts (`ChatInput.Attach`/`.Model`/`.Export`/
  * `.Voice`/`.Send`) inside it without re-implementing the composer. Pure layout: the
- * children read their own `ComposerContext`, so `<ChatInput.Toolbar>` just
+ * children read their own `ChatInputContext`, so `<ChatInput.Toolbar>` just
  * mirrors the default action-row wrapper classes.
  */
 export function ChatInputToolbar(
-  { className, children }: ChatInputToolbarProps,
+  { className, children, ref, ...props }: ChatInputToolbarProps,
 ): React.ReactElement {
   return (
     <div
+      ref={ref}
       role="toolbar"
       className={cn("flex items-center gap-1.5 md:gap-2", className)}
+      {...props}
     >
       {children}
     </div>
@@ -378,79 +140,30 @@ ChatInputToolbar.displayName = "ChatInput.Toolbar";
 // ChatInput — batteries-included composer
 // ---------------------------------------------------------------------------
 
-/** Props accepted by `ChatInput`. */
-export interface ChatInputProps {
-  input: string;
-  onChange: (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
-  ) => void;
-  onSubmit?: (e?: React.FormEvent) => void;
-  isLoading?: boolean;
-  placeholder?: string;
-  theme?: ChatTheme;
-
-  // Stop / Voice
-  stop?: () => void;
-  onVoice?: () => void;
-  isListening?: boolean;
-  transcript?: string;
-
-  // Model
-  models?: ModelOption[];
-  model?: string;
-  onModelChange?: (model: string) => void;
-
-  // Leading toolbar slot — rendered in the footer toolbar after the `+` (Studio
-  // PromptForm's leading slot). Generic: hold an `<AgentPicker>`, a template
-  // button, anything. (Was `agentSelector` — renamed to a role-neutral slot.)
-  toolbarStart?: React.ReactNode;
-
-  // Attachments
-  onAttach?: (files: FileList) => void;
-  onSelectAttachment?: () => void;
-  /**
-   * Files dropped onto the composer. Defaults to `onAttach` — pass this only to
-   * treat a drop differently from the `+` menu upload.
-   */
-  onDrop?: (files: FileList) => void;
-  attachAccept?: string;
-  attachments?: AttachmentInfo[];
-  onRemoveAttachment?: (id: string) => void;
-
-  // Customisation
-  /** Wrap the built-in attachment `+` click; call `next()` to run it. */
-  onAttachClick?: WrapClick;
-
-  className?: string;
-  children?: React.ReactNode;
-  /** React 19: ref is a regular prop. */
-  ref?: React.Ref<HTMLDivElement>;
-}
-
-/** Props accepted by `<ChatInput.Root>`. */
-export interface ChatInputRootProps extends ComposerStateProps {
-  className?: string;
-  children: React.ReactNode;
-  /** React 19: ref is a regular prop. */
-  ref?: React.Ref<HTMLDivElement>;
-}
-
 /**
  * `ChatInput.Root` — the provider shell for a fully custom composer. Supplies
- * `ComposerContext` from props and renders your children, so you arrange
+ * `ChatInputContext` from props and renders your children, so you arrange
  * `ChatInput.Field` + the toolbar sub-parts yourself (like `Message.Root`). The
- * default `<ChatInput>` is exactly this Root plus the standard body.
+ * default `<ChatInput>` is exactly this Root plus the standard body. Omitted
+ * props fall back to the surrounding `ChatContext` (`<Chat.Root chat={…}>`),
+ * so a propless Root wires itself to the shared session; explicit props win.
  */
 export function ChatInputRoot(
   { className, children, ref, ...state }: ChatInputRootProps,
 ): React.ReactElement {
-  const ctxValue = useComposerValue(state);
+  const baseCtxValue = useComposerValue(state);
+  const { contextValue, fileInput } = useChatInputAttachmentPicker(
+    baseCtxValue,
+    baseCtxValue.onAttach,
+    state.attachAccept,
+  );
   return (
-    <ComposerContextProvider value={ctxValue}>
+    <ChatInputContextProvider value={contextValue}>
       <div ref={ref} className={cn("flex-shrink-0 pb-6 pt-2", className)}>
+        {fileInput}
         <div className="mx-auto w-full max-w-[850px] px-4">{children}</div>
       </div>
-    </ComposerContextProvider>
+    </ChatInputContextProvider>
   );
 }
 ChatInputRoot.displayName = "ChatInput.Root";
@@ -460,8 +173,12 @@ function ChatInputBase(
   {
     input,
     onChange,
+    setInput,
     onSubmit,
-    isLoading = false,
+    // No `= false` default: an omitted `isLoading` must stay `undefined` so
+    // `useComposerValue` can inherit the surrounding session's loading state
+    // (a default would always win over the context and hide Stop mid-turn).
+    isLoading,
     placeholder = "Type a message...",
     theme,
     stop,
@@ -503,16 +220,10 @@ function ChatInputBase(
     );
     const handleAttach = withFocus(onAttach);
 
-    const {
-      isDragActive,
-      onDragEnter,
-      onDragLeave,
-      onDragOver,
-      onDrop: onFileDrop,
-    } = useDropZone(withFocus(onDrop ?? onAttach));
-    const ctxValue = useComposerValue({
+    const baseCtxValue = useComposerValue({
       input,
       onChange,
+      setInput,
       onSubmit,
       isLoading,
       stop,
@@ -528,34 +239,35 @@ function ChatInputBase(
       attachments,
       onRemoveAttachment,
     });
+    // Attach + drop fall back to the context-resolved handler (like
+    // `ChatInput.Root`), so a propless composer inside `<Chat.Root chat={…}>`
+    // keeps a working picker and drop zone. Both explicit and inherited
+    // handlers restore field focus after a selection.
+    const resolvedAttach = handleAttach ?? withFocus(baseCtxValue.onAttach);
+    const {
+      isDragActive,
+      onDragEnter,
+      onDragLeave,
+      onDragOver,
+      onDrop: onFileDrop,
+    } = useDropZone(withFocus(onDrop) ?? resolvedAttach);
+    const { contextValue, fileInput } = useChatInputAttachmentPicker(
+      baseCtxValue,
+      resolvedAttach,
+      attachAccept,
+    );
 
     return (
-      <ComposerContextProvider value={ctxValue}>
+      <ChatInputContextProvider value={contextValue}>
         <div ref={ref} className={cn("flex-shrink-0 pb-6", className)}>
+          {fileInput}
           <div className="mx-auto w-full max-w-[850px] px-4">
             {React.Children.toArray(children).length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5 pb-3">
                 {children}
               </div>
             )}
-            {attachments && attachments.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2 pb-4">
-                {attachments.map((file) => (
-                  <AttachmentPill
-                    key={file.id}
-                    attachment={file}
-                    onRemove={onRemoveAttachment}
-                    className="w-[200px]"
-                  />
-                ))}
-              </div>
-            )}
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                onSubmit?.(e);
-              }}
-            >
+            <ChatInputForm onSubmit={contextValue.onSubmit}>
               <div
                 onDragEnter={onDragEnter}
                 onDragLeave={onDragLeave}
@@ -569,6 +281,23 @@ function ChatInputBase(
               >
                 {/* Drag overlay — files dragged onto the card (Studio PromptForm) */}
                 <DropZoneOverlay visible={isDragActive} />
+
+                {
+                  /* Pending attachments — inside the composer card, above the
+                    editor (Studio PromptForm), not floating as a separate row. */
+                }
+                {contextValue.attachments.length > 0 && (
+                  <div className="mb-2.5 flex flex-wrap items-center gap-2">
+                    {contextValue.attachments.map((file) => (
+                      <AttachmentPill
+                        key={file.id}
+                        attachment={file}
+                        onRemove={contextValue.onRemoveAttachment}
+                        className="w-[200px]"
+                      />
+                    ))}
+                  </div>
+                )}
 
                 {/* Editor — occupies the top of the card (Studio PromptForm) */}
                 <ChatInputField placeholder={placeholder} className={theme?.input} />
@@ -592,10 +321,10 @@ function ChatInputBase(
                   </div>
                 </div>
               </div>
-            </form>
+            </ChatInputForm>
           </div>
         </div>
-      </ComposerContextProvider>
+      </ChatInputContextProvider>
     );
   }
 }

@@ -3,8 +3,16 @@ import {
   type AgentMessage as Message,
   type AgentResponse,
   AgentRuntime,
+  type AgentSystem,
 } from "#veryfront/agent";
 import { normalizeAgUiRuntimeMessages } from "#veryfront/agent/ag-ui/runtime-support.ts";
+import {
+  createProviderAwareAgentSystemResolver,
+  getEffectiveAgentSystem,
+  resolveAgentSystem,
+  resolveAgentSystemFromResolvedBase,
+} from "#veryfront/agent/runtime/effective-agent-system.ts";
+import { flattenSystemInstructions } from "#veryfront/agent/runtime/tool-inventory.ts";
 import { compactForStep, estimateOverhead } from "#veryfront/chat/message-prep.ts";
 import {
   getRuntimeRemoteToolSources,
@@ -13,6 +21,7 @@ import {
 import { buildRuntimeUsageTraceAttributes } from "#veryfront/agent/runtime/trace-usage.ts";
 import { getProviderNativeToolNames } from "#veryfront/agent/runtime/provider-native-tool-inventory.ts";
 import { selectProviderCompatibleToolNames } from "#veryfront/agent/runtime/provider-tool-compat.ts";
+import { INVOKE_AGENT_TOOL_ID } from "#veryfront/agent/runtime/agent-delegation.ts";
 import {
   convertAgentRuntimeMessagesToProviderMessages,
   convertProviderMessagesToAgentRuntimeMessages,
@@ -51,6 +60,13 @@ import {
   mapRuntimeEventToAgUi,
   parseSseJsonEvents,
 } from "./ag-ui-sse.ts";
+import type { AgentRunEvent, AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
+import {
+  createAgentRunEventTimingAnchor,
+  createTimedAgentRunEventSink,
+} from "#veryfront/runtime/model-call-context.ts";
+import { stampAgUiEventTiming } from "#veryfront/agent/ag-ui/encoder.ts";
+import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
 import { AgentRunCancelledError, type AgentRunSessionManager } from "./session-manager.ts";
 import { composeInternalAgentRunSystemPrompt } from "./run-system-prompt.ts";
 import type { RuntimeRunAgentInput } from "./schema.ts";
@@ -64,6 +80,12 @@ const INTERNAL_AGENT_RUNTIME_HEARTBEAT_INTERVAL_MS = 25_000;
 const INTERNAL_AGENT_RUNTIME_HEARTBEAT_FRAME = new TextEncoder().encode(
   ": internal-agent-runtime-heartbeat\n\n",
 );
+/**
+ * SSE frame name carrying AGENT_RUN_MODEL_CALL_CONTEXT to veryfront-api. Not an
+ * AG-UI event: veryfront-api persists it under its own event type rather than
+ * folding it into the run's public event sequence.
+ */
+export const MODEL_CALL_CONTEXT_SSE_EVENT_NAME = "AgentRunModelCallContext";
 
 type RuntimeFilteredAgent = Agent & {
   config: Agent["config"] & {
@@ -208,7 +230,11 @@ export function buildMergedTools(
     for (const toolName of sourceAllowedRemoteToolNames) {
       merged[toolName] = true;
     }
-    return { ...injectedTools, ...merged };
+    // Injected Studio tools win: an unmarked forwarded name keeps its
+    // wait-for-tool-result wrapper so the frontend handler still runs. Server
+    // authority is opted into by name via serverResolvedProjectTools, which
+    // filters the name out of injectedTools above.
+    return { ...merged, ...injectedTools };
   }
 
   const merged: Record<string, Tool | boolean> = {};
@@ -242,7 +268,7 @@ export function buildMergedTools(
     }
   }
 
-  const filtered = { ...injectedTools, ...merged };
+  const filtered = { ...merged, ...injectedTools };
   return Object.keys(filtered).length > 0 ? filtered : undefined;
 }
 
@@ -501,6 +527,20 @@ function applyRuntimeToolAllowlist(
   );
 }
 
+function applyDelegationAuthority(
+  mergedTools: Agent["config"]["tools"],
+  allowDelegation: RuntimeRunAgentInput["allowDelegation"],
+): Agent["config"]["tools"] {
+  if (allowDelegation !== false || !mergedTools || mergedTools === true) {
+    return mergedTools;
+  }
+
+  const filtered = Object.fromEntries(
+    Object.entries(mergedTools).filter(([toolName]) => toolName !== INVOKE_AGENT_TOOL_ID),
+  );
+  return Object.keys(filtered).length > 0 ? filtered : undefined;
+}
+
 function getRequiredLocalToolNames(input: {
   mergedTools: Agent["config"]["tools"];
   availableLocalTools: Record<string, Tool | boolean>;
@@ -623,15 +663,45 @@ async function getDeclaredRemoteSourceToolNames(input: {
 
 function compactRuntimeMessagesForStream(
   messages: Message[],
-  systemPrompt: string,
+  systemPrompt: AgentSystem,
   toolCount: number,
 ): Message[] {
+  const systemText = typeof systemPrompt === "string"
+    ? systemPrompt
+    : flattenSystemInstructions(systemPrompt);
   return convertProviderMessagesToAgentRuntimeMessages(
     compactForStep(
       convertAgentRuntimeMessagesToProviderMessages(messages),
-      estimateOverhead(systemPrompt, toolCount),
+      estimateOverhead(systemText, toolCount),
     ),
   ) as Message[];
+}
+
+/**
+ * Relays run events produced by the runtime into the run's SSE stream.
+ *
+ * The first model call is dispatched while `runtime.stream()` is still being
+ * awaited, before there is a controller to enqueue into, so events raised
+ * before `attach` are buffered and replayed once the stream opens.
+ */
+function createModelCallContextRelay(
+  timing: Parameters<typeof createTimedAgentRunEventSink>[1],
+): {
+  sink: AgentRunEventSink;
+  attach: (emit: (event: AgentRunEvent) => void) => void;
+} {
+  const buffered: AgentRunEvent[] = [];
+  let emit: ((event: AgentRunEvent) => void) | undefined;
+  return {
+    sink: createTimedAgentRunEventSink((event) => {
+      if (emit) emit(event);
+      else buffered.push(event);
+    }, timing),
+    attach: (next) => {
+      emit = next;
+      for (const event of buffered.splice(0)) next(event);
+    },
+  };
 }
 
 export async function createRuntimeAgentStreamResponse(
@@ -655,6 +725,8 @@ export async function createRuntimeAgentStreamResponse(
   let completedResponse: AgentResponse | null = null;
   let runtimeStream: ReadableStream<Uint8Array>;
   let closeSandbox = createIdempotentAsyncCleanup();
+  const timing = createAgentRunEventTimingAnchor();
+  const modelCallContextRelay = createModelCallContextRelay(timing);
   try {
     const forwardedAllowedRemoteToolNames = getAllowedRemoteToolNames(input.forwardedProps);
     const sourceAllowedRemoteToolNames = getAgentAllowedRemoteToolNames(agent);
@@ -689,27 +761,33 @@ export async function createRuntimeAgentStreamResponse(
         sourceRemoteFilterBase === undefined
       ? await getDeclaredRemoteSourceToolNames({ agent, runInput: input, deps })
       : undefined;
-    const allowedRemoteToolNames = runtimeToolAllowlist === null
+    const runtimeAllowedRemoteToolNames = runtimeToolAllowlist === null
       ? grantedRemoteToolNames
       : (grantedRemoteToolNames ?? sourceRemoteFilterBase ?? remoteFallbackBase ?? []).filter(
         (toolName) => runtimeToolAllowlist.has(toolName),
       );
+    const allowedRemoteToolNames = input.allowDelegation === false
+      ? runtimeAllowedRemoteToolNames?.filter((toolName) => toolName !== INVOKE_AGENT_TOOL_ID)
+      : runtimeAllowedRemoteToolNames;
     const sandboxTools = await buildProjectAgentSandboxTools({ agent, deps });
     closeSandbox = sandboxTools.closeSandbox ?? closeSandbox;
     const availableLocalTools = {
       ...(deps.localTools ?? {}),
       ...(sandboxTools.tools ?? {}),
     };
-    const mergedTools = applyRuntimeToolAllowlist(
-      buildMergedTools(
+    const mergedTools = applyDelegationAuthority(
+      applyRuntimeToolAllowlist(
+        buildMergedTools(
+          agent,
+          input,
+          deps.sessionManager,
+          availableForwardedToolNames,
+          Object.keys(availableLocalTools).length > 0 ? availableLocalTools : undefined,
+        ),
+        runtimeToolAllowlist,
         agent,
-        input,
-        deps.sessionManager,
-        availableForwardedToolNames,
-        Object.keys(availableLocalTools).length > 0 ? availableLocalTools : undefined,
       ),
-      runtimeToolAllowlist,
-      agent,
+      input.allowDelegation,
     );
     // Provider-native tools (e.g. web_search) are provider-side and bypass the
     // merged tool record, so cap them against the allowlist explicitly.
@@ -754,18 +832,45 @@ export async function createRuntimeAgentStreamResponse(
         requiredToolNames: localToolNames,
       },
     );
-    const systemPrompt = await composeInternalAgentRunSystemPrompt({
-      agent,
-      runInput: input,
-      projectId: deps.projectAgentSandbox?.projectId ?? null,
-      branchId: deps.projectAgentSandbox?.branchId,
-      toolNames: runtimeToolNames,
-    });
+    const runtimeContext = {
+      threadId: input.threadId,
+      runId: input.runId,
+      ...(deps.projectAgentSandbox?.authToken
+        ? { authToken: deps.projectAgentSandbox.authToken }
+        : {}),
+      ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
+      ...(input.state !== undefined ? { state: input.state } : {}),
+      context: input.context,
+      forwardedProps: input.forwardedProps,
+    };
+    const authoredSystemPromise = Promise.resolve(
+      resolveAgentSystem(agent.config.system, undefined),
+    );
+    const effectiveAgentSystem = getEffectiveAgentSystem(agent);
+    const resolveSystemPrompt = async (providerOptionKey?: string) => {
+      const authoredSystem = await authoredSystemPromise;
+      const resolvedBaseSystem = await resolveAgentSystemFromResolvedBase(
+        effectiveAgentSystem,
+        authoredSystem,
+        providerOptionKey,
+        { preserveRuntimeContextMarker: true },
+      );
+      return composeInternalAgentRunSystemPrompt({
+        agent,
+        resolvedBaseSystem,
+        runInput: input,
+        projectId: deps.projectAgentSandbox?.projectId ?? null,
+        branchId: deps.projectAgentSandbox?.branchId,
+        toolNames: runtimeToolNames,
+        ...(providerOptionKey ? { providerOptionKey } : {}),
+      });
+    };
+    const systemPrompt = await resolveSystemPrompt();
     const runtimeAgent: RuntimeFilteredAgent = {
       ...agent,
       config: {
         ...agent.config,
-        system: systemPrompt,
+        system: createProviderAwareAgentSystemResolver(resolveSystemPrompt),
         tools: mergedTools,
         ...(cappedProviderTools !== undefined ? { providerTools: cappedProviderTools } : {}),
         ...(allowedRemoteToolNames !== undefined
@@ -784,27 +889,24 @@ export async function createRuntimeAgentStreamResponse(
       runtimeToolNames.length,
     );
     const maxOutputTokens = getForwardedMaxOutputTokens(input.forwardedProps);
-    const candidateRuntimeStream = await runtime.stream(
-      runtimeMessages,
-      {
-        threadId: input.threadId,
-        runId: input.runId,
-        ...(deps.projectAgentSandbox?.authToken
-          ? { authToken: deps.projectAgentSandbox.authToken }
-          : {}),
-        ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
-        ...(input.state !== undefined ? { state: input.state } : {}),
-        context: input.context,
-        forwardedProps: input.forwardedProps,
-      },
-      {
-        onFinish: (response) => {
-          completedResponse = response;
-        },
-      },
-      undefined,
-      maxOutputTokens,
-      abortSignal,
+    // Scoped here because the runtime dispatches the run's first model call
+    // before stream() resolves. Later steps inherit this scope through the
+    // stream they are pumped from.
+    const candidateRuntimeStream = await runWithMandatoryRunEventSink(
+      modelCallContextRelay.sink,
+      () =>
+        runtime.stream(
+          runtimeMessages,
+          runtimeContext,
+          {
+            onFinish: (response) => {
+              completedResponse = response;
+            },
+          },
+          undefined,
+          maxOutputTokens,
+          abortSignal,
+        ),
     );
     if (candidateRuntimeStream.locked) {
       throw new TypeError("Internal agent runtime returned a locked stream");
@@ -850,7 +952,7 @@ export async function createRuntimeAgentStreamResponse(
             }),
           );
           addSpanEvent(runSpan, "agent.run.started");
-          const state = createStreamTransformState();
+          const state = createStreamTransformState(timing);
           const reader = runtimeStream.getReader();
           const decoder = new TextDecoder();
           let remainder = "";
@@ -869,7 +971,8 @@ export async function createRuntimeAgentStreamResponse(
           };
 
           const enqueueIfAttached = (event: string, payload: Record<string, unknown>) => {
-            const encodedEvent = formatAgUiEvent(event, payload);
+            const [timed] = stampAgUiEventTiming(state, [{ event, payload }]);
+            const encodedEvent = formatAgUiEvent(event, timed?.payload ?? payload);
             if (!clientAttached) {
               return;
             }
@@ -938,7 +1041,7 @@ export async function createRuntimeAgentStreamResponse(
             aborted = true;
             const cancellationError = new AgentRunCancelledError();
             readerExitReason = cancellationError;
-            logger.warn("Internal agent runtime stream aborted", {
+            logger.debug("Internal agent runtime stream aborted", {
               runId: input.runId,
               threadId: input.threadId,
               agentId: agent.id,
@@ -956,6 +1059,11 @@ export async function createRuntimeAgentStreamResponse(
               threadId: input.threadId,
               agentId: agent.id,
             });
+            // Replays whatever the first model call already produced, then
+            // forwards later steps as they happen. RunStarted stays first.
+            modelCallContextRelay.attach((event) =>
+              enqueueIfAttached(MODEL_CALL_CONTEXT_SSE_EVENT_NAME, event)
+            );
             heartbeatTimer = setInterval(
               enqueueHeartbeatIfAttached,
               INTERNAL_AGENT_RUNTIME_HEARTBEAT_INTERVAL_MS,
@@ -964,7 +1072,13 @@ export async function createRuntimeAgentStreamResponse(
             while (true) {
               throwIfAborted();
 
-              const { done, value } = await reader.read();
+              // A runtime that dispatches later model calls from its pull()
+              // rather than from a continuation of stream() needs the sink in
+              // scope on the read that triggers the pull.
+              const { done, value } = await runWithMandatoryRunEventSink(
+                modelCallContextRelay.sink,
+                () => reader.read(),
+              );
               throwIfAborted();
 
               if (done) {
@@ -1055,11 +1169,13 @@ export async function createRuntimeAgentStreamResponse(
                 "error.message": error.message,
               });
               addSpanEvent(runSpan, "agent.run.cancelled");
-              logger.warn("Internal agent runtime stream cancelled", {
+              // The control plane also cancels runtime sessions to park canonical runs for tools.
+              // This is a lifecycle transition, not an execution failure.
+              logger.info("Internal agent runtime session cancelled", {
                 runId: input.runId,
                 threadId: input.threadId,
                 agentId: agent.id,
-                error: error.message,
+                status: "cancelled",
               });
               enqueueIfAttached("RunError", {
                 code: "CANCELLED",

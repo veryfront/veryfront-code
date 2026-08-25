@@ -1,6 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import type { ModelRuntime } from "#veryfront/provider";
 import type { RemoteToolSource, ToolExecutionContext } from "#veryfront/tool";
 import { agent } from "../index.ts";
 import { agentRegistry } from "../composition/index.ts";
@@ -8,37 +7,16 @@ import {
   type RuntimeRemoteToolConfig,
   VERYFRONT_STUDIO_MCP_SOURCE_ID,
 } from "./mcp-server-tool-sources.ts";
+import { scriptedModel } from "./model-runtime.test-helpers.ts";
 
 function eagerAgent(config: Parameters<typeof agent>[0]): ReturnType<typeof agent> {
   return agent({ ...config, __vfToolLoadingMode: "eager" } as Parameters<typeof agent>[0]);
 }
 
-function createRuntimeStream(parts: unknown[]) {
-  return new ReadableStream<unknown>({
-    start(controller) {
-      for (const part of parts) controller.enqueue(part);
-      controller.close();
-    },
-  });
-}
-
-function getRuntimeToolNames(options: unknown): string[] {
-  const tools = (options as { tools?: unknown }).tools;
-  return Array.isArray(tools)
-    ? tools.map((entry) =>
-      (entry as { name?: string; id?: string }).name ??
-        (entry as { name?: string; id?: string }).id ?? ""
-    )
-    : Object.keys((tools as Record<string, unknown> | undefined) ?? {});
-}
-
 Deno.test("local delegates inherit the trusted request-scoped MCP source", async () => {
   const childId = "request-scoped-mcp-child";
   const rootId = "request-scoped-mcp-root";
-  let childModelCalls = 0;
-  let rootModelCalls = 0;
   const listedBy: string[] = [];
-  let childRuntimeToolNames: string[] = [];
 
   const injectedStudioSource: RemoteToolSource = {
     id: VERYFRONT_STUDIO_MCP_SOURCE_ID,
@@ -60,59 +38,19 @@ Deno.test("local delegates inherit the trusted request-scoped MCP source", async
     executeTool: () => Promise.resolve({ ok: true }),
   };
 
-  const childModel: ModelRuntime = {
-    provider: "test",
-    modelId: "test/delegate-child",
-    doGenerate: () => Promise.reject(new Error("unused")),
-    doStream(options) {
-      childModelCalls++;
-      childRuntimeToolNames = getRuntimeToolNames(options);
-      return Promise.resolve({
-        stream: createRuntimeStream([
-          { type: "text-delta", text: "child completed" },
-          {
-            type: "finish",
-            finishReason: "stop",
-            usage: { inputTokens: 1, outputTokens: 1 },
-          },
-        ]),
-      });
+  const childModel = scriptedModel([
+    { text: "child completed" },
+  ], { provider: "test", modelId: "test/delegate-child", only: "stream" });
+  const rootModel = scriptedModel([
+    {
+      toolCalls: [{
+        id: "delegate-call-1",
+        name: `agent_${childId}`,
+        input: { input: "Read the project file" },
+      }],
     },
-  };
-  const rootModel: ModelRuntime = {
-    provider: "test",
-    modelId: "test/delegate-root",
-    doGenerate: () => Promise.reject(new Error("unused")),
-    doStream() {
-      rootModelCalls++;
-      return Promise.resolve({
-        stream: createRuntimeStream(
-          rootModelCalls === 1
-            ? [
-              {
-                type: "tool-call",
-                toolCallId: "delegate-call-1",
-                toolName: `agent_${childId}`,
-                input: { input: "Read the project file" },
-              },
-              {
-                type: "finish",
-                finishReason: "tool-calls",
-                usage: { inputTokens: 1, outputTokens: 1 },
-              },
-            ]
-            : [
-              { type: "text-delta", text: "root completed" },
-              {
-                type: "finish",
-                finishReason: "stop",
-                usage: { inputTokens: 1, outputTokens: 1 },
-              },
-            ],
-        ),
-      });
-    },
-  };
+    { text: "root completed" },
+  ], { provider: "test", modelId: "test/delegate-root", only: "stream" });
 
   eagerAgent({
     id: childId,
@@ -139,11 +77,11 @@ Deno.test("local delegates inherit the trusted request-scoped MCP source", async
       .toDataStreamResponse()
       .text();
 
-    assertEquals(childModelCalls, 1);
-    assertEquals(rootModelCalls, 2);
+    assertEquals(childModel.callCount, 1);
+    assertEquals(rootModel.callCount, 2);
     assertEquals(listedBy.includes(childId), true);
-    assertEquals(childRuntimeToolNames.includes("get_file"), true);
-    assertEquals(childRuntimeToolNames.includes("delete_file"), false);
+    assertEquals(childModel.toolNames(0).includes("get_file"), true);
+    assertEquals(childModel.toolNames(0).includes("delete_file"), false);
     assertEquals(body.includes("root completed"), true);
     assertEquals(body.includes('"type":"error"'), false);
   } finally {
@@ -155,8 +93,6 @@ Deno.test("local delegates inherit the trusted request-scoped MCP source", async
 Deno.test("local delegates execute inherited MCP tools with the parent credential identity", async () => {
   const childId = "request-scoped-auth-child";
   const rootId = "request-scoped-auth-root";
-  let childModelCalls = 0;
-  let rootModelCalls = 0;
   let executeContext: ToolExecutionContext | undefined;
 
   const injectedStudioSource: RemoteToolSource = {
@@ -173,74 +109,26 @@ Deno.test("local delegates execute inherited MCP tools with the parent credentia
     },
   };
 
-  const childModel: ModelRuntime = {
-    provider: "test",
-    modelId: "test/delegate-auth-child",
-    doGenerate: () => Promise.reject(new Error("unused")),
-    doStream() {
-      childModelCalls++;
-      return Promise.resolve({
-        stream: createRuntimeStream(
-          childModelCalls === 1
-            ? [
-              {
-                type: "tool-call",
-                toolCallId: "get-file-call-1",
-                toolName: "get_file",
-                input: { path: "README.md" },
-              },
-              {
-                type: "finish",
-                finishReason: "tool-calls",
-                usage: { inputTokens: 1, outputTokens: 1 },
-              },
-            ]
-            : [
-              { type: "text-delta", text: "child completed" },
-              {
-                type: "finish",
-                finishReason: "stop",
-                usage: { inputTokens: 1, outputTokens: 1 },
-              },
-            ],
-        ),
-      });
+  const childModel = scriptedModel([
+    {
+      toolCalls: [{
+        id: "get-file-call-1",
+        name: "get_file",
+        input: { path: "README.md" },
+      }],
     },
-  };
-  const rootModel: ModelRuntime = {
-    provider: "test",
-    modelId: "test/delegate-auth-root",
-    doGenerate: () => Promise.reject(new Error("unused")),
-    doStream() {
-      rootModelCalls++;
-      return Promise.resolve({
-        stream: createRuntimeStream(
-          rootModelCalls === 1
-            ? [
-              {
-                type: "tool-call",
-                toolCallId: "delegate-call-1",
-                toolName: `agent_${childId}`,
-                input: { input: "Read the project file" },
-              },
-              {
-                type: "finish",
-                finishReason: "tool-calls",
-                usage: { inputTokens: 1, outputTokens: 1 },
-              },
-            ]
-            : [
-              { type: "text-delta", text: "root completed" },
-              {
-                type: "finish",
-                finishReason: "stop",
-                usage: { inputTokens: 1, outputTokens: 1 },
-              },
-            ],
-        ),
-      });
+    { text: "child completed" },
+  ], { provider: "test", modelId: "test/delegate-auth-child", only: "stream" });
+  const rootModel = scriptedModel([
+    {
+      toolCalls: [{
+        id: "delegate-call-1",
+        name: `agent_${childId}`,
+        input: { input: "Read the project file" },
+      }],
     },
-  };
+    { text: "root completed" },
+  ], { provider: "test", modelId: "test/delegate-auth-root", only: "stream" });
 
   eagerAgent({
     id: childId,
@@ -273,8 +161,8 @@ Deno.test("local delegates execute inherited MCP tools with the parent credentia
       },
     })).toDataStreamResponse().text();
 
-    assertEquals(childModelCalls, 2);
-    assertEquals(rootModelCalls, 2);
+    assertEquals(childModel.callCount, 2);
+    assertEquals(rootModel.callCount, 2);
     assertEquals(body.includes("root completed"), true);
     assertEquals(executeContext?.authToken, "parent-token");
     assertEquals(executeContext?.runId, "parent-run");
@@ -290,9 +178,6 @@ Deno.test("local-only delegates preserve the trusted MCP source for a grandchild
   const grandchildId = "request-scoped-mcp-grandchild";
   const childId = "request-scoped-local-child";
   const rootId = "request-scoped-mcp-nested-root";
-  let grandchildModelCalls = 0;
-  let childModelCalls = 0;
-  let rootModelCalls = 0;
   const listedBy: string[] = [];
 
   const injectedStudioSource: RemoteToolSource = {
@@ -308,92 +193,29 @@ Deno.test("local-only delegates preserve the trusted MCP source for a grandchild
     executeTool: () => Promise.resolve({ ok: true }),
   };
 
-  const grandchildModel: ModelRuntime = {
-    provider: "test",
-    modelId: "test/delegate-grandchild",
-    doGenerate: () => Promise.reject(new Error("unused")),
-    doStream() {
-      grandchildModelCalls++;
-      return Promise.resolve({
-        stream: createRuntimeStream([
-          { type: "text-delta", text: "grandchild completed" },
-          {
-            type: "finish",
-            finishReason: "stop",
-            usage: { inputTokens: 1, outputTokens: 1 },
-          },
-        ]),
-      });
+  const grandchildModel = scriptedModel([
+    { text: "grandchild completed" },
+  ], { provider: "test", modelId: "test/delegate-grandchild", only: "stream" });
+  const childModel = scriptedModel([
+    {
+      toolCalls: [{
+        id: "grandchild-call-1",
+        name: `agent_${grandchildId}`,
+        input: { input: "Read the project file" },
+      }],
     },
-  };
-  const childModel: ModelRuntime = {
-    provider: "test",
-    modelId: "test/delegate-intermediate",
-    doGenerate: () => Promise.reject(new Error("unused")),
-    doStream() {
-      childModelCalls++;
-      return Promise.resolve({
-        stream: createRuntimeStream(
-          childModelCalls === 1
-            ? [
-              {
-                type: "tool-call",
-                toolCallId: "grandchild-call-1",
-                toolName: `agent_${grandchildId}`,
-                input: { input: "Read the project file" },
-              },
-              {
-                type: "finish",
-                finishReason: "tool-calls",
-                usage: { inputTokens: 1, outputTokens: 1 },
-              },
-            ]
-            : [
-              { type: "text-delta", text: "child completed" },
-              {
-                type: "finish",
-                finishReason: "stop",
-                usage: { inputTokens: 1, outputTokens: 1 },
-              },
-            ],
-        ),
-      });
+    { text: "child completed" },
+  ], { provider: "test", modelId: "test/delegate-intermediate", only: "stream" });
+  const rootModel = scriptedModel([
+    {
+      toolCalls: [{
+        id: "child-call-1",
+        name: `agent_${childId}`,
+        input: { input: "Delegate to the grandchild" },
+      }],
     },
-  };
-  const rootModel: ModelRuntime = {
-    provider: "test",
-    modelId: "test/delegate-nested-root",
-    doGenerate: () => Promise.reject(new Error("unused")),
-    doStream() {
-      rootModelCalls++;
-      return Promise.resolve({
-        stream: createRuntimeStream(
-          rootModelCalls === 1
-            ? [
-              {
-                type: "tool-call",
-                toolCallId: "child-call-1",
-                toolName: `agent_${childId}`,
-                input: { input: "Delegate to the grandchild" },
-              },
-              {
-                type: "finish",
-                finishReason: "tool-calls",
-                usage: { inputTokens: 1, outputTokens: 1 },
-              },
-            ]
-            : [
-              { type: "text-delta", text: "root completed" },
-              {
-                type: "finish",
-                finishReason: "stop",
-                usage: { inputTokens: 1, outputTokens: 1 },
-              },
-            ],
-        ),
-      });
-    },
-  };
+    { text: "root completed" },
+  ], { provider: "test", modelId: "test/delegate-nested-root", only: "stream" });
 
   eagerAgent({
     id: grandchildId,
@@ -429,10 +251,11 @@ Deno.test("local-only delegates preserve the trusted MCP source for a grandchild
       .toDataStreamResponse()
       .text();
 
-    assertEquals(grandchildModelCalls, 1);
-    assertEquals(childModelCalls, 2);
-    assertEquals(rootModelCalls, 2);
+    assertEquals(grandchildModel.callCount, 1);
+    assertEquals(childModel.callCount, 2);
+    assertEquals(rootModel.callCount, 2);
     assertEquals(listedBy.includes(grandchildId), true);
+    assertEquals(grandchildModel.toolNames(0).includes("get_file"), true);
     assertEquals(body.includes("root completed"), true);
     assertEquals(body.includes('"type":"error"'), false);
   } finally {

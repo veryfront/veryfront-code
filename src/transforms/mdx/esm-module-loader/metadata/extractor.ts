@@ -81,7 +81,7 @@ function extractComplexValue(
 function parseLayoutValue(value: string): boolean | string {
   if (value === "true") return true;
   if (value === "false") return false;
-  return value.replace(/^"|"$/g, "");
+  return value.replace(/^["']|["']$/g, "");
 }
 
 export function extractMetadata(moduleCode: string): Partial<MDXModule> {

@@ -5,7 +5,7 @@ import type {
   WorkflowContext,
   WorkflowNode,
 } from "../types.ts";
-import { validateNodeId } from "./validation.ts";
+import { namespaceWorkflowNodes, validateNodeId } from "./validation.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 /** Options accepted by branch. */
@@ -20,12 +20,7 @@ export interface BranchOptions extends Omit<BaseNodeConfig, "checkpoint"> {
 }
 
 function prefixNodes(id: string, branch: "then" | "else", nodes: WorkflowNode[]): WorkflowNode[] {
-  const prefix = `${id}/${branch}/`;
-
-  return nodes.map((node) => {
-    if (node.id.startsWith(prefix)) return node;
-    return { ...node, id: `${prefix}${node.id}` };
-  });
+  return namespaceWorkflowNodes(`${id}/${branch}/`, nodes);
 }
 
 /** Create a conditional branch node. */
@@ -41,6 +36,7 @@ export function branch(id: string, options: BranchOptions): WorkflowNode {
 
   const config: BranchNodeConfig = {
     type: "branch",
+    description: options.description,
     condition: options.condition,
     then: prefixNodes(id, "then", options.then),
     else: options.else ? prefixNodes(id, "else", options.else) : undefined,

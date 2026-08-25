@@ -1,0 +1,27 @@
+{
+  "name": "@veryfront/ext-yaml",
+  "version": "0.1.0",
+  "exports": "./src/index.ts",
+  "veryfront": {
+    "extension": true,
+    "activation": "auto",
+    "contracts": {
+      "provides": ["SkillDocumentParserProvider", "YamlParserProvider"]
+    },
+    "capabilities": [],
+    "npm": {
+      "runtimeVersionFromManifest": true
+    }
+  },
+  "imports": {
+    "yaml": "npm:yaml@2.9.0",
+    "@std/assert": "jsr:@std/assert@1.0.19",
+    "@std/testing/bdd": "jsr:@std/testing@1.0.17/bdd",
+    "veryfront/extensions": "../../src/extensions/types.ts",
+    "veryfront/extensions/parser": "../../src/extensions/parser/index.ts"
+  },
+  "tasks": {
+    "test": "deno test --allow-all src/",
+    "check": "deno check src/index.ts src/*.test.ts"
+  }
+}

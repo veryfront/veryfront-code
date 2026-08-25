@@ -13,7 +13,11 @@ import { reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
 import type { Extension, ExtensionSource, ResolvedExtension } from "./types.ts";
 import type { LLMProvider, LLMProviderRegistry } from "./llm/index.ts";
 import { createLLMProviderRegistry, LLMProviderRegistryName } from "./llm/index.ts";
-import { createBuiltinExtensions } from "./builtin-extensions.ts";
+import {
+  createBuiltinExtensions,
+  createDeferredBuiltinExtension,
+  createEvalCliBuiltinExtensions,
+} from "./builtin-extensions.ts";
 import { join } from "@std/path";
 
 const noopLogger = {
@@ -501,7 +505,7 @@ describe("orchestrateExtensions()", () => {
   it("does not activate a retry while timed-out setup is still running", async () => {
     const firstStarted = Promise.withResolvers<void>();
     const releaseFirst = Promise.withResolvers<void>();
-    const retryStarted = Promise.withResolvers<void>();
+    const order: string[] = [];
     const first = orchestrateExtensions({
       projectDir: "/fake",
       config: {
@@ -509,6 +513,7 @@ describe("orchestrateExtensions()", () => {
           async setup() {
             firstStarted.resolve();
             await releaseFirst.promise;
+            order.push("late-setup-done");
           },
         })],
       },
@@ -524,23 +529,29 @@ describe("orchestrateExtensions()", () => {
       config: {
         extensions: [stubExt("replacement", {
           setup() {
-            retryStarted.resolve();
+            order.push("retry-setup");
           },
         })],
       },
       logger: noopLogger,
       discovery: emptyDiscovery(),
     });
-    const retryStartedBeforeLateSetupSettled = await Promise.race([
-      retryStarted.promise.then(() => true),
-      new Promise<false>((resolve) => setTimeout(() => resolve(false), 20)),
-    ]);
+    for (let index = 0; index < 100; index++) await Promise.resolve();
+    assertEquals(
+      order,
+      [],
+      "the retry must not run setup while the timed-out setup is still pending",
+    );
 
     releaseFirst.resolve();
     const retryLoader = await retry;
     await retryLoader.teardownAll();
 
-    assertEquals(retryStartedBeforeLateSetupSettled, false);
+    assertEquals(
+      order,
+      ["late-setup-done", "retry-setup"],
+      "the replacement generation must activate only after the late setup and its cleanup settle",
+    );
   });
 
   it("filters disable directives from config.extensions", async () => {
@@ -602,6 +613,166 @@ describe("orchestrateExtensions()", () => {
         return Promise.reject(
           new Error(`should-not-load: ${path} (source=${source})`),
         );
+      },
+    });
+
+    assertEquals(loadCalls, []);
+    await loader.teardownAll();
+  });
+
+  it("keeps installed first-party builtin packages deferred and prefilters their disable aliases", async () => {
+    const packageHits = [
+      {
+        packageName: "@veryfront/ext-css-tailwind",
+        importTarget: "/canonical/ext-css-tailwind.js",
+        metadata: {
+          isExtension: true as const,
+          activation: "auto" as const,
+          capabilities: [],
+        },
+      },
+      {
+        packageName: "@veryfront/ext-node-websocket-ws",
+        importTarget: "/canonical/ext-node-websocket-ws.js",
+        metadata: {
+          isExtension: true as const,
+          activation: "auto" as const,
+          capabilities: [],
+        },
+      },
+    ];
+
+    for (
+      const [disabledName, expectedDeferredFactoryCalls] of [
+        ["ext-css-tailwind", ["ext-node-websocket-ws"]],
+        ["@veryfront/ext-node-websocket-ws", ["ext-css-tailwind"]],
+      ] as const
+    ) {
+      const loadCalls: string[] = [];
+      const deferredFactoryCalls: string[] = [];
+      const loader = await orchestrateExtensions({
+        projectDir: "/fake",
+        config: {
+          extensions: [{ name: disabledName, enabled: false }],
+        },
+        logger: noopLogger,
+        discovery: {
+          ...emptyDiscovery(),
+          discoverPackageExtensions: () => Promise.resolve(packageHits),
+        },
+        builtinExtensions: [
+          createDeferredBuiltinExtension({
+            name: "ext-css-tailwind",
+            origin: "veryfront/ext-css-tailwind",
+            sourceDirectory: "ext-css-tailwind",
+            availability: "root-bundled",
+            factory: () => {
+              deferredFactoryCalls.push("ext-css-tailwind");
+              return stubExt("ext-css-tailwind", {
+                contracts: { provides: ["CSSProcessor"] },
+                setup: (ctx) => ctx.provide("CSSProcessor", { id: "tailwind" }),
+              });
+            },
+          }),
+          createDeferredBuiltinExtension({
+            name: "ext-node-websocket-ws",
+            origin: "veryfront/ext-node-websocket-ws",
+            sourceDirectory: "ext-node-websocket-ws",
+            availability: "root-bundled",
+            factory: () => {
+              deferredFactoryCalls.push("ext-node-websocket-ws");
+              return stubExt("ext-node-websocket-ws", {
+                contracts: { provides: ["NodeWebSocketServerProvider"] },
+                setup: (ctx) => ctx.provide("NodeWebSocketServerProvider", { id: "ws" }),
+              });
+            },
+          }),
+        ],
+        loadFactory: (path: string, source: ExtensionSource) => {
+          loadCalls.push(path);
+          return Promise.resolve<ResolvedExtension>({
+            extension: stubExt(path),
+            source,
+            origin: path,
+          });
+        },
+      });
+
+      assertEquals(loadCalls, []);
+      assertEquals(deferredFactoryCalls, [...expectedDeferredFactoryCalls]);
+      await loader.teardownAll();
+    }
+  });
+
+  it("keeps package discovery above ordinary builtins with the same first-party name", async () => {
+    const loader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: {},
+      logger: noopLogger,
+      discovery: {
+        ...emptyDiscovery(),
+        discoverPackageExtensions: () =>
+          Promise.resolve([{
+            packageName: "@veryfront/ext-css-tailwind",
+            importTarget: "/canonical/ext-css-tailwind.js",
+            metadata: {
+              isExtension: true as const,
+              activation: "auto" as const,
+              capabilities: [],
+            },
+          }]),
+      },
+      builtinExtensions: [{
+        extension: stubExt("ext-css-tailwind", {
+          provides: { SelectedExtensionSource: { from: "builtin" } },
+        }),
+        source: "builtin",
+        origin: "custom-direct-builtin",
+      }],
+      loadFactory: (_path: string, source: ExtensionSource) =>
+        Promise.resolve<ResolvedExtension>({
+          extension: stubExt("ext-css-tailwind", {
+            provides: { SelectedExtensionSource: { from: "package" } },
+          }),
+          source,
+          origin: "canonical-package",
+        }),
+    });
+
+    assertEquals(tryResolve("SelectedExtensionSource"), { from: "package" });
+    await loader.teardownAll();
+  });
+
+  it("keeps deferred packages lazy for the reduced eval CLI builtin set", async () => {
+    const loadCalls: string[] = [];
+    const loader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: {},
+      logger: noopLogger,
+      primeContracts: {
+        [LLMProviderRegistryName]: createLLMProviderRegistry(),
+      },
+      discovery: {
+        ...emptyDiscovery(),
+        discoverPackageExtensions: () =>
+          Promise.resolve([{
+            packageName: "@veryfront/ext-css-tailwind",
+            importTarget: "/canonical/ext-css-tailwind.js",
+            metadata: {
+              isExtension: true as const,
+              activation: "auto" as const,
+              capabilities: [],
+            },
+          }]),
+      },
+      builtinExtensions: createEvalCliBuiltinExtensions([]),
+      loadFactory: (path: string, source: ExtensionSource) => {
+        loadCalls.push(path);
+        return Promise.resolve<ResolvedExtension>({
+          extension: stubExt("ext-css-tailwind"),
+          source,
+          origin: path,
+        });
       },
     });
 

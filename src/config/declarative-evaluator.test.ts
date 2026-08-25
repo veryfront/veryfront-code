@@ -107,6 +107,7 @@ export default defineConfig({
   },
   security: {
     remoteHosts: ["https://esm.sh"],
+    redirects: { allowedOrigins: ["https://accounts.example.com"] },
   },
 });
 `,
@@ -122,7 +123,10 @@ export default defineConfig({
         components: ["components", "ui"],
       },
       router: "app",
-      security: { remoteHosts: ["https://esm.sh"] },
+      security: {
+        redirects: { allowedOrigins: ["https://accounts.example.com"] },
+        remoteHosts: ["https://esm.sh"],
+      },
       title: "My App",
     });
     assertEquals(Object.getPrototypeOf(snapshot), null);
@@ -279,6 +283,53 @@ export default defineConfig({
     assertEquals(graph.includes("/rendering/cache/stores/filesystem-store.ts"), false);
     assertEquals(graph.includes("/utils/redis-client.ts"), false);
     assertEquals(reachableNpmNames.has("@redis/client"), false);
+  });
+
+  it("accepts TypeScript syntax in a config named .js or .mjs", async () => {
+    // Regression: hosted configs are authored in TypeScript but can be served
+    // under a .js name. The parser chooses its plugins from the file extension,
+    // so passing the name parsed `as const` as plain JavaScript and rejected
+    // valid config with "Hosted configuration rejected (syntax-error:
+    // syntax-error)", which took customer sites down.
+    //
+    // The suite never caught it because DeclarativeConfigFileName defaults to
+    // veryfront.config.ts, so every other test here implicitly picked the one
+    // extension that works.
+    const source = `
+import { defineConfig } from "veryfront";
+
+const router = "pages" as const;
+
+export default defineConfig({
+  title: "TS syntax under a JS name",
+  router,
+});
+`;
+
+    const asJs = await evaluateDeclarativeConfig({
+      ...DEFAULT_OPTIONS,
+      fileName: "veryfront.config.js",
+      source,
+    });
+    assertEquals(asJs.router, "pages", "veryfront.config.js must parse TypeScript syntax");
+
+    const asMjs = await evaluateDeclarativeConfig({
+      ...DEFAULT_OPTIONS,
+      fileName: "veryfront.config.mjs",
+      source,
+    });
+    assertEquals(asMjs.router, "pages", "veryfront.config.mjs must parse TypeScript syntax");
+  });
+
+  it("still allows angle-bracket type assertions in a .ts config", async () => {
+    // Withholding filePath would put every config in TSX mode, where `<T>x` is
+    // an unclosed JSX element rather than a type assertion.
+    const snapshot = await evaluateDeclarativeConfig({
+      ...DEFAULT_OPTIONS,
+      fileName: "veryfront.config.ts",
+      source: 'const router = <string> "pages";\nexport default { router };',
+    });
+    assertEquals(snapshot.router, "pages");
   });
 
   it("supports helper aliases, safe spreads, environment branching, templates, and TS wrappers", async () => {

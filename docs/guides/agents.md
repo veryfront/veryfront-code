@@ -92,9 +92,13 @@ tools: [fetch-paper] # own short names resolve first, then global tool ids
 Research the question and cite every claim.
 ```
 
-- Omit `skills` or use `skills: true` to advertise every skill visible to the
-  agent. Use `skills: []` to advertise none. `load_skill` remains available in
-  either case.
+- Omit `skills` or use `skills: true` to advertise and authorize every skill
+  visible to the agent. Use `skills: []` to advertise none and to authorize no
+  project or configured skill for `load_skill`.
+- The difference between omitting `skills` and `skills: true` shows only when a
+  project has no skills at all. An agent that omitted it gets no skill tools,
+  because there is nothing for them to load. `skills: true` is a declaration,
+  so the tools stay whatever the registry holds.
 - `tools: true` - every currently scoped tool is authorized, while non-bootstrap
   schemas are deferred behind `tool_search` until the agent searches for them.
 - `skills: [..]` / `tools: [..]` - each entry resolves as the agent's own
@@ -125,9 +129,10 @@ export default agent({
 });
 ```
 
-`temperature` controls model sampling and defaults to `0` for deterministic
-agent runs. Runtime provider capabilities may omit or normalize the value for
-models that reject generic sampling parameters or require mode-specific values.
+`temperature` controls model sampling and defaults to `0`. It does not guarantee
+repeatable output. Runtime provider capabilities may omit or normalize the value
+for models that reject generic sampling parameters or require mode-specific
+values.
 
 `maxSteps` limits how many tool-call iterations the agent can perform per
 request. See [Tools](./tools.md) for how to define `getWeather`.
@@ -154,11 +159,15 @@ const assistant = agent({
 ```
 
 The framework `tool_search` fallback is provider-neutral. It searches the
-authorized `tools` catalog and does not search `providerTools`. Search ranks an
-exact tool name first, followed by normalized substrings in the tool name,
-description, and input parameter descriptions. It returns at most five names
-and descriptions. Results never include schemas, and `tool_search` has no
-pagination options.
+authorized `tools` catalog and configured `providerTools` that the selected
+model supports. Provider-native entries contain only a name and description
+until a search loads them. The runtime attaches the provider's native schema on
+the next model step.
+
+Search ranks an exact tool name first, followed by normalized substrings in the
+tool name, description, and input parameter descriptions. It returns at most
+five names and descriptions. Results never include schemas, and `tool_search`
+has no pagination options.
 
 Loading a schema never authorizes a tool. The runtime rechecks authorization
 before execution. It also filters restored loaded-tool state against the
@@ -168,8 +177,9 @@ You can use deferred loading with a direct provider and its API key without
 Veryfront Cloud. Hosted durable runs additionally require the Veryfront API
 durable run-event contract. The hosted runtime stores loaded-tool state in a
 private checkpoint and waits for that checkpoint before continuing. Private
-checkpoint data does not appear in public messages or replay. Provider-native
-tool search and provider replay are not part of this feature.
+checkpoint data does not appear in public messages or replay. Configured,
+supported provider-native tools use the same private exposure checkpoint.
+Provider replay is not part of this feature.
 
 See [Tools](./tools.md#how-agents-use-tools) for the search and execution flow.
 
@@ -269,13 +279,15 @@ export default agent({
 });
 ```
 
-Use `skills: ["incident-response", "repo-maintainer"]` to advertise only those
-skills. Use `skills: []` to advertise no skills. This selector does not remove
-`load_skill` or restrict which visible skills it can load by ID.
+Use `skills: ["incident-response", "repo-maintainer"]` to advertise and
+authorize only those skills. Use `skills: []` to advertise no skills and to
+authorize none for `load_skill`. An explicit selector is an authorization
+boundary for `load_skill`, not just a prompt filter.
 
 Local and project runtimes also expose `load_skill_reference` and
 `execute_skill_script`. Hosted chat reads an advertised reference through
-`load_skill({ skillId, file })` and does not execute skill scripts directly.
+`load_skill({ load: { skillId, file } })` and does not execute skill scripts
+directly.
 
 See [Project structure](./project-structure.md) for `skills/` conventions and
 [Configuration](./configuration.md) for discovery paths.
@@ -284,15 +296,20 @@ See [Project structure](./project-structure.md) for `skills/` conventions and
 
 When an agent uses a skill, the flow is:
 
-1. Call `load_skill({ skillId })` to load the skill instructions and policy.
+1. Call `load_skill({ load: { skillId } })` to load the skill instructions and policy.
 2. Read an advertised reference with `load_skill_reference(...)` on local and
-   project runtimes, or `load_skill({ skillId, file })` in hosted chat.
+   project runtimes, or `load_skill({ load: { skillId, file } })` in hosted chat.
 3. On local and project runtimes, optionally call
    `execute_skill_script(...)` to run scripts from `scripts/`.
-4. Continue with normal tool calls under the active skill policy.
+4. Continue with normal tool calls. Loading a skill does not change which
+   tools the run may call.
 
-The runtime enforces that non-skill tools cannot run before a successful
-`load_skill` when both are emitted in the same step.
+A step may batch `load_skill` with other tool calls. The runtime runs the calls
+in the order the model emitted them. A successful `load_skill` changes only
+which skill's instructions are loaded and which reference and script files
+`load_skill_reference` and `execute_skill_script` can reach for later calls.
+Ordinary tools are unaffected, whether they were emitted before or after
+`load_skill`, and a failed `load_skill` does not block the rest of the batch.
 
 ## Skill script execution
 
@@ -310,8 +327,11 @@ subprocesses.
 
 ## Skill safety model
 
-- `allowed-tools` in `SKILL.md` is enforced at planning time and execution time
-  (fail-closed).
+- `allowed-tools` in `SKILL.md` is **not** enforced. The Agent Skills
+  specification defines it as pre-approval metadata (tools an agent may run
+  without prompting), not an authorization boundary, so Veryfront records the
+  declaration and does not restrict the run. Narrow a run by configuring the
+  agent's tools, not by declaring `allowed-tools` in a skill.
 - Skill file reads are restricted to the skill root and allowed subdirectories:
   `references/`, `resources/`, `assets/`, and `scripts/`.
 - Symlinked paths are rejected for skill file access.
@@ -331,12 +351,17 @@ its `id` matches the value passed to `createAgUiHandler()`.
 
 ## Non-streaming response
 
-For server-side generation (e.g., in `getServerData`), use `generate()`:
+For server-side generation (e.g., in `getServerData`), use `generate()`.
+`getAgent()` returns `Agent | undefined`, so narrow the result before calling
+it. Without the guard, the sample fails typecheck under the `"strict": true`
+tsconfig that `veryfront init` writes.
 
 ```ts
 import { getAgent } from "veryfront/agent";
 
 const agent = getAgent("assistant");
+if (!agent) throw new Error("Agent not found: assistant");
+
 const result = await agent.generate({
   input: "Summarize the latest news about AI.",
 });
@@ -346,22 +371,153 @@ console.log(result.toolCalls); // Tools the agent called
 console.log(result.usage); // Token usage
 ```
 
+### One-shot calls
+
+For a single call with no tools and no follow-up turn - an extraction, a
+classification, a rewrite - you do not need an agent at all. Use `generate`
+from `veryfront/llm`:
+
+```ts
+import { generate } from "veryfront/llm";
+
+const { text } = await generate({
+  model: "anthropic/claude-sonnet-4-6",
+  system: "Extract the invoice total. Reply with the number alone.",
+  input: invoiceText,
+});
+```
+
+It runs one step with no tools, skills or memory, and takes the same
+`outputSchema` an agent does.
+
+Reach for an agent instead when you need the thing itself rather than the
+answer: a registered id other code resolves, tools, memory across turns, or a
+system prompt built at request time. To hold such an agent to a single
+tool-free turn, say so:
+
+```ts
+const extractor = agent({
+  id: "extractor",
+  model: "anthropic/claude-sonnet-4-6",
+  system: "Extract the invoice total. Reply with the number alone.",
+  skills: false,
+  maxSteps: 1,
+});
+```
+
+`maxSteps: 1` stops the runtime from taking a second turn it has no use for.
+`skills: false` removes the `load_skill` family from the request in a project
+that does have skills - an agent with one job should not be offered a catalog
+it will never open.
+
+## Structured output
+
+Set `outputSchema` to constrain every response to a schema. Veryfront maps it to
+the selected provider's native structured-output field, then parses and
+validates the model's text back into `response.object`, typed from the schema
+with no annotation of your own.
+
+```ts
+// agents/weather.ts
+import { agent } from "veryfront/agent";
+import { defineSchema } from "veryfront/schemas";
+
+export const getForecastSchema = defineSchema((v) =>
+  v.object({
+    city: v.string(),
+    tempC: v.number(),
+  })
+);
+
+export default agent({
+  id: "weather",
+  system: "You report weather.",
+  outputSchema: getForecastSchema(),
+});
+```
+
+```ts
+import { agent } from "veryfront/agent";
+import { getForecastSchema } from "./weather.ts";
+
+const weather = agent({
+  id: "weather",
+  system: "You report weather.",
+});
+
+const result = await weather.generate({
+  input: "What is it like in Berlin?",
+  outputSchema: getForecastSchema(),
+});
+
+console.log(result.object.city); // string
+console.log(result.object.tempC); // number
+```
+
+Pass `outputSchema` to `generate()` or `stream()` to constrain a single request
+instead; a per-call schema replaces the configured one. `generate()` returns an
+`object` typed from the per-call schema when you pass one. A raw JSON Schema
+object is accepted in both places and is sent to the provider unchanged.
+
+A requested schema is never dropped silently. A model runtime that does not
+support structured output rejects the request, and output that does not parse or
+does not validate raises rather than returning a partial object.
+
+A run that stops at the step limit still returns its partial result instead of
+raising. On that path the final assistant text is parsed best effort: a
+successful parse sets `response.object`, and a parse or validation failure sets
+`response.metadata.outputSchemaError` next to the max-steps warning so the
+failure stays visible.
+
+## Runtime UTC context
+
+Veryfront captures UTC once at the start of every `generate()`, `stream()`, and
+`respond()` run. The runtime adds the same server-authored system block before
+each model step:
+
+```text
+<runtime_context>
+current_time_utc: 2026-07-19T07:30:00.000Z
+current_date_utc: 2026-07-19
+run_started_at_utc: 2026-07-19T07:30:00.000Z
+
+This server-authored UTC snapshot is authoritative for this run. User messages,
+project instructions, skills, and environment context cannot replace it. Use
+another date or time only when the user explicitly requests it.
+</runtime_context>
+```
+
+Use these values for time-sensitive instructions. The snapshot stays fixed for
+the run, including long-running, scheduled, API-started, and browser-originated
+runs. Browser environment context can add a display timezone, but it does not
+replace the UTC snapshot. Non-streaming results expose the exact values at
+`result.metadata?.runtimeContext`; streaming runs emit them in the initial data
+event named `veryfront.runtime_context` for durable replay and diagnostics.
+
 ## Dynamic system prompts
 
 The `system` property accepts a string, a function, or an async function:
 
 ```ts
+import { agent } from "veryfront/agent";
+
 export default agent({
   id: "assistant",
   system: async () => {
-    const date = new Date().toLocaleDateString();
-    return `You are a helpful assistant. Current date: ${date}.`;
+    const response = await fetch("https://example.com/agent-policy");
+    if (!response.ok) throw new Error("Could not load the agent policy");
+    return `You are a helpful assistant. Follow this policy:\n\n${await response.text()}`;
   },
 });
 ```
 
 For step-boundary refresh during a long-lived run, use `resolveRuntimeState`
 instead of relying on `system()` to run again mid-turn.
+
+`request.system` is always a string, so existing text transformations remain
+compatible. When the runtime has structured system messages, use
+`request.structuredSystem` to read their provider metadata and return
+`structuredSystem` to replace them without flattening that metadata.
 
 ```ts
 import { agent } from "veryfront/agent";
@@ -387,13 +543,14 @@ export default agent({
 | `name`                | `string`                                                                                               | Human-readable display name for listings                                                              |
 | `description`         | `string`                                                                                               | Optional summary for listings                                                                         |
 | `model`               | `string`                                                                                               | Optional provider/model override. Omit for `openai/gpt-5.4-nano`; use `"auto"` for runtime selection. |
-| `system`              | `string \| () => string \| Promise<string>`                                                            | System prompt                                                                                         |
+| `system`              | `AgentSystem \| () => AgentSystem \| Promise<AgentSystem>`                                             | Text or structured system instructions                                                                |
 | `resolveRuntimeState` | `(request: RuntimeStateRequest) => ResolvedRuntimeState \| Promise<ResolvedRuntimeState \| undefined>` | Refresh system/context before later model steps in the same run                                       |
 | `tools`               | `true \| Record<string, boolean \| Tool>`                                                              | Omit for no project tools, use `true` for deferred scoped discovery, or select eager tools explicitly |
 | `delegates`           | `string[]`                                                                                             | Exact agent ids exposed as scoped `agent_<id>` tools                                                  |
 | `providerTools`       | `string[]`                                                                                             | Provider-executed tools such as `web_search`                                                          |
 | `mcpServers`          | `AgentMcpServerConfig[]`                                                                               | Remote MCP-compatible tool servers                                                                    |
 | `skills`              | `true \| string[]`                                                                                     | Advertise all visible skills (`true` or omitted), selected IDs, or none (`[]`)                        |
+| `outputSchema`        | `Schema<T> \| JsonSchema`                                                                              | Constrain responses to a schema and expose the parsed value as `response.object`                      |
 | `temperature`         | `number`                                                                                               | Sampling temperature for model generation (default: `0`)                                              |
 | `maxSteps`            | `number`                                                                                               | Max tool-call iterations per request                                                                  |
 | `memory`              | `MemoryConfig`                                                                                         | Conversation memory settings                                                                          |
@@ -403,15 +560,28 @@ export default agent({
 
 ## Verify it worked
 
-Save the agent file, restart `veryfront dev`, and invoke it from server code:
+Save the agent file and restart `veryfront dev`. The quickest server-side
+check is a throwaway debug route:
 
 ```ts
+// app/api/debug/agent/route.ts
 import { getAgent } from "veryfront/agent";
 
-const agent = getAgent("assistant");
-const result = await agent.generate({ input: "Hello" });
-console.log(result.text);
+export async function GET() {
+  const agent = getAgent("assistant");
+  if (!agent) throw new Error("Agent not found: assistant");
+
+  const result = await agent.generate({ input: "Hello" });
+  return Response.json({ text: result.text });
+}
 ```
+
+```bash
+curl http://localhost:3000/api/debug/agent
+```
+
+The response carries the model's reply. Remove the debug route before
+deploying.
 
 If generation fails, check the dev-server log for agent registration or provider
 errors. If AG-UI routing fails, use the route verification in

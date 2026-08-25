@@ -184,6 +184,50 @@ describe("agent/ag-ui-runtime-handler", () => {
     });
   });
 
+  it("withholds infrastructure headers from runtime context callbacks", async () => {
+    let admissionToken: string | null = null;
+    const handler = createAgUiRuntimeHandler({
+      beforeParse: ({ request }) => {
+        admissionToken = request.headers.get("x-token");
+      },
+      context: (request) => {
+        assertEquals(request.headers.get("authorization"), "Bearer public-user");
+        assertEquals(request.headers.get("cookie"), "session=public");
+        assertEquals(request.headers.get("x-token"), null);
+        assertEquals(request.headers.get("x-project-slug"), null);
+        assertEquals(request.headers.get("x-forwarded-host"), null);
+        return { admitted: true };
+      },
+      execute: ({ request, context }) => {
+        assertEquals(request.headers.get("authorization"), "Bearer public-user");
+        assertEquals(request.headers.get("x-token"), null);
+        return Response.json(context);
+      },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer public-user",
+          Cookie: "session=public",
+          "x-token": "host-secret",
+          "x-project-slug": "infrastructure-project",
+          "x-forwarded-host": "trusted-proxy.example",
+        },
+        body: JSON.stringify({
+          runId: "run_runtime_boundary",
+          threadId: crypto.randomUUID(),
+          messages: [{ id: "user-1", role: "user", content: "Hello" }],
+        }),
+      }),
+    );
+
+    assertEquals(admissionToken, "host-secret");
+    assertEquals(await response.json(), { admitted: true });
+  });
+
   it("lets hosts short-circuit before parsing the runtime request body", async () => {
     let beforeParseCalls = 0;
     let executeCalls = 0;
@@ -457,6 +501,43 @@ describe("agent/ag-ui-runtime-handler", () => {
     assertEquals(response.status, 200);
     const body = await response.text();
     assertStringIncludes(body, "event: RunFinished");
+    assertEquals(
+      body.includes("event: RunError"),
+      false,
+      "a rejecting lifecycle callback must not turn a successful run into RunError",
+    );
+  });
+
+  it("swallows synchronously thrown lifecycle callbacks during normal streaming", async () => {
+    const testAgent = createTestAgent();
+    const threadId = crypto.randomUUID();
+    const handler = createAgUiRuntimeHandler({
+      agent: testAgent.agent,
+      onFinish: () => {
+        throw new Error("telemetry exploded");
+      },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          threadId,
+          runId: "run_runtime_hooks_5",
+          messages: [{ id: "user-1", role: "user", content: "Hello" }],
+        }),
+      }),
+    );
+
+    assertEquals(response.status, 200);
+    const body = await response.text();
+    assertStringIncludes(body, "event: RunFinished");
+    assertEquals(
+      body.includes("event: RunError"),
+      false,
+      "a synchronously throwing lifecycle callback must not turn a successful run into RunError",
+    );
   });
 
   it("calls onError when direct hosted stream setup fails before a stream exists", async () => {
@@ -490,7 +571,7 @@ describe("agent/ag-ui-runtime-handler", () => {
     );
 
     assertEquals(response.status, 500);
-    assertEquals(await response.json(), { error: "clearMemory exploded" });
+    assertEquals(await response.json(), { error: "Internal server error" });
     assertEquals(seenRunId, "run_runtime_hooks_4");
     assertEquals(seenError, "clearMemory exploded");
   });
@@ -612,12 +693,178 @@ describe("agent/ag-ui-runtime-handler", () => {
       assertStringIncludes(body, "event: ToolCallStart");
       assertEquals(seenToolCallId, "tool-call-1");
       assertEquals(finishedRunId, "run_runtime_4");
+      assertEquals(
+        sessionManager.getRunStatus("run_runtime_4"),
+        null,
+        "a finished injected-tools run must be released from the session manager",
+      );
     } finally {
       AgentRuntime.prototype.stream = originalStream;
     }
   });
 
-  it("does not prepare browser resume waits for source project tools", async () => {
+  it("releases a failed run through the injected-tools runtime path", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const originalStream = AgentRuntime.prototype.stream;
+    let seenError: string | undefined;
+
+    AgentRuntime.prototype.stream = (): Promise<ReadableStream<Uint8Array>> =>
+      Promise.resolve(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              encodeDataStreamEvent({ type: "message-start", messageId: "assistant-msg-1" }),
+            );
+            controller.error(new Error("injected runtime stream exploded"));
+          },
+        }),
+      );
+
+    try {
+      const handler = createAgUiRuntimeHandler({
+        agent: createTestAgent().agent,
+        sessionManager,
+        onError: ({ error }) => {
+          seenError = error instanceof Error ? error.message : String(error);
+        },
+      });
+
+      const response = await handler(
+        new Request("http://localhost/api/ag-ui", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            threadId: crypto.randomUUID(),
+            runId: "run_runtime_5",
+            messages: [{ id: "msg-1", role: "user", content: "hello" }],
+            tools: [{ name: "client_confirm" }],
+          }),
+        }),
+      );
+
+      const body = await response.text();
+      assertStringIncludes(body, "event: RunError");
+      assertEquals(
+        seenError,
+        "injected runtime stream exploded",
+        "the injected-tools path must forward the stream failure to the host onError hook",
+      );
+      assertEquals(
+        sessionManager.getRunStatus("run_runtime_5"),
+        null,
+        "a failed injected-tools run must be released via failRun",
+      );
+    } finally {
+      AgentRuntime.prototype.stream = originalStream;
+      sessionManager.reset();
+    }
+  });
+
+  it("returns 409 when the run id is already active", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const threadId = crypto.randomUUID();
+    sessionManager.startRun({ runId: "run_runtime_dup", threadId });
+
+    try {
+      const handler = createAgUiRuntimeHandler({
+        agent: createTestAgent().agent,
+        sessionManager,
+      });
+
+      const response = await handler(
+        new Request("http://localhost/api/ag-ui", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            threadId,
+            runId: "run_runtime_dup",
+            messages: [{ id: "msg-1", role: "user", content: "hello" }],
+            tools: [{ name: "client_confirm" }],
+          }),
+        }),
+      );
+
+      assertEquals(
+        response.status,
+        409,
+        "a duplicate run id must be reported as a conflict, not a generic failure",
+      );
+      assertEquals(
+        await response.json(),
+        { error: "Run already active" },
+        "the duplicate-run body must stay stable so hosts can drive retry handling",
+      );
+    } finally {
+      sessionManager.reset();
+    }
+  });
+
+  it("releases the run when injected-tools stream setup fails", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const originalStream = AgentRuntime.prototype.stream;
+    let seenError: string | undefined;
+
+    AgentRuntime.prototype.stream = (): Promise<ReadableStream<Uint8Array>> =>
+      Promise.reject(new Error("runtime stream setup exploded"));
+
+    try {
+      const handler = createAgUiRuntimeHandler({
+        agent: createTestAgent().agent,
+        sessionManager,
+        onError: ({ error }) => {
+          seenError = error instanceof Error ? error.message : String(error);
+        },
+      });
+
+      const response = await handler(
+        new Request("http://localhost/api/ag-ui", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            threadId: crypto.randomUUID(),
+            runId: "run_runtime_setup_fail",
+            messages: [{ id: "msg-1", role: "user", content: "hello" }],
+            tools: [{ name: "client_confirm" }],
+          }),
+        }),
+      );
+
+      assertEquals(
+        response.status,
+        500,
+        "a runtime stream setup failure must surface as a server error",
+      );
+      assertEquals(
+        await response.json(),
+        { error: "Internal server error" },
+        "runtime internals must not leak through the public error response",
+      );
+      assertEquals(
+        seenError,
+        "runtime stream setup exploded",
+        "the host lifecycle callback must still receive the original startup error",
+      );
+      assertEquals(
+        sessionManager.getRunStatus("run_runtime_setup_fail"),
+        null,
+        "a run whose stream setup failed must be released instead of staying active forever",
+      );
+    } finally {
+      AgentRuntime.prototype.stream = originalStream;
+      sessionManager.reset();
+    }
+  });
+
+  it("does not prepare client resume waits for source project tools", async () => {
     class TrackingSessionManager extends RunResumeSessionManager<{
       result: unknown;
       isError: boolean;

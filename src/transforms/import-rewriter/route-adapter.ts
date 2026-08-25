@@ -8,6 +8,7 @@ import {
   resolveExportEntry as resolveRouteExportEntry,
   toCjsDestructureBindings,
 } from "#veryfront/routing/api/module-loader/loader-helpers.ts";
+import { rethrowProjectBoundaryViolation } from "#veryfront/routing/api/module-loader/project-source-snapshot.ts";
 
 const logger = serverLogger.component("api");
 
@@ -61,7 +62,8 @@ export async function readProjectDependenciesForRoute(
     const content = await fs.readTextFile(pathHelper.join(projectDir, "package.json"));
     const pkg = JSON.parse(content) as { dependencies?: Record<string, string> };
     return new Map(Object.entries(pkg.dependencies ?? {}));
-  } catch (_) {
+  } catch (error) {
+    rethrowProjectBoundaryViolation(error);
     /* expected: package.json may not exist */
     return new Map();
   }
@@ -129,7 +131,7 @@ function resolveEsmEntry(pkgJson: Record<string, unknown>): string | undefined {
  */
 export async function resolveEsmUserDependenciesForRoute(
   projectDir: string,
-  fs: FileSystem,
+  fs: Pick<FileSystem, "readTextFile">,
   userDeps: Map<string, string>,
 ): Promise<Map<string, EsmDependencyLocation>> {
   const esmDeps = new Map<string, EsmDependencyLocation>();
@@ -160,7 +162,8 @@ export async function resolveEsmUserDependenciesForRoute(
         entryUrl: pathHelper.toFileUrl(entryPath).href,
         packageDir,
       });
-    } catch (_) {
+    } catch (error) {
+      rethrowProjectBoundaryViolation(error);
       /* expected: package.json missing/invalid -> treat as CJS */
     }
   }
@@ -296,7 +299,7 @@ export function rewriteCompiledUserDependencyImportsForRoute(
 export async function rewriteDenoNpmDependencyImportsForRoute(
   code: string,
   projectDir: string,
-  fs: FileSystem,
+  fs: Pick<FileSystem, "readTextFile">,
   userDeps: Map<string, string>,
 ): Promise<string> {
   const importedSpecifiers = new Set(
@@ -319,7 +322,8 @@ export async function rewriteDenoNpmDependencyImportsForRoute(
       const pkgContent = await fs.readTextFile(pkgPath);
       const pkg = JSON.parse(pkgContent) as { version?: string };
       if (pkg.version) resolvedVersion = pkg.version;
-    } catch (_) {
+    } catch (error) {
+      rethrowProjectBoundaryViolation(error);
       /* expected: installed package.json may not exist, fall back to declared range */
     }
 

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { CLIENT_PREFETCH_BUNDLE, CLIENT_ROUTER_BUNDLE, CLIENT_STYLES } from "./templates.ts";
 
@@ -29,19 +29,41 @@ describe("build/production-build/templates", () => {
   });
 
   describe("CLIENT_ROUTER_BUNDLE", () => {
-    it("should be undefined or a string", () => {
+    it("should embed the prebundled router", () => {
       assertEquals(
-        CLIENT_ROUTER_BUNDLE === undefined || typeof CLIENT_ROUTER_BUNDLE === "string",
-        true,
+        typeof CLIENT_ROUTER_BUNDLE,
+        "string",
+        "router bundle must be embedded by the prebundle step",
+      );
+      assertStringIncludes(
+        CLIENT_ROUTER_BUNDLE ?? "",
+        "VeryfrontRouter",
+        "embedded router bundle contains the router class",
+      );
+      assertEquals(
+        (CLIENT_ROUTER_BUNDLE ?? "").includes("#veryfront/"),
+        false,
+        "embedded bundle has internal aliases resolved",
       );
     });
   });
 
   describe("CLIENT_PREFETCH_BUNDLE", () => {
-    it("should be undefined or a string", () => {
+    it("should embed the prebundled prefetch manager", () => {
       assertEquals(
-        CLIENT_PREFETCH_BUNDLE === undefined || typeof CLIENT_PREFETCH_BUNDLE === "string",
-        true,
+        typeof CLIENT_PREFETCH_BUNDLE,
+        "string",
+        "prefetch bundle must be embedded by the prebundle step",
+      );
+      assertStringIncludes(
+        CLIENT_PREFETCH_BUNDLE ?? "",
+        "PrefetchManager",
+        "embedded prefetch bundle contains the prefetch manager",
+      );
+      assertEquals(
+        (CLIENT_PREFETCH_BUNDLE ?? "").includes("#veryfront/"),
+        false,
+        "embedded bundle has internal aliases resolved",
       );
     });
   });

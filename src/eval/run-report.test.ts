@@ -506,7 +506,7 @@ describe("runEvalReport single mode", () => {
   });
 
   it("returns exit 1 for failed records and baseline regressions", async () => {
-    const { adapters } = createAdapters({
+    const { adapters, writes } = createAdapters({
       report: createFailingReport(),
       baselineText: JSON.stringify(createReport()),
     });
@@ -530,6 +530,23 @@ describe("runEvalReport single mode", () => {
     if (outcome.kind !== "single") throw new Error("expected single outcome");
     assertEquals(outcome.report.summary.failed, 1);
     assertEquals(outcome.baseline?.regressed, true);
+
+    const markdown = writes.find((write) => write.path.endsWith("report.md"))?.content ?? "";
+    assertStringIncludes(
+      markdown,
+      "Status: `regressed`",
+      "a regressed baseline must be reported as regressed in report.md",
+    );
+    assertStringIncludes(
+      markdown,
+      "New failed examples: example-1",
+      "newly failing examples must be listed in report.md",
+    );
+    assertStringIncludes(
+      markdown,
+      "| `eval:answers/example-1/1` | FAIL |",
+      "a record with a failing gate metric must render as FAIL in the examples table",
+    );
   });
 
   it("emits record execution errors as JUnit testcase failures", async () => {
@@ -563,6 +580,62 @@ describe("runEvalReport single mode", () => {
     const junit = writes.find((write) => write.path === "artifacts/error.xml")?.content ?? "";
     assertStringIncludes(junit, '<failure message="record.error failed">');
     assertStringIncludes(junit, "adapter contract failed");
+  });
+
+  it("emits blocking metric failures as JUnit testcase failures", async () => {
+    const failingReport = createFailingReport();
+    const firstRecord = failingReport.records[0]!;
+    const metricFailureReport: EvalReport = {
+      ...failingReport,
+      summary: {
+        ...failingReport.summary,
+        records: 2,
+        failed: 2,
+      },
+      records: [
+        firstRecord,
+        {
+          ...firstRecord,
+          id: "eval:answers/example-2/1",
+          exampleId: "example-2",
+          metrics: [{
+            name: "answer.correct",
+            family: "answer",
+            severity: "gate",
+            pass: false,
+            evidence: { expected: "A framework." },
+          }],
+        },
+      ],
+    };
+    const { adapters, writes } = createAdapters({ report: metricFailureReport });
+
+    await runEvalReport({
+      kind: "single",
+      projectDir: "/repo",
+      frameworkVersion: "1.2.3",
+      evalItem: createDiscoveredEval(),
+      targetKind: "agent",
+      target: "agent:answers",
+      targetAdapter: {},
+      junit: "artifacts/metrics.xml",
+    }, adapters);
+
+    const junit = writes.find((write) => write.path === "artifacts/metrics.xml")?.content ?? "";
+    assertEquals(
+      junit,
+      `<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="eval:answers" tests="2" failures="2" skipped="0">
+  <testcase classname="eval:answers" name="example-1#1" time="1.000">
+    <failure message="answer.correct failed">Wrong answer.</failure>
+  </testcase>
+  <testcase classname="eval:answers" name="example-2#1" time="1.000">
+    <failure message="answer.correct failed">{&quot;expected&quot;:&quot;A framework.&quot;}</failure>
+  </testcase>
+</testsuite>
+`,
+      "gate-metric failures must render as JUnit <failure> children carrying the explanation or the evidence",
+    );
   });
 
   it("returns exit 1 when a passing report regresses against a stronger baseline", async () => {
@@ -846,6 +919,7 @@ describe("runEvalReport suite mode", () => {
       {
         kind: "report",
         evalId: "eval:alpha",
+        name: "Alpha",
         reportDirectory: "suite/001-alpha",
         report: {
           ...reportById.get("eval:alpha")!,
@@ -867,6 +941,7 @@ describe("runEvalReport suite mode", () => {
       {
         kind: "report",
         evalId: "eval:beta",
+        name: "Beta",
         reportDirectory: "suite/003-beta",
         report: {
           ...reportById.get("eval:beta")!,
@@ -883,6 +958,7 @@ describe("runEvalReport suite mode", () => {
       {
         kind: "report",
         evalId: "eval:gamma",
+        name: "Gamma",
         reportDirectory: "suite/004-gamma",
         report: {
           ...reportById.get("eval:gamma")!,

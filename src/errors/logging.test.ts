@@ -74,7 +74,10 @@ describe("logging", () => {
           output,
           "Suggestion: Create veryfront.config.js, veryfront.config.ts, or veryfront.config.mjs in the project root",
         );
-        assertStringIncludes(output, "Docs: https://veryfront.com/docs/errors/config-not-found");
+        assertStringIncludes(
+          output,
+          "Docs: https://veryfront.com/docs/code/guides/errors#config-not-found",
+        );
       });
 
       it("should include context when provided", () => {
@@ -170,7 +173,7 @@ describe("logging", () => {
         assertEquals(parsed.title, "Configuration file not found");
         assertEquals(parsed.detail, "Missing config file");
         assertEquals(parsed.status, 404);
-        assertEquals(parsed.docs, "https://veryfront.com/docs/errors/config-not-found");
+        assertEquals(parsed.docs, "https://veryfront.com/docs/code/guides/errors#config-not-found");
         assertEquals(typeof parsed.timestamp, "string");
       });
 

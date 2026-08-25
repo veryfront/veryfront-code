@@ -5,16 +5,30 @@ export interface SingleflightOptions {
   staleAfterMs?: number;
   /** Called after this exact leader is evicted as stale. */
   onStaleEvicted?: () => void;
+  /** Lets this caller detach without cancelling other callers. */
+  signal?: AbortSignal;
+  /** Cancels the shared operation after its final caller detaches. */
+  cancelWhenUnobserved?: boolean;
 }
 
 export interface SingleflightControl {
   /** Whether this operation is still the exact leader registered for its key. */
   isCurrent(): boolean;
+  /** Shared cancellation that fires only after every caller detaches. */
+  signal: AbortSignal;
 }
 
 interface SingleflightEntry<T> {
   promise: Promise<T>;
+  controller: AbortController;
+  waiterCount: number;
+  settled: boolean;
+  cancelWhenUnobserved: boolean;
   staleTimer?: ReturnType<typeof setTimeout>;
+}
+
+function signalAbortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException("The operation was aborted", "AbortError");
 }
 
 /**
@@ -27,20 +41,17 @@ export async function waitForSharedPromise<T>(
 ): Promise<T> {
   if (!signal) return await shared;
 
-  const abortReason = (): unknown =>
-    signal.reason ?? new DOMException("The operation was aborted", "AbortError");
-
   if (signal.aborted) {
     // The shared operation can still fail after this caller detaches.
     // Observe that rejection so a sole detached caller cannot leave it unhandled.
     void shared.catch(() => {});
-    throw abortReason();
+    throw signalAbortReason(signal);
   }
 
   return await new Promise<T>((resolve, reject) => {
     const onAbort = (): void => {
       signal.removeEventListener("abort", onAbort);
-      reject(abortReason());
+      reject(signalAbortReason(signal));
     };
 
     signal.addEventListener("abort", onAbort, { once: true });
@@ -60,6 +71,52 @@ export async function waitForSharedPromise<T>(
 export class Singleflight<T> {
   private inflight = new Map<string, SingleflightEntry<T>>();
 
+  private waitForEntry(
+    key: string,
+    entry: SingleflightEntry<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    entry.waiterCount++;
+
+    return new Promise<T>((resolve, reject) => {
+      let finished = false;
+      let released = false;
+
+      const release = (reason?: unknown): void => {
+        if (released) return;
+        released = true;
+        entry.waiterCount--;
+        if (
+          entry.waiterCount === 0 && entry.cancelWhenUnobserved && !entry.settled &&
+          !entry.controller.signal.aborted
+        ) {
+          entry.controller.abort(reason);
+          if (this.inflight.get(key) === entry) this.inflight.delete(key);
+          if (entry.staleTimer !== undefined) clearTimeout(entry.staleTimer);
+        }
+      };
+      const detach = (): void => signal?.removeEventListener("abort", onAbort);
+      const finish = (settle: () => void, reason?: unknown): void => {
+        if (finished) return;
+        finished = true;
+        detach();
+        release(reason);
+        settle();
+      };
+      const onAbort = (): void => {
+        const reason = signal ? signalAbortReason(signal) : undefined;
+        finish(() => reject(reason), reason);
+      };
+
+      signal?.addEventListener("abort", onAbort, { once: true });
+      entry.promise.then(
+        (value) => finish(() => resolve(value)),
+        (error) => finish(() => reject(error)),
+      );
+      if (signal?.aborted) onAbort();
+    });
+  }
+
   async do(
     key: string,
     operation: (control: SingleflightControl) => Promise<T>,
@@ -68,9 +125,13 @@ export class Singleflight<T> {
     if (options.staleAfterMs !== undefined && options.staleAfterMs <= 0) {
       throw new RangeError("Singleflight staleAfterMs must be greater than zero");
     }
+    if (options.signal?.aborted) throw signalAbortReason(options.signal);
 
-    const existing = this.inflight.get(key);
-    if (existing) return existing.promise;
+    const entry = this.inflight.get(key);
+    if (entry) {
+      if (options.cancelWhenUnobserved === true) entry.cancelWhenUnobserved = true;
+      return await this.waitForEntry(key, entry, options.signal);
+    }
 
     let resolvePromise!: (value: T | PromiseLike<T>) => void;
     let rejectPromise!: (reason?: unknown) => void;
@@ -78,21 +139,44 @@ export class Singleflight<T> {
       resolvePromise = resolve;
       rejectPromise = reject;
     });
-    const entry: SingleflightEntry<T> = { promise };
-    const control: SingleflightControl = {
-      isCurrent: () => this.inflight.get(key) === entry,
+    const createdEntry: SingleflightEntry<T> = {
+      promise,
+      controller: new AbortController(),
+      waiterCount: 0,
+      settled: false,
+      cancelWhenUnobserved: options.cancelWhenUnobserved === true,
     };
-    this.inflight.set(key, entry);
+    const control: SingleflightControl = {
+      isCurrent: () => this.inflight.get(key) === createdEntry,
+      signal: createdEntry.controller.signal,
+    };
+    this.inflight.set(key, createdEntry);
 
     try {
-      void operation(control).then(resolvePromise, rejectPromise);
+      void operation(control).then(
+        (value) => {
+          createdEntry.settled = true;
+          resolvePromise(value);
+        },
+        (error) => {
+          createdEntry.settled = true;
+          rejectPromise(error);
+        },
+      );
     } catch (error) {
+      createdEntry.settled = true;
       rejectPromise(error);
     }
 
+    const cleanup = (): void => {
+      if (createdEntry.staleTimer !== undefined) clearTimeout(createdEntry.staleTimer);
+      if (this.inflight.get(key) === createdEntry) this.inflight.delete(key);
+    };
+    void promise.then(cleanup, cleanup);
+
     if (options.staleAfterMs !== undefined) {
-      entry.staleTimer = setTimeout(() => {
-        if (this.inflight.get(key) !== entry) return;
+      createdEntry.staleTimer = setTimeout(() => {
+        if (this.inflight.get(key) !== createdEntry) return;
         this.inflight.delete(key);
         try {
           options.onStaleEvicted?.();
@@ -101,19 +185,22 @@ export class Singleflight<T> {
           // the timer task or interfere with singleflight state cleanup.
         }
       }, options.staleAfterMs);
-      unrefTimer(entry.staleTimer);
+      unrefTimer(createdEntry.staleTimer);
     }
 
-    try {
-      return await promise;
-    } finally {
-      if (entry.staleTimer !== undefined) clearTimeout(entry.staleTimer);
-      if (this.inflight.get(key) === entry) this.inflight.delete(key);
-    }
+    return await this.waitForEntry(key, createdEntry, options.signal);
   }
 
   has(key: string): boolean {
     return this.inflight.has(key);
+  }
+
+  /** Allow a replacement leader while the forgotten operation finishes independently. */
+  forget(key: string): boolean {
+    const entry = this.inflight.get(key);
+    if (!entry) return false;
+    if (entry.staleTimer !== undefined) clearTimeout(entry.staleTimer);
+    return this.inflight.delete(key);
   }
 
   get size(): number {

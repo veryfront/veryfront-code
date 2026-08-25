@@ -39,11 +39,21 @@ export function importTransformers(): Promise<OpaqueModule> {
   ));
 }
 
+/**
+ * Return `value` when it is an injected Claude Agent SDK mock (an object exposing
+ * `query`), otherwise `undefined` so the real package is imported.
+ */
+export function injectedClaudeAgentSdkMock(value: unknown): unknown | undefined {
+  return value && typeof value === "object" && "query" in value ? value : undefined;
+}
+
 /** Lazily import `@anthropic-ai/claude-agent-sdk` (~69MB). */
 export function importClaudeAgentSDK(): Promise<OpaqueModule> {
   // Allow tests to inject a mock SDK without loading the real 69 MB package.
-  const mock = (globalThis as Record<string, unknown>).__vfMockClaudeSDK;
-  if (mock && typeof mock === "object" && "query" in mock) return Promise.resolve(mock);
+  const mock = injectedClaudeAgentSdkMock(
+    (globalThis as Record<string, unknown>).__vfMockClaudeSDK,
+  );
+  if (mock) return Promise.resolve(mock);
   return dynamicImport(resolve(
     "@anthropic-ai/claude-agent-sdk",
     OPAQUE_DEPENDENCY_VERSIONS["@anthropic-ai/claude-agent-sdk"],

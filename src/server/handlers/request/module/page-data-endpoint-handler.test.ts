@@ -116,7 +116,6 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
     config: {} as HandlerContext["config"],
     adapter: createMockAdapter(),
     securityConfig: null,
-    cspUserHeader: null,
     ...overrides,
   };
 }
@@ -201,7 +200,7 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
     setRendererInitializer(undefined);
   });
 
-  it("caches anonymous page-data responses by project, release, slug, and query", async () => {
+  it("caches anonymous page-data responses across query parameter order", async () => {
     let calls = 0;
     setRendererInitializer(
       createInitializer((slug) => Promise.resolve(createPageData(slug, ++calls))),
@@ -220,6 +219,82 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
     assertEquals(second.status, 200);
     assertEquals(calls, 1);
     assertEquals(await first.text(), await second.text());
+  });
+
+  it("does not share anonymous page-data responses across projects", async () => {
+    let calls = 0;
+    setRendererInitializer(
+      createInitializer((slug) => Promise.resolve(createPageData(slug, ++calls))),
+    );
+    const url = "http://localhost/_veryfront/page-data/index.json";
+
+    const first = await callPageDataEndpoint(
+      new Request(url),
+      makeCtx({ projectId: "proj-a" }),
+    );
+    const second = await callPageDataEndpoint(
+      new Request(url),
+      makeCtx({ projectId: "proj-b" }),
+    );
+
+    assertEquals(first.status, 200);
+    assertEquals(second.status, 200);
+    assertEquals(calls, 2, "page data must not be shared across projects");
+    assertEquals((await first.json()).frontmatter.sequence, 1);
+    assertEquals(
+      (await second.json()).frontmatter.sequence,
+      2,
+      "the second project must receive its own render, not the first project's payload",
+    );
+  });
+
+  it("does not share anonymous page-data responses across releases", async () => {
+    let calls = 0;
+    setRendererInitializer(
+      createInitializer((slug) => Promise.resolve(createPageData(slug, ++calls))),
+    );
+    const url = "http://localhost/_veryfront/page-data/index.json";
+
+    const first = await callPageDataEndpoint(
+      new Request(url),
+      makeCtx({ releaseId: "rel-a" }),
+    );
+    const second = await callPageDataEndpoint(
+      new Request(url),
+      makeCtx({ releaseId: "rel-b" }),
+    );
+
+    assertEquals(first.status, 200);
+    assertEquals(second.status, 200);
+    assertEquals(calls, 2, "page data must not be shared across releases");
+    assertEquals(
+      (await second.json()).frontmatter.sequence,
+      2,
+      "a new release must receive its own render, not the previous release's payload",
+    );
+  });
+
+  it("does not share anonymous page-data responses across slugs", async () => {
+    let calls = 0;
+    setRendererInitializer(
+      createInitializer((slug) => Promise.resolve(createPageData(slug, ++calls))),
+    );
+    const ctx = makeCtx();
+
+    const first = await callPageDataEndpoint(
+      new Request("http://localhost/_veryfront/page-data/index.json"),
+      ctx,
+    );
+    const second = await callPageDataEndpoint(
+      new Request("http://localhost/_veryfront/page-data/about.json"),
+      ctx,
+    );
+
+    assertEquals(first.status, 200);
+    assertEquals(second.status, 200);
+    assertEquals(calls, 2, "page data must not be shared across slugs");
+    assertEquals((await first.json()).slug, "index", "index.json must serve the index page");
+    assertEquals((await second.json()).slug, "about", "about.json must serve the about page");
   });
 
   it("renders a historical requested dependency snapshot without exposing pins to page data", async () => {
@@ -472,11 +547,92 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
     });
   });
 
+  it("applies the redirect origin policy to returned and thrown SPA redirects", async () => {
+    const failures = [
+      RENDER_ERROR.create({
+        detail: "Redirect blocked by policy",
+        context: {
+          redirect: {
+            destination: "https://untrusted.example/login",
+            permanent: false,
+          },
+        },
+      }),
+      redirect("https://untrusted.example/login"),
+    ];
+
+    for (const failure of failures) {
+      setRendererInitializer(
+        createInitializer(() => Promise.reject(failure)),
+      );
+
+      const res = await callPageDataEndpoint(
+        new Request("http://runtime.internal/_veryfront/page-data/redirecting.json"),
+        makeCtx({
+          requestOrigin: "https://app.example.com",
+          securityConfig: { redirects: { allowedOrigins: [] } },
+        }),
+      );
+
+      assertEquals(res.status, 500);
+      assertEquals((await res.json()).redirect, undefined);
+      __clearPageDataEndpointCacheForTests();
+    }
+  });
+
+  it("allows SPA redirects to the browser-visible request origin", async () => {
+    setRendererInitializer(
+      createInitializer(() => Promise.reject(redirect("https://app.example.com/login"))),
+    );
+
+    const res = await callPageDataEndpoint(
+      new Request("http://runtime.internal/_veryfront/page-data/redirecting.json"),
+      makeCtx({
+        requestOrigin: "https://app.example.com",
+        securityConfig: { redirects: { allowedOrigins: [] } },
+      }),
+    );
+
+    assertEquals(res.status, 200);
+    assertEquals(await res.json(), {
+      redirect: { destination: "https://app.example.com/login", permanent: false },
+    });
+  });
+
+  it("encodes path-, query-, and fragment-relative redirects for SPA navigation", async () => {
+    for (const destination of ["login", "../login", "?next=1", "#details"]) {
+      setRendererInitializer(
+        createInitializer(() => Promise.reject(redirect(destination))),
+      );
+
+      const res = await callPageDataEndpoint(
+        new Request("http://runtime.internal/_veryfront/page-data/account.json"),
+        makeCtx({
+          requestOrigin: "https://app.example.com",
+          securityConfig: { redirects: { allowedOrigins: [] } },
+        }),
+      );
+
+      assertEquals(res.status, 200);
+      assertEquals(await res.json(), {
+        redirect: { destination, permanent: false },
+      });
+      __clearPageDataEndpointCacheForTests();
+    }
+  });
+
   it("does not encode a non-http(s) redirect destination for the client to follow", async () => {
     // The client follows the destination with window.location.href, which would
     // EXECUTE a javascript:/data: URL. Such destinations must NOT be emitted as a
     // 200 redirect payload — they fall through to normal error handling instead.
-    for (const destination of ["javascript:alert(1)", "data:text/html,x", "//evil.example"]) {
+    for (
+      const destination of [
+        "javascript:alert(1)",
+        "data:text/html,x",
+        "https:evil.example",
+        "//evil.example",
+      ]
+    ) {
       setRendererInitializer(
         createInitializer(() =>
           Promise.reject(

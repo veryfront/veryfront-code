@@ -1,0 +1,47 @@
+import { tool } from "veryfront/tool";
+import { defineSchema } from "veryfront/schemas";
+import { postComment } from "../lib/figma-client.ts";
+
+export default tool({
+  id: "figma-post-comment",
+  description:
+    "Post a comment on a Figma file. Can be a new comment or a reply to an existing comment thread.",
+  inputSchema: defineSchema((v) => v.object({
+    fileKey: v.string().describe("The file key (from the Figma URL)"),
+    message: v.string().min(1).describe("The comment message to post"),
+    parentId: v
+      .string()
+      .optional()
+      .describe("ID of parent comment to reply to (for threaded replies)"),
+    nodeId: v.string().optional().describe("ID of the Figma node to attach the comment to"),
+    x: v.number().optional().describe("X coordinate for comment placement (0-1, relative to canvas)"),
+    y: v.number().optional().describe("Y coordinate for comment placement (0-1, relative to canvas)"),
+  }))(),
+  async execute({ fileKey, message, parentId, nodeId, x, y }) {
+    const clientMeta: { x?: number; y?: number; node_id?: string[] } = {};
+
+    if (x !== undefined) clientMeta.x = x;
+    if (y !== undefined) clientMeta.y = y;
+    if (nodeId) clientMeta.node_id = [nodeId];
+
+    const comment = await postComment(fileKey, message, {
+      client_meta: Object.keys(clientMeta).length ? clientMeta : undefined,
+      parent_id: parentId,
+    });
+
+    return {
+      success: true,
+      comment: {
+        id: comment.id,
+        message: comment.message,
+        author: {
+          handle: comment.user.handle,
+          avatar: comment.user.img_url,
+        },
+        createdAt: comment.created_at,
+        isReply: Boolean(comment.parent_id),
+        fileUrl: `https://www.figma.com/file/${fileKey}`,
+      },
+    };
+  },
+});

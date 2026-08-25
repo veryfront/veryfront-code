@@ -12,11 +12,14 @@ import {
 import type { SSRFailureOutcome } from "./ssr-outcome.ts";
 import {
   findSSRControlOutcome,
+  isMissingProjectSourceError,
   isSSRBuildFailure,
   isSSRControlOutcome,
   resolveSSRControlOutcome,
   resolveSSRFailure,
 } from "./ssr-outcome.ts";
+import { attachDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
+import { createNotFoundLikeError } from "#veryfront/platform/adapters/fs/veryfront/read-operations-helpers.ts";
 
 function assertSSRFailureOutcome(
   actual: SSRFailureOutcome,
@@ -118,17 +121,41 @@ describe("ssr-outcome.ts", () => {
   describe("resolveSSRControlOutcome", () => {
     it("recognises the routing brands the render pipeline raises", () => {
       assertEquals(
-        resolveSSRControlOutcome(FILE_NOT_FOUND.create({ detail: "Page not found: x" })),
-        { kind: "not-found" },
+        resolveSSRControlOutcome(
+          attachDataResponseMetadata(
+            FILE_NOT_FOUND.create({ detail: "Page not found: x" }),
+            {
+              headers: { "x-missing-reason": "gone" },
+              cookies: [{ name: "visited-missing", value: "1", path: "/" }],
+            },
+          ),
+        ),
+        {
+          kind: "not-found",
+          headers: { "x-missing-reason": "gone" },
+          cookies: [{ name: "visited-missing", value: "1", path: "/" }],
+        },
       );
       assertEquals(
         resolveSSRControlOutcome(
-          RENDER_ERROR.create({
-            detail: "Redirect to /login",
-            context: { redirect: { destination: "/login", permanent: true } },
-          }),
+          attachDataResponseMetadata(
+            RENDER_ERROR.create({
+              detail: "Redirect to /login",
+              context: { redirect: { destination: "/login", permanent: true } },
+            }),
+            {
+              headers: { "x-auth-result": "signed-in" },
+              cookies: [{ name: "session", value: "abc", path: "/" }],
+            },
+          ),
         ),
-        { kind: "redirect", location: "/login", permanent: true },
+        {
+          kind: "redirect",
+          location: "/login",
+          permanent: true,
+          headers: { "x-auth-result": "signed-in" },
+          cookies: [{ name: "session", value: "abc", path: "/" }],
+        },
       );
       assertEquals(resolveSSRControlOutcome(notFound()), { kind: "not-found" });
       assertEquals(
@@ -148,10 +175,27 @@ describe("ssr-outcome.ts", () => {
       );
     });
 
-    it("returns null for a render-error carrying no redirect", () => {
+    it("returns null for a render-error with no redirect or a non-string destination", () => {
       assertEquals(
         resolveSSRControlOutcome(RENDER_ERROR.create({ detail: "boom" })),
         null,
+      );
+      assertEquals(
+        resolveSSRControlOutcome(
+          RENDER_ERROR.create({ detail: "x", context: { redirect: { permanent: true } } }),
+        ),
+        null,
+        "a redirect context without a destination must not become a redirect outcome",
+      );
+      assertEquals(
+        resolveSSRControlOutcome(
+          RENDER_ERROR.create({
+            detail: "x",
+            context: { redirect: { destination: 302, permanent: false } },
+          }),
+        ),
+        null,
+        "a non-string redirect destination must not become a redirect outcome",
       );
     });
   });
@@ -211,6 +255,41 @@ describe("ssr-outcome.ts", () => {
         status: 404,
         context: {
           details: { url: "/api/projects/p1/environments/production/files" },
+        },
+      });
+      const branchFileListError = API_CLIENT_ERROR.create({
+        detail: "missing files",
+        status: 404,
+        context: {
+          details: { url: "/api/projects/p1/branches/main/files" },
+        },
+      });
+      const fileMemberError = API_CLIENT_ERROR.create({
+        detail: "missing file",
+        status: 404,
+        context: {
+          details: { url: "/api/projects/p1/environments/production/files/app/page.tsx" },
+        },
+      });
+      const fileListServerError = API_CLIENT_ERROR.create({
+        detail: "file list failed",
+        status: 500,
+        context: {
+          details: { url: "/api/projects/p1/environments/production/files" },
+        },
+      });
+      const unscopedFileListError = API_CLIENT_ERROR.create({
+        detail: "missing files",
+        status: 404,
+        context: {
+          details: { url: "/api/projects/p1/files" },
+        },
+      });
+      const assetsListError = API_CLIENT_ERROR.create({
+        detail: "missing assets",
+        status: 404,
+        context: {
+          details: { url: "/api/projects/p1/environments/production/assets" },
         },
       });
       const redirectError = RENDER_ERROR.create({
@@ -273,6 +352,52 @@ describe("ssr-outcome.ts", () => {
           } satisfies SSRFailureOutcome,
         },
         {
+          name: "undeployed branch file list",
+          error: branchFileListError,
+          context: { isLocalProject: false },
+          want: { kind: "undeployed", error: branchFileListError } satisfies SSRFailureOutcome,
+        },
+        {
+          name: "file member 404 inside a live release",
+          error: fileMemberError,
+          context: { isLocalProject: false },
+          want: {
+            kind: "server-error",
+            exposure: "generic",
+            error: fileMemberError,
+          } satisfies SSRFailureOutcome,
+        },
+        {
+          name: "file list server error",
+          error: fileListServerError,
+          context: { isLocalProject: false },
+          want: {
+            kind: "server-error",
+            exposure: "generic",
+            error: fileListServerError,
+          } satisfies SSRFailureOutcome,
+        },
+        {
+          name: "unscoped file list 404",
+          error: unscopedFileListError,
+          context: { isLocalProject: false },
+          want: {
+            kind: "server-error",
+            exposure: "generic",
+            error: unscopedFileListError,
+          } satisfies SSRFailureOutcome,
+        },
+        {
+          name: "release assets 404",
+          error: assetsListError,
+          context: { isLocalProject: false },
+          want: {
+            kind: "server-error",
+            exposure: "generic",
+            error: assetsListError,
+          } satisfies SSRFailureOutcome,
+        },
+        {
           name: "app-router error boundary",
           error: boundaryError,
           context: { isLocalProject: true },
@@ -291,6 +416,80 @@ describe("ssr-outcome.ts", () => {
           testCase.name,
         );
       }
+    });
+
+    it("does not treat every file-not-found as an absent project source", () => {
+      // `file-not-found` is raised in-tree for conditions that are not an
+      // absent source: http-cache raises it when a bundle write reports success
+      // and the file still is not there, and discovery/transpiler folds EACCES
+      // and EIO into it. Routing those to 404 would hide a real fault behind a
+      // status nothing alerts on -- the exact inversion this PR exists to stop.
+      const invariantViolation = FILE_NOT_FOUND.create({
+        detail: "[HTTP-CACHE] INVARIANT VIOLATION: File write succeeded but file does not exist",
+      });
+
+      assertEquals(
+        isMissingProjectSourceError(invariantViolation),
+        false,
+        "an infrastructure fault must not be read as a deleted release",
+      );
+      assertEquals(
+        isMissingProjectSourceError(createNotFoundLikeError("app/layout.tsx")),
+        true,
+        "the filesystem adapter's own absence error still qualifies",
+      );
+    });
+
+    it("reads the ENOENT marker as an own data property only", () => {
+      // Pins the shape of the check, not just its answer. A plain
+      // `error.code === "ENOENT"` passes every other assertion in this file
+      // while accepting an accessor and an inherited value, so without this the
+      // narrowing could be "simplified" away and CI would stay green.
+      const withGetter = FILE_NOT_FOUND.create({ detail: "accessor" });
+      Object.defineProperty(withGetter, "code", { get: () => "ENOENT" });
+
+      const proto = Object.assign(FILE_NOT_FOUND.create({ detail: "proto" }), {
+        code: "ENOENT",
+      });
+      const inherited = Object.create(proto);
+
+      assertEquals(
+        isMissingProjectSourceError(withGetter),
+        false,
+        "an accessor must not stand in for the marker, and must not be invoked",
+      );
+      assertEquals(
+        isMissingProjectSourceError(inherited),
+        false,
+        "an inherited marker is not this error's own",
+      );
+      assertEquals(
+        isMissingProjectSourceError(proto),
+        true,
+        "an own data property is the shape the adapter writes",
+      );
+    });
+
+    it("keeps a layout that exists but throws a server error", () => {
+      // The regression guard for the file-not-found branch above: only the
+      // framework's own absence error becomes a 404. Project code that loaded
+      // and then threw is still a fault, including when its message names a
+      // missing file or it sets ENOENT itself.
+      const thrown = new Error("404 Not Found: app/layout.tsx");
+      const enoent = Object.assign(new Error("Cannot read properties of undefined"), {
+        code: "ENOENT",
+      });
+
+      assertSSRFailureOutcome(
+        resolveSSRFailure(thrown, { isLocalProject: false }),
+        { kind: "server-error", exposure: "generic", error: thrown },
+        "message text must never be read as a routing decision",
+      );
+      assertSSRFailureOutcome(
+        resolveSSRFailure(enoent, { isLocalProject: false }),
+        { kind: "server-error", exposure: "generic", error: enoent },
+        "an unbranded ENOENT is not the framework's absence error",
+      );
     });
 
     it("defaults service-overloaded to 503 when the error has no status", () => {

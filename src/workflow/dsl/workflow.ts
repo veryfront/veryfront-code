@@ -5,6 +5,8 @@
  **************************/
 
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
+import type { ScheduleIntegrationRequirementConfig } from "#veryfront/schedule/types.ts";
 import type {
   RetryConfig,
   StepBuilderContext,
@@ -14,7 +16,6 @@ import type {
   WorkflowNode,
 } from "../types.ts";
 import { workflowRegistry } from "../registry.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 export type { Workflow } from "../types.ts";
 
@@ -25,6 +26,8 @@ export interface WorkflowOptions<TInput = unknown, TOutput = unknown> {
   version?: string;
   inputSchema?: Schema<TInput>;
   outputSchema?: Schema<TOutput>;
+  /** Explicit integration scopes and resources required by scheduled runs. */
+  integrationRequirements?: ScheduleIntegrationRequirementConfig[];
   retry?: RetryConfig;
   timeout?: string | number;
   introspect?: boolean;
@@ -53,6 +56,7 @@ export function workflow<TInput = unknown, TOutput = unknown>(
     version: options.version,
     inputSchema: options.inputSchema,
     outputSchema: options.outputSchema,
+    integrationRequirements: options.integrationRequirements,
     retry: options.retry,
     timeout: options.timeout,
     introspect: options.introspect,
@@ -69,7 +73,7 @@ export function workflow<TInput = unknown, TOutput = unknown>(
 
   // Auto-register for discovery in dev tools
   // Use type assertion since registry only stores metadata, not the full generic type
-  workflowRegistry.register(wf as unknown as Workflow);
+  workflowRegistry.register(wf as Workflow);
 
   return wf;
 }
@@ -79,9 +83,24 @@ export function sequence(...nodes: WorkflowNode[]): WorkflowNode[] {
   return nodes.map((node, index) => {
     if (index === 0) return node;
 
+    const previousId = nodes[index - 1]!.id;
+    const existingDependencies = node.dependsOn ?? [];
+    const dependencies: string[] = [];
+    let includesPrevious = false;
+    for (
+      let dependencyIndex = 0;
+      dependencyIndex < existingDependencies.length;
+      dependencyIndex++
+    ) {
+      const dependency = existingDependencies[dependencyIndex]!;
+      dependencies[dependencyIndex] = dependency;
+      if (dependency === previousId) includesPrevious = true;
+    }
+    if (!includesPrevious) dependencies[dependencies.length] = previousId;
+
     return {
       ...node,
-      dependsOn: [nodes[index - 1]!.id],
+      dependsOn: dependencies,
     };
   });
 }

@@ -9,7 +9,9 @@ class MockElement {
   textContent = "";
   dataset: Record<string, string> = {};
   children: MockElement[] = [];
+  parentElement: MockElement | null = null;
   private rawInnerHtml = "";
+  private readonly attributes = new Map<string, string>();
 
   constructor(readonly tagName: string) {}
 
@@ -20,11 +22,25 @@ class MockElement {
   set innerHTML(value: string) {
     this.rawInnerHtml = value;
     this.children = parseChildren(value);
+    for (const child of this.children) child.parentElement = this;
+  }
+
+  get firstElementChild(): MockElement | null {
+    return this.children[0] ?? null;
   }
 
   appendChild(child: MockElement): MockElement {
+    child.parentElement = this;
     this.children.push(child);
     return child;
+  }
+
+  setAttribute(name: string, value: string): void {
+    this.attributes.set(name, value);
+  }
+
+  getAttribute(name: string): string | null {
+    return this.attributes.get(name) ?? null;
   }
 
   querySelector(selector: string): MockElement | null {
@@ -45,6 +61,11 @@ class MockDocument {
 
   getElementById(id: string): MockElement | null {
     return findByPredicate(this.body, (node) => node.id === id);
+  }
+
+  querySelectorAll(selector: string): MockElement[] {
+    if (selector !== `[id="${HYDRATION_DATA_ID}"]`) return [];
+    return findAllByPredicate(this.body, (node) => node.id === HYDRATION_DATA_ID);
   }
 }
 
@@ -73,6 +94,18 @@ function findByPredicate(
     if (nested) return nested;
   }
   return null;
+}
+
+function findAllByPredicate(
+  node: MockElement,
+  predicate: (node: MockElement) => boolean,
+): MockElement[] {
+  const matches: MockElement[] = [];
+  for (const child of node.children) {
+    if (predicate(child)) matches.push(child);
+    matches.push(...findAllByPredicate(child, predicate));
+  }
+  return matches;
 }
 
 function parseChildren(html: string): MockElement[] {
@@ -114,25 +147,47 @@ describe("rendering/rsc/client-dom", () => {
     const doc = createDocument();
     const hydrationData = doc.createElement("script") as unknown as MockElement;
     hydrationData.id = HYDRATION_DATA_ID;
+    hydrationData.setAttribute("type", "application/json");
     hydrationData.textContent = JSON.stringify({ reactVersion: "19.2.4" });
     (doc.body as unknown as MockElement).appendChild(hydrationData);
 
+    // Record the snapshot the document carries when the first chunk is pulled,
+    // so the assertion sees the ordering and not just the final state.
+    let snapshotAtFirstChunk: string | undefined;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        snapshotAtFirstChunk ??= hydrationData.textContent;
+        controller.enqueue(
+          new TextEncoder().encode('{"type":"slot","id":"root","html":"<div>Ready</div>"}\n'),
+        );
+        controller.close();
+      },
+    });
+
     await consumeNdjsonStream(
-      new Response(
-        '{"type":"slot","id":"root","html":"<div>Ready</div>"}\n',
-        {
-          headers: {
-            [RSC_DEPENDENCY_PINNING_HEADER]: "on:pins-a",
-          },
+      new Response(body, {
+        headers: {
+          [RSC_DEPENDENCY_PINNING_HEADER]: "on:pins-a",
         },
-      ),
+      }),
       doc,
     );
 
+    assertExists(snapshotAtFirstChunk, "the stream body was consumed");
+    assertEquals(
+      JSON.parse(snapshotAtFirstChunk).dependencyPinningCacheKey,
+      "on:pins-a",
+      "the snapshot must be seeded before the first chunk is applied",
+    );
     assertEquals(JSON.parse(hydrationData.textContent), {
       reactVersion: "19.2.4",
       dependencyPinningCacheKey: "on:pins-a",
     });
+    assertEquals(
+      doc.getElementById(RSC_ROOT_ID)?.innerHTML.includes("Ready"),
+      true,
+      "the streamed slot must be applied",
+    );
   });
 
   it("applies streamed slot HTML and marks client boundaries as hydrated", async () => {
@@ -172,6 +227,72 @@ describe("rendering/rsc/client-dom", () => {
     assertExists(sidebar);
     assertEquals(root.innerHTML.includes("Parsed"), true);
     assertEquals(sidebar.innerHTML.includes("Ready"), true);
+  });
+
+  it("renders a final NDJSON line delivered without a trailing newline", async () => {
+    const doc = createDocument();
+
+    await consumeNdjsonStream(
+      createStream([
+        '{"type":"slot","id":"root","htm',
+        'l":"<div>Last</div>"}',
+      ]),
+      doc,
+    );
+
+    const root = doc.getElementById(RSC_ROOT_ID);
+    assertExists(root);
+    assertEquals(
+      root.innerHTML.includes("Last"),
+      true,
+      "the last line is flushed when the stream closes without a newline",
+    );
+  });
+
+  it("rejects streamed slot HTML carrying an event handler attribute", async () => {
+    const doc = createDocument();
+
+    await assertRejects(
+      () =>
+        consumeNdjsonStream(
+          createStream([
+            '{"type":"slot","id":"root","html":"<div onclick=\\"steal()\\"></div>"}\n',
+          ]),
+          doc,
+        ),
+      Error,
+      "Potentially unsafe HTML",
+      "a suspicious slot payload must be rejected by validateTrustedHtml",
+    );
+
+    assertEquals(
+      doc.getElementById(RSC_ROOT_ID)?.innerHTML ?? "",
+      "",
+      "unsafe HTML must not reach the DOM",
+    );
+  });
+
+  it("rejects streamed slot HTML carrying an inline script", async () => {
+    const doc = createDocument();
+
+    await assertRejects(
+      () =>
+        consumeNdjsonStream(
+          createStream([
+            '{"type":"slot","id":"root","html":"<script>steal()<\\/script>"}\n',
+          ]),
+          doc,
+        ),
+      Error,
+      "Potentially unsafe HTML",
+      "an inline script in a slot payload must be rejected",
+    );
+
+    assertEquals(
+      doc.getElementById(RSC_ROOT_ID)?.innerHTML ?? "",
+      "",
+      "inline script HTML must not reach the DOM",
+    );
   });
 
   it("aborts pending reads and cancels the underlying stream", async () => {

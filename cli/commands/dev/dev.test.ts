@@ -1,8 +1,17 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertMatch,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { DevCommandOptions, DevCommandResult, DevOptions } from "./index.ts";
-import { createSelectedProjectPushOptions, preloadDevAuth } from "./command.ts";
+import {
+  createSelectedProjectPushOptions,
+  preloadDevAuth,
+  startDevServerOnFreePort,
+} from "./command.ts";
 
 describe("cli/commands/dev", () => {
   describe("DevOptions type", () => {
@@ -68,15 +77,17 @@ describe("cli/commands/dev", () => {
   });
 
   describe("DevCommandResult type", () => {
-    it("should have ready, done, and stop properties", () => {
+    it("should have ready, done, port, and stop properties", () => {
       const result: DevCommandResult = {
         ready: Promise.resolve(),
         done: Promise.resolve(),
+        port: 3000,
         stop: async () => {},
       };
 
       assertEquals(typeof result.ready.then, "function");
       assertEquals(typeof result.done.then, "function");
+      assertEquals(result.port, 3000);
       assertEquals(typeof result.stop, "function");
     });
 
@@ -84,6 +95,7 @@ describe("cli/commands/dev", () => {
       const result: DevCommandResult = {
         ready: Promise.resolve(),
         done: new Promise(() => {}), // never resolves
+        port: 3000,
         stop: async () => {},
       };
 
@@ -96,6 +108,7 @@ describe("cli/commands/dev", () => {
       const result: DevCommandResult = {
         ready: Promise.resolve(),
         done: Promise.resolve(),
+        port: 3000,
         stop: () => {
           stopped = true;
           return Promise.resolve();
@@ -138,6 +151,113 @@ describe("cli/commands/dev", () => {
     });
   });
 
+  describe("dev server port wiring", () => {
+    /** A port nothing on this machine is holding. */
+    function freePort(): number {
+      const probe = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+      const port = (probe.addr as Deno.NetAddr).port;
+      probe.close();
+      return port;
+    }
+
+    it("starts the server on the port it selected, not the one that was asked for", async () => {
+      const held = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+      const heldPort = (held.addr as Deno.NetAddr).port;
+      const startedOn: number[] = [];
+
+      try {
+        const started = await startDevServerOnFreePort(heldPort, (port) => {
+          startedOn.push(port);
+          return Promise.resolve({ id: "dev-server" });
+        });
+
+        // Which port the scan lands on depends on what else the machine runs,
+        // but the server must be handed the selected one and never the held one.
+        assert(started.port > heldPort, `expected a port after ${heldPort}, got ${started.port}`);
+        assertEquals(startedOn, [started.port]);
+        assertEquals(started.server, { id: "dev-server" });
+      } finally {
+        held.close();
+      }
+    });
+
+    it("reports the selected port so DevCommandResult.port can carry it", async () => {
+      const held = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+      const heldPort = (held.addr as Deno.NetAddr).port;
+
+      try {
+        const started = await startDevServerOnFreePort(
+          heldPort,
+          (port) => Promise.resolve({ boundTo: port }),
+        );
+
+        // devCommand returns this port as DevCommandResult.port and derives the
+        // MCP port and the printed URL from it, so it must be the bound one.
+        const result: DevCommandResult = {
+          ready: Promise.resolve(),
+          done: Promise.resolve(),
+          port: started.port,
+          stop: () => Promise.resolve(),
+        };
+
+        assertEquals(result.port, started.server.boundTo);
+        assertEquals(result.port === heldPort, false);
+      } finally {
+        held.close();
+      }
+    });
+
+    it("keeps the requested port when nothing is holding it", async () => {
+      const port = freePort();
+      const startedOn: number[] = [];
+
+      const started = await startDevServerOnFreePort(port, (selected) => {
+        startedOn.push(selected);
+        return Promise.resolve(null);
+      });
+
+      assert(
+        started.port >= port,
+        `expected the scan to start at ${port}, got ${started.port}`,
+      );
+      assertEquals(startedOn, [started.port]);
+    });
+
+    it("names the port in a PORT_IN_USE error when binding loses the race", async () => {
+      const port = freePort();
+      let boundPort: number | undefined;
+
+      const error = await startDevServerOnFreePort(port, (selected) => {
+        boundPort = selected;
+        // What the runtime throws when something grabs the port after the probe.
+        return Promise.reject(
+          Object.assign(new Error("listen EADDRINUSE: address already in use"), {
+            code: "EADDRINUSE",
+          }),
+        );
+      }).then(() => null, (caught: unknown) => caught);
+
+      assert(error instanceof Error, "expected the lost bind race to reject");
+      const veryfrontError = error as Error & { slug?: string };
+      assertEquals(veryfrontError.slug, "port-in-use");
+      assertStringIncludes(
+        veryfrontError.message,
+        String(boundPort),
+        "the error names the port that lost the race, not the one asked for",
+      );
+    });
+
+    it("lets an unrelated startup failure through untouched", async () => {
+      const port = freePort();
+      const boom = new Error("config blew up");
+
+      const error = await startDevServerOnFreePort(port, () => Promise.reject(boom))
+        .then(() => null, (caught: unknown) => caught);
+
+      assertEquals(error, boom);
+    });
+  });
+
   describe("HMR enable logic", () => {
     function shouldEnableHMR(
       configHmr: boolean | undefined,
@@ -164,20 +284,26 @@ describe("cli/commands/dev", () => {
   });
 
   describe("project sync shortcuts", () => {
+    const selectedProject = {
+      id: "project-1",
+      slug: "selected-project",
+      name: "Selected Project",
+    };
+
     it("targets the project selected in the dev session when pushing", () => {
-      assertEquals(
-        createSelectedProjectPushOptions("/tmp/project", {
-          id: "project-1",
-          slug: "selected-project",
-          name: "Selected Project",
-        }),
-        {
-          projectDir: "/tmp/project",
-          projectSlug: "selected-project",
-          force: true,
-          quiet: true,
-        },
-      );
+      const options = createSelectedProjectPushOptions("/tmp/project", selectedProject);
+
+      assertEquals(options.projectDir, "/tmp/project");
+      assertEquals(options.projectSlug, "selected-project");
+      assertEquals(options.force, true);
+      assertEquals(options.quiet, true);
+    });
+
+    it("stages the push on an isolation branch so main is not overwritten in place", () => {
+      const options = createSelectedProjectPushOptions("/tmp/project", selectedProject);
+
+      assertEquals(options.branch === "main", false);
+      assertMatch(options.branch ?? "", /^push-\d{8}t\d{6}-[0-9a-f]{6}$/);
     });
   });
 
@@ -290,5 +416,28 @@ describe("cli/commands/dev", () => {
         globalThis.fetch = originalFetch;
       }
     });
+  });
+});
+
+describe("cli/commands/dev: --port 0", () => {
+  it("hands the server a concrete port and reports that same port", async () => {
+    const startedOn: number[] = [];
+    const logged: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => logged.push(args.map(String).join(" "));
+
+    try {
+      const started = await startDevServerOnFreePort(0, (port) => {
+        startedOn.push(port);
+        return Promise.resolve(null);
+      });
+
+      assert(started.port > 0, `expected a real port, got ${started.port}`);
+      assertEquals(startedOn, [started.port]);
+      // The user asked for "any port", so nothing was taken from them.
+      assertEquals(logged.some((line) => line.includes("is in use")), false);
+    } finally {
+      console.log = originalLog;
+    }
   });
 });

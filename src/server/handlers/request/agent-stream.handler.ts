@@ -53,21 +53,32 @@ import {
   type RuntimeRunAgentInput,
   toRuntimeRunAgentInput,
 } from "#veryfront/internal-agents/schema.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import {
+  AUTHENTICATION_REQUIRED,
+  errorToResponse,
+  INVALID_ARGUMENT,
+  isVeryfrontError,
+  PERMISSION_DENIED,
+} from "#veryfront/errors";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
-import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
+import {
+  HTTP_INTERNAL_SERVER_ERROR,
+  PRIORITY_MEDIUM_API,
+} from "#veryfront/utils/constants/index.ts";
+import { reportHandlerFailure } from "./report-handler-failure.ts";
 import { buildRuntimeShuttingDownResponse } from "./runtime-shutdown-response.ts";
 import { isServerShuttingDown } from "../../shutdown-state.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { resolveVeryfrontApiBaseUrlFromHostEnv } from "#veryfront/platform/cloud/resolver.ts";
 import { serverLogger } from "#veryfront/utils";
-import { LRUCacheAdapter } from "#veryfront/utils/cache/stores/memory/lru-cache-adapter.ts";
 import {
   EnvironmentVariableCache,
   fetchProjectEnvVars,
   filterRuntimeProjectEnv,
+  ProjectEnvironmentIdentityResolver,
   runWithProjectEnv,
+  unwrapReplayedProjectEnvironmentFailure,
 } from "../../project-env/index.ts";
 import { getHostedConfig, type VeryfrontConfig } from "#veryfront/config/loader.ts";
 import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
@@ -78,16 +89,38 @@ export interface AgentStreamHandlerDeps
   extends RuntimeAgentDiscoveryDeps, RuntimeAgentStreamExecutionDeps {
   resolveRuntimeOwnerInvokeUrl?: typeof resolveRuntimeOwnerInvokeUrl;
   getLocalTools?: (agentId: string) => RuntimeAgentStreamExecutionDeps["localTools"];
+  loadAgentSourceEnvironment?: AgentSourceEnvironmentLoader;
 }
+
+type AgentSourceTargetIdentity = Pick<
+  InternalAgentStreamRequest,
+  "runtimeTargetKind" | "runtimeTargetEnvironmentId" | "runtimeTargetBranchId"
+>;
+
+export type AgentSourceEnvironmentLoader = (
+  ctx: HandlerContext,
+  sourceContext: RuntimeAgentSourceContext,
+  targetIdentity: AgentSourceTargetIdentity,
+  apiAuthToken: string,
+  signal?: AbortSignal,
+) => Promise<Record<string, string>>;
 
 const defaultDeps: AgentStreamHandlerDeps = {
   ...defaultChannelInvokeDeps,
   sessionManager: agentRunSessionManager,
   resolveRuntimeOwnerInvokeUrl,
+  loadAgentSourceEnvironment: resolveAgentSourceEnvironment,
   getLocalTools: (agentId) =>
     getDiscoveredHostTools({ agentId }) as RuntimeAgentStreamExecutionDeps["localTools"],
 };
 const logger = serverLogger.component("agent-stream-handler");
+
+/** VeryfrontError.cause is `unknown` and is often a plain string. */
+function describeErrorCause(cause: unknown): string | undefined {
+  if (cause === undefined || cause === null) return undefined;
+  if (cause instanceof Error) return cause.message;
+  return typeof cause === "string" ? cause : String(cause);
+}
 const RUN_STREAM_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/stream$/;
 const STUDIO_RUNTIME_REMOTE_TOOL_NAMES = new Set<string>(
   [
@@ -102,60 +135,21 @@ const STUDIO_RUNTIME_REMOTE_TOOL_NAMES = new Set<string>(
 
 // Per-environment env var cache shared across all agent stream requests (60s TTL)
 const _agentEnvVarCache = new EnvironmentVariableCache(
-  (environmentId, token, projectSlug) => {
+  ({ environmentId, token, projectSlug }, signal) => {
     return fetchProjectEnvVars(
       resolveVeryfrontApiBaseUrlFromHostEnv(),
       projectSlug,
       environmentId,
       token,
+      signal,
     );
   },
+  60_000,
+  100,
+  { markFailureReplays: true },
 );
 
-// Cache: projectSlug → production environmentId (stable across restarts)
-const _productionEnvIdCache = new LRUCacheAdapter({ maxEntries: 1000 });
-
-async function _resolveProductionEnvironmentId(
-  projectSlug: string,
-  token: string,
-): Promise<string | null> {
-  const cached = _productionEnvIdCache.get<string>(projectSlug);
-  if (cached) return cached;
-  const apiBaseUrl = resolveVeryfrontApiBaseUrlFromHostEnv();
-  try {
-    const res = await fetch(
-      `${apiBaseUrl}/projects/${encodeURIComponent(projectSlug)}/environments`,
-      { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } },
-    );
-    if (!res.ok) {
-      await res.body?.cancel();
-      logger.warn("Unable to resolve production environment for agent stream", {
-        projectSlug,
-        apiBaseUrl,
-        status: res.status,
-      });
-      return null;
-    }
-    const body = await res.json() as { data?: Array<{ id: string; name?: string }> };
-    const env = body.data?.find((e) => e.name === "production") ?? body.data?.[0];
-    if (!env?.id) {
-      logger.warn("Production environment missing for agent stream", {
-        projectSlug,
-        apiBaseUrl,
-      });
-      return null;
-    }
-    _productionEnvIdCache.set(projectSlug, env.id);
-    return env.id;
-  } catch (error) {
-    logger.warn("Unable to resolve production environment for agent stream", {
-      projectSlug,
-      apiBaseUrl,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return null;
-  }
-}
+const _environmentIdentityResolver = new ProjectEnvironmentIdentityResolver();
 
 function mergeAllowedRemoteTools(
   current: RuntimeRemoteToolConfig["__vfAllowedRemoteTools"],
@@ -374,23 +368,55 @@ function buildAgentSourceEnvironmentName(sourceContext: RuntimeAgentSourceContex
 /**
  * Load the project environment this agent source may read.
  *
- * Control-plane requests don't go through the proxy and therefore don't carry
- * x-environment-id, so the production environment ID is discovered from the API
- * (one fetch per project per server lifetime, then cached).
+ * Branch and bare-release sources do not carry an authoritative environment
+ * identity, so they receive no project environment variables. Named sources
+ * must carry an exact signed environment target, which is revalidated against
+ * project metadata before any secrets are fetched.
+ * Main-branch runs may omit a target environment pin and use the request-scoped
+ * production fallback path.
  */
 async function resolveAgentSourceEnvironment(
   ctx: HandlerContext,
   sourceContext: RuntimeAgentSourceContext,
+  targetIdentity: AgentSourceTargetIdentity,
   apiAuthToken: string,
+  signal?: AbortSignal,
 ): Promise<Record<string, string>> {
-  if (sourceContext.type === "release") return {};
-  if (!ctx.projectSlug || !apiAuthToken) return {};
+  if (sourceContext.type !== "environment") return {};
+  if (!ctx.projectSlug) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Agent source environment requires a canonical project identity",
+    });
+  }
+  if (
+    targetIdentity.runtimeTargetKind !== "environment" ||
+    !targetIdentity.runtimeTargetEnvironmentId ||
+    targetIdentity.runtimeTargetBranchId
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Named agent source requires an exact signed environment target",
+    });
+  }
 
-  const environmentId = ctx.environmentId ??
-    await _resolveProductionEnvironmentId(ctx.projectSlug, apiAuthToken);
-  if (!environmentId) return {};
+  const environmentId = await _environmentIdentityResolver.resolveNamedForActiveRelease(
+    {
+      apiBaseUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
+      projectSlug: ctx.projectSlug,
+      projectId: ctx.projectId,
+      token: apiAuthToken,
+      environmentName: sourceContext.environmentName,
+      expectedEnvironmentId: targetIdentity.runtimeTargetEnvironmentId,
+      expectedReleaseId: sourceContext.releaseId,
+    },
+    signal,
+  );
 
-  return await _agentEnvVarCache.get(environmentId, apiAuthToken, ctx.projectSlug);
+  return await _agentEnvVarCache.get({
+    environmentId,
+    token: apiAuthToken,
+    projectSlug: ctx.projectSlug,
+    projectId: ctx.projectId,
+  });
 }
 
 /**
@@ -587,6 +613,38 @@ type SourceContextFsWrapper = {
   ) => Promise<R>;
 };
 
+function assertAgentSourceMatchesHostedTarget(
+  ctx: HandlerContext,
+  payload: InternalAgentStreamRequest,
+): void {
+  const fsWrapper = ctx.adapter.fs as SourceContextFsWrapper;
+  if (!fsWrapper.isMultiProjectMode?.()) return;
+  if (payload.runtimeTargetKind === "preview_branch") {
+    if (
+      payload.agentSource.type !== "branch" ||
+      !ctx.branchId ||
+      !ctx.branchName ||
+      payload.runtimeTargetBranchId !== ctx.branchId ||
+      payload.agentSource.branch !== ctx.branchName
+    ) {
+      throw PERMISSION_DENIED.create({
+        detail: "Signed agent source does not match the trusted preview branch target",
+      });
+    }
+    return;
+  }
+
+  if (
+    payload.runtimeTargetKind === "main_branch" &&
+    payload.agentSource.type === "branch" &&
+    (!ctx.defaultBranchName || payload.agentSource.branch !== ctx.defaultBranchName)
+  ) {
+    throw PERMISSION_DENIED.create({
+      detail: "Signed agent source does not match the trusted default branch target",
+    });
+  }
+}
+
 function buildAgentSourceRunOptions(sourceContext: RuntimeAgentSourceContext): {
   productionMode: boolean;
   releaseId?: string | null;
@@ -651,6 +709,15 @@ function getPathRunId(pathname: string): string | null {
   return match?.[1] ? decodeURIComponent(match[1]) : null;
 }
 
+/** getPathRunId decodes, which throws on a malformed escape; reporting must not. */
+function safeRunId(req: Request): string | null {
+  try {
+    return getPathRunId(new URL(req.url).pathname);
+  } catch {
+    return null;
+  }
+}
+
 export class AgentStreamHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "AgentStreamHandler",
@@ -676,7 +743,7 @@ export class AgentStreamHandler extends BaseHandler {
       });
     }
 
-    const token = ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || "";
+    const token = ctx.proxyToken || "";
     return fsWrapper.runWithContext(
       ctx.projectSlug,
       token,
@@ -718,11 +785,19 @@ export class AgentStreamHandler extends BaseHandler {
         expectedSubject: payload.runId,
         expectedSurface: "studio",
       });
-      const apiAuthToken = payload.credentials?.authToken || ctx.proxyToken ||
-        getHostEnv("VERYFRONT_API_TOKEN") || "";
+      assertAgentSourceMatchesHostedTarget(ctx, payload);
+      const apiAuthToken = payload.credentials?.authToken || ctx.proxyToken || "";
+      if (payload.agentSource.type === "environment" && !apiAuthToken) {
+        throw AUTHENTICATION_REQUIRED.create({
+          detail: "Named agent source environment requires a request-scoped API token",
+        });
+      }
       const requestScopedContext: HandlerContext = {
         ...ctx,
         proxyToken: apiAuthToken || undefined,
+        // The signed invocation is authoritative. Never promote an unrelated
+        // request header into the environment used for hosted evaluation.
+        environmentId: payload.runtimeTargetEnvironmentId ?? undefined,
         requestContext: ctx.requestContext
           ? { ...ctx.requestContext, token: apiAuthToken }
           : ctx.requestContext,
@@ -746,10 +821,14 @@ export class AgentStreamHandler extends BaseHandler {
           async () => {
             // Resolved before the config load because hosted evaluation binds
             // config to the same environment the run will execute with.
-            const envVarsForAgent = await resolveAgentSourceEnvironment(
+            const envVarsForAgent = await (
+              this.deps.loadAgentSourceEnvironment ?? resolveAgentSourceEnvironment
+            )(
               requestScopedContext,
               payload.agentSource,
+              payload,
               apiAuthToken,
+              req.signal,
             );
             const sourceConfig = await resolveAgentSourceConfig(
               requestScopedContext,
@@ -860,7 +939,10 @@ export class AgentStreamHandler extends BaseHandler {
         verifiedClaims,
         runWithAgentSourceContext,
       );
-    } catch (error) {
+    } catch (caught) {
+      // The first negative-cache failure owns diagnostics. Replays retain the
+      // original error for response construction but must not repeat reports.
+      const { error, replayed } = unwrapReplayedProjectEnvironmentFailure(caught);
       if (error instanceof InternalAgentRequestBodyTooLargeError) {
         return this.respond(builder.json({ error: error.message }, error.status));
       }
@@ -885,16 +967,60 @@ export class AgentStreamHandler extends BaseHandler {
         );
       }
 
-      this.logWarn("Internal agent stream request failed", {
-        error: error instanceof Error ? error.message : String(error),
-        projectId: ctx.projectId,
-        projectSlug: ctx.projectSlug,
-      });
-      logger.error("Internal agent stream handler failed", {
-        projectId: ctx.projectId,
-        projectSlug: ctx.projectSlug,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      if (isVeryfrontError(error)) {
+        const response = errorToResponse(error, new URL(req.url).pathname);
+        // errorToResponse strips `detail` from 5xx bodies, so the log and the
+        // reported event are the only places it survives.
+        if (response.status >= 500 && !replayed) {
+          const cause = describeErrorCause(error.cause);
+          logger.error("Internal agent stream request failed", {
+            projectId: ctx.projectId,
+            projectSlug: ctx.projectSlug,
+            status: response.status,
+            slug: error.slug,
+            category: error.category,
+            detail: error.detail,
+            error: error.message,
+            cause,
+          });
+          reportHandlerFailure(error, {
+            boundary: "agent.stream.request",
+            method: req.method,
+            status: response.status,
+            runId: safeRunId(req),
+            projectId: ctx.projectId,
+            projectSlug: ctx.projectSlug,
+            slug: error.slug,
+            category: error.category,
+            detail: error.detail,
+            cause,
+          });
+        }
+        return this.respond(applyBuilderHeaders(response, builder.headers));
+      }
+
+      if (!replayed) {
+        this.logWarn("Internal agent stream request failed", {
+          error: error instanceof Error ? error.message : String(error),
+          projectId: ctx.projectId,
+          projectSlug: ctx.projectSlug,
+        });
+        logger.error("Internal agent stream handler failed", {
+          projectId: ctx.projectId,
+          projectSlug: ctx.projectSlug,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        // Unexpected failures have no slug or detail, so the captured stack is
+        // the only real diagnostic.
+        reportHandlerFailure(error, {
+          boundary: "agent.stream.handler",
+          method: req.method,
+          status: HTTP_INTERNAL_SERVER_ERROR,
+          runId: safeRunId(req),
+          projectId: ctx.projectId,
+          projectSlug: ctx.projectSlug,
+        });
+      }
       return this.respond(builder.json({ error: "Internal agent stream failed" }, 500));
     }
   }

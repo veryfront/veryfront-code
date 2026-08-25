@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import {
   __injectCssCacheForTests,
   __pageCssCacheForTests,
@@ -136,21 +137,38 @@ describe("css-cache", () => {
         context: { projectId: "test", environment: "preview" as const, versionId: "v1" },
       };
 
+      // Seed the process-local LRU first so the sync getter has something stale
+      // to serve if it ever ignores the injected repository.
+      const key = `injected-test-${Date.now()}`;
+      cachePageCss(key, "stale-internal-css");
+      assertEquals(
+        getCachedPageCss(key),
+        "stale-internal-css",
+        "the process-local LRU holds the entry before a repo is injected",
+      );
+
       __injectCssCacheForTests(mockRepo);
 
-      // getCachedPageCss returns undefined when repo is injected (sync fallback)
-      const key = `injected-test-${Date.now()}`;
-      cachePageCss(key, "injected-css");
+      try {
+        cachePageCss(key, "injected-css");
 
-      // Sync getter returns undefined when repo is injected
-      assertEquals(getCachedPageCss(key), undefined);
+        // Sync getter must force a miss while a repo is injected
+        assertEquals(
+          getCachedPageCss(key),
+          undefined,
+          "the sync getter must force a miss while a repo is injected, not serve the process-local LRU",
+        );
 
-      // But the mock repo should have it
-      await new Promise((r) => setTimeout(r, 10)); // Wait for fire-and-forget
-      assertEquals(injectedCache.get(key), "injected-css");
-
-      // Restore
-      __injectCssCacheForTests(null);
+        // But the mock repo should have it
+        await waitFor(() => injectedCache.get(key) === "injected-css", {
+          message: "fire-and-forget write reaches the injected repo",
+        });
+        assertEquals(injectedCache.get(key), "injected-css");
+      } finally {
+        // Restore
+        __injectCssCacheForTests(null);
+        __pageCssCacheForTests.delete(key);
+      }
     });
   });
 });

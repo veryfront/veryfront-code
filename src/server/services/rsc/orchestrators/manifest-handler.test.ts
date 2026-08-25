@@ -1,20 +1,27 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ManifestHandler } from "./manifest-handler.ts";
 import type { CacheRepository } from "#veryfront/repositories/types.ts";
 import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
+import { RSC_MANIFEST_CACHE_TTL_MS } from "#veryfront/utils";
 
-function createMockCacheRepo(): CacheRepository<string> & { store: Map<string, string> } {
+function createMockCacheRepo(): CacheRepository<string> & {
+  store: Map<string, string>;
+  ttls: Map<string, number | undefined>;
+} {
   const store = new Map<string, string>();
+  const ttls = new Map<string, number | undefined>();
   return {
     store,
+    ttls,
     async get(key: string) {
       return store.get(key) ?? null;
     },
-    async set(key: string, value: string, _ttl?: number) {
+    async set(key: string, value: string, ttl?: number) {
       store.set(key, value);
+      ttls.set(key, ttl);
     },
     async delete(key: string) {
       store.delete(key);
@@ -22,7 +29,10 @@ function createMockCacheRepo(): CacheRepository<string> & { store: Map<string, s
     async has(key: string) {
       return store.has(key);
     },
-  } as CacheRepository<string> & { store: Map<string, string> };
+  } as CacheRepository<string> & {
+    store: Map<string, string>;
+    ttls: Map<string, number | undefined>;
+  };
 }
 
 describe("server/services/rsc/orchestrators/manifest-handler", () => {
@@ -33,18 +43,23 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
         ["Card", { path: "/app/components/Card.tsx", exports: [] }],
       ]);
 
-      const handler = new ManifestHandler("/project");
+      const handler = new ManifestHandler("/project", { isLocalProject: true });
       const response = await handler.handle(manifest as any);
 
       assertEquals(response.headers.get("content-type"), "application/json");
       assertEquals(response.headers.get("vary"), RSC_DEPENDENCY_PINNING_HEADER);
+      assertEquals(
+        response.headers.get("cache-control"),
+        "private, no-cache, must-revalidate",
+        "a per-tenant client-component manifest must never be shared-cacheable",
+      );
       const body = await response.json();
       assertEquals(body.components.Button, "/app/components/Button.tsx");
       assertEquals(body.components.Card, "/app/components/Card.tsx");
     });
 
     it("should return empty components for empty manifest", async () => {
-      const handler = new ManifestHandler("/project");
+      const handler = new ManifestHandler("/project", { isLocalProject: true });
       const response = await handler.handle(new Map());
       const body = await response.json();
       assertEquals(body.components, {});
@@ -162,7 +177,7 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
         ["A", { path: "/a.tsx", exports: [] }],
       ]);
 
-      const handler = new ManifestHandler("/project");
+      const handler = new ManifestHandler("/project", { isLocalProject: true });
       const response1 = await handler.handle(manifest as any);
       const body1 = await response1.json();
 
@@ -210,6 +225,41 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
       assertEquals(stateBAgain.hash, stateB.hash);
       assertEquals(stateB.dependencyPinningCacheKey, "on:pins-b");
     });
+
+    it("defaults an omitted isLocalProject to remote", async () => {
+      const manifest = new Map([
+        [
+          "Button",
+          {
+            id: "Button",
+            path: "/project/frontend/Button.tsx",
+            rel: "frontend/Button.tsx",
+            contentHash: "rev-a",
+            exports: ["default"],
+          },
+        ],
+      ]);
+
+      const body = await (await new ManifestHandler("/project").handle(manifest)).json();
+
+      assertEquals(
+        body.components.Button,
+        "/_veryfront/rsc/module?rel=frontend%2FButton.tsx&v=rev-a",
+      );
+      assertEquals(JSON.stringify(body).includes("/project/frontend/Button.tsx"), false);
+    });
+
+    it("rejects a rel-less component when isLocalProject is omitted", async () => {
+      const manifest = new Map([
+        ["Button", { id: "Button", path: "/project/frontend/Button.tsx", exports: ["default"] }],
+      ]);
+
+      await assertRejects(
+        () => new ManifestHandler("/project").handle(manifest),
+        Error,
+        "missing its project-relative module path",
+      );
+    });
   });
 
   describe("handle with injected CacheRepository", () => {
@@ -219,10 +269,16 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
         ["X", { path: "/x.tsx", exports: [] }],
       ]);
 
-      const handler = new ManifestHandler("/project", { cacheRepo });
+      const handler = new ManifestHandler("/project", { cacheRepo, isLocalProject: true });
       await handler.handle(manifest as any);
 
       assertEquals(cacheRepo.store.size, 1);
+      const key = [...cacheRepo.store.keys()][0]!;
+      assertEquals(
+        cacheRepo.ttls.get(key),
+        Math.floor(RSC_MANIFEST_CACHE_TTL_MS / 1000),
+        "the external manifest TTL is written in seconds, not milliseconds",
+      );
     });
 
     it("should return cached data from injected cache", async () => {
@@ -231,7 +287,7 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
         ["Y", { path: "/y.tsx", exports: [] }],
       ]);
 
-      const handler = new ManifestHandler("/project", { cacheRepo });
+      const handler = new ManifestHandler("/project", { cacheRepo, isLocalProject: true });
       await handler.handle(manifest as any);
 
       // Second call should use cache
@@ -246,10 +302,12 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
 
       await new ManifestHandler("/project", {
         cacheRepo,
+        isLocalProject: true,
         contentSourceId: "release-a",
       }).handle(manifest as any);
       await new ManifestHandler("/project", {
         cacheRepo,
+        isLocalProject: true,
         contentSourceId: "release-b",
       }).handle(manifest as any);
 
@@ -324,7 +382,7 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
         ["Z", { path: "/z.tsx", exports: [] }],
       ]);
 
-      const handler = new ManifestHandler("/project");
+      const handler = new ManifestHandler("/project", { isLocalProject: true });
       await handler.handle(manifest as any);
       handler.clearCache();
 
@@ -336,6 +394,33 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
       const body = await response.json();
       assertEquals(body.components.W, "/w.tsx");
       assertEquals(body.components.Z, undefined);
+    });
+
+    it("purges tracked keys from the injected cache repository", async () => {
+      const cacheRepo = createMockCacheRepo();
+      const handler = new ManifestHandler("/project", { cacheRepo, isLocalProject: true });
+      await handler.handle(new Map([["Z", { path: "/z.tsx", exports: [] }]]) as any);
+      assertEquals(cacheRepo.store.size, 1, "the first build is written to the repository");
+
+      handler.clearCache();
+      // clearCache enqueues the purge with void, so await the private queue.
+      await (handler as unknown as { cacheMutation: Promise<void> }).cacheMutation;
+
+      assertEquals(
+        cacheRepo.store.size,
+        0,
+        "clearCache must purge every tracked key from the external cache repository",
+      );
+      const response = await handler.handle(
+        new Map([["W", { path: "/w.tsx", exports: [] }]]) as any,
+      );
+      const body = await response.json();
+      assertEquals(
+        body.components.Z,
+        undefined,
+        "a cleared manifest must not be re-read from the injected repository",
+      );
+      assertEquals(body.components.W, "/w.tsx", "the post-clear build is served");
     });
 
     it("does not let a pre-invalidation build republish stale manifest data", async () => {
@@ -369,7 +454,7 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
           return `'use client';\nexport default function Counter() { return "fresh"; }`;
         },
       };
-      const handler = new ManifestHandler("/project", { fs: fs as any });
+      const handler = new ManifestHandler("/project", { fs: fs as any, isLocalProject: true });
 
       const preInvalidation = handler.handle(null);
       await firstReadStarted;

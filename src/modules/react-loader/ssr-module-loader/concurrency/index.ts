@@ -5,3 +5,4 @@
  */
 
 export { Semaphore } from "./semaphore.ts";
+export type { SemaphoreAcquireReport } from "./semaphore.ts";

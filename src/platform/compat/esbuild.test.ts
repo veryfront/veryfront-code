@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  build as bundlerBuild,
+  stop as bundlerStop,
+  transform as bundlerTransform,
+} from "veryfront/extensions/bundler";
 import { build, getEsbuild, initializeEsbuild, stop, transform } from "./esbuild.ts";
 
 // esbuild starts a child process that lives across tests, so we disable sanitizers
@@ -9,9 +14,17 @@ describe("platform/compat/esbuild", { sanitizeOps: false, sanitizeResources: fal
     it("should return the esbuild module", async () => {
       const esbuild = await getEsbuild();
       assertExists(esbuild);
-      assertEquals(typeof esbuild.transform, "function");
-      assertEquals(typeof esbuild.build, "function");
-      assertEquals(typeof esbuild.stop, "function");
+      assertEquals(
+        esbuild.transform,
+        bundlerTransform,
+        "the esbuild facade must expose the contract's transform",
+      );
+      assertEquals(
+        esbuild.build,
+        bundlerBuild,
+        "the esbuild facade must expose the contract's build",
+      );
+      assertEquals(esbuild.stop, bundlerStop, "the esbuild facade must expose the contract's stop");
     });
 
     it("should return same module on subsequent calls", async () => {
@@ -37,6 +50,13 @@ describe("platform/compat/esbuild", { sanitizeOps: false, sanitizeResources: fal
       );
       assertExists(result.code);
       assertEquals(result.code.includes("<div>"), false);
+      assertStringIncludes(
+        result.code,
+        "react/jsx-runtime",
+        "the automatic runtime import source is honoured",
+      );
+      assertStringIncludes(result.code, 'jsx("div"', "JSX compiles to an automatic-runtime call");
+      assertStringIncludes(result.code, "Hello", "child text survives the transform");
     });
   });
 
@@ -56,6 +76,13 @@ describe("platform/compat/esbuild", { sanitizeOps: false, sanitizeResources: fal
 
   describe("stop", () => {
     it("should stop esbuild without error", async () => {
+      assertEquals(stop, bundlerStop, "stop must forward to the registered Bundler contract");
+      assertEquals(
+        transform,
+        bundlerTransform,
+        "transform must forward to the registered Bundler contract",
+      );
+      assertEquals(build, bundlerBuild, "build must forward to the registered Bundler contract");
       await stop();
     });
   });

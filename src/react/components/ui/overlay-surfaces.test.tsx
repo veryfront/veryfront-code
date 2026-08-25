@@ -4,6 +4,7 @@ import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { type ComponentDomOptions, installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./collapsible.tsx";
 import {
   Dialog,
@@ -21,44 +22,9 @@ import {
 } from "./dropdown-menu.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "./popover.tsx";
 
-function installDom(dom: JSDOM): () => void {
-  const window = dom.window;
-  const replacements: Record<string, unknown> = {
-    window,
-    document: window.document,
-    navigator: window.navigator,
-    self: window,
-    Node: window.Node,
-    Element: window.Element,
-    HTMLElement: window.HTMLElement,
-    HTMLButtonElement: window.HTMLButtonElement,
-    FocusEvent: window.FocusEvent,
-    KeyboardEvent: window.KeyboardEvent,
-    MouseEvent: window.MouseEvent,
-    requestAnimationFrame: window.requestAnimationFrame.bind(window),
-    cancelAnimationFrame: window.cancelAnimationFrame.bind(window),
-  };
-  const previous = new Map<string, PropertyDescriptor | undefined>();
-
-  for (const [key, value] of Object.entries(replacements)) {
-    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
-    Object.defineProperty(globalThis, key, {
-      configurable: true,
-      enumerable: true,
-      value,
-      writable: true,
-    });
-  }
-
-  return () => {
-    for (const key of Object.keys(replacements)) {
-      const descriptor = previous.get(key);
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-      else delete (globalThis as Record<string, unknown>)[key];
-    }
-    dom.window.close();
-  };
-}
+const DOM_OPTIONS: ComponentDomOptions = {
+  windowGlobals: ["self", "HTMLButtonElement", "FocusEvent", "KeyboardEvent"],
+};
 
 function createDom(): JSDOM {
   return new JSDOM(
@@ -110,7 +76,7 @@ async function unmount(root: Root): Promise<void> {
 describe("modal surfaces", () => {
   it("wires ARIA, traps focus, restores focus, and balances scroll locking", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const rootElement = document.getElementById("root");
     assert(rootElement);
     const root = createRoot(rootElement);
@@ -207,7 +173,7 @@ describe("modal surfaces", () => {
 
   it("honors a consumer-cancelled trigger click", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const rootElement = document.getElementById("root");
     assert(rootElement);
     const root = createRoot(rootElement);
@@ -241,7 +207,7 @@ describe("modal surfaces", () => {
 describe("dropdown menu keyboard contract", () => {
   it("focuses enabled items and supports navigation, typeahead, Escape, and Tab", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const rootElement = document.getElementById("root");
     assert(rootElement);
     const root = createRoot(rootElement);
@@ -327,7 +293,7 @@ describe("dropdown menu keyboard contract", () => {
 
   it("dismisses only the topmost nested floating surface on Escape", async () => {
     const dom = createDom();
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const rootElement = document.getElementById("root");
     assert(rootElement);
     const root = createRoot(rootElement);
@@ -390,7 +356,7 @@ describe("dropdown menu keyboard contract", () => {
 describe("Collapsible ARIA contract", () => {
   it("uses hydration-stable control wiring and keeps closed content represented", () => {
     const html = renderToString(
-      <Collapsible>
+      <Collapsible triggerId="details-trigger" contentId="details-content">
         <CollapsibleTrigger>Details</CollapsibleTrigger>
         <CollapsibleContent>Hidden details</CollapsibleContent>
       </Collapsible>,
@@ -403,6 +369,33 @@ describe("Collapsible ARIA contract", () => {
       assertEquals(trigger.getAttribute("aria-controls"), content.id);
       assertEquals(trigger.getAttribute("aria-expanded"), "false");
       assertEquals(content.getAttribute("data-state"), "closed");
+    } finally {
+      dom.window.close();
+    }
+  });
+
+  it("never emits dangling SSR references for part-owned ids", () => {
+    function WrappedTrigger(): React.ReactElement {
+      return <CollapsibleTrigger id="wrapped-trigger">Details</CollapsibleTrigger>;
+    }
+    function WrappedContent(): React.ReactElement {
+      return <CollapsibleContent id="wrapped-content">Hidden details</CollapsibleContent>;
+    }
+
+    const html = renderToString(
+      <Collapsible>
+        <WrappedTrigger />
+        <WrappedContent />
+      </Collapsible>,
+    );
+    const dom = new JSDOM(`<!doctype html><body>${html}</body>`);
+    try {
+      const trigger = dom.window.document.querySelector("button")!;
+      const content = dom.window.document.querySelector<HTMLElement>("div[hidden]")!;
+      assertEquals(trigger.id, "wrapped-trigger");
+      assertEquals(content.id, "wrapped-content");
+      assertEquals(trigger.getAttribute("aria-controls"), null);
+      assertEquals(content.getAttribute("aria-labelledby"), null);
     } finally {
       dom.window.close();
     }

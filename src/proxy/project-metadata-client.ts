@@ -3,6 +3,7 @@ import {
   isCanonicalProjectSlug,
 } from "#veryfront/utils/project-identity.ts";
 import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
+import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
 import { injectContext, ProxySpanNames, withSpan } from "./tracing.ts";
 import { readProxyResponseJson, settleProxyResponseBody } from "./response-body.ts";
 
@@ -92,15 +93,23 @@ export class ProxyLookupAuthError extends Error {
   }
 }
 
+export interface ProxyLookupFailureUpstreamContext {
+  /** HTTP status returned by the metadata API for the failed lookup. */
+  upstreamStatus?: number;
+}
+
 export class ProxyLookupFailure extends Error {
+  readonly upstreamStatus?: number;
+
   constructor(
     readonly lookupType: ProxyLookupType,
     readonly publicStatus: 502 | 503 | 504,
     message: string,
-    options?: ErrorOptions,
+    options?: ErrorOptions & ProxyLookupFailureUpstreamContext,
   ) {
     super(message, options);
     this.name = "ProxyLookupFailure";
+    this.upstreamStatus = options?.upstreamStatus;
   }
 }
 
@@ -409,7 +418,7 @@ function requireToken(value: string): string {
 }
 
 function abortReason(signal: AbortSignal): Error {
-  return signal.reason instanceof Error
+  return isErrorAcrossRealms(signal.reason)
     ? signal.reason
     : new DOMException("Proxy metadata lookup was aborted", "AbortError");
 }
@@ -517,6 +526,7 @@ export function createProjectMetadataClient(
             lookupType,
             publicStatus,
             `Proxy ${lookupType} metadata request was rejected`,
+            { upstreamStatus: response.status },
           );
         }
 
@@ -528,6 +538,7 @@ export function createProjectMetadataClient(
             lookupType,
             502,
             `Proxy ${lookupType} metadata returned an invalid content type`,
+            { upstreamStatus: response.status },
           );
         }
 
@@ -546,7 +557,10 @@ export function createProjectMetadataClient(
             lookupType,
             502,
             `Proxy ${lookupType} metadata returned an invalid response`,
-            { cause: error },
+            {
+              cause: error,
+              upstreamStatus: response.status,
+            },
           );
         }
       } catch (error) {

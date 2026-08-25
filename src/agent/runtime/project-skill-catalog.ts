@@ -1,4 +1,4 @@
-import { basename } from "node:path";
+import { basename } from "#veryfront/compat/path";
 import {
   DEFAULT_PROJECT_STEERING_PATHS,
   type ProjectSteeringPaths,
@@ -10,6 +10,7 @@ import type {
   RuntimeProjectFilesApiOptions,
 } from "./project-files-client.ts";
 import { createRuntimeProjectFileListingBudget } from "./project-files-client.ts";
+import { isRuntimeProjectFileContent, isRuntimeProjectFilePath } from "./project-files-client.ts";
 import {
   listRuntimeBuiltinSkillReferences,
   readRuntimeBuiltinDirectorySkill,
@@ -17,7 +18,9 @@ import {
   readRuntimeBuiltinSkillEntries,
 } from "./builtin-skill-files.ts";
 import {
-  buildRuntimeSkillDefinition,
+  buildLegacyRuntimeFlatSkillDefinition,
+  buildRuntimeDirectorySkillDefinition,
+  normalizeStrictRuntimeSkillReferencePath,
   type RuntimeSkillDefinition,
   type RuntimeSkillMetadataLogger,
 } from "./skill-metadata.ts";
@@ -26,6 +29,7 @@ import {
   type SkillOperationBudget,
 } from "#veryfront/skill/operation-budget.ts";
 import {
+  SKILL_ALLOWED_TOOL_MAX_PATTERNS,
   SKILL_CATALOG_MAX_DOCUMENT_CHARACTERS,
   SKILL_CATALOG_MAX_DOCUMENT_UTF8_BYTES,
   SKILL_CATALOG_MAX_METADATA_CHARACTERS,
@@ -33,12 +37,26 @@ import {
   SKILL_CATALOG_MAX_SKILLS,
   SKILL_DOCUMENT_MAX_CHARACTERS,
   SKILL_FILE_OPERATION_TIMEOUT_MS,
-  SKILL_ROOT_PATH_MAX_LENGTH,
+  SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
   SKILL_STEERING_PATH_MAX_ENTRIES,
   SKILL_SUBDIR_MAX_ENTRIES,
 } from "#veryfront/skill/limits.ts";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import { readOwnDataProperty, snapshotOwnDataPropertyArray } from "./data-property-descriptor.ts";
+import type { SkillDocumentParserProvider } from "#veryfront/extensions/parser/skill-document-parser.ts";
+import { SkillIdAdmission } from "#veryfront/skill/id-admission.ts";
+import { SKILL_READABLE_DIRS } from "#veryfront/skill/types.ts";
+import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
 
-const utf8Encoder = new TextEncoder();
+const ArrayIsArray = Array.isArray;
+const NumberIsFinite = Number.isFinite;
+const NumberIsSafeInteger = Number.isSafeInteger;
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectFreeze = Object.freeze;
+const ObjectKeys = Object.keys;
+const ReflectApply = Reflect.apply;
+
+const PROJECT_SKILL_FETCH_CONCURRENCY = 16;
 
 class RuntimeSkillCatalogBudget {
   private documentCharacters = 0;
@@ -49,19 +67,20 @@ class RuntimeSkillCatalogBudget {
 
   retainDocument(content: string): void {
     const characters = this.documentCharacters + content.length;
-    const utf8Bytes = this.documentUtf8Bytes + utf8Encoder.encode(content).byteLength;
     if (characters > SKILL_CATALOG_MAX_DOCUMENT_CHARACTERS) {
       throw new RangeError(
         `Skill catalog documents may contain at most ${SKILL_CATALOG_MAX_DOCUMENT_CHARACTERS} characters`,
       );
     }
-    if (utf8Bytes > SKILL_CATALOG_MAX_DOCUMENT_UTF8_BYTES) {
+    const remainingUtf8Bytes = SKILL_CATALOG_MAX_DOCUMENT_UTF8_BYTES - this.documentUtf8Bytes;
+    const addedUtf8Bytes = utf8ByteLength(content, remainingUtf8Bytes);
+    if (addedUtf8Bytes > remainingUtf8Bytes) {
       throw new RangeError(
         `Skill catalog documents may contain at most ${SKILL_CATALOG_MAX_DOCUMENT_UTF8_BYTES} UTF-8 bytes`,
       );
     }
     this.documentCharacters = characters;
-    this.documentUtf8Bytes = utf8Bytes;
+    this.documentUtf8Bytes += addedUtf8Bytes;
   }
 
   retainPath(): void {
@@ -101,7 +120,7 @@ function getRetainedMetadataCharacters(definition: RuntimeSkillDefinition): numb
   ) {
     total += value?.length ?? 0;
   }
-  for (const value of definition.allowedTools) total += value.length;
+  for (const value of definition.allowedTools ?? []) total += value.length;
   for (const value of definition.references ?? []) total += value.length;
   for (const [key, value] of Object.entries(definition.metadata ?? {})) {
     total += key.length + value.length;
@@ -135,6 +154,7 @@ export type RuntimeProjectSkillCatalogOptions = {
   steeringPaths?: Pick<ProjectSteeringPaths, "skills">;
   logger?: RuntimeSkillMetadataLogger;
   operationBudget?: SkillOperationBudget;
+  skillDocumentParserProvider?: SkillDocumentParserProvider;
 };
 
 /** Options accepted by runtime project instructions. */
@@ -148,36 +168,313 @@ function sortSkillsById(skills: Iterable<RuntimeSkillDefinition>): RuntimeSkillD
   return [...skills].sort((a, b) => a.id.localeCompare(b.id));
 }
 
-function getSkillPaths(options: Pick<RuntimeProjectSkillCatalogOptions, "steeringPaths">) {
-  const paths = options.steeringPaths?.skills ?? DEFAULT_PROJECT_STEERING_PATHS.skills;
-  assertSteeringPathCount(paths);
-  for (const path of paths) assertCatalogPrefix(path);
-  return paths;
+function requireBuiltinSkills(
+  value: readonly RuntimeSkillDefinition[],
+  budget: RuntimeSkillCatalogBudget,
+): readonly RuntimeSkillDefinition[] {
+  return snapshotOwnDataPropertyArray(value, {
+    label: "builtinSkills",
+    maximumEntries: SKILL_CATALOG_MAX_SKILLS,
+    mapValue: (definition, index) => {
+      const snapshot = snapshotBuiltinSkillDefinition(definition, index);
+      retainExistingDefinition(budget, snapshot);
+      return snapshot;
+    },
+  });
 }
 
-function assertCatalogPrefix(path: string): void {
-  const segments = path.split("/");
-  if (
-    path.length === 0 || path.length > SKILL_ROOT_PATH_MAX_LENGTH || path.startsWith("/") ||
-    path.endsWith("/") || path.includes("\\") || path.includes("\0") ||
-    segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")
-  ) {
-    throw new RangeError("Project skill catalog prefixes must be bounded relative paths");
+function isNonArrayObject(value: unknown): value is Record<PropertyKey, unknown> {
+  if (!value || typeof value !== "object") return false;
+  try {
+    return !ArrayIsArray(value);
+  } catch {
+    return false;
   }
 }
 
-function getInstructionPaths(options: RuntimeProjectInstructionsOptions) {
-  const paths = options.steeringPaths?.instructions ?? DEFAULT_PROJECT_STEERING_PATHS.instructions;
-  assertSteeringPathCount(paths);
-  return paths;
+function requireBuiltinString(
+  definition: unknown,
+  key: keyof RuntimeSkillDefinition,
+  index: number,
+  required: boolean,
+): string | undefined {
+  const value = readOwnDataProperty(
+    definition,
+    key,
+    `builtinSkills entry ${index}`,
+    required,
+  );
+  if (value === undefined && !required) return undefined;
+  if (typeof value !== "string") {
+    throw new TypeError(`builtinSkills entry ${index}.${key} must be a string`);
+  }
+  return value;
 }
 
-function assertSteeringPathCount(paths: readonly string[]): void {
-  if (paths.length > SKILL_STEERING_PATH_MAX_ENTRIES) {
+function snapshotBuiltinStringArray(
+  value: unknown,
+  label: string,
+  maximumEntries: number,
+  validate?: (value: string) => boolean,
+): readonly string[] {
+  return snapshotOwnDataPropertyArray(value, {
+    label,
+    maximumEntries,
+    mapValue: (entry, index) => {
+      if (typeof entry !== "string" || (validate !== undefined && !validate(entry))) {
+        throw new TypeError(`${label} entry ${index} must be a valid string`);
+      }
+      return entry;
+    },
+  });
+}
+
+function snapshotBuiltinReferences(value: unknown, label: string): readonly string[] {
+  const references = snapshotBuiltinStringArray(
+    value,
+    label,
+    SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
+    (reference) =>
+      normalizeStrictRuntimeSkillReferencePath(reference) === reference &&
+      SKILL_READABLE_DIRS.some((directory) => reference.startsWith(`${directory}/`)),
+  );
+  const counts = new Map<string, number>();
+  for (const reference of references) {
+    const directory = reference.slice(0, reference.indexOf("/"));
+    const count = (counts.get(directory) ?? 0) + 1;
+    if (count > SKILL_SUBDIR_MAX_ENTRIES) {
+      throw new RangeError(
+        `${label} ${directory}/ may contain at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
+      );
+    }
+    counts.set(directory, count);
+  }
+  return references;
+}
+
+function snapshotBuiltinMetadata(value: unknown, index: number): Readonly<Record<string, string>> {
+  if (!isNonArrayObject(value) || isProxyWithoutHooks(value)) {
+    throw new TypeError(`builtinSkills entry ${index}.metadata must be an object`);
+  }
+  let keys: string[];
+  try {
+    keys = ReflectApply(ObjectKeys, undefined, [value]) as string[];
+  } catch {
+    throw new TypeError(`builtinSkills entry ${index}.metadata must be readable`);
+  }
+  if (keys.length > SKILL_SUBDIR_MAX_ENTRIES) {
     throw new RangeError(
-      `Project steering paths may contain at most ${SKILL_STEERING_PATH_MAX_ENTRIES} entries`,
+      `builtinSkills entry ${index}.metadata may contain at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
     );
   }
+
+  const snapshot: Record<string, string> = {};
+  for (const key of keys) {
+    const metadataValue = readOwnDataProperty(
+      value,
+      key,
+      `builtinSkills entry ${index}.metadata`,
+    );
+    if (typeof metadataValue !== "string") {
+      throw new TypeError(`builtinSkills entry ${index}.metadata.${key} must be a string`);
+    }
+    ReflectApply(ObjectDefineProperty, undefined, [snapshot, key, {
+      configurable: false,
+      enumerable: true,
+      value: metadataValue,
+      writable: false,
+    }]);
+  }
+  return ObjectFreeze(snapshot);
+}
+
+function snapshotBuiltinSkillDefinition(
+  value: unknown,
+  index: number,
+): RuntimeSkillDefinition {
+  if (!isNonArrayObject(value)) {
+    throw new TypeError(`builtinSkills entry ${index} must be an object`);
+  }
+  const label = `builtinSkills entry ${index}`;
+  const allowedTools = snapshotBuiltinStringArray(
+    readOwnDataProperty(value, "allowedTools", label),
+    `${label}.allowedTools`,
+    SKILL_ALLOWED_TOOL_MAX_PATTERNS,
+  );
+  const rawReferences = readOwnDataProperty(value, "references", label, false);
+  const references = rawReferences === undefined ? undefined : snapshotBuiltinReferences(
+    rawReferences,
+    `${label}.references`,
+  );
+  const rawMetadata = readOwnDataProperty(value, "metadata", label, false);
+  const metadata = rawMetadata === undefined
+    ? undefined
+    : snapshotBuiltinMetadata(rawMetadata, index);
+  const thinking = readOwnDataProperty(value, "thinking", label, false);
+  if (
+    thinking !== undefined &&
+    thinking !== false &&
+    (typeof thinking !== "number" || !NumberIsFinite(thinking) || thinking < 0)
+  ) {
+    throw new TypeError(`${label}.thinking must be false or a non-negative finite number`);
+  }
+  const maxSteps = readOwnDataProperty(value, "maxSteps", label, false);
+  if (
+    maxSteps !== undefined &&
+    (typeof maxSteps !== "number" || !NumberIsSafeInteger(maxSteps) || maxSteps <= 0)
+  ) {
+    throw new TypeError(`${label}.maxSteps must be a positive safe integer`);
+  }
+
+  return ObjectFreeze({
+    id: requireBuiltinString(value, "id", index, true)!,
+    name: requireBuiltinString(value, "name", index, true)!,
+    description: requireBuiltinString(value, "description", index, true)!,
+    instructions: requireBuiltinString(value, "instructions", index, true)!,
+    allowedTools: allowedTools as string[],
+    ...(metadata === undefined ? {} : { metadata: metadata as Record<string, string> }),
+    ...(thinking === undefined ? {} : { thinking: thinking as false | number }),
+    ...(maxSteps === undefined ? {} : { maxSteps }),
+    ...(references === undefined ? {} : { references: references as string[] }),
+    ...snapshotOptionalBuiltinStrings(value, index),
+  });
+}
+
+function snapshotOptionalBuiltinStrings(
+  value: unknown,
+  index: number,
+): Pick<
+  RuntimeSkillDefinition,
+  "displayName" | "model" | "ownerAgentId" | "shortName" | "sourcePath"
+> {
+  const snapshot: Pick<
+    RuntimeSkillDefinition,
+    "displayName" | "model" | "ownerAgentId" | "shortName" | "sourcePath"
+  > = {};
+  for (
+    const key of ["displayName", "model", "ownerAgentId", "shortName", "sourcePath"] as const
+  ) {
+    const property = requireBuiltinString(value, key, index, false);
+    if (property !== undefined) snapshot[key] = property;
+  }
+  return snapshot;
+}
+
+function snapshotProjectFileList(
+  value: readonly RuntimeProjectFileListItem[] | null,
+): readonly RuntimeProjectFileListItem[] | null {
+  if (value === null) return null;
+  return snapshotOwnDataPropertyArray(value, {
+    label: "Project file listing",
+    maximumEntries: SKILL_CATALOG_MAX_PATH_ENTRIES,
+    mapValue: (item, index) => {
+      if (!isNonArrayObject(item)) {
+        throw new TypeError(`Project file listing item ${index} must be an object`);
+      }
+      const path = readOwnDataProperty(
+        item,
+        "path",
+        `Project file listing item ${index}`,
+      );
+      if (!isRuntimeProjectFilePath(path)) {
+        throw new TypeError(`Project file listing item ${index} has an invalid path`);
+      }
+      return ObjectFreeze({ path });
+    },
+  });
+}
+
+function normalizeSteeringPaths(
+  value: readonly string[],
+  label: string,
+): readonly string[] {
+  return snapshotOwnDataPropertyArray(value, {
+    label: `${label} paths`,
+    maximumEntries: SKILL_STEERING_PATH_MAX_ENTRIES,
+    mapValue: (path, index) => {
+      if (
+        typeof path !== "string" ||
+        normalizeStrictRuntimeSkillReferencePath(path) !== path
+      ) {
+        throw new TypeError(`Invalid ${label} path at index ${index}`);
+      }
+      return path;
+    },
+  });
+}
+
+function getSkillPaths(
+  options: Pick<RuntimeProjectSkillCatalogOptions, "steeringPaths">,
+): readonly string[] {
+  return normalizeSteeringPaths(
+    options.steeringPaths?.skills ?? DEFAULT_PROJECT_STEERING_PATHS.skills,
+    "project skill steering",
+  );
+}
+
+function getInstructionPaths(options: RuntimeProjectInstructionsOptions): readonly string[] {
+  return normalizeSteeringPaths(
+    options.steeringPaths?.instructions ?? DEFAULT_PROJECT_STEERING_PATHS.instructions,
+    "project instruction steering",
+  );
+}
+
+function claimProjectSkillId(claimedIds: Set<string>, id: string): boolean {
+  if (claimedIds.has(id)) return false;
+  if (claimedIds.size >= SKILL_SUBDIR_MAX_ENTRIES) {
+    throw new RangeError(
+      `Project may declare at most ${SKILL_SUBDIR_MAX_ENTRIES} skills`,
+    );
+  }
+  claimedIds.add(id);
+  return true;
+}
+
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  fn: (value: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  let stopped = false;
+  let didFail = false;
+  let firstFailure: unknown;
+  const workers = Array.from(
+    { length: Math.min(concurrency, values.length) },
+    async () => {
+      while (!stopped) {
+        const index = nextIndex;
+        if (index >= values.length) {
+          return;
+        }
+        nextIndex += 1;
+        try {
+          results[index] = await fn(values[index]!, index);
+        } catch (error) {
+          if (!didFail) {
+            didFail = true;
+            firstFailure = error;
+          }
+          stopped = true;
+        }
+      }
+    },
+  );
+  await Promise.all(workers);
+  if (didFail) {
+    throw firstFailure;
+  }
+  return results;
+}
+
+function isImmediateDirectorySkillPath(path: string, prefixWithSlash: string): boolean {
+  if (!path.startsWith(prefixWithSlash)) {
+    return false;
+  }
+
+  const segments = path.slice(prefixWithSlash.length).split("/");
+  return segments.length === 2 && segments[0]!.length > 0 && segments[1] === "SKILL.md";
 }
 
 function assertCatalogContent(content: string, label: string): void {
@@ -192,67 +489,119 @@ function createCatalogBudget(existing?: SkillOperationBudget): SkillOperationBud
   return existing ?? createSkillOperationBudget({ timeoutMs: SKILL_FILE_OPERATION_TIMEOUT_MS });
 }
 
+async function fetchProjectSkillDocument(
+  input:
+    & RuntimeProjectSteeringLookup
+    & Pick<RuntimeProjectSkillCatalogOptions, "getProjectFile" | "logger">,
+  requestedPath: string,
+  operationBudget: SkillOperationBudget,
+  catalogBudget: RuntimeSkillCatalogBudget,
+): Promise<RuntimeProjectFile | null> {
+  const value = await operationBudget.run((abortSignal) =>
+    input.getProjectFile({
+      projectId: input.projectId,
+      authToken: input.authToken,
+      branchId: input.branchId,
+      path: requestedPath,
+      maximumContentCharacters: SKILL_DOCUMENT_MAX_CHARACTERS,
+      abortSignal,
+      timeoutMs: operationBudget.remainingMs(),
+    })
+  );
+  if (value === null) return null;
+  if (typeof value !== "object" || ArrayIsArray(value)) {
+    throw new TypeError("Project skill response must be an object or null");
+  }
+
+  const responsePath = readOwnDataProperty(value, "path", "Project skill response");
+  const content = readOwnDataProperty(value, "content", "Project skill response");
+  if (!isRuntimeProjectFilePath(responsePath)) {
+    input.logger?.error?.("Project skill response had an invalid path; skipping skill", {
+      expectedPath: requestedPath,
+    });
+    return null;
+  }
+  if (responsePath !== requestedPath) {
+    input.logger?.error?.(
+      "Project skill response path did not match its request; skipping skill",
+      { expectedPath: requestedPath, responsePath },
+    );
+    return null;
+  }
+  if (content === "") return null;
+  if (!isRuntimeProjectFileContent(content)) {
+    input.logger?.error?.("Project skill content exceeded its budget; skipping skill", {
+      path: requestedPath,
+    });
+    return null;
+  }
+
+  assertCatalogContent(content, "Skill document");
+  // Charge the shared catalog before returning the document to the concurrent
+  // result set. This caps retained completed reads to the aggregate budget;
+  // only the fixed-size worker set can still be in flight.
+  catalogBudget.retainDocument(content);
+  return Object.freeze({ path: responsePath, content });
+}
+
 /** Loads runtime builtin skill catalog. */
 export function loadRuntimeBuiltinSkillCatalog(input: {
   skillsDir: string;
   logger?: RuntimeSkillMetadataLogger;
+  skillDocumentParserProvider?: SkillDocumentParserProvider;
 }): RuntimeSkillDefinition[] {
   const catalogBudget = new RuntimeSkillCatalogBudget();
   const entriesResult = readRuntimeBuiltinSkillEntries(input.skillsDir);
   if (!entriesResult.ok) {
     input.logger?.error?.("Failed to load built-in skills", {
       error: entriesResult.errorMessage,
-      skillsDir: input.skillsDir,
     });
     return [];
   }
 
-  const definitions = entriesResult.entries.flatMap((entry) => {
-    if (entry.isFile() && entry.name.endsWith(".md")) {
-      const id = basename(entry.name, ".md");
-      const content = readRuntimeBuiltinFlatSkill(input.skillsDir, id);
-      if (content === null) {
-        return [];
-      }
-      catalogBudget.retainDocument(content);
-
-      const definition = buildRuntimeSkillDefinition({
-        id,
-        content,
-        logger: input.logger,
-      });
-
-      if (!definition) return [];
+  const definitionsById = new Map<string, RuntimeSkillDefinition>();
+  for (const entry of entriesResult.entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+    const id = basename(entry.name, ".md");
+    const content = readRuntimeBuiltinFlatSkill(input.skillsDir, id);
+    if (content === null) continue;
+    catalogBudget.retainDocument(content);
+    const definition = buildLegacyRuntimeFlatSkillDefinition({
+      id,
+      content,
+      logger: input.logger,
+      skillDocumentParserProvider: input.skillDocumentParserProvider,
+    });
+    if (definition) {
       catalogBudget.retainPath();
       catalogBudget.retainDefinition(definition);
-      return [definition];
+      definitionsById.set(id, definition);
     }
+  }
 
-    if (entry.isDirectory()) {
-      const content = readRuntimeBuiltinDirectorySkill(input.skillsDir, entry.name);
-      if (content === null) {
-        return [];
-      }
-      catalogBudget.retainDocument(content);
-      const references = listRuntimeBuiltinSkillReferences(input.skillsDir, entry.name);
-      for (const _reference of references) catalogBudget.retainPath();
-
-      const definition = buildRuntimeSkillDefinition({
-        id: entry.name,
-        content,
-        references,
-        logger: input.logger,
-      });
-
-      if (!definition) return [];
+  for (const entry of entriesResult.entries) {
+    if (!entry.isDirectory()) continue;
+    const content = readRuntimeBuiltinDirectorySkill(input.skillsDir, entry.name);
+    if (content === null) continue;
+    catalogBudget.retainDocument(content);
+    definitionsById.delete(entry.name);
+    const references = listRuntimeBuiltinSkillReferences(input.skillsDir, entry.name);
+    for (const _reference of references) catalogBudget.retainPath();
+    const definition = buildRuntimeDirectorySkillDefinition({
+      id: entry.name,
+      content,
+      references,
+      logger: input.logger,
+      skillDocumentParserProvider: input.skillDocumentParserProvider,
+    });
+    if (definition) {
       catalogBudget.retainPath();
       catalogBudget.retainDefinition(definition);
-      return [definition];
+      definitionsById.set(entry.name, definition);
     }
+  }
 
-    return [];
-  });
-  return sortSkillsById(definitions);
+  return sortSkillsById(definitionsById.values());
 }
 
 /** Return runtime project instructions. */
@@ -273,6 +622,14 @@ export async function getRuntimeProjectInstructions(
       })
     );
 
+    if (file !== null && file.path !== filePath) {
+      throw new TypeError(
+        `Project instruction response path "${file.path}" did not match requested path "${filePath}"`,
+      );
+    }
+    if (file !== null && !isRuntimeProjectFileContent(file.content)) {
+      throw new RangeError("Project instruction content exceeds the shared Skill file budget");
+    }
     if (file?.content) {
       assertCatalogContent(file.content, "Project instructions");
       return file.content;
@@ -288,52 +645,51 @@ export async function getRuntimeProjectSkillCatalog(
 ): Promise<RuntimeSkillDefinition[]> {
   const budget = createCatalogBudget(input.operationBudget);
   const catalogBudget = new RuntimeSkillCatalogBudget();
+  const builtinSkills = requireBuiltinSkills(input.builtinSkills, catalogBudget);
   const skillPrefixes = getSkillPaths(input);
-  for (const definition of input.builtinSkills) retainExistingDefinition(catalogBudget, definition);
   const filesByPath = new Map<string, RuntimeProjectFileListItem>();
   const listingBudget = createRuntimeProjectFileListingBudget();
   let hasAvailableListing = false;
   for (const prefix of new Set([...skillPrefixes, "agents"])) {
     const prefixWithSlash = `${prefix}/`;
-    const files = await budget.run((abortSignal) =>
-      input.getProjectFiles({
-        projectId: input.projectId,
-        authToken: input.authToken,
-        branchId: input.branchId,
-        pathPrefix: prefix,
-        maximumEntries: SKILL_SUBDIR_MAX_ENTRIES,
-        listingBudget,
-        abortSignal,
-        timeoutMs: budget.remainingMs(),
-      })
+    const files = snapshotProjectFileList(
+      await budget.run((abortSignal) =>
+        input.getProjectFiles({
+          projectId: input.projectId,
+          authToken: input.authToken,
+          branchId: input.branchId,
+          pathPrefix: prefix,
+          maximumEntries: SKILL_CATALOG_MAX_PATH_ENTRIES,
+          listingBudget,
+          abortSignal,
+          timeoutMs: budget.remainingMs(),
+        })
+      ),
     );
-    if (!files) {
-      continue;
-    }
+    if (!files) continue;
     hasAvailableListing = true;
     for (const file of files) {
-      // Do not trust custom clients to honor the server-side catalog filter.
-      if (!file.path.startsWith(prefixWithSlash)) {
-        continue;
-      }
+      // Custom clients may ignore the server-side catalog filter.
+      if (!file.path.startsWith(prefixWithSlash)) continue;
       if (!filesByPath.has(file.path)) catalogBudget.retainPath();
       filesByPath.set(file.path, file);
-      if (filesByPath.size > SKILL_SUBDIR_MAX_ENTRIES) {
-        throw new RangeError(
-          `Project skill file listing may contain at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
-        );
-      }
     }
   }
   if (!hasAvailableListing) {
-    return [...input.builtinSkills];
+    return [...builtinSkills];
   }
-  const allFiles = [...filesByPath.values()];
+  const allFiles = Object.freeze([...filesByPath.values()]);
   if (allFiles.length === 0) {
-    return [...input.builtinSkills];
+    return [...builtinSkills];
   }
 
   const projectSkillsById = new Map<string, RuntimeSkillDefinition>();
+  // A declared project skill shadows lower-precedence flat files and built-ins
+  // even when its content is missing or invalid. Falling through on a broken
+  // higher-precedence policy would re-enable capabilities unexpectedly.
+  const claimedProjectSkillIds = new Set<string>();
+  const agentIds = getProjectAgentIds(allFiles);
+  assertUniqueCapabilityNamespaces(agentIds);
 
   for (const prefix of skillPrefixes) {
     const prefixWithSlash = `${prefix}/`;
@@ -350,111 +706,148 @@ export async function getRuntimeProjectSkillCatalog(
       .map((file) => file.path);
 
     const dirPaths = allFiles
-      .filter((file) => file.path.startsWith(prefixWithSlash) && file.path.endsWith("/SKILL.md"))
+      .filter((file) => isImmediateDirectorySkillPath(file.path, prefixWithSlash))
       .map((file) => file.path);
 
-    const skillPaths = [...dirPaths.sort(), ...flatPaths.sort()];
-    if (skillPaths.length === 0) {
+    const candidates = [...dirPaths.sort(), ...flatPaths.sort()].flatMap((path) => {
+      const isFlat = path.endsWith(".md") && !path.endsWith("/SKILL.md");
+      const id = getProjectSkillId(path, isFlat);
+      if (!id || !claimProjectSkillId(claimedProjectSkillIds, id)) return [];
+      return [{ id, isFlat, path }];
+    });
+    if (candidates.length === 0) {
       continue;
     }
 
-    for (const path of skillPaths) {
-      const file = await budget.run((abortSignal) =>
-        input.getProjectFile({
-          projectId: input.projectId,
-          authToken: input.authToken,
-          branchId: input.branchId,
-          path,
-          maximumContentCharacters: SKILL_DOCUMENT_MAX_CHARACTERS,
-          abortSignal,
-          timeoutMs: budget.remainingMs(),
-        })
-      );
+    const skillFiles = await mapWithConcurrency(
+      candidates,
+      PROJECT_SKILL_FETCH_CONCURRENCY,
+      ({ path }) => fetchProjectSkillDocument(input, path, budget, catalogBudget),
+    );
+
+    for (let index = 0; index < skillFiles.length; index += 1) {
+      budget.throwIfTerminated();
+      const candidate = candidates[index]!;
+      const file = skillFiles[index];
       if (!file?.content) {
         continue;
       }
-      assertCatalogContent(file.content, "Skill document");
-      catalogBudget.retainDocument(file.content);
 
-      const isFlat = file.path.endsWith(".md") && !file.path.endsWith("/SKILL.md");
-      const id = getProjectSkillId(file.path, isFlat);
-      if (!id) {
-        continue;
-      }
+      const definition = candidate.isFlat
+        ? buildLegacyRuntimeFlatSkillDefinition({
+          id: candidate.id,
+          content: file.content,
+          sourcePath: candidate.path,
+          logger: input.logger,
+          skillDocumentParserProvider: input.skillDocumentParserProvider,
+        })
+        : buildRuntimeDirectorySkillDefinition({
+          id: candidate.id,
+          content: file.content,
+          references: getProjectSkillReferences({
+            allFiles,
+            file: { ...file, path: candidate.path },
+            isFlat: false,
+          }),
+          sourcePath: candidate.path,
+          logger: input.logger,
+          skillDocumentParserProvider: input.skillDocumentParserProvider,
+        });
 
-      const definition = buildRuntimeSkillDefinition({
-        id,
-        content: file.content,
-        references: getProjectSkillReferences({ allFiles, file, isFlat }),
-        sourcePath: file.path,
-        logger: input.logger,
-      });
-
-      if (definition && !projectSkillsById.has(definition.id)) {
+      if (definition) {
         catalogBudget.retainDefinition(definition);
         projectSkillsById.set(definition.id, definition);
       }
     }
+  }
+
+  const skillIdAdmission = new SkillIdAdmission();
+  for (const id of claimedProjectSkillIds) {
+    skillIdAdmission.claim({ id, source: "project-global skill" });
   }
 
   // Colocated (agent-owned) skills: agents/{id}/SKILL.md (the agent's own
   // skill) and agents/{id}/skills/{sub}/SKILL.md. Registered with owner
   // metadata so per-run filtering and the source-path loader can apply the
   // one owner-aware rule; ids match framework/control-plane discovery.
-  const colocatedPaths = allFiles
-    .map((file) => file.path)
-    .filter((path) => getColocatedSkillIdentity(path) !== null)
-    .sort();
+  const colocatedCandidates = allFiles
+    .map((file) => ({
+      identity: getColocatedSkillIdentity(file.path),
+      path: file.path,
+    }))
+    .filter(
+      (
+        candidate,
+      ): candidate is { identity: ColocatedSkillIdentity; path: string } =>
+        candidate.identity !== null && agentIds.has(candidate.identity.ownerAgentId),
+    )
+    .sort((left, right) => left.path.localeCompare(right.path))
+    .filter((candidate) => {
+      const admission = skillIdAdmission.claim({
+        id: candidate.identity.id,
+        source: `agent-owned skill for agent "${candidate.identity.ownerAgentId}"`,
+        ownerAgentId: candidate.identity.ownerAgentId,
+      });
+      if (!admission.accepted) {
+        projectSkillsById.delete(candidate.identity.id);
+        input.logger?.error?.(admission.error.message, {
+          skillId: candidate.identity.id,
+          existingOwnerAgentId: admission.error.existing.ownerAgentId,
+          incomingOwnerAgentId: admission.error.incoming.ownerAgentId,
+        });
+        return false;
+      }
+      return claimProjectSkillId(claimedProjectSkillIds, candidate.identity.id);
+    })
+    .filter((candidate) => !skillIdAdmission.isRejected(candidate.identity.id));
 
-  if (colocatedPaths.length > 0) {
-    for (const path of colocatedPaths) {
-      const file = await budget.run((abortSignal) =>
-        input.getProjectFile({
-          projectId: input.projectId,
-          authToken: input.authToken,
-          branchId: input.branchId,
-          path,
-          maximumContentCharacters: SKILL_DOCUMENT_MAX_CHARACTERS,
-          abortSignal,
-          timeoutMs: budget.remainingMs(),
-        })
-      );
+  if (colocatedCandidates.length > 0) {
+    const colocatedFiles = await mapWithConcurrency(
+      colocatedCandidates,
+      PROJECT_SKILL_FETCH_CONCURRENCY,
+      ({ path }) => fetchProjectSkillDocument(input, path, budget, catalogBudget),
+    );
+
+    for (let index = 0; index < colocatedFiles.length; index += 1) {
+      budget.throwIfTerminated();
+      const candidate = colocatedCandidates[index]!;
+      const file = colocatedFiles[index];
       if (!file?.content) {
         continue;
       }
-      assertCatalogContent(file.content, "Colocated skill document");
-      catalogBudget.retainDocument(file.content);
-      const identity = getColocatedSkillIdentity(file.path);
-      if (!identity) {
-        continue;
-      }
 
-      const definition = buildRuntimeSkillDefinition({
-        id: identity.id,
+      const definition = buildRuntimeDirectorySkillDefinition({
+        id: candidate.identity.id,
         content: file.content,
-        references: getProjectSkillReferences({ allFiles, file, isFlat: false }),
-        ownerAgentId: identity.ownerAgentId,
-        shortName: identity.shortName,
-        sourcePath: file.path,
+        references: getProjectSkillReferences({
+          allFiles,
+          file: { ...file, path: candidate.path },
+          isFlat: false,
+        }),
+        ownerAgentId: candidate.identity.ownerAgentId,
+        shortName: candidate.identity.shortName,
+        sourcePath: candidate.path,
         logger: input.logger,
+        skillDocumentParserProvider: input.skillDocumentParserProvider,
       });
 
-      if (definition && !projectSkillsById.has(definition.id)) {
+      if (definition) {
         catalogBudget.retainDefinition(definition);
         projectSkillsById.set(definition.id, definition);
       }
     }
   }
 
-  if (projectSkillsById.size === 0) {
-    return [...input.builtinSkills];
-  }
-
-  const mergedSkillsById = new Map(input.builtinSkills.map((skill) => [skill.id, skill]));
+  const mergedSkillsById = new Map(
+    builtinSkills
+      .filter((skill) => !claimedProjectSkillIds.has(skill.id))
+      .map((skill) => [skill.id, skill]),
+  );
   for (const skill of projectSkillsById.values()) {
     mergedSkillsById.set(skill.id, skill);
   }
 
+  budget.throwIfTerminated();
   return sortSkillsById(mergedSkillsById.values());
 }
 
@@ -472,12 +865,40 @@ function sanitizeCapabilityNamespace(agentId: string): string {
 
 const COLOCATED_OWN_SKILL_REGEX = /^agents\/([^/]+)\/SKILL\.md$/;
 const COLOCATED_NESTED_SKILL_REGEX = /^agents\/([^/]+)\/skills\/([^/]+)\/SKILL\.md$/;
+const COLOCATED_AGENT_DEFINITION_REGEX = /^agents\/([^/]+)\/AGENT\.md$/;
 
 type ColocatedSkillIdentity = {
   id: string;
   ownerAgentId: string;
   shortName: string;
 };
+
+function getProjectAgentIds(
+  allFiles: readonly RuntimeProjectFileListItem[],
+): ReadonlySet<string> {
+  const agentIds = new Set<string>();
+  for (const file of allFiles) {
+    const agentId = file.path.match(COLOCATED_AGENT_DEFINITION_REGEX)?.[1];
+    if (agentId) {
+      agentIds.add(agentId);
+    }
+  }
+  return agentIds;
+}
+
+function assertUniqueCapabilityNamespaces(agentIds: ReadonlySet<string>): void {
+  const ownersByNamespace = new Map<string, string>();
+  for (const agentId of [...agentIds].sort()) {
+    const namespace = sanitizeCapabilityNamespace(agentId);
+    const existingAgentId = ownersByNamespace.get(namespace);
+    if (existingAgentId && existingAgentId !== agentId) {
+      throw new TypeError(
+        `Agent ids "${existingAgentId}" and "${agentId}" collide after sanitized capability namespace "${namespace}"`,
+      );
+    }
+    ownersByNamespace.set(namespace, agentId);
+  }
+}
 
 function getColocatedSkillIdentity(path: string): ColocatedSkillIdentity | null {
   const nested = path.match(COLOCATED_NESTED_SKILL_REGEX);
@@ -521,16 +942,35 @@ function getProjectSkillReferences(input: {
   }
 
   const skillRootPrefix = input.file.path.replace(/SKILL\.md$/, "");
-  const refsPrefix = `${skillRootPrefix}references/`;
+  const references = new Set<string>();
 
-  const references = input.allFiles
-    .filter((file) => file.path.startsWith(refsPrefix))
-    .map((file) => file.path.slice(skillRootPrefix.length))
-    .sort();
-  if (references.length > SKILL_SUBDIR_MAX_ENTRIES) {
-    throw new RangeError(
-      `Skill references may contain at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
-    );
+  for (const directory of SKILL_READABLE_DIRS) {
+    const directoryPrefix = `${skillRootPrefix}${directory}/`;
+    let directoryEntryCount = 0;
+    for (const file of input.allFiles) {
+      if (!file.path.startsWith(directoryPrefix)) {
+        continue;
+      }
+
+      const relativePath = file.path.slice(skillRootPrefix.length);
+      if (references.has(relativePath)) {
+        continue;
+      }
+      directoryEntryCount += 1;
+      if (directoryEntryCount > SKILL_SUBDIR_MAX_ENTRIES) {
+        throw new RangeError(
+          `Project skill ${directory}/ may contain at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
+        );
+      }
+
+      references.add(relativePath);
+      if (references.size > SKILL_LOADABLE_REFERENCE_MAX_ENTRIES) {
+        throw new RangeError(
+          `Project skill may advertise at most ${SKILL_LOADABLE_REFERENCE_MAX_ENTRIES} readable files`,
+        );
+      }
+    }
   }
-  return references;
+
+  return [...references].sort();
 }

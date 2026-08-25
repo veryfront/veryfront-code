@@ -4,35 +4,30 @@ import { zodToJsonSchema } from "./schema/zod-json-schema.ts";
 import { agentLogger } from "#veryfront/utils";
 import { createError, getErrorMessage, INVALID_ARGUMENT, toError } from "#veryfront/errors";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import {
+  isContractSchema,
+  isInferredJsonSchemaObject,
+  snapshotJsonSchemaObject,
+} from "#veryfront/schemas/schema-input.ts";
+import {
+  canIdentifyProxyWithoutHooks,
+  isProxyWithoutHooks,
+} from "#veryfront/platform/compat/error-introspection.ts";
 
-interface ContractSchemaShape {
-  __zod?: unknown;
-  _output?: unknown;
-  parse: (input: unknown) => unknown;
-  safeParse?: (input: unknown) => unknown;
+const apply = Reflect.apply;
+const arrayIsArray = Array.isArray;
+const objectCreate = Object.create;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwnProperty = Object.prototype.hasOwnProperty;
+const ownKeys = Reflect.ownKeys;
+const structuredCloneValue = globalThis.structuredClone;
+
+function hasOwn(object: PropertyDescriptor, key: PropertyKey): boolean {
+  return apply(objectHasOwnProperty, object, [key]) as boolean;
 }
 
 interface SchemaWithParse {
   parse: (input: unknown) => unknown;
-}
-
-function snapshotJsonSchemaObject(value: unknown): JsonSchema | undefined {
-  const snapshot = snapshotBoundedJsonValue(value);
-  return snapshot.success &&
-      typeof snapshot.value === "object" &&
-      snapshot.value !== null &&
-      !Array.isArray(snapshot.value)
-    ? snapshot.value
-    : undefined;
-}
-
-function isContractSchema(value: unknown): value is ContractSchemaShape {
-  if (value === null || typeof value !== "object") return false;
-  if ("__zod" in value) return true;
-  return (
-    "_output" in value &&
-    typeof (value as { parse?: unknown }).parse === "function"
-  );
 }
 
 function hasSchemaParse(schema: unknown): schema is SchemaWithParse {
@@ -99,7 +94,7 @@ function convertSchemaToJson(
   }
 
   const jsonSchema = snapshotJsonSchemaObject(schema);
-  if (jsonSchema && (!permissive || Object.keys(jsonSchema).length > 0)) {
+  if (jsonSchema && isInferredJsonSchemaObject(jsonSchema)) {
     logSchemaResult(logPrefix, toolId, "Raw JSON", jsonSchema);
     return jsonSchema;
   }
@@ -117,31 +112,56 @@ function snapshotMcpConfig(
   toolId: string,
 ): ToolConfig["mcp"] | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (typeof value !== "object" || value === null) {
+    schemaError(toolId, "MCP configuration must be a bounded JSON object");
+  }
+  let inspectedValue: object = value;
+  if (canIdentifyProxyWithoutHooks) {
+    if (isProxyWithoutHooks(value)) {
+      schemaError(toolId, "MCP configuration must contain only data properties");
+    }
+  } else {
+    if (typeof structuredCloneValue !== "function") {
+      schemaError(toolId, "MCP configuration must contain only data properties");
+    }
+    // Local MCP metadata crosses the same edge-runtime trust boundary as
+    // provider-bound JSON: hosts without no-hook Proxy detection use the
+    // captured structured clone primitive to reject Proxies before reflection
+    // and then validate the owned clone.
+    try {
+      inspectedValue = apply(structuredCloneValue, globalThis, [value]) as object;
+    } catch {
+      schemaError(toolId, "MCP configuration must contain only data properties");
+    }
+  }
+  if (arrayIsArray(inspectedValue)) {
     schemaError(toolId, "MCP configuration must be a bounded JSON object");
   }
 
-  const canonicalInput: Record<string, unknown> = {};
+  const canonicalInput = objectCreate(null) as Record<string, unknown>;
   let keys: PropertyKey[];
   try {
-    keys = Reflect.ownKeys(value);
+    keys = ownKeys(inspectedValue);
   } catch {
     schemaError(toolId, "MCP configuration must be a bounded JSON object");
   }
-  for (const key of keys) {
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
     if (typeof key !== "string") {
       schemaError(toolId, "MCP configuration must be a bounded JSON object");
     }
     let descriptor: PropertyDescriptor | undefined;
     try {
-      descriptor = Object.getOwnPropertyDescriptor(value, key);
+      descriptor = objectGetOwnPropertyDescriptor(inspectedValue, key);
     } catch {
       schemaError(toolId, "MCP configuration must contain only data properties");
     }
-    if (!descriptor || !("value" in descriptor)) {
+    if (!descriptor || !hasOwn(descriptor, "value")) {
       schemaError(toolId, "MCP configuration must contain only data properties");
     }
     if (descriptor.enumerable && descriptor.value !== undefined) {
+      // A null prototype makes assignment safe even for `__proto__` and other
+      // special names without consulting inherited setters.
       canonicalInput[key] = descriptor.value;
     }
   }
@@ -151,7 +171,7 @@ function snapshotMcpConfig(
     !snapshot.success ||
     typeof snapshot.value !== "object" ||
     snapshot.value === null ||
-    Array.isArray(snapshot.value)
+    arrayIsArray(snapshot.value)
   ) {
     schemaError(toolId, "MCP configuration must be a bounded JSON object");
   }

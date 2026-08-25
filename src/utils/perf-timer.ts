@@ -1,4 +1,4 @@
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getEnv } from "#veryfront/platform/compat/process/env.ts";
 import { serverLogger } from "./logger/logger.ts";
 
 const logger = serverLogger.component("perf");

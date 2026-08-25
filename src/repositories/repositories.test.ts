@@ -204,7 +204,23 @@ describe("SecureFsRepository", () => {
       context: createMockRepositoryContext(),
     });
 
-    await expect(repository.readFile("../outside.txt")).rejects.toThrow();
+    await expect(repository.readFile("../outside.txt")).rejects.toThrow(
+      /outside base directory/,
+    );
+  });
+
+  it("refuses to read an existing file outside the repository root", async () => {
+    const adapter = createMockAdapter();
+    adapter.fs.files.set("/outside.txt", "secret");
+    const repository = createFileSystemRepository({
+      baseDir: "/project",
+      adapter,
+      context: createMockRepositoryContext(),
+    });
+
+    await expect(repository.readFile("../outside.txt")).rejects.toThrow(
+      /outside base directory/,
+    );
   });
 
   it("publishes immutable exact and snapshot read capabilities", async () => {
@@ -222,6 +238,13 @@ describe("SecureFsRepository", () => {
     expect(
       [...await repository.readFileSnapshotWithinLimit!("asset.bin", 3)],
     ).toEqual([97, 98, 99]);
+
+    await expect(repository.readFileBytesWithinLimit!("asset.bin", 2)).rejects.toThrow(
+      RangeError,
+    );
+    await expect(repository.readFileSnapshotWithinLimit!("asset.bin", 2)).rejects.toThrow(
+      /exceeds byte limit of 2/,
+    );
 
     for (const key of ["readFileBytesWithinLimit", "readFileSnapshotWithinLimit"] as const) {
       const descriptor = Object.getOwnPropertyDescriptor(repository, key);
@@ -296,7 +319,6 @@ describe("extractRepositoryContext", () => {
       projectDir: "/path/to/project",
       adapter: {} as HandlerContext["adapter"],
       securityConfig: null,
-      cspUserHeader: null,
     };
   }
 
@@ -351,6 +373,30 @@ describe("extractRepositoryContext", () => {
     const ctx = extractRepositoryContext(handlerCtx as HandlerContext);
     expect(ctx.projectId).toBe("project-from-id");
     expect(ctx.versionId).toBe("content-source-123");
+  });
+
+  it("falls back to enriched.releaseId when neither releaseId nor contentSourceId is present", () => {
+    const handlerCtx: Partial<HandlerContext> = {
+      ...createBaseHandlerCtx(),
+      projectId: "project-from-id",
+      enriched: {
+        releaseId: "release-789",
+      } as HandlerContext["enriched"],
+    };
+
+    const ctx = extractRepositoryContext(handlerCtx as HandlerContext);
+    expect(ctx.versionId).toBe("release-789");
+  });
+
+  it("prefers projectSlug over projectId", () => {
+    const handlerCtx: Partial<HandlerContext> = {
+      ...createBaseHandlerCtx(),
+      projectSlug: "my-project",
+      projectId: "project-from-id",
+    };
+
+    const ctx = extractRepositoryContext(handlerCtx as HandlerContext);
+    expect(ctx.projectId).toBe("my-project");
   });
 
   it("prefers resolvedEnvironment over requestContext.mode", () => {

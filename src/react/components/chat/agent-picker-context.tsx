@@ -16,8 +16,24 @@ export interface AgentPickerContextValue {
   onManage?: () => void;
 }
 
-const [AgentPickerContext, useAgentPicker] = createStrictContext<AgentPickerContextValue>(
+const [AgentPickerContext, useAgentPickerStrict] = createStrictContext<AgentPickerContextValue>(
   "useAgentPicker",
   "an AgentPicker",
 );
-export { AgentPickerContext, useAgentPicker };
+
+/**
+ * Read the enclosing `<AgentPicker>`'s selection and open state (selected id,
+ * `onSelect`, `open`/`setOpen`, and the optional `onCreate`/`onManage`
+ * actions) from a custom sub-part. Throws when used outside an `AgentPicker`.
+ *
+ * @example
+ * ```tsx
+ * function AgentPickerTrigger() {
+ *   const { open, setOpen, value } = useAgentPicker();
+ *   return <button onClick={() => setOpen(!open)}>{value ?? "Pick agent"}</button>;
+ * }
+ * ```
+ */
+export const useAgentPicker = useAgentPickerStrict;
+
+export { AgentPickerContext };

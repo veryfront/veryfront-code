@@ -9,8 +9,10 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import {
   createUploadId,
+  INLINE_ATTACHMENT_MAX_BYTES,
   parseChatUploadResponse,
   useUpload,
   type UseUploadResult,
@@ -252,7 +254,7 @@ describe("useUpload", () => {
         return createObjectURL(blob);
       };
       const Capture = (): null => {
-        latest = useUpload({ api: "/api/uploads" });
+        latest = useUpload({ url: "/api/uploads" });
         return null;
       };
       const root = createRoot(document.getElementById("root")!);
@@ -298,7 +300,7 @@ describe("useUpload", () => {
 
     try {
       const Capture = (): null => {
-        latest = useUpload({ api: "/api/uploads" });
+        latest = useUpload({ url: "/api/uploads" });
         return null;
       };
       const root = createRoot(document.getElementById("root")!);
@@ -323,6 +325,50 @@ describe("useUpload", () => {
     }
   });
 
+  it("classifies every transport failure as an errored attachment", async () => {
+    const dom = installDom();
+    PendingXMLHttpRequest.instances = [];
+    let latest: UseUploadResult | null = null;
+
+    try {
+      const Capture = (): null => {
+        latest = useUpload({ url: "/api/uploads" });
+        return null;
+      };
+      const root = createRoot(document.getElementById("root")!);
+      flushSync(() => root.render(<Capture />));
+      flushSync(() =>
+        latest?.upload([
+          new File(["a"], "rejected.txt"),
+          new File(["b"], "unparsable.txt"),
+          new File(["c"], "unsafe.txt"),
+          new File(["d"], "offline.txt"),
+        ])
+      );
+
+      const [rejected, unparsable, unsafe, offline] = PendingXMLHttpRequest.instances;
+      flushSync(() => rejected!.respond(500, '{"url":"https://cdn.example.com/report.txt"}'));
+      flushSync(() => unparsable!.respond(200, "<html>not json</html>"));
+      flushSync(() => unsafe!.respond(200, '{"url":"javascript:alert(1)"}'));
+      flushSync(() => offline!.onerror?.());
+
+      const attachments = (latest as unknown as UseUploadResult).attachments;
+      assertEquals(
+        attachments.map((attachment) => attachment.state),
+        ["error", "error", "error", "error"],
+        "a non-2xx status, an unparsable body, an unsafe URL and a transport error all error out",
+      );
+      assertEquals(
+        attachments.map((attachment) => attachment.url),
+        [undefined, undefined, undefined, undefined],
+        "a failed upload never admits a URL",
+      );
+      await unmount(root);
+    } finally {
+      dom.restore();
+    }
+  });
+
   it("aborts pending uploads and releases previews on unmount", async () => {
     const dom = installDom();
     PendingXMLHttpRequest.instances = [];
@@ -330,7 +376,7 @@ describe("useUpload", () => {
 
     try {
       const Capture = (): null => {
-        latest = useUpload({ api: "/api/uploads" });
+        latest = useUpload({ url: "/api/uploads" });
         return null;
       };
       const rootElement = document.getElementById("root");
@@ -365,7 +411,7 @@ describe("useUpload", () => {
 
     try {
       const Capture = (): null => {
-        latest = useUpload({ api: "/api/uploads" });
+        latest = useUpload({ url: "/api/uploads" });
         return null;
       };
       const root = createRoot(document.getElementById("root")!);
@@ -405,7 +451,7 @@ describe("useUpload", () => {
 
     try {
       const Capture = (): null => {
-        latest = useUpload({ api: "/api/uploads" });
+        latest = useUpload({ url: "/api/uploads" });
         return null;
       };
       const root = createRoot(document.getElementById("root")!);
@@ -443,17 +489,17 @@ describe("useUpload", () => {
     let latest: UseUploadResult | null = null;
 
     try {
-      const Capture = ({ api }: { api: string }): null => {
-        latest = useUpload({ api });
+      const Capture = ({ url }: { url: string }): null => {
+        latest = useUpload({ url });
         return null;
       };
       const root = createRoot(document.getElementById("root")!);
-      flushSync(() => root.render(<Capture api="/old" />));
+      flushSync(() => root.render(<Capture url="/old" />));
       flushSync(() => latest?.upload([new File(["x"], "report.txt")]));
       const oldRequest = PendingXMLHttpRequest.instances[0]!;
       const id = (latest as unknown as UseUploadResult).attachments[0]!.id;
 
-      flushSync(() => root.render(<Capture api="/new" />));
+      flushSync(() => root.render(<Capture url="/new" />));
       await new Promise((resolve) => setTimeout(resolve, 0));
       flushSync(() => {});
       assertEquals(oldRequest.aborted, true);
@@ -497,14 +543,14 @@ describe("useUpload", () => {
         return null;
       };
       const Capture = (
-        { api, authorization, run }: { api: string; authorization: string; run: boolean },
+        { url, authorization, run }: { url: string; authorization: string; run: boolean },
       ): React.JSX.Element => {
-        latest = useUpload({ api, headers: { authorization } });
+        latest = useUpload({ url, headers: { authorization } });
         return <Child upload={latest.upload} run={run} />;
       };
       const root = createRoot(document.getElementById("root")!);
-      flushSync(() => root.render(<Capture api="/old" authorization="Bearer old" run={false} />));
-      flushSync(() => root.render(<Capture api="/new" authorization="Bearer new" run />));
+      flushSync(() => root.render(<Capture url="/old" authorization="Bearer old" run={false} />));
+      flushSync(() => root.render(<Capture url="/new" authorization="Bearer new" run />));
 
       assertEquals(PendingXMLHttpRequest.instances.length, 1);
       assertEquals(PendingXMLHttpRequest.instances[0]?.url, "/new");
@@ -526,7 +572,7 @@ describe("useUpload", () => {
 
     try {
       const Capture = (): null => {
-        latest = useUpload({ api: "/api/uploads" });
+        latest = useUpload({ url: "/api/uploads" });
         return null;
       };
       const root = createRoot(document.getElementById("root")!);
@@ -584,6 +630,52 @@ describe("useUpload", () => {
     }
   });
 
+  it("rejects a guest-mode file over the inline size cap without reading it", async () => {
+    const dom = installDom();
+    PendingFileReader.instances = [];
+    let latest: UseUploadResult | null = null;
+
+    try {
+      const Capture = (): null => {
+        latest = useUpload();
+        return null;
+      };
+      const root = createRoot(document.getElementById("root")!);
+      flushSync(() => root.render(<Capture />));
+      flushSync(() =>
+        latest?.upload([new File([new Uint8Array(INLINE_ATTACHMENT_MAX_BYTES + 1)], "over.bin")])
+      );
+
+      assertEquals(
+        (latest as unknown as UseUploadResult).attachments[0]?.state,
+        "error",
+        "an oversized guest-mode file settles as error",
+      );
+      assertEquals(
+        PendingFileReader.instances.length,
+        0,
+        "the oversized file is never handed to a FileReader",
+      );
+
+      flushSync(() =>
+        latest?.upload([new File([new Uint8Array(INLINE_ATTACHMENT_MAX_BYTES)], "at-cap.bin")])
+      );
+      assertEquals(
+        PendingFileReader.instances.length,
+        1,
+        "a file at exactly the cap is still read inline",
+      );
+      assertEquals(
+        (latest as unknown as UseUploadResult).attachments[1]?.state,
+        "uploading",
+        "a file at exactly the cap stays in flight",
+      );
+      await unmount(root);
+    } finally {
+      dom.restore();
+    }
+  });
+
   it("retained callbacks are inert after unmount and allocate no previews", async () => {
     const dom = installDom();
     PendingXMLHttpRequest.instances = [];
@@ -591,7 +683,7 @@ describe("useUpload", () => {
 
     try {
       const Capture = (): null => {
-        latest = useUpload({ api: "/api/uploads" });
+        latest = useUpload({ url: "/api/uploads" });
         return null;
       };
       const root = createRoot(document.getElementById("root")!);
@@ -620,9 +712,9 @@ describe("useUpload", () => {
 
     try {
       const Capture = (
-        { api, suspend = false }: { api: string; suspend?: boolean },
+        { url, suspend = false }: { url: string; suspend?: boolean },
       ): null => {
-        const result = useUpload({ api });
+        const result = useUpload({ url });
         React.useLayoutEffect(() => {
           committed = result;
         });
@@ -636,7 +728,7 @@ describe("useUpload", () => {
       flushSync(() =>
         root.render(
           <React.Suspense fallback={null}>
-            <Capture api="/committed" />
+            <Capture url="/committed" />
           </React.Suspense>,
         )
       );
@@ -646,11 +738,14 @@ describe("useUpload", () => {
       React.startTransition(() => {
         root.render(
           <React.Suspense fallback={null}>
-            <Capture api="/abandoned" suspend />
+            <Capture url="/abandoned" suspend />
           </React.Suspense>,
         );
       });
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await waitFor(() => attemptedSuspendedRender, {
+        interval: 1,
+        message: "Concurrent upload render did not start",
+      });
       assertEquals(attemptedSuspendedRender, true);
       assertEquals(request.aborted, false);
 
@@ -668,7 +763,7 @@ describe("useUpload", () => {
       flushSync(() =>
         root.render(
           <React.Suspense fallback={null}>
-            <Capture api="/committed" />
+            <Capture url="/committed" />
           </React.Suspense>,
         )
       );

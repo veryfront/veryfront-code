@@ -46,6 +46,10 @@ import {
 } from "../runtime/tool-exposure.ts";
 import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
 import type { HostedHostToolPolicy } from "./chat-runtime-tool-assembly.ts";
+import {
+  createHostedRunEventWriterCapabilityForRequest,
+  runWithHostedRunEventWriterCapability,
+} from "./child-run-event-writer-token.ts";
 
 /** Request payload for normalized hosted chat. */
 export type NormalizedHostedChatRequest = {
@@ -120,6 +124,8 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
   rootRunContext?: HostedChatRuntimePreparationRootRunContext;
   /** Trusted checkpoint resolved after hosted service authentication. */
   serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
+  /** Verified integration tool grant for this run, resolved by the control plane. */
+  serverResolvedIntegrationToolNames?: readonly string[];
   /** Service-owned authorization ceiling for Framework host tools. */
   hostToolPolicy?: HostedHostToolPolicy;
   resolveModelId: (modelId: string | undefined) => string | undefined;
@@ -264,6 +270,8 @@ export type HostedChatExecutionPreparationInput<
   contextBudget?: HostedChatContextBudgetOptions;
   /** Trusted checkpoint resolved by the authenticated hosted service. */
   serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
+  /** Verified integration tool grant for this run, resolved by the control plane. */
+  serverResolvedIntegrationToolNames?: readonly string[];
   /** Service-owned authorization ceiling for Framework host tools. */
   hostToolPolicy?: HostedHostToolPolicy;
 };
@@ -422,6 +430,9 @@ export async function prepareHostedChatRuntimeCreationOptions<
       ...(input.serverResolvedToolExposureCheckpoint
         ? { serverResolvedToolExposureCheckpoint: input.serverResolvedToolExposureCheckpoint }
         : {}),
+      ...(input.serverResolvedIntegrationToolNames?.length
+        ? { serverResolvedIntegrationToolNames: input.serverResolvedIntegrationToolNames }
+        : {}),
       ...(input.request.allowDelegation !== undefined
         ? { allowDelegation: input.request.allowDelegation }
         : {}),
@@ -495,23 +506,29 @@ export async function prepareHostedChatExecution<
   HostedChatExecutionPreparationResult<TRuntimeAgentDefinition, TRuntimeResult>
 > {
   const normalized = normalizeParsedHostedChatRequest(input.request);
-  const rootRunContext = await prepareHostedConversationRootRunContext(
-    {
-      authToken: input.request.authToken,
-      runEventAppendToken: input.request.runEventAppendToken,
+  const rootRunEventWriterCapability = input.request.durableRootRun
+    ? createHostedRunEventWriterCapabilityForRequest(input.request, {
       apiUrl: input.apiUrl.toString(),
-      conversationId: input.request.conversationId,
-      projectId: input.request.projectId,
-      branchId: normalized.effectiveValidatedContext.branchId,
-      agentId: input.agentConfig.id,
-      messages: normalized.effectiveMessages,
-      parentRunId: input.request.parentRunId,
-      parentMessageId: normalized.parentMessageId,
-      providedRun: input.request.durableRootRun,
-      persistLatestUserMessageBeforeRun: input.request.persistLatestUserMessageBeforeDurableRun,
-      ...input.rootRun,
-    },
-    { abortSignal: input.abortSignal },
+      runId: input.request.durableRootRun.runId,
+    })
+    : undefined;
+  const rootRunContext = await runWithHostedRunEventWriterCapability(
+    rootRunEventWriterCapability,
+    () =>
+      prepareHostedConversationRootRunContext({
+        authToken: input.request.authToken,
+        apiUrl: input.apiUrl.toString(),
+        conversationId: input.request.conversationId,
+        projectId: input.request.projectId,
+        branchId: normalized.effectiveValidatedContext.branchId,
+        agentId: input.agentConfig.id,
+        messages: normalized.effectiveMessages,
+        parentRunId: input.request.parentRunId,
+        parentMessageId: normalized.parentMessageId,
+        providedRun: input.request.durableRootRun,
+        persistLatestUserMessageBeforeRun: input.request.persistLatestUserMessageBeforeDurableRun,
+        ...input.rootRun,
+      }, { abortSignal: input.abortSignal }),
   );
   const runtimePreparation = await prepareHostedChatRuntimeCreationOptions({
     request: input.request,
@@ -529,6 +546,7 @@ export async function prepareHostedChatExecution<
     fetchSteering: input.fetchSteering,
     buildInstructions: input.buildInstructions,
     serverResolvedToolExposureCheckpoint: input.serverResolvedToolExposureCheckpoint,
+    serverResolvedIntegrationToolNames: input.serverResolvedIntegrationToolNames,
     hostToolPolicy: input.hostToolPolicy,
   });
   const submittedFormInputResult = findSubmittedFormInputResult(normalized.effectiveMessages);
@@ -578,10 +596,14 @@ export async function prepareHostedChatExecution<
       ...budgetedContext.diagnostics,
     });
   }
-  const runtime = await input.createRuntime({
-    ...runtimePreparation.creationOptions,
-    ...(submittedFormInputResult ? { submittedFormInputResult } : {}),
-  });
+  const runtime = await runWithHostedRunEventWriterCapability(
+    rootRunEventWriterCapability,
+    () =>
+      input.createRuntime({
+        ...runtimePreparation.creationOptions,
+        ...(submittedFormInputResult ? { submittedFormInputResult } : {}),
+      }),
+  );
 
   return {
     ...normalized,

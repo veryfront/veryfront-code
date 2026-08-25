@@ -40,6 +40,7 @@ export function step(id: string, options: StepOptions): WorkflowNode {
 
   const config: StepNodeConfig = {
     type: "step",
+    description: options.description,
     agent: options.agent,
     tool: options.tool,
     input: options.input,

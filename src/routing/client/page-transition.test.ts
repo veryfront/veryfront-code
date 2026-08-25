@@ -61,6 +61,7 @@ function setupMockDOM(): {
   mockLoadingIndicator: MockElement;
   mockBody: MockElement;
   mockBodyClasses: Set<string>;
+  innerHTMLWrites: string[];
   getScrollPosition: () => { x: number; y: number };
   cleanup: () => void;
 } {
@@ -73,6 +74,7 @@ function setupMockDOM(): {
   let fallbackDocumentTitle = "Original Title";
 
   const mockRootChildren: MockElement[] = [];
+  const innerHTMLWrites: string[] = [];
   let mockRootInnerHTML = "";
 
   const mockRoot: MockElement = {
@@ -82,6 +84,7 @@ function setupMockDOM(): {
     },
     set innerHTML(value: string) {
       mockRootInnerHTML = value;
+      innerHTMLWrites.push(value);
       mockRootChildren.length = 0;
     },
     style: { opacity: "1" },
@@ -257,6 +260,7 @@ function setupMockDOM(): {
     mockLoadingIndicator,
     mockBody,
     mockBodyClasses,
+    innerHTMLWrites,
     getScrollPosition: () => ({ x: scrollToX, y: scrollToY }),
     cleanup: () => {
       (globalThis as any).document = originalDocument;
@@ -695,8 +699,49 @@ describe("PageTransition", () => {
 
         await delay(200);
 
-        assertEquals(mocks.mockRoot.innerHTML, "<main>Current</main>");
-        assertEquals(mocks.mockRoot.style?.opacity, "1");
+        assertEquals(
+          mocks.innerHTMLWrites,
+          ["<main>Current</main>"],
+          "the superseded destination must never be painted",
+        );
+        assertEquals(
+          mocks.mockRoot.innerHTML,
+          "<main>Current</main>",
+          "the newest destination is the one that commits",
+        );
+        assertEquals(
+          mocks.mockRoot.style?.opacity,
+          "1",
+          "the root is faded back in after the commit",
+        );
+      }),
+    );
+
+    it(
+      "does not commit a transition after destroy()",
+      withMocks(async (mocks) => {
+        mocks.mockRoot.innerHTML = "<main>Current</main>";
+        const pageTransition = new PageTransition(() => {});
+
+        pageTransition.updatePage(
+          { html: "<main>Next</main>", frontmatter: {} },
+          false,
+          0,
+        );
+        pageTransition.destroy();
+
+        await delay(200);
+
+        assertEquals(
+          mocks.mockRoot.innerHTML,
+          "<main>Current</main>",
+          "a destroyed transition must not commit its pending route",
+        );
+        assertEquals(
+          mocks.mockRoot.style?.opacity,
+          "1",
+          "destroy must restore the faded root",
+        );
       }),
     );
 
@@ -782,12 +827,83 @@ describe("PageTransition", () => {
     it(
       "should not perform transition when root element is missing",
       withMocks((mocks) => {
+        const attributes = new Map<string, string>([
+          ["data-vf-head", "true"],
+          ["data-vf-react-head", "true"],
+          ["name", "keywords"],
+          ["content", "previous"],
+        ]);
+        const staleReactHead: MockElement = {
+          tagName: "META",
+          getAttribute: (name) => attributes.get(name) ?? null,
+          setAttribute: (name, value) => attributes.set(name, value),
+          remove: () => {
+            const children = mocks.mockDocument.head?.children ?? [];
+            const index = children.indexOf(staleReactHead);
+            if (index !== -1) children.splice(index, 1);
+          },
+        };
+        mocks.mockDocument.head?.appendChild?.(staleReactHead);
+        mocks.mockDocument.title = "Previous";
         mocks.mockDocument.getElementById = () => null;
 
         const pageTransition = new PageTransition(() => {});
-        const data: RouteData = { html: "<div>Content</div>", frontmatter: {} };
+        const data: RouteData = {
+          html: "<div>Content</div>",
+          frontmatter: { title: "Destination", description: "Destination description" },
+        };
 
         pageTransition.updatePage(data, false, 0);
+
+        assertEquals(
+          mocks.mockDocument.title,
+          "Destination",
+          "a destination without a mount point must still update the document title",
+        );
+        assertEquals(
+          mocks.mockDocument.querySelector?.('meta[name="description"]')?.getAttribute?.(
+            "content",
+          ),
+          "Destination description",
+          "a destination without a mount point must still update the route meta tags",
+        );
+        assertEquals(
+          mocks.mockDocument.head?.children?.includes(staleReactHead),
+          false,
+          "the previous React head nodes must be retired even without a mount point",
+        );
+        assertEquals(
+          mocks.innerHTMLWrites,
+          [],
+          "a missing mount point must not paint any route content",
+        );
+      }),
+    );
+
+    it(
+      "should keep the current route when the destination reported no html",
+      withMocks(async (mocks) => {
+        // A backstop: a destination with no route content is handed to the
+        // document loader before it reaches a soft transition. If one ever
+        // arrives here anyway, it must not blank the mounted app.
+        const pageTransition = new PageTransition(() => {});
+        mocks.mockRoot.innerHTML = "Previous content";
+        mocks.mockDocument.title = "Previous";
+        const data: RouteData = { html: undefined, frontmatter: { title: "Destination" } };
+
+        pageTransition.updatePage(data, false, 0);
+        await delay(200);
+
+        assertEquals(
+          mocks.mockRoot.innerHTML,
+          "Previous content",
+          "A destination without route content must leave the live app mounted",
+        );
+        assertEquals(
+          mocks.mockDocument.title,
+          "Destination",
+          "A destination without route content must still update the document title",
+        );
       }),
     );
 
@@ -881,17 +997,41 @@ describe("PageTransition", () => {
 
     it(
       "should handle scroll errors gracefully",
-      withMocks(async () => {
+      withMocks(async (mocks) => {
         (globalThis as any).scrollTo = () => {
           throw new Error("Scroll failed");
         };
 
-        const pageTransition = new PageTransition(() => {});
-        const data: RouteData = { html: "<div>Content</div>", frontmatter: {} };
+        const previousLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
+        let reloads = 0;
+        Object.defineProperty(globalThis, "location", {
+          configurable: true,
+          writable: true,
+          value: { reload: () => reloads++ },
+        });
 
-        pageTransition.updatePage(data, false, 0);
+        try {
+          const pageTransition = new PageTransition(() => {});
+          const data: RouteData = { html: "<div>Content</div>", frontmatter: {} };
 
-        await delay(200);
+          pageTransition.updatePage(data, false, 0);
+
+          await delay(200);
+
+          assertEquals(
+            reloads,
+            0,
+            "a failing scrollTo must be contained, not escalated to a document reload",
+          );
+          assertEquals(
+            mocks.mockRoot.innerHTML,
+            "<div>Content</div>",
+            "the transition still commits when scrolling fails",
+          );
+        } finally {
+          if (previousLocation) Object.defineProperty(globalThis, "location", previousLocation);
+          else delete (globalThis as Record<string, unknown>).location;
+        }
       }),
     );
   });

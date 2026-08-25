@@ -147,7 +147,7 @@ interface RequestScopeBinding<T> {
 
 function trackRegistryManager<T>(manager: ProjectScopedRegistryManager<T>): void {
   const reference = new WeakRef(
-    manager as unknown as ProjectScopedRegistryManager<unknown>,
+    manager as ProjectScopedRegistryManager<unknown>,
   );
   registryManagerReferences.add(reference);
   registryManagerFinalizer.register(manager, reference, reference);

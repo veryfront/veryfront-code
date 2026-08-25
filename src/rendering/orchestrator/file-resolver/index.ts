@@ -55,6 +55,7 @@ export async function findSourceFile(
   basePath: string,
   projectDir: string,
   adapter: RuntimeAdapter,
+  options: { onLegacyComponentsFallback?: () => void } = {},
 ): Promise<string | null> {
   // When the specifier already carries an explicit source extension
   // (e.g. `@/components/Welcome.tsx`), the literal on-disk path must be a
@@ -68,12 +69,14 @@ export async function findSourceFile(
     if (hasExplicitExt) directBases.push(join(projectDir, basePath));
     directBases.push(join(projectDir, stem));
 
+    const legacyBases: string[] = [];
     const stemWithoutComponents = stem.replace(/^components\//, "");
     if (stemWithoutComponents !== stem) {
       if (hasExplicitExt) {
-        directBases.push(join(projectDir, basePath.replace(/^components\//, "")));
+        legacyBases.push(join(projectDir, basePath.replace(/^components\//, "")));
       }
-      directBases.push(join(projectDir, stemWithoutComponents));
+      legacyBases.push(join(projectDir, stemWithoutComponents));
+      directBases.push(...legacyBases);
     }
 
     for (const candidateBase of directBases) {
@@ -81,6 +84,7 @@ export async function findSourceFile(
         allowPagesPrefix: false,
       });
       if (resolved) {
+        if (legacyBases.includes(candidateBase)) options.onLegacyComponentsFallback?.();
         logger.debug("[FileResolver] Found file via resolveFile:", resolved);
         return resolved;
       }
@@ -91,15 +95,20 @@ export async function findSourceFile(
   if (hasExplicitExt) candidates.push(join(projectDir, basePath));
   candidates.push(...buildCandidatePaths(projectDir, stem, SOURCE_EXTENSIONS));
 
+  const legacyCandidates: string[] = [];
   const stemWithoutComponents = stem.replace(/^components\//, "");
   if (stemWithoutComponents !== stem) {
     if (hasExplicitExt) {
-      candidates.push(join(projectDir, basePath.replace(/^components\//, "")));
+      legacyCandidates.push(join(projectDir, basePath.replace(/^components\//, "")));
     }
-    candidates.push(...buildCandidatePaths(projectDir, stemWithoutComponents, SOURCE_EXTENSIONS));
+    legacyCandidates.push(
+      ...buildCandidatePaths(projectDir, stemWithoutComponents, SOURCE_EXTENSIONS),
+    );
+    candidates.push(...legacyCandidates);
   }
 
   const result = await findFirstExisting(candidates, (p) => adapter.fs.stat(p));
+  if (result && legacyCandidates.includes(result)) options.onLegacyComponentsFallback?.();
   logger.debug(
     result ? "[FileResolver] Found file:" : "[FileResolver] File not found:",
     result ?? basePath,

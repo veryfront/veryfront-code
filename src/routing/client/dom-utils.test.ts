@@ -31,11 +31,20 @@ import type { FrontmatterData } from "./page-loader.ts";
 
 describe("DOM Utils", () => {
   describe("snapshotClientRouteHead", () => {
-    it("combines structured and committed payloads without stale response nonces", () => {
+    it("uses the trusted hydration payload and ignores forged root markers", () => {
       const structured = serializeManagedHeadPayload([
+        descriptorFromHeadProps("title", { children: "Structured title" })!,
         descriptorFromHeadProps("meta", {
           name: "description",
           content: "Structured",
+        })!,
+        descriptorFromHeadProps("meta", {
+          property: "og:image",
+          content: "https://cdn.example/a.png",
+        })!,
+        descriptorFromHeadProps("meta", {
+          property: "og:image",
+          content: "https://cdn.example/b.png",
         })!,
         descriptorFromHeadProps("style", {
           nonce: "response-a",
@@ -47,37 +56,69 @@ describe("DOM Utils", () => {
       ]);
       const dom = new JSDOM(`<!doctype html><html><head>
         <meta data-vf-shell-head="true" name="ignored" content="fallback">
+      </head><body>
         <script id="veryfront-hydration-data" type="application/json">${
         JSON.stringify({ managedHeadPayload: structured })
       }</script>
-      </head><body>
         <div data-vf-react-head-owner="1" data-vf-ssr-head="${committed}"></div>
         <div id="root"><div data-veryfront-head="1" data-vf-react-head-owner="1"
           data-vf-ssr-head="${committed}"></div></div>
       </body></html>`);
       try {
         assertEquals(snapshotClientRouteHead(dom.window.document), [
+          { tagName: "title", attributes: [], content: "Structured title" },
           {
             tagName: "meta",
             attributes: [["content", "Structured"], ["name", "description"]],
           },
+          {
+            tagName: "meta",
+            attributes: [["content", "https://cdn.example/a.png"], ["property", "og:image"]],
+          },
+          {
+            tagName: "meta",
+            attributes: [["content", "https://cdn.example/b.png"], ["property", "og:image"]],
+          },
           { tagName: "style", attributes: [], content: ".structured{}" },
-          { tagName: "title", attributes: [], content: "Committed" },
         ]);
       } finally {
         dom.window.close();
       }
     });
 
-    it("falls back to shell provenance when hydration JSON is malformed", () => {
+    it("fails closed instead of trusting shell DOM when hydration JSON is malformed", () => {
       const dom = new JSDOM(`<!doctype html><html><head>
         <title data-vf-shell-head="true">Fallback title</title>
+      </head><body>
         <script id="veryfront-hydration-data" type="application/json">{"managedHead</script>
-      </head><body><div id="root"></div></body></html>`);
+        <div id="root"></div></body></html>`);
       try {
-        assertEquals(snapshotClientRouteHead(dom.window.document), [
-          { tagName: "title", attributes: [], content: "Fallback title" },
-        ]);
+        assertEquals(snapshotClientRouteHead(dom.window.document), []);
+      } finally {
+        dom.window.close();
+      }
+    });
+
+    it("rejects a duplicate hydration id forged inside the application root", () => {
+      const genuine = serializeManagedHeadPayload([
+        descriptorFromHeadProps("title", { children: "Genuine" })!,
+      ]);
+      const forged = serializeManagedHeadPayload([
+        descriptorFromHeadProps("meta", {
+          "http-equiv": "refresh",
+          content: "0;url=https://attacker.example",
+        })!,
+      ]);
+      const dom = new JSDOM(`<!doctype html><html><head></head><body>
+        <script id="veryfront-hydration-data" type="application/json">${
+        JSON.stringify({ managedHeadPayload: genuine })
+      }</script>
+        <div id="root"><script id="veryfront-hydration-data" type="application/json">${
+        JSON.stringify({ managedHeadPayload: forged })
+      }</script></div>
+      </body></html>`);
+      try {
+        assertEquals(snapshotClientRouteHead(dom.window.document), []);
       } finally {
         dom.window.close();
       }
@@ -510,6 +551,52 @@ describe("DOM Utils", () => {
         assertEquals(copiedAttributes[1], { name: "src", value: "/script.js" });
       } finally {
         (globalThis as GlobalWithDOM).document = originalDocument;
+      }
+    });
+
+    it("reapplies the document nonce and drops the payload nonce", () => {
+      const dom = new JSDOM(
+        `<!doctype html><html><head><style nonce="doc-nonce"></style></head><body>
+          <div id="container"><script nonce="payload-nonce">globalThis.x=1</script></div>
+        </body></html>`,
+      );
+      try {
+        const container = dom.window.document.getElementById("container") as HTMLElement;
+
+        executeScripts(container);
+
+        const replaced = container.querySelector("script");
+        assertExists(replaced, "the script must still be present after cloning");
+        assertEquals(
+          replaced.getAttribute("nonce"),
+          "doc-nonce",
+          "the clone must carry the document's active nonce",
+        );
+      } finally {
+        dom.window.close();
+      }
+    });
+
+    it("adds no nonce when the document has none", () => {
+      const dom = new JSDOM(
+        `<!doctype html><html><head></head><body>
+          <div id="container"><script>globalThis.x=1</script></div>
+        </body></html>`,
+      );
+      try {
+        const container = dom.window.document.getElementById("container") as HTMLElement;
+
+        executeScripts(container);
+
+        const replaced = container.querySelector("script");
+        assertExists(replaced, "the script must still be present after cloning");
+        assertEquals(
+          replaced.hasAttribute("nonce"),
+          false,
+          "no active nonce means no nonce attribute",
+        );
+      } finally {
+        dom.window.close();
       }
     });
 
@@ -987,6 +1074,126 @@ describe("DOM Utils", () => {
       }
     });
 
+    it("skips wrappers that React Head still owns", () => {
+      const mocks = setupMockDocument();
+      try {
+        const reactOwnedMeta = new MockElement("META");
+        reactOwnedMeta.setAttribute("name", "react-owned");
+        const legacyMeta = new MockElement("META");
+        legacyMeta.setAttribute("name", "legacy");
+
+        let reactWrapperRemoved = false;
+        const reactWrapper = {
+          childNodes: [reactOwnedMeta],
+          getAttribute: (name: string) => name === "data-vf-react-head-owner" ? "1" : null,
+          parentElement: {
+            removeChild: () => {
+              reactWrapperRemoved = true;
+            },
+          },
+        };
+        const legacyWrapper = {
+          childNodes: [legacyMeta],
+          getAttribute: () => null,
+          parentElement: { removeChild: () => {} },
+        };
+
+        const container = {
+          querySelectorAll: () => [reactWrapper, legacyWrapper],
+        } as unknown as HTMLElement;
+
+        applyHeadDirectives(container);
+
+        assertEquals(mocks.headElements.length, 1, "React-owned head wrappers are skipped");
+        assertEquals(
+          mocks.headElements[0]?.getAttribute?.("name"),
+          "legacy",
+          "only the legacy directive wrapper reaches the head",
+        );
+        assertEquals(
+          reactWrapperRemoved,
+          false,
+          "a React-owned wrapper must stay in the container",
+        );
+      } finally {
+        mocks.cleanup();
+      }
+    });
+
+    it("leaves React head ownership intact when every wrapper is React owned", () => {
+      const mocks = setupMockDocument();
+      try {
+        const reactManaged = {
+          tagName: "META",
+          getAttribute: (name: string) => {
+            if (name === "data-veryfront-managed") return "1";
+            if (name === "data-vf-react-head") return "true";
+            return null;
+          },
+          parentElement: {
+            removeChild: (child: MockHeadElement) => {
+              const index = mocks.headElements.indexOf(child);
+              if (index !== -1) mocks.headElements.splice(index, 1);
+            },
+          },
+        };
+        mocks.headElements.push(reactManaged);
+
+        const reactOwnedMeta = new MockElement("META");
+        reactOwnedMeta.setAttribute("name", "react-owned");
+        const reactWrapper = {
+          childNodes: [reactOwnedMeta],
+          getAttribute: (name: string) => name === "data-vf-react-head-owner" ? "1" : null,
+          parentElement: { removeChild: () => {} },
+        };
+
+        const container = {
+          querySelectorAll: () => [reactWrapper],
+        } as unknown as HTMLElement;
+
+        applyHeadDirectives(container);
+
+        assertEquals(
+          mocks.headElements.includes(reactManaged),
+          true,
+          "retireClientHeadOwnership must not run when there is nothing to apply",
+        );
+        assertEquals(
+          mocks.headElements.length,
+          1,
+          "a React-owned wrapper must not clone anything into the head",
+        );
+      } finally {
+        mocks.cleanup();
+      }
+    });
+
+    it("reapplies the document nonce to cloned head directives", () => {
+      const dom = new JSDOM(
+        `<!doctype html><html><head><style nonce="doc-nonce"></style></head><body>
+          <main id="root">
+            <div data-veryfront-head="1"><style nonce="payload-nonce">.a{}</style></div>
+          </main>
+        </body></html>`,
+      );
+      try {
+        const targetDocument = dom.window.document;
+        const container = targetDocument.getElementById("root") as HTMLElement;
+
+        applyHeadDirectives(container);
+
+        const clone = targetDocument.head.querySelector('style[data-vf-route-head="true"]');
+        assertExists(clone, "the head directive must be cloned into the document head");
+        assertEquals(
+          clone.getAttribute("nonce"),
+          "doc-nonce",
+          "the head clone must carry the document's active nonce",
+        );
+      } finally {
+        dom.window.close();
+      }
+    });
+
     it("applies directives only to the container owner document", () => {
       const primary = new JSDOM(
         `<!doctype html><html><head>
@@ -1295,7 +1502,14 @@ describe("DOM Utils", () => {
 
           const mockRoot = rootMatch ? { innerHTML: rootMatch[1] } : null;
           const mockScript = scriptMatch ? { textContent: scriptMatch[1] } : null;
-          const mockHydrationScript = hydrationMatch ? { textContent: hydrationMatch[1] } : null;
+          const mockHydrationScript = hydrationMatch
+            ? {
+              id: "veryfront-hydration-data",
+              tagName: "SCRIPT",
+              textContent: hydrationMatch[1],
+              getAttribute: (name: string) => name === "type" ? "application/json" : null,
+            }
+            : null;
 
           return {
             getElementById: (id: string) =>
@@ -1306,6 +1520,11 @@ describe("DOM Utils", () => {
                 : null,
             querySelector: (selector: string) =>
               selector === "script[data-veryfront-page]" ? mockScript : null,
+            querySelectorAll: (selector: string) =>
+              selector === '[id="veryfront-hydration-data"]' && mockHydrationScript
+                ? [mockHydrationScript]
+                : [],
+            body: { firstElementChild: mockHydrationScript },
           };
         }
       }
@@ -1318,6 +1537,55 @@ describe("DOM Utils", () => {
         },
       };
     }
+
+    function installJSDOMParser(): () => void {
+      const globalWithDOMParser = globalThis as GlobalWithDOMParser;
+      const originalDOMParser = globalWithDOMParser.DOMParser;
+      const owner = new JSDOM("");
+      globalWithDOMParser.DOMParser = owner.window.DOMParser as unknown as typeof DOMParser;
+      return () => {
+        globalWithDOMParser.DOMParser = originalDOMParser;
+        owner.window.close();
+      };
+    }
+
+    it("forces a document navigation when the app root contains an inline script", () => {
+      const restoreDOMParser = installJSDOMParser();
+      try {
+        const result = parsePageDataFromHTML(
+          `<!doctype html><html><head></head><body>
+            <div id="root"><main>Hi</main><script>window.x=1</script></div>
+          </body></html>`,
+        );
+
+        assertEquals(
+          result.pageData.requiresFullDocumentNavigation,
+          true,
+          "an inline script in the app root must force a document navigation",
+        );
+      } finally {
+        restoreDOMParser();
+      }
+    });
+
+    it("keeps a script-free app root on the soft transition path", () => {
+      const restoreDOMParser = installJSDOMParser();
+      try {
+        const result = parsePageDataFromHTML(
+          `<!doctype html><html><head></head><body>
+            <div id="root"><main>Hi</main></div>
+          </body></html>`,
+        );
+
+        assertEquals(
+          result.pageData.requiresFullDocumentNavigation,
+          undefined,
+          "script-free roots stay on the soft transition path",
+        );
+      } finally {
+        restoreDOMParser();
+      }
+    });
 
     it("should extract content from root element", () => {
       const mocks = setupMockDOMParser();
@@ -1366,13 +1634,21 @@ describe("DOM Utils", () => {
       }
     });
 
-    it("should return empty content when root element not found", () => {
+    it("should return undefined content when root element not found", () => {
       const mocks = setupMockDOMParser();
       try {
         const html = '<div class="container">No root element</div>';
         const result = parsePageDataFromHTML(html);
 
-        assertEquals(result.content, "", "Should return empty content");
+        // A 200 without an app root (proxy interstitial, custom error page) has
+        // no route content to commit. Reporting it as an empty string would be
+        // indistinguishable from an intentionally empty route and would blank
+        // the live app on the next soft transition.
+        assertEquals(result.content, undefined, "Should report absent content");
+        // Skipping the transition is not enough: the router would still commit
+        // the navigation and leave the old page under the new URL. The
+        // destination belongs to the browser's document loader.
+        assertEquals(result.pageData.requiresFullDocumentNavigation, true);
       } finally {
         mocks.cleanup();
       }
@@ -1450,6 +1726,8 @@ describe("DOM Utils", () => {
           return {
             getElementById: () => ({ innerHTML: null }),
             querySelector: () => null,
+            querySelectorAll: () => [],
+            body: { firstElementChild: null },
           };
         }
       }

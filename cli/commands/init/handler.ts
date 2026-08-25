@@ -11,7 +11,7 @@ import { initCommand } from "./init-command.ts";
 import type { ParsedArgs } from "#cli/shared/types";
 import type { InitRuntime, InitTemplate } from "./types.ts";
 import { parseRuntime } from "./runtime.ts";
-import type { IntegrationName } from "../../templates/types.ts";
+import type { IntegrationName } from "../../../templates/types.ts";
 
 /**
  * Handle the init command with argument parsing and config file support

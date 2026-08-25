@@ -13,7 +13,7 @@ document sources.
 ```bash title="Terminal"
 veryfront init my-rag --template docs-agent
 cd my-rag
-npx veryfront dev
+npx veryfront@latest dev
 ```
 
 ## How RAG works
@@ -27,7 +27,7 @@ Veryfront splits a RAG app into three flows:
   agent responds.
 
 The `docs-agent` template wires these flows with `ragStore()`,
-`createUploadHandler()`, `useUploadsRegistry()`, and `createAgUiHandler()`.
+`createUploadHandler()`, `useAttachments()`, and `createAgUiHandler()`.
 
 ## Create the store
 
@@ -56,7 +56,7 @@ Create upload routes that share the same store:
 import { authorizeSession } from "./session.ts";
 
 // Verify your app's signed, same-origin session cookie. The browser sends that
-// cookie for useUploadsRegistry requests without exposing a bearer token to
+// cookie for useAttachments requests without exposing a bearer token to
 // client code.
 export const authorizeUploads = (request: Request) => authorizeSession(request);
 ```
@@ -104,7 +104,7 @@ newest first:
 ```
 
 The default and maximum page sizes are controlled by `maxListItems` (100 by
-default, at most 1,000). `useUploadsRegistry()` follows `hasMore` pages and
+default, at most 1,000). `useAttachments()` follows `hasMore` pages and
 publishes the new server snapshot only after every bounded page validates.
 `DELETE` accepts an `id` route parameter or query parameter and refuses to
 delete documents that did not originate from the upload route. In Cloud mode,
@@ -204,16 +204,16 @@ documents that supported them.
 
 ## Add the chat UI
 
-Use the app-mode `Chat` component with `useUploadsRegistry()` and
+Use the app-mode `Chat` component with `useAttachments()` and
 `AttachmentsPanel`:
 
 ```tsx title="app/page.tsx"
 "use client";
 
-import { AttachmentsPanel, Chat, useUploadsRegistry } from "veryfront/chat";
+import { AttachmentsPanel, Chat, useAttachments } from "veryfront/chat";
 
 export default function RagPage() {
-  const uploads = useUploadsRegistry({ url: "/api/uploads" });
+  const uploads = useAttachments({ url: "/api/uploads" });
   const uploadError = uploads.uploadError ??
     uploads.refreshError ??
     uploads.removeError ??
@@ -254,7 +254,7 @@ Set Veryfront Cloud bootstrap variables before starting the app:
 ```bash title="Terminal"
 export VERYFRONT_API_TOKEN=<TOKEN>
 export VERYFRONT_PROJECT_SLUG=<PROJECT_SLUG>
-npx veryfront dev
+npx veryfront@latest dev
 ```
 
 With cloud bootstrap:

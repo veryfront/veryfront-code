@@ -1,5 +1,7 @@
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import type { ScheduleIntegrationRequirementConfig } from "#veryfront/schedule/types.ts";
+import { captureScheduleIntegrationRequirementsConfig } from "#veryfront/schedule/validation.ts";
 import {
   MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES,
   MAX_WORKFLOW_DEFINITION_DEPTH,
@@ -22,12 +24,99 @@ import {
 } from "../types.ts";
 import { INTERNAL_DELAY_EVENT_NAME, INTERNAL_WAIT_KIND_FIELD } from "../timed-wait-state.ts";
 
+const arrayIsArray = Array.isArray;
+const arrayIterator = Array.prototype[Symbol.iterator];
+const dateGetTime = Date.prototype.getTime;
+const MapConstructor = Map;
+const mapForEach = Map.prototype.forEach;
+const mapGet = Map.prototype.get;
+const mapHas = Map.prototype.has;
+const mapSet = Map.prototype.set;
+const NativeSet = Set;
+const NativeWeakSet = WeakSet;
+const numberIsFinite = Number.isFinite;
+const numberIsSafeInteger = Number.isSafeInteger;
+const objectDefineProperty = Object.defineProperty;
+const objectFreeze = Object.freeze;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectGetPrototypeOf = Object.getPrototypeOf;
+const objectHasOwn = Object.hasOwn;
+const reflectApply = Reflect.apply;
+const reflectOwnKeys = Reflect.ownKeys;
+const setAdd = Set.prototype.add;
+const setHas = Set.prototype.has;
+const StringConstructor = String;
+const stringEndsWith = String.prototype.endsWith;
+const stringTrim = String.prototype.trim;
+const structuredCloneValue = structuredClone;
+const weakSetAdd = WeakSet.prototype.add;
+const weakSetDelete = WeakSet.prototype.delete;
+const weakSetHas = WeakSet.prototype.has;
+
+const structuredCloneTransferList: ArrayBuffer[] = [];
+objectDefineProperty(structuredCloneTransferList, Symbol.iterator, {
+  configurable: false,
+  enumerable: false,
+  value: arrayIterator,
+  writable: false,
+});
+objectFreeze(structuredCloneTransferList);
+const structuredCloneOptions = objectFreeze({ transfer: structuredCloneTransferList });
+
+function appendArrayValue<T>(values: T[], value: T): void {
+  objectDefineProperty(values, values.length, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
+
+function mapGetValue<K, V>(values: ReadonlyMap<K, V>, key: K): V | undefined {
+  return reflectApply(mapGet, values, [key]);
+}
+
+function mapHasKey<K, V>(values: ReadonlyMap<K, V>, key: K): boolean {
+  return reflectApply(mapHas, values, [key]) as boolean;
+}
+
+function mapSetValue<K, V>(values: Map<K, V>, key: K, value: V): void {
+  reflectApply(mapSet, values, [key, value]);
+}
+
+function setHasValue<T>(values: ReadonlySet<T>, value: T): boolean {
+  return reflectApply(setHas, values, [value]) as boolean;
+}
+
+function setAddValue<T>(values: Set<T>, value: T): void {
+  reflectApply(setAdd, values, [value]);
+}
+
+function weakSetHasValue<T extends object>(values: WeakSet<T>, value: T): boolean {
+  return reflectApply(weakSetHas, values, [value]) as boolean;
+}
+
+function weakSetAddValue<T extends object>(values: WeakSet<T>, value: T): void {
+  reflectApply(weakSetAdd, values, [value]);
+}
+
+function weakSetDeleteValue<T extends object>(values: WeakSet<T>, value: T): void {
+  reflectApply(weakSetDelete, values, [value]);
+}
+
+function hasDescriptorValue(
+  descriptor: PropertyDescriptor,
+): descriptor is PropertyDescriptor & { value: unknown } {
+  return objectHasOwn(descriptor, "value");
+}
+
 const DEFINITION_KEYS = new Set([
   "id",
   "description",
   "version",
   "inputSchema",
   "outputSchema",
+  "integrationRequirements",
   "retry",
   "timeout",
   "introspect",
@@ -36,6 +125,8 @@ const DEFINITION_KEYS = new Set([
   "onComplete",
 ]);
 const CAPTURE_DEFINITION_OPTION_KEYS = new Set(["allowEmptySteps"]);
+const CAPTURE_NODE_OPTION_KEYS = new Set(["allowEmpty", "emptyElementName"]);
+const CAPTURE_STRING_LIST_OPTION_KEYS = new Set(["allowUndefined", "requireNonEmpty"]);
 const NODE_KEYS = new Set(["id", "config", "dependsOn"]);
 const RETRY_KEYS = new Set([
   "maxAttempts",
@@ -44,7 +135,14 @@ const RETRY_KEYS = new Set([
   "backoff",
   "retryIf",
 ]);
-const COMMON_CONFIG_KEYS = ["type", "checkpoint", "retry", "timeout", "skip"] as const;
+const COMMON_CONFIG_KEYS = [
+  "type",
+  "description",
+  "checkpoint",
+  "retry",
+  "timeout",
+  "skip",
+] as const;
 const CONFIG_KEYS = {
   step: new Set([...COMMON_CONFIG_KEYS, "agent", "tool", "input"]),
   parallel: new Set([...COMMON_CONFIG_KEYS, "nodes", "strategy"]),
@@ -56,6 +154,7 @@ const CONFIG_KEYS = {
     "payload",
     "approvers",
     "eventName",
+    "responseSchema",
     INTERNAL_WAIT_KIND_FIELD,
   ]),
   subWorkflow: new Set([...COMMON_CONFIG_KEYS, "workflow", "input", "output"]),
@@ -71,6 +170,17 @@ const CONFIG_KEYS = {
     "delay",
   ]),
 } as const;
+const ALL_CONFIG_KEYS = new Set([
+  ...CONFIG_KEYS.step,
+  ...CONFIG_KEYS.parallel,
+  ...CONFIG_KEYS.branch,
+  ...CONFIG_KEYS.wait,
+  ...CONFIG_KEYS.subWorkflow,
+  ...CONFIG_KEYS.map,
+  ...CONFIG_KEYS.loop,
+]);
+const MAP_PROCESSOR_KEYS = new Set([...DEFINITION_KEYS, ...NODE_KEYS]);
+const PARALLEL_STRATEGIES = new Set(["all", "race", "allSettled"]);
 
 const RESERVED_CONTEXT_NODE_IDS = new Set(["input", "env", "_tenant", "_loop"]);
 const LOOP_STATE_SUFFIX = "_loop_state";
@@ -131,12 +241,15 @@ interface StaticInspectionState {
   readonly budget: StaticBudget;
 }
 
-type ExactRecord = ReadonlyMap<string, unknown>;
+interface ExactRecord {
+  get(key: string): unknown;
+  has(key: string): boolean;
+}
 
 function createCaptureState(): CaptureState {
   return {
-    activeDefinitions: new WeakSet(),
-    activeNodes: new WeakSet(),
+    activeDefinitions: new NativeWeakSet(),
+    activeNodes: new NativeWeakSet(),
     staticBudget: { bytes: 0, values: 0 },
     nodeCount: 0,
   };
@@ -170,7 +283,7 @@ function addBudget(
 function assertPlainStructuralRecord(value: object, label: string): void {
   let prototype: object | null;
   try {
-    prototype = Object.getPrototypeOf(value) as object | null;
+    prototype = objectGetPrototypeOf(value) as object | null;
   } catch (cause) {
     fail(`${label} could not be inspected`, cause);
   }
@@ -178,7 +291,7 @@ function assertPlainStructuralRecord(value: object, label: string): void {
   if (isProxyWithoutHooks(prototype)) fail(`${label} must not inherit from a Proxy`);
   let parent: object | null;
   try {
-    parent = Object.getPrototypeOf(prototype) as object | null;
+    parent = objectGetPrototypeOf(prototype) as object | null;
   } catch (cause) {
     fail(`${label} prototype could not be inspected`, cause);
   }
@@ -197,12 +310,12 @@ function inspectExactRecord(
   ) {
     fail(`${label} must be a non-Proxy plain record`);
   }
-  if (Array.isArray(value)) fail(`${label} must be a plain record`);
+  if (arrayIsArray(value)) fail(`${label} must be a plain record`);
   assertPlainStructuralRecord(value, label);
 
   let keys: PropertyKey[];
   try {
-    keys = Reflect.ownKeys(value);
+    keys = reflectOwnKeys(value);
   } catch (cause) {
     fail(`${label} could not be inspected`, cause);
   }
@@ -210,70 +323,92 @@ function inspectExactRecord(
     fail(`${label} contains too many fields`);
   }
 
-  const fields = new Map<string, unknown>();
-  for (const key of keys) {
-    if (typeof key !== "string" || !allowedKeys.has(key)) {
+  const fields = new MapConstructor<string, unknown>();
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
+    if (
+      typeof key !== "string" ||
+      !(reflectApply(setHas, allowedKeys, [key]) as boolean)
+    ) {
       fail(
         `${label} contains unsupported field ${typeof key === "string" ? `"${key}"` : "symbol"}`,
       );
     }
     let descriptor: PropertyDescriptor | undefined;
     try {
-      descriptor = Object.getOwnPropertyDescriptor(value, key);
+      descriptor = objectGetOwnPropertyDescriptor(value, key);
     } catch (cause) {
       fail(`${label} field "${key}" could not be inspected`, cause);
     }
-    if (!descriptor || !("value" in descriptor)) {
+    if (!descriptor || !hasDescriptorValue(descriptor)) {
       fail(`${label} field "${key}" must be an own data property`);
     }
-    fields.set(key, descriptor.value);
+    reflectApply(mapSet, fields, [key, descriptor.value]);
   }
-  for (const key of requiredKeys) {
-    if (!fields.has(key)) fail(`${label} must contain own data property "${key}"`);
+  for (let index = 0; index < requiredKeys.length; index++) {
+    const key = requiredKeys[index]!;
+    if (!(reflectApply(mapHas, fields, [key]) as boolean)) {
+      fail(`${label} must contain own data property "${key}"`);
+    }
   }
-  return fields;
+  return {
+    get(key: string): unknown {
+      return reflectApply(mapGet, fields, [key]);
+    },
+    has(key: string): boolean {
+      return reflectApply(mapHas, fields, [key]) as boolean;
+    },
+  };
 }
 
 function inspectDenseArrayValues(value: unknown, label: string): unknown[] {
   if (typeof value !== "object" || value === null || isProxyWithoutHooks(value)) {
     fail(`${label} must be a non-Proxy array`);
   }
-  if (!Array.isArray(value)) fail(`${label} must be an array`);
+  if (!arrayIsArray(value)) fail(`${label} must be an array`);
 
   let keys: PropertyKey[];
   let lengthDescriptor: PropertyDescriptor | undefined;
   try {
-    keys = Reflect.ownKeys(value);
-    lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+    keys = reflectOwnKeys(value);
+    lengthDescriptor = objectGetOwnPropertyDescriptor(value, "length");
   } catch (cause) {
     fail(`${label} could not be inspected`, cause);
   }
-  const length = lengthDescriptor && "value" in lengthDescriptor
+  const length = lengthDescriptor && hasDescriptorValue(lengthDescriptor)
     ? lengthDescriptor.value
     : undefined;
-  if (!Number.isSafeInteger(length) || length < 0) fail(`${label} has an invalid length`);
+  if (!numberIsSafeInteger(length) || length < 0) fail(`${label} has an invalid length`);
   if (length > MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES) {
     fail(`${label} cannot contain more than ${MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES} entries`);
   }
-  if (
-    keys.length !== length + 1 || keys.some((key) => key !== "length" && typeof key !== "string")
-  ) {
+  let unsupportedKey = false;
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
+    if (key !== "length" && typeof key !== "string") unsupportedKey = true;
+  }
+  if (keys.length !== length + 1 || unsupportedKey) {
     fail(`${label} must be dense and contain no custom properties`);
   }
 
   const values: unknown[] = [];
   for (let index = 0; index < length; index++) {
-    const key = String(index);
+    const key = StringConstructor(index);
     let descriptor: PropertyDescriptor | undefined;
     try {
-      descriptor = Object.getOwnPropertyDescriptor(value, key);
+      descriptor = objectGetOwnPropertyDescriptor(value, key);
     } catch (cause) {
       fail(`${label} entry ${index} could not be inspected`, cause);
     }
-    if (!descriptor || !("value" in descriptor)) {
+    if (!descriptor || !hasDescriptorValue(descriptor)) {
       fail(`${label} must be dense; entry ${index} is missing or is an accessor`);
     }
-    values.push(descriptor.value);
+    objectDefineProperty(values, index, {
+      value: descriptor.value,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
   }
   return values;
 }
@@ -286,13 +421,26 @@ function assertString(
 ): asserts value is string {
   if (
     typeof value !== "string" || value.length > maxLength ||
-    (requireCanonical && (value.length === 0 || value.trim() !== value))
+    (requireCanonical &&
+      (value.length === 0 || reflectApply(stringTrim, value, []) !== value))
   ) {
     fail(
       requireCanonical
         ? `${label} must be a canonical non-empty string of at most ${maxLength} code units`
         : `${label} must be a string of at most ${maxLength} code units`,
     );
+  }
+}
+
+function captureIntegrationRequirements(
+  value: unknown,
+  workflowId: string,
+): ScheduleIntegrationRequirementConfig[] | undefined {
+  try {
+    return captureScheduleIntegrationRequirementsConfig(value, "Workflow");
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "invalid integration metadata";
+    fail(`Workflow "${workflowId}" integrationRequirements is invalid: ${detail}`);
   }
 }
 
@@ -321,14 +469,17 @@ function assertDurationValue(
 
 function assertNodeId(value: unknown, label: string): asserts value is string {
   assertString(value, label, MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS, true);
-  if (RESERVED_CONTEXT_NODE_IDS.has(value) || value.endsWith(LOOP_STATE_SUFFIX)) {
+  if (
+    setHasValue(RESERVED_CONTEXT_NODE_IDS, value) ||
+    reflectApply(stringEndsWith, value, [LOOP_STATE_SUFFIX])
+  ) {
     fail(`${label} uses reserved workflow context namespace "${value}"`);
   }
 }
 
 function callGetter(getter: ((this: unknown) => unknown) | undefined, value: object): unknown {
   if (!getter) return undefined;
-  return Reflect.apply(getter, value, []);
+  return reflectApply(getter, value, []);
 }
 
 function tryGetter(
@@ -346,7 +497,7 @@ function tryGetter(
 function assertNoOwnFields(value: object, label: string): void {
   let keys: PropertyKey[];
   try {
-    keys = Reflect.ownKeys(value);
+    keys = reflectOwnKeys(value);
   } catch (cause) {
     fail(`${label} could not be inspected`, cause);
   }
@@ -381,14 +532,14 @@ function inspectStaticValue(
   if (typeof value !== "object" || isProxyWithoutHooks(value)) {
     fail(`${label} must contain only non-Proxy structured-cloneable data`);
   }
-  if (state.active.has(value)) fail(`${label} must not contain recursive references`);
-  if (state.seen.has(value)) return;
-  state.seen.add(value);
-  state.active.add(value);
+  if (weakSetHasValue(state.active, value)) fail(`${label} must not contain recursive references`);
+  if (weakSetHasValue(state.seen, value)) return;
+  weakSetAddValue(state.seen, value);
+  weakSetAddValue(state.active, value);
   addBudget(state.budget, label);
 
   try {
-    if (Array.isArray(value)) {
+    if (arrayIsArray(value)) {
       const entries = inspectDenseArrayValues(value, label);
       for (let index = 0; index < entries.length; index++) {
         inspectStaticValue(entries[index], `${label}[${index}]`, state, depth + 1);
@@ -398,13 +549,13 @@ function inspectStaticValue(
 
     const date = (() => {
       try {
-        return { matched: true, value: Date.prototype.getTime.call(value) };
+        return { matched: true, value: reflectApply(dateGetTime, value, []) };
       } catch {
         return { matched: false, value: 0 };
       }
     })();
     if (date.matched) {
-      if (!Number.isFinite(date.value)) fail(`${label} must not contain an invalid Date`);
+      if (!numberIsFinite(date.value)) fail(`${label} must not contain an invalid Date`);
       assertNoOwnFields(value, label);
       addBudget(state.budget, label, 0, 8);
       return;
@@ -413,20 +564,20 @@ function inspectStaticValue(
     const mapSize = tryGetter(mapSizeGetter, value);
     if (mapSize.matched) {
       const size = mapSize.value;
-      if (!Number.isSafeInteger(size) || (size as number) < 0) {
+      if (!numberIsSafeInteger(size) || (size as number) < 0) {
         fail(`${label} has invalid Map size`);
       }
       if ((size as number) > MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES) {
         fail(`${label} Map contains too many entries`);
       }
       assertNoOwnFields(value, label);
-      const iterator = Reflect.apply(mapEntries, value, []) as IterableIterator<[
+      const iterator = reflectApply(mapEntries, value, []) as IterableIterator<[
         unknown,
         unknown,
       ]>;
       let index = 0;
       while (true) {
-        const next = Reflect.apply(mapIteratorNext, iterator, []) as IteratorResult<[
+        const next = reflectApply(mapIteratorNext, iterator, []) as IteratorResult<[
           unknown,
           unknown,
         ]>;
@@ -441,17 +592,17 @@ function inspectStaticValue(
     const setSize = tryGetter(setSizeGetter, value);
     if (setSize.matched) {
       const size = setSize.value;
-      if (!Number.isSafeInteger(size) || (size as number) < 0) {
+      if (!numberIsSafeInteger(size) || (size as number) < 0) {
         fail(`${label} has invalid Set size`);
       }
       if ((size as number) > MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES) {
         fail(`${label} Set contains too many entries`);
       }
       assertNoOwnFields(value, label);
-      const iterator = Reflect.apply(setValues, value, []) as IterableIterator<unknown>;
+      const iterator = reflectApply(setValues, value, []) as IterableIterator<unknown>;
       let index = 0;
       while (true) {
-        const next = Reflect.apply(setIteratorNext, iterator, []) as IteratorResult<unknown>;
+        const next = reflectApply(setIteratorNext, iterator, []) as IteratorResult<unknown>;
         if (next.done) break;
         inspectStaticValue(next.value, `${label} Set value ${index}`, state, depth + 1);
         index++;
@@ -481,7 +632,7 @@ function inspectStaticValue(
     const typedLength = tryGetter(typedArrayLengthGetter, value);
     if (typedLength.matched) {
       const length = typedLength.value as number;
-      if (!Number.isSafeInteger(length) || length < 0) {
+      if (!numberIsSafeInteger(length) || length < 0) {
         fail(`${label} has invalid typed-array length`);
       }
       if (length > MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES) {
@@ -492,14 +643,14 @@ function inspectStaticValue(
       if (isSharedArrayBuffer(buffer)) fail(`${label} must not view shared memory`);
       let keys: PropertyKey[];
       try {
-        keys = Reflect.ownKeys(value);
+        keys = reflectOwnKeys(value);
       } catch (cause) {
         fail(`${label} could not be inspected`, cause);
       }
       if (keys.length !== length) fail(`${label} typed array must not contain custom properties`);
       for (let index = 0; index < length; index++) {
-        const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
-        if (!descriptor || !("value" in descriptor)) {
+        const descriptor = objectGetOwnPropertyDescriptor(value, StringConstructor(index));
+        if (!descriptor || !hasDescriptorValue(descriptor)) {
           fail(`${label} typed-array entry ${index} is not canonical`);
         }
       }
@@ -509,60 +660,63 @@ function inspectStaticValue(
 
     const regexp = tryGetter(regexpSourceGetter, value);
     if (regexp.matched) {
-      const keys = Reflect.ownKeys(value);
+      const keys = reflectOwnKeys(value);
       if (keys.length !== 1 || keys[0] !== "lastIndex") {
         fail(`${label} RegExp must not contain custom properties`);
       }
-      const lastIndex = Object.getOwnPropertyDescriptor(value, "lastIndex");
-      if (!lastIndex || !("value" in lastIndex) || lastIndex.value !== 0) {
+      const lastIndex = objectGetOwnPropertyDescriptor(value, "lastIndex");
+      if (!lastIndex || !hasDescriptorValue(lastIndex) || lastIndex.value !== 0) {
         fail(`${label} RegExp lastIndex must be zero`);
       }
-      addBudget(state.budget, label, 0, String(regexp.value).length * 2);
+      addBudget(state.budget, label, 0, StringConstructor(regexp.value).length * 2);
       return;
     }
 
     assertPlainStructuralRecord(value, label);
     let keys: PropertyKey[];
     try {
-      keys = Reflect.ownKeys(value);
+      keys = reflectOwnKeys(value);
     } catch (cause) {
       fail(`${label} could not be inspected`, cause);
     }
     if (keys.length > MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES) {
       fail(`${label} record contains too many fields`);
     }
-    for (const key of keys) {
+    for (let index = 0; index < keys.length; index++) {
+      const key = keys[index]!;
       if (typeof key !== "string") fail(`${label} must not contain symbol keys`);
       if (key.length > MAX_WORKFLOW_DEFINITION_TEXT_CODE_UNITS) {
         fail(`${label} contains an overlong record key`);
       }
-      const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
+      const descriptor = objectGetOwnPropertyDescriptor(value, key);
+      if (!descriptor || !hasDescriptorValue(descriptor) || descriptor.enumerable !== true) {
         fail(`${label} field "${key}" must be an enumerable own data property`);
       }
       addBudget(state.budget, label, 0, key.length * 2);
       inspectStaticValue(descriptor.value, `${label}.${key}`, state, depth + 1);
     }
   } finally {
-    state.active.delete(value);
+    weakSetDeleteValue(state.active, value);
   }
 }
 
-function freezeStaticSnapshot<T>(value: T, seen = new WeakSet<object>()): T {
-  if (typeof value !== "object" || value === null || seen.has(value)) return value;
-  seen.add(value);
-  if (Array.isArray(value)) {
-    for (const entry of value) freezeStaticSnapshot(entry, seen);
-    return Object.freeze(value);
+function freezeStaticSnapshot<T>(value: T, seen = new NativeWeakSet<object>()): T {
+  if (typeof value !== "object" || value === null || weakSetHasValue(seen, value)) return value;
+  weakSetAddValue(seen, value);
+  if (arrayIsArray(value)) {
+    for (let index = 0; index < value.length; index++) {
+      freezeStaticSnapshot(value[index], seen);
+    }
+    return objectFreeze(value);
   }
   const mapSize = tryGetter(mapSizeGetter, value);
   if (mapSize.matched) {
-    const iterator = Reflect.apply(mapEntries, value, []) as IterableIterator<[
+    const iterator = reflectApply(mapEntries, value, []) as IterableIterator<[
       unknown,
       unknown,
     ]>;
     while (true) {
-      const next = Reflect.apply(mapIteratorNext, iterator, []) as IteratorResult<[
+      const next = reflectApply(mapIteratorNext, iterator, []) as IteratorResult<[
         unknown,
         unknown,
       ]>;
@@ -570,24 +724,27 @@ function freezeStaticSnapshot<T>(value: T, seen = new WeakSet<object>()): T {
       freezeStaticSnapshot(next.value[0], seen);
       freezeStaticSnapshot(next.value[1], seen);
     }
-    return Object.freeze(value);
+    return objectFreeze(value);
   }
   const setSize = tryGetter(setSizeGetter, value);
   if (setSize.matched) {
-    const iterator = Reflect.apply(setValues, value, []) as IterableIterator<unknown>;
+    const iterator = reflectApply(setValues, value, []) as IterableIterator<unknown>;
     while (true) {
-      const next = Reflect.apply(setIteratorNext, iterator, []) as IteratorResult<unknown>;
+      const next = reflectApply(setIteratorNext, iterator, []) as IteratorResult<unknown>;
       if (next.done) break;
       freezeStaticSnapshot(next.value, seen);
     }
-    return Object.freeze(value);
+    return objectFreeze(value);
   }
   if (tryGetter(typedArrayLengthGetter, value).matched) return value;
-  for (const key of Reflect.ownKeys(value)) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (descriptor && "value" in descriptor) freezeStaticSnapshot(descriptor.value, seen);
+  const keys = reflectOwnKeys(value);
+  for (let index = 0; index < keys.length; index++) {
+    const descriptor = objectGetOwnPropertyDescriptor(value, keys[index]!);
+    if (descriptor && hasDescriptorValue(descriptor)) {
+      freezeStaticSnapshot(descriptor.value, seen);
+    }
   }
-  return Object.freeze(value);
+  return objectFreeze(value);
 }
 
 function captureStaticValueWithBudget<T>(
@@ -598,11 +755,11 @@ function captureStaticValueWithBudget<T>(
   inspectStaticValue(
     value,
     label,
-    { active: new WeakSet(), seen: new WeakSet(), budget },
+    { active: new NativeWeakSet(), seen: new NativeWeakSet(), budget },
     0,
   );
   try {
-    return freezeStaticSnapshot(structuredClone(value));
+    return freezeStaticSnapshot(structuredCloneValue(value, structuredCloneOptions));
   } catch (cause) {
     fail(`${label} must contain only structured-cloneable values`, cause);
   }
@@ -618,11 +775,15 @@ export function cloneCapturedWorkflowStaticValue<T>(value: T, label: string): T 
   inspectStaticValue(
     value,
     label,
-    { active: new WeakSet(), seen: new WeakSet(), budget: { bytes: 0, values: 0 } },
+    {
+      active: new NativeWeakSet(),
+      seen: new NativeWeakSet(),
+      budget: { bytes: 0, values: 0 },
+    },
     0,
   );
   try {
-    return structuredClone(value);
+    return structuredCloneValue(value, structuredCloneOptions);
   } catch (cause) {
     fail(`${label} must contain only structured-cloneable values`, cause);
   }
@@ -639,18 +800,32 @@ export function captureWorkflowStringList(
   label: string,
   options: CaptureWorkflowStringListOptions = {},
 ): string[] | undefined {
-  if (value === undefined && options.allowUndefined) return undefined;
-  const entries = inspectDenseArrayValues(value, label);
-  if (options.requireNonEmpty && entries.length === 0) fail(`${label} must not be empty`);
-  const captured: string[] = [];
-  const seen = new Set<string>();
-  for (const entry of entries) {
-    assertString(entry, `${label} entry`, MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS, true);
-    if (seen.has(entry)) fail(`${label} must not contain duplicate values`);
-    seen.add(entry);
-    captured.push(entry);
+  const optionFields = inspectExactRecord(
+    options,
+    `${label} capture options`,
+    CAPTURE_STRING_LIST_OPTION_KEYS,
+  );
+  const allowUndefined = optionFields.get("allowUndefined");
+  const requireNonEmpty = optionFields.get("requireNonEmpty");
+  if (allowUndefined !== undefined && typeof allowUndefined !== "boolean") {
+    fail(`${label} capture option allowUndefined must be a boolean`);
   }
-  return Object.freeze(captured) as unknown as string[];
+  if (requireNonEmpty !== undefined && typeof requireNonEmpty !== "boolean") {
+    fail(`${label} capture option requireNonEmpty must be a boolean`);
+  }
+  if (value === undefined && allowUndefined) return undefined;
+  const entries = inspectDenseArrayValues(value, label);
+  if (requireNonEmpty && entries.length === 0) fail(`${label} must not be empty`);
+  const captured: string[] = [];
+  const seen = new NativeSet<string>();
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index];
+    assertString(entry, `${label} entry`, MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS, true);
+    if (setHasValue(seen, entry)) fail(`${label} must not contain duplicate values`);
+    setAddValue(seen, entry);
+    appendArrayValue(captured, entry);
+  }
+  return objectFreeze(captured) as string[];
 }
 
 function captureRetryConfig(value: unknown, label: string): RetryConfig | undefined {
@@ -672,7 +847,7 @@ function captureRetryConfig(value: unknown, label: string): RetryConfig | undefi
   if (backoff !== undefined && typeof backoff !== "string") {
     fail(`${label} retry backoff must be a string`);
   }
-  const retry = Object.freeze({
+  const retry = objectFreeze({
     ...(fields.has("maxAttempts") ? { maxAttempts } : {}),
     ...(fields.has("initialDelay") ? { initialDelay } : {}),
     ...(fields.has("maxDelay") ? { maxDelay } : {}),
@@ -687,11 +862,17 @@ function captureRetryConfig(value: unknown, label: string): RetryConfig | undefi
 function captureDependencies(value: unknown, label: string): string[] | undefined {
   if (value === undefined) return undefined;
   const captured = captureWorkflowStringList(value, `${label} dependsOn`) ?? [];
-  for (const dependency of captured) assertNodeId(dependency, `${label} dependency`);
+  for (let index = 0; index < captured.length; index++) {
+    assertNodeId(captured[index], `${label} dependency`);
+  }
   return captured;
 }
 
 function captureCommonConfig(fields: ExactRecord, label: string) {
+  const description = fields.get("description");
+  // Bounded like every other captured text field: a node description is
+  // surfaced through workflow metadata and must not become an unbounded sink.
+  if (description !== undefined) assertString(description, `${label} description`);
   const checkpoint = fields.get("checkpoint");
   if (checkpoint !== undefined && typeof checkpoint !== "boolean") {
     fail(`${label} checkpoint must be a boolean`);
@@ -701,6 +882,7 @@ function captureCommonConfig(fields: ExactRecord, label: string) {
   const timeout = fields.get("timeout");
   if (timeout !== undefined) assertDurationValue(timeout, `${label} timeout`, true);
   return {
+    ...(description === undefined ? {} : { description: description as string }),
     checkpoint: checkpoint as boolean | undefined,
     retry: captureRetryConfig(fields.get("retry"), label),
     timeout: timeout as string | number | undefined,
@@ -717,11 +899,11 @@ function captureNodeConfig(
   const typeFields = inspectExactRecord(
     value,
     `${label} config`,
-    new Set(Object.values(CONFIG_KEYS).flatMap((keys) => [...keys])),
+    ALL_CONFIG_KEYS,
     ["type"],
   );
   const type = typeFields.get("type");
-  if (typeof type !== "string" || !Object.hasOwn(CONFIG_KEYS, type)) {
+  if (typeof type !== "string" || !objectHasOwn(CONFIG_KEYS, type)) {
     fail(`${label} has unsupported config type`);
   }
   const fields = inspectExactRecord(
@@ -761,7 +943,7 @@ function captureNodeConfig(
       }
       const input = fields.get("input");
       if (typeof input === "function") assertFunction(input, `${label} input builder`);
-      return Object.freeze({
+      return objectFreeze({
         type: "step" as const,
         ...common,
         agent,
@@ -773,10 +955,13 @@ function captureNodeConfig(
     }
     case "parallel": {
       const strategy = fields.get("strategy");
-      if (strategy !== undefined && !["all", "race", "allSettled"].includes(strategy as string)) {
+      if (
+        strategy !== undefined &&
+        !setHasValue(PARALLEL_STRATEGIES, strategy as string)
+      ) {
         fail(`${label} parallel strategy is invalid`);
       }
-      return Object.freeze({
+      return objectFreeze({
         type: "parallel" as const,
         ...common,
         strategy,
@@ -786,7 +971,7 @@ function captureNodeConfig(
     case "branch": {
       const condition = fields.get("condition");
       assertFunction(condition, `${label} branch condition`);
-      return Object.freeze({
+      return objectFreeze({
         type: "branch" as const,
         ...common,
         condition,
@@ -833,11 +1018,23 @@ function captureNodeConfig(
       }
       const payload = fields.get("payload");
       if (typeof payload === "function") assertFunction(payload, `${label} payload builder`);
-      return Object.freeze({
+      // Carried by reference, like a definition-level inputSchema: a schema is a
+      // live object, not durable state, and is only consulted while the
+      // definition that declared it is registered.
+      const responseSchema = fields.get("responseSchema");
+      if (
+        responseSchema !== undefined &&
+        (typeof responseSchema !== "object" || responseSchema === null ||
+          typeof (responseSchema as { parse?: unknown }).parse !== "function")
+      ) {
+        fail(`${label} responseSchema must be a schema`);
+      }
+      return objectFreeze({
         type: "wait" as const,
         ...common,
         waitType,
         message,
+        ...(responseSchema === undefined ? {} : { responseSchema }),
         payload: typeof payload === "function" || payload === undefined
           ? payload
           : staticValue(payload, "payload"),
@@ -870,7 +1067,7 @@ function captureNodeConfig(
       const output = fields.get("output");
       assertOptionalFunction(output, `${label} output`);
       if (typeof input === "function") assertFunction(input, `${label} input builder`);
-      return Object.freeze({
+      return objectFreeze({
         type: "subWorkflow" as const,
         ...common,
         workflow: typeof workflow === "string"
@@ -885,7 +1082,7 @@ function captureNodeConfig(
     case "map": {
       const items = fields.get("items");
       if (items === undefined) fail(`${label} map items are required`);
-      if (typeof items !== "function" && !Array.isArray(items)) {
+      if (typeof items !== "function" && !arrayIsArray(items)) {
         fail(`${label} map items must be an array or builder function`);
       }
       if (typeof items === "function") assertFunction(items, `${label} map items builder`);
@@ -896,7 +1093,7 @@ function captureNodeConfig(
       const processorFields = inspectExactRecord(
         processor,
         `${label} map processor`,
-        new Set([...DEFINITION_KEYS, ...NODE_KEYS]),
+        MAP_PROCESSOR_KEYS,
       );
       const capturedProcessor = processorFields.has("steps")
         ? captureDefinition(processor as WorkflowDefinition, state, depth + 1, true)
@@ -904,11 +1101,11 @@ function captureNodeConfig(
       const concurrency = fields.get("concurrency");
       if (
         concurrency !== undefined &&
-        (!Number.isSafeInteger(concurrency) || (concurrency as number) < 1)
+        (!numberIsSafeInteger(concurrency) || (concurrency as number) < 1)
       ) {
         fail(`${label} map concurrency must be a positive safe integer`);
       }
-      return Object.freeze({
+      return objectFreeze({
         type: "map" as const,
         ...common,
         items: typeof items === "function" ? items : staticValue(items, "items"),
@@ -920,13 +1117,13 @@ function captureNodeConfig(
       const condition = fields.get("while");
       assertFunction(condition, `${label} loop while`);
       const steps = fields.get("steps");
-      if (typeof steps !== "function" && !Array.isArray(steps)) {
+      if (typeof steps !== "function" && !arrayIsArray(steps)) {
         fail(`${label} loop steps must be an array or builder function`);
       }
       if (typeof steps === "function") assertFunction(steps, `${label} loop steps builder`);
       const maxIterations = fields.get("maxIterations");
       if (
-        !Number.isSafeInteger(maxIterations) || (maxIterations as number) < 1 ||
+        !numberIsSafeInteger(maxIterations) || (maxIterations as number) < 1 ||
         (maxIterations as number) > 100
       ) {
         fail(`${label} loop maxIterations must be an integer between 1 and 100`);
@@ -941,7 +1138,7 @@ function captureNodeConfig(
       }
       const delay = fields.get("delay");
       if (delay !== undefined) assertDurationValue(delay, `${label} delay`, false);
-      return Object.freeze({
+      return objectFreeze({
         type: "loop" as const,
         ...common,
         while: condition,
@@ -975,10 +1172,12 @@ function captureNode(
     fail(`Workflow definition cannot contain more than ${MAX_WORKFLOW_DEFINITION_NODES} nodes`);
   }
   const object = value as object;
-  if (state.activeNodes.has(object)) fail(`${label} contains a recursive node reference`);
-  state.activeNodes.add(object);
+  if (weakSetHasValue(state.activeNodes, object)) {
+    fail(`${label} contains a recursive node reference`);
+  }
+  weakSetAddValue(state.activeNodes, object);
   try {
-    return Object.freeze({
+    return objectFreeze({
       id,
       config: captureNodeConfig(fields.get("config"), label, state, depth),
       ...(fields.has("dependsOn")
@@ -986,37 +1185,51 @@ function captureNode(
         : {}),
     });
   } finally {
-    state.activeNodes.delete(object);
+    weakSetDeleteValue(state.activeNodes, object);
   }
 }
 
 function validateDependencyGraph(nodes: readonly WorkflowNode[], label: string): void {
-  const byId = new Map<string, WorkflowNode>();
-  const dependents = new Map<string, string[]>();
-  const indegree = new Map<string, number>();
-  for (const node of nodes) {
-    if (byId.has(node.id)) fail(`${label} has duplicate node ID "${node.id}"`);
-    byId.set(node.id, node);
-    dependents.set(node.id, []);
-    indegree.set(node.id, 0);
+  const byId = new MapConstructor<string, WorkflowNode>();
+  const dependents = new MapConstructor<string, string[]>();
+  const indegree = new MapConstructor<string, number>();
+  for (let index = 0; index < nodes.length; index++) {
+    const node = nodes[index]!;
+    if (mapHasKey(byId, node.id)) fail(`${label} has duplicate node ID "${node.id}"`);
+    mapSetValue(byId, node.id, node);
+    mapSetValue(dependents, node.id, []);
+    mapSetValue(indegree, node.id, 0);
   }
-  for (const node of nodes) {
-    for (const dependency of node.dependsOn ?? []) {
-      const targets = dependents.get(dependency);
+  for (let index = 0; index < nodes.length; index++) {
+    const node = nodes[index]!;
+    const dependencies = objectHasOwn(node, "dependsOn") ? node.dependsOn ?? [] : [];
+    for (let dependencyIndex = 0; dependencyIndex < dependencies.length; dependencyIndex++) {
+      const dependency = dependencies[dependencyIndex]!;
+      const targets = mapGetValue(dependents, dependency);
       if (!targets) fail(`${label} node "${node.id}" depends on unknown node "${dependency}"`);
-      targets.push(node.id);
-      indegree.set(node.id, (indegree.get(node.id) ?? 0) + 1);
+      appendArrayValue(targets, node.id);
+      mapSetValue(indegree, node.id, (mapGetValue(indegree, node.id) ?? 0) + 1);
     }
   }
   const queue: string[] = [];
-  for (const [id, degree] of indegree) if (degree === 0) queue.push(id);
+  reflectApply(mapForEach, indegree, [
+    (degree: number, id: string) => {
+      if (degree === 0) appendArrayValue(queue, id);
+    },
+  ]);
   let visited = 0;
   for (let index = 0; index < queue.length; index++) {
     visited++;
-    for (const dependent of dependents.get(queue[index]!) ?? []) {
-      const next = (indegree.get(dependent) ?? 0) - 1;
-      indegree.set(dependent, next);
-      if (next === 0) queue.push(dependent);
+    const currentDependents = mapGetValue(dependents, queue[index]!) ?? [];
+    for (
+      let dependentIndex = 0;
+      dependentIndex < currentDependents.length;
+      dependentIndex++
+    ) {
+      const dependent = currentDependents[dependentIndex]!;
+      const next = (mapGetValue(indegree, dependent) ?? 0) - 1;
+      mapSetValue(indegree, dependent, next);
+      if (next === 0) appendArrayValue(queue, dependent);
     }
   }
   if (visited !== nodes.length) fail(`${label} contains a dependency cycle`);
@@ -1037,10 +1250,13 @@ function captureNodeList(
   }
   const captured: WorkflowNode[] = [];
   for (let index = 0; index < values.length; index++) {
-    captured.push(captureNode(values[index], `${label} node at index ${index}`, state, depth));
+    appendArrayValue(
+      captured,
+      captureNode(values[index], `${label} node at index ${index}`, state, depth),
+    );
   }
   validateDependencyGraph(captured, label);
-  return Object.freeze(captured) as unknown as WorkflowNode[];
+  return objectFreeze(captured) as WorkflowNode[];
 }
 
 function captureDefinition<TInput, TOutput>(
@@ -1059,6 +1275,10 @@ function captureDefinition<TInput, TOutput>(
   if (version !== undefined) {
     assertString(version, `Workflow "${id}" version`, MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS, true);
   }
+  const integrationRequirements = captureIntegrationRequirements(
+    fields.get("integrationRequirements"),
+    id,
+  );
   const timeout = fields.get("timeout");
   if (timeout !== undefined) {
     assertDurationValue(timeout, `Workflow "${id}" timeout`, true);
@@ -1073,7 +1293,7 @@ function captureDefinition<TInput, TOutput>(
   assertOptionalFunction(onError, `Workflow "${id}" onError`);
   assertOptionalFunction(onComplete, `Workflow "${id}" onComplete`);
   const stepsValue = fields.get("steps");
-  if (typeof stepsValue !== "function" && !Array.isArray(stepsValue)) {
+  if (typeof stepsValue !== "function" && !arrayIsArray(stepsValue)) {
     fail(`Workflow "${id}" steps must be an array or builder function`);
   }
   if (typeof stepsValue === "function") {
@@ -1081,10 +1301,10 @@ function captureDefinition<TInput, TOutput>(
   }
 
   const object = value as object;
-  if (state.activeDefinitions.has(object)) {
+  if (weakSetHasValue(state.activeDefinitions, object)) {
     fail(`Workflow "${id}" contains a recursive static definition reference`);
   }
-  state.activeDefinitions.add(object);
+  weakSetAddValue(state.activeDefinitions, object);
   try {
     const steps = typeof stepsValue === "function" ? stepsValue : captureNodeList(
       stepsValue,
@@ -1094,12 +1314,13 @@ function captureDefinition<TInput, TOutput>(
       allowEmptySteps,
       "step",
     );
-    return Object.freeze({
+    return objectFreeze({
       id,
       ...(fields.has("description") ? { description } : {}),
       ...(fields.has("version") ? { version } : {}),
       ...(fields.has("inputSchema") ? { inputSchema: fields.get("inputSchema") } : {}),
       ...(fields.has("outputSchema") ? { outputSchema: fields.get("outputSchema") } : {}),
+      ...(fields.has("integrationRequirements") ? { integrationRequirements } : {}),
       ...(fields.has("retry") ? { retry } : {}),
       ...(fields.has("timeout") ? { timeout } : {}),
       ...(fields.has("introspect") ? { introspect } : {}),
@@ -1108,7 +1329,7 @@ function captureDefinition<TInput, TOutput>(
       ...(fields.has("onComplete") ? { onComplete } : {}),
     }) as WorkflowDefinition<TInput, TOutput>;
   } finally {
-    state.activeDefinitions.delete(object);
+    weakSetDeleteValue(state.activeDefinitions, object);
   }
 }
 
@@ -1146,14 +1367,17 @@ export function captureWorkflowDefinitions(
   const values = inspectDenseArrayValues(workflows, "Workflow definitions");
   const state = createCaptureState();
   const captured: WorkflowDefinition[] = [];
-  const seenIds = new Set<string>();
-  for (const value of values) {
+  const seenIds = new NativeSet<string>();
+  for (let index = 0; index < values.length; index++) {
+    const value = values[index];
     const workflow = captureDefinition(value, state, 0);
-    if (seenIds.has(workflow.id)) fail(`Workflow already registered in batch: ${workflow.id}`);
-    seenIds.add(workflow.id);
-    captured.push(workflow);
+    if (setHasValue(seenIds, workflow.id)) {
+      fail(`Workflow already registered in batch: ${workflow.id}`);
+    }
+    setAddValue(seenIds, workflow.id);
+    appendArrayValue(captured, workflow);
   }
-  return Object.freeze(captured) as unknown as WorkflowDefinition[];
+  return objectFreeze(captured) as WorkflowDefinition[];
 }
 
 /** Capture nodes returned by a workflow or composite builder. */
@@ -1165,13 +1389,29 @@ export function captureWorkflowNodes(
     emptyElementName?: "node" | "step";
   }> = {},
 ): WorkflowNode[] {
+  const optionFields = inspectExactRecord(
+    options,
+    `${label} capture options`,
+    CAPTURE_NODE_OPTION_KEYS,
+  );
+  const allowEmpty = optionFields.get("allowEmpty");
+  const emptyElementName = optionFields.get("emptyElementName");
+  if (allowEmpty !== undefined && typeof allowEmpty !== "boolean") {
+    fail(`${label} capture option allowEmpty must be a boolean`);
+  }
+  if (
+    emptyElementName !== undefined &&
+    emptyElementName !== "node" && emptyElementName !== "step"
+  ) {
+    fail(`${label} capture option emptyElementName must be "node" or "step"`);
+  }
   return captureNodeList(
     value,
     label,
     createCaptureState(),
     0,
-    options.allowEmpty ?? false,
-    options.emptyElementName ?? "node",
+    allowEmpty ?? false,
+    emptyElementName ?? "node",
   );
 }
 
@@ -1179,5 +1419,5 @@ export function captureWorkflowNodes(
 export function captureWorkflowMapItems(value: unknown, label: string): unknown[] {
   const entries = inspectDenseArrayValues(value, label);
   const captured = captureWorkflowStaticValue(entries, label);
-  return Object.freeze(captured) as unknown as unknown[];
+  return objectFreeze(captured) as unknown[];
 }

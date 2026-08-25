@@ -43,7 +43,7 @@ export const vfBootstrap: MCPTool<BootstrapInput, BootstrapResult> = {
     "Returns project structure, coding conventions, current errors, and server status. " +
     "Equivalent to calling vf_get_project_context + vf_get_conventions + vf_get_errors + " +
     "vf_get_status separately, but in a single round-trip. " +
-    "Do not use repeatedly — call once at session bootstrap.",
+    "Do not use repeatedly. Call once at session bootstrap.",
   inputSchema: bootstrapInput,
   execute: async (input) => {
     const [project, conventions] = await Promise.all([

@@ -42,6 +42,15 @@ function formatIssues(issues: Array<{ path: string[]; message: string }>): strin
   return issues.map((i) => `  - ${i.path.join(".")}: ${i.message}`).join("\n");
 }
 
+/**
+ * Builds args carrying a raw, unvalidated `mode` so the router's own validation
+ * is what rejects it. The widening is scoped to `mode`, every other field keeps
+ * its `ParsedArgs` type, and `args` is copied rather than mutated.
+ */
+function parsedArgsWithRawMode(args: ParsedArgs, mode: unknown): ParsedArgs {
+  return { ...args, mode: mode as ParsedArgs["mode"] };
+}
+
 describe("cli/command-definitions integrity", () => {
   it("should have all expected commands", () => {
     const expectedCommands = [
@@ -73,6 +82,7 @@ describe("cli/command-definitions integrity", () => {
       "uploads",
       "files",
       "knowledge",
+      "project",
     ];
 
     for (const cmd of expectedCommands) {
@@ -487,13 +497,99 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("routes env to its subcommand handler", async () => {
+      stubExit();
+      stubConsole();
+      setJsonMode(true);
+      try {
+        const code = await runAndCaptureExit({ _: ["env"], json: true } as ParsedArgs);
+        assertEquals(code, 2);
+        assertEquals(consoleOutput.length, 1);
+        const parsed = JSON.parse(consoleOutput[0]!);
+        assertEquals(parsed.command, "env");
+        assertEquals(parsed.error.registrySlug, "invalid-argument");
+        assertEquals(
+          parsed.error.message,
+          "Environment subcommand is required. Usage: veryfront env token --env <name>",
+        );
+      } finally {
+        restoreAll();
+      }
+    });
+
+    const DUPLICATED_BINARY_MESSAGE =
+      '  You already included "veryfront". Remove the extra "veryfront" argument and run the command again.';
+
+    it("a duplicated binary name explains how to remove it", async () => {
+      stubExit();
+      stubLogger();
+      stubConsole();
+      try {
+        const code = await runAndCaptureExit({ _: ["veryfront", "dev"] } as ParsedArgs);
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [DUPLICATED_BINARY_MESSAGE]);
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("a duplicated binary name is explained rather than shadowed by --help", async () => {
+      stubExit();
+      stubLogger();
+      stubConsole();
+      try {
+        const code = await runAndCaptureExit(
+          { _: ["veryfront", "login"], help: true } as ParsedArgs,
+        );
+        assertEquals(code, 2);
+        assertEquals(infoMessages, [DUPLICATED_BINARY_MESSAGE]);
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("a duplicated binary name followed by an unknown command falls through", async () => {
+      stubExit();
+      stubLogger();
+      stubConsole();
+      try {
+        const code = await runAndCaptureExit({ _: ["veryfront", "nosuch"] } as ParsedArgs);
+        assertEquals(code, 2);
+        assertEquals(infoMessages.includes(DUPLICATED_BINARY_MESSAGE), false);
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("a duplicated binary name with --json suggests the intended command", async () => {
+      stubExit();
+      stubConsole();
+      setJsonMode(true);
+      try {
+        const code = await runAndCaptureExit(
+          { _: ["veryfront", "login"], json: true } as ParsedArgs,
+        );
+        assertEquals(code, 2);
+        assertEquals(consoleOutput.length, 1);
+        const parsed = JSON.parse(consoleOutput[0]!);
+        assertEquals(parsed.success, false);
+        assertEquals(parsed.command, "veryfront");
+        assertEquals(parsed.error.code, "USAGE_ERROR");
+        assertEquals(parsed.error.slug, "unknown-command");
+        assertEquals(parsed.error.message, "Unknown command: veryfront");
+        assertEquals(parsed.error.context.suggestions, ["login"]);
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("command validation failure with --json outputs a JSON error envelope", async () => {
       stubExit();
       stubConsole();
       setJsonMode(true);
       try {
         const code = await runAndCaptureExit(
-          { _: ["serve"], mode: "invalid", json: true } as ParsedArgs,
+          parsedArgsWithRawMode({ _: ["serve"], json: true }, "invalid"),
         );
         assertEquals(code, 2);
         assertEquals(consoleOutput.length, 1);
@@ -501,7 +597,8 @@ describe("cli/router helpers", () => {
         assertEquals(parsed.success, false);
         assertEquals(parsed.command, "serve");
         assertEquals(parsed.error.code, "USAGE_ERROR");
-        assertEquals(parsed.error.slug, "invalid-argument");
+        assertEquals(parsed.error.slug, "invalid-arguments");
+        assertEquals(parsed.error.registrySlug, "invalid-argument");
       } finally {
         restoreAll();
       }
@@ -515,7 +612,7 @@ describe("cli/router helpers", () => {
       Deno.env.set("VERYFRONT_NO_UPDATE_CHECK", "1");
       try {
         const code = await runAndCaptureExit(
-          { _: ["serve"], mode: "invalid" } as ParsedArgs,
+          parsedArgsWithRawMode({ _: ["serve"] }, "invalid"),
         );
         assertEquals(code, 2);
         assertEquals(consoleErrorOutput.some((line) => line.includes("✗")), true);
@@ -543,14 +640,14 @@ describe("cli/router helpers", () => {
         assertEquals(parsed.success, false);
         assertEquals(parsed.command, "schedule");
         assertEquals(parsed.error.code, "USAGE_ERROR");
-        assertEquals(parsed.error.slug, "invalid-argument");
+        assertEquals(parsed.error.slug, "invalid-arguments");
+        assertEquals(parsed.error.registrySlug, "invalid-argument");
       } finally {
         restoreAll();
       }
     });
 
     it("reports missing credentials for schedule remote JSON runs as JSON command failure", async () => {
-      const originalCwd = Deno.cwd();
       const projectDir = await Deno.makeTempDir({ prefix: "vf-schedule-json-auth-" });
       const configHome = await Deno.makeTempDir({ prefix: "vf-schedule-json-auth-config-" });
       const environmentNames = [
@@ -571,7 +668,6 @@ describe("cli/router helpers", () => {
           `${projectDir}/veryfront.json`,
           JSON.stringify({ projectSlug: "json-auth-project" }),
         );
-        Deno.chdir(projectDir);
         Deno.env.delete("VERYFRONT_API_URL");
         Deno.env.delete("VERYFRONT_API_TOKEN");
         Deno.env.delete("VERYFRONT_PROJECT_SLUG");
@@ -580,6 +676,7 @@ describe("cli/router helpers", () => {
 
         const code = await runAndCaptureExit({
           _: ["schedule", "run", "process-job-submissions"],
+          "project-dir": projectDir,
           remote: true,
           json: true,
         } as ParsedArgs);
@@ -590,10 +687,10 @@ describe("cli/router helpers", () => {
         assertEquals(parsed.command, "schedule");
         assertEquals(parsed.error.code, "RUNTIME_ERROR");
         assertEquals(parsed.error.slug, "command-failed");
+        assertEquals(parsed.error.registrySlug, "unknown-error");
         assertEquals(parsed.error.message, "Authentication required for this operation.");
         assertEquals(consoleErrorOutput, []);
       } finally {
-        Deno.chdir(originalCwd);
         for (const name of environmentNames) {
           const value = originalEnvironment[name];
           if (value === undefined) Deno.env.delete(name);

@@ -18,6 +18,15 @@ export const runtimeProcess: RuntimeProcess | null = testHasRuntimeProcess(nodeP
   ? nodeProcess
   : null;
 
+/**
+ * The host environment record, captured before any narrower view is installed
+ * over `process.env`.
+ *
+ * Host-scoped accessors read through this reference so that installing a
+ * scoped view over `process.env` cannot redirect them.
+ */
+export const hostProcessEnv: RuntimeProcess["env"] | null = runtimeProcess?.env ?? null;
+
 export function isWindowsPlatform(): boolean {
   const deno = IS_DENO ? getDenoRuntime() : undefined;
   if (deno) return deno.build.os === "windows";

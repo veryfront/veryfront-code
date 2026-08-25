@@ -1,4 +1,4 @@
-import { join } from "#veryfront/compat/path";
+import { extname, join } from "#veryfront/compat/path";
 import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
@@ -177,7 +177,9 @@ export async function resolveFileWithExtension(
     const content = await readFile(tryPath);
     if (content === null) continue;
 
-    const extension = tryExt || tryPath.split(".").pop() || "";
+    // `tryExt` is empty when `relativePath` already carries its own extension;
+    // derive it in the same leading-dot form so loader lookups still match.
+    const extension = tryExt || extname(tryPath);
     return { content, resolvedPath: tryPath, extension };
   }
 

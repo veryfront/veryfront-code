@@ -1,12 +1,81 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import type { AgentRuntimeMessage } from "../runtime/message-adapter.ts";
 import {
+  cloneHostedChildForkRuntimeStepSystem,
   convertCompactedProviderMessagesToChildForkRuntimeMessages,
   prepareHostedChildForkRuntimeStepMessages,
 } from "./child-fork-step-message-preparation.ts";
 
-Deno.test("convertCompactedProviderMessagesToChildForkRuntimeMessages rewrites tool-call part types", () => {
+it("cloneHostedChildForkRuntimeStepSystem detaches a custom provider bucket", () => {
+  let trapCalls = 0;
+  const opaqueProxy = new Proxy({}, {
+    ownKeys() {
+      trapCalls += 1;
+      return [];
+    },
+  });
+  const structuredSystem = [{
+    role: "system" as const,
+    content: "Base instructions",
+    providerOptions: {
+      bedrock: {
+        cacheControl: { type: "ephemeral" },
+        opaqueProxy,
+      },
+    },
+  }];
+
+  const clone = cloneHostedChildForkRuntimeStepSystem(
+    structuredSystem,
+    "bedrock",
+    false,
+  );
+  const bedrock = clone[0]?.providerOptions?.bedrock as {
+    cacheControl: { type: string };
+    opaqueProxy: object;
+  };
+  bedrock.cacheControl.type = "changed";
+
+  assertEquals(structuredSystem[0]?.providerOptions.bedrock.cacheControl.type, "ephemeral");
+  assertStrictEquals(bedrock.opaqueProxy, opaqueProxy);
+  assertEquals(trapCalls, 0);
+});
+
+it("cloneHostedChildForkRuntimeStepSystem keeps accessors inert without Proxy branding", () => {
+  let getterCalls = 0;
+  const bedrock: Record<string, unknown> = {
+    cacheControl: { type: "ephemeral" },
+  };
+  Object.defineProperty(bedrock, "lazySecret", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      throw new Error("accessor must not run during clone fallback");
+    },
+  });
+  const structuredSystem = [{
+    role: "system" as const,
+    content: "Base instructions",
+    providerOptions: { bedrock },
+  }];
+
+  const clone = cloneHostedChildForkRuntimeStepSystem(
+    structuredSystem,
+    "bedrock",
+    false,
+  );
+  const descriptor = Object.getOwnPropertyDescriptor(
+    clone[0]?.providerOptions?.bedrock,
+    "lazySecret",
+  );
+
+  assertEquals(getterCalls, 0);
+  assertEquals(typeof descriptor?.get, "function");
+});
+
+it("convertCompactedProviderMessagesToChildForkRuntimeMessages rewrites tool-call part types", () => {
   const messages = convertCompactedProviderMessagesToChildForkRuntimeMessages([
     {
       role: "assistant",
@@ -29,7 +98,7 @@ Deno.test("convertCompactedProviderMessagesToChildForkRuntimeMessages rewrites t
   });
 });
 
-Deno.test("prepareHostedChildForkRuntimeStepMessages compacts messages and resolves system text", () => {
+it("prepareHostedChildForkRuntimeStepMessages compacts messages and resolves system text", () => {
   const messages: AgentRuntimeMessage[] = [
     {
       id: "message-1",
@@ -64,7 +133,64 @@ Deno.test("prepareHostedChildForkRuntimeStepMessages compacts messages and resol
   ]);
 });
 
-Deno.test("prepareHostedChildForkRuntimeStepMessages preserves same-message assistant tool results", () => {
+it("prepareHostedChildForkRuntimeStepMessages keeps resolver system text-compatible", () => {
+  const structuredSystem = [{
+    role: "system" as const,
+    content: "Base instructions",
+    providerOptions: {
+      anthropic: { cacheControl: { type: "ephemeral" as const, ttl: "1h" as const } },
+    },
+  }];
+  const prepared = prepareHostedChildForkRuntimeStepMessages({
+    messages: [],
+    buildInstructions: () => structuredSystem,
+    forkToolNames: [],
+    resolveSystem: ({ system, structuredSystem: receivedStructuredSystem }) => {
+      assertEquals(system, "Base instructions");
+      assertEquals(receivedStructuredSystem, structuredSystem);
+      return system.replace("Base", "Refreshed");
+    },
+  });
+
+  assertEquals(prepared.system, "Refreshed instructions");
+});
+
+it("prepareHostedChildForkRuntimeStepMessages isolates structured resolver mutations", () => {
+  const structuredSystem = [{
+    role: "system" as const,
+    content: "Base instructions",
+    providerOptions: {
+      anthropic: { cacheControl: { type: "ephemeral" as const } },
+    },
+  }];
+  const prepared = prepareHostedChildForkRuntimeStepMessages({
+    messages: [],
+    buildInstructions: () => structuredSystem,
+    forkToolNames: [],
+    resolveSystem: ({ structuredSystem: receivedStructuredSystem }) => {
+      const message = receivedStructuredSystem?.[0];
+      if (message) {
+        message.content = "Mutated instructions";
+        const anthropic = message.providerOptions?.anthropic as {
+          cacheControl?: { type?: string };
+        } | undefined;
+        if (anthropic?.cacheControl) anthropic.cacheControl.type = "changed";
+      }
+      return null;
+    },
+  });
+
+  assertEquals(structuredSystem, [{
+    role: "system",
+    content: "Base instructions",
+    providerOptions: {
+      anthropic: { cacheControl: { type: "ephemeral" } },
+    },
+  }]);
+  assertEquals(prepared.system, structuredSystem);
+});
+
+it("prepareHostedChildForkRuntimeStepMessages preserves same-message assistant tool results", () => {
   const messages: AgentRuntimeMessage[] = [
     {
       id: "assistant-message-1",
@@ -126,7 +252,7 @@ Deno.test("prepareHostedChildForkRuntimeStepMessages preserves same-message assi
   ]);
 });
 
-Deno.test("prepareHostedChildForkRuntimeStepMessages falls back to current instructions", () => {
+it("prepareHostedChildForkRuntimeStepMessages falls back to current instructions", () => {
   const prepared = prepareHostedChildForkRuntimeStepMessages({
     messages: [],
     buildInstructions: () => "Current instructions",
@@ -138,7 +264,7 @@ Deno.test("prepareHostedChildForkRuntimeStepMessages falls back to current instr
   assertEquals(prepared.messages, []);
 });
 
-Deno.test("prepareHostedChildForkRuntimeStepMessages returns live forkToolNames when getActivatedToolNames provided", () => {
+it("prepareHostedChildForkRuntimeStepMessages returns live forkToolNames when getActivatedToolNames provided", () => {
   const activated = new Set(["read_file", "write_file"]);
   const pinned = ["load_skill", "search_tools", "load_tools"];
 
@@ -151,7 +277,7 @@ Deno.test("prepareHostedChildForkRuntimeStepMessages returns live forkToolNames 
   });
 
   // forkToolNames in result = pinned ∪ activated, sorted
-  assertEquals(prepared.forkToolNames?.sort(), [
+  assertEquals(prepared.forkToolNames && [...prepared.forkToolNames].sort(), [
     "load_skill",
     "load_tools",
     "read_file",
@@ -160,7 +286,7 @@ Deno.test("prepareHostedChildForkRuntimeStepMessages returns live forkToolNames 
   ]);
 });
 
-Deno.test("prepareHostedChildForkRuntimeStepMessages omits forkToolNames when no activated getter provided", () => {
+it("prepareHostedChildForkRuntimeStepMessages omits forkToolNames when no activated getter provided", () => {
   const prepared = prepareHostedChildForkRuntimeStepMessages({
     messages: [],
     buildInstructions: () => "Instructions",
@@ -171,7 +297,7 @@ Deno.test("prepareHostedChildForkRuntimeStepMessages omits forkToolNames when no
   assertEquals(prepared.forkToolNames, undefined);
 });
 
-Deno.test("prepareHostedChildForkRuntimeStepMessages deduplicates pinned and activated names", () => {
+it("prepareHostedChildForkRuntimeStepMessages deduplicates pinned and activated names", () => {
   const activated = new Set(["load_skill", "new_tool"]); // load_skill is also pinned
   const pinned = ["load_skill", "search_tools"];
 
@@ -187,5 +313,5 @@ Deno.test("prepareHostedChildForkRuntimeStepMessages deduplicates pinned and act
   const names = prepared.forkToolNames ?? [];
   const loadSkillCount = names.filter((n) => n === "load_skill").length;
   assertEquals(loadSkillCount, 1);
-  assertEquals(names.sort(), ["load_skill", "new_tool", "search_tools"]);
+  assertEquals([...names].sort(), ["load_skill", "new_tool", "search_tools"]);
 });

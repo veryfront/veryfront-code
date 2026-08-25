@@ -40,9 +40,12 @@ const addFormats = addFormatsModule as unknown as (
 // deno-lint-ignore no-explicit-any -- zod's chainable APIs return parametric types
 type AnyZodSchema = z.ZodType<any, any, any>;
 
+/** A wrapped Schema<T> carrying its backing zod schema for adapter round-trips. */
+type ZodBackedSchema<T> = Schema<T> & { __zod: AnyZodSchema };
+
 /** Unwrap our opaque Schema<T> back to the underlying zod schema. */
 function toZod<T>(schema: Schema<T>): AnyZodSchema {
-  return (schema as unknown as { __zod: AnyZodSchema }).__zod;
+  return (schema as ZodBackedSchema<T>).__zod;
 }
 
 /** Wrap a zod schema as an opaque Schema<T> with chainables routed through zod. */
@@ -53,7 +56,7 @@ function wrap<T>(zs: AnyZodSchema): Schema<T> {
   // deno-lint-ignore no-explicit-any -- safe within this adapter
   const anyZs = zs as any;
   const s: Schema<T> = {
-    _output: undefined as unknown as T,
+    _output: undefined as T,
     optional: () => wrap<T | undefined>(zs.optional()),
     nullable: () => wrap<T | null>(zs.nullable()),
     nullish: () => wrap<T | null | undefined>(zs.nullish()),
@@ -131,7 +134,7 @@ function wrap<T>(zs: AnyZodSchema): Schema<T> {
   };
   // Attach the underlying zod schema for adapter round-trips without
   // widening the public Schema<T> surface.
-  (s as unknown as { __zod: AnyZodSchema }).__zod = zs;
+  (s as ZodBackedSchema<T>).__zod = zs;
   return s;
 }
 
@@ -817,7 +820,7 @@ export function createZodAdapter(): SchemaValidator {
     function: (): Schema<(...args: unknown[]) => unknown> =>
       // zod 4's z.function() is callable without args/returns and produces a
       // schema accepting any function. We wrap it as Schema<AnyFunction>.
-      wrap(z.function() as unknown as AnyZodSchema),
+      wrap(z.function() as AnyZodSchema),
 
     object: <S extends Record<string, Schema<unknown>>>(shape: S): Schema<InferShape<S>> =>
       wrap(z.object(toZodShape(shape))),
@@ -827,7 +830,7 @@ export function createZodAdapter(): SchemaValidator {
     tuple: <T extends readonly Schema<unknown>[]>(
       items: T,
     ): Schema<{ [K in keyof T]: T[K] extends Schema<infer U> ? U : never }> => {
-      const zodItems = items.map((s) => toZod(s)) as unknown as [
+      const zodItems = items.map((s) => toZod(s)) as [
         AnyZodSchema,
         ...AnyZodSchema[],
       ];
@@ -837,12 +840,12 @@ export function createZodAdapter(): SchemaValidator {
     record: <K extends string | number | symbol, V>(
       keys: Schema<K>,
       values: Schema<V>,
-    ): Schema<Record<K, V>> => wrap(z.record(toZod(keys) as unknown as z.ZodString, toZod(values))),
+    ): Schema<Record<K, V>> => wrap(z.record(toZod(keys) as z.ZodString, toZod(values))),
 
     union: <T extends readonly [Schema<unknown>, ...Schema<unknown>[]]>(
       schemas: T,
     ): Schema<T[number] extends Schema<infer U> ? U : never> => {
-      const zodSchemas = schemas.map((s: Schema<unknown>) => toZod(s)) as unknown as [
+      const zodSchemas = schemas.map((s: Schema<unknown>) => toZod(s)) as [
         AnyZodSchema,
         AnyZodSchema,
         ...AnyZodSchema[],
@@ -857,7 +860,7 @@ export function createZodAdapter(): SchemaValidator {
       discriminator: K,
       schemas: T,
     ): Schema<T[number] extends Schema<infer U> ? U : never> => {
-      const zodSchemas = schemas.map((s: Schema<unknown>) => toZod(s)) as unknown as [
+      const zodSchemas = schemas.map((s: Schema<unknown>) => toZod(s)) as [
         // deno-lint-ignore no-explicit-any -- discriminated-union variants widen here
         z.ZodObject<any>,
         // deno-lint-ignore no-explicit-any -- discriminated-union variants widen here
@@ -871,9 +874,9 @@ export function createZodAdapter(): SchemaValidator {
     literal: <T extends string | number | boolean | null>(value: T): Schema<T> =>
       wrap(z.literal(value as never)),
 
-    enum: <T extends readonly [string, ...string[]]>(values: T): Schema<T[number]> =>
+    enum: <const T extends readonly [string, ...string[]]>(values: T): Schema<T[number]> =>
       wrap(
-        (z.enum as unknown as (v: readonly [string, ...string[]]) => AnyZodSchema)(values),
+        (z.enum as (v: readonly [string, ...string[]]) => AnyZodSchema)(values),
       ),
 
     lazy: <T>(factory: () => Schema<T>): Schema<T> => wrap<T>(z.lazy(() => toZod(factory()))),
@@ -883,7 +886,7 @@ export function createZodAdapter(): SchemaValidator {
       // contract uses a slimmer `new`-able shape; bridge with a single cast
       // through unknown.
       wrap<T>(
-        (z.instanceof as unknown as (c: unknown) => AnyZodSchema)(ctor),
+        (z.instanceof as (c: unknown) => AnyZodSchema)(ctor),
       ),
 
     custom: <T>(check?: (value: unknown) => boolean, message?: string): Schema<T> =>

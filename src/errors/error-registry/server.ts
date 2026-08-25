@@ -5,7 +5,8 @@ export const PORT_IN_USE = defineError({
   category: "SERVER",
   status: 409,
   title: "Server port already in use",
-  suggestion: "Use a different port or stop the process using this port",
+  suggestion:
+    "Stop the process using the port, or pick another with: veryfront dev --port <number>",
 });
 
 export const SERVER_START_ERROR = defineError({
@@ -46,6 +47,14 @@ export const SERVICE_OVERLOADED = defineError({
   status: 503,
   title: "Service overloaded",
   suggestion: "Reduce load or scale up resources",
+});
+
+export const PROJECT_EXECUTION_UNAVAILABLE = defineError({
+  slug: "project-execution-unavailable",
+  category: "SERVER",
+  status: 503,
+  title: "Project execution unavailable",
+  suggestion: "Route the project to a dedicated isolated runtime",
 });
 
 export const SEMAPHORE_TIMEOUT = defineError({
@@ -125,6 +134,33 @@ export const FALLBACK_EXHAUSTED = defineError({
   suggestion: "Check service availability and connectivity",
 });
 
+/** Persisted RAG index is malformed or failed structural validation. */
+export const RAG_STORE_CORRUPT = defineError({
+  slug: "rag-store-corrupt",
+  category: "SERVER",
+  status: 500,
+  title: "RAG store file is corrupt",
+  suggestion: "Repair or move the store file aside, then retry; it was not overwritten",
+});
+
+/** A persisted RAG index operation could not be completed safely. */
+export const RAG_STORE_UNAVAILABLE = defineError({
+  slug: "rag-store-unavailable",
+  category: "SERVER",
+  status: 500,
+  title: "RAG store file is unavailable",
+  suggestion: "Check storage availability, permissions, and concurrent operations, then retry",
+});
+
+export const SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE = defineError({
+  slug: "source-snapshot-freshness-unavailable",
+  category: "SERVER",
+  status: 503,
+  title: "Source snapshot freshness cannot be established",
+  suggestion:
+    "Implement ensureSourceSnapshotFresh() or refreshSourceSnapshot() on the filesystem adapter that serves this mutable source",
+});
+
 /** Registry fragment for SERVER errors (slug → definition). */
 export const SERVER_REGISTRY = {
   "port-in-use": PORT_IN_USE,
@@ -133,6 +169,7 @@ export const SERVER_REGISTRY = {
   "file-watch-error": FILE_WATCH_ERROR,
   "request-error": REQUEST_ERROR,
   "service-overloaded": SERVICE_OVERLOADED,
+  "project-execution-unavailable": PROJECT_EXECUTION_UNAVAILABLE,
   "semaphore-timeout": SEMAPHORE_TIMEOUT,
   "circuit-breaker-open": CIRCUIT_BREAKER_OPEN,
   "cache-path-mismatch": CACHE_PATH_MISMATCH,
@@ -142,4 +179,7 @@ export const SERVER_REGISTRY = {
   "cache-invariant-violation": CACHE_INVARIANT_VIOLATION,
   "release-not-found": RELEASE_NOT_FOUND,
   "fallback-exhausted": FALLBACK_EXHAUSTED,
+  "rag-store-corrupt": RAG_STORE_CORRUPT,
+  "rag-store-unavailable": RAG_STORE_UNAVAILABLE,
+  "source-snapshot-freshness-unavailable": SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE,
 } as const;

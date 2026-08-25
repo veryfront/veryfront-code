@@ -11,5 +11,10 @@ describe("veryfront/utils public export surface", () => {
   it("does not expose test-only logger reset helpers", () => {
     assertEquals("__resetLoggerConfigForTests" in utils, false);
     assertEquals("__resetLogRecordEmitterForTests" in utils, false);
+    assertEquals(
+      Object.keys(utils).filter((key) => key.endsWith("ForTests")),
+      [],
+      "the veryfront/utils barrel must not export test-only helpers",
+    );
   });
 });

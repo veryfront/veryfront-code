@@ -26,9 +26,19 @@ describe("base64url", () => {
     });
 
     it("should handle latin1 characters", () => {
-      const result = base64urlEncode("café");
-      assertEquals(typeof result, "string");
-      assertEquals(result.length > 0, true);
+      assertEquals(
+        base64urlEncode("café"),
+        "Y2Fm6Q",
+        "latin1 input uses btoa binary-string semantics, not UTF-8 bytes",
+      );
+    });
+
+    it("should fall back to UTF-8 bytes outside latin1", () => {
+      assertEquals(
+        base64urlEncode("日本"),
+        "5pel5pys",
+        "input outside latin1 falls back to UTF-8 bytes",
+      );
     });
 
     it("should produce consistent output", () => {
@@ -64,6 +74,54 @@ describe("base64url", () => {
     it("should produce consistent output for same bytes", () => {
       const bytes = new Uint8Array([1, 2, 3, 4, 5]);
       assertEquals(base64urlEncodeBytes(bytes), base64urlEncodeBytes(bytes));
+    });
+
+    it("should preserve byte-exact btoa fallback output at chunk and tail boundaries", () => {
+      const globalWithBuffer = globalThis as { Buffer?: unknown };
+      const bufferDescriptor = Object.getOwnPropertyDescriptor(globalWithBuffer, "Buffer");
+
+      try {
+        Object.defineProperty(globalWithBuffer, "Buffer", {
+          configurable: true,
+          value: undefined,
+          writable: true,
+        });
+
+        const chunkSize = 24 * 1024;
+        for (
+          const length of [
+            chunkSize - 1,
+            chunkSize,
+            chunkSize + 1,
+            chunkSize + 2,
+            300_001,
+          ]
+        ) {
+          const bytes = new Uint8Array(length);
+          for (let index = 0; index < bytes.length; index++) {
+            bytes[index] = index % 256;
+          }
+
+          const encoded = base64urlEncodeBytes(bytes);
+          assertEquals(encoded.includes("="), false);
+
+          const base64 = encoded.replaceAll("-", "+").replaceAll("_", "/") +
+            "=".repeat((4 - (encoded.length % 4)) % 4);
+          const decoded = atob(base64);
+          assertEquals(decoded.length, bytes.length);
+          for (let index = 0; index < bytes.length; index++) {
+            if (decoded.charCodeAt(index) !== bytes[index]) {
+              throw new Error(`Round-trip mismatch at byte ${index} for length ${length}`);
+            }
+          }
+        }
+      } finally {
+        if (bufferDescriptor) {
+          Object.defineProperty(globalWithBuffer, "Buffer", bufferDescriptor);
+        } else {
+          delete globalWithBuffer.Buffer;
+        }
+      }
     });
   });
 });

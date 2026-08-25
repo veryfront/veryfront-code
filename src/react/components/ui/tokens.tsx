@@ -14,14 +14,14 @@
  * @module react/components/ui/tokens
  */
 import * as React from "react";
-import { getDocumentNonce } from "./csp-nonce.ts";
+import { useDocumentNonce } from "./csp-nonce.ts";
 import { generateTokenCSS } from "./design-tokens.ts";
 
 const tokenCSS = generateTokenCSS();
 
 /** Scoped design-token stylesheet. Idempotent — render it anywhere. */
 export function DesignTokenStyle(): React.ReactElement {
-  const nonce = getDocumentNonce();
+  const nonce = useDocumentNonce();
   return <style nonce={nonce} dangerouslySetInnerHTML={{ __html: tokenCSS }} />;
 }
 DesignTokenStyle.displayName = "DesignTokenStyle";

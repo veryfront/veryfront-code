@@ -8,7 +8,7 @@ import { ensureAuthenticated } from "../../auth/index.ts";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import { createSpinner } from "#cli/ui";
 import { isTTY, promptUser } from "#cli/utils";
-import { logSuccess, logWarning } from "#cli/utils";
+import { logInfo, logSuccess, logWarning } from "#cli/utils";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import {
   createApiClient,
@@ -117,6 +117,29 @@ function plannedUpActions(plan: DeployPlan): string[] {
   ];
 }
 
+/**
+ * The same plan in prose, for the humans `--dry-run` exists to inform.
+ *
+ * A dry run that only says it finished cannot be read before the real run, so
+ * it names the project it resolved and every action the apply would take.
+ * The name comes from the plan, not from the local link: a project renamed
+ * after it was linked still resolves by id, and the plan carries the slug the
+ * apply would actually target.
+ * It never predicts a preview URL: `up` prints URLs it has verified, and the
+ * hostname of a deployment that does not exist yet is not one of them.
+ */
+function formatUpDryRunPlan(plan: DeployPlan): string {
+  const actions = [
+    ...(plan.plannedActions.includes("create-project") ? ["create the project"] : []),
+    ...(plan.plannedActions.includes("push-source") ? [`push source to "${plan.branch}"`] : []),
+    "create release",
+    `deploy to "${plan.environment}"`,
+  ];
+  const last = actions[actions.length - 1];
+  const phrase = `${actions.slice(0, -1).join(", ")}, and ${last}`;
+  return `Would ${phrase} for project ${plan.projectSlug}`;
+}
+
 export async function upCommand(
   options: Partial<UpOptions> = {},
   env: EnvironmentConfig = getEnvironmentConfig(),
@@ -125,7 +148,7 @@ export async function upCommand(
   const { projectDir = cwd(), force = false, dryRun = false } = options;
   const jsonOutput = isJsonMode();
 
-  const userInfo = await ensureAuthenticated(env);
+  const userInfo = await ensureAuthenticated(env, projectDir);
   if (!userInfo) {
     if (jsonOutput) {
       const message = "Not authenticated. Set VERYFRONT_API_TOKEN or run veryfront login.";
@@ -159,10 +182,10 @@ export async function upCommand(
       );
     } else {
       logWarning("This folder is empty.");
-      cliLogger.info("");
+      console.log();
       cliLogger.info("To get started, create your app files or run:");
       cliLogger.info(`  ${brand("veryfront init")}`);
-      cliLogger.info("");
+      console.log();
     }
     exitProcess(1);
     return;
@@ -238,7 +261,9 @@ export async function upCommand(
     projectSlug = slug;
   }
 
-  if (!jsonOutput) cliLogger.info("");
+  // A blank separator is written straight to stdout: routed through the logger
+  // it renders as a status glyph with no message.
+  if (!jsonOutput) console.log();
 
   // Deploy Execution owns the rest: the bootstrap push, the release, the
   // deployment, and the readiness probe behind the URL printed below.
@@ -257,6 +282,9 @@ export async function upCommand(
     }, {
       onEvent(event) {
         if (event.kind !== "step") return;
+        // A dry run resolves the target and stops. Narrating the steps of an
+        // apply it never performs told users it was "Building release...".
+        if (dryRun) return;
         const next = deployProgressText(event, "preview", verbose);
         if (!next || next === progressText) return;
         progressText = next;
@@ -282,6 +310,7 @@ export async function upCommand(
         },
       });
     } else {
+      logInfo(formatUpDryRunPlan(outcome.plan));
       logSuccess("Dry run complete");
     }
     return;

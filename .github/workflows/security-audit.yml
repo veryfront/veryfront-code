@@ -8,6 +8,8 @@ on:
       - "cli/deno.json"
       - "react/deno.json"
       - "extensions/**/deno.json"
+      - "storybook/package.json"
+      - "storybook/package-lock.json"
       - "scripts/build/generate-sbom.ts"
       - "scripts/lib/deno-lock.ts"
       - "scripts/lint/audit-core-deps.ts"
@@ -36,6 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
 
       - name: Run npm dependency audit
         run: deno task audit
@@ -76,6 +79,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
 
       - name: Submit deno.lock graph to GitHub
         env:

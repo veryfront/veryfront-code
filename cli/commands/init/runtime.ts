@@ -1,3 +1,4 @@
+import { INVALID_ARGUMENT } from "veryfront/errors";
 import type { InitRuntime } from "./types.ts";
 
 const VALID_RUNTIMES: readonly InitRuntime[] = ["node", "bun", "deno"];
@@ -14,8 +15,9 @@ export function parseRuntime(value: unknown): InitRuntime {
   ) {
     return value as InitRuntime;
   }
-  throw new Error(
-    `Invalid runtime value: ${JSON.stringify(value)}. ` +
+  throw INVALID_ARGUMENT.create({
+    detail: `Invalid runtime value: ${JSON.stringify(value)}. ` +
       `Must be one of: ${VALID_RUNTIMES.join(", ")}.`,
-  );
+    context: { value, allowed: VALID_RUNTIMES },
+  });
 }

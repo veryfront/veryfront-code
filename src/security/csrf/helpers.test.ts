@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertNotEquals, assertThrows } from "#veryfront/testing/assert.ts";
-import { applyCsrfCookie, generateCsrfToken, validateCsrf } from "./helpers.ts";
+import { applyCsrfCookie, csrfCookieSetting, generateCsrfToken, validateCsrf } from "./helpers.ts";
 
 describe("security/csrf/helpers", () => {
   describe("generateCsrfToken", () => {
@@ -219,6 +219,50 @@ describe("security/csrf/helpers", () => {
       assertEquals(setCookie!.includes("Secure"), true);
     });
 
+    it("should not mark a non-__Host cookie Secure over plain http", () => {
+      const req = new Request("http://localhost/", {
+        headers: { accept: "text/html" },
+      });
+      const headers = new Headers();
+      applyCsrfCookie(req, headers, { cookieName: "vf_csrf" });
+
+      assertEquals(
+        headers.get("set-cookie")!.includes("Secure"),
+        false,
+        "a non-__Host cookie over plain http must not be marked Secure",
+      );
+    });
+
+    it("should mark a non-__Host cookie Secure on an https request URL", () => {
+      const req = new Request("https://example.com/", {
+        headers: { accept: "text/html" },
+      });
+      const headers = new Headers();
+      applyCsrfCookie(req, headers, { cookieName: "vf_csrf" });
+
+      assertEquals(
+        headers.get("set-cookie")!.includes("Secure"),
+        true,
+        "an https request URL must mark the CSRF cookie Secure",
+      );
+    });
+
+    // The trusted-topology arm of this branch needs a real process env mutation
+    // and lives in tests/integration/security/csrf-proxy-topology.test.ts.
+    it("should ignore x-forwarded-proto while the proxy topology is untrusted", () => {
+      const req = new Request("http://localhost/", {
+        headers: { "x-forwarded-proto": "https", accept: "text/html" },
+      });
+      const headers = new Headers();
+      applyCsrfCookie(req, headers, { cookieName: "vf_csrf" });
+
+      assertEquals(
+        headers.get("set-cookie")!.includes("Secure"),
+        false,
+        "a spoofable forwarded-proto header must not control the Secure flag while the proxy topology is untrusted",
+      );
+    });
+
     it("should set cookie on HEAD when absent", () => {
       const req = new Request("http://localhost/", {
         method: "HEAD",
@@ -345,6 +389,75 @@ describe("security/csrf/helpers", () => {
       const setCookie = headers.get("set-cookie");
       assertNotEquals(setCookie, null);
       assertEquals(setCookie!.startsWith("__Host-vf_csrf="), true);
+    });
+  });
+
+  describe("csrfCookieSetting", () => {
+    it("issues the token cookie locally when security.csrf is unset", () => {
+      assertEquals(
+        csrfCookieSetting(undefined, true),
+        true,
+        "an unset local project needs a token cookie so browser mutations have one to echo",
+      );
+
+      const req = new Request("http://localhost/", {
+        headers: { accept: "text/html" },
+      });
+      const headers = new Headers();
+      applyCsrfCookie(req, headers, csrfCookieSetting(undefined, true));
+
+      const setCookie = headers.get("set-cookie");
+      assertNotEquals(
+        setCookie,
+        null,
+        "a local HTML document response must carry the double-submit token cookie",
+      );
+      assertEquals(
+        setCookie!.startsWith("__Host-vf_csrf="),
+        true,
+        "the local token uses the same default cookie name as production",
+      );
+      assertEquals(
+        setCookie!.includes("HttpOnly"),
+        false,
+        "csrfMutationHeaders reads the cookie from document.cookie, so it must not be HttpOnly",
+      );
+    });
+
+    it("never turns enforcement on and never overrides an explicit setting", () => {
+      assertEquals(
+        csrfCookieSetting(undefined, false),
+        undefined,
+        "a non-local surface keeps the unset setting so nothing changes outside development",
+      );
+      assertEquals(
+        csrfCookieSetting(false, true),
+        false,
+        "an explicit opt-out is preserved locally and issues no cookie",
+      );
+      assertEquals(
+        csrfCookieSetting(true, false),
+        true,
+        "an explicitly enabled setting is passed through untouched",
+      );
+
+      const config = { cookieName: "vf_csrf" };
+      assertEquals(
+        csrfCookieSetting(config, true),
+        config,
+        "an object setting is returned by identity so cookie and header overrides survive",
+      );
+
+      const req = new Request("http://localhost/", {
+        headers: { accept: "text/html" },
+      });
+      const headers = new Headers();
+      applyCsrfCookie(req, headers, csrfCookieSetting(false, true));
+      assertEquals(
+        headers.get("set-cookie"),
+        null,
+        "an explicit opt-out must not gain a token cookie from local development",
+      );
     });
   });
 });

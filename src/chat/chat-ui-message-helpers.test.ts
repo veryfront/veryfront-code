@@ -141,6 +141,56 @@ describe("chat/chat-ui-message-helpers", () => {
     );
   });
 
+  it("preserves the full billing metadata set and drops invalid enum members", () => {
+    assertEquals(
+      normalizeChatMessageMetadata({
+        billableInputTokens: 10,
+        billableOutputTokens: 7,
+        costUsd: 0.0025,
+        providerInputCostUsd: 0.001,
+        providerOutputCostUsd: 0.0005,
+        providerCostUsd: 0.0015,
+        veryfrontInputChargeUsd: 0.0012,
+        veryfrontOutputChargeUsd: 0.0007,
+        veryfrontChargeUsd: 0.0019,
+        veryfrontBilledUsd: 0.002,
+        costCredits: 19,
+        costSource: "gateway",
+        billingMode: "deferred",
+        usageCaptureStatus: "complete",
+      }),
+      {
+        billableInputTokens: 10,
+        billableOutputTokens: 7,
+        costUsd: 0.0025,
+        providerInputCostUsd: 0.001,
+        providerOutputCostUsd: 0.0005,
+        providerCostUsd: 0.0015,
+        veryfrontInputChargeUsd: 0.0012,
+        veryfrontOutputChargeUsd: 0.0007,
+        veryfrontChargeUsd: 0.0019,
+        veryfrontBilledUsd: 0.002,
+        costCredits: 19,
+        costSource: "gateway",
+        billingMode: "deferred",
+        usageCaptureStatus: "complete",
+      },
+      "every billing field the run stream emits must survive normalization",
+    );
+
+    assertEquals(
+      normalizeChatMessageMetadata({
+        billingMode: "bogus",
+        usageCaptureStatus: "bogus",
+        costSource: "bogus",
+        billableInputTokens: 1.5,
+        billableOutputTokens: -1,
+      }),
+      {},
+      "invalid enum members and fractional or negative token counts must be dropped",
+    );
+  });
+
   it("returns undefined when extracting empty metadata", () => {
     assertEquals(extractChatMessageMetadata(null), undefined);
     assertEquals(extractChatMessageMetadata({ ignored: true }), undefined);
@@ -240,6 +290,104 @@ describe("chat/chat-ui-message-helpers", () => {
       { type: "text-delta", id: "msg-1", delta: "Hello" },
       { type: "text-delta", id: "msg-1", delta: " world" },
       { type: "text-end", id: "msg-1" },
+    ]);
+  });
+
+  it("starts a replacement segment when replayed text diverges", async () => {
+    const result = await collect(dedupeChatUiMessageChunks(toStream([
+      { type: "text-start", id: "msg-1" },
+      { type: "text-delta", id: "msg-1", delta: "Created the assistant." },
+      { type: "text-start", id: "msg-1" },
+      { type: "text-delta", id: "msg-1", delta: "Created the " },
+      { type: "text-delta", id: "msg-1", delta: "workflow." },
+      { type: "text-end", id: "msg-1" },
+    ])));
+
+    assertEquals(result, [
+      { type: "text-start", id: "msg-1" },
+      { type: "text-delta", id: "msg-1", delta: "Created the assistant." },
+      { type: "text-end", id: "msg-1" },
+      { type: "text-start", id: "msg-1:replacement:1" },
+      { type: "text-delta", id: "msg-1:replacement:1", delta: "Created the workflow." },
+      { type: "text-end", id: "msg-1:replacement:1" },
+    ]);
+  });
+
+  it("keeps content-addressed replacement chunks on one block identity", async () => {
+    const result = await collect(dedupeChatUiMessageChunks(toStream([
+      { type: "text-start", id: "msg-1", contentId: "text-0" },
+      {
+        type: "text-delta",
+        id: "msg-1",
+        contentId: "text-0",
+        delta: "Created the assistant.",
+      },
+      { type: "text-start", id: "msg-1", contentId: "text-0" },
+      { type: "text-delta", id: "msg-1", contentId: "text-0", delta: "Created the " },
+      { type: "text-delta", id: "msg-1", contentId: "text-0", delta: "workflow." },
+      { type: "text-end", id: "msg-1", contentId: "text-0" },
+    ])));
+
+    assertEquals(result, [
+      { type: "text-start", id: "msg-1", contentId: "text-0" },
+      {
+        type: "text-delta",
+        id: "msg-1",
+        contentId: "text-0",
+        delta: "Created the assistant.",
+      },
+      { type: "text-end", id: "msg-1", contentId: "text-0" },
+      { type: "text-start", id: "msg-1", contentId: "text-0:replacement:1" },
+      {
+        type: "text-delta",
+        id: "msg-1",
+        contentId: "text-0:replacement:1",
+        delta: "Created the workflow.",
+      },
+      { type: "text-end", id: "msg-1", contentId: "text-0:replacement:1" },
+    ]);
+  });
+
+  it("starts a complete replacement after a closed segment is extended", async () => {
+    const result = await collect(dedupeChatUiMessageChunks(toStream([
+      { type: "text-start", id: "msg-1" },
+      { type: "text-delta", id: "msg-1", delta: "Created the assistant." },
+      { type: "text-end", id: "msg-1" },
+      { type: "text-start", id: "msg-1" },
+      { type: "text-delta", id: "msg-1", delta: "Created the assistant. It is ready." },
+      { type: "text-end", id: "msg-1" },
+    ])));
+
+    assertEquals(result, [
+      { type: "text-start", id: "msg-1" },
+      { type: "text-delta", id: "msg-1", delta: "Created the assistant." },
+      { type: "text-end", id: "msg-1" },
+      { type: "text-start", id: "msg-1:replacement:1" },
+      {
+        type: "text-delta",
+        id: "msg-1:replacement:1",
+        delta: "Created the assistant. It is ready.",
+      },
+      { type: "text-end", id: "msg-1:replacement:1" },
+    ]);
+  });
+
+  it("preserves reasoning end metadata on a divergent replacement", async () => {
+    const result = await collect(dedupeChatUiMessageChunks(toStream([
+      { type: "reasoning-start", id: "reasoning-1" },
+      { type: "reasoning-delta", id: "reasoning-1", delta: "Plan A" },
+      { type: "reasoning-start", id: "reasoning-1" },
+      { type: "reasoning-delta", id: "reasoning-1", delta: "Plan B" },
+      { type: "reasoning-end", id: "reasoning-1", signature: "signed" },
+    ])));
+
+    assertEquals(result, [
+      { type: "reasoning-start", id: "reasoning-1" },
+      { type: "reasoning-delta", id: "reasoning-1", delta: "Plan A" },
+      { type: "reasoning-end", id: "reasoning-1" },
+      { type: "reasoning-start", id: "reasoning-1:replacement:1" },
+      { type: "reasoning-delta", id: "reasoning-1:replacement:1", delta: "Plan B" },
+      { type: "reasoning-end", id: "reasoning-1:replacement:1", signature: "signed" },
     ]);
   });
 

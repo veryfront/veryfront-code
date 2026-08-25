@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MAX_VERYFRONT_API_RETRIES } from "#veryfront/utils/config-resource-limits.ts";
 import { VeryfrontTokenAdapter } from "./adapter.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 
 describe("platform/adapters/token/veryfront/adapter", () => {
   function createConfig(overrides: Record<string, unknown> = {}) {
@@ -62,12 +63,11 @@ describe("platform/adapters/token/veryfront/adapter", () => {
     });
 
     it("coalesces concurrent connection checks", async () => {
-      const originalFetch = globalThis.fetch;
       let requests = 0;
-      globalThis.fetch = () => {
+      installMockFetch(() => {
         requests++;
         return Promise.resolve(Response.json({ keys: [] }));
-      };
+      });
 
       try {
         const adapter = new VeryfrontTokenAdapter(createConfig({
@@ -80,17 +80,17 @@ describe("platform/adapters/token/veryfront/adapter", () => {
         ]);
         assertEquals(requests, 1);
       } finally {
-        globalThis.fetch = originalFetch;
+        restoreMockFetch();
       }
     });
 
     it("does not let a late connection check resurrect a disposed adapter", async () => {
-      const originalFetch = globalThis.fetch;
       let resolveResponse: ((response: Response) => void) | undefined;
-      globalThis.fetch = () =>
+      installMockFetch(() =>
         new Promise<Response>((resolve) => {
           resolveResponse = resolve;
-        });
+        })
+      );
 
       try {
         const adapter = new VeryfrontTokenAdapter(createConfig({
@@ -108,14 +108,14 @@ describe("platform/adapters/token/veryfront/adapter", () => {
         );
 
         let retries = 0;
-        globalThis.fetch = () => {
+        installMockFetch(() => {
           retries++;
           return Promise.resolve(Response.json({ keys: [] }));
-        };
+        });
         await adapter.initialize();
         assertEquals(retries, 1);
       } finally {
-        globalThis.fetch = originalFetch;
+        restoreMockFetch();
       }
     });
   });
@@ -131,6 +131,32 @@ describe("platform/adapters/token/veryfront/adapter", () => {
       adapter.dispose();
       // Should attempt to re-init (will fail since API is unreachable)
       await assertRejects(() => adapter.initialize(), VeryfrontError);
+    });
+
+    it("clears the initialized flag so a disposed adapter re-pings the API", async () => {
+      let requests = 0;
+      installMockFetch(() => {
+        requests++;
+        return Promise.resolve(Response.json({ keys: [] }));
+      });
+
+      try {
+        const adapter = new VeryfrontTokenAdapter(createConfig({
+          apiBaseUrl: "https://api.example.com",
+        }));
+        await adapter.initialize();
+        assertEquals(requests, 1, "the first initialize must ping the API");
+
+        adapter.dispose();
+        await adapter.initialize();
+        assertEquals(
+          requests,
+          2,
+          "dispose must clear the initialized flag so the next initialize re-pings the API",
+        );
+      } finally {
+        restoreMockFetch();
+      }
     });
   });
 });

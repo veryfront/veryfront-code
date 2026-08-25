@@ -4,13 +4,11 @@
  *******************************/
 
 import { cliLogger as logger, isVerbose } from "#cli/utils";
-import { brand, dim, red } from "#cli/ui";
+import { brand, dim } from "#cli/ui";
 import { createTransientSpinner } from "../../ui/progress.ts";
-import { join } from "veryfront/platform/path";
-import { createError, toError } from "veryfront/errors";
+import { INVALID_ARGUMENT } from "veryfront/errors";
 import type { InitOptions, InitRuntime, InitTemplate } from "./types.ts";
 import { cwd } from "veryfront/platform";
-import { createFileSystem } from "veryfront/platform";
 import { getDlxCommand, getInstallCommand, getRunCommand } from "../../utils/package-manager.ts";
 import { createProject, type ProjectCreationObserver } from "../../shared/project-creation.ts";
 import { validateProjectName } from "../../shared/project-name.ts";
@@ -121,7 +119,7 @@ export async function initCommand(
   options: InitOptions,
   dependencies: InitCommandDependencies = {},
 ): Promise<void> {
-  const { name, features = [], quiet = false } = options;
+  const { name, quiet = false } = options;
   const { integrations = [] } = options;
   const parentDir = options.parentDir ?? cwd();
 
@@ -137,21 +135,7 @@ export async function initCommand(
   if (name) {
     const nameError = validateProjectName(name);
     if (nameError) {
-      throw toError(createError({ type: "config", message: nameError }));
-    }
-  }
-
-  // Check if directory already exists before entering the wizard
-  if (name && !options.force) {
-    const fs = createFileSystem();
-    const targetDir = join(parentDir, name);
-    if (await fs.exists(targetDir)) {
-      console.error(
-        red(
-          `Directory "${name}" already exists. Choose a different name or use --force to overwrite.`,
-        ),
-      );
-      return;
+      throw INVALID_ARGUMENT.create({ detail: nameError });
     }
   }
 
@@ -172,19 +156,9 @@ export async function initCommand(
   }
 
   const runtime: InitRuntime = options.runtime ?? wizardRuntime;
-  const projectDir = projectName ? join(parentDir, projectName) : parentDir;
-  if (projectName && !options.force) {
-    const fs = createFileSystem();
-    if (await fs.exists(projectDir)) {
-      throw toError(
-        createError({
-          type: "config",
-          message:
-            `Directory "${projectName}" already exists. Choose a different name or use --force to overwrite.`,
-        }),
-      );
-    }
-  }
+  // Whether the target can be written to is `createProject`'s call: it knows
+  // which files the template ships, so it refuses exactly the files it would
+  // overwrite rather than any directory that happens to exist.
 
   let installSpinner: ReturnType<typeof createTransientSpinner> | null = null;
   const installObserver: ProjectCreationObserver = {
@@ -216,7 +190,6 @@ export async function initCommand(
       parentDir,
       template,
       runtime,
-      features,
       integrations,
       environmentValues: options.env ?? {},
       conflictPolicy: options.force ? "overwrite" : "fail",
@@ -262,44 +235,38 @@ export async function initCommand(
       }
     } else {
       const { chdir } = await import("veryfront/platform");
-      const { ensureAuthenticated, readToken } = await import("../../auth/index.ts");
+      const { ensureAuthenticated } = await import("../../auth/index.ts");
       const { deployCommand } = await import("../deploy/index.ts");
-      const authResult = await ensureAuthenticated();
+      const authResult = await ensureAuthenticated(undefined, createdProjectDir);
 
       if (!authResult) {
         if (!quiet) console.log();
         log(`  Authentication required for --deploy. ${manualDeployHint}`);
       } else {
-        const token = await readToken();
-        if (!token) {
-          if (!quiet) console.log();
-          log(`  Could not read auth token. ${manualDeployHint}`);
-        } else {
-          if (!quiet) console.log();
-          log(`  Deploying project...`);
+        if (!quiet) console.log();
+        log(`  Deploying project...`);
 
-          try {
-            chdir(createdProjectDir);
+        try {
+          chdir(createdProjectDir);
 
-            const deployment = await deployCommand({
-              projectDir: createdProjectDir,
-              branch: "main",
-              env: "production",
-              force: true,
-              dryRun: false,
-              quiet: true,
-            });
+          const deployment = await deployCommand({
+            projectDir: createdProjectDir,
+            branch: "main",
+            env: "production",
+            force: true,
+            dryRun: false,
+            quiet: true,
+          });
 
-            if (!deployment) {
-              throw new Error("Deploy completed without a verified result.");
-            }
-            deployedUrl = deployment.url;
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            if (!quiet) console.log();
-            log(`  Deploy failed: ${message}`);
-            log(`  Your project was created locally. ${manualDeployHint}`);
+          if (!deployment) {
+            throw new Error("Deploy completed without a verified result.");
           }
+          deployedUrl = deployment.url;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (!quiet) console.log();
+          log(`  Deploy failed: ${message}`);
+          log(`  Your project was created locally. ${manualDeployHint}`);
         }
       }
     }
@@ -349,8 +316,8 @@ export async function initCommand(
     }
 
     const tips: string[] = [];
-    if (result.featureTips.length) {
-      for (const tip of result.featureTips) {
+    if (result.setupTips.length) {
+      for (const tip of result.setupTips) {
         tips.push(dim(tip));
       }
     }
