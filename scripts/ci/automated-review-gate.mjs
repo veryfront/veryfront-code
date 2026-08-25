@@ -211,7 +211,7 @@ export async function publishAutomatedReviewStatus({
                 ...common,
                 username: login,
               });
-            return TRUSTED_PERMISSIONS.has(response?.data?.user?.permission);
+            return TRUSTED_PERMISSIONS.has(response?.data?.permission);
           } catch {
             return false;
           }

@@ -408,7 +408,10 @@ function githubFixture(options: {
         getCommit: () => Promise.resolve({ data: { sha: options.commit } }),
         getCollaboratorPermissionLevel: () =>
           Promise.resolve({
-            data: { user: { permission: options.permission ?? "read" } },
+            data: {
+              permission: options.permission ?? "read",
+              user: { login: "trusted-maintainer" },
+            },
           }),
         createCommitStatus: (value: Record<string, unknown>) => {
           published.push(value);
