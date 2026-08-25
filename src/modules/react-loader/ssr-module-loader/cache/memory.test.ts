@@ -20,6 +20,7 @@ import { getTransformPerProjectLimit } from "../constants.ts";
 import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { getTmpDirCacheKey } from "../tmp-paths.ts";
+import { cacheRegistry } from "#veryfront/cache/registry.ts";
 
 describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
   function resetState(): void {
@@ -268,6 +269,43 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
   });
 
   describe("clearSSRModuleCacheForProject", () => {
+    it("should expose and delete framed cross-project entries through generic registry APIs", async () => {
+      resetState();
+
+      const projectId = "project:01J2XYZ";
+      const ownedKey = buildCrossProjectImportCacheKey({
+        projectId,
+        specifier: "@acme/component:variant",
+        reactVersion: "1.0.0",
+        registryBaseUrl: "https://registry.example.com",
+      });
+      const foreignKey = buildCrossProjectImportCacheKey({
+        projectId: `tenant:${projectId}`,
+        specifier: `prefix:${projectId}:component`,
+        reactVersion: "1.0.0",
+        registryBaseUrl: "https://registry.example.com",
+      });
+      const entry = { tempPath: "cross-project.mjs", contentHash: "hash" };
+      globalCrossProjectCache.set(ownedKey, entry);
+      globalCrossProjectCache.set(foreignKey, entry);
+
+      assertEquals(
+        cacheRegistry.getKeysForProject(projectId).get("ssr-cross-project-cache"),
+        [ownedKey],
+      );
+      assertEquals(cacheRegistry.deleteKeysForProject(projectId), 1);
+      assertEquals(globalCrossProjectCache.has(ownedKey), false);
+      assertEquals(globalCrossProjectCache.has(foreignKey), true);
+
+      globalCrossProjectCache.set(ownedKey, entry);
+      assertEquals(
+        await cacheRegistry.deleteAllKeysForProjectAsync(projectId),
+        { memoryDeleted: 1, redisDeleted: 0 },
+      );
+      assertEquals(globalCrossProjectCache.has(ownedKey), false);
+      assertEquals(globalCrossProjectCache.has(foreignKey), true);
+    });
+
     it("should clear module cache entries for a specific project", () => {
       resetState();
 
