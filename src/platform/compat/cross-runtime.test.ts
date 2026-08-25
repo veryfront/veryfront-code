@@ -1,3 +1,4 @@
+// @veryfront-test runtime-guarded-deno
 import "#veryfront/schemas/_test-setup.ts";
 /**
  * Cross-Runtime Compatibility Tests
