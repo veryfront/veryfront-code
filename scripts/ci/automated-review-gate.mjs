@@ -552,6 +552,99 @@ async function resolveQueueRefTarget(github, common, ref) {
   return sha;
 }
 
+function mergeQueueTarget(queueRef, pullNumber) {
+  const parsed = parseMergeQueuePullNumber(queueRef?.ref);
+  if (parsed?.pullNumber !== pullNumber) return undefined;
+  const mergeGroupSha = queueRef?.object?.sha;
+  if (!FULL_SHA.test(mergeGroupSha ?? "")) {
+    throw new Error("Merge queue ref has a malformed commit");
+  }
+  return {
+    baseHeadSha: parsed.baseHeadSha,
+    mergeGroupSha,
+    key: mergeGroupSha.toLowerCase(),
+    ref: queueRef.ref.startsWith("refs/")
+      ? queueRef.ref.slice("refs/".length)
+      : queueRef.ref,
+  };
+}
+
+async function queueTargetIsActive({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  sourceHeadSha,
+  target,
+}) {
+  try {
+    await requireActiveMergeQueueBinding({
+      github,
+      owner,
+      repo,
+      pullNumber,
+      sourceHeadSha,
+      baseHeadSha: target.baseHeadSha,
+      mergeGroupSha: target.mergeGroupSha,
+    });
+    return true;
+  } catch {
+    const liveTarget = await resolveQueueRefTarget(
+      github,
+      { owner, repo },
+      target.ref,
+    );
+    return liveTarget?.toLowerCase() === target.key;
+  }
+}
+
+async function publishQueueReviewResolutionFailure({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  sourceHeadSha,
+  pullUrl,
+  queueRef,
+  seen,
+}) {
+  const target = mergeQueueTarget(queueRef, pullNumber);
+  if (!target || seen.has(target.key)) return;
+  const common = { owner, repo };
+  const currentHeadSha = await resolveCommitRef(
+    github,
+    common,
+    `refs/pull/${pullNumber}/head`,
+  );
+  if (currentHeadSha?.toLowerCase() !== sourceHeadSha.toLowerCase()) return;
+  if (
+    !await queueTargetIsActive({
+      github,
+      owner,
+      repo,
+      pullNumber,
+      sourceHeadSha,
+      target,
+    })
+  ) return;
+  const finalSourceHeadSha = await resolveCommitRef(
+    github,
+    common,
+    `refs/pull/${pullNumber}/head`,
+  );
+  if (finalSourceHeadSha?.toLowerCase() !== sourceHeadSha.toLowerCase()) return;
+  await github.rest.repos.createCommitStatus({
+    owner,
+    repo,
+    sha: target.mergeGroupSha,
+    state: "failure",
+    context: AUTOMATED_REVIEW_STATUS_CONTEXT,
+    description: `Could not revalidate review for PR #${pullNumber}`,
+    target_url: pullUrl,
+  });
+  seen.add(target.key);
+}
+
 /** Fail one source head and every active queue commit derived from it. */
 export async function publishReviewResolutionFailure({
   github,
@@ -592,64 +685,16 @@ export async function publishReviewResolutionFailure({
   );
   const seen = new Set();
   for (const queueRef of refs) {
-    const parsed = parseMergeQueuePullNumber(queueRef?.ref);
-    const mergeGroupSha = queueRef?.object?.sha;
-    if (parsed?.pullNumber !== pullNumber) continue;
-    if (!FULL_SHA.test(mergeGroupSha ?? "")) {
-      throw new Error("Merge queue ref has a malformed commit");
-    }
-    if (seen.has(mergeGroupSha.toLowerCase())) continue;
-    const latestSourceHeadSha = await resolveCommitRef(
+    await publishQueueReviewResolutionFailure({
       github,
-      { owner, repo },
-      `refs/pull/${pullNumber}/head`,
-    );
-    if (latestSourceHeadSha?.toLowerCase() !== sourceHeadSha.toLowerCase()) {
-      continue;
-    }
-    let targetVerified = false;
-    try {
-      await requireActiveMergeQueueBinding({
-        github,
-        owner,
-        repo,
-        pullNumber,
-        sourceHeadSha,
-        baseHeadSha: parsed.baseHeadSha,
-        mergeGroupSha,
-      });
-      targetVerified = true;
-    } catch {
-      const ref = queueRef.ref.startsWith("refs/")
-        ? queueRef.ref.slice("refs/".length)
-        : queueRef.ref;
-      const liveTarget = await resolveQueueRefTarget(
-        github,
-        { owner, repo },
-        ref,
-      );
-      targetVerified =
-        liveTarget?.toLowerCase() === mergeGroupSha.toLowerCase();
-    }
-    if (!targetVerified) continue;
-    const finalSourceHeadSha = await resolveCommitRef(
-      github,
-      { owner, repo },
-      `refs/pull/${pullNumber}/head`,
-    );
-    if (finalSourceHeadSha?.toLowerCase() !== sourceHeadSha.toLowerCase()) {
-      continue;
-    }
-    await github.rest.repos.createCommitStatus({
       owner,
       repo,
-      sha: mergeGroupSha,
-      state: "failure",
-      context: AUTOMATED_REVIEW_STATUS_CONTEXT,
-      description: `Could not revalidate review for PR #${pullNumber}`,
-      target_url: pullUrl,
+      pullNumber,
+      sourceHeadSha,
+      pullUrl,
+      queueRef,
+      seen,
     });
-    seen.add(mergeGroupSha.toLowerCase());
   }
   return { queueFailures: seen.size, skipped: false };
 }
@@ -1276,17 +1321,24 @@ export async function publishMergeGroupReviewStatus({
         "Human reviewer is no longer trusted for merge queue reuse",
       );
     }
-    bindingVerified = false;
-    await requireActiveMergeQueueBinding({
-      github,
-      owner,
-      repo,
-      pullNumber,
-      sourceHeadSha,
-      baseHeadSha,
-      mergeGroupSha,
-    });
-    bindingVerified = true;
+    try {
+      await requireActiveMergeQueueBinding({
+        github,
+        owner,
+        repo,
+        pullNumber,
+        sourceHeadSha,
+        baseHeadSha,
+        mergeGroupSha,
+      });
+    } catch (error) {
+      return {
+        state: "failure",
+        description: undefined,
+        failure: error instanceof Error ? error : new Error(String(error)),
+        published: false,
+      };
+    }
     currentReviewStatus = latestReviewStatus;
     const description = `Reused exact-head review for PR #${pullNumber}`;
     await github.rest.repos.createCommitStatus({
@@ -1328,6 +1380,43 @@ export async function publishMergeGroupReviewStatus({
   };
 }
 
+async function reconcileMergeQueueTarget({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  sourceHeadSha,
+  target,
+}) {
+  const result = await publishMergeGroupReviewStatus({
+    github,
+    owner,
+    repo,
+    pullNumber,
+    sourceHeadSha,
+    baseHeadSha: target.baseHeadSha,
+    mergeGroupSha: target.mergeGroupSha,
+  });
+  if (result.state !== "failure" || result.published === true) {
+    return { result };
+  }
+  // No replacement status reached this synthetic commit, so any prior
+  // success it carries would keep satisfying the queue's required check.
+  // Skip only when the exact queue ref demonstrably no longer targets the
+  // commit (a confirmed identity change); an operational lookup failure must
+  // fail reconciliation so its independent invalidation path takes over.
+  const liveTarget = await resolveQueueRefTarget(
+    github,
+    { owner, repo },
+    target.ref,
+  );
+  if (liveTarget?.toLowerCase() !== target.key) return {};
+  return {
+    unpublished: result.failure ??
+      new Error("Merge queue review status was not replaced"),
+  };
+}
+
 /** Reconcile copied review proof on every active queue ref for one source. */
 export async function reconcileActiveMergeGroupReviewStatuses({
   github,
@@ -1363,47 +1452,19 @@ export async function reconcileActiveMergeGroupReviewStatuses({
   const seen = new Set();
   const unpublished = [];
   for (const queueRef of refs) {
-    const parsed = parseMergeQueuePullNumber(queueRef?.ref);
-    const mergeGroupSha = queueRef?.object?.sha;
-    if (parsed?.pullNumber !== pullNumber) continue;
-    if (!FULL_SHA.test(mergeGroupSha ?? "")) {
-      throw new Error("Merge queue ref has a malformed commit");
-    }
-    if (seen.has(mergeGroupSha.toLowerCase())) continue;
-    seen.add(mergeGroupSha.toLowerCase());
-    const result = await publishMergeGroupReviewStatus({
+    const target = mergeQueueTarget(queueRef, pullNumber);
+    if (!target || seen.has(target.key)) continue;
+    seen.add(target.key);
+    const outcome = await reconcileMergeQueueTarget({
       github,
       owner,
       repo,
       pullNumber,
       sourceHeadSha,
-      baseHeadSha: parsed.baseHeadSha,
-      mergeGroupSha,
+      target,
     });
-    if (result.state === "failure" && result.published !== true) {
-      // No replacement status reached this synthetic commit, so any prior
-      // success it carries would keep satisfying the queue's required check.
-      // Skip only when the exact queue ref demonstrably no longer targets
-      // the commit (a confirmed identity change); an operational lookup
-      // failure must fail this reconciliation so the workflow run goes red
-      // and its independent invalidation path takes over.
-      const ref = queueRef.ref.startsWith("refs/")
-        ? queueRef.ref.slice("refs/".length)
-        : queueRef.ref;
-      const liveTarget = await resolveQueueRefTarget(
-        github,
-        { owner, repo },
-        ref,
-      );
-      if (liveTarget?.toLowerCase() === mergeGroupSha.toLowerCase()) {
-        unpublished.push(
-          result.failure ??
-            new Error("Merge queue review status was not replaced"),
-        );
-      }
-      continue;
-    }
-    results.push(result);
+    if (outcome.unpublished) unpublished.push(outcome.unpublished);
+    if (outcome.result) results.push(outcome.result);
   }
   if (unpublished.length > 0) {
     throw new Error(
