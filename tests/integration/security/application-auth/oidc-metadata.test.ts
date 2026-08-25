@@ -9,7 +9,7 @@ import {
   fetchOidcMetadata,
   type OidcMetadata,
   parseStrictJsonObject,
-} from "./oidc-metadata.ts";
+} from "../../../../src/security/application-auth/oidc-metadata.ts";
 
 const TestArrayPrototypeSort = Array.prototype.sort;
 const TestJSONParse = JSON.parse;

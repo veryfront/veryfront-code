@@ -8,7 +8,10 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { testDelay } from "#veryfront/testing/timing.ts";
-import { createJwksCache, getJwksKeyWithFreshness } from "./jwks-cache.ts";
+import {
+  createJwksCache,
+  getJwksKeyWithFreshness,
+} from "../../../../src/security/application-auth/jwks-cache.ts";
 
 const TestJSONStringify = JSON.stringify;
 const TestMapPrototypeGet = Map.prototype.get;

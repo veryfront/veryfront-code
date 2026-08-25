@@ -2,8 +2,12 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { createJwksCache, type JwksCache, type PublicJwk } from "./jwks-cache.ts";
-import { verifyOidcIdToken } from "./id-token.ts";
+import {
+  createJwksCache,
+  type JwksCache,
+  type PublicJwk,
+} from "../../../../src/security/application-auth/jwks-cache.ts";
+import { verifyOidcIdToken } from "../../../../src/security/application-auth/id-token.ts";
 
 const TestReflectApply = Reflect.apply;
 const TestObjectDefineProperty = Object.defineProperty;

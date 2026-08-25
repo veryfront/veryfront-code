@@ -6,8 +6,8 @@ import { HandlerPriority } from "#veryfront/types";
 import { AuthHandler } from "#veryfront/security/http/auth.ts";
 import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
-import { handleApplicationAuthRequest } from "./application-auth-runtime.ts";
-import { markApplicationAuthAdmittedRequest } from "./oidc-runtime.ts";
+import { handleApplicationAuthRequest } from "../../../../src/security/application-auth/application-auth-runtime.ts";
+import { markApplicationAuthAdmittedRequest } from "../../../../src/security/application-auth/oidc-runtime.ts";
 
 const APP_ORIGIN = "https://app.example.test";
 

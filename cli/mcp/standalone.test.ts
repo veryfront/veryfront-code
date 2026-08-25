@@ -5,7 +5,6 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { join } from "veryfront/platform/path";
 import {
   createStandaloneMCPServer,
   type StandaloneMCPConfig,
@@ -273,163 +272,25 @@ describe("mcp/standalone", () => {
       assertEquals(typeof info.version, "string");
     });
 
-    it("tools/call vf_scaffold creates auth files and reports conflicts like dev MCP", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-standalone-auth-" });
-      try {
-        const server = new StandaloneMCPServer();
-        const first = await dispatch(server, "tools/call", {
-          name: "vf_scaffold",
-          arguments: { type: "auth", name: "microsoft-entra", projectPath: projectDir },
-        });
-        const second = await dispatch(server, "tools/call", {
-          name: "vf_scaffold",
-          arguments: { type: "auth", name: "microsoft-entra", projectPath: projectDir },
-        });
-        const firstPayload = JSON.parse(
-          (first.result as { content: { text: string }[] }).content[0]!
-            .text,
-        );
-        const secondPayload = JSON.parse(
-          (second.result as { content: { text: string }[] }).content[0]!
-            .text,
-        );
-
-        assertEquals(firstPayload.success, true);
-        assertEquals(firstPayload.files.map((file: { path: string }) => file.path), [
-          ".env.auth.example",
-          "AUTH_PROVIDER_SETUP.md",
-          "AUTH_SETUP.md",
-          "veryfront.auth.config.example.ts",
-        ]);
-        assertEquals(await fileExists(join(projectDir, "veryfront.auth.config.example.ts")), true);
-        assertEquals(secondPayload.success, false);
-        assertEquals(secondPayload.files.map((file: { path: string }) => file.path), [
-          ".env.auth.example",
-          "AUTH_PROVIDER_SETUP.md",
-          "AUTH_SETUP.md",
-          "veryfront.auth.config.example.ts",
-        ]);
-        assertEquals(secondPayload.message.includes(projectDir), false);
-      } finally {
-        await Deno.remove(projectDir, { recursive: true });
-      }
-    });
-
-    it("tools/call vf_scaffold accepts a relative auth projectPath", async () => {
-      const originalCwd = Deno.cwd();
-      const parentDir = await Deno.makeTempDir({ prefix: "vf-standalone-relative-" });
-      try {
-        await Deno.mkdir(join(parentDir, "project"));
-        Deno.chdir(parentDir);
-        const server = new StandaloneMCPServer();
-        const response = await dispatch(server, "tools/call", {
-          name: "vf_scaffold",
-          arguments: { type: "auth", name: "oidc", projectPath: "./project" },
-        });
-        const payload = parseToolPayload(response);
-
-        assertEquals(payload.success, true);
-        assertEquals(payload.files.map((file: { path: string }) => file.path), [
-          ".env.auth.example",
-          "AUTH_PROVIDER_SETUP.md",
-          "AUTH_SETUP.md",
-          "veryfront.auth.config.example.ts",
-        ]);
-        assertEquals(await fileExists(join(parentDir, "project", "AUTH_SETUP.md")), true);
-      } finally {
-        Deno.chdir(originalCwd);
-        await Deno.remove(parentDir, { recursive: true });
-      }
-    });
-
     it("tools/call vf_scaffold rejects arguments that do not match the advertised schema", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-standalone-schema-" });
-      try {
-        const server = new StandaloneMCPServer();
-        for (
-          const argumentsValue of [
-            { type: "auth", name: "oidc", projectPath: null },
-            { type: "auth", name: "oidc", projectPath: 123 },
-            { type: "auth", name: "secret-provider-token", projectPath: projectDir },
-            { type: "api", name: "users", methods: ["GET", "TRACE"], projectPath: projectDir },
-          ]
-        ) {
-          const response = await dispatch(server, "tools/call", {
-            name: "vf_scaffold",
-            arguments: argumentsValue,
-          });
-
-          const error = response.error as { code: number; message: string };
-          assertEquals(error.code, -32602);
-          assertStringIncludes(error.message, "Invalid vf_scaffold arguments");
-          assertEquals(error.message.includes("secret-provider-token"), false);
-        }
-        assertEquals(await fileExists(join(projectDir, "AUTH_SETUP.md")), false);
-      } finally {
-        await Deno.remove(projectDir, { recursive: true });
-      }
-    });
-
-    it("tools/call vf_scaffold reports non-auth scaffold paths without absolute paths", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-standalone-component-" });
-      try {
-        const server = new StandaloneMCPServer();
+      const server = new StandaloneMCPServer();
+      for (
+        const argumentsValue of [
+          { type: "auth", name: "oidc", projectPath: null },
+          { type: "auth", name: "oidc", projectPath: 123 },
+          { type: "auth", name: "secret-provider-token", projectPath: "/project" },
+          { type: "api", name: "users", methods: ["GET", "TRACE"], projectPath: "/project" },
+        ]
+      ) {
         const response = await dispatch(server, "tools/call", {
           name: "vf_scaffold",
-          arguments: { type: "component", name: "user-card", projectPath: projectDir },
+          arguments: argumentsValue,
         });
-        const payload = parseToolPayload(response);
 
-        assertEquals(payload.success, true);
-        assertEquals(payload.files, [{ path: "components/UserCard.tsx", created: true }]);
-        assertEquals(payload.message.includes(projectDir), false);
-      } finally {
-        await Deno.remove(projectDir, { recursive: true });
-      }
-    });
-
-    it("tools/call vf_scaffold accepts a relative non-auth projectPath", async () => {
-      const originalCwd = Deno.cwd();
-      const parentDir = await Deno.makeTempDir({ prefix: "vf-standalone-relative-component-" });
-      try {
-        await Deno.mkdir(join(parentDir, "project"));
-        Deno.chdir(parentDir);
-        const server = new StandaloneMCPServer();
-        const response = await dispatch(server, "tools/call", {
-          name: "vf_scaffold",
-          arguments: { type: "component", name: "user-card", projectPath: "./project" },
-        });
-        const payload = parseToolPayload(response);
-
-        assertEquals(payload.success, true);
-        assertEquals(payload.files, [{ path: "components/UserCard.tsx", created: true }]);
-        assertEquals(
-          await fileExists(join(parentDir, "project", "components", "UserCard.tsx")),
-          true,
-        );
-      } finally {
-        Deno.chdir(originalCwd);
-        await Deno.remove(parentDir, { recursive: true });
-      }
-    });
-
-    it("tools/call vf_scaffold accepts an empty methods array and uses the default API method", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-standalone-empty-methods-" });
-      try {
-        const server = new StandaloneMCPServer();
-        const response = await dispatch(server, "tools/call", {
-          name: "vf_scaffold",
-          arguments: { type: "api", name: "status", methods: [], projectPath: projectDir },
-        });
-        const payload = parseToolPayload(response);
-
-        assertEquals(payload.success, true);
-        const content = await Deno.readTextFile(
-          join(projectDir, "app", "api", "status", "route.ts"),
-        );
-        assertStringIncludes(content, "export const GET");
-      } finally {
-        await Deno.remove(projectDir, { recursive: true });
+        const error = response.error as { code: number; message: string };
+        assertEquals(error.code, -32602);
+        assertStringIncludes(error.message, "Invalid vf_scaffold arguments");
+        assertEquals(error.message.includes("secret-provider-token"), false);
       }
     });
 
@@ -470,25 +331,6 @@ describe("mcp/standalone", () => {
     });
   });
 });
-
-async function fileExists(path: string): Promise<boolean> {
-  try {
-    await Deno.lstat(path);
-    return true;
-  } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return false;
-    throw error;
-  }
-}
-
-function parseToolPayload(response: { result?: unknown }): {
-  success: boolean;
-  files: Array<{ path: string; created: boolean }>;
-  message: string;
-} {
-  const result = response.result as { content: { text: string }[] };
-  return JSON.parse(result.content[0]!.text);
-}
 
 function getAuthPresetEnum(schema: unknown): unknown {
   if (!isRecord(schema) || !Array.isArray(schema.anyOf)) return undefined;

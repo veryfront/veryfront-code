@@ -26,8 +26,11 @@ import {
   __subscribeLogRecordEmitter,
   type LogEntry,
 } from "#veryfront/utils/logger/index.ts";
-import { createMockOidcProvider, type MockOidcKeyName } from "./mock-oidc-provider.ts";
-import { createOidcApplicationAuthRuntime } from "./oidc-runtime.ts";
+import {
+  createMockOidcProvider,
+  type MockOidcKeyName,
+} from "../../../../src/security/application-auth/mock-oidc-provider.ts";
+import { createOidcApplicationAuthRuntime } from "../../../../src/security/application-auth/oidc-runtime.ts";
 
 const APP_ORIGIN = "https://app.example.test";
 const CLIENT_ID = "application-client";

@@ -192,26 +192,16 @@ describe("scaffold engine", () => {
   });
 
   it("plans auth preset targets against a resolved project directory", async () => {
-    const originalCwd = Deno.cwd();
-    const parentDir = await Deno.makeTempDir({ prefix: "vf-auth-relative-parent-" });
-    try {
-      await Deno.mkdir(join(parentDir, "project"));
-      Deno.chdir(parentDir);
+    const projectDir = "./relative-auth-project";
+    const plan = await planAuthScaffold({ projectDir, preset: "authelia" });
 
-      const plan = await planAuthScaffold({ projectDir: "./project", preset: "authelia" });
-      const resolvedProjectDir = resolve(Deno.cwd(), "project");
-
-      assertEquals(plan.files.map((file) => file.path), [
-        resolve(resolvedProjectDir, ".env.auth.example"),
-        resolve(resolvedProjectDir, "AUTH_PROVIDER_SETUP.md"),
-        resolve(resolvedProjectDir, "AUTH_SETUP.md"),
-        resolve(resolvedProjectDir, "authelia.client.example.yml"),
-        resolve(resolvedProjectDir, "veryfront.auth.config.example.ts"),
-      ]);
-    } finally {
-      Deno.chdir(originalCwd);
-      await Deno.remove(parentDir, { recursive: true });
-    }
+    assertEquals(plan.files.map((file) => file.path), [
+      resolve(projectDir, ".env.auth.example"),
+      resolve(projectDir, "AUTH_PROVIDER_SETUP.md"),
+      resolve(projectDir, "AUTH_SETUP.md"),
+      resolve(projectDir, "authelia.client.example.yml"),
+      resolve(projectDir, "veryfront.auth.config.example.ts"),
+    ]);
   });
 
   it("rejects unknown auth presets without falling back to another scaffold", async () => {

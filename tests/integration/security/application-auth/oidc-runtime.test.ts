@@ -3,9 +3,9 @@ import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/run
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { createSessionCookie } from "./cookies.ts";
-import { createOidcApplicationAuthRuntime } from "./oidc-runtime.ts";
-import type { PublicJwk } from "./jwks-cache.ts";
+import { createSessionCookie } from "../../../../src/security/application-auth/cookies.ts";
+import { createOidcApplicationAuthRuntime } from "../../../../src/security/application-auth/oidc-runtime.ts";
+import type { PublicJwk } from "../../../../src/security/application-auth/jwks-cache.ts";
 
 const TestArrayPrototypeSort = Array.prototype.sort;
 const TestObjectDefineProperty = Object.defineProperty;

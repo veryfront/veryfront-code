@@ -4,7 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createApplicationRequest,
   createApplicationRequestHeaders,
-} from "./application-request.ts";
+} from "../../../src/security/http/application-request.ts";
 
 const nativeSetHas = Set.prototype.has;
 const nativeSetAdd = Set.prototype.add;
@@ -183,7 +183,7 @@ describe("security/http/application-request", () => {
 
   it("removes configured identity headers after Set.add tampering", () => {
     try {
-      Set.prototype.add = function (): Set<unknown> {
+      Set.prototype.add = function (this: Set<unknown>): Set<unknown> {
         return this;
       } as typeof Set.prototype.add;
       const headers = createApplicationRequestHeaders(

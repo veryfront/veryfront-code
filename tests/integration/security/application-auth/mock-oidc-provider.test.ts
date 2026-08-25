@@ -2,8 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { encodeAuthBase64Url } from "./base64url.ts";
-import { createMockOidcProvider } from "./mock-oidc-provider.ts";
+import { encodeAuthBase64Url } from "../../../../src/security/application-auth/base64url.ts";
+import { createMockOidcProvider } from "../../../../src/security/application-auth/mock-oidc-provider.ts";
 
 const STATE = "s".repeat(43);
 const NONCE = "n".repeat(43);

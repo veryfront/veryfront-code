@@ -1,7 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createApplicationIdentity, snapshotApplicationIdentity } from "./identity.ts";
+import {
+  createApplicationIdentity,
+  snapshotApplicationIdentity,
+} from "../../../../src/security/application-auth/identity.ts";
 
 const nativeObjectFreeze = Object.freeze;
 const nativeObjectIsFrozen = Object.isFrozen;

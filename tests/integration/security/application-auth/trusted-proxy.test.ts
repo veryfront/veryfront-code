@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
-import { createTrustedProxyApplicationAuthRuntime } from "./trusted-proxy.ts";
+import { createTrustedProxyApplicationAuthRuntime } from "../../../../src/security/application-auth/trusted-proxy.ts";
 import type { TrustedProxyAuthConfig } from "#veryfront/security/http/middleware/types.ts";
 
 const APP_URL = "https://app.example.test/dashboard";
@@ -147,7 +147,7 @@ describe("security/application-auth trusted proxy runtime", () => {
         }
         Object.assign(FakeNumber, NativeNumber);
         globalThis.Number = FakeNumber as NumberConstructor;
-        Array.isArray = () => true;
+        Array.isArray = (_value: unknown): _value is unknown[] => true;
         Number.isSafeInteger = () => true;
       },
       async () => {
@@ -224,7 +224,7 @@ describe("security/application-auth trusted proxy runtime", () => {
   it("rejects wrong peers after Set.add tampering during runtime config snapshot", async () => {
     await withTamperedPrimordials(
       () => {
-        Set.prototype.add = function (value: string): Set<string> {
+        Set.prototype.add = function (this: Set<unknown>, value: unknown): Set<unknown> {
           if (value === "ipv4:127.0.0.1") {
             return nativeSetAdd.call(this, "ipv4:198.51.100.3");
           }
@@ -276,7 +276,7 @@ describe("security/application-auth trusted proxy runtime", () => {
 
     await withTamperedPrimordials(
       () => {
-        Array.prototype.push = function (...values: unknown[]): number {
+        Array.prototype.push = function (this: unknown[], ...values: unknown[]): number {
           const rewritten = values.map((value) => {
             if (value === 198) return 127;
             if (value === 51 || value === 100 || value === 3) return value === 3 ? 1 : 0;
@@ -369,7 +369,7 @@ describe("security/application-auth trusted proxy runtime", () => {
           throw new Error("must not invoke");
         },
       }),
-    } as TrustedProxyAuthConfig;
+    } as unknown as TrustedProxyAuthConfig;
     const inheritedConfig = Object.create({ trustedPeers: ["127.0.0.1"] });
     Object.defineProperty(inheritedConfig, "headers", {
       enumerable: true,
@@ -387,23 +387,23 @@ describe("security/application-auth trusted proxy runtime", () => {
   });
 
   it("rejects missing, oversized, and control-bearing asserted identity values", async () => {
-    for (
-      const headers of [
-        {},
-        { "x-auth-subject": "" },
-        { "x-auth-subject": "u".repeat(1_025) },
-        { "x-auth-subject": `${"\u00a0".repeat(1_024)}u` },
-        { "x-auth-subject": "user\u0001123" },
-        { "x-auth-subject": "user-123", "x-auth-email": "e".repeat(513) },
-        { "x-auth-subject": "user-123", "x-auth-email": `${"\u00a0".repeat(512)}e` },
-        { "x-auth-subject": "user-123", "x-auth-name": `${"\u00a0".repeat(512)}n` },
-        { "x-auth-subject": "user-123", "x-auth-groups": "g".repeat(257) },
-        {
-          "x-auth-subject": "user-123",
-          "x-auth-roles": Array.from({ length: 257 }, (_, index) => `r${index}`).join(","),
-        },
-      ]
-    ) {
+    const invalidHeaders: HeadersInit[] = [
+      {},
+      { "x-auth-subject": "" },
+      { "x-auth-subject": "u".repeat(1_025) },
+      { "x-auth-subject": `${"\u00a0".repeat(1_024)}u` },
+      { "x-auth-subject": "user\u0001123" },
+      { "x-auth-subject": "user-123", "x-auth-email": "e".repeat(513) },
+      { "x-auth-subject": "user-123", "x-auth-email": `${"\u00a0".repeat(512)}e` },
+      { "x-auth-subject": "user-123", "x-auth-name": `${"\u00a0".repeat(512)}n` },
+      { "x-auth-subject": "user-123", "x-auth-groups": "g".repeat(257) },
+      {
+        "x-auth-subject": "user-123",
+        "x-auth-roles": Array.from({ length: 257 }, (_, index) => `r${index}`).join(","),
+      },
+    ];
+
+    for (const headers of invalidHeaders) {
       assertUnauthorized(await admit(config(), request(headers)));
     }
   });
