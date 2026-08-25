@@ -76,6 +76,12 @@ function parseNamedImportBindings(
 
     if (/^[_$a-zA-Z][\w$]*$/.test(part)) {
       bindings.push({ imported: part, local: part });
+      continue;
+    }
+
+    const quotedName = allowQuotedAlias ? parseQuotedExportName(part) : undefined;
+    if (quotedName !== undefined) {
+      bindings.push({ imported: quotedName, local: quotedName });
     }
   }
 
