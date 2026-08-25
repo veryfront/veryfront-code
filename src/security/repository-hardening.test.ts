@@ -1,5 +1,6 @@
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { parse } from "#std/yaml/parse";
 
 const WORKFLOW_PR_GUARD =
   "github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository";
@@ -40,35 +41,61 @@ function jobBlock(workflow: string, jobName: string): string {
   return nextJob === -1 ? rest : rest.slice(0, nextJob);
 }
 
-/** Slices the body of the top-level `on:` mapping, excluding the `on:` line. */
-function onBlock(workflow: string, path: string): string {
-  const marker = "\non:\n";
-  const start = workflow.indexOf(marker);
-  assert(start >= 0, `expected ${path} to define a top-level on: block`);
+/**
+ * Reads the top-level `on:` mapping of a workflow as parsed YAML.
+ *
+ * The trigger assertions below used to slice this block with string offsets.
+ * That made every answer depend on where a sibling trigger happened to sit:
+ * a trigger written with no body left the slice starting at the NEXT sibling,
+ * so the helper silently returned that sibling's entry, and a guard could pass
+ * while reporting on a trigger nobody asked about. Parsing the document takes
+ * trigger order, body emptiness and comment placement out of the question.
+ *
+ * GitHub's `on` key comes back as the string key "on" rather than YAML 1.1's
+ * boolean `true`, so it is read by name.
+ */
+async function workflowTriggers(
+  path: string,
+): Promise<Record<string, unknown>> {
+  const document = parse(await readText(path));
+  assert(
+    document !== null && typeof document === "object" &&
+      !Array.isArray(document),
+    `expected ${path} to parse as a YAML mapping`,
+  );
 
-  const rest = workflow.slice(start + marker.length);
-  const nextTopLevelKey = rest.search(/\n[A-Za-z0-9_-]+:/);
-  return nextTopLevelKey === -1 ? rest : rest.slice(0, nextTopLevelKey);
+  const triggers = (document as Record<string, unknown>).on;
+  assert(
+    triggers !== null && typeof triggers === "object" &&
+      !Array.isArray(triggers),
+    `expected ${path} to define a top-level on: mapping of triggers`,
+  );
+  return triggers as Record<string, unknown>;
 }
 
 /**
- * Slices a single trigger entry out of the `on:` block. Scoped to that one
- * entry so a sibling trigger keeping its own `branches:` filter (`push:`
- * legitimately stays pinned to main) cannot be mistaken for it.
+ * Reads one trigger entry out of a parsed `on:` mapping. A trigger written
+ * with no body (`pull_request:`) parses as null, which is its unfiltered form,
+ * and is returned as null rather than being confused with a sibling entry.
  */
 function triggerEntry(
-  workflow: string,
+  triggers: Record<string, unknown>,
   path: string,
   trigger: string,
-): string {
-  const block = onBlock(workflow, path);
-  const marker = `  ${trigger}:\n`;
-  const start = block.indexOf(marker);
-  assert(start >= 0, `expected ${path} to define an ${trigger}: trigger`);
+): Record<string, unknown> | null {
+  assert(
+    Object.hasOwn(triggers, trigger),
+    `expected ${path} to define an ${trigger}: trigger`,
+  );
 
-  const rest = block.slice(start + marker.length);
-  const nextTrigger = rest.search(/\n {2}[A-Za-z0-9_-]+:/);
-  return nextTrigger === -1 ? rest : rest.slice(0, nextTrigger);
+  const entry = triggers[trigger];
+  if (entry === null || entry === undefined) return null;
+  assert(
+    typeof entry === "object" && !Array.isArray(entry),
+    `expected ${path} ${trigger}: trigger to be empty or a mapping of ` +
+      `filters, found ${JSON.stringify(entry)}`,
+  );
+  return entry as Record<string, unknown>;
 }
 
 function workflowStepBlock(workflow: string, stepName: string): string {
@@ -385,18 +412,25 @@ describe("repository hardening", () => {
         ".github/workflows/client-bundle-report.yml",
       ]
     ) {
-      const workflow = stripComments(await readText(path));
-      const pullRequest = triggerEntry(workflow, path, "pull_request");
+      const pullRequest = triggerEntry(
+        await workflowTriggers(path),
+        path,
+        "pull_request",
+      );
+      const branchFilters = Object.keys(pullRequest ?? {}).filter((key) =>
+        key === "branches" || key === "branches-ignore"
+      );
 
       assertEquals(
-        /^\s+branches(?:-ignore)?:/m.test(pullRequest),
-        false,
+        branchFilters,
+        [],
         `${path} filters its pull_request: trigger by branch, and GitHub ` +
           `matches that filter against the pull request BASE branch. A pull ` +
           `request stacked on any other branch would skip this workflow ` +
           `entirely, its required checks would report as absent rather than ` +
           `failing, and branch protection would let it merge green without ` +
-          `ever running the gates. Found: ${JSON.stringify(pullRequest)}`,
+          `ever running the gates. Found pull_request: ` +
+          `${JSON.stringify(pullRequest)}`,
       );
     }
   });
@@ -408,15 +442,16 @@ describe("repository hardening", () => {
         ".github/workflows/codeql.yml",
       ]
     ) {
-      const workflow = stripComments(await readText(path));
-      const push = triggerEntry(workflow, path, "push");
+      const push = triggerEntry(await workflowTriggers(path), path, "push");
 
-      assert(
-        /^\s+branches: \[main\]$/m.test(push),
+      assertEquals(
+        push?.branches,
+        ["main"],
         `${path} must keep its push: trigger pinned to branches: [main]. ` +
           `Release-capable jobs key off refs/heads/main on push, so widening ` +
           `this trigger would expose the publish path to feature branches. ` +
-          `Found: ${JSON.stringify(push)}`,
+          `An empty push: entry is the widest form of all and must fail here ` +
+          `too. Found push: ${JSON.stringify(push)}`,
       );
     }
   });
