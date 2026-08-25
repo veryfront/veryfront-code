@@ -1436,6 +1436,20 @@ describe("integration endpoint specs", () => {
     }
   });
 
+  it("masks configured hosts that may name self-hosted infrastructure", () => {
+    for (
+      const [connectorName, variableName] of [
+        ["langfuse", "LANGFUSE_HOST"],
+        ["posthog", "POSTHOG_HOST"],
+      ] as const
+    ) {
+      const envVar = getConnector(connectorName).envVars?.find(
+        (candidate) => candidate.name === variableName,
+      );
+      assertEquals(envVar?.sensitive, true, `${variableName} must be masked in CLI output`);
+    }
+  });
+
   it("routes Pinecone data-plane tools through per-call hosts pinned to pinecone.io", () => {
     for (
       const [toolId, path] of [

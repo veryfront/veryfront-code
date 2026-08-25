@@ -34,7 +34,7 @@
       "name": "LANGFUSE_HOST",
       "description": "Langfuse host without scheme or port. Use cloud.langfuse.com (EU), us.cloud.langfuse.com (US), or your self-hosted domain.",
       "required": true,
-      "sensitive": false,
+      "sensitive": true,
       "default": "cloud.langfuse.com"
     }
   ],

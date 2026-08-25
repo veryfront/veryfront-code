@@ -560,6 +560,31 @@ describe("createLocalIntegrationToolSource", () => {
     assertEquals(requests, ["https://unit-cluster.example.cloud:6333/collections"]);
   });
 
+  it("accepts the scaffolded HTTPS origin for PostHog", async () => {
+    const requests: string[] = [];
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["posthog__list_feature_flags"],
+        credentialProvider: (name) =>
+          name === "POSTHOG_HOST" ? "https://app.posthog.com" : TEST_CREDENTIAL,
+      },
+      (request) => {
+        requests.push(request.url.href);
+        assertEquals(request.url.origin, request.allowedOrigin);
+        assertEquals(headerValue(request.init, "authorization"), `Bearer ${TEST_CREDENTIAL}`);
+        return Promise.resolve(Response.json({ results: [] }));
+      },
+    );
+
+    assertEquals(
+      await source.executeTool("posthog__list_feature_flags", { projectId: "42" }),
+      { results: [] },
+    );
+    assertEquals(requests, [
+      "https://app.posthog.com/api/projects/42/feature_flags/?limit=50&offset=0",
+    ]);
+  });
+
   it("falls back to the catalog default host when the variable is unset", async () => {
     const requests: string[] = [];
     const transport: LocalIntegrationEndpointTransport = (request) => {

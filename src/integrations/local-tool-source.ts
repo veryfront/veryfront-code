@@ -340,6 +340,7 @@ function assertHttpsCatalogUrl(value: string, label: string): string {
 }
 
 const ENVIRONMENT_HOST_PREFIX = "{{env.";
+const HTTPS_SCHEME_PREFIX = "https://";
 /**
  * Syntactically valid but unroutable (`.invalid` TLD) stand-in host used to
  * validate an environment-host URL template before the variable is resolved.
@@ -479,7 +480,11 @@ function environmentHostBinding(
   return freeze({ token, variableName, defaultValue, allowsPathPrefix });
 }
 
-/** Resolve and validate the host an environment-bound endpoint targets. */
+/**
+ * Resolve and validate the host an environment-bound endpoint targets.
+ * Existing scaffold values may include an HTTPS scheme. Strip only that exact
+ * scheme before applying the same authority and optional path-prefix checks.
+ */
 async function resolveEnvironmentHost(
   binding: EnvironmentHostBinding,
   credentialProvider: LocalIntegrationCredentialProvider,
@@ -503,12 +508,16 @@ async function resolveEnvironmentHost(
       detail: `Set local integration host variables: ${binding.variableName}`,
     });
   }
+  if (stringBoolean(stringStartsWith, value, HTTPS_SCHEME_PREFIX)) {
+    value = apply(stringSlice, value, [HTTPS_SCHEME_PREFIX.length]) as string;
+  }
   if (!isHostWithOptionalPort(value, binding.allowsPathPrefix)) {
     configurationError(
-      `Local integration host variable ${binding.variableName} must be a bare ` +
+      `Local integration host variable ${binding.variableName} must be a bare hostname ` +
+        `or HTTPS host ` +
         (binding.allowsPathPrefix
-          ? "hostname with an optional port and path prefix"
-          : "hostname with an optional port"),
+          ? "with an optional port and path prefix"
+          : "with an optional port"),
     );
   }
   return value;

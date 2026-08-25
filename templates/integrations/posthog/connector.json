@@ -26,9 +26,9 @@
     },
     {
       "name": "POSTHOG_HOST",
-      "description": "PostHog API host without scheme: us.posthog.com for US Cloud (default; app.posthog.com is the legacy US alias) or eu.posthog.com for EU Cloud",
+      "description": "PostHog API host or HTTPS origin: us.posthog.com for US Cloud (default; https://app.posthog.com is the legacy US alias) or eu.posthog.com for EU Cloud",
       "required": false,
-      "sensitive": false,
+      "sensitive": true,
       "docsUrl": "https://posthog.com/docs/self-host",
       "default": "us.posthog.com"
     }

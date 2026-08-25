@@ -31259,7 +31259,7 @@ export const connectors: IntegrationConfig[] = [
       "description":
         "Langfuse host without scheme or port. Use cloud.langfuse.com (EU), us.cloud.langfuse.com (US), or your self-hosted domain.",
       "required": true,
-      "sensitive": false,
+      "sensitive": true,
       "default": "cloud.langfuse.com",
     }],
     "tools": [{
@@ -43037,9 +43037,9 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "name": "POSTHOG_HOST",
       "description":
-        "PostHog API host without scheme: us.posthog.com for US Cloud (default; app.posthog.com is the legacy US alias) or eu.posthog.com for EU Cloud",
+        "PostHog API host or HTTPS origin: us.posthog.com for US Cloud (default; https://app.posthog.com is the legacy US alias) or eu.posthog.com for EU Cloud",
       "required": false,
-      "sensitive": false,
+      "sensitive": true,
       "docsUrl": "https://posthog.com/docs/self-host",
       "default": "us.posthog.com",
     }],
