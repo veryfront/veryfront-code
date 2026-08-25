@@ -97,6 +97,9 @@ const SAFE_RECEIVER_QUALIFIED_CALLABLE_LABEL =
 /** Standard V8 modifiers are syntax around the callable label, not part of it. */
 const CALLABLE_LABEL_PREFIX = /^(?:(?:async|new)\s+)+/;
 
+/** Standard V8 property aliases must be safe independently of their function name. */
+const CALLABLE_ALIAS_SUFFIX = /^(.+)\s+\[as\s+([^\]\r\n]+)\]$/;
+
 /** Captures a frame whose text after `at ` can be a bare source location. */
 const LOCATION_ONLY_FRAME = /^at\s+(.+)$/;
 
@@ -107,19 +110,26 @@ function isSourceLocationText(text: string): boolean {
     FILE_LINE_COLUMN_LOCATION.test(trimmed) || SOURCE_FILE_BASENAME_LOCATION.test(trimmed);
 }
 
+function isRetainableCallableLabel(label: string): boolean {
+  // A method can be named like a location ("123-app.ts:3:3" on Node 24), so a
+  // label gets the same source-location validation as location text itself.
+  return !!label && !isSourceLocationText(label) &&
+    !BRACKETED_IPV6_CALLABLE_LABEL.test(label) &&
+    (!HOSTNAME_SHAPED_CALLABLE_LABEL.test(label) ||
+      SAFE_RECEIVER_QUALIFIED_CALLABLE_LABEL.test(label));
+}
+
 /** Keep a frame's callable label only when the label itself carries no source location. */
 function retainCallableLabel(label: string): string {
   const trimmed = label.trim();
   const prefix = CALLABLE_LABEL_PREFIX.exec(trimmed)?.[0] ?? "";
   const callableLabel = prefix ? trimmed.slice(prefix.length).trim() : trimmed;
-  // A method can be named like a location ("123-app.ts:3:3" on Node 24), so a
-  // label gets the same source-location validation as location text itself.
-  return callableLabel && !isSourceLocationText(callableLabel) &&
-      !BRACKETED_IPV6_CALLABLE_LABEL.test(callableLabel) &&
-      (!HOSTNAME_SHAPED_CALLABLE_LABEL.test(callableLabel) ||
-        SAFE_RECEIVER_QUALIFIED_CALLABLE_LABEL.test(callableLabel))
-    ? `at ${prefix}${callableLabel}`
-    : "at <anonymous>";
+  const alias = CALLABLE_ALIAS_SUFFIX.exec(callableLabel);
+  const isSafe = alias
+    ? isRetainableCallableLabel(alias[1]!.trim()) &&
+      isRetainableCallableLabel(alias[2]!.trim())
+    : isRetainableCallableLabel(callableLabel);
+  return isSafe ? `at ${prefix}${callableLabel}` : "at <anonymous>";
 }
 
 /** Keep a development stack's callable label without exposing its source location. */

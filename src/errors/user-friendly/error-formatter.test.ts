@@ -171,6 +171,20 @@ describe("formatUserError", () => {
     assertEquals(output.includes("file:///home/user"), false);
   });
 
+  it("should validate V8 property aliases independently of callable labels", () => {
+    const error = new Error("unknown error callable_alias_frames");
+    error.stack = [
+      "Error: unknown error callable_alias_frames",
+      "    at Object.publicAlias [as private-control.example] (/srv/app.ts:1:1)",
+      "    at Object.publicAlias [as visibleAlias] (/srv/app.ts:2:1)",
+    ].join("\n");
+
+    const output = formatUserError(error);
+
+    assertEquals(output.includes("private-control.example"), false);
+    assertEquals(output.includes("Object.publicAlias [as visibleAlias]"), true);
+  });
+
   it("should not invoke proxy traps in plain output", () => {
     let messageReads = 0;
     const stateful = new Proxy(new Error("unused"), {

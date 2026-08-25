@@ -175,7 +175,7 @@ describe("safe-diagnostics", () => {
           "file://SERVER/audit-root/project/../private-source-marker",
           "file://server/audit-root/private-source-marker",
         ],
-      ]
+      ] as const
     ) {
       assertEquals(
         snapshotThrowableDiagnosticRedactingPath(
@@ -205,6 +205,14 @@ describe("safe-diagnostics", () => {
         ],
         [
           "file:///C:/definitely-private-marker/nope",
+          "ENOENT: no such file or directory, open 'C:\\definitely-private-marker\\nope'",
+        ],
+        [
+          "file://C:/definitely-private-marker/nope",
+          "ENOENT: no such file or directory, open '/C:/definitely-private-marker/nope'",
+        ],
+        [
+          "file://C:/definitely-private-marker/nope",
           "ENOENT: no such file or directory, open 'C:\\definitely-private-marker\\nope'",
         ],
         [
@@ -241,6 +249,19 @@ describe("safe-diagnostics", () => {
       ),
       "Filesystem operation failed for <absolute-path>",
     );
+  });
+
+  it("should redact native paths after canonicalizing embedded file URL whitespace", () => {
+    for (const whitespace of ["\t", "\n", "\r"] as const) {
+      assertEquals(
+        snapshotThrowableDiagnosticRedactingPath(
+          new Error("ENOENT: no such file or directory, open '/private/secret/nope'"),
+          `file:///private/se${whitespace}cret/nope`,
+          "<absolute-path>",
+        ),
+        "ENOENT: no such file or directory, open '<absolute-path>'",
+      );
+    }
   });
 
   it("should normalize localhost file authorities before redacting canonical diagnostics", () => {
