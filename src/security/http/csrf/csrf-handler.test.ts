@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { CsrfHandler } from "./csrf-handler.ts";
 import { generateCsrfToken } from "../../csrf/helpers.ts";
 import type { HandlerContext } from "#veryfront/types";
@@ -26,7 +26,13 @@ describe("security/http/csrf/csrf-handler", () => {
 
       assertEquals(exampleStart >= 0 && exampleEnd > exampleStart, true);
       assertEquals(
-        example.includes('headers["x-veryfront-dependency-pins"] = pinKey;'),
+        example.includes(
+          'import { csrfMutationHeaders } from "veryfront/index.client";',
+        ),
+        true,
+      );
+      assertEquals(
+        example.includes('headers.set("x-veryfront-dependency-pins", pinKey);'),
         true,
       );
       assertEquals(example.includes('searchParams.set("pins"'), false);
@@ -288,6 +294,260 @@ describe("security/http/csrf/csrf-handler", () => {
   });
 
   describe("when CSRF is not configured", () => {
+    it("suppresses the warning only for the exact local client-log mutation", async () => {
+      const localHandler = new CsrfHandler();
+      const ctx = createCtx();
+      ctx.securityConfig = {};
+      ctx.isLocalProject = true;
+      const warnings: string[] = [];
+      const originalWarn = console.warn;
+
+      console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      try {
+        await localHandler.handle(
+          new Request("http://localhost/_veryfront/log", { method: "POST" }),
+          ctx,
+        );
+        await localHandler.handle(
+          new Request("http://localhost/_veryfront/log/subpath", { method: "POST" }),
+          ctx,
+        );
+        await localHandler.handle(
+          new Request("http://localhost/_veryfront/log", { method: "PUT" }),
+          ctx,
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(
+        warnings.length,
+        2,
+        "only the registered POST /_veryfront/log mutation is framework-owned",
+      );
+      assertStringIncludes(warnings[0]!, "POST request [path redacted]");
+      assertStringIncludes(warnings[1]!, "PUT request [path redacted]");
+    });
+
+    it("warns once per path in local development when production would reject", async () => {
+      const localHandler = new CsrfHandler();
+      const ctx = createCtx();
+      ctx.securityConfig = {};
+      ctx.isLocalProject = true;
+      const warnings: string[] = [];
+      const originalWarn = console.warn;
+
+      console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      try {
+        await localHandler.handle(
+          new Request("http://localhost/api/cases?attempt=1", { method: "POST" }),
+          ctx,
+        );
+        await localHandler.handle(
+          new Request("http://localhost/api/cases?attempt=2", { method: "POST" }),
+          ctx,
+        );
+        await localHandler.handle(
+          new Request("http://localhost/api/other", { method: "PUT" }),
+          ctx,
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(warnings.length, 2);
+      assertStringIncludes(warnings[0]!, "POST request [path redacted]");
+      assertStringIncludes(warnings[0]!, "csrfMutationHeaders");
+      assertStringIncludes(warnings[0]!, '"veryfront/index.client"');
+      assertStringIncludes(warnings[1]!, "PUT request [path redacted]");
+    });
+
+    it("warns when a local mutation sends an empty CSRF header", async () => {
+      const localHandler = new CsrfHandler();
+      const ctx = createCtx();
+      ctx.securityConfig = {};
+      ctx.isLocalProject = true;
+      const warnings: string[] = [];
+      const originalWarn = console.warn;
+
+      console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      try {
+        await localHandler.handle(
+          new Request("http://localhost/api/empty-header", {
+            method: "POST",
+            headers: { "x-csrf-token": "" },
+          }),
+          ctx,
+        );
+        await localHandler.handle(
+          new Request("http://localhost/api/blank-header", {
+            method: "POST",
+            headers: { "x-csrf-token": "   " },
+          }),
+          ctx,
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(
+        warnings.length,
+        2,
+        "an empty or whitespace x-csrf-token is rejected by validateCsrf in production, so it must still warn locally",
+      );
+      assertStringIncludes(
+        warnings[0]!,
+        "POST request [path redacted]",
+        "the empty-header warning names the method and redacts the path",
+      );
+      assertStringIncludes(
+        warnings[1]!,
+        "POST request [path redacted]",
+        "the whitespace-header warning names the method and redacts the path",
+      );
+    });
+
+    it("does not include raw path segments in the missing-header warning", async () => {
+      const localHandler = new CsrfHandler();
+      const ctx = createCtx();
+      ctx.securityConfig = {};
+      ctx.isLocalProject = true;
+      const warnings: string[] = [];
+      const originalWarn = console.warn;
+      const sensitiveSegment = "private.email@example.com";
+
+      console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      try {
+        await localHandler.handle(
+          new Request(`http://localhost/api/orders/${sensitiveSegment}/charge`, {
+            method: "POST",
+          }),
+          ctx,
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(warnings.length, 1);
+      assertStringIncludes(warnings[0]!, "POST request [path redacted]");
+      assertEquals(warnings[0]!.includes("/api/orders"), false);
+      assertEquals(warnings[0]!.includes("charge"), false);
+      assertEquals(warnings[0]!.includes(sensitiveSegment), false);
+    });
+
+    it("warns once per local project identity", async () => {
+      const localHandler = new CsrfHandler();
+      const alphaCtx = createCtx();
+      alphaCtx.securityConfig = {};
+      alphaCtx.isLocalProject = true;
+      alphaCtx.projectSlug = "alpha";
+      const betaCtx = createCtx();
+      betaCtx.securityConfig = {};
+      betaCtx.isLocalProject = true;
+      betaCtx.projectSlug = "beta";
+      const warnings: string[] = [];
+      const originalWarn = console.warn;
+
+      console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      try {
+        await localHandler.handle(
+          new Request("http://localhost/api/shared", { method: "POST" }),
+          alphaCtx,
+        );
+        await localHandler.handle(
+          new Request("http://localhost/api/shared", { method: "POST" }),
+          betaCtx,
+        );
+        await localHandler.handle(
+          new Request("http://localhost/api/shared", { method: "POST" }),
+          betaCtx,
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(warnings.length, 2);
+      assertStringIncludes(warnings[0]!, "POST request [path redacted]");
+      assertStringIncludes(warnings[1]!, "POST request [path redacted]");
+    });
+
+    it("evicts old warning keys without suppressing new routes", async () => {
+      const localHandler = new CsrfHandler();
+      const ctx = createCtx();
+      ctx.securityConfig = {};
+      ctx.isLocalProject = true;
+      ctx.projectSlug = "eviction-project";
+      const warnings: string[] = [];
+      const originalWarn = console.warn;
+
+      console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      try {
+        for (let index = 0; index < 101; index++) {
+          await localHandler.handle(
+            new Request(`http://localhost/api/r${index}`, { method: "POST" }),
+            ctx,
+          );
+        }
+        await localHandler.handle(
+          new Request("http://localhost/api/final-route", { method: "POST" }),
+          ctx,
+        );
+        await localHandler.handle(
+          new Request("http://localhost/api/final-route", { method: "POST" }),
+          ctx,
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(warnings.length, 102);
+      assertStringIncludes(warnings[101]!, "POST request [path redacted]");
+    });
+
+    it("does not warn outside the absent-header local development case", async () => {
+      const localHandler = new CsrfHandler();
+      const localCtx = createCtx();
+      localCtx.securityConfig = {};
+      localCtx.isLocalProject = true;
+      const disabledCtx = createCtx(false);
+      disabledCtx.isLocalProject = true;
+      const nonLocalCtx = createCtx();
+      nonLocalCtx.securityConfig = {};
+      const warnings: string[] = [];
+      const originalWarn = console.warn;
+
+      console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      try {
+        await localHandler.handle(
+          new Request("http://localhost/explicit-off", { method: "POST" }),
+          disabledCtx,
+        );
+        await localHandler.handle(
+          new Request("http://localhost/non-local", { method: "POST" }),
+          nonLocalCtx,
+        );
+        await localHandler.handle(new Request("http://localhost/safe"), localCtx);
+        await localHandler.handle(
+          new Request("http://localhost/header-present", {
+            method: "POST",
+            headers: { "x-csrf-token": "present" },
+          }),
+          localCtx,
+        );
+        await localHandler.handle(
+          new Request("http://localhost/api/control-plane/agents/list", {
+            method: "POST",
+            headers: { "x-veryfront-control-plane-jws": "header.payload.signature" },
+          }),
+          localCtx,
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(warnings, []);
+    });
+
     it("should pass through all requests when securityConfig is null", async () => {
       const ctx = createCtx();
       ctx.securityConfig = null;

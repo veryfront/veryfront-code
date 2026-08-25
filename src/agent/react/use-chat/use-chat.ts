@@ -249,12 +249,14 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
 
         const response = await fetch(api, {
           method: "POST",
-          // A production build turns `security.csrf` on by default, so this
-          // POST has to echo the `__Host-vf_csrf` cookie back or the server
-          // answers 403 — dev, where CSRF is off, would never show it.
+          // Production enables CSRF by default, so this POST has to echo the
+          // `__Host-vf_csrf` cookie or the server answers 403. Development
+          // issues the same cookie without enforcing it so this path is tested.
           headers: csrfMutationHeaders(api, {
-            "Content-Type": "application/json",
-            ...options.headers,
+            headers: {
+              "Content-Type": "application/json",
+              ...options.headers,
+            },
           }),
           credentials: options.credentials,
           body: JSON.stringify({

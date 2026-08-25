@@ -114,5 +114,29 @@ describe("server/handlers/request/api/security-headers", () => {
       applySecurityHeaders(headers, ctx, req);
       assertEquals(headers.get("set-cookie"), null, "no CSRF cookie without csrf config");
     });
+
+    it("should issue a CSRF cookie in local development when csrf is unset", () => {
+      const ctx = makeCtx({ isLocalProject: true, securityConfig: {} } as never);
+      const headers = new Headers();
+      const req = new Request("http://localhost/page", { headers: { accept: "text/html" } });
+      applySecurityHeaders(headers, ctx, req);
+      assertEquals(
+        headers.get("set-cookie")?.includes("__Host-vf_csrf=") ?? false,
+        true,
+        "local development must issue the token cookie so csrfMutationHeaders can echo it before deploy",
+      );
+    });
+
+    it("should not issue a CSRF cookie locally when csrf is explicitly disabled", () => {
+      const ctx = makeCtx({ isLocalProject: true, securityConfig: { csrf: false } } as never);
+      const headers = new Headers();
+      const req = new Request("http://localhost/page", { headers: { accept: "text/html" } });
+      applySecurityHeaders(headers, ctx, req);
+      assertEquals(
+        headers.get("set-cookie"),
+        null,
+        "an explicit opt-out must stay honoured in local development",
+      );
+    });
   });
 });
