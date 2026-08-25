@@ -20,6 +20,7 @@ import {
   CACHE_INVARIANT_VIOLATION,
   CONFIG_PARSE_ERROR,
   CONFIG_VALIDATION_FAILED,
+  DEPENDENCY_MISSING,
   INITIALIZATION_ERROR,
   SERVICE_OVERLOADED,
 } from "#veryfront/errors/error-registry.ts";
@@ -1628,6 +1629,106 @@ function configLoadFailureDetail(configFile: string, error: unknown): string {
     : `Failed to load ${configFile}: ${summary}`;
 }
 
+/**
+ * How far to walk `cause` when looking for the runtime's resolution error.
+ *
+ * The loader wraps import failures on its way out, so the runtime's own error
+ * is rarely the outermost one. The bound keeps a self-referential chain from
+ * spinning.
+ */
+const MAX_CONFIG_LOAD_CAUSE_DEPTH = 8;
+
+/**
+ * Every shape in which a runtime names the specifier it could not resolve.
+ *
+ * Both runtimes raise `ERR_MODULE_NOT_FOUND` for a missing *file* as readily as
+ * for a missing package, so the code alone cannot classify; these patterns only
+ * extract the specifier, and {@link isBarePackageSpecifier} decides. Verified
+ * against Deno 2.7.7 and the Node message in the field report.
+ */
+const MISSING_DEPENDENCY_PATTERNS: readonly RegExp[] = [
+  // Node: "Cannot find package 'x' imported from /path/veryfront.config.ts".
+  /Cannot find package ['"]([^'"]+)['"]/,
+  // Node: CommonJS resolution; also fires for relative paths, filtered by shape.
+  /Cannot find module ['"]([^'"]+)['"]/,
+  // Deno: a bare specifier no import map or node_modules entry claims.
+  /Import ['"]([^'"]+)['"] not a dependency/,
+  // Deno: unresolved specifier, including npm:/jsr: forms. A missing relative
+  // file arrives here as a file:// URL and is filtered by shape.
+  /Module not found ['"]([^'"]+)['"]/,
+];
+
+/**
+ * Decide whether a specifier names a package rather than a file.
+ *
+ * Only a bare specifier is fixable by installing dependencies. Node raises the
+ * same `ERR_MODULE_NOT_FOUND` for a relative import whose file is genuinely
+ * missing ("Cannot find module '/abs/path/missing.js'"), and telling that
+ * reader to run `npm install` would be the same misdirection this classifies
+ * away from. A `npm:`/`jsr:` prefix is stripped first: those name packages too.
+ *
+ * Excluding every other scheme also keeps credentials out of the detail line
+ * without a redaction pass, since a bare specifier has no userinfo to leak.
+ */
+function isBarePackageSpecifier(specifier: string): boolean {
+  const bare = specifier.startsWith("npm:")
+    ? specifier.slice(4)
+    : specifier.startsWith("jsr:")
+    ? specifier.slice(4)
+    : specifier;
+  if (bare.length === 0) return false;
+  if (bare.startsWith(".") || bare.startsWith("/") || bare.startsWith("#")) return false;
+  return !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(bare);
+}
+
+/**
+ * Name the package a config module imports that the runtime cannot resolve.
+ *
+ * A config file whose imports do not resolve is not a malformed config file:
+ * the remedy is installing dependencies, not editing syntax. Classifying this
+ * as a parse error sends the reader to inspect a file that is fine, while the
+ * detail line already carries the real cause.
+ *
+ * Returns `undefined` for resolution failures an install cannot fix -- an
+ * unknown subpath of a package that *is* installed resolves the package and
+ * rejects the export, and stays with the parse-error family.
+ */
+function unresolvedConfigDependency(error: unknown): string | undefined {
+  let current: unknown = error;
+  for (let depth = 0; depth < MAX_CONFIG_LOAD_CAUSE_DEPTH; depth += 1) {
+    if (!(current instanceof Error)) return undefined;
+    for (const pattern of MISSING_DEPENDENCY_PATTERNS) {
+      const specifier = current.message.match(pattern)?.[1];
+      if (specifier !== undefined && isBarePackageSpecifier(specifier)) return specifier;
+    }
+    current = current.cause;
+  }
+  return undefined;
+}
+
+/**
+ * Build the error for a config module that failed to load.
+ *
+ * Split from the throw sites so every path that loads a config module -- local
+ * file, hosted source, hosted source selection -- classifies the same failure
+ * the same way.
+ */
+function configLoadFailure(configFile: string, error: unknown): VeryfrontError {
+  const dependency = unresolvedConfigDependency(error);
+  if (dependency !== undefined) {
+    return DEPENDENCY_MISSING.create({
+      detail: `${configFile} imports "${dependency}", which is not installed`,
+      cause: error,
+      context: { configFile, specifier: dependency },
+    });
+  }
+  return CONFIG_PARSE_ERROR.create({
+    detail: configLoadFailureDetail(configFile, error),
+    cause: error,
+    context: { configFile },
+  });
+}
+
 async function loadConfigFromTempFile(
   source: string,
   configPath: string,
@@ -2291,11 +2392,7 @@ function getConfigInternal(
                 }
                 if (isPreservedConfigLoadError(error)) throw error;
                 logger.warn("Failed to load config file", { configFile });
-                throw CONFIG_PARSE_ERROR.create({
-                  detail: configLoadFailureDetail(configFile, error),
-                  cause: error,
-                  context: { configFile },
-                });
+                throw configLoadFailure(configFile, error);
               }
             }
 
@@ -2361,11 +2458,7 @@ function getConfigInternal(
           } catch (error) {
             if (isPreservedConfigLoadError(error)) throw error;
             logger.warn("Failed to load config file", { configFile });
-            throw CONFIG_PARSE_ERROR.create({
-              detail: configLoadFailureDetail(configFile, error),
-              cause: error,
-              context: { configFile },
-            });
+            throw configLoadFailure(configFile, error);
           }
         }
 
@@ -2491,11 +2584,7 @@ export async function evaluateHostedConfigSource(
       throw translateHostedConfigEvaluationError(error, options.source.fileName);
     }
     if (isPreservedConfigLoadError(error)) throw error;
-    throw CONFIG_PARSE_ERROR.create({
-      detail: configLoadFailureDetail(options.source.fileName, error),
-      cause: error,
-      context: { configFile: options.source.fileName },
-    });
+    throw configLoadFailure(options.source.fileName, error);
   }
 }
 

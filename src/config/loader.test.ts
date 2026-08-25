@@ -741,6 +741,86 @@ export default config as const;
         }
       });
 
+      it("classifies an uninstalled config dependency as a missing dependency", async () => {
+        // Field report: after a branch switch changed dependencies, `veryfront
+        // dev` reported
+        //
+        //   ✗ [config-parse-error] Failed to parse configuration
+        //     Suggestion: Ensure your configuration file contains valid
+        //                 JavaScript or TypeScript
+        //
+        // for a config file whose syntax was fine. The fix was `npm install`.
+        // The classification, suggestion, and docs link all pointed at file
+        // validity, sending the reader to inspect a file that was never wrong.
+        const adapter = setup();
+        const projectDir = await Deno.makeTempDir({
+          prefix: "vf-config-missing-dep-",
+        });
+        const configPath = `${projectDir}/veryfront.config.js`;
+        // Not the field report's own `@veryfront/ext-observability-opentelemetry`:
+        // an uninstalled first-party extension is resolved through the contract
+        // registry, which raises its own `missing-extension` error before the
+        // import is ever attempted. An ordinary third-party package is what
+        // reaches the module resolver, which is the path under test.
+        const source = 'import "some-uninstalled-telemetry-sdk";\n' +
+          "export default {};\n";
+
+        try {
+          await Deno.writeTextFile(configPath, source);
+          adapter.fs.files.set(configPath, source);
+
+          const error = await assertRejects(
+            () => getConfig(projectDir, adapter),
+            VeryfrontError,
+          ) as VeryfrontError;
+
+          assertEquals(error.slug, "dependency-missing");
+          assert(
+            error.message.includes("some-uninstalled-telemetry-sdk"),
+            `error must name the unresolved package, got: ${error.message}`,
+          );
+          assert(
+            error.message.includes("veryfront.config.js"),
+            `error must still name the config file, got: ${error.message}`,
+          );
+          assert(
+            !/valid JavaScript or TypeScript/i.test(
+              `${error.message} ${error.suggestion ?? ""}`,
+            ),
+            "a missing dependency must not advise checking the file's syntax",
+          );
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+
+      it("does not blame a missing relative import on an uninstalled package", async () => {
+        // Both runtimes raise ERR_MODULE_NOT_FOUND for a missing *file* as
+        // readily as for a missing package, so classifying on the code alone
+        // would tell this reader to run `npm install` for a file they simply
+        // have not written yet. Only a bare specifier is install-fixable.
+        const adapter = setup();
+        const projectDir = await Deno.makeTempDir({
+          prefix: "vf-config-missing-file-",
+        });
+        const configPath = `${projectDir}/veryfront.config.js`;
+        const source = 'import "./not-written-yet.js";\nexport default {};\n';
+
+        try {
+          await Deno.writeTextFile(configPath, source);
+          adapter.fs.files.set(configPath, source);
+
+          const error = await assertRejects(
+            () => getConfig(projectDir, adapter),
+            VeryfrontError,
+          ) as VeryfrontError;
+
+          assertEquals(error.slug, "config-parse-error");
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+
       it("carries a thrown config's own message through to the reader", async () => {
         const adapter = setup();
         const projectDir = await Deno.makeTempDir({
