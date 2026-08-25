@@ -46,6 +46,15 @@ describe("modules/import-map/resolver", () => {
       );
     });
 
+    it("should preserve repeated separators when selecting an esm.sh subpath", () => {
+      const map = { imports: { "pkg//sub": "/local.js" } };
+      assertEquals(
+        resolveImport("https://esm.sh/pkg@1//sub", map),
+        "/local.js",
+        "the dev-server resolver must select the exact empty-segment subpath entry",
+      );
+    });
+
     it("should not append the esm.sh subpath to a local file mapping", () => {
       const map = { imports: { react: "/local/react.ts" } };
       assertEquals(

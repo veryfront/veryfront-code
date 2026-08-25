@@ -81,6 +81,34 @@ describe("transforms/shared/esm-sh-import-map", () => {
     );
   });
 
+  it("preserves repeated separators in esm.sh subpaths", () => {
+    assertEquals(parseEsmShSpecifier("https://esm.sh/pkg@1//sub"), {
+      packageName: "pkg",
+      subpath: "//sub",
+      version: "1",
+    });
+    assertEquals(parseEsmShSpecifier("https://esm.sh/@scope/pkg@1///deep//sub"), {
+      packageName: "@scope/pkg",
+      subpath: "///deep//sub",
+      version: "1",
+    });
+    assertEquals(
+      resolve("https://esm.sh/pkg@1//sub", {
+        "pkg//sub": "/local.js",
+        pkg: "https://cdn.example/pkg",
+      }),
+      "/local.js",
+    );
+    assertEquals(
+      resolve("https://esm.sh/pkg@1//sub", { pkg: "https://cdn.example/pkg" }),
+      "https://cdn.example/pkg//sub",
+    );
+    assertEquals(
+      resolve("https://esm.sh/pkg@1//", { pkg: "https://cdn.example/pkg" }),
+      "https://cdn.example/pkg//",
+    );
+  });
+
   it("keeps URL query, fragment, and trailing separator boundaries", () => {
     assertEquals(
       resolve("https://esm.sh/@scope/pkg@1/sub", {

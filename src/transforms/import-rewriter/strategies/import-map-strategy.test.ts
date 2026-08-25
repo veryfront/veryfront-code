@@ -136,6 +136,15 @@ describe("transforms/import-rewriter/strategies/import-map-strategy", () => {
       );
     });
 
+    it("preserves repeated separators in an exact esm.sh subpath mapping", () => {
+      const map: ImportMapConfig = { imports: { "pkg//sub": "/local.js" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/pkg@1//sub", map),
+        "/local.js",
+        "the unified rewriter must keep empty path segments in the import-map key",
+      );
+    });
+
     it("drops the esm.sh subpath for a file-path mapping", () => {
       const map: ImportMapConfig = { imports: { lodash: "/local/lodash.js" } };
       assertEquals(

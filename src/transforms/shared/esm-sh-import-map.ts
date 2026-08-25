@@ -109,6 +109,42 @@ function isReservedCoordinateName(packageName: string): boolean {
   return /^v\d+$/.test(packageName) || ESM_SH_RESERVED_SEGMENTS.has(packageName);
 }
 
+/**
+ * Parse through a normalized separator view while retaining the original
+ * subpath. esm.sh accepts empty subpath segments, but the strict coordinate
+ * parser rejects them; import-map keys still need the exact `//` spelling.
+ */
+function parseEsmShUrlWithRepeatedSubpathSeparators(
+  url: string,
+): { packageName: string; subpath: string; version: string | null } | null {
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+  } catch (_) {
+    /* expected: URL may be malformed */
+    return null;
+  }
+
+  const { pathname } = parsedUrl;
+  const firstSeparator = pathname.indexOf("/", 1);
+  if (firstSeparator <= 1) return null;
+
+  const firstSegment = pathname.slice(1, firstSeparator);
+  let coordinateEnd = firstSeparator;
+  if (isScopeSegment(firstSegment)) {
+    coordinateEnd = pathname.indexOf("/", firstSeparator + 1);
+    if (coordinateEnd <= firstSeparator + 1) return null;
+  }
+
+  const rawSubpath = coordinateEnd === -1 ? "" : pathname.slice(coordinateEnd);
+  if (!rawSubpath) return null;
+
+  const normalizedSubpath = rawSubpath.replace(/\/{2,}/g, "/").replace(/\/$/, "");
+  parsedUrl.pathname = pathname.slice(0, coordinateEnd) + normalizedSubpath;
+  const coordinates = parseEsmShUrl(parsedUrl.href);
+  return coordinates ? { ...coordinates, subpath: rawSubpath } : null;
+}
+
 export function parseEsmShSpecifier(
   url: string,
 ): { packageName: string; subpath: string; version: string | null } | null {
@@ -132,7 +168,7 @@ export function parseEsmShSpecifier(
   const hadTrailingSeparator = stripped !== withoutBuildPrefix;
 
   const coordinates = reservedNamePackage(stripped, afterBuildChannel) ??
-    parseEsmShUrl(stripped);
+    parseEsmShUrl(stripped) ?? parseEsmShUrlWithRepeatedSubpathSeparators(stripped);
   if (!coordinates) return null;
 
   const { packageName, subpath } = coordinates;
