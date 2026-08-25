@@ -50,6 +50,12 @@ type RemoteModuleFetchResult =
     url: string;
   };
 
+function describeErrorCategory(error: unknown): string {
+  if (!(error instanceof Error)) return typeof error;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" && code ? `${error.name || "Error"}(${code})` : error.name;
+}
+
 async function removeLegacyHTTPModuleCache(projectDir: string | undefined): Promise<void> {
   if (!projectDir) return;
 
@@ -58,7 +64,11 @@ async function removeLegacyHTTPModuleCache(projectDir: string | undefined): Prom
     await remove(cacheDir, { recursive: true });
   } catch (error) {
     if (isNotFoundError(error)) return;
-    logger.warn(`[http] could not remove legacy module cache ${cacheDir}: ${error}`);
+    logger.warn(
+      `[http] could not remove legacy module cache ${LEGACY_HTTP_MODULE_CACHE_DIR}: ${
+        describeErrorCategory(error)
+      }`,
+    );
   }
 }
 
