@@ -9,7 +9,7 @@ import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts"
 import {
   CONTROL_PLANE_RUN_OPERATION_PATH,
   CONTROL_PLANE_RUN_PATH,
-} from "./control-plane-routes.ts";
+} from "#veryfront/channels/control-plane-routes.ts";
 
 const SIGNATURE_SKEW_SECONDS = 5;
 const MAX_SIGNATURE_JWS_CODE_UNITS = 16 * 1024;
