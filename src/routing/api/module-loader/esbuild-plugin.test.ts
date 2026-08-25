@@ -451,6 +451,9 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       const moduleSource = "export const parsed = true;";
       const requestUrl = "https://esm.sh/yaml@2";
       const resolvedUrl = "https://esm.sh/yaml@2?target=es2020&bundle=true";
+      const legacyCacheDir = `${projectDir}/.veryfront/cache/api-http-imports`;
+      await Deno.mkdir(legacyCacheDir, { recursive: true });
+      await Deno.writeTextFile(`${legacyCacheDir}/legacy.mjs`, moduleSource);
 
       const load = (fetchImpl: typeof fetch) => {
         installMockFetch(fetchImpl);
@@ -494,7 +497,7 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
         );
         assertEquals("errors" in (second as Record<string, unknown>), true);
         assertEquals(
-          await Deno.stat(`${projectDir}/.veryfront/cache/api-http-imports`).then(
+          await Deno.stat(legacyCacheDir).then(
             () => true,
             () => false,
           ),
@@ -877,6 +880,68 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       } finally {
         restoreMockFetch();
         await Deno.remove(projectDir, { recursive: true }).catch(() => {});
+      }
+    });
+
+    it("does not fall back to a mutable URL when the locked URL is unavailable", async () => {
+      const requestUrl = "https://esm.sh/yaml@2";
+      const lockedUrl = "https://cdn.example/yaml-2.0.0.js";
+      const lockedSource = "export const version = '2.0.0';";
+      const lockedIntegrity = await computeIntegrity(lockedSource);
+      const requestedUrls: string[] = [];
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const lockfile: LockfileManager = {
+        read: () => Promise.resolve(null),
+        write: () => Promise.resolve(),
+        get: (url) =>
+          Promise.resolve(
+            url === requestUrl
+              ? {
+                resolved: lockedUrl,
+                integrity: lockedIntegrity,
+                fetchedAt: new Date().toISOString(),
+              }
+              : null,
+          ),
+        set: () => Promise.resolve(),
+        has: () => Promise.resolve(true),
+        clear: () => Promise.resolve(),
+        flush: () => Promise.resolve(),
+      };
+      const plugin = createHTTPPlugin({
+        allowedHosts: ["https://esm.sh", "https://cdn.example"],
+        lockfile,
+      });
+      plugin.setup(createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      ));
+      assertExists(loadHandler);
+
+      try {
+        installMockFetch(
+          (async (input) => {
+            const url = String(input);
+            requestedUrls.push(url);
+            return url === lockedUrl
+              ? new Response("unavailable", { status: 599 })
+              : new Response("export const mutable = true;", { status: 200 });
+          }) as typeof fetch,
+        );
+
+        const result = await loadHandler({
+          path: requestUrl,
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+
+        assertEquals("errors" in (result as Record<string, unknown>), true);
+        assertEquals(requestedUrls, [lockedUrl, lockedUrl, lockedUrl]);
+      } finally {
+        restoreMockFetch();
       }
     });
 

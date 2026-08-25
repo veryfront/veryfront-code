@@ -20,8 +20,11 @@ import {
   readHttpModuleText,
 } from "../../../transforms/shared/http-module-response.ts";
 import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
+import { isNotFoundError, remove } from "#veryfront/platform/compat/fs.ts";
+import * as pathHelper from "#veryfront/compat/path";
 
 const logger = serverLogger.component("api");
+const LEGACY_HTTP_MODULE_CACHE_DIR = ".veryfront/cache/api-http-imports";
 const HTTP_MODULE_FETCH_MAX_ATTEMPTS = 3;
 const HTTP_MODULE_FETCH_RETRY_DELAY_MS = 100;
 
@@ -46,6 +49,19 @@ type RemoteModuleFetchResult =
     status: number;
     url: string;
   };
+
+async function removeLegacyHTTPModuleCache(projectDir: string | undefined): Promise<void> {
+  if (!projectDir) return;
+
+  const cacheDir = pathHelper.join(projectDir, LEGACY_HTTP_MODULE_CACHE_DIR);
+  try {
+    await remove(cacheDir, { recursive: true });
+  } catch (error) {
+    if (isNotFoundError(error)) return;
+    logger.warn(`[http] could not remove legacy module cache ${cacheDir}: ${error}`);
+  }
+}
+
 export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin {
   const opts: HTTPPluginOptions = Array.isArray(options) ? { allowedHosts: options } : options;
   const { allowedHosts, strict = false } = opts;
@@ -56,6 +72,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
   const lockfile = opts.lockfile ??
     (opts.projectDir ? createLockfileManager(opts.projectDir) : null);
   let lockfileFlushDisabled = false;
+  void removeLegacyHTTPModuleCache(opts.projectDir);
 
   return {
     name: "vf-api-http-fetch",
@@ -288,13 +305,20 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
 
               logger.warn(`[http] integrity mismatch, refetching: ${args.path}`);
             } else {
-              logger.warn(
-                `[http] cached URL returned ${res.status}: ${args.path}`,
-              );
+              return {
+                errors: [{
+                  text:
+                    `Failed to fetch locked remote module ${lockfileEntry.resolved}: ${res.status}`,
+                } as Message],
+              };
             }
           } catch (error) {
             if (error instanceof OutboundRequestBlockedError) throw error;
-            logger.warn(`[http] cached URL failed: ${args.path}`);
+            return {
+              errors: [{
+                text: `Failed to fetch locked remote module ${lockfileEntry.resolved}`,
+              } as Message],
+            };
           }
         }
 
