@@ -267,9 +267,13 @@ jobs:
       # pull request. Post the "@codex review" request only for synchronize.
       # The helper re-fetches the PR immediately before posting so a queued
       # stale event cannot bind its marker to a request for a newer head. A
-      # base edit gets a run-specific marker, which invalidates proof issued
-      # for an earlier base without coupling normal reviews to a moving base
-      # commit.
+      # base edit gets a marker scoped to the run attempt, which invalidates
+      # proof issued for an earlier base without coupling normal reviews to a
+      # moving base commit. The attempt matters: a rerun writes a fresh reset
+      # status that invalidates every earlier review, so it has to ask for a
+      # new review too. A run id alone is stable across reruns, so its marker
+      # would already exist, no request would be posted, and the unchanged
+      # head would stay pending with no outstanding request.
       - name: Request an automated review of the current commit
         if: >-
           github.event_name == 'pull_request_target' &&
@@ -280,6 +284,7 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           TARGET_SHA: ${{ needs.target.outputs.key }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         with:
           retries: 3
           script: |
@@ -289,6 +294,11 @@ jobs:
             ).href;
             const { requestAutomatedReview } = await import(gateUrl);
             const pullRequest = context.payload.pull_request;
+            const runAttempt = Number(process.env.RUN_ATTEMPT);
+            if (!Number.isSafeInteger(runAttempt) || runAttempt < 1) {
+              core.setFailed("The workflow run attempt is invalid");
+              return;
+            }
             const result = await requestAutomatedReview({
               github,
               owner: context.repo.owner,
@@ -296,7 +306,7 @@ jobs:
               pullNumber: pullRequest.number,
               headSha: process.env.TARGET_SHA,
               requestKey: context.payload.action === "edited"
-                ? `base-${context.runId}`
+                ? `base-${context.runId}-${runAttempt}`
                 : undefined,
             });
             core.notice(
@@ -305,6 +315,66 @@ jobs:
                 : result.reason === "stale-head"
                 ? "Skipped an automated review request from a stale synchronize event."
                 : "An automated review request for this head commit already exists.",
+            );
+
+  invalidate:
+    name: invalidate unverified review proof
+    # A reconciliation event is consumed by the run that observes it. If the
+    # resolver or the publisher cannot complete, the previous success stays on
+    # the head and a later merge group reuses it, so a finding, a deleted
+    # verdict, or a dismissed approval is silently lost. Head and base changes
+    # do not need this: a new head has no status of its own, and a new base
+    # changes the base binding every reused status is checked against.
+    needs: [target, review]
+    if: >-
+      failure() &&
+      (github.event_name == 'issue_comment' ||
+       github.event_name == 'workflow_run')
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Close the gate on the unreconciled head
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          retries: 3
+          script: |
+            const { pathToFileURL } = require("node:url");
+            const gateUrl = pathToFileURL(
+              `${process.env.GITHUB_WORKSPACE}/scripts/ci/automated-review-gate.mjs`,
+            ).href;
+            const {
+              invalidateReviewProof,
+              parseReviewWakeupRun,
+            } = await import(gateUrl);
+            const pullNumber = context.eventName === "issue_comment"
+              ? (context.payload.issue?.pull_request
+                ? context.payload.issue?.number
+                : undefined)
+              : parseReviewWakeupRun(context.payload.workflow_run)?.pullNumber;
+            if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
+              core.setFailed(
+                "Could not resolve the pull request whose review proof is unverified",
+              );
+              return;
+            }
+            const result = await invalidateReviewProof({
+              github,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pullNumber,
+            });
+            // Keep the run red: the revocation event was still dropped, and
+            // the closed gate has to be looked at rather than waited out.
+            core.setFailed(
+              `Closed the review gate on ${result.headSha.slice(0, 12)} after reconciliation failed.`,
             );
 
   merge_group:

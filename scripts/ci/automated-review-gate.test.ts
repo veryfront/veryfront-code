@@ -7,6 +7,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
 import {
   findAutomatedReview,
+  invalidateReviewProof,
   matchesReviewWakeupPullRequest,
   parseMergeQueuePullNumber,
   parseReviewWakeupRun,
@@ -1524,6 +1525,130 @@ describe("automated review request", () => {
   });
 });
 
+describe("review proof invalidation", () => {
+  it("closes the gate on the head a dropped reconciliation left behind", async () => {
+    const fixture = githubFixture({ headResponses: [HEAD] });
+    const result = await invalidateReviewProof({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+    });
+    assertEquals(
+      result.headSha,
+      HEAD,
+      "invalidation must target the pull request head it just read",
+    );
+    assertEquals(fixture.published, [{
+      owner: "veryfront",
+      repo: "veryfront-code",
+      sha: HEAD,
+      state: "failure",
+      context: "Automated review",
+      description: "PR#1 review status unavailable",
+      target_url: "https://example.test/pr/1",
+    }], "a lost revocation must leave a failing status, never an older success");
+  });
+
+  it("keeps a merge group from reusing an invalidated source status", async () => {
+    // listCommitStatusesForRef returns newest first, so the invalidation is
+    // the current gate status and the earlier success is no longer reusable.
+    const fixture = githubFixture({
+      pages: {
+        statuses: [[
+          automatedReviewStatus({
+            state: "failure",
+            description: "PR#1 review status unavailable",
+          }),
+          automatedReviewStatus(),
+        ]],
+      },
+    });
+    const result = await publishMergeGroupReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      sourceHeadSha: HEAD,
+      mergeGroupSha: OTHER_HEAD,
+    });
+    assertEquals(
+      result.state,
+      "failure",
+      "an invalidated source gate must not be reusable by the merge queue",
+    );
+    assertEquals(
+      fixture.published[0]?.state,
+      "failure",
+      "the merge group commit must carry the refusal",
+    );
+  });
+
+  it("refuses to invalidate without a resolvable pull request head", async () => {
+    for (const pullNumber of [0, -1, 1.5, Number.NaN]) {
+      const fixture = githubFixture();
+      await assertRejects(
+        () =>
+          invalidateReviewProof({
+            github: fixture.github,
+            owner: "veryfront",
+            repo: "veryfront-code",
+            pullNumber,
+          }),
+        Error,
+        "Pull request number is invalid",
+      );
+      assertEquals(
+        fixture.published.length,
+        0,
+        "an unidentified pull request must not have any status written for it",
+      );
+    }
+
+    const malformed = githubFixture({ headResponses: ["not-a-sha"] });
+    await assertRejects(
+      () =>
+        invalidateReviewProof({
+          github: malformed.github,
+          owner: "veryfront",
+          repo: "veryfront-code",
+          pullNumber: 1,
+        }),
+      Error,
+      "Could not resolve the pull request head commit",
+    );
+    assertEquals(
+      malformed.published.length,
+      0,
+      "a malformed head must not receive a status on an arbitrary ref",
+    );
+  });
+
+  it("propagates the lookup failure instead of reporting a closed gate", async () => {
+    const fixture = githubFixture({
+      pullError: Object.assign(new Error("pull request unavailable"), {
+        status: 500,
+      }),
+    });
+    await assertRejects(
+      () =>
+        invalidateReviewProof({
+          github: fixture.github,
+          owner: "veryfront",
+          repo: "veryfront-code",
+          pullNumber: 1,
+        }),
+      Error,
+      "pull request unavailable",
+    );
+    assertEquals(
+      fixture.published.length,
+      0,
+      "an unreadable pull request must fail the job, not fake an invalidation",
+    );
+  });
+});
+
 describe("review wakeup identity", () => {
   const wakeupRun = (overrides: Record<string, unknown> = {}) => ({
     id: 42,
@@ -1840,7 +1965,86 @@ describe("automated review workflow", () => {
     );
     assert(requestScript.includes("requestKey"));
     assert(requestScript.includes("context.runId"));
+    assertEquals(
+      record(request.env, "request environment").RUN_ATTEMPT,
+      "${{ github.run_attempt }}",
+      "a rerun must tell its reset epoch apart from the first attempt",
+    );
+    assert(
+      requestScript.includes("`base-${context.runId}-${runAttempt}`"),
+      "a base-edit rerun must request a review for the reset it just wrote",
+    );
+    assert(
+      !requestScript.includes("`base-${context.runId}`"),
+      "a key stable across reruns leaves the reset head pending with no request",
+    );
     assert(script.includes("forcePending"));
+
+    const invalidateJob = record(jobs.invalidate, "invalidate job");
+    assertEquals(
+      invalidateJob.needs,
+      ["target", "review"],
+      "invalidation must cover a failed resolver and a failed publisher alike",
+    );
+    const invalidateIf = String(invalidateJob.if);
+    for (
+      const guard of [
+        "failure()",
+        "github.event_name == 'issue_comment'",
+        "github.event_name == 'workflow_run'",
+      ]
+    ) {
+      assert(
+        invalidateIf.includes(guard),
+        "a dropped revocation event must close the gate it could not reconcile",
+      );
+    }
+    assert(
+      !invalidateIf.includes("pull_request_target"),
+      "head and base changes already invalidate reused proof by their binding",
+    );
+    assertEquals(
+      record(invalidateJob.permissions, "invalidate permissions"),
+      {
+        contents: "read",
+        "pull-requests": "read",
+        statuses: "write",
+      },
+      "invalidation needs no scope beyond the commit status it closes",
+    );
+    const invalidateSteps = invalidateJob.steps;
+    assert(
+      Array.isArray(invalidateSteps),
+      "the invalidate job must run steps of its own",
+    );
+    assertEquals(
+      record(
+        record(invalidateSteps[0], "invalidate checkout").with,
+        "invalidate checkout inputs",
+      ).ref,
+      "${{ github.event.repository.default_branch }}",
+      "the invalidator must read the gate from the trusted default branch",
+    );
+    const invalidateScript = String(
+      record(
+        record(invalidateSteps[1], "invalidate gate").with,
+        "invalidate inputs",
+      ).script,
+    );
+    for (
+      const required of [
+        "invalidateReviewProof",
+        "parseReviewWakeupRun",
+        "context.payload.issue?.pull_request",
+        "Number.isSafeInteger",
+        "core.setFailed",
+      ]
+    ) {
+      assert(
+        invalidateScript.includes(required),
+        "the invalidator must resolve its pull request the way the resolver does",
+      );
+    }
 
     const mergeGroupJob = record(jobs.merge_group, "merge group job");
     assertEquals(mergeGroupJob.if, "github.event_name == 'merge_group'");

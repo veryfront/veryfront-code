@@ -539,6 +539,51 @@ export async function publishAutomatedReviewStatus({
   return { state, review, failure, description };
 }
 
+/**
+ * Mark the current head of one pull request as unverified review proof.
+ *
+ * A revocation event - a Codex finding, a deleted verdict comment, a
+ * dismissed approval - is consumed by the run that observes it. When that run
+ * cannot resolve its target or publish a status, the older success stays on
+ * the head, and a later merge group reuses that cached success as if nothing
+ * had been revoked. Writing a failure for the current head keeps the gate
+ * closed until a later event recomputes real evidence.
+ */
+export async function invalidateReviewProof({
+  github,
+  owner,
+  repo,
+  pullNumber,
+}) {
+  if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
+    throw new Error("Pull request number is invalid");
+  }
+  const response = await github.rest.pulls.get({
+    owner,
+    repo,
+    pull_number: pullNumber,
+  });
+  const headSha = response?.data?.head?.sha;
+  if (typeof headSha !== "string" || !FULL_SHA.test(headSha)) {
+    throw new Error("Could not resolve the pull request head commit");
+  }
+  // Reuse the publisher's failure description so the merge queue reader sees
+  // one shape of "not reviewable" and never a stale success.
+  const description = `PR#${pullNumber} review status unavailable`;
+  await github.rest.repos.createCommitStatus({
+    owner,
+    repo,
+    sha: headSha,
+    state: "failure",
+    context: AUTOMATED_REVIEW_STATUS_CONTEXT,
+    description,
+    target_url: typeof response?.data?.html_url === "string"
+      ? response.data.html_url
+      : undefined,
+  });
+  return { headSha, description };
+}
+
 /** Extract the pull request represented by a merge queue head ref. */
 export function parseMergeQueuePullNumber(headRef) {
   if (typeof headRef !== "string") return undefined;
