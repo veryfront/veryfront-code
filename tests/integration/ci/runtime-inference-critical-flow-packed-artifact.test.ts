@@ -21,12 +21,48 @@ async function sha256File(path: string): Promise<string> {
   ).join("");
 }
 
+async function writePackageTarball(
+  artifactDir: string,
+  filename: string,
+  manifest: { readonly name: string; readonly version: string },
+  body: string,
+): Promise<string> {
+  const stagingDir = `${artifactDir}/staging-${crypto.randomUUID()}`;
+  const packageDir = `${stagingDir}/package`;
+  const tarball = `${artifactDir}/${filename}`;
+  await Deno.mkdir(packageDir, { recursive: true });
+  try {
+    await Deno.writeTextFile(`${packageDir}/package.json`, JSON.stringify(manifest));
+    await Deno.writeTextFile(`${packageDir}/index.js`, body);
+    const output = await new Deno.Command("tar", {
+      args: ["-czf", tarball, "package"],
+      cwd: stagingDir,
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assertEquals(output.code, 0, new TextDecoder().decode(output.stderr));
+    return tarball;
+  } finally {
+    await remove(stagingDir, { recursive: true }).catch(() => {});
+  }
+}
+
 async function writePackedArtifactFixture(
   artifactDir: string,
   rootBody: string,
+  options: { readonly validTarball?: boolean } = {},
 ): Promise<string> {
-  const rootFile = `${artifactDir}/veryfront-0.1.0.tgz`;
-  await Deno.writeTextFile(rootFile, rootBody);
+  const rootFile = options.validTarball === false
+    ? `${artifactDir}/veryfront-0.1.0.tgz`
+    : await writePackageTarball(
+      artifactDir,
+      "veryfront-0.1.0.tgz",
+      { name: "veryfront", version: "0.1.0" },
+      rootBody,
+    );
+  if (options.validTarball === false) {
+    await Deno.writeTextFile(rootFile, rootBody);
+  }
   await Deno.writeTextFile(
     `${artifactDir}/manifest.json`,
     `${
@@ -79,12 +115,16 @@ describe("runtime inference critical-flow packed artifact integration", () => {
       prefix: ".runtime-packed-artifact-",
     });
     try {
-      const extensionFile = `${artifactDir}/ext-bundler-esbuild-0.1.0.tgz`;
       await writePackedArtifactFixture(
         artifactDir,
         "root package",
       );
-      await Deno.writeTextFile(extensionFile, "extension package");
+      const extensionFile = await writePackageTarball(
+        artifactDir,
+        "ext-bundler-esbuild-0.1.0.tgz",
+        { name: "@veryfront/ext-bundler-esbuild", version: "0.1.0" },
+        "extension package",
+      );
       const manifest = JSON.parse(
         await Deno.readTextFile(`${artifactDir}/manifest.json`),
       );
@@ -109,11 +149,8 @@ describe("runtime inference critical-flow packed artifact integration", () => {
         loaded.extensions.every(({ tarball }) => isAbsolute(tarball)),
         "Extension tarball paths must be absolute",
       );
-      assertEquals(await Deno.readTextFile(loaded.root), "root package");
-      assertEquals(
-        await Deno.readTextFile(loaded.extensions[0]?.tarball ?? ""),
-        "extension package",
-      );
+      assertEquals((await Deno.stat(loaded.root)).isFile, true);
+      assertEquals((await Deno.stat(loaded.extensions[0]?.tarball ?? "")).isFile, true);
     } finally {
       await remove(artifactDir, { recursive: true }).catch(() => {});
     }
@@ -128,6 +165,7 @@ describe("runtime inference critical-flow packed artifact integration", () => {
       const tarball = await writePackedArtifactFixture(
         artifactDir,
         "this checksum matches, but this is not a gzipped tarball",
+        { validTarball: false },
       );
 
       const error = await assertRejects(
@@ -144,8 +182,8 @@ describe("runtime inference critical-flow packed artifact integration", () => {
 
       assertStringIncludes(
         message,
-        "node/packed npm consumer failed",
-        "The regression should exercise the runtime journey failure wrapper",
+        "Failed to inspect canonical package metadata for veryfront",
+        "The loader must reject a checksum-valid file that is not a package tarball",
       );
       assert(
         !message.includes(artifactDir),

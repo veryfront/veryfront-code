@@ -146,8 +146,13 @@ rc_publish_package_dir() {
   PUBLISH_SPEC="${2:-${PACKAGE_DIR}}"
   PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
   if npm view "${PACKAGE_NAME}@${VERSION}" version 2>/dev/null; then
-    echo "::notice::${PACKAGE_NAME}@${VERSION} already published to npm; skipping publish"
-    return 0
+    PUBLISHED_GIT_HEAD="$(npm view "${PACKAGE_NAME}@${VERSION}" gitHead 2>/dev/null || true)"
+    if [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]; then
+      echo "::notice::${PACKAGE_NAME}@${VERSION} already published for this commit; skipping npm publish"
+      return 0
+    fi
+    echo "::error::${PACKAGE_NAME}@${VERSION} already exists, but its gitHead does not match this commit." >&2
+    return 1
   fi
 
   echo "Publishing ${PACKAGE_NAME}@${VERSION} with rc tag"

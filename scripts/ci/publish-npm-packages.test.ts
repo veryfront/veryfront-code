@@ -364,6 +364,114 @@ describe("npm package publishing", () => {
     }
   });
 
+  for (const publishedGitHead of ["", "wrong-commit"]) {
+    const identityCase = publishedGitHead === "" ? "missing" : "mismatched";
+    it(`rejects an RC rerun when the existing version has ${identityCase} gitHead`, async () => {
+      await withTempDir(async (stateDir) => {
+        const packageDir = `${stateDir}/package`;
+        const npmLog = `${stateDir}/npm.log`;
+        await Deno.mkdir(packageDir);
+        await Deno.writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({ name: "@veryfront/ext-auth-jwt" }),
+        );
+        await Deno.writeTextFile(npmLog, "");
+
+        const output = await runBash(
+          [
+            "set -euo pipefail",
+            'source "$SCRIPT_PATH"',
+            "npm() {",
+            '  printf "%s\\n" "$*" >> "$NPM_LOG"',
+            '  if [ "$1" = "view" ] && [ "$3" = "version" ]; then',
+            '    printf "%s\\n" "$VERSION"',
+            "    return 0",
+            "  fi",
+            '  if [ "$1" = "view" ] && [ "$3" = "gitHead" ]; then',
+            '    printf "%s\\n" "$PUBLISHED_GIT_HEAD_FIXTURE"',
+            "    return 0",
+            "  fi",
+            "  return 92",
+            "}",
+            'rc_publish_package_dir "$PACKAGE_DIR"',
+          ].join("\n"),
+          {
+            GITHUB_SHA: "expected-commit",
+            NPM_LOG: npmLog,
+            PACKAGE_DIR: packageDir,
+            PUBLISHED_GIT_HEAD_FIXTURE: publishedGitHead,
+            VERSION: "0.1.1069",
+          },
+        );
+
+        assertEquals(output.code, 1, decoder.decode(output.stderr));
+        assertStringIncludes(
+          decoder.decode(output.stderr),
+          "gitHead does not match this commit",
+        );
+        assertEquals(
+          (await Deno.readTextFile(npmLog)).trim().split("\n"),
+          [
+            "view @veryfront/ext-auth-jwt@0.1.1069 version",
+            "view @veryfront/ext-auth-jwt@0.1.1069 gitHead",
+          ],
+        );
+      });
+    });
+  }
+
+  it("skips an RC package already published for the same commit", async () => {
+    await withTempDir(async (stateDir) => {
+      const packageDir = `${stateDir}/package`;
+      const npmLog = `${stateDir}/npm.log`;
+      await Deno.mkdir(packageDir);
+      await Deno.writeTextFile(
+        `${packageDir}/package.json`,
+        JSON.stringify({ name: "@veryfront/ext-auth-jwt" }),
+      );
+      await Deno.writeTextFile(npmLog, "");
+
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          '  printf "%s\\n" "$*" >> "$NPM_LOG"',
+          '  if [ "$1" = "view" ] && [ "$3" = "version" ]; then',
+          '    printf "%s\\n" "$VERSION"',
+          "    return 0",
+          "  fi",
+          '  if [ "$1" = "view" ] && [ "$3" = "gitHead" ]; then',
+          '    printf "%s\\n" "$GITHUB_SHA"',
+          "    return 0",
+          "  fi",
+          "  return 92",
+          "}",
+          'rc_publish_package_dir "$PACKAGE_DIR"',
+        ].join("\n"),
+        {
+          GITHUB_SHA: "expected-commit",
+          NPM_LOG: npmLog,
+          PACKAGE_DIR: packageDir,
+          VERSION: "0.1.1069",
+        },
+      );
+
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      assertEquals(
+        (await Deno.readTextFile(npmLog)).trim().split("\n"),
+        [
+          "view @veryfront/ext-auth-jwt@0.1.1069 version",
+          "view @veryfront/ext-auth-jwt@0.1.1069 gitHead",
+        ],
+      );
+      assertStringIncludes(
+        decoder.decode(output.stdout),
+        "already published for this commit; skipping npm publish",
+      );
+    });
+  });
+
   it("skips a package already published for the commit on a release rerun", async () => {
     const stateDir = await Deno.makeTempDir();
     const packageDir = `${stateDir}/package`;

@@ -76,10 +76,10 @@ function validateGitHead(gitHead: string): void {
   }
 }
 
-async function verifyPackageGitHead(
+async function verifyPackageMetadata(
   tarball: string,
-  packageName: string,
-  expectedGitHead: string,
+  entry: NpmCompatibilityPackage,
+  expectedGitHead?: string,
 ): Promise<void> {
   const output = await new Deno.Command("tar", {
     args: ["-xOf", tarball, "package/package.json"],
@@ -89,25 +89,41 @@ async function verifyPackageGitHead(
   if (!output.success) {
     throw new NpmCompatibilityArtifactError(
       "verify",
-      `Failed to inspect canonical package metadata for ${packageName}`,
-      { packageName },
+      `Failed to inspect canonical package metadata for ${entry.name}`,
+      { packageName: entry.name },
     );
   }
   let manifest: PackageManifest;
   try {
-    manifest = JSON.parse(new TextDecoder().decode(output.stdout)) as PackageManifest;
+    manifest = JSON.parse(
+      new TextDecoder().decode(output.stdout),
+    ) as PackageManifest;
   } catch {
     throw new NpmCompatibilityArtifactError(
       "verify",
-      `Canonical package metadata for ${packageName} is not valid JSON`,
-      { packageName },
+      `Canonical package metadata for ${entry.name} is not valid JSON`,
+      { packageName: entry.name },
     );
   }
-  if (manifest.gitHead !== expectedGitHead) {
+  if (manifest.name !== entry.name) {
     throw new NpmCompatibilityArtifactError(
       "verify",
-      `Canonical package ${packageName} gitHead does not match the release commit`,
-      { packageName },
+      `Canonical package ${entry.name} name does not match the canonical manifest`,
+      { packageName: entry.name },
+    );
+  }
+  if (manifest.version !== entry.version) {
+    throw new NpmCompatibilityArtifactError(
+      "verify",
+      `Canonical package ${entry.name} version does not match the canonical manifest`,
+      { packageName: entry.name },
+    );
+  }
+  if (expectedGitHead !== undefined && manifest.gitHead !== expectedGitHead) {
+    throw new NpmCompatibilityArtifactError(
+      "verify",
+      `Canonical package ${entry.name} gitHead does not match the release commit`,
+      { packageName: entry.name },
     );
   }
 }
@@ -321,9 +337,7 @@ export async function loadNpmCompatibilityArtifact(
         `SHA-256 mismatch for ${entry.name}: expected ${entry.sha256}, received ${actual}`,
       );
     }
-    if (options.expectedGitHead !== undefined) {
-      await verifyPackageGitHead(path, entry.name, options.expectedGitHead);
-    }
+    await verifyPackageMetadata(path, entry, options.expectedGitHead);
     packagePaths.set(entry.name, path);
   }
   const root = packagePaths.get(manifest.rootPackage);

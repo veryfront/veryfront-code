@@ -28,6 +28,48 @@ async function writePackage(
   await Deno.writeTextFile(join(directory, "index.js"), "export {};\n");
 }
 
+async function sha256File(path: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    await Deno.readFile(path),
+  );
+  return Array.from(
+    new Uint8Array(digest),
+    (byte) => byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
+
+async function writeCanonicalTarballArtifact(
+  directory: string,
+  packageManifest: Record<string, unknown>,
+): Promise<void> {
+  await withTempDir(async (staging) => {
+    await writePackage(join(staging, "package"), packageManifest);
+    const tarball = join(directory, "veryfront-1.2.3.tgz");
+    const output = await new Deno.Command("tar", {
+      args: ["-czf", tarball, "package"],
+      cwd: staging,
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assertEquals(output.code, 0, new TextDecoder().decode(output.stderr));
+    await Deno.writeTextFile(
+      join(directory, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        rootPackage: "veryfront",
+        rootExtensionNames: [],
+        packages: [{
+          name: "veryfront",
+          version: "1.2.3",
+          file: "veryfront-1.2.3.tgz",
+          sha256: await sha256File(tarball),
+        }],
+      }),
+    );
+  });
+}
+
 function withTempDirs<T>(
   prefixes: string[],
   run: (directories: string[]) => Promise<T>,
@@ -241,6 +283,34 @@ describe("npm compatibility artifact", () => {
       );
     });
   });
+
+  for (
+    const identityCase of [
+      {
+        field: "name",
+        packageManifest: { name: "different-package", version: "1.2.3" },
+      },
+      {
+        field: "version",
+        packageManifest: { name: "veryfront", version: "9.9.9" },
+      },
+    ]
+  ) {
+    it(`rejects a SHA-valid tarball whose embedded ${identityCase.field} differs from the manifest`, async () => {
+      await withTempDir(async (artifact) => {
+        await writeCanonicalTarballArtifact(
+          artifact,
+          identityCase.packageManifest,
+        );
+
+        await assertRejects(
+          () => loadNpmCompatibilityArtifact(artifact),
+          NpmCompatibilityArtifactError,
+          `${identityCase.field} does not match the canonical manifest`,
+        );
+      });
+    });
+  }
 
   it("rejects a first-party package version that differs from the root", async () => {
     await withTempDirs([
