@@ -628,6 +628,31 @@ describe("routing/api/module-loader/http-validator", () => {
       );
     });
 
+    it("should reject unresolved constructor keys after prototype mutation", async () => {
+      const mutations = [
+        `const holder = {}; Object.setPrototypeOf(holder, () => {});`,
+        `const holder = {}; Reflect.set(holder, "__proto__", () => {});`,
+        `const source = Object.defineProperty({}, "__proto__", {` +
+        ` value: () => {}, enumerable: true });` +
+        ` const holder = {}; Object.assign(holder, source);`,
+      ];
+
+      for (const mutation of mutations) {
+        await assertRejects(
+          async () =>
+            await validateHTTPImports(
+              `${mutation} const key = ["con", "structor"].join("");` +
+                ` const make = holder[key];` +
+                ` make('return import("https://blocked.example/mod.js")')();`,
+              [],
+            ),
+          Error,
+          "dynamic code generation",
+          "an unresolved key may select constructor after the object stops being provably plain",
+        );
+      }
+    });
+
     it("should reject static constructor keys in destructuring", async () => {
       for (
         const pattern of [

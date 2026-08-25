@@ -1386,18 +1386,12 @@ export async function analyzeSourceCapabilities(
 
     if (node.type === "MemberExpression" || node.type === "OptionalMemberExpression") {
       const property = memberPropertyName(node);
+      const objectIsProvablyPlain = isNode(node.object) &&
+        isPlainObjectValue(node.object, scope, nodeScopes);
+      const mayReadConstructor = property === "constructor" ||
+        node.computed === true && property === null;
       if (
-        property === "constructor" &&
-        (!isNode(node.object) || !isPlainObjectValue(node.object, scope, nodeScopes))
-      ) {
-        hasDynamicCodeGeneration = true;
-      }
-      // A computed property name this analysis cannot resolve may spell
-      // "constructor"; on a callable value that read returns the Function
-      // code generator.
-      if (
-        node.computed === true && property === null && isNode(node.object) &&
-        isCallableValue(node.object, scope, nodeScopes)
+        mayReadConstructor && !objectIsProvablyPlain
       ) {
         hasDynamicCodeGeneration = true;
       }
