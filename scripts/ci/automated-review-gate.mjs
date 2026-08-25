@@ -93,7 +93,10 @@ export function matchesReviewWakeupPullRequest(
     typeof pullRequest?.head?.sha === "string" &&
     pullRequest.head.sha.toLowerCase() === signal?.headSha &&
     pullRequest?.head?.repo?.id === signal?.headRepositoryId &&
-    pullRequest?.base?.ref === repository?.default_branch &&
+    typeof pullRequest?.base?.ref === "string" &&
+    pullRequest.base.ref.length > 0 &&
+    pullRequest.base.ref.length <= 1024 &&
+    !pullRequest.base.ref.includes("\0") &&
     pullRequest?.base?.repo?.id === repository?.id;
 }
 
@@ -118,9 +121,9 @@ function isLaterReview(candidate, current, candidateIndex, currentIndex) {
   return candidateIndex > currentIndex;
 }
 
-function latestReviewRequestTime(comments, headSha) {
+function latestReviewRequest(comments, headSha) {
   let latest;
-  for (const comment of comments) {
+  for (const [index, comment] of comments.entries()) {
     if (
       !isPinnedBot(comment?.user, GITHUB_ACTIONS_LOGIN) ||
       typeof comment?.body !== "string"
@@ -128,16 +131,67 @@ function latestReviewRequestTime(comments, headSha) {
     const marker = REVIEW_REQUEST_MARKER.exec(comment.body);
     if (marker?.[1]?.toLowerCase() !== headSha.toLowerCase()) continue;
     const createdAt = Date.parse(comment?.created_at ?? "");
-    if (!Number.isFinite(createdAt)) return Number.POSITIVE_INFINITY;
-    if (latest === undefined || createdAt > latest) latest = createdAt;
+    if (!Number.isFinite(createdAt)) {
+      return { time: Number.POSITIVE_INFINITY, id: undefined, index };
+    }
+    const id = Number.isSafeInteger(comment?.id) && comment.id > 0
+      ? comment.id
+      : undefined;
+    if (
+      latest === undefined || createdAt > latest.time ||
+      (createdAt === latest.time &&
+        (id !== undefined && latest.id !== undefined
+          ? id > latest.id
+          : index > latest.index))
+    ) latest = { time: createdAt, id, index };
   }
   return latest;
 }
 
-function isEvidenceNewerThan(timestamp, requestTime) {
-  if (requestTime === undefined) return true;
-  const evidenceTime = Date.parse(timestamp ?? "");
-  return Number.isFinite(evidenceTime) && evidenceTime > requestTime;
+function timelinePosition(timeline, event, id) {
+  if (!Number.isSafeInteger(id) || id < 1) return undefined;
+  let position;
+  for (const [index, item] of timeline.entries()) {
+    if (item?.event !== event || item?.id !== id) continue;
+    if (position !== undefined) return undefined;
+    position = index;
+  }
+  return position;
+}
+
+function evidenceFreshness(
+  evidence,
+  timelineEvent,
+  request,
+  reviewNotBefore,
+  timeline,
+) {
+  const requestTime = request?.time;
+  const boundary = requestTime === undefined
+    ? reviewNotBefore
+    : reviewNotBefore === undefined
+    ? requestTime
+    : Math.max(requestTime, reviewNotBefore);
+  if (boundary === undefined) return "newer";
+  const evidenceTime = Date.parse(
+    timelineEvent === "reviewed"
+      ? evidence?.submitted_at ?? ""
+      : evidence?.created_at ?? "",
+  );
+  if (!Number.isFinite(evidenceTime)) return "ambiguous";
+  if (evidenceTime < boundary) return "older";
+  if (evidenceTime > boundary) return "newer";
+  if (requestTime !== boundary) return "ambiguous";
+  const requestPosition = timelinePosition(timeline, "commented", request?.id);
+  const evidencePosition = timelinePosition(
+    timeline,
+    timelineEvent,
+    evidence?.id,
+  );
+  if (requestPosition === undefined || evidencePosition === undefined) {
+    return "ambiguous";
+  }
+  return evidencePosition > requestPosition ? "newer" : "older";
 }
 
 function reviewResetDescription(baseBinding) {
@@ -163,24 +217,22 @@ function latestReviewResetTime(statuses, baseBinding) {
 
 /** Find one authenticated automated-review proof for the captured head. */
 export async function findAutomatedReview(
-  { reviews, comments },
+  {
+    reviews,
+    comments,
+    timeline = /** @type {unknown[]} */ ([]),
+  },
   headSha,
   resolveCommit = NO_COMMIT,
   isTrustedHuman = NO_TRUSTED_HUMAN,
   reviewNotBefore = /** @type {number | undefined} */ (undefined),
 ) {
   if (!FULL_SHA.test(headSha)) return undefined;
-  const markerTime = latestReviewRequestTime(comments, headSha);
+  const request = latestReviewRequest(comments, headSha);
   const validReviewNotBefore = reviewNotBefore === undefined ||
       Number.isFinite(reviewNotBefore)
     ? reviewNotBefore
     : Number.POSITIVE_INFINITY;
-  const requestTime = markerTime === undefined
-    ? validReviewNotBefore
-    : validReviewNotBefore === undefined
-    ? markerTime
-    : Math.max(markerTime, validReviewNotBefore);
-
   let codexApproval;
   let codexReviewFinding = false;
   {
@@ -191,12 +243,16 @@ export async function findAutomatedReview(
         : "";
       const exactHead = review?.commit_id?.toLowerCase() ===
         headSha.toLowerCase();
+      if (!exactHead) continue;
+      const freshness = evidenceFreshness(
+        review,
+        "reviewed",
+        request,
+        validReviewNotBefore,
+        timeline,
+      );
       if (
-        exactHead &&
-        !isEvidenceNewerThan(review?.submitted_at, requestTime)
-      ) continue;
-      if (
-        exactHead && state === "APPROVED" &&
+        freshness === "newer" && state === "APPROVED" &&
         isPinnedBot(review?.user, CODEX_LOGIN)
       ) {
         codexApproval = {
@@ -210,14 +266,14 @@ export async function findAutomatedReview(
         continue;
       }
       if (
-        exactHead && isPinnedBot(review?.user, CODEX_LOGIN) &&
+        freshness !== "older" && isPinnedBot(review?.user, CODEX_LOGIN) &&
         (state === "COMMENTED" || state === "CHANGES_REQUESTED")
       ) {
         codexReviewFinding = true;
         continue;
       }
       if (
-        exactHead && review?.user?.type === "User" &&
+        freshness === "newer" && review?.user?.type === "User" &&
         typeof review?.user?.login === "string"
       ) {
         const current = latestHumanReviews.get(review.user.login);
@@ -251,7 +307,14 @@ export async function findAutomatedReview(
       !isPinnedBot(comment?.user, CODEX_LOGIN) ||
       typeof comment?.body !== "string"
     ) continue;
-    if (!isEvidenceNewerThan(comment?.created_at, requestTime)) continue;
+    const freshness = evidenceFreshness(
+      comment,
+      "commented",
+      request,
+      validReviewNotBefore,
+      timeline,
+    );
+    if (freshness === "older") continue;
     const reviewedCommits = [...comment.body.matchAll(
       new RegExp(CODEX_REVIEWED_COMMIT, "gi"),
     )];
@@ -267,7 +330,9 @@ export async function findAutomatedReview(
       typeof resolved === "string" && FULL_SHA.test(resolved) &&
       resolved.toLowerCase() === headSha.toLowerCase()
     ) {
-      if (comment.body.startsWith(CODEX_NO_FINDINGS)) {
+      if (
+        freshness === "newer" && comment.body.startsWith(CODEX_NO_FINDINGS)
+      ) {
         codexNoFindings = {
           reviewer: CODEX_LOGIN,
           source: "codex-comment",
@@ -303,6 +368,26 @@ async function collectAll(github, endpoint, parameters, source) {
     }
   }
   return items;
+}
+
+async function isCurrentlyTrustedHuman(
+  github,
+  { owner, repo, login, pullAuthor },
+) {
+  if (
+    typeof login !== "string" || typeof pullAuthor !== "string" ||
+    login === pullAuthor
+  ) return false;
+  try {
+    const response = await github.rest.repos.getCollaboratorPermissionLevel({
+      owner,
+      repo,
+      username: login,
+    });
+    return TRUSTED_PERMISSIONS.has(response?.data?.permission);
+  } catch {
+    return false;
+  }
 }
 
 /** Publish the review decision on the captured head after checking for drift. */
@@ -343,7 +428,7 @@ export async function publishAutomatedReviewStatus({
   if (!failure && !isDraft && !forcePending) {
     try {
       const common = { owner, repo };
-      const [reviews, comments, statuses] = await Promise.all([
+      const [reviews, comments, statuses, timeline] = await Promise.all([
         collectAll(
           github,
           github.rest.pulls.listReviews,
@@ -362,9 +447,15 @@ export async function publishAutomatedReviewStatus({
           { ...common, ref: headSha },
           "review statuses",
         ),
+        collectAll(
+          github,
+          github.rest.issues.listEventsForTimeline,
+          { ...common, issue_number: pullNumber },
+          "pull request timeline",
+        ),
       ]);
       review = await findAutomatedReview(
-        { reviews, comments },
+        { reviews, comments, timeline },
         headSha,
         async (ref) => {
           try {
@@ -377,19 +468,12 @@ export async function publishAutomatedReviewStatus({
             return undefined;
           }
         },
-        async (login) => {
-          if (login === pullAuthor) return false;
-          try {
-            const response = await github.rest.repos
-              .getCollaboratorPermissionLevel({
-                ...common,
-                username: login,
-              });
-            return TRUSTED_PERMISSIONS.has(response?.data?.permission);
-          } catch {
-            return false;
-          }
-        },
+        (login) =>
+          isCurrentlyTrustedHuman(github, {
+            ...common,
+            login,
+            pullAuthor,
+          }),
         latestReviewResetTime(statuses, baseBinding),
       );
     } catch (error) {
@@ -462,19 +546,20 @@ export function parseMergeQueuePullNumber(headRef) {
     : undefined;
 }
 
-function isTrustedReviewGateStatus(status, baseBinding) {
+function trustedReviewGateReviewer(status, baseBinding) {
   if (
     status?.context !== AUTOMATED_REVIEW_STATUS_CONTEXT ||
     status?.state !== "success" ||
     !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN) ||
     typeof status?.description !== "string"
-  ) return false;
+  ) return undefined;
   const prefix = `Reviewed base ${baseBinding} by `;
-  if (status.description === `${prefix}${CODEX_LOGIN}`) return true;
-  return status.description.startsWith(prefix) &&
-    /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(
-      status.description.slice(prefix.length),
-    );
+  if (status.description === `${prefix}${CODEX_LOGIN}`) return CODEX_LOGIN;
+  if (!status.description.startsWith(prefix)) return undefined;
+  const reviewer = status.description.slice(prefix.length);
+  return /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(reviewer)
+    ? reviewer
+    : undefined;
 }
 
 /** Reuse a successful exact-head review for a synthetic merge queue commit. */
@@ -520,7 +605,7 @@ export async function publishMergeGroupReviewStatus({
     let currentReviewStatus = statuses.find((status) =>
       status?.context === AUTOMATED_REVIEW_STATUS_CONTEXT
     );
-    if (!isTrustedReviewGateStatus(currentReviewStatus, baseBinding)) {
+    if (!trustedReviewGateReviewer(currentReviewStatus, baseBinding)) {
       throw new Error(
         "Pull request head does not have a current trusted review gate",
       );
@@ -552,9 +637,26 @@ export async function publishMergeGroupReviewStatus({
     const latestReviewStatus = latestStatuses.find((status) =>
       status?.context === AUTOMATED_REVIEW_STATUS_CONTEXT
     );
-    if (!isTrustedReviewGateStatus(latestReviewStatus, baseBinding)) {
+    const latestReviewer = trustedReviewGateReviewer(
+      latestReviewStatus,
+      baseBinding,
+    );
+    if (!latestReviewer) {
       throw new Error(
         "Pull request review gate changed while propagating review evidence",
+      );
+    }
+    if (
+      latestReviewer !== CODEX_LOGIN &&
+      !await isCurrentlyTrustedHuman(github, {
+        owner,
+        repo,
+        login: latestReviewer,
+        pullAuthor: current?.data?.user?.login,
+      })
+    ) {
+      throw new Error(
+        "Human reviewer is no longer trusted for merge queue reuse",
       );
     }
     currentReviewStatus = latestReviewStatus;

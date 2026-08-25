@@ -73,6 +73,18 @@ function automatedReviewResetStatus(
   });
 }
 
+function reviewRequestComment(
+  createdAt = "2026-08-25T08:00:00Z",
+  id = 100,
+) {
+  return {
+    id,
+    user: bot("github-actions[bot]", GITHUB_ACTIONS_ID),
+    body: `<!-- automated-review-request: ${HEAD} base-42 -->\n@codex review`,
+    created_at: createdAt,
+  };
+}
+
 function codexComment(
   ref = HEAD.slice(0, 10),
   overrides: Record<string, unknown> = {},
@@ -511,6 +523,117 @@ describe("automated review evidence", () => {
       undefined,
     );
   });
+
+  it("orders same-second evidence through the pull request timeline", async () => {
+    const request = reviewRequestComment();
+    const humanApprovalId = 101;
+    const codexVerdictId = 102;
+    const codexVerdict = codexComment(HEAD.slice(0, 10), {
+      id: codexVerdictId,
+      created_at: request.created_at,
+    });
+    const humanApproval = review({
+      id: humanApprovalId,
+      user: { login: "trusted-maintainer", id: 7, type: "User" },
+      state: "APPROVED",
+      submitted_at: request.created_at,
+    });
+    const timeline = [
+      { event: "commented", id: request.id },
+      { event: "reviewed", id: humanApprovalId },
+      { event: "commented", id: codexVerdictId },
+    ];
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [humanApproval],
+          comments: [request, codexVerdict],
+          timeline,
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+        () => Promise.resolve(true),
+        Date.parse(request.created_at),
+      ))?.source,
+      "human-approval",
+    );
+    assertEquals(
+      (await findAutomatedReview(
+        { reviews: [], comments: [request, codexVerdict], timeline },
+        HEAD,
+        () => Promise.resolve(HEAD),
+        undefined,
+        Date.parse(request.created_at),
+      ))?.source,
+      "codex-comment",
+    );
+
+    const findingId = 103;
+    const finding = codexFindingComment(HEAD.slice(0, 10), {
+      id: findingId,
+      created_at: request.created_at,
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [request, codexVerdict, finding],
+          timeline: [...timeline, { event: "commented", id: findingId }],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+        undefined,
+        Date.parse(request.created_at),
+      ),
+      undefined,
+    );
+
+    const beforeRequestId = 99;
+    const beforeRequest = codexComment(HEAD.slice(0, 10), {
+      id: beforeRequestId,
+      created_at: request.created_at,
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [beforeRequest, request],
+          timeline: [
+            { event: "commented", id: beforeRequestId },
+            { event: "commented", id: request.id },
+          ],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+        undefined,
+        Date.parse(request.created_at),
+      ),
+      undefined,
+    );
+
+    const ambiguousFinding = codexFindingComment(HEAD.slice(0, 10), {
+      id: 104,
+      created_at: request.created_at,
+    });
+    const laterVerdict = codexComment(HEAD.slice(0, 10), {
+      id: 105,
+      created_at: "2026-08-25T08:00:01Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [request, ambiguousFinding, laterVerdict],
+          timeline: [],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+        undefined,
+        Date.parse(request.created_at),
+      ),
+      undefined,
+    );
+  });
 });
 
 function githubFixture(options: {
@@ -529,6 +652,7 @@ function githubFixture(options: {
     comments: () => undefined,
     statuses: () => undefined,
     refs: () => undefined,
+    timeline: () => undefined,
   };
   const published: Record<string, unknown>[] = [];
   const pageReads = new Map<string, number>();
@@ -574,7 +698,10 @@ function githubFixture(options: {
           });
         },
       },
-      issues: { listComments: endpoints.comments },
+      issues: {
+        listComments: endpoints.comments,
+        listEventsForTimeline: endpoints.timeline,
+      },
       git: { listMatchingRefs: endpoints.refs },
       repos: {
         listCommitStatusesForRef: endpoints.statuses,
@@ -667,11 +794,12 @@ describe("automated review publication", () => {
   });
 
   it("fails closed on partial pagination and the 500-item cap", async () => {
-    const partialPages = ["reviews", "comments", "statuses"].map((source) =>
-      githubFixture({
-        pages: { [source]: [[], []] },
-        failAfterFirstPage: source,
-      })
+    const partialPages = ["reviews", "comments", "statuses", "timeline"].map(
+      (source) =>
+        githubFixture({
+          pages: { [source]: [[], []] },
+          failAfterFirstPage: source,
+        }),
     );
     for (
       const fixture of [
@@ -1041,6 +1169,41 @@ describe("merge queue review propagation", () => {
       target_url: "https://example.test/pr/1",
     }]);
   });
+
+  it("revalidates a human reviewer's trust before queue reuse", async () => {
+    const description = `Reviewed base ${
+      reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
+    } by trusted-maintainer`;
+    for (
+      const candidate of [
+        { permission: "read", pullAuthor: "pull-author", state: "failure" },
+        {
+          permission: "write",
+          pullAuthor: "trusted-maintainer",
+          state: "failure",
+        },
+        { permission: "write", pullAuthor: "pull-author", state: "success" },
+      ]
+    ) {
+      const fixture = githubFixture({
+        pages: {
+          statuses: [[automatedReviewStatus({ description })]],
+        },
+        permission: candidate.permission,
+        pullAuthor: candidate.pullAuthor,
+      });
+      const result = await publishMergeGroupReviewStatus({
+        github: fixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        sourceHeadSha: HEAD,
+        mergeGroupSha: OTHER_HEAD,
+      });
+      assertEquals(result.state, candidate.state);
+      assertEquals(fixture.published[0]?.state, candidate.state);
+    }
+  });
 });
 
 function requestFixture(options: {
@@ -1275,6 +1438,13 @@ describe("review wakeup identity", () => {
     const signal = parseReviewWakeupRun(wakeupRun());
     assert(signal);
     assert(matchesReviewWakeupPullRequest(signal, pullRequest(), repository));
+    assert(
+      matchesReviewWakeupPullRequest(
+        signal,
+        pullRequest({ base: { ref: "release", repo: { id: 88 } } }),
+        repository,
+      ),
+    );
     for (
       const candidate of [
         pullRequest({ number: 2 }),
@@ -1307,7 +1477,7 @@ describe("review wakeup identity", () => {
             repo: { id: 78 },
           },
         }),
-        pullRequest({ base: { ref: "release", repo: { id: 88 } } }),
+        pullRequest({ base: { ref: "", repo: { id: 88 } } }),
         pullRequest({ base: { ref: "main", repo: { id: 89 } } }),
       ]
     ) {
