@@ -5,6 +5,7 @@ import {
   assertRejects,
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import { Server as NativeHttpServer } from "node:http";
 import {
@@ -401,7 +402,7 @@ Deno.test("Node service startup preserves transport error when lifecycle rollbac
   }
 });
 
-Deno.test("createVeryfrontServer answers 500 and logs when a module throws", async () => {
+it("createVeryfrontServer answers 500 and logs when a module throws", async () => {
   const errors: Array<{ message: string; metadata?: Record<string, unknown> }> = [];
   const runtime = createVeryfrontServer({
     modules: [{
@@ -437,7 +438,7 @@ Deno.test("createVeryfrontServer answers 500 and logs when a module throws", asy
   );
 });
 
-Deno.test("createVeryfrontServer honours custom notFound and onError overrides", async () => {
+it("createVeryfrontServer honours custom notFound and onError overrides", async () => {
   const runtime = createVeryfrontServer({
     modules: [{
       name: "boom",
@@ -469,7 +470,7 @@ Deno.test("createVeryfrontServer honours custom notFound and onError overrides",
   assertEquals(await failed.text(), "custom", "the custom onError body must be served as-is");
 });
 
-Deno.test("Deno service shutdown reports the transport failure when runtime stop also fails", async () => {
+it("Deno service shutdown reports the transport failure when runtime stop also fails", async () => {
   const denoRuntime = Deno as unknown as {
     serve: typeof Deno.serve;
     addSignalListener: typeof Deno.addSignalListener;
@@ -530,7 +531,7 @@ Deno.test("Deno service shutdown reports the transport failure when runtime stop
   }
 });
 
-Deno.test("Node service start reports the actually bound ephemeral port", async () => {
+it("Node service start reports the actually bound ephemeral port", async () => {
   const runtime = createVeryfrontServer({
     modules: [{ name: "test", handle: () => new Response("served") }],
   });
@@ -570,7 +571,7 @@ type DenoSignalTestRuntime = {
   exit: typeof Deno.exit;
 };
 
-Deno.test("Deno shutdown signal handler stops once and exits nonzero when stop fails", async () => {
+it("Deno shutdown signal handler stops once and exits nonzero when stop fails", async () => {
   using _time = new FakeTime();
   const denoRuntime = Deno as unknown as DenoSignalTestRuntime;
   const originalServe = denoRuntime.serve;
@@ -654,7 +655,7 @@ Deno.test("Deno shutdown signal handler stops once and exits nonzero when stop f
   }
 });
 
-Deno.test("Deno shutdown signal handler exits nonzero when graceful shutdown times out", async () => {
+it("Deno shutdown signal handler exits nonzero when graceful shutdown times out", async () => {
   using time = new FakeTime();
   const denoRuntime = Deno as unknown as DenoSignalTestRuntime;
   const originalServe = denoRuntime.serve;
