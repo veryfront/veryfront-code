@@ -34,6 +34,7 @@ const objectGetPrototypeOf = NativeObject.getPrototypeOf;
 const objectKeys = NativeObject.keys;
 const objectPrototype = NativeObject.prototype;
 const objectValues = NativeObject.values;
+const reflectOwnKeys = Reflect.ownKeys;
 const regexpTest = RegExp.prototype.test;
 const setAdd = NativeSet.prototype.add;
 const setHas = NativeSet.prototype.has;
@@ -43,6 +44,15 @@ const weakSetAdd = NativeWeakSet.prototype.add;
 const weakSetDelete = NativeWeakSet.prototype.delete;
 const weakSetHas = NativeWeakSet.prototype.has;
 const isProxy = nodeUtilTypes.isProxy;
+
+const IDENTITY_REQUIRED_KEYS = apply(objectFreeze, NativeObject, [[
+  "issuer",
+  "subject",
+  "groups",
+  "roles",
+  "groupsComplete",
+  "claims",
+]]) as readonly string[];
 
 export interface ApplicationIdentityClaimNames {
   readonly email?: string;
@@ -120,19 +130,40 @@ export function createApplicationIdentity(
 export function snapshotApplicationIdentity(value: unknown): ApplicationIdentity {
   const root = parseIdentityRoot(value);
   const claims = parseClaimSnapshot(readRequiredIdentityField(root, "claims"));
-  const identity: ApplicationIdentity = {
-    issuer: parseIdentityIssuer(readRequiredIdentityField(root, "issuer")),
-    subject: parseSubject(readRequiredIdentityField(root, "subject")),
-    ...parseOptionalIdentityProfile(root),
-    groups: freezeArray(
-      parseSerializedStringList(readRequiredIdentityField(root, "groups"), "groups"),
-    ),
-    roles: freezeArray(
-      parseSerializedStringList(readRequiredIdentityField(root, "roles"), "roles"),
-    ),
-    groupsComplete: parseGroupsComplete(readRequiredIdentityField(root, "groupsComplete")),
-    claims,
-  };
+  const profile = parseOptionalIdentityProfile(root);
+  const identity = apply(objectCreate, NativeObject, [null]) as ApplicationIdentity;
+  defineIdentitySnapshotField(
+    identity,
+    "issuer",
+    parseIdentityIssuer(readRequiredIdentityField(root, "issuer")),
+  );
+  defineIdentitySnapshotField(
+    identity,
+    "subject",
+    parseSubject(readRequiredIdentityField(root, "subject")),
+  );
+  if (profile.email !== undefined) {
+    defineIdentitySnapshotField(identity, "email", profile.email);
+  }
+  if (profile.name !== undefined) {
+    defineIdentitySnapshotField(identity, "name", profile.name);
+  }
+  defineIdentitySnapshotField(
+    identity,
+    "groups",
+    freezeArray(parseSerializedStringList(readRequiredIdentityField(root, "groups"), "groups")),
+  );
+  defineIdentitySnapshotField(
+    identity,
+    "roles",
+    freezeArray(parseSerializedStringList(readRequiredIdentityField(root, "roles"), "roles")),
+  );
+  defineIdentitySnapshotField(
+    identity,
+    "groupsComplete",
+    parseGroupsComplete(readRequiredIdentityField(root, "groupsComplete")),
+  );
+  defineIdentitySnapshotField(identity, "claims", claims);
 
   return freeze(identity) as ApplicationIdentity;
 }
@@ -142,35 +173,33 @@ function parseIdentityRoot(value: unknown): UnknownRecord {
     throw new TypeError("Application identity must be a plain object");
   }
 
-  const symbolKeys = apply(objectGetOwnPropertySymbols, NativeObject, [value]) as symbol[];
-  if (symbolKeys.length > 0) {
-    throw new TypeError("Application identity contains a non-JSON-safe symbol key");
-  }
-
-  const keys = apply(objectKeys, NativeObject, [value]) as string[];
-  const required = new NativeSet([
-    "issuer",
-    "subject",
-    "groups",
-    "roles",
-    "groupsComplete",
-    "claims",
-  ]);
-  const optional = new NativeSet(["email", "name"]);
-  for (let index = 0; index < keys.length; index += 1) {
-    const key = keys[index]!;
+  const ownKeys = apply(reflectOwnKeys, Reflect, [value]) as PropertyKey[];
+  const keys: string[] = [];
+  for (let index = 0; index < ownKeys.length; index += 1) {
+    const key = ownKeys[index]!;
+    if (typeof key !== "string") {
+      throw new TypeError("Application identity contains a non-JSON-safe symbol key");
+    }
     const descriptor = apply(objectGetOwnPropertyDescriptor, NativeObject, [
       value,
       key,
     ]) as PropertyDescriptor | undefined;
-    if (!descriptor || !("value" in descriptor)) {
+    if (!descriptor) {
+      throw new TypeError(`Application identity is missing ${key}`);
+    }
+    if (!("value" in descriptor)) {
       throw new TypeError(`Application identity ${key} contains an accessor property`);
     }
-    if (!setContains(required, key) && !setContains(optional, key)) {
+    if (!descriptor.enumerable) {
       throw new TypeError(`Application identity contains an unsupported ${key} field`);
     }
+    if (!isIdentityRootField(key)) {
+      throw new TypeError(`Application identity contains an unsupported ${key} field`);
+    }
+    arrayAppend(keys, key);
   }
-  for (const key of required) {
+  for (let index = 0; index < IDENTITY_REQUIRED_KEYS.length; index += 1) {
+    const key = IDENTITY_REQUIRED_KEYS[index]!;
     if (
       apply(objectGetOwnPropertyDescriptor, NativeObject, [
         value,
@@ -202,6 +231,35 @@ function parseIdentityRoot(value: unknown): UnknownRecord {
     }
   }
   return output;
+}
+
+function isIdentityRootField(key: string): boolean {
+  switch (key) {
+    case "issuer":
+    case "subject":
+    case "email":
+    case "name":
+    case "groups":
+    case "roles":
+    case "groupsComplete":
+    case "claims":
+      return true;
+    default:
+      return false;
+  }
+}
+
+function defineIdentitySnapshotField<Key extends keyof ApplicationIdentity>(
+  identity: ApplicationIdentity,
+  key: Key,
+  value: ApplicationIdentity[Key],
+): void {
+  apply(objectDefineProperty, NativeObject, [identity, key, {
+    value,
+    enumerable: true,
+    configurable: false,
+    writable: false,
+  }]);
 }
 
 function readRequiredIdentityField(root: UnknownRecord, key: string): unknown {

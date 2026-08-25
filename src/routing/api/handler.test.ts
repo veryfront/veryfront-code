@@ -61,6 +61,14 @@ function createIdentity(): ApplicationIdentity {
   });
 }
 
+async function prepareSource(source: string): Promise<{ source: string; sha256: string }> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(source));
+  return {
+    source,
+    sha256: new Uint8Array(digest).toHex(),
+  };
+}
+
 /** App routes receive (request, ctx); Pages routes receive (ctx). */
 function routeParamsOf(first: unknown, second?: unknown): unknown {
   const candidate = second ?? first;
@@ -339,6 +347,158 @@ describe("APIRouteHandler", () => {
         Deno.env.get("VF_TEST_HOST_ONLY_SECRET") === undefined,
         "the test must not depend on a real host secret",
       );
+    });
+
+    it("passes admitted identity through isolated prepared App Router execution", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/app/api/isolated-identity/route.ts",
+        "export function GET() { return new Response('discovery-only'); }",
+      );
+      const module = await prepareSource(`
+        export function GET(request, ctx) {
+          return Response.json({
+            subject: ctx.identity?.subject ?? null,
+            identityIsNull: ctx.identity === null,
+            forgedSubject: request.headers.get("x-auth-subject"),
+            authorization: request.headers.get("authorization"),
+          });
+        }
+      `);
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          throw new Error("isolated route reached host import");
+        },
+        prepareHandlerModule: () => Promise.resolve(module),
+      });
+
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const authenticated = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          handler.handle(
+            new Request("http://localhost/api/isolated-identity", {
+              headers: {
+                authorization: "Bearer application-token",
+                "x-auth-subject": "forged-user",
+              },
+            }),
+            {
+              projectDir: "/test/project",
+              adapter,
+              securityConfig: null,
+              isLocalProject: false,
+              applicationIdentity: createIdentity(),
+              applicationIdentityHeaderNames: ["x-auth-subject"],
+            },
+          ),
+      );
+      assertEquals(await authenticated?.json(), {
+        subject: "user-123",
+        identityIsNull: false,
+        forgedSubject: null,
+        authorization: "Bearer application-token",
+      });
+
+      const anonymous = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          handler.handle(
+            new Request("http://localhost/api/isolated-identity", {
+              headers: { "x-auth-subject": "forged-user" },
+            }),
+            {
+              projectDir: "/test/project",
+              adapter,
+              securityConfig: null,
+              isLocalProject: false,
+              applicationIdentity: null,
+              applicationIdentityHeaderNames: ["x-auth-subject"],
+            },
+          ),
+      );
+      assertEquals(await anonymous?.json(), {
+        subject: null,
+        identityIsNull: true,
+        forgedSubject: null,
+        authorization: null,
+      });
+    });
+
+    it("passes admitted identity through isolated prepared Pages Router execution", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/isolated-identity.ts",
+        "export function GET() { return new Response('discovery-only'); }",
+      );
+      const module = await prepareSource(`
+        export function GET(ctx) {
+          return Response.json({
+            subject: ctx.identity?.subject ?? null,
+            identityIsNull: ctx.identity === null,
+            forgedSubject: ctx.headers.get("x-auth-subject"),
+            authorization: ctx.headers.get("authorization"),
+          });
+        }
+      `);
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          throw new Error("isolated route reached host import");
+        },
+        prepareHandlerModule: () => Promise.resolve(module),
+      });
+
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const authenticated = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          handler.handle(
+            new Request("http://localhost/api/isolated-identity", {
+              headers: {
+                authorization: "Bearer application-token",
+                "x-auth-subject": "forged-user",
+              },
+            }),
+            {
+              projectDir: "/test/project",
+              adapter,
+              securityConfig: null,
+              isLocalProject: false,
+              applicationIdentity: createIdentity(),
+              applicationIdentityHeaderNames: ["x-auth-subject"],
+            },
+          ),
+      );
+      assertEquals(await authenticated?.json(), {
+        subject: "user-123",
+        identityIsNull: false,
+        forgedSubject: null,
+        authorization: "Bearer application-token",
+      });
+
+      const anonymous = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          handler.handle(
+            new Request("http://localhost/api/isolated-identity", {
+              headers: { "x-auth-subject": "forged-user" },
+            }),
+            {
+              projectDir: "/test/project",
+              adapter,
+              securityConfig: null,
+              isLocalProject: false,
+              applicationIdentity: null,
+              applicationIdentityHeaderNames: ["x-auth-subject"],
+            },
+          ),
+      );
+      assertEquals(await anonymous?.json(), {
+        subject: null,
+        identityIsNull: true,
+        forgedSubject: null,
+        authorization: null,
+      });
     });
 
     it("keeps local development on the host-compatible route path", async () => {

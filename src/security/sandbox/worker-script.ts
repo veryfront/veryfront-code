@@ -961,6 +961,39 @@ function snapshotWorkerApplicationIdentity(value: unknown): ApplicationIdentity 
   }
 }
 
+function prevalidateWorkerRequestApplicationIdentity(value: unknown): void {
+  const envelope = requirePlainDataRecord(value, "payload", 16).record;
+  const type = requireString(
+    readDataProperty(envelope, "type"),
+    "type",
+    64,
+    false,
+  );
+
+  if (type === "execute-app-route") {
+    const applicationIdentity = readOptionalDataProperty(
+      envelope,
+      "applicationIdentity",
+    );
+    if (!applicationIdentity.present) {
+      return invalidWorkerRequest("applicationIdentity");
+    }
+    snapshotWorkerApplicationIdentity(applicationIdentity.value);
+    return;
+  }
+
+  if (type === "execute-pages-route") {
+    const applicationIdentity = readOptionalDataProperty(
+      envelope,
+      "applicationIdentity",
+    );
+    if (!applicationIdentity.present) {
+      return invalidWorkerRequest("applicationIdentity");
+    }
+    snapshotWorkerApplicationIdentity(applicationIdentity.value);
+  }
+}
+
 function snapshotStringArray(
   value: unknown,
   field: string,
@@ -1733,6 +1766,8 @@ export function assertIsolatedSsrDependencySnapshotSupported(
  * @internal Exported for deterministic boundary regression tests.
  */
 export function snapshotWorkerRequest(value: unknown): WorkerRequest {
+  prevalidateWorkerRequestApplicationIdentity(value);
+
   let cloned: unknown;
   try {
     cloned = cloneStructuredValue(value);

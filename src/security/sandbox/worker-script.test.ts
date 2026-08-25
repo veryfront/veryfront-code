@@ -371,6 +371,7 @@ describe("worker-script request snapshots", () => {
       applicationIdentity?: typeof TEST_APPLICATION_IDENTITY | null;
     };
     assertEquals(appSnapshot.applicationIdentity, TEST_APPLICATION_IDENTITY);
+    assertEquals(Object.getPrototypeOf(appSnapshot.applicationIdentity), null);
     assertEquals(
       Object.getPrototypeOf(appSnapshot.applicationIdentity?.claims),
       null,
@@ -518,6 +519,98 @@ describe("worker-script request snapshots", () => {
         TypeError,
         "Invalid worker request applicationIdentity",
       );
+    }
+  });
+
+  it("rejects hidden or accessor-backed root identity fields without invoking them", () => {
+    const hiddenUnknown = { ...TEST_APPLICATION_IDENTITY };
+    Object.defineProperty(hiddenUnknown, "hidden", {
+      value: "bad",
+      enumerable: false,
+    });
+    assertThrows(
+      () => snapshotApplicationIdentity(hiddenUnknown),
+      TypeError,
+      "unsupported hidden field",
+    );
+
+    let accessorCalls = 0;
+    const accessorUnknown = { ...TEST_APPLICATION_IDENTITY };
+    Object.defineProperty(accessorUnknown, "hidden", {
+      enumerable: false,
+      get() {
+        accessorCalls += 1;
+        return "bad";
+      },
+    });
+    assertThrows(
+      () => snapshotApplicationIdentity(accessorUnknown),
+      TypeError,
+      "accessor property",
+    );
+    assertEquals(accessorCalls, 0);
+  });
+
+  it("pre-validates App and Pages identity before cloning direct worker requests", () => {
+    for (
+      const request of [
+        {
+          type: "execute-app-route",
+          id: "accessor-identity",
+          module: {
+            source: "export function GET() {}",
+            sha256: "a".repeat(64),
+          },
+          modulePath: "/project/app/api/route.ts",
+          method: "GET",
+          request: {
+            url: "http://localhost/api/test",
+            method: "GET",
+            headers: [],
+            body: null,
+          },
+          params: {},
+          projectDir: "/project",
+          sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+        },
+        {
+          type: "execute-pages-route",
+          id: "accessor-pages-identity",
+          module: {
+            source: "export function GET() {}",
+            sha256: "a".repeat(64),
+          },
+          modulePath: "/project/pages/api/test.ts",
+          method: "GET",
+          context: {
+            url: "http://localhost/api/test",
+            method: "GET",
+            headers: [],
+            body: null,
+            params: {},
+            cookies: {},
+          },
+          projectDir: "/project",
+          sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+        },
+      ]
+    ) {
+      let issuerAccessorCalls = 0;
+      const applicationIdentity = { ...TEST_APPLICATION_IDENTITY };
+      Object.defineProperty(applicationIdentity, "issuer", {
+        enumerable: true,
+        get() {
+          issuerAccessorCalls += 1;
+          return "veryfront:trusted-proxy";
+        },
+      });
+
+      assertThrows(
+        () => snapshotWorkerRequest({ ...request, applicationIdentity }),
+        TypeError,
+        "Invalid worker request applicationIdentity",
+      );
+      assertEquals(issuerAccessorCalls, 0);
     }
   });
 

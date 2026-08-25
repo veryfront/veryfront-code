@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createApplicationIdentity } from "./identity.ts";
+import { createApplicationIdentity, snapshotApplicationIdentity } from "./identity.ts";
 
 const nativeObjectFreeze = Object.freeze;
 const nativeObjectIsFrozen = Object.isFrozen;
@@ -176,14 +176,32 @@ describe("security/application-auth/identity", () => {
     }, TypeError);
   });
 
+  it("creates a null-prototype frozen snapshot root from serialized identity", () => {
+    const identity = snapshotApplicationIdentity({
+      issuer: "https://issuer.example.com",
+      subject: "user-123",
+      groups: ["admin"],
+      roles: ["operator"],
+      groupsComplete: true,
+      claims: { sub: "user-123" },
+    });
+
+    assertEquals(Object.getPrototypeOf(identity), null);
+    assertEquals(nativeObjectIsFrozen(identity), true);
+    assertEquals(nativeObjectIsFrozen(identity.groups), true);
+    assertEquals(nativeObjectIsFrozen(identity.roles), true);
+    assertEquals(Object.getPrototypeOf(identity.claims), null);
+    assertEquals(nativeObjectIsFrozen(identity.claims), true);
+  });
+
   it("deep-freezes identity data after Object.freeze and collection prototype tampering", () => {
     try {
       Object.freeze = ((value: unknown) => value) as typeof Object.freeze;
       Set.prototype.has = (() => false) as typeof Set.prototype.has;
-      Set.prototype.add = function (): Set<unknown> {
+      Set.prototype.add = function (this: Set<unknown>): Set<unknown> {
         return this;
       } as typeof Set.prototype.add;
-      Array.prototype.push = function (): number {
+      Array.prototype.push = function (this: unknown[]): number {
         return this.length;
       } as typeof Array.prototype.push;
 

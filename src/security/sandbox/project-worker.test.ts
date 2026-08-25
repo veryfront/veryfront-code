@@ -1341,6 +1341,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
     const projectDir = await Deno.makeTempDir();
     const appModulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
     const pagesModulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
+    const poisonModulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
     await Deno.writeTextFile(
       appModulePath,
       `
@@ -1354,6 +1355,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
             groupsComplete: identity?.groupsComplete ?? null,
             frozen: identity === null ? null : {
               root: Object.isFrozen(identity),
+              rootProto: Object.getPrototypeOf(identity) === null,
               groups: Object.isFrozen(identity.groups),
               roles: Object.isFrozen(identity.roles),
               claims: Object.isFrozen(identity.claims),
@@ -1375,12 +1377,24 @@ testSuite("ProjectWorker - real worker request isolation", () => {
             email: identity?.email ?? null,
             frozen: identity === null ? null : {
               root: Object.isFrozen(identity),
+              rootProto: Object.getPrototypeOf(identity) === null,
               groups: Object.isFrozen(identity.groups),
               roles: Object.isFrozen(identity.roles),
               claims: Object.isFrozen(identity.claims),
             },
             sameWithinContext: identity === context.identity,
           });
+        }
+      `,
+    );
+    await Deno.writeTextFile(
+      poisonModulePath,
+      `
+        export function GET() {
+          Set.prototype[Symbol.iterator] = function* () {
+            throw new Error("poisoned Set iterator");
+          };
+          return new Response("poisoned");
         }
       `,
     );
@@ -1424,6 +1438,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
           groupsComplete: true,
           frozen: {
             root: true,
+            rootProto: true,
             groups: true,
             roles: true,
             claims: true,
@@ -1461,9 +1476,74 @@ testSuite("ProjectWorker - real worker request isolation", () => {
           email: "user@example.test",
           frozen: {
             root: true,
+            rootProto: true,
             groups: true,
             roles: true,
             claims: true,
+          },
+          sameWithinContext: true,
+        },
+      );
+
+      const poisonResponse = await worker.execute({
+        type: "execute-app-route",
+        id: "poison-set-iterator",
+        module: await prepareModulePath(poisonModulePath),
+        modulePath: poisonModulePath,
+        method: "GET",
+        request: {
+          url: "http://localhost/api/poison",
+          method: "GET",
+          headers: [],
+          body: null,
+        },
+        params: {},
+        projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+        applicationIdentity: null,
+      });
+      assertEquals(poisonResponse.type, "result");
+      if (poisonResponse.type !== "result") throw new Error("expected result response");
+      assertEquals(
+        new TextDecoder().decode(poisonResponse.response.body ?? new Uint8Array()),
+        "poisoned",
+      );
+
+      const postPoisonResponse = await worker.execute({
+        type: "execute-app-route",
+        id: "identity-after-set-iterator-poisoning",
+        module: await prepareModulePath(appModulePath),
+        modulePath: appModulePath,
+        method: "GET",
+        request: {
+          url: "http://localhost/api/app-identity",
+          method: "GET",
+          headers: [],
+          body: null,
+        },
+        params: {},
+        projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+        applicationIdentity: TEST_APPLICATION_IDENTITY,
+      });
+      assertEquals(postPoisonResponse.type, "result");
+      if (postPoisonResponse.type !== "result") throw new Error("expected result response");
+      assertEquals(
+        JSON.parse(new TextDecoder().decode(postPoisonResponse.response.body ?? new Uint8Array())),
+        {
+          subject: "user-123",
+          email: "user@example.test",
+          groups: ["admin"],
+          roles: ["operator"],
+          groupsComplete: true,
+          frozen: {
+            root: true,
+            rootProto: true,
+            groups: true,
+            roles: true,
+            claims: true,
+            proto: true,
+            protoClaim: { preserved: true },
           },
           sameWithinContext: true,
         },
