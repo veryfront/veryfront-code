@@ -831,19 +831,25 @@ export class Renderer {
         )
         : await runRender();
     } catch (error) {
-      const attachedCookies = error instanceof Error
-        ? getAttachedDataResponseMetadata(error).cookies
-        : undefined;
+      const attachedMetadata = error instanceof Error ? getAttachedDataResponseMetadata(error) : {};
+      const attachedCookies = attachedMetadata.cookies;
       const unwrappedError = error instanceof Error
         ? unwrapDataResponseMetadataError(error)
         : error;
-      const controlCookies = resolveSSRControlOutcome(unwrappedError)?.cookies ??
-        resolveSSRControlOutcome(error)?.cookies;
+      const controlOutcome = resolveSSRControlOutcome(unwrappedError) ??
+        resolveSSRControlOutcome(error);
+      const controlCookies = controlOutcome?.cookies;
+      const attachedHeaders = attachedMetadata.headers;
+      const controlHeaders = controlOutcome?.headers;
       if (
         isFollower &&
-        ((attachedCookies?.length ?? 0) > 0 || (controlCookies?.length ?? 0) > 0)
+        ((attachedCookies?.length ?? 0) > 0 ||
+          (controlCookies?.length ?? 0) > 0 ||
+          Object.keys(attachedHeaders ?? {}).length > 0 ||
+          (typeof controlHeaders === "object" && controlHeaders !== null &&
+            Object.keys(controlHeaders).length > 0))
       ) {
-        logger.debug("Rerendering follower after cookie-bearing render failure", {
+        logger.debug("Rerendering follower after response-metadata-bearing render failure", {
           slug,
           projectId: ctx.projectId,
         });
@@ -1006,7 +1012,7 @@ export class Renderer {
           ...options,
           request,
           abortSignal: renderAbortController.signal,
-          delivery: "string",
+          delivery: cacheKey === null ? options?.delivery : "string",
           projectId: ctx.projectId,
           projectSlug: ctx.projectSlug,
           environment: ctx.environment,

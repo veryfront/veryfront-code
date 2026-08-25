@@ -437,6 +437,104 @@ describe("Renderer response metadata", () => {
     assertEquals(store.data.size, 0);
   });
 
+  it("rerenders singleflight followers when the leader throws with headers", async () => {
+    const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const firstStarted = Promise.withResolvers<void>();
+    const releaseFirst = Promise.withResolvers<void>();
+    let renderCalls = 0;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (_slug: string, options?: RenderOptions) => Promise<RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: async (_slug, options) => {
+          renderCalls++;
+          if (renderCalls === 1) {
+            firstStarted.resolve();
+            await releaseFirst.promise;
+          }
+          const user = options?.request?.headers.get("x-test-user") ?? "missing";
+          throw attachDataResponseMetadata(new Error(user), {
+            headers: { "x-page-state": user },
+          });
+        },
+      },
+    });
+    const baseOptions = {
+      environment: "production" as const,
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    };
+    const captureFailure = async (promise: Promise<RenderResult>): Promise<Error> => {
+      try {
+        await promise;
+      } catch (error) {
+        if (error instanceof Error) return error;
+      }
+      throw new Error("Expected render to fail");
+    };
+
+    const leader = captureFailure(renderer.renderPage("/header-error", makeRenderContext(), {
+      ...baseOptions,
+      request: new Request("https://example.test/header-error", {
+        headers: { "x-test-user": "leader" },
+      }),
+    }));
+    await firstStarted.promise;
+    const follower = captureFailure(renderer.renderPage("/header-error", makeRenderContext(), {
+      ...baseOptions,
+      request: new Request("https://example.test/header-error", {
+        headers: { "x-test-user": "follower" },
+      }),
+    }));
+    releaseFirst.resolve();
+
+    const [leaderError, followerError] = await Promise.all([leader, follower]);
+    assertEquals(getAttachedDataResponseMetadata(leaderError).headers, {
+      "x-page-state": "leader",
+    });
+    assertEquals(getAttachedDataResponseMetadata(followerError).headers, {
+      "x-page-state": "follower",
+    });
+    assertEquals(renderCalls, 2);
+  });
+
+  it("preserves streaming delivery for cache-sensitive requests", async () => {
+    const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let observedDelivery: RenderOptions["delivery"];
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (_slug: string, options?: RenderOptions) => Promise<RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          observedDelivery = options?.delivery;
+          return Promise.resolve({ html: "<html>private</html>", frontmatter: {}, stream: null });
+        },
+      },
+    });
+
+    await renderer.renderPage("/private", makeRenderContext(), {
+      environment: "production",
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+      delivery: "stream",
+      request: new Request("https://example.test/private", {
+        headers: { authorization: "Bearer secret" },
+      }),
+    });
+
+    assertEquals(observedDelivery, "stream");
+  });
+
   it("rerenders singleflight followers when the leader returns cookies", async () => {
     const store = createInMemoryStore();
     const renderer = new Renderer({ cache: { store } });
