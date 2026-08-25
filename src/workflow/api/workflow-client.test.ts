@@ -371,6 +371,53 @@ describe("WorkflowClient", () => {
       assertEquals(await backend.getPendingApprovals(runId), []);
     });
 
+    it("falls back to the configured internal response schema resolver", async () => {
+      const workflowId = "custom-internal-schema-workflow";
+      const responseSchemaId = "custom-backend-schema";
+      client.getApprovalManager().stop();
+      client = createWorkflowClient({
+        backend,
+        approval: {
+          internalResponseSchemaResolver: ({ approval }) => {
+            assertEquals(getPendingApprovalResponseSchemaId(approval), responseSchemaId);
+            return defineSchema((v) => v.object({ confirmed: v.boolean() }))();
+          },
+        },
+      });
+      const runId = "run-custom-internal-schema";
+      await backend.createRun({
+        id: runId,
+        workflowId,
+        status: "waiting",
+        input: {},
+        nodeStates: {},
+        currentNodes: ["review"],
+        context: { input: {}, runId, workflowId },
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(),
+        sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+      });
+      await backend.savePendingApproval(runId, {
+        id: "apr-custom-internal-schema",
+        nodeId: "review",
+        message: "Review item",
+        payload: undefined,
+        requestedAt: new Date(),
+        status: "pending",
+        responseSchemaId,
+      });
+
+      await assertRejects(() =>
+        client.approve(runId, "apr-custom-internal-schema", "reviewer", undefined, {
+          confirmed: "yes",
+        })
+      );
+
+      const [approval] = await backend.getPendingApprovals(runId);
+      assertEquals(approval?.status, "pending");
+    });
+
     it("drops stale approval schemas when a workflow id is re-registered", async () => {
       const workflowId = "re-registered-approval-workflow";
       client.register(workflow({
