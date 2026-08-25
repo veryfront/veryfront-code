@@ -90,6 +90,7 @@ async function handleApplicationAuthRequestWithCaches(
   const runtime = createOidcApplicationAuthRuntime({
     config: oidc,
     env: ctx.adapter.env,
+    trustedRequestOrigin: ctx.requestOrigin,
     metadataCache: caches.metadata,
     jwksCache: caches.jwks,
   });

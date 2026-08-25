@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import type { HandlerContext, SecurityConfig } from "#veryfront/types";
 import { HandlerPriority } from "#veryfront/types";
 import { AuthHandler } from "#veryfront/security/http/auth.ts";
@@ -201,6 +202,74 @@ describe("security/application-auth runtime integration", () => {
       "/_veryfront/auth/login?returnTo=%2Fdashboard%3Fview%3Dhome",
     );
     assertEquals(result?.response?.headers.get("Cache-Control"), "no-store");
+  });
+
+  it("uses the trusted browser-visible origin when TLS terminates at a reverse proxy", async () => {
+    const result = await withMockFetch(
+      () =>
+        Promise.resolve(
+          Response.json({
+            issuer: "https://issuer.example.test",
+            authorization_endpoint: "https://issuer.example.test/authorize",
+            token_endpoint: "https://issuer.example.test/token",
+            jwks_uri: "https://issuer.example.test/jwks",
+          }),
+        ),
+      () =>
+        handleApplicationAuthRequest(
+          new Request("http://internal.proxy/_veryfront/auth/login", {
+            headers: {
+              host: "app.example.test",
+              "x-forwarded-host": "app.example.test",
+              "x-forwarded-proto": "https",
+            },
+          }),
+          {
+            ...createCtx({
+              APP_URL: APP_ORIGIN,
+              OIDC_ISSUER: "https://issuer.example.test",
+              OIDC_CLIENT_ID: "client-id",
+              OIDC_CLIENT_SECRET: "client-secret",
+              OIDC_SESSION_SECRET: "s".repeat(32),
+            }),
+            requestOrigin: APP_ORIGIN,
+          },
+        ),
+    );
+
+    assertEquals(result?.response?.status, 302);
+    const location = new URL(result?.response?.headers.get("Location") ?? "");
+    assertEquals(
+      location.searchParams.get("redirect_uri"),
+      `${APP_ORIGIN}/_veryfront/auth/callback`,
+    );
+  });
+
+  it("fails closed when trusted public origin resolution rejects forwarded headers", async () => {
+    let discoveryCalls = 0;
+    const result = await withMockFetch(
+      () => {
+        discoveryCalls += 1;
+        return Promise.resolve(new Response("must not fetch"));
+      },
+      () =>
+        handleApplicationAuthRequest(
+          new Request(`${APP_ORIGIN}/_veryfront/auth/login`),
+          {
+            ...createCtx({
+              APP_URL: APP_ORIGIN,
+              OIDC_ISSUER: "https://issuer.example.test",
+              OIDC_CLIENT_ID: "client-id",
+              OIDC_CLIENT_SECRET: "client-secret",
+              OIDC_SESSION_SECRET: "s".repeat(32),
+            }),
+            requestOrigin: null,
+          },
+        ),
+    );
+
+    assertEquals(result?.response?.status, 500);
+    assertEquals(discoveryCalls, 0);
   });
 
   it("admits trusted-proxy identity with normalized identity-header metadata", async () => {

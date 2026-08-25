@@ -135,6 +135,29 @@ describe("security/application-auth JWKS cache", () => {
     assertEquals(cached.n, RSA_KEY.n);
   });
 
+  it("ignores unrelated encryption and unsupported keys while selecting a signing key", async () => {
+    const key = await withMockFetch(
+      () =>
+        Promise.resolve(
+          jsonResponse(
+            jwks([
+              { kty: "oct", kid: "symmetric-encryption", use: "enc", k: "secret" },
+              { ...RSA_KEY, kid: "rsa-encryption", use: "enc" },
+              RSA_KEY,
+            ]),
+          ),
+        ),
+      () =>
+        createJwksCache().getKey({
+          jwksUri: JWKS_URI,
+          kid: "rsa-1",
+          alg: "RS256",
+        }),
+    );
+
+    assertEquals(key, RSA_KEY);
+  });
+
   it("allows HTTP JWKS only for explicit loopback development and isolates that cache key", async () => {
     const loopbackUri = "http://127.0.0.1:8787/jwks.json";
     await assertRejects(

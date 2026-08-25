@@ -163,6 +163,7 @@ export function createJwksCache(options: JwksCacheOptions = {}): JwksCache {
     },
     timeoutMs: number,
     refreshKind: RefreshKind,
+    requestedKid: string,
     refreshIfCurrent?: JwksKeySnapshot["freshness"],
   ): Promise<JwksLoad> {
     const forceRefresh = refreshKind !== "none";
@@ -221,7 +222,7 @@ export function createJwksCache(options: JwksCacheOptions = {}): JwksCache {
       ? withRefreshCooldown(current, refreshKind, currentTime)
       : undefined;
     const pending = promiseThen(
-      fetchJwks(fetchOptions, timeoutMs),
+      fetchJwks(fetchOptions, timeoutMs, requestedKid),
       (value) => {
         const freshness = new JwksFreshnessToken();
         const completedAt = now();
@@ -279,6 +280,7 @@ export function createJwksCache(options: JwksCacheOptions = {}): JwksCache {
       keyOptions.forceRefresh === true
         ? refreshIfCurrent === undefined ? "explicit" : "signature-mismatch"
         : "none",
+      kid,
       refreshIfCurrent,
     );
     const firstKey = mapGet(firstLoad.document.keys, kid);
@@ -294,6 +296,7 @@ export function createJwksCache(options: JwksCacheOptions = {}): JwksCache {
         fetchOptions,
         timeoutMs,
         "incompatible-key",
+        kid,
         firstLoad.freshness,
       );
       const refreshedKey = mapGet(refreshed.document.keys, kid);
@@ -305,7 +308,13 @@ export function createJwksCache(options: JwksCacheOptions = {}): JwksCache {
     if (keyOptions.forceRefresh === true || firstLoad.refreshed) {
       throw new TypeError("JWKS does not contain the requested kid");
     }
-    const refreshed = await load(fetchOptions, timeoutMs, "unknown-kid", firstLoad.freshness);
+    const refreshed = await load(
+      fetchOptions,
+      timeoutMs,
+      "unknown-kid",
+      kid,
+      firstLoad.freshness,
+    );
     const refreshedKey = mapGet(refreshed.document.keys, kid);
     if (refreshedKey === undefined) {
       throw new TypeError("JWKS does not contain the requested kid");
@@ -400,6 +409,7 @@ function samePublicJwk(left: PublicJwk, right: PublicJwk): boolean {
 async function fetchJwks(
   options: { readonly jwksUri: string; readonly allowInsecureLoopback: boolean },
   timeoutMs: number,
+  requestedKid: string,
 ): Promise<JwksDocument> {
   const url = parseJwksUri(options.jwksUri, options.allowInsecureLoopback);
   const parsed = await fetchJsonObject({
@@ -412,11 +422,12 @@ async function fetchJwks(
       validateJwksUrl(candidate, options.allowInsecureLoopback);
     },
   });
-  return await parseJwksDocument(parsed);
+  return await parseJwksDocument(parsed, requestedKid);
 }
 
 async function parseJwksDocument(
   value: { readonly [key: string]: unknown },
+  requestedKid: string,
 ): Promise<JwksDocument> {
   const topLevelKeys = ObjectKeys(value);
   if (topLevelKeys.length !== 1 || topLevelKeys[0] !== "keys") {
@@ -429,7 +440,14 @@ async function parseJwksDocument(
   const output = new NativeMap<string, PublicJwk>();
   for (let index = 0; index < keys.length; index += 1) {
     const key = keys[index];
-    const parsed = await parsePublicJwk(key);
+    const selected = isPlainObject(key) && key.kid === requestedKid;
+    let parsed: PublicJwk;
+    try {
+      parsed = await parsePublicJwk(key);
+    } catch (error) {
+      if (selected || !(error instanceof TypeError)) throw error;
+      continue;
+    }
     if (mapHas(output, parsed.kid)) {
       throw new TypeError("JWKS keys must not contain duplicate kid values");
     }

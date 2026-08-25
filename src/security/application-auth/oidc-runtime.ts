@@ -79,6 +79,8 @@ export interface ApplicationAuthEnvironmentReader {
 export interface OidcApplicationAuthRuntimeOptions {
   readonly config: OidcAuthConfig;
   readonly env: ApplicationAuthEnvironmentReader;
+  /** Browser-visible origin already resolved at the trusted request boundary. */
+  readonly trustedRequestOrigin?: string | null;
   readonly now?: () => number;
   readonly randomBytes?: (length: number) => Uint8Array;
   readonly metadataCache?: OidcMetadataCache;
@@ -151,7 +153,7 @@ export function createOidcApplicationAuthRuntime(
       let runtime: RuntimeConfig;
       try {
         runtime = await resolve(request);
-        requireTrustedRequestOrigin(request, runtime.appOrigin);
+        requireTrustedRequestOrigin(request, runtime.appOrigin, options.trustedRequestOrigin);
       } catch {
         return hardenedText("Authentication unavailable", 500);
       }
@@ -173,7 +175,7 @@ export function createOidcApplicationAuthRuntime(
       let runtime: RuntimeConfig;
       try {
         runtime = await resolve(request);
-        requireTrustedRequestOrigin(request, runtime.appOrigin);
+        requireTrustedRequestOrigin(request, runtime.appOrigin, options.trustedRequestOrigin);
       } catch {
         return unauthorized(request);
       }
@@ -749,8 +751,14 @@ function parseRandomValue(value: unknown): string {
   return value;
 }
 
-function requireTrustedRequestOrigin(request: Request, appOrigin: string): void {
-  const origin = new URL(request.url).origin;
+function requireTrustedRequestOrigin(
+  request: Request,
+  appOrigin: string,
+  trustedRequestOrigin: string | null | undefined,
+): void {
+  const origin = trustedRequestOrigin === undefined
+    ? new URL(request.url).origin
+    : trustedRequestOrigin;
   if (origin !== appOrigin) throw new TypeError("request origin is not trusted");
 }
 
