@@ -99,7 +99,7 @@ describe("MultiProjectFSAdapter", () => {
         await assertRejects(
           () => adapter.readTextFile("a.ts"),
           Error,
-          "No request context available",
+          "Use runWithContext() to set project context before accessing files",
           "a read with neither a request context nor a default adapter must name runWithContext",
         );
       });

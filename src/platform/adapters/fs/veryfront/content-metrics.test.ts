@@ -45,11 +45,12 @@ describe("platform/adapters/fs/veryfront/content-metrics", () => {
       assertEquals(snapshot.requestsTracked, 1);
     });
 
-    it("should not throw when endRequestMetrics called without context", () => {
-      resetContentMetrics();
+    it("should not throw when endRequestMetrics called without context", async () => {
+      const isolatedMetrics = await import("./content-metrics.ts?without-context");
+      isolatedMetrics.resetContentMetrics();
       // endRequestMetrics is a no-op when there is no active metrics store.
-      endRequestMetrics({ requestId: "no-start" });
-      const snapshot = getContentMetricsSnapshot();
+      isolatedMetrics.endRequestMetrics({ requestId: "no-start" });
+      const snapshot = isolatedMetrics.getContentMetricsSnapshot();
       assertEquals(
         snapshot.requestsTracked,
         0,
