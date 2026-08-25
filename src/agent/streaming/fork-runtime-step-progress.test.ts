@@ -53,6 +53,32 @@ describe("agent/fork-runtime-step-progress", () => {
       finishReason: "tool-calls",
     });
     assertEquals(shouldContinueForkRuntimeStep(step, response), true);
+
+    const erroredResponse: AgentResponse = {
+      ...response,
+      toolCalls: [
+        {
+          id: "tool-1",
+          name: "create_file",
+          args: { path: "plans/a.md" },
+          status: "error",
+          result: undefined,
+        },
+      ],
+      metadata: { finishReason: "tool-calls" },
+    };
+    const erroredStep = buildForkRuntimeStepFromResponse(erroredResponse);
+
+    assertEquals(
+      erroredStep.toolResults,
+      [],
+      "a tool call that did not complete must not be replayed as a tool result",
+    );
+    assertEquals(
+      shouldContinueForkRuntimeStep(erroredStep, erroredResponse),
+      false,
+      "a tool-calls step whose every tool call errored must not continue the fork loop",
+    );
   });
 
   it("commits steps and accumulates usage for the fork runtime loop", () => {

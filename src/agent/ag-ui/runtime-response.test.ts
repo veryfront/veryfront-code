@@ -7,7 +7,7 @@ describe("agent/ag-ui-runtime-response", () => {
   it("normalizes runtime defaults and wraps the stream in SSE headers", async () => {
     const response = createAgUiRuntimeResponse({
       agUiInput: {
-        threadId: crypto.randomUUID(),
+        threadId: "11111111-1111-4111-8111-111111111111",
         runId: "run_1",
         state: "ignored",
         messages: [],
@@ -15,7 +15,7 @@ describe("agent/ag-ui-runtime-response", () => {
         context: [],
       },
       defaults: {
-        threadId: crypto.randomUUID(),
+        threadId: "22222222-2222-4222-8222-222222222222",
         runId: "run_override",
       },
       agentId: "agent-1",
@@ -39,6 +39,12 @@ describe("agent/ag-ui-runtime-response", () => {
     const text = await response.text();
     assertStringIncludes(text, "event: RunStarted");
     assertStringIncludes(text, '"runId":"run_override"');
+    assertStringIncludes(text, '"threadId":"22222222-2222-4222-8222-222222222222"');
+    assertEquals(
+      text.includes("11111111-1111-4111-8111-111111111111"),
+      false,
+      "the client-supplied threadId must not reach the RunStarted payload",
+    );
     assertStringIncludes(text, "event: StateSnapshot");
     assertStringIncludes(text, '"snapshot":{}');
     assertStringIncludes(text, "event: Custom");

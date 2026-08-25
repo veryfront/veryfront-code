@@ -212,20 +212,29 @@ describe("lifecycle AG-UI adapter", () => {
           output: { content: "final" },
           isError: false,
           providerExecuted: true,
+          preliminary: false,
         },
       },
     ]).flatMap((frame) => adapter.encode(frame));
 
-    assertEquals(events.map((event) => event.event), [
-      "ToolCallStart",
-      "ToolCallArgs",
-      "ToolCallEnd",
-      "ToolCallResult",
-    ]);
-    assertEquals(events.at(-1)?.payload, {
-      toolCallId: "provider-1",
-      result: { content: "final" },
-    });
+    assertEquals(
+      events.map((event) => event.event),
+      [
+        "ToolCallStart",
+        "ToolCallArgs",
+        "ToolCallEnd",
+        "ToolCallResult",
+      ],
+      "only preliminary === true suppresses a result, so an explicit preliminary: false must still emit ToolCallResult",
+    );
+    assertEquals(
+      events.at(-1)?.payload,
+      {
+        toolCallId: "provider-1",
+        result: { content: "final" },
+      },
+      "the final provider result must reach the client even when it carries preliminary: false",
+    );
   });
 
   it("keeps a tool-handoff attempt open and finishes only on run completion", () => {
@@ -328,6 +337,108 @@ describe("lifecycle AG-UI adapter", () => {
       event: "RunError",
       payload: { code: "STREAM_CANCELLED", message: "Stream was cancelled" },
     }]);
+  });
+
+  it("reports failed outcomes with the public error code and message", () => {
+    const adapter = createLifecycleAgUiAdapter({ messageId: "message-failed" });
+
+    const failedOutcome = adapter.finalize({
+      outcome: {
+        status: "failed",
+        error: {
+          code: "PROVIDER_STREAM_ERROR",
+          phase: "streaming",
+          source: "provider",
+          retryable: false,
+          publicMessage: "The model provider stopped responding",
+          diagnosticId: "diag-1",
+        },
+        snapshot: {
+          phase: "failed",
+          accumulatedText: "",
+          reasoning: [],
+          tools: [],
+          finishReason: "other",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+          hasStreamOutput: false,
+          hasSemanticProgress: false,
+        },
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        elapsedMs: 10,
+        phase: "failed",
+      },
+    });
+
+    assertEquals(
+      failedOutcome,
+      [{
+        event: "RunError",
+        payload: {
+          code: "PROVIDER_STREAM_ERROR",
+          message: "The model provider stopped responding",
+        },
+      }],
+      "a failed outcome must surface its public error code and sanitized public message",
+    );
+
+    const failed = createLifecycleAgUiAdapter({ messageId: "message-terminal-failed" });
+    assertEquals(
+      failed.finalize({ terminalStatus: "failed" }),
+      [{
+        event: "RunError",
+        payload: { code: "RUN_FAILED", message: "Agent run failed" },
+      }],
+      "a failed terminal status must emit RUN_FAILED, never a success terminal",
+    );
+    assertEquals(
+      failed.finalize({ terminalStatus: "failed" }),
+      [],
+      "the terminal-error latch must suppress a second finalize",
+    );
+  });
+
+  it("carries merged usage and billing metadata on RunFinished", () => {
+    const adapter = createLifecycleAgUiAdapter({ messageId: "message-usage" });
+    for (
+      const frame of frames([
+        { event: { type: "text_start" } },
+        { event: { type: "text_content", delta: "done" } },
+        { event: { type: "text_end" } },
+        {
+          event: {
+            type: "usage",
+            usage: {
+              inputTokens: 12,
+              outputTokens: 8,
+              totalTokens: 20,
+              costUsd: 0.002,
+              costCredits: 2,
+              billingMode: "deferred",
+              usageCaptureStatus: "complete",
+            },
+          },
+        },
+      ])
+    ) {
+      adapter.encode(frame);
+    }
+
+    const finished = adapter.finalize({ terminalStatus: "completed" });
+
+    assertEquals(finished[0]?.event, "RunFinished", "a completed run must emit RunFinished");
+    assertEquals(
+      finished[0]?.payload.metadata,
+      {
+        inputTokens: 12,
+        outputTokens: 8,
+        totalTokens: 20,
+        costUsd: 0.002,
+        costCredits: 2,
+        billingMode: "deferred",
+        usageCaptureStatus: "complete",
+      },
+      "RunFinished metadata must carry the merged usage including billing fields",
+    );
   });
 
   it("drops a reasoning end that closes no open span", () => {

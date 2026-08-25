@@ -89,7 +89,10 @@ describe("agent/ag-ui-tracked-response", () => {
       },
       chunkEncoder: {
         encode: () => [{ event: "RunError", payload: { message: "boom" } }],
-        finalize: () => [],
+        finalize: (response) =>
+          response
+            ? [{ event: "RunFinished", payload: { metadata: response.metadata ?? {} } }]
+            : [],
       },
       finalizeTracker: createAgUiFinalizeTracker({
         getMetadataFromChunk: () => ({ finishReason: "stop" }),
@@ -98,10 +101,15 @@ describe("agent/ag-ui-tracked-response", () => {
 
     const text = await response.text();
     assertStringIncludes(text, "event: RunError");
-    assertEquals(text.includes("finishReason"), false);
+    assertEquals(
+      text.includes("RunFinished"),
+      false,
+      "a RunError observed through the finalize tracker must null out the final response so no RunFinished is emitted",
+    );
     assertEquals(
       parseSseFrames(text).every((frame) => typeof frame.data.elapsedMs === "number"),
       true,
+      "every emitted frame must carry an elapsedMs timing field",
     );
   });
 

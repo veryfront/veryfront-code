@@ -116,6 +116,44 @@ describe("agent/ag-ui-finalize-tracker", () => {
     });
   });
 
+  it("keeps deferred billing sticky across later chunks", () => {
+    const tracker = createAgUiFinalizeTracker<{
+      billingMode?: "direct" | "deferred";
+      usageCaptureStatus?: "complete" | "partial" | "missing";
+      costUsd?: number;
+    }>({
+      getMetadataFromChunk: (chunk) => ({
+        billingMode: chunk.billingMode,
+        usageCaptureStatus: chunk.usageCaptureStatus,
+        costUsd: chunk.costUsd,
+      }),
+    });
+
+    tracker.observeChunk({
+      billingMode: "deferred",
+      usageCaptureStatus: "partial",
+      costUsd: 0.02,
+    });
+    tracker.observeChunk({ billingMode: "direct" });
+
+    const response = tracker.getFinalResponse();
+    assertEquals(
+      response?.metadata?.billingMode,
+      "deferred",
+      "a deferred billing chunk must keep the run deferred even when a later chunk reports direct",
+    );
+    assertEquals(
+      response?.metadata?.usageCaptureStatus,
+      "partial",
+      "the observed usage capture status must survive later chunks that omit it",
+    );
+    assertEquals(
+      response?.metadata?.costUsd,
+      0.02,
+      "the observed cost must survive later chunks that omit it",
+    );
+  });
+
   it("suppresses the final response after a RunError event", () => {
     const tracker = createAgUiFinalizeTracker<{
       finishReason?: string;

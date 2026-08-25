@@ -76,8 +76,16 @@ describe("agent/ag-ui-chat-ui-chunk-encoder", () => {
           cacheReadInputTokens: 1,
           reasoningTokens: 4,
         },
+        billableInputTokens: 2,
+        billableOutputTokens: 3,
+        costUsd: 0.0012,
+        providerCostUsd: 0.0009,
+        veryfrontChargeUsd: 0.0003,
+        veryfrontBilledUsd: 0.0012,
         costCredits: 0.25,
         costSource: "gateway",
+        billingMode: "deferred",
+        usageCaptureStatus: "complete",
       },
     };
 
@@ -95,10 +103,19 @@ describe("agent/ag-ui-chat-ui-chunk-encoder", () => {
         cacheCreationInputTokens: 2,
         cacheReadInputTokens: 1,
         reasoningTokens: 4,
+        billableInputTokens: 2,
+        billableOutputTokens: 3,
+        costUsd: 0.0012,
+        providerCostUsd: 0.0009,
+        veryfrontChargeUsd: 0.0003,
+        veryfrontBilledUsd: 0.0012,
         costCredits: 0.25,
         costSource: "gateway",
+        billingMode: "deferred",
+        usageCaptureStatus: "complete",
         finishReason: "stop",
       },
+      "finish-chunk billing metadata must pass through to RunFinished unchanged",
     );
   });
 

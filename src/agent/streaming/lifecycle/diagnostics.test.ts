@@ -11,6 +11,21 @@ describe("stream lifecycle diagnostics", () => {
         value: { authorization: "<REDACTED>" },
       }),
       null,
+      "the default policy must never publish a raw diagnostic candidate",
+    );
+  });
+
+  it("ignores the redactor when raw capture is disabled", () => {
+    assertEquals(
+      acceptDiagnosticCandidate({
+        rawCapture: "disabled",
+        redact: () => ({
+          kind: "provider_shape",
+          attributes: { partType: "x" },
+        }),
+      }, { kind: "provider_payload", value: { authorization: "<REDACTED>" } }),
+      null,
+      "disabled raw capture must return null even when the redactor produces a safe event",
     );
   });
 
@@ -24,6 +39,7 @@ describe("stream lifecycle diagnostics", () => {
         }),
       }, { kind: "provider_payload", value: { secret: "<REDACTED>" } }),
       { kind: "provider_shape", attributes: { partType: "unknown" } },
+      "a redacted policy must publish exactly what the redactor returns",
     );
   });
 });

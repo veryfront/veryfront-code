@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   AgentRuntime,
@@ -153,6 +158,117 @@ describe("agent/ag-ui-detached-start", () => {
 
     assertEquals(parsed.runId, "run_1");
     assertExists(parsed.threadId);
+
+    const validUserMessage = {
+      id: "msg-1",
+      role: "user",
+      parts: [{ type: "text", text: "hello" }],
+    };
+    assertThrows(
+      () =>
+        AgUiDetachedStartRequestSchema.parse({
+          threadId: crypto.randomUUID(),
+          messages: [validUserMessage],
+        }),
+      undefined,
+      undefined,
+      "a detached start payload without runId must be rejected",
+    );
+    assertThrows(
+      () =>
+        AgUiDetachedStartRequestSchema.parse({
+          runId: "run_1",
+          threadId: "not-a-uuid",
+          messages: [validUserMessage],
+        }),
+      undefined,
+      undefined,
+      "threadId must be a uuid",
+    );
+    assertThrows(
+      () =>
+        AgUiDetachedStartRequestSchema.parse({
+          runId: "run 1/../x",
+          threadId: crypto.randomUUID(),
+          messages: [validUserMessage],
+        }),
+      undefined,
+      undefined,
+      "runId must match AGENT_ID_PATTERN so it is safe as a session run key",
+    );
+    assertThrows(
+      () =>
+        AgUiDetachedStartRequestSchema.parse({
+          runId: "x".repeat(129),
+          threadId: crypto.randomUUID(),
+          messages: [validUserMessage],
+        }),
+      undefined,
+      undefined,
+      "runId must be at most 128 characters",
+    );
+  });
+
+  it("rejects a malformed runId before the run is started", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const handler = createAgUiDetachedStartHandler({
+      agent: createTestAgent(),
+      sessionManager,
+      startDetachedExecution: async () => {
+        throw new Error("detached execution should not start for invalid requests");
+      },
+    });
+
+    const response = await handler(createDetachedRequest({ runId: "run 1/../x" }));
+
+    assertEquals(
+      response.status,
+      400,
+      "a malformed runId must be rejected before the run is started",
+    );
+    const payload = await response.json();
+    assertEquals(payload.error, "Invalid AG-UI detached start request");
+  });
+
+  it("hands the detached task to a host waitUntil when the ctx provides one", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const captured: Promise<unknown>[] = [];
+    let finishedRunId: string | null = null;
+
+    const handler = createAgUiDetachedStartHandler({
+      sessionManager,
+      startDetachedExecution: async () => {},
+      onFinish: ({ runId }) => {
+        finishedRunId = runId;
+      },
+    });
+
+    const response = await handler({
+      request: createDetachedRequest(),
+      waitUntil: (promise: Promise<unknown>) => {
+        captured.push(promise);
+      },
+    });
+
+    assertEquals(response.status, 202, "detached start must still accept");
+    assertEquals(
+      captured.length,
+      1,
+      "the detached task must be handed to the host waitUntil",
+    );
+    await captured[0];
+    assertEquals(finishedRunId, "run_1", "awaiting the waitUntil promise must finish the run");
+    assertEquals(
+      sessionManager.getRunStatus("run_1"),
+      null,
+      "awaiting the waitUntil promise must complete the run",
+    );
   });
 
   it("starts a detached run and returns accepted duplicate false", async () => {

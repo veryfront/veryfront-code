@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
+import {
+  assertEquals,
+  assertExists,
+  assertInstanceOf,
+  assertRejects,
+} from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { type ModelRuntime, registerModelProvider } from "#veryfront/provider";
@@ -400,6 +405,57 @@ describe("agent/fork-runtime-stream", () => {
     });
   });
 
+  it("uses the step preparer forkToolNames override for the child step", async () => {
+    const capturedInputs: RunAgentRuntimeForkStepInput[] = [];
+    const response: AgentResponse = {
+      text: "Done.",
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          timestamp: 2,
+          parts: [{ type: "text", text: "Done." }],
+        },
+      ],
+      toolCalls: [],
+      status: "completed",
+    };
+    const streamResult = startAgentRuntimeFork({
+      apiUrl: "https://api.example.com",
+      authToken: "auth-token",
+      projectId: "project-1",
+      model: "model-1",
+      maxSteps: 1,
+      prompt: "Do the work.",
+      forkToolNames: ["create_file"],
+      runtimeTools: {},
+      buildInstructions: () => "Base instructions.",
+      prepareStep: ({ messages, buildInstructions }) => ({
+        messages,
+        system: buildInstructions(),
+        forkToolNames: ["create_file", "gmail__list_emails"],
+      }),
+      runStep: async (input) => {
+        capturedInputs.push(input);
+        return {
+          stream: createRuntimeEventStream([{ type: "text-delta", delta: "Done." }]),
+          responsePromise: Promise.resolve(response),
+        };
+      },
+    });
+
+    for await (const _part of streamResult.fullStream) {
+      // Drain the stream so the step runs.
+    }
+    await streamResult.steps;
+
+    assertEquals(
+      capturedInputs[0]?.forkToolNames,
+      ["create_file", "gmail__list_emails"],
+      "prepared forkToolNames must reach the child step",
+    );
+  });
+
   it("preserves structured provider options in the default fork step runner", async () => {
     const providerId = "fork-structured-system";
     let observedSystem: unknown;
@@ -460,6 +516,69 @@ describe("agent/fork-runtime-stream", () => {
           anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
         },
       });
+    } finally {
+      unregister();
+    }
+  });
+
+  it("rejects the response promise when the fork step starts with an aborted signal", async () => {
+    const providerId = "fork-aborted-step";
+    const model: ModelRuntime = {
+      provider: providerId,
+      modelId: `${providerId}/demo`,
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "Done." }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return {
+          stream: new ReadableStream<unknown>({
+            start(controller) {
+              controller.enqueue({ type: "text-delta", text: "Done." });
+              controller.enqueue({ type: "finish", finishReason: "stop" });
+              controller.close();
+            },
+          }),
+        };
+      },
+    };
+    const unregister = registerModelProvider(providerId, () => model);
+    const controller = new AbortController();
+    controller.abort();
+
+    try {
+      const result = await runAgentRuntimeForkStep({
+        apiUrl: "https://api.example.com",
+        authToken: "test-token",
+        projectId: "project-1",
+        model: `${providerId}/demo`,
+        messages: [{
+          id: "user-1",
+          role: "user",
+          parts: [{ type: "text", text: "Do the work." }],
+        }],
+        system: "Fork instructions.",
+        abortSignal: controller.signal,
+        forkToolNames: [],
+        runtimeTools: {},
+      });
+
+      const error = await assertRejects(() => result.responsePromise, Error);
+      assertInstanceOf(
+        error,
+        Error,
+        "an aborted fork step must reject with an Error",
+      );
+      assertEquals(
+        error.name,
+        "AbortError",
+        "an aborted fork step must settle responsePromise",
+      );
+
+      await new Response(result.stream).text().catch(() => undefined);
     } finally {
       unregister();
     }

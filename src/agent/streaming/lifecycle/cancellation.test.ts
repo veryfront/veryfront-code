@@ -29,6 +29,63 @@ describe("createCancellationCoordinator", () => {
     assertEquals(runtime.activeAbortListenerCount(), 0);
     assertEquals(client.activeAbortListenerCount(), 0);
   });
+
+  it("selects consumer_stopped and aborts the coordinator signal when the consumer stops", () => {
+    const runtime = createAbortListenerCountingController();
+    const client = createAbortListenerCountingController();
+    const selected: string[] = [];
+    const coordinator = createCancellationCoordinator([
+      { source: "runtime", signal: runtime.signal },
+      { source: "client_disconnected", signal: client.signal },
+    ], (source) => selected.push(source));
+
+    coordinator.stopConsumer();
+
+    assertEquals(
+      coordinator.source,
+      "consumer_stopped",
+      "stopping the consumer must win the cancellation race",
+    );
+    assertEquals(
+      coordinator.signal.aborted,
+      true,
+      "stopConsumer must abort the coordinator signal so a pending provider read unblocks",
+    );
+    assertEquals(selected, ["consumer_stopped"], "onCancel must fire once with consumer_stopped");
+    assertEquals(
+      runtime.activeAbortListenerCount(),
+      0,
+      "input listeners must be removed when the consumer stops",
+    );
+    assertEquals(
+      client.activeAbortListenerCount(),
+      0,
+      "input listeners must be removed when the consumer stops",
+    );
+    coordinator.dispose();
+  });
+
+  it("aborts the provider without claiming a cancellation source", () => {
+    const runtime = createAbortListenerCountingController();
+    const coordinator = createCancellationCoordinator(
+      [{ source: "runtime", signal: runtime.signal }],
+      () => {},
+    );
+
+    coordinator.abortProvider("provider reset");
+
+    assertEquals(
+      coordinator.signal.aborted,
+      true,
+      "abortProvider must abort the coordinator signal",
+    );
+    assertEquals(
+      coordinator.source,
+      null,
+      "abortProvider must not claim a cancellation source",
+    );
+    coordinator.dispose();
+  });
 });
 
 function createAbortListenerCountingController(): AbortController & {

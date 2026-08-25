@@ -88,6 +88,178 @@ describe("stream lifecycle deadlines", () => {
     }
   });
 
+  it("kills a provider that never starts after the first-progress budget", async () => {
+    const clock = new ManualMonotonicClock();
+    const provider = createControllableSignalProvider();
+    const run = runStreamLifecycle({
+      provider,
+      policy: {
+        clock,
+        firstProgressTimeoutMs: 60_000,
+        semanticIdleTimeoutMs: 15_000,
+        statusIntervalMs: 60_000,
+        attemptTimeoutMs: 300_000,
+      },
+    });
+    const iterator = run.frames[Symbol.asyncIterator]();
+    const pending = iterator.next();
+
+    clock.advanceBy(15_000);
+    assertEquals(
+      clock.pendingWaitCount,
+      2,
+      "the first-progress budget must outlast the semantic-idle budget for a provider that never starts",
+    );
+
+    clock.advanceBy(45_000);
+    assertEquals((await pending).done, true, "the first-progress deadline must end the stream");
+    const outcome = await run.outcome;
+    assertEquals(outcome.status, "failed", "a provider that never starts must fail the stream");
+    if (outcome.status === "failed") {
+      assertEquals(
+        outcome.error.code,
+        "FIRST_PROGRESS_TIMEOUT",
+        "a provider that never starts must fail with the first-progress code",
+      );
+    }
+    assertEquals(
+      outcome.elapsedMs,
+      60_000,
+      "first progress must be budgeted from firstProgressTimeoutMs",
+    );
+  });
+
+  it("kills a provider that stalls mid-stream after the semantic-idle budget", async () => {
+    const clock = new ManualMonotonicClock();
+    const provider = createControllableSignalProvider();
+    const run = runStreamLifecycle({
+      provider,
+      policy: {
+        clock,
+        firstProgressTimeoutMs: 60_000,
+        semanticIdleTimeoutMs: 15_000,
+        statusIntervalMs: 60_000,
+        attemptTimeoutMs: 300_000,
+      },
+    });
+    const iterator = run.frames[Symbol.asyncIterator]();
+    const firstRead = iterator.next();
+    provider.resolveNext({
+      done: false,
+      value: {
+        kind: "protocol",
+        event: { type: "text_content", id: "text-1", delta: "hello" },
+      },
+    });
+    assertEquals(
+      (await firstRead).value?.class,
+      "semantic",
+      "the implicit text start must surface as a semantic frame",
+    );
+    assertEquals(
+      (await iterator.next()).value?.class,
+      "diagnostic",
+      "the implicit text start must be reported as a protocol repair",
+    );
+    assertEquals(
+      (await iterator.next()).value?.class,
+      "semantic",
+      "the text content must surface as a semantic frame",
+    );
+
+    const pending = iterator.next();
+    clock.advanceBy(14_999);
+    assertEquals(
+      clock.pendingWaitCount,
+      2,
+      "the semantic-idle budget must still be armed just before it elapses",
+    );
+
+    clock.advanceBy(1);
+    assertEquals(
+      clock.pendingWaitCount,
+      1,
+      "semantic idle must elapse on the semantic-idle budget, not the first-progress budget",
+    );
+    assertEquals((await pending).done, true, "the semantic-idle deadline must end the stream");
+    const outcome = await run.outcome;
+    assertEquals(
+      outcome.status,
+      "failed",
+      "a provider that stalls mid-stream must fail the stream",
+    );
+    if (outcome.status === "failed") {
+      assertEquals(
+        outcome.error.code,
+        "SEMANTIC_IDLE_TIMEOUT",
+        "a provider that stalls mid-stream must fail with the semantic-idle code",
+      );
+    }
+    assertEquals(
+      outcome.elapsedMs,
+      15_000,
+      "semantic idle must be budgeted from semanticIdleTimeoutMs",
+    );
+  });
+
+  it("prefers the provider deadline over a read that settled after it", async () => {
+    const clock = new ManualMonotonicClock();
+    const provider = createControllableSignalProvider();
+    const run = runStreamLifecycle({
+      provider,
+      policy: {
+        clock,
+        toolInputIdleTimeoutMs: 20_000,
+        statusIntervalMs: 60_000,
+        attemptTimeoutMs: 120_000,
+      },
+    });
+    const iterator = run.frames[Symbol.asyncIterator]();
+    provider.resolveNext({
+      done: false,
+      value: {
+        kind: "protocol",
+        event: {
+          type: "tool_input_start",
+          toolCallId: "t1",
+          toolName: "create_file",
+        },
+      },
+    });
+    await iterator.next();
+
+    const pending = iterator.next();
+    // The clock passes the armed idle deadline before the provider part lands,
+    // so the tracked read settles strictly after the deadline it lost to.
+    clock.advanceBy(21_000);
+    provider.resolveNext({
+      done: false,
+      value: {
+        kind: "protocol",
+        event: {
+          type: "tool_input_content",
+          toolCallId: "t1",
+          delta: '{"path":"a.md"}',
+        },
+      },
+    });
+
+    assertEquals(
+      (await pending).done,
+      true,
+      "a part that settles after the idle deadline must not defer the deadline",
+    );
+    const outcome = await run.outcome;
+    assertEquals(outcome.status, "failed", "the late part must not rescue the stalled tool input");
+    if (outcome.status === "failed") {
+      assertEquals(
+        outcome.error.code,
+        "TOOL_INPUT_TIMEOUT",
+        "the provider deadline must win over a late-settled cached read",
+      );
+    }
+  });
+
   it("resumes the remaining provider-wait budget after consumer backpressure", async () => {
     const clock = new ManualMonotonicClock();
     const provider = createControllableSignalProvider();
