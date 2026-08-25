@@ -1047,6 +1047,7 @@ export class Renderer {
                   error: cancelError instanceof Error ? cancelError.message : cancelError,
                 });
               }
+              throw error;
             }
           }
         }

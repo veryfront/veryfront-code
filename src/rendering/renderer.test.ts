@@ -705,7 +705,8 @@ describe("Renderer response metadata", () => {
       assertEquals(projectRenderCounts.get(projectId), 1);
 
       finishCancellation.resolve();
-      assertEquals((await render).stream, stream);
+      const rejected = await assertRejects(() => render, Error, readinessError.message);
+      assertStrictEquals(rejected, readinessError);
       assertEquals(projectRenderCounts.has(projectId), false);
     } finally {
       allReady.reject(readinessError);
