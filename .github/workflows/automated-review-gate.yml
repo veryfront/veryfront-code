@@ -55,7 +55,7 @@ jobs:
               const match = /^(?:refs\/heads\/)?gh-readonly-queue\/.+\/pr-([1-9]\d*)-([0-9a-f]{40})$/i.exec(headRef);
               const pullNumber = match ? Number(match[1]) : undefined;
               return Number.isSafeInteger(pullNumber)
-                ? { pullNumber, sourceHeadSha: match[2].toLowerCase() }
+                ? { pullNumber, baseSha: match[2].toLowerCase() }
                 : undefined;
             };
             const parseReviewWakeupIdentity = (run) => {
@@ -102,6 +102,13 @@ jobs:
                 core.setOutput("key", `run-${context.runId}`);
                 return;
               }
+              const mergeGroupBaseSha =
+                context.payload.merge_group?.base_sha?.toLowerCase();
+              if (queueEntry.baseSha !== mergeGroupBaseSha) {
+                core.setFailed("Merge queue ref does not match its base commit");
+                core.setOutput("key", `run-${context.runId}`);
+                return;
+              }
             }
             const pullNumber = queueEntry?.pullNumber ??
               context.payload.pull_request?.number ??
@@ -113,8 +120,8 @@ jobs:
               core.setOutput("key", `run-${context.runId}`);
               return;
             }
-            let headSha = queueEntry?.sourceHeadSha;
-            if (!headSha) {
+            let headSha;
+            {
               try {
                 const response = await github.rest.git.getRef({
                   owner: context.repo.owner,
@@ -611,15 +618,22 @@ jobs:
                 {
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  ref: `heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-${headSha}`,
+                  ref: `heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-`,
                 },
                 "merge queue refs",
               );
               const seen = new Set();
-              const expectedQueueRef =
-                `refs/heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-${headSha}`;
+              const queueRefPrefix =
+                `refs/heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-`;
               for (const queueRef of refs) {
-                if (queueRef?.ref !== expectedQueueRef) continue;
+                if (
+                  typeof queueRef?.ref !== "string" ||
+                  !queueRef.ref.startsWith(queueRefPrefix)
+                ) continue;
+                const queueBaseSha = queueRef.ref.slice(queueRefPrefix.length);
+                if (!fullSha.test(queueBaseSha)) {
+                  throw new Error("Merge queue ref has a malformed base commit");
+                }
                 const mergeGroupSha = queueRef?.object?.sha;
                 if (!fullSha.test(mergeGroupSha ?? "")) {
                   throw new Error("Merge queue ref has a malformed commit");
@@ -742,7 +756,8 @@ jobs:
             if (
               !Number.isSafeInteger(pullNumber) ||
               pullNumber !== queueEntry.pullNumber ||
-              sourceHeadSha !== queueEntry.sourceHeadSha
+              queueEntry.baseSha !==
+                context.payload.merge_group.base_sha?.toLowerCase()
             ) {
               core.setFailed("Merge queue source does not match its serialized lock");
               return;
@@ -753,6 +768,7 @@ jobs:
               repo: context.repo.repo,
               pullNumber,
               sourceHeadSha,
+              baseSha: queueEntry.baseSha,
               mergeGroupSha: context.payload.merge_group.head_sha,
             });
             if (result.state === "success") {

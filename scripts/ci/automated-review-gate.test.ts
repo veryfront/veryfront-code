@@ -12,15 +12,17 @@ import {
   parseMergeQueuePullNumber,
   parseReviewWakeupRun,
   publishAutomatedReviewStatus,
-  publishMergeGroupReviewStatus,
+  publishMergeGroupReviewStatus as publishMergeGroupReviewStatusImpl,
   publishReviewResolutionFailure,
   reconcileActiveMergeGroupReviewStatuses,
   requestAutomatedReview,
+  resolveMergeQueueSource,
   reviewBaseBinding,
 } from "./automated-review-gate.mjs";
 
 const HEAD = "a4804e5b9a0c9c45da7c4866d9eb317c878b029c";
 const OTHER_HEAD = "d258d506fede01c84b61bc40488059447d755a5a";
+const QUEUE_BASE = "4e85ab7773ea2341a4d2cc75a81001df3f084fcc";
 const BASE_REPOSITORY_ID = 1_101_259_327;
 const BASE_REF = "main";
 const OTHER_BASE_REF = "release";
@@ -35,6 +37,15 @@ const WAKEUP_WORKFLOW_PATH = new URL(
   "../../.github/workflows/automated-review-wakeup.yml",
   import.meta.url,
 );
+
+function publishMergeGroupReviewStatus(
+  options: Record<string, unknown>,
+) {
+  return publishMergeGroupReviewStatusImpl({
+    baseSha: QUEUE_BASE,
+    ...options,
+  });
+}
 
 const bot = (login: string, id: number) => ({ login, id, type: "Bot" });
 
@@ -757,6 +768,7 @@ function githubFixture(options: {
   permissionError?: Error;
   pullAuthor?: string;
   draft?: boolean;
+  queueEntry?: Record<string, unknown> | null;
 } = {}) {
   const endpoints = {
     reviews: () => undefined,
@@ -770,6 +782,22 @@ function githubFixture(options: {
   const pageReads = new Map<string, number>();
   let pullRead = 0;
   const github = {
+    graphql: () =>
+      Promise.resolve({
+        repository: {
+          pullRequest: {
+            number: 1,
+            headRefOid: HEAD,
+            mergeQueueEntry: options.queueEntry === undefined
+              ? {
+                baseCommit: { oid: QUEUE_BASE },
+                headCommit: { oid: HEAD },
+                pullRequest: { number: 1, headRefOid: HEAD },
+              }
+              : options.queueEntry,
+          },
+        },
+      }),
     paginate: {
       async *iterator(endpoint: unknown) {
         const name = Object.entries(endpoints).find(([, value]) =>
@@ -1358,12 +1386,12 @@ describe("automated review publication", () => {
 });
 
 describe("merge queue review propagation", () => {
-  it("extracts only a fully qualified merge-queue pull request ref", () => {
+  it("extracts the pull request and base commit from a merge-queue ref", () => {
     assertEquals(
       parseMergeQueuePullNumber(
         `refs/heads/gh-readonly-queue/main/pr-4135-${OTHER_HEAD}`,
       ),
-      { pullNumber: 4135, sourceHeadSha: OTHER_HEAD },
+      { pullNumber: 4135, baseSha: OTHER_HEAD },
     );
     for (
       const ref of [
@@ -1376,21 +1404,70 @@ describe("merge queue review propagation", () => {
     ) assertEquals(parseMergeQueuePullNumber(ref), undefined);
   });
 
+  it("binds a queue base to GitHub's immutable entry source", async () => {
+    const fixture = githubFixture();
+    assertEquals(
+      await resolveMergeQueueSource({
+        github: fixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        baseSha: QUEUE_BASE,
+      }),
+      HEAD,
+    );
+
+    for (
+      const queueEntry of [
+        null,
+        {
+          baseCommit: { oid: OTHER_HEAD },
+          headCommit: { oid: HEAD },
+          pullRequest: { number: 1, headRefOid: HEAD },
+        },
+        {
+          baseCommit: { oid: QUEUE_BASE },
+          headCommit: { oid: OTHER_HEAD },
+          pullRequest: { number: 1, headRefOid: HEAD },
+        },
+        {
+          baseCommit: { oid: QUEUE_BASE },
+          headCommit: { oid: HEAD },
+          pullRequest: { number: 2, headRefOid: HEAD },
+        },
+      ]
+    ) {
+      const invalid = githubFixture({ queueEntry });
+      await assertRejects(
+        () =>
+          resolveMergeQueueSource({
+            github: invalid.github,
+            owner: "veryfront",
+            repo: "veryfront-code",
+            pullNumber: 1,
+            baseSha: QUEUE_BASE,
+          }),
+        Error,
+        "does not match its queued pull request",
+      );
+    }
+  });
+
   it("fails the source and active queue refs without a pull lookup", async () => {
     const secondQueueHead = "e724246c0e05c8dcf0db41f024f4592128222937";
     const fixture = githubFixture({
       pages: {
         refs: [[
           {
-            ref: `refs/heads/gh-readonly-queue/main/pr-1-${HEAD}`,
+            ref: `refs/heads/gh-readonly-queue/main/pr-1-${QUEUE_BASE}`,
             object: { sha: OTHER_HEAD },
           },
           {
-            ref: `refs/heads/gh-readonly-queue/release/pr-1-${HEAD}`,
+            ref: `refs/heads/gh-readonly-queue/release/pr-1-${QUEUE_BASE}`,
             object: { sha: secondQueueHead },
           },
           {
-            ref: `refs/heads/gh-readonly-queue/main/pr-2-${HEAD}`,
+            ref: `refs/heads/gh-readonly-queue/main/pr-2-${QUEUE_BASE}`,
             object: { sha: secondQueueHead },
           },
         ]],
@@ -1652,7 +1729,7 @@ describe("merge queue review propagation", () => {
       pages: {
         reviews: [[review({ state: "APPROVED" })]],
         refs: [[{
-          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${HEAD}`,
+          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${QUEUE_BASE}`,
           object: { sha: OTHER_HEAD },
         }]],
         statuses: [[automatedReviewStatus({ state: "pending" })]],
@@ -1955,7 +2032,7 @@ describe("review proof invalidation", () => {
           created_at: "2026-08-25T08:00:00Z",
         })]],
         refs: [[{
-          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${HEAD}`,
+          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${QUEUE_BASE}`,
           object: { sha: OTHER_HEAD },
         }]],
       },
@@ -2005,7 +2082,7 @@ describe("review proof invalidation", () => {
       headResponses: [HEAD],
       pages: {
         refs: [[{
-          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${HEAD}`,
+          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${QUEUE_BASE}`,
           object: { sha: OTHER_HEAD },
         }]],
       },
@@ -2395,6 +2472,8 @@ describe("automated review workflow", () => {
         "github.rest.git.getRef",
         "fallbackResponse = await github.rest.pulls.get",
         "context.payload.pull_request?.head?.sha",
+        "context.payload.merge_group?.base_sha",
+        "queueEntry.baseSha",
         "Could not resolve a valid review target commit",
       ]
     ) assert(targetScript.includes(required));
@@ -2423,6 +2502,10 @@ describe("automated review workflow", () => {
     assert(
       !targetScript.includes("workflowRun?.name"),
       "a dynamic run-name must not be mistaken for the stable workflow identity",
+    );
+    assert(
+      !targetScript.includes("sourceHeadSha: match[2]"),
+      "the queue ref suffix is the base commit, not the pull request head",
     );
 
     const mergeGroupFailureJob = record(
@@ -2625,8 +2708,7 @@ describe("automated review workflow", () => {
       {
         TARGET_SHA: "${{ needs.target.outputs.key }}",
         PULL_NUMBER: "${{ needs.target.outputs.pull_number }}",
-        RECONCILIATION_STATUS_ID:
-          "${{ needs.target.outputs.status_id }}",
+        RECONCILIATION_STATUS_ID: "${{ needs.target.outputs.status_id }}",
       },
     );
     for (
@@ -2647,6 +2729,18 @@ describe("automated review workflow", () => {
         "the invalidator must resolve its pull request the way the resolver does",
       );
     }
+    assert(
+      invalidateScript.includes(
+        "`heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-`",
+      ),
+      "the independent fallback must list every queue ref for the pull request",
+    );
+    assert(
+      !invalidateScript.includes(
+        "`heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-${headSha}`",
+      ),
+      "the queue ref suffix is the base commit, not the source head",
+    );
 
     const mergeGroupJob = record(jobs.merge_group, "merge group job");
     assertEquals(mergeGroupJob.if, "github.event_name == 'merge_group'");
@@ -2677,6 +2771,8 @@ describe("automated review workflow", () => {
     assert(mergeGroupScript.includes("process.env.SOURCE_HEAD_SHA"));
     assert(mergeGroupScript.includes("process.env.PULL_NUMBER"));
     assert(mergeGroupScript.includes("sourceHeadSha"));
+    assert(mergeGroupScript.includes("queueEntry.baseSha"));
+    assert(mergeGroupScript.includes("context.payload.merge_group.base_sha"));
     assert(mergeGroupScript.includes("context.payload.merge_group.head_ref"));
     assert(mergeGroupScript.includes("context.payload.merge_group.head_sha"));
     assert(
