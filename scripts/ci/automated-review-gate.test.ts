@@ -769,6 +769,7 @@ function githubFixture(options: {
   pullAuthor?: string;
   draft?: boolean;
   queueEntry?: Record<string, unknown> | null;
+  queueSourceHead?: string;
 } = {}) {
   const endpoints = {
     reviews: () => undefined,
@@ -781,18 +782,19 @@ function githubFixture(options: {
   const published: Record<string, unknown>[] = [];
   const pageReads = new Map<string, number>();
   let pullRead = 0;
+  const queueSourceHead = options.queueSourceHead ?? HEAD;
   const github = {
     graphql: () =>
       Promise.resolve({
         repository: {
           pullRequest: {
             number: 1,
-            headRefOid: HEAD,
+            headRefOid: queueSourceHead,
             mergeQueueEntry: options.queueEntry === undefined
               ? {
                 baseCommit: { oid: QUEUE_BASE },
                 headCommit: { oid: OTHER_HEAD },
-                pullRequest: { number: 1, headRefOid: HEAD },
+                pullRequest: { number: 1, headRefOid: queueSourceHead },
               }
               : options.queueEntry,
           },
@@ -1460,7 +1462,7 @@ describe("merge queue review propagation", () => {
     }
   });
 
-  it("fails the source and active queue refs without a pull lookup", async () => {
+  it("fails the source and only its identity-bound queue ref", async () => {
     const secondQueueHead = "e724246c0e05c8dcf0db41f024f4592128222937";
     const fixture = githubFixture({
       pages: {
@@ -1488,14 +1490,74 @@ describe("merge queue review propagation", () => {
       pullNumber: 1,
       sourceHeadSha: HEAD,
     });
-    assertEquals(result.queueFailures, 2);
+    assertEquals(result.queueFailures, 1);
     assertEquals(
       fixture.published.map((status) => [status.sha, status.state]),
       [
         [HEAD, "failure"],
         [OTHER_HEAD, "failure"],
-        [secondQueueHead, "failure"],
       ],
+    );
+  });
+
+  it("does not let an old-head failure close a newer queue entry", async () => {
+    const newerQueueHead = "e724246c0e05c8dcf0db41f024f4592128222937";
+    const fixture = githubFixture({
+      queueSourceHead: OTHER_HEAD,
+      queueEntry: {
+        baseCommit: { oid: QUEUE_BASE },
+        headCommit: { oid: newerQueueHead },
+        pullRequest: { number: 1, headRefOid: OTHER_HEAD },
+      },
+      pages: {
+        refs: [[{
+          ref: `refs/heads/gh-readonly-queue/main/pr-1-${QUEUE_BASE}`,
+          object: { sha: newerQueueHead },
+        }]],
+      },
+    });
+
+    const result = await publishReviewResolutionFailure({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      sourceHeadSha: HEAD,
+    });
+
+    assertEquals(result.queueFailures, 0);
+    assertEquals(
+      fixture.published.map((status) => [status.sha, status.state]),
+      [[HEAD, "failure"]],
+    );
+  });
+
+  it("does not guess a queue failure target when entry identity is unavailable", async () => {
+    const fixture = githubFixture({
+      queueEntry: null,
+      pages: {
+        refs: [[{
+          ref: `refs/heads/gh-readonly-queue/main/pr-1-${QUEUE_BASE}`,
+          object: { sha: OTHER_HEAD },
+        }]],
+      },
+    });
+
+    await assertRejects(
+      () =>
+        publishReviewResolutionFailure({
+          github: fixture.github,
+          owner: "veryfront",
+          repo: "veryfront-code",
+          pullNumber: 1,
+          sourceHeadSha: HEAD,
+        }),
+      Error,
+      "does not match its queued pull request",
+    );
+    assertEquals(
+      fixture.published.map((status) => [status.sha, status.state]),
+      [[HEAD, "failure"]],
     );
   });
 
@@ -2724,6 +2786,9 @@ describe("automated review workflow", () => {
         "reconciliationStatusId",
         "publishIndependentFailure",
         "listMatchingRefs",
+        "github.graphql",
+        "mergeQueueEntry",
+        "headCommit",
         "createCommitStatus",
         "process.env.TARGET_SHA",
         "process.env.PULL_NUMBER",

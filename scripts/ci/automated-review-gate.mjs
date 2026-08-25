@@ -492,14 +492,30 @@ export async function publishReviewResolutionFailure({
     { owner, repo, ref: "heads/gh-readonly-queue/" },
     "merge queue refs",
   );
+  const pullQueueRefs = refs.filter((queueRef) =>
+    parseMergeQueuePullNumber(queueRef?.ref)?.pullNumber === pullNumber
+  );
+  if (pullQueueRefs.length === 0) return { queueFailures: 0 };
+  const queueEntry = await resolveCurrentMergeQueueEntry({
+    github,
+    owner,
+    repo,
+    pullNumber,
+  });
+  if (queueEntry.sourceHeadSha !== sourceHeadSha.toLowerCase()) {
+    return { queueFailures: 0 };
+  }
   const seen = new Set();
-  for (const queueRef of refs) {
+  for (const queueRef of pullQueueRefs) {
     const parsed = parseMergeQueuePullNumber(queueRef?.ref);
     const mergeGroupSha = queueRef?.object?.sha;
-    if (parsed?.pullNumber !== pullNumber) continue;
     if (!FULL_SHA.test(mergeGroupSha ?? "")) {
       throw new Error("Merge queue ref has a malformed commit");
     }
+    if (
+      parsed?.baseSha !== queueEntry.baseSha ||
+      mergeGroupSha.toLowerCase() !== queueEntry.mergeGroupSha
+    ) continue;
     if (seen.has(mergeGroupSha.toLowerCase())) continue;
     seen.add(mergeGroupSha.toLowerCase());
     await github.rest.repos.createCommitStatus({
@@ -813,23 +829,14 @@ export function parseMergeQueuePullNumber(headRef) {
     : undefined;
 }
 
-/** Resolve the immutable source commit stored in GitHub's merge-queue entry. */
-export async function resolveMergeQueueSource({
+async function resolveCurrentMergeQueueEntry({
   github,
   owner,
   repo,
   pullNumber,
-  baseSha,
-  mergeGroupSha,
 }) {
   if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
     throw new Error("Merge queue pull request number is invalid");
-  }
-  if (!FULL_SHA.test(baseSha)) {
-    throw new Error("Merge queue base commit is malformed");
-  }
-  if (!FULL_SHA.test(mergeGroupSha)) {
-    throw new Error("Merge group commit is malformed");
   }
   const response = await github.graphql(
     `query ResolveMergeQueueSource(
@@ -854,17 +861,53 @@ export async function resolveMergeQueueSource({
   const pullRequest = response?.repository?.pullRequest;
   const entry = pullRequest?.mergeQueueEntry;
   const sourceHeadSha = entry?.pullRequest?.headRefOid;
+  const baseSha = entry?.baseCommit?.oid;
+  const mergeGroupSha = entry?.headCommit?.oid;
   if (
     pullRequest?.number !== pullNumber ||
     entry?.pullRequest?.number !== pullNumber ||
-    entry?.baseCommit?.oid?.toLowerCase() !== baseSha.toLowerCase() ||
-    entry?.headCommit?.oid?.toLowerCase() !== mergeGroupSha.toLowerCase() ||
+    !FULL_SHA.test(baseSha ?? "") ||
+    !FULL_SHA.test(mergeGroupSha ?? "") ||
     !FULL_SHA.test(sourceHeadSha ?? "") ||
     pullRequest?.headRefOid?.toLowerCase() !== sourceHeadSha.toLowerCase()
   ) {
     throw new Error("Merge queue entry does not match its queued pull request");
   }
-  return sourceHeadSha.toLowerCase();
+  return {
+    baseSha: baseSha.toLowerCase(),
+    mergeGroupSha: mergeGroupSha.toLowerCase(),
+    sourceHeadSha: sourceHeadSha.toLowerCase(),
+  };
+}
+
+/** Resolve the immutable source commit stored in GitHub's merge-queue entry. */
+export async function resolveMergeQueueSource({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  baseSha,
+  mergeGroupSha,
+}) {
+  if (!FULL_SHA.test(baseSha)) {
+    throw new Error("Merge queue base commit is malformed");
+  }
+  if (!FULL_SHA.test(mergeGroupSha)) {
+    throw new Error("Merge group commit is malformed");
+  }
+  const entry = await resolveCurrentMergeQueueEntry({
+    github,
+    owner,
+    repo,
+    pullNumber,
+  });
+  if (
+    entry.baseSha !== baseSha.toLowerCase() ||
+    entry.mergeGroupSha !== mergeGroupSha.toLowerCase()
+  ) {
+    throw new Error("Merge queue entry does not match its queued pull request");
+  }
+  return entry.sourceHeadSha;
 }
 
 function assertMergeGroupInputs({

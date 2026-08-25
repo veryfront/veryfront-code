@@ -622,6 +622,50 @@ jobs:
                 },
                 "merge queue refs",
               );
+              let queueEntryIdentity;
+              if (refs.length > 0) {
+                const queueResponse = await github.graphql(
+                  `query ResolveIndependentQueueSource(
+                    $owner: String!
+                    $repo: String!
+                    $pullNumber: Int!
+                  ) {
+                    repository(owner: $owner, name: $repo) {
+                      pullRequest(number: $pullNumber) {
+                        number
+                        headRefOid
+                        mergeQueueEntry {
+                          baseCommit { oid }
+                          headCommit { oid }
+                          pullRequest { number headRefOid }
+                        }
+                      }
+                    }
+                  }`,
+                  { owner: context.repo.owner, repo: context.repo.repo, pullNumber },
+                );
+                const queuePull = queueResponse?.repository?.pullRequest;
+                const queueEntry = queuePull?.mergeQueueEntry;
+                const queueSourceHead = queueEntry?.pullRequest?.headRefOid;
+                const queueBaseSha = queueEntry?.baseCommit?.oid;
+                const queueMergeGroupSha = queueEntry?.headCommit?.oid;
+                if (
+                  queuePull?.number !== pullNumber ||
+                  queueEntry?.pullRequest?.number !== pullNumber ||
+                  !fullSha.test(queueSourceHead ?? "") ||
+                  !fullSha.test(queueBaseSha ?? "") ||
+                  !fullSha.test(queueMergeGroupSha ?? "") ||
+                  queuePull?.headRefOid?.toLowerCase() !==
+                    queueSourceHead.toLowerCase()
+                ) throw new Error("Merge queue entry is malformed");
+                if (queueSourceHead.toLowerCase() !== headSha.toLowerCase()) {
+                  return { headSha, queueFailures: 0, skipped: false };
+                }
+                queueEntryIdentity = {
+                  baseSha: queueBaseSha.toLowerCase(),
+                  mergeGroupSha: queueMergeGroupSha.toLowerCase(),
+                };
+              }
               const seen = new Set();
               const queueRefPrefix =
                 `refs/heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-`;
@@ -638,6 +682,11 @@ jobs:
                 if (!fullSha.test(mergeGroupSha ?? "")) {
                   throw new Error("Merge queue ref has a malformed commit");
                 }
+                if (
+                  queueBaseSha.toLowerCase() !== queueEntryIdentity?.baseSha ||
+                  mergeGroupSha.toLowerCase() !==
+                    queueEntryIdentity?.mergeGroupSha
+                ) continue;
                 if (seen.has(mergeGroupSha.toLowerCase())) continue;
                 seen.add(mergeGroupSha.toLowerCase());
                 await github.rest.repos.createCommitStatus({
