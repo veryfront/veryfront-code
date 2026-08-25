@@ -429,7 +429,6 @@ export {
   type NodeVeryfrontCloudAgentServiceOptions,
   type NodeVeryfrontCloudAgentServicePreparedExecution,
   type NodeVeryfrontCloudAgentServiceProcessTarget,
-  startAgentService,
   startNodeVeryfrontCloudAgentService,
   veryfrontApiMcpServer,
   type VeryfrontCloudAgentServiceOptions,
