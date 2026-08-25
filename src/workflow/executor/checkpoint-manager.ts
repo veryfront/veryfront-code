@@ -7,6 +7,21 @@ import { buildGraph, getReadyNodes, updateInDegreesForCompletedNodes } from "./d
 
 const logger = baseLogger.component("checkpoint-manager");
 const numberIsSafeInteger = Number.isSafeInteger;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwn = Object.hasOwn;
+
+function getOwnDataProperty(value: unknown, key: PropertyKey): unknown {
+  if (
+    (typeof value !== "object" && typeof value !== "function") ||
+    value === null
+  ) return undefined;
+  try {
+    const descriptor = objectGetOwnPropertyDescriptor(value, key);
+    return descriptor && objectHasOwn(descriptor, "value") ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export interface CheckpointManagerConfig {
   backend: WorkflowBackend;
@@ -132,6 +147,34 @@ export class CheckpointManager {
     };
     updateInDegreesForCompletedNodes(readinessStates, adjList, inDegree);
     return getReadyNodes(inDegree, readinessStates)[0] ?? null;
+  }
+
+  /**
+   * @deprecated Node checkpoint policy is owned by the DAG executor. This
+   * compatibility wrapper preserves the historical public API until the next
+   * breaking release.
+   */
+  shouldCheckpoint(node: WorkflowNode): boolean {
+    const { config } = node;
+    const explicitCheckpoint = getOwnDataProperty(config, "checkpoint");
+
+    if (explicitCheckpoint !== undefined) return explicitCheckpoint === true;
+
+    const configType = getOwnDataProperty(config, "type");
+    if (typeof configType !== "string") return false;
+
+    if (configType === "step") {
+      return !!getOwnDataProperty(config, "agent");
+    }
+
+    const checkpointDefaults: Record<string, boolean> = {
+      wait: true,
+      parallel: true,
+      subWorkflow: true,
+      branch: false,
+    };
+
+    return checkpointDefaults[configType] === true;
   }
 
   /**
