@@ -21,6 +21,7 @@ import {
 
 const HEAD = "a4804e5b9a0c9c45da7c4866d9eb317c878b029c";
 const OTHER_HEAD = "d258d506fede01c84b61bc40488059447d755a5a";
+const BASE_HEAD = "e724246c0e05c8dcf0db41f024f4592128222937";
 const BASE_REPOSITORY_ID = 1_101_259_327;
 const BASE_REF = "main";
 const OTHER_BASE_REF = "release";
@@ -1363,7 +1364,7 @@ describe("merge queue review propagation", () => {
       parseMergeQueuePullNumber(
         `refs/heads/gh-readonly-queue/main/pr-4135-${OTHER_HEAD}`,
       ),
-      { pullNumber: 4135, sourceHeadSha: OTHER_HEAD },
+      { pullNumber: 4135, baseHeadSha: OTHER_HEAD },
     );
     for (
       const ref of [
@@ -1377,20 +1378,20 @@ describe("merge queue review propagation", () => {
   });
 
   it("fails the source and active queue refs without a pull lookup", async () => {
-    const secondQueueHead = "e724246c0e05c8dcf0db41f024f4592128222937";
+    const secondQueueHead = BASE_HEAD;
     const fixture = githubFixture({
       pages: {
         refs: [[
           {
-            ref: `refs/heads/gh-readonly-queue/main/pr-1-${HEAD}`,
+            ref: `refs/heads/gh-readonly-queue/main/pr-1-${BASE_HEAD}`,
             object: { sha: OTHER_HEAD },
           },
           {
-            ref: `refs/heads/gh-readonly-queue/release/pr-1-${HEAD}`,
+            ref: `refs/heads/gh-readonly-queue/release/pr-1-${OTHER_HEAD}`,
             object: { sha: secondQueueHead },
           },
           {
-            ref: `refs/heads/gh-readonly-queue/main/pr-2-${HEAD}`,
+            ref: `refs/heads/gh-readonly-queue/main/pr-2-${BASE_HEAD}`,
             object: { sha: secondQueueHead },
           },
         ]],
@@ -1652,7 +1653,7 @@ describe("merge queue review propagation", () => {
       pages: {
         reviews: [[review({ state: "APPROVED" })]],
         refs: [[{
-          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${HEAD}`,
+          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${BASE_HEAD}`,
           object: { sha: OTHER_HEAD },
         }]],
         statuses: [[automatedReviewStatus({ state: "pending" })]],
@@ -1955,7 +1956,7 @@ describe("review proof invalidation", () => {
           created_at: "2026-08-25T08:00:00Z",
         })]],
         refs: [[{
-          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${HEAD}`,
+          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${BASE_HEAD}`,
           object: { sha: OTHER_HEAD },
         }]],
       },
@@ -2005,7 +2006,7 @@ describe("review proof invalidation", () => {
       headResponses: [HEAD],
       pages: {
         refs: [[{
-          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${HEAD}`,
+          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${BASE_HEAD}`,
           object: { sha: OTHER_HEAD },
         }]],
       },
@@ -2396,8 +2397,14 @@ describe("automated review workflow", () => {
         "fallbackResponse = await github.rest.pulls.get",
         "context.payload.pull_request?.head?.sha",
         "Could not resolve a valid review target commit",
+        "context.payload.merge_group?.base_sha",
+        "queueEntry.baseHeadSha",
       ]
     ) assert(targetScript.includes(required));
+    assert(
+      !targetScript.includes("let headSha = queueEntry?.sourceHeadSha"),
+      "the queue ref suffix is the base commit, not the source pull request head",
+    );
     assert(
       targetScript.replaceAll(/\s+/g, " ").includes(
         'context.eventName === "workflow_run" && workflowRun?.conclusion !== "success"',
@@ -2679,6 +2686,12 @@ describe("automated review workflow", () => {
     assert(mergeGroupScript.includes("sourceHeadSha"));
     assert(mergeGroupScript.includes("context.payload.merge_group.head_ref"));
     assert(mergeGroupScript.includes("context.payload.merge_group.head_sha"));
+    assert(mergeGroupScript.includes("context.payload.merge_group.base_sha"));
+    assert(mergeGroupScript.includes("queueEntry.baseHeadSha"));
+    assert(
+      mergeGroupScript.includes("queueEntry.sourceHeadSha"),
+      "the merge-group job must remain compatible with the trusted pre-fix parser until this PR merges",
+    );
     assert(
       !mergeGroupScript.includes("requestAutomatedReview"),
       "merge groups must reuse source proof without rerunning Codex",

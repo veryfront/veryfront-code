@@ -55,7 +55,7 @@ jobs:
               const match = /^(?:refs\/heads\/)?gh-readonly-queue\/.+\/pr-([1-9]\d*)-([0-9a-f]{40})$/i.exec(headRef);
               const pullNumber = match ? Number(match[1]) : undefined;
               return Number.isSafeInteger(pullNumber)
-                ? { pullNumber, sourceHeadSha: match[2].toLowerCase() }
+                ? { pullNumber, baseHeadSha: match[2].toLowerCase() }
                 : undefined;
             };
             const parseReviewWakeupIdentity = (run) => {
@@ -102,6 +102,15 @@ jobs:
                 core.setOutput("key", `run-${context.runId}`);
                 return;
               }
+              const baseSha = context.payload.merge_group?.base_sha;
+              if (
+                typeof baseSha !== "string" || !fullSha.test(baseSha) ||
+                queueEntry.baseHeadSha !== baseSha.toLowerCase()
+              ) {
+                core.setFailed("Merge queue base does not match its serialized lock");
+                core.setOutput("key", `run-${context.runId}`);
+                return;
+              }
             }
             const pullNumber = queueEntry?.pullNumber ??
               context.payload.pull_request?.number ??
@@ -113,7 +122,7 @@ jobs:
               core.setOutput("key", `run-${context.runId}`);
               return;
             }
-            let headSha = queueEntry?.sourceHeadSha;
+            let headSha;
             if (!headSha) {
               try {
                 const response = await github.rest.git.getRef({
@@ -739,12 +748,18 @@ jobs:
             }
             const pullNumber = Number(process.env.PULL_NUMBER);
             const sourceHeadSha = process.env.SOURCE_HEAD_SHA;
+            const baseSha = context.payload.merge_group.base_sha;
+            // The trusted default-branch helper returns sourceHeadSha until
+            // this compatibility fix itself has passed the merge queue.
+            const serializedBaseSha = queueEntry.baseHeadSha ??
+              queueEntry.sourceHeadSha;
             if (
               !Number.isSafeInteger(pullNumber) ||
               pullNumber !== queueEntry.pullNumber ||
-              sourceHeadSha !== queueEntry.sourceHeadSha
+              typeof baseSha !== "string" ||
+              baseSha.toLowerCase() !== serializedBaseSha
             ) {
-              core.setFailed("Merge queue source does not match its serialized lock");
+              core.setFailed("Merge queue identity does not match its serialized lock");
               return;
             }
             const result = await publishMergeGroupReviewStatus({

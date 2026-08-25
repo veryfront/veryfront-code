@@ -496,10 +496,7 @@ export async function publishReviewResolutionFailure({
   for (const queueRef of refs) {
     const parsed = parseMergeQueuePullNumber(queueRef?.ref);
     const mergeGroupSha = queueRef?.object?.sha;
-    if (
-      parsed?.pullNumber !== pullNumber ||
-      parsed?.sourceHeadSha !== sourceHeadSha.toLowerCase()
-    ) continue;
+    if (parsed?.pullNumber !== pullNumber) continue;
     if (!FULL_SHA.test(mergeGroupSha ?? "")) {
       throw new Error("Merge queue ref has a malformed commit");
     }
@@ -801,7 +798,7 @@ export async function invalidateReviewProof({
   return { headSha, description, ...result, skipped: false };
 }
 
-/** Extract the pull request represented by a merge queue head ref. */
+/** Extract the pull request and base commit represented by a merge queue ref. */
 export function parseMergeQueuePullNumber(headRef) {
   if (typeof headRef !== "string") return undefined;
   const match =
@@ -811,7 +808,7 @@ export function parseMergeQueuePullNumber(headRef) {
   if (!match) return undefined;
   const pullNumber = Number(match[1]);
   return Number.isSafeInteger(pullNumber)
-    ? { pullNumber, sourceHeadSha: match[2].toLowerCase() }
+    ? { pullNumber, baseHeadSha: match[2].toLowerCase() }
     : undefined;
 }
 
@@ -1050,8 +1047,7 @@ export async function reconcileActiveMergeGroupReviewStatuses({
     {
       owner,
       repo,
-      ref:
-        `heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-${sourceHeadSha}`,
+      ref: `heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-`,
     },
     "merge queue refs",
   );
@@ -1060,10 +1056,7 @@ export async function reconcileActiveMergeGroupReviewStatuses({
   for (const queueRef of refs) {
     const parsed = parseMergeQueuePullNumber(queueRef?.ref);
     const mergeGroupSha = queueRef?.object?.sha;
-    if (
-      parsed?.pullNumber !== pullNumber ||
-      parsed?.sourceHeadSha !== sourceHeadSha.toLowerCase()
-    ) continue;
+    if (parsed?.pullNumber !== pullNumber) continue;
     if (!FULL_SHA.test(mergeGroupSha ?? "")) {
       throw new Error("Merge queue ref has a malformed commit");
     }
