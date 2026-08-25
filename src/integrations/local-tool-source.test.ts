@@ -10,6 +10,7 @@ import {
   assertInstanceOf,
   assertRejects,
   assertStrictEquals,
+  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/testing/deno-compat.ts";
@@ -536,6 +537,42 @@ describe("createLocalIntegrationToolSource", () => {
       "https://api.vercel.com/v10/projects?limit=20",
       "https://panel.sendcloud.sc/api/v3/shipments?page_size=40",
     ]);
+  });
+
+  it("keeps exposed host enums detached from runtime enforcement", async () => {
+    let credentialProviderCalls = 0;
+    let transportCalls = 0;
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["datadog__validate_api_key"],
+        credentialProvider: () => {
+          credentialProviderCalls += 1;
+          return TEST_CREDENTIAL;
+        },
+      },
+      () => {
+        transportCalls += 1;
+        return Promise.resolve(Response.json({ valid: true }));
+      },
+    );
+    const definition = (await source.listTools())[0]!;
+    const siteEnum = (definition.parameters as {
+      properties: { site: { enum: string[] } };
+    }).properties.site.enum;
+    assertThrows(() => siteEnum.push("attacker.example"), TypeError);
+    credentialProviderCalls = 0;
+
+    const error = await assertRejects(
+      () =>
+        source.executeTool("datadog__validate_api_key", {
+          site: "attacker.example",
+        }),
+      VeryfrontError,
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "local-integration-request-invalid");
+    assertEquals(credentialProviderCalls, 0);
+    assertEquals(transportCalls, 0);
   });
 
   it("mints client credentials before executing a fixed-origin provider tool", async () => {

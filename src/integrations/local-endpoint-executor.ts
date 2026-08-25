@@ -296,7 +296,9 @@ function scalarString(value: unknown): string {
  * credential is resolved or interpolated into the endpoint URL.
  */
 function assertEnum(value: unknown, allowed: readonly string[], name: string): void {
-  if (typeof value !== "string") return;
+  if (typeof value !== "string") {
+    requestInvalid(`Local integration argument "${name}" must use a string allowlist`);
+  }
   for (let index = 0; index < allowed.length; index++) {
     if (allowed[index] === value) return;
   }

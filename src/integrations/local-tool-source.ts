@@ -43,8 +43,10 @@ const SetConstructor = Set;
 const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
 const stringIncludes = String.prototype.includes;
+const stringIndexOf = String.prototype.indexOf;
 const stringReplace = String.prototype.replace;
 const stringReplaceAll = String.prototype.replaceAll;
+const stringSlice = String.prototype.slice;
 const stringStartsWith = String.prototype.startsWith;
 const URLConstructor = URL;
 const urlHash = Object.getOwnPropertyDescriptor(URL.prototype, "hash")?.get;
@@ -69,11 +71,18 @@ export interface LocalIntegrationToolSourceOptions {
 
 type IntegrationEndpoint = NonNullable<IntegrationToolMeta["endpoint"]>;
 
+interface EnumeratedHostBinding {
+  readonly token: string;
+  readonly parameterName: string;
+  readonly origins: Map<string, string>;
+}
+
 interface AdmittedLocalIntegrationTool {
   readonly authPlan: LocalCredentialAuthPlan;
   readonly connector: LocalCatalogConnector;
   readonly endpoint: IntegrationEndpoint;
   readonly endpointOrigin?: string;
+  readonly enumeratedHost?: EnumeratedHostBinding;
   readonly tool: IntegrationToolMeta & { id: string };
   readonly definition: ToolDefinition;
 }
@@ -298,6 +307,53 @@ function assertHttpsCatalogUrl(value: string, label: string): string {
   return urlValue(urlOrigin, parsed);
 }
 
+function enumeratedHostBinding(
+  endpoint: IntegrationEndpoint,
+  toolId: string,
+): EnumeratedHostBinding | undefined {
+  const schemePrefix = "https://";
+  if (!stringBoolean(stringStartsWith, endpoint.url, schemePrefix)) return undefined;
+  const pathStart = apply(stringIndexOf, endpoint.url, ["/", schemePrefix.length]) as number;
+  const authorityEnd = pathStart === -1 ? endpoint.url.length : pathStart;
+  const tokenStart = apply(stringIndexOf, endpoint.url, ["{", schemePrefix.length]) as number;
+  if (tokenStart === -1 || tokenStart >= authorityEnd) return undefined;
+  const tokenEnd = apply(stringIndexOf, endpoint.url, ["}", tokenStart + 1]) as number;
+  if (tokenEnd === -1 || tokenEnd >= authorityEnd) return undefined;
+
+  const parameterName = apply(stringSlice, endpoint.url, [tokenStart + 1, tokenEnd]) as string;
+  const token = `{${parameterName}}`;
+  const parameter = endpoint.params?.[parameterName];
+  if (
+    !parameter || parameter.in !== "path" || parameter.type !== "string" ||
+    !arrayIsArray(parameter.enum) || parameter.enum.length === 0
+  ) {
+    configurationError(
+      `Local integration tool "${toolId}" endpoint must be a fixed HTTPS URL ` +
+        "or restrict its host to an enum",
+    );
+  }
+
+  const origins = new MapConstructor<string, string>();
+  for (let index = 0; index < parameter.enum.length; index++) {
+    const host = parameter.enum[index];
+    if (typeof host !== "string" || host.length === 0) {
+      configurationError(`Local integration tool "${toolId}" has an invalid host enum`);
+    }
+    const resolvedUrl = apply(stringReplace, endpoint.url, [token, host]) as string;
+    apply(mapSet, origins, [
+      host,
+      assertHttpsCatalogUrl(resolvedUrl, `Local integration tool "${toolId}" endpoint`),
+    ]);
+  }
+  if (
+    parameter.default !== undefined &&
+    (typeof parameter.default !== "string" || !apply(mapHas, origins, [parameter.default]))
+  ) {
+    configurationError(`Local integration tool "${toolId}" has an invalid default host`);
+  }
+  return freeze({ token, parameterName, origins });
+}
+
 function assertSupportedAuth(
   connector: LocalCatalogConnector,
   endpoint: IntegrationEndpoint,
@@ -397,8 +453,15 @@ function inputPropertySchema(
     description: removeCredentialNames(field.description, credentialNames),
   };
   if (field.type === "string[]") schema.items = { type: "string" };
-  if (field.type === "string" && field.enum !== undefined) {
-    schema.enum = field.enum;
+  if (field.enum !== undefined) {
+    if (field.type !== "string" || field.enum.length === 0) {
+      configurationError("Local integration enums require a non-empty string allowlist");
+    }
+    const allowedValues: string[] = [];
+    for (let index = 0; index < field.enum.length; index++) {
+      append(allowedValues, field.enum[index]!);
+    }
+    schema.enum = freeze(allowedValues);
   }
   if (field.exposeDefault === true && field.default !== undefined) {
     schema.default = field.default;
@@ -470,11 +533,10 @@ function admitTool(canonicalToolId: string): AdmittedLocalIntegrationTool {
     configurationError(`Local integration tool "${canonicalToolId}" has no executable endpoint`);
   }
 
-  const endpointOrigin = assertSupportedEndpoint(
-    connector,
-    tool.endpoint,
-    canonicalToolId,
-  );
+  const enumeratedHost = enumeratedHostBinding(tool.endpoint, canonicalToolId);
+  const endpointOrigin = enumeratedHost
+    ? undefined
+    : assertSupportedEndpoint(connector, tool.endpoint, canonicalToolId);
   assertSupportedAuth(connector, tool.endpoint);
   const authPlan = createLocalCredentialAuthPlan(connector);
   return freeze({
@@ -482,6 +544,7 @@ function admitTool(canonicalToolId: string): AdmittedLocalIntegrationTool {
     connector,
     endpoint: tool.endpoint,
     endpointOrigin,
+    enumeratedHost,
     tool,
     definition: toolDefinition(
       tool,
@@ -539,14 +602,28 @@ function createLocalIntegrationToolSourceInternal(
         );
       }
       const validated = snapshotLocalIntegrationEndpointArguments(tool.endpoint, args);
+      let endpoint = tool.endpoint;
+      let allowedOrigin = tool.endpointOrigin;
+      if (tool.enumeratedHost) {
+        const host = validated.args[tool.enumeratedHost.parameterName];
+        if (typeof host !== "string") {
+          configurationError(`Local integration tool "${toolName}" has no allowed host`);
+        }
+        allowedOrigin = mapValue(tool.enumeratedHost.origins, host);
+        if (!allowedOrigin) {
+          configurationError(`Local integration tool "${toolName}" has no allowed host`);
+        }
+        endpoint = freeze({
+          ...endpoint,
+          url: apply(stringReplace, endpoint.url, [tool.enumeratedHost.token, host]) as string,
+        });
+      }
       const auth = await mintLocalCredentialAuth(
         await resolveLocalCredentialAuth(tool.authPlan, credentialProvider),
         toolName,
         context?.abortSignal,
         transport,
       );
-      let endpoint = tool.endpoint;
-      let allowedOrigin = tool.endpointOrigin;
       if (tool.connector.name === "salesforce") {
         if (!auth.instanceOrigin) {
           configurationError("Local Salesforce execution requires a validated instance origin");

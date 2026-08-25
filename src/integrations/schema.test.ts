@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getIntegrationEndpointParamSchema } from "./schema.ts";
 
@@ -26,5 +26,19 @@ describe("IntegrationEndpointParamSchema", () => {
     });
 
     assertEquals(parsed.enum, ["datadoghq.com", "datadoghq.eu"]);
+  });
+
+  it("rejects value allowlists on non-string parameters", () => {
+    assertThrows(
+      () =>
+        getIntegrationEndpointParamSchema().parse({
+          type: "number",
+          in: "query",
+          description: "Page size",
+          enum: ["10", "20"],
+        }),
+      Error,
+      "supported only for string parameters",
+    );
   });
 });
