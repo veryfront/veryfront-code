@@ -9,10 +9,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { NodeBasedShellAdapter } from "#veryfront/platform/adapters/runtime/shared/node-based-shell-adapter.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 describe("NodeBasedShellAdapter.readFileSync against the host filesystem", () => {
   it("returns the file decoded as UTF-8 text", async () => {
-    const directory = await Deno.makeTempDir({ prefix: "vf-node-shell-read-" });
+    const directory = await makeTempDir({ prefix: "vf-node-shell-read-" });
 
     try {
       const path = `${directory}/sample.txt`;

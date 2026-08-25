@@ -14,6 +14,7 @@ import {
   getTokenStorageAdapter,
   resetTokenStorageAdapter,
 } from "#veryfront/platform/adapters/token/integration.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 
 interface CapturedRequest {
   readonly urls: string[];
@@ -23,18 +24,19 @@ interface CapturedRequest {
 async function withCapturedFetch(
   action: (captured: CapturedRequest) => Promise<void>,
 ): Promise<void> {
-  const originalFetch = globalThis.fetch;
   const captured: CapturedRequest = { urls: [], authorizations: [] };
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    captured.urls.push(String(input));
-    captured.authorizations.push(new Headers(init?.headers).get("authorization"));
-    return Promise.resolve(Response.json({ keys: [] }));
-  }) as typeof fetch;
+  installMockFetch(
+    ((input: RequestInfo | URL, init?: RequestInit) => {
+      captured.urls.push(String(input));
+      captured.authorizations.push(new Headers(init?.headers).get("authorization"));
+      return Promise.resolve(Response.json({ keys: [] }));
+    }) as typeof fetch,
+  );
 
   try {
     await action(captured);
   } finally {
-    globalThis.fetch = originalFetch;
+    restoreMockFetch();
   }
 }
 

@@ -12,12 +12,12 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { resolve } from "node:path";
 import type { FileChangeEvent } from "#veryfront/platform/adapters/base.ts";
 import { setupNodeFsWatcher } from "#veryfront/platform/adapters/runtime/shared/shared-watcher.ts";
-import { waitFor } from "#veryfront/testing/deno-compat.ts";
+import { makeTempDir, waitFor } from "#veryfront/testing/deno-compat.ts";
 
 describe("setupNodeFsWatcher on a real directory", () => {
   it("emits the resolved path of a file changed inside the watched root", async () => {
     const root = await Deno.realPath(
-      await Deno.makeTempDir({ prefix: "veryfront-shared-watcher-" }),
+      await makeTempDir({ prefix: "veryfront-shared-watcher-" }),
     );
     const changedFile = resolve(root, "file.ts");
     const eventQueue: FileChangeEvent[] = [];

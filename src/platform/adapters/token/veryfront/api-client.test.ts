@@ -10,6 +10,7 @@ import { MAX_VERYFRONT_API_RETRIES } from "#veryfront/utils/config-resource-limi
 import { TokenStorageApiClient } from "./api-client.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import type { VeryfrontTokenConfig } from "./types.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 
 function createConfig(overrides: Partial<VeryfrontTokenConfig> = {}): VeryfrontTokenConfig {
   return {
@@ -83,8 +84,7 @@ describe("platform/adapters/token/veryfront/api-client", () => {
     });
 
     it("validates successful response payloads", async () => {
-      const originalFetch = globalThis.fetch;
-      globalThis.fetch = () => Promise.resolve(Response.json({ value: 42 }));
+      installMockFetch(() => Promise.resolve(Response.json({ value: 42 })));
 
       try {
         const client = new TokenStorageApiClient(createConfig());
@@ -94,7 +94,7 @@ describe("platform/adapters/token/veryfront/api-client", () => {
           "Malformed get response",
         );
       } finally {
-        globalThis.fetch = originalFetch;
+        restoreMockFetch();
       }
     });
   });
@@ -137,8 +137,7 @@ describe("platform/adapters/token/veryfront/api-client", () => {
     });
 
     it("validates the returned key array", async () => {
-      const originalFetch = globalThis.fetch;
-      globalThis.fetch = () => Promise.resolve(Response.json({ keys: ["valid", 42] }));
+      installMockFetch(() => Promise.resolve(Response.json({ keys: ["valid", 42] })));
 
       try {
         const client = new TokenStorageApiClient(createConfig());
@@ -148,7 +147,7 @@ describe("platform/adapters/token/veryfront/api-client", () => {
           "Malformed list response",
         );
       } finally {
-        globalThis.fetch = originalFetch;
+        restoreMockFetch();
       }
     });
   });
@@ -163,18 +162,19 @@ describe("platform/adapters/token/veryfront/api-client", () => {
 
   describe("request and response lifecycle", () => {
     it("preserves configured base paths for every endpoint", async () => {
-      const originalFetch = globalThis.fetch;
       const requests: string[] = [];
-      globalThis.fetch = ((url: RequestInfo | URL, init?: RequestInit) => {
-        requests.push(String(url));
-        if (init?.method === "PUT" || init?.method === "DELETE") {
-          return Promise.resolve(new Response(null, { status: 204 }));
-        }
-        if (String(url).endsWith("/tokens")) {
-          return Promise.resolve(Response.json({ keys: [] }));
-        }
-        return Promise.resolve(Response.json({ value: "encrypted" }));
-      }) as typeof fetch;
+      installMockFetch(
+        ((url: RequestInfo | URL, init?: RequestInit) => {
+          requests.push(String(url));
+          if (init?.method === "PUT" || init?.method === "DELETE") {
+            return Promise.resolve(new Response(null, { status: 204 }));
+          }
+          if (String(url).endsWith("/tokens")) {
+            return Promise.resolve(Response.json({ keys: [] }));
+          }
+          return Promise.resolve(Response.json({ value: "encrypted" }));
+        }) as typeof fetch,
+      );
 
       try {
         const client = new TokenStorageApiClient(createConfig({
@@ -192,19 +192,18 @@ describe("platform/adapters/token/veryfront/api-client", () => {
           "https://api.example.com/control/v1/projects/test-project/tokens",
         ]);
       } finally {
-        globalThis.fetch = originalFetch;
+        restoreMockFetch();
       }
     });
 
     it("consumes successful and not-found response bodies before returning", async () => {
-      const originalFetch = globalThis.fetch;
       const createdResponses = [
         new Response("missing", { status: 404 }),
         new Response("stored", { status: 200 }),
         new Response("already absent", { status: 404 }),
       ];
       const responses = [...createdResponses];
-      globalThis.fetch = () => Promise.resolve(responses.shift()!);
+      installMockFetch(() => Promise.resolve(responses.shift()!));
 
       try {
         const client = new TokenStorageApiClient(createConfig());
@@ -215,29 +214,29 @@ describe("platform/adapters/token/veryfront/api-client", () => {
         assertEquals(responses.length, 0);
         assertEquals(createdResponses.every((response) => response.bodyUsed), true);
       } finally {
-        globalThis.fetch = originalFetch;
+        restoreMockFetch();
       }
     });
 
     it("rejects empty keys at the client boundary before fetching", async () => {
-      const originalFetch = globalThis.fetch;
       let fetchCalls = 0;
-      globalThis.fetch = (() => {
-        fetchCalls++;
-        return Promise.resolve(Response.json({ value: "unexpected" }));
-      }) as typeof fetch;
+      installMockFetch(
+        (() => {
+          fetchCalls++;
+          return Promise.resolve(Response.json({ value: "unexpected" }));
+        }) as typeof fetch,
+      );
 
       try {
         const client = new TokenStorageApiClient(createConfig());
         await assertRejects(() => client.get(""), TypeError, "non-empty");
         assertEquals(fetchCalls, 0);
       } finally {
-        globalThis.fetch = originalFetch;
+        restoreMockFetch();
       }
     });
 
     it("bounds and cancels oversized successful response bodies", async () => {
-      const originalFetch = globalThis.fetch;
       let cancelled = false;
       const body = new ReadableStream<Uint8Array>({
         start(controller) {
@@ -247,7 +246,7 @@ describe("platform/adapters/token/veryfront/api-client", () => {
           cancelled = true;
         },
       });
-      globalThis.fetch = () => Promise.resolve(new Response(body));
+      installMockFetch(() => Promise.resolve(new Response(body)));
 
       try {
         const client = new TokenStorageApiClient(createConfig());
@@ -258,20 +257,21 @@ describe("platform/adapters/token/veryfront/api-client", () => {
         );
         assertEquals(cancelled, true);
       } finally {
-        globalThis.fetch = originalFetch;
+        restoreMockFetch();
       }
     });
 
     it("retries rate-limited reads instead of failing the caller", async () => {
-      const originalFetch = globalThis.fetch;
       let fetchCalls = 0;
-      globalThis.fetch = (() => {
-        fetchCalls++;
-        if (fetchCalls === 1) {
-          return Promise.resolve(new Response("slow down", { status: 429 }));
-        }
-        return Promise.resolve(Response.json({ value: "secret" }));
-      }) as typeof fetch;
+      installMockFetch(
+        (() => {
+          fetchCalls++;
+          if (fetchCalls === 1) {
+            return Promise.resolve(new Response("slow down", { status: 429 }));
+          }
+          return Promise.resolve(Response.json({ value: "secret" }));
+        }) as typeof fetch,
+      );
 
       try {
         const client = new TokenStorageApiClient(createConfig({
@@ -284,29 +284,30 @@ describe("platform/adapters/token/veryfront/api-client", () => {
         );
         assertEquals(fetchCalls, 2, "the rate-limited attempt must be retried exactly once");
       } finally {
-        globalThis.fetch = originalFetch;
+        restoreMockFetch();
       }
     });
 
     it("cancels the unread body of a retried server error", async () => {
-      const originalFetch = globalThis.fetch;
       let cancelled = false;
       let fetchCalls = 0;
-      globalThis.fetch = (() => {
-        fetchCalls++;
-        if (fetchCalls === 1) {
-          const body = new ReadableStream<Uint8Array>({
-            start(controller) {
-              controller.enqueue(new Uint8Array(16));
-            },
-            cancel() {
-              cancelled = true;
-            },
-          });
-          return Promise.resolve(new Response(body, { status: 500 }));
-        }
-        return Promise.resolve(Response.json({ value: "ok" }));
-      }) as typeof fetch;
+      installMockFetch(
+        (() => {
+          fetchCalls++;
+          if (fetchCalls === 1) {
+            const body = new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(new Uint8Array(16));
+              },
+              cancel() {
+                cancelled = true;
+              },
+            });
+            return Promise.resolve(new Response(body, { status: 500 }));
+          }
+          return Promise.resolve(Response.json({ value: "ok" }));
+        }) as typeof fetch,
+      );
 
       try {
         const client = new TokenStorageApiClient(createConfig({
@@ -323,7 +324,7 @@ describe("platform/adapters/token/veryfront/api-client", () => {
           "a retried 5xx body must be cancelled so the connection is not held open",
         );
       } finally {
-        globalThis.fetch = originalFetch;
+        restoreMockFetch();
       }
     });
   });

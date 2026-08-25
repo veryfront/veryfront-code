@@ -11,11 +11,12 @@ import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { join } from "#veryfront/compat/path";
 import { isNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
 import { DenoFileSystemAdapter } from "./filesystem-adapter.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 if (isDeno) {
   describe("Deno filesystem adapter", () => {
     it("constructs exact snapshot and exclusive-create capabilities independently", async () => {
-      const root = await Deno.makeTempDir({ prefix: "vf-deno-snapshot-factory-" });
+      const root = await makeTempDir({ prefix: "vf-deno-snapshot-factory-" });
       try {
         const empty = join(root, "empty.bin");
         const exact = join(root, "exact.bin");
@@ -101,7 +102,7 @@ if (isDeno) {
       const failure = new Error("injected Deno write failure");
       let writes = 0;
       let closes = 0;
-      const root = await Deno.makeTempDir({ prefix: "vf-deno-reserved-" });
+      const root = await makeTempDir({ prefix: "vf-deno-reserved-" });
       const reserved = join(root, "reserved.bin");
       const TestableAdapter = DenoFileSystemAdapter as unknown as new (
         options: Record<string, unknown>,
@@ -198,7 +199,7 @@ if (isDeno) {
     });
 
     it("reads a genuinely bounded byte prefix", async () => {
-      const root = await Deno.makeTempDir({ prefix: "vf-deno-bounded-read-" });
+      const root = await makeTempDir({ prefix: "vf-deno-bounded-read-" });
       const path = join(root, "file.txt");
       try {
         await Deno.writeTextFile(path, "hello");
@@ -237,7 +238,7 @@ if (isDeno) {
     });
 
     it("round-trips binary files without text decoding", async () => {
-      const root = await Deno.makeTempDir({ prefix: "vf-deno-binary-write-" });
+      const root = await makeTempDir({ prefix: "vf-deno-binary-write-" });
       const path = join(root, "file.bin");
       const bytes = new Uint8Array([0, 255, 1, 128]);
       try {
@@ -250,7 +251,7 @@ if (isDeno) {
     });
 
     it("uses the native watcher and surfaces observed paths", async () => {
-      const root = await Deno.makeTempDir({ prefix: "vf-deno-watch-" });
+      const root = await makeTempDir({ prefix: "vf-deno-watch-" });
       const path = join(root, "created.txt");
       const watcher = new DenoFileSystemAdapter().watch(root, {
         recursive: false,
@@ -291,7 +292,7 @@ if (isDeno) {
     });
 
     it("rejects a second concurrent iterator read", async () => {
-      const root = await Deno.makeTempDir({ prefix: "vf-deno-watch-next-" });
+      const root = await makeTempDir({ prefix: "vf-deno-watch-next-" });
       const watcher = new DenoFileSystemAdapter().watch(root);
       const iterator = watcher[Symbol.asyncIterator]();
 
