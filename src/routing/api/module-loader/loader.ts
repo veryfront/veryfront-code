@@ -1136,7 +1136,6 @@ function createImportMapPlugin(
     name: "import-map",
     setup(build) {
       build.onResolve({ filter: /.*/ }, (args) => {
-        if (args.path.startsWith("http://") || args.path.startsWith("https://")) return undefined;
         if (args.path.startsWith("node:")) return { path: args.path, external: true };
 
         if (
