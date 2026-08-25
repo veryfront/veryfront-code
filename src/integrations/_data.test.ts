@@ -785,7 +785,7 @@ describe("integration endpoint specs", () => {
       ["gitlab", 10],
       ["jira", 12],
       ["confluence", 7],
-      ["outlook", 62],
+      ["outlook", 60],
       ["teams", 7],
     ]);
 
@@ -1851,7 +1851,6 @@ describe("integration endpoint specs", () => {
       "Mail.Read.Shared",
       "Calendars.Read",
       "Calendars.ReadWrite",
-      "Group-Conversation.Read.All",
       "offline_access",
     ]);
 
@@ -1897,8 +1896,6 @@ describe("integration endpoint specs", () => {
       "get_thread",
       "list_shared_mailbox_emails",
       "search_shared_mailbox_emails",
-      "list_group_threads",
-      "list_group_thread_posts",
       "list_calendars",
       "get_calendar",
       "create_calendar",
@@ -1983,14 +1980,6 @@ describe("integration endpoint specs", () => {
         (tool) => tool.id === "outlook__find_group_by_mail",
       ),
       false,
-    );
-    assertEquals(
-      getTool("outlook", "list_group_threads").endpoint?.url,
-      "https://graph.microsoft.com/v1.0/groups/{groupId}/threads",
-    );
-    assertEquals(
-      getTool("outlook", "list_group_thread_posts").endpoint?.url,
-      "https://graph.microsoft.com/v1.0/groups/{groupId}/threads/{threadId}/posts",
     );
     assertEquals(getTool("outlook", "add_attachment_to_message").endpoint?.body, {
       "@odata.type": {

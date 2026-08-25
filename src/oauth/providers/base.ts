@@ -66,6 +66,13 @@ const TOKEN_REFRESH_BUFFER_MS = 300_000;
 const SECONDS_TO_MS = 1_000;
 const DEFAULT_TOKEN_RESPONSE_MAX_BYTES = 64 * 1_024;
 const DEFAULT_API_RESPONSE_MAX_BYTES = 1_048_576;
+const DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
+const DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+
+function driveTokenNeedsReauthorization(serviceId: string, scope: string | undefined): boolean {
+  if (serviceId !== "drive" || typeof scope !== "string") return serviceId === "drive";
+  return !scope.includes(DRIVE_READONLY_SCOPE) || !scope.includes(DRIVE_FILE_SCOPE);
+}
 
 function assertBoundedPositiveInteger(value: number, name: string, maximum: number): void {
   if (!Number.isSafeInteger(value) || value <= 0 || value > maximum) {
@@ -1118,6 +1125,11 @@ export class OAuthService extends OAuthProvider {
     const stored = await awaitAbortable(this.readTokenSnapshot(userId), signal);
     if (!stored) return null;
     const { tokens } = stored;
+
+    if (driveTokenNeedsReauthorization(this.serviceId, tokens.scope)) {
+      await this.tokenStore?.clearTokens(this.serviceId, userId);
+      return null;
+    }
 
     const refreshToken = tokens.refreshToken;
     if (tokens.expiresAt === undefined) return tokens.accessToken;

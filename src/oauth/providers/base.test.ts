@@ -1697,6 +1697,24 @@ it("OAuthService.getAccessToken treats an epoch expiry as expired", async () => 
   assertEquals(await service.getAccessToken("alice"), null);
 });
 
+it("OAuthService.getAccessToken clears legacy full-Drive tokens before use", async () => {
+  const store = new MemoryTokenStore();
+  await store.setTokens("drive", "alice", {
+    accessToken: "legacy-drive-token",
+    refreshToken: "legacy-drive-refresh",
+    scope: "https://www.googleapis.com/auth/drive",
+    expiresAt: Date.now() + 60_000,
+  });
+  const service = new OAuthService(
+    { ...TEST_CONFIG, serviceId: "drive", defaultScopes: ["drive.readonly", "drive.file"] },
+    store,
+    (key) => ENV[key],
+  );
+
+  assertEquals(await service.getAccessToken("alice"), null);
+  assertEquals(await store.getTokens("drive", "alice"), null);
+});
+
 it("OAuthService.getAccessToken uses a non-refreshable token until its real expiry", async () => {
   const store = makeAuthedTokenStore();
   store.getTokens = () =>

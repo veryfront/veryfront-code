@@ -382,6 +382,7 @@ function inputPropertySchema(
     description: string;
     default?: unknown;
     exposeDefault?: boolean;
+    pattern?: string;
   },
   credentialNames: readonly string[],
 ): JsonSchema {
@@ -396,6 +397,9 @@ function inputPropertySchema(
     description: removeCredentialNames(field.description, credentialNames),
   };
   if (field.type === "string[]") schema.items = { type: "string" };
+  if (field.type === "string" && field.pattern !== undefined) {
+    schema.pattern = field.pattern;
+  }
   if (field.exposeDefault === true && field.default !== undefined) {
     schema.default = field.default;
   }
