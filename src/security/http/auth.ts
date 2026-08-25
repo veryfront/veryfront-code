@@ -6,6 +6,7 @@ import {
 } from "#veryfront/channels/control-plane.ts";
 import { BaseHandler } from "./base-handler.ts";
 import { isApplicationAuthAdmittedRequest } from "#veryfront/security/application-auth/oidc-runtime.ts";
+import { isTrustedProxyApplicationAuthAdmittedRequest } from "#veryfront/security/application-auth/trusted-proxy.ts";
 import type {
   HandlerContext,
   HandlerMetadata,
@@ -270,7 +271,10 @@ export class AuthHandler extends BaseHandler {
       return Promise.resolve(this.rejectOidcAuth(req, ctx));
     }
     if (auth.kind === "trusted-proxy") {
-      return Promise.resolve(this.continue());
+      if (isTrustedProxyApplicationAuthAdmittedRequest(req)) {
+        return Promise.resolve(this.continue());
+      }
+      return Promise.resolve(this.rejectOidcAuth(req, ctx));
     }
     return Promise.resolve(this.rejectInvalidAuth(req, ctx));
   }

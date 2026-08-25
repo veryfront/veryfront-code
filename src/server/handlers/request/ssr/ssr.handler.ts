@@ -257,6 +257,7 @@ export class SSRHandler extends BaseHandler {
         const applicationUrl = new URL(url);
         const applicationHeaders = createApplicationRequestHeaders(
           stripSnapshotHeader(req.headers),
+          { denyHeaders: ctx.applicationIdentityHeaderNames },
         );
         const applicationRequest = new Request(applicationUrl, {
           method: req.method,

@@ -1,6 +1,9 @@
 import type { HandlerContext, HandlerResult } from "#veryfront/types";
 import { createOidcApplicationAuthRuntime } from "./oidc-runtime.ts";
-import { createTrustedProxyApplicationAuthRuntime } from "./trusted-proxy.ts";
+import {
+  createTrustedProxyApplicationAuthRuntime,
+  markTrustedProxyApplicationAuthAdmittedRequest,
+} from "./trusted-proxy.ts";
 import type { ApplicationIdentity } from "./types.ts";
 
 export interface ApplicationAuthHandlerResult extends HandlerResult {
@@ -40,6 +43,7 @@ export async function handleApplicationAuthRequest(
     });
     const admission = await runtime.admitRequest(request);
     if (admission instanceof Response) return { response: admission };
+    markTrustedProxyApplicationAuthAdmittedRequest(request);
     return {
       continue: true,
       metadata: {

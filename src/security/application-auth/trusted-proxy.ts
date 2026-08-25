@@ -21,6 +21,7 @@ const arrayPush = Array.prototype.push;
 const NativeNumber = Number;
 const NativeResponse = Response;
 const NativeSet = Set;
+const NativeWeakSet = WeakSet;
 const NativeHeaders = Headers;
 const NativeRequest = Request;
 const getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
@@ -50,6 +51,8 @@ const stringStartsWith = String.prototype.startsWith;
 const stringToLowerCase = String.prototype.toLowerCase;
 const stringTrim = String.prototype.trim;
 
+const admittedTrustedProxyRequests = new NativeWeakSet<Request>();
+
 if (typeof rawRequestHeadersGetter !== "function") {
   throw new TypeError("Request.prototype.headers getter is unavailable");
 }
@@ -78,6 +81,14 @@ export interface TrustedProxyApplicationAuthRuntime {
 
 export interface TrustedProxyApplicationAuthRuntimeOptions {
   readonly config: TrustedProxyAuthConfig;
+}
+
+export function markTrustedProxyApplicationAuthAdmittedRequest(request: Request): void {
+  admittedTrustedProxyRequests.add(request);
+}
+
+export function isTrustedProxyApplicationAuthAdmittedRequest(request: Request): boolean {
+  return admittedTrustedProxyRequests.has(request);
 }
 
 interface TrustedProxyConfigSnapshot {
