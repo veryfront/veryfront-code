@@ -1,5 +1,4 @@
 import {
-  computeHash,
   computeIntegrity,
   createLockfileManager,
   getLockfileEntryForBuild,
@@ -10,8 +9,6 @@ import {
   setLockfileEntryForBuild,
   sleep,
 } from "#veryfront/utils";
-import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
-import * as pathHelper from "#veryfront/compat/path";
 import type { Message, Plugin } from "veryfront/extensions/bundler";
 import { isAllowedRemoteHost } from "./http-validator.ts";
 import {
@@ -25,7 +22,6 @@ import {
 import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
 
 const logger = serverLogger.component("api");
-const HTTP_MODULE_CACHE_DIR = ".veryfront/cache/api-http-imports";
 const HTTP_MODULE_FETCH_MAX_ATTEMPTS = 3;
 const HTTP_MODULE_FETCH_RETRY_DELAY_MS = 100;
 
@@ -36,23 +32,6 @@ interface HTTPPluginOptions {
   lockfile?: LockfileManager;
   projectDir?: string;
   strict?: boolean;
-}
-
-interface CachedHTTPModuleMetadata {
-  url: string;
-  resolvedUrl: string;
-  integrity: string;
-  fetchedAt: string;
-}
-
-interface HTTPModuleCache {
-  read(url: string, expectedIntegrity?: string): Promise<string | null>;
-  write(
-    url: string,
-    contents: string,
-    resolvedUrl: string,
-    integrity: string,
-  ): Promise<void>;
 }
 
 type RemoteModuleFetchResult =
@@ -67,98 +46,6 @@ type RemoteModuleFetchResult =
     status: number;
     url: string;
   };
-
-function createHTTPModuleCache(projectDir: string | undefined): HTTPModuleCache | null {
-  if (!projectDir) return null;
-
-  const fs = createFileSystem();
-  const cacheDir = pathHelper.join(projectDir, HTTP_MODULE_CACHE_DIR);
-
-  async function cachePaths(
-    url: string,
-    integrity: string,
-  ): Promise<{ sourcePath: string; metadataPath: string }> {
-    const key = await computeHash(`${url}\n${integrity}`);
-    return {
-      sourcePath: pathHelper.join(cacheDir, `${key}.mjs`),
-      metadataPath: pathHelper.join(cacheDir, `${key}.json`),
-    };
-  }
-
-  async function readMetadata(
-    metadataPath: string,
-    fs: FileSystem,
-  ): Promise<CachedHTTPModuleMetadata | null> {
-    if (!await fs.exists(metadataPath)) return null;
-
-    try {
-      return JSON.parse(await fs.readTextFile(metadataPath)) as CachedHTTPModuleMetadata;
-    } catch (error) {
-      logger.debug(`[http] ignoring unreadable module cache metadata: ${error}`);
-      return null;
-    }
-  }
-
-  return {
-    async read(url: string, expectedIntegrity?: string): Promise<string | null> {
-      if (!expectedIntegrity) return null;
-
-      try {
-        const { sourcePath, metadataPath } = await cachePaths(url, expectedIntegrity);
-        if (!await fs.exists(sourcePath)) return null;
-
-        const contents = await fs.readTextFile(sourcePath);
-        const integrity = await computeIntegrity(contents);
-        if (integrity !== expectedIntegrity) {
-          logger.warn(`[http] cached module integrity mismatch: ${url}`);
-          return null;
-        }
-
-        const metadata = await readMetadata(metadataPath, fs);
-        if (metadata?.integrity && metadata.integrity !== integrity) {
-          logger.warn(`[http] cached module metadata integrity mismatch: ${url}`);
-          return null;
-        }
-
-        return contents;
-      } catch (error) {
-        logger.debug(`[http] module cache read miss for ${url}: ${error}`);
-        return null;
-      }
-    },
-
-    async write(
-      url: string,
-      contents: string,
-      resolvedUrl: string,
-      integrity: string,
-    ): Promise<void> {
-      try {
-        await fs.mkdir(cacheDir, { recursive: true });
-        const { sourcePath, metadataPath } = await cachePaths(url, integrity);
-        await fs.writeTextFile(sourcePath, contents);
-        await fs.writeTextFile(
-          metadataPath,
-          `${
-            JSON.stringify(
-              {
-                url,
-                resolvedUrl,
-                integrity,
-                fetchedAt: new Date().toISOString(),
-              } satisfies CachedHTTPModuleMetadata,
-              null,
-              2,
-            )
-          }\n`,
-        );
-      } catch (error) {
-        logger.debug(`[http] could not update module cache for ${url}: ${error}`);
-      }
-    },
-  };
-}
-
 export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin {
   const opts: HTTPPluginOptions = Array.isArray(options) ? { allowedHosts: options } : options;
   const { allowedHosts, strict = false } = opts;
@@ -168,7 +55,6 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
   }
   const lockfile = opts.lockfile ??
     (opts.projectDir ? createLockfileManager(opts.projectDir) : null);
-  const moduleCache = createHTTPModuleCache(opts.projectDir);
   let lockfileFlushDisabled = false;
 
   return {
@@ -373,20 +259,11 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
           logger.warn("API URL parse failed", e);
         }
 
-        const readCachedModule = async (
-          url: string | undefined,
-          expectedIntegrity?: string,
-        ): Promise<string | null> => {
-          if (!url || !moduleCache) return null;
-          return await moduleCache.read(url, expectedIntegrity);
-        };
-
         // A newer-format lockfile keeps failing the load loudly; an unreadable
         // or malformed lockfile degrades to a cache miss with a logged remedy.
         const lockfileEntry = lockfile ? await getLockfileEntryForBuild(lockfile, args.path) : null;
 
         if (lockfileEntry) {
-          let canUseLockfileCacheFallback = true;
           logger.debug(`[http] lockfile hit: ${args.path}`);
           try {
             const res = await fetchRemoteModule(lockfileEntry.resolved);
@@ -395,13 +272,6 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
               const integrity = await computeIntegrity(text);
 
               if (integrity === lockfileEntry.integrity) {
-                await moduleCache?.write(args.path, text, lockfileEntry.resolved, integrity);
-                await moduleCache?.write(
-                  lockfileEntry.resolved,
-                  text,
-                  lockfileEntry.resolved,
-                  integrity,
-                );
                 return { contents: text, loader: "js" } as const;
               }
 
@@ -416,26 +286,15 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
                 };
               }
 
-              canUseLockfileCacheFallback = false;
               logger.warn(`[http] integrity mismatch, refetching: ${args.path}`);
             } else {
               logger.warn(
-                `[http] cached URL returned ${res.status}, trying module cache: ${args.path}`,
+                `[http] cached URL returned ${res.status}: ${args.path}`,
               );
             }
           } catch (error) {
             if (error instanceof OutboundRequestBlockedError) throw error;
-            logger.warn(`[http] cached URL failed, trying module cache: ${args.path}`);
-          }
-
-          if (canUseLockfileCacheFallback) {
-            const cachedText =
-              await readCachedModule(lockfileEntry.resolved, lockfileEntry.integrity) ??
-                await readCachedModule(args.path, lockfileEntry.integrity);
-            if (cachedText) {
-              logger.warn(`[http] serving cached remote import for ${args.path}`);
-              return { contents: cachedText, loader: "js" } as const;
-            }
+            logger.warn(`[http] cached URL failed: ${args.path}`);
           }
         }
 
@@ -450,15 +309,6 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         }
 
         if (!res.ok) {
-          const cachedText =
-            await readCachedModule(lockfileEntry?.resolved, lockfileEntry?.integrity) ??
-              await readCachedModule(requestUrl, lockfileEntry?.integrity) ??
-              await readCachedModule(args.path, lockfileEntry?.integrity);
-          if (cachedText) {
-            logger.warn(`[http] serving cached remote import for ${args.path}`);
-            return { contents: cachedText, loader: "js" } as const;
-          }
-
           logger.error(`[http] fetch failed ${requestUrl} ${res.status}`);
           return {
             errors: [
@@ -478,10 +328,6 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
           integrity,
           fetchedAt: new Date().toISOString(),
         });
-        await moduleCache?.write(args.path, text, resolvedUrl, integrity);
-        await moduleCache?.write(requestUrl, text, resolvedUrl, integrity);
-        await moduleCache?.write(resolvedUrl, text, resolvedUrl, integrity);
-
         return { contents: text, loader: "js" } as const;
       });
 

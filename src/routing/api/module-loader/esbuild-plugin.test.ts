@@ -446,7 +446,7 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       }
     });
 
-    it("serves a previously fetched remote module when the CDN later returns an error", async () => {
+    it("does not persist remote module bodies when the CDN later returns an error", async () => {
       const projectDir = await Deno.makeTempDir();
       const moduleSource = "export const parsed = true;";
       const requestUrl = "https://esm.sh/yaml@2";
@@ -492,7 +492,14 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
         const second = await load(
           (async () => new Response("cdn unavailable", { status: 599 })) as typeof fetch,
         );
-        assertEquals((second as { contents: string }).contents, moduleSource);
+        assertEquals("errors" in (second as Record<string, unknown>), true);
+        assertEquals(
+          await Deno.stat(`${projectDir}/.veryfront/cache/api-http-imports`).then(
+            () => true,
+            () => false,
+          ),
+          false,
+        );
       } finally {
         restoreMockFetch();
         await Deno.remove(projectDir, { recursive: true }).catch(() => {});
@@ -709,14 +716,14 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
         assertEquals(warnings, []);
 
         failRemoteFetches = true;
-        const cached = await loadHandler({
+        const unavailable = await loadHandler({
           path: "https://esm.sh/yaml@2/parse",
           namespace: "http-url",
           pluginData: undefined,
           suffix: "",
         });
 
-        assertEquals((cached as { contents: string }).contents, moduleSource);
+        assertEquals("errors" in (unavailable as Record<string, unknown>), true);
         assertEquals(
           warnings.some((warning) => warning.includes("could not persist lockfile entry")),
           false,
