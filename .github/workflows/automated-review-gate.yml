@@ -170,11 +170,43 @@ jobs:
             }
             return headSha;
 
+  merge_group_target_failure:
+    name: close unresolved merge group review gate
+    needs: target
+    if: >-
+      always() &&
+      github.event_name == 'merge_group' &&
+      needs.target.result != 'success'
+    permissions:
+      statuses: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Publish the resolver failure
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          retries: 3
+          script: |
+            const mergeGroupSha = context.payload.merge_group?.head_sha;
+            if (!/^[0-9a-f]{40}$/i.test(mergeGroupSha ?? "")) {
+              core.setFailed("Could not resolve the merge group failure target");
+              return;
+            }
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: mergeGroupSha,
+              state: "failure",
+              context: "Automated review",
+              description: "Merge queue review resolver is unavailable",
+            });
+            core.setFailed("Closed the merge group gate after target resolution failed");
+
   review:
     name: publish automated review status
     # Issues write lets this job post the fixed "@codex review" request after
-    # verifying the current head. This job checks out
-    # only the trusted default branch and never executes pull request files.
+    # verifying the current head. This job loads gate code through the API
+    # from the trusted default branch and never executes pull request files.
     permissions:
       contents: read
       issues: write

@@ -587,6 +587,51 @@ describe("automated review evidence", () => {
     );
   });
 
+  it("uses a base-ref issue event before the asynchronous reset status exists", async () => {
+    const oldVerdict = codexComment(HEAD.slice(0, 10), {
+      id: 101,
+      created_at: "2026-08-25T08:00:00Z",
+    });
+    const freshVerdict = codexComment(HEAD.slice(0, 10), {
+      id: 103,
+      created_at: "2026-08-25T08:00:01Z",
+    });
+    const baseChange = {
+      event: "base_ref_changed",
+      id: 102,
+      created_at: "2026-08-25T08:00:00Z",
+    };
+
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [oldVerdict],
+          events: [baseChange],
+          timeline: [{ event: "commented", id: 101 }],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+      ),
+      undefined,
+    );
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [freshVerdict],
+          events: [baseChange],
+          timeline: [{ event: "commented", id: 103 }],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+        undefined,
+        Date.parse("2026-08-25T08:00:02Z"),
+      ))?.source,
+      "codex-comment",
+    );
+  });
+
   it("orders same-second evidence through the pull request timeline", async () => {
     const request = reviewRequestComment();
     const humanApprovalId = 101;
@@ -716,6 +761,7 @@ function githubFixture(options: {
   const endpoints = {
     reviews: () => undefined,
     comments: () => undefined,
+    events: () => undefined,
     statuses: () => undefined,
     refs: () => undefined,
     timeline: () => undefined,
@@ -766,6 +812,7 @@ function githubFixture(options: {
       },
       issues: {
         listComments: endpoints.comments,
+        listEvents: endpoints.events,
         listEventsForTimeline: endpoints.timeline,
       },
       git: { listMatchingRefs: endpoints.refs },
@@ -800,6 +847,7 @@ describe("automated review publication", () => {
       pages: {
         reviews: [[], []],
         comments: [[], [codexComment()]],
+        events: [[], []],
       },
       headResponses: [HEAD],
       commit: HEAD,
@@ -955,12 +1003,17 @@ describe("automated review publication", () => {
   });
 
   it("fails closed on partial pagination and the 500-item cap", async () => {
-    const partialPages = ["reviews", "comments", "statuses", "timeline"].map(
-      (source) =>
-        githubFixture({
-          pages: { [source]: [[], []] },
-          failAfterFirstPage: source,
-        }),
+    const partialPages = [
+      "reviews",
+      "comments",
+      "events",
+      "statuses",
+      "timeline",
+    ].map((source) =>
+      githubFixture({
+        pages: { [source]: [[], []] },
+        failAfterFirstPage: source,
+      })
     );
     for (
       const fixture of [
@@ -1152,6 +1205,71 @@ describe("automated review publication", () => {
     );
   });
 
+  it("blocks old proof before the base-edit run publishes its reset", async () => {
+    const fixture = githubFixture({
+      pages: {
+        comments: [[codexComment(HEAD.slice(0, 10), {
+          id: 101,
+          created_at: "2026-08-25T08:00:00Z",
+        })]],
+        events: [[
+          {
+            event: "base_ref_changed",
+            id: 102,
+            created_at: "2026-08-25T08:00:01Z",
+          },
+        ]],
+        timeline: [[{ event: "commented", id: 101 }]],
+      },
+      commit: HEAD,
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+
+    assertEquals(result.state, "pending");
+    assertEquals(result.review, undefined);
+    assertEquals(fixture.published[0]?.state, "pending");
+  });
+
+  it("keeps proof after the base event valid when the reset status lands later", async () => {
+    const fixture = githubFixture({
+      pages: {
+        comments: [[codexComment(HEAD.slice(0, 10), {
+          id: 103,
+          created_at: "2026-08-25T08:00:01Z",
+        })]],
+        events: [[{
+          event: "base_ref_changed",
+          id: 102,
+          created_at: "2026-08-25T08:00:00Z",
+        }]],
+        statuses: [[automatedReviewResetStatus(
+          "2026-08-25T08:00:02Z",
+        )]],
+        timeline: [[{ event: "commented", id: 103 }]],
+      },
+      commit: HEAD,
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+
+    assertEquals(result.state, "success");
+    assertEquals(result.review?.source, "codex-comment");
+    assertEquals(fixture.published[0]?.state, "success");
+  });
+
   it("does not repeat a processed base-edit reset when its run is rerun", async () => {
     const request = reviewRequestComment();
     const verdict = codexComment(HEAD.slice(0, 10), {
@@ -1323,6 +1441,75 @@ describe("merge queue review propagation", () => {
       description: "Reused exact-head review for PR #1",
       target_url: "https://example.test/review-proof",
     }]);
+  });
+
+  it("does not reuse proof that predates a base-ref issue event", async () => {
+    const fixture = githubFixture({
+      pages: {
+        comments: [[codexComment(HEAD.slice(0, 10), {
+          id: 101,
+          created_at: "2026-08-25T08:00:00Z",
+        })]],
+        events: [[
+          {
+            event: "base_ref_changed",
+            id: 102,
+            created_at: "2026-08-25T08:00:01Z",
+          },
+        ]],
+        statuses: [[automatedReviewStatus()]],
+        timeline: [[{ event: "commented", id: 101 }]],
+      },
+      commit: HEAD,
+      headResponses: [HEAD, HEAD],
+    });
+    const result = await publishMergeGroupReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      sourceHeadSha: HEAD,
+      mergeGroupSha: OTHER_HEAD,
+    });
+
+    assertEquals(result.state, "failure");
+    assertEquals(fixture.published[0]?.sha, OTHER_HEAD);
+    assertEquals(fixture.published[0]?.state, "failure");
+  });
+
+  it("reuses proof after the base event even when the reset status landed later", async () => {
+    const fixture = githubFixture({
+      pages: {
+        comments: [[codexComment(HEAD.slice(0, 10), {
+          id: 103,
+          created_at: "2026-08-25T08:00:01Z",
+        })]],
+        events: [[{
+          event: "base_ref_changed",
+          id: 102,
+          created_at: "2026-08-25T08:00:00Z",
+        }]],
+        statuses: [[
+          automatedReviewStatus(),
+          automatedReviewResetStatus("2026-08-25T08:00:02Z"),
+        ]],
+        timeline: [[{ event: "commented", id: 103 }]],
+      },
+      commit: HEAD,
+      headResponses: [HEAD, HEAD],
+    });
+    const result = await publishMergeGroupReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      sourceHeadSha: HEAD,
+      mergeGroupSha: OTHER_HEAD,
+    });
+
+    assertEquals(result.state, "success");
+    assertEquals(fixture.published[0]?.sha, OTHER_HEAD);
+    assertEquals(fixture.published[0]?.state, "success");
   });
 
   it("does not reuse a source review status from another pull request", async () => {
@@ -2158,9 +2345,8 @@ describe("automated review workflow", () => {
       ]
     ) assert(targetScript.includes(required));
     assert(
-      !targetScript.includes("publishReviewResolutionFailure") &&
-        !targetScript.includes("createCommitStatus"),
-      "the resolver must leave failure publication to the serialized invalidator",
+      !targetScript.includes("createCommitStatus"),
+      "read-only target resolution must not receive status authority",
     );
     assert(
       !targetScript.includes("pull_request?.head.sha"),
@@ -2178,6 +2364,44 @@ describe("automated review workflow", () => {
       !targetScript.includes("workflowRun?.name"),
       "a dynamic run-name must not be mistaken for the stable workflow identity",
     );
+
+    const mergeGroupFailureJob = record(
+      jobs.merge_group_target_failure,
+      "merge group target failure job",
+    );
+    assertEquals(mergeGroupFailureJob.needs, "target");
+    const mergeGroupFailureIf = String(mergeGroupFailureJob.if);
+    assert(mergeGroupFailureIf.includes("always()"));
+    assert(mergeGroupFailureIf.includes("github.event_name == 'merge_group'"));
+    assert(mergeGroupFailureIf.includes("needs.target.result != 'success'"));
+    assertEquals(
+      record(
+        mergeGroupFailureJob.permissions,
+        "merge group target failure permissions",
+      ),
+      { statuses: "write" },
+    );
+    const mergeGroupFailureSteps = mergeGroupFailureJob.steps;
+    assert(Array.isArray(mergeGroupFailureSteps));
+    const mergeGroupFailureScript = String(
+      record(
+        record(mergeGroupFailureSteps[0], "merge group target failure").with,
+        "merge group target failure inputs",
+      ).script,
+    );
+    for (
+      const required of [
+        "context.payload.merge_group?.head_sha",
+        "github.rest.repos.createCommitStatus",
+        'context: "Automated review"',
+        'state: "failure"',
+      ]
+    ) {
+      assert(
+        mergeGroupFailureScript.includes(required),
+        "a merge-group resolver failure must close the gate on the synthetic commit",
+      );
+    }
 
     const job = record(jobs.review, "review job");
     assertEquals(record(job.permissions, "review permissions"), {

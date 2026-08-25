@@ -186,18 +186,43 @@ function timelinePosition(timeline, event, id) {
   return position;
 }
 
+function latestBaseRefChange(events) {
+  let latest;
+  for (const item of events) {
+    if (item?.event !== "base_ref_changed") continue;
+    const time = Date.parse(item?.created_at ?? "");
+    if (!Number.isFinite(time)) {
+      return { time: Number.POSITIVE_INFINITY, kind: "base-change" };
+    }
+    if (latest === undefined || time > latest.time) {
+      latest = { time, kind: "base-change" };
+    }
+  }
+  return latest;
+}
+
+function activeReviewBoundary(request, reviewNotBefore, baseChange) {
+  // The issue event is GitHub's durable record of the policy change. The
+  // workflow writes its reset status later, so letting that timestamp replace
+  // the event would reject valid evidence submitted between the two writes.
+  if (baseChange !== undefined) return baseChange;
+  const boundary = reviewNotBefore === undefined
+    ? undefined
+    : { time: reviewNotBefore, kind: "status" };
+  if (
+    boundary?.kind === "status" &&
+    request?.time === boundary.time
+  ) return { ...request, timelineEvent: "commented" };
+  if (boundary !== undefined || request === undefined) return boundary;
+  return { ...request, timelineEvent: "commented" };
+}
+
 function evidenceFreshness(
   evidence,
   timelineEvent,
-  request,
-  reviewNotBefore,
+  boundary,
   timeline,
 ) {
-  const requestTime = request?.time;
-  // The durable reset status is written before a keyed base-edit request.
-  // Once it exists, it is the authoritative epoch: using the later request
-  // comment would erase a valid review submitted between those two writes.
-  const boundary = reviewNotBefore ?? requestTime;
   if (boundary === undefined) return "newer";
   const evidenceTime = Date.parse(
     timelineEvent === "reviewed"
@@ -205,19 +230,23 @@ function evidenceFreshness(
       : evidence?.created_at ?? "",
   );
   if (!Number.isFinite(evidenceTime)) return "ambiguous";
-  if (evidenceTime < boundary) return "older";
-  if (evidenceTime > boundary) return "newer";
-  if (requestTime !== boundary) return "ambiguous";
-  const requestPosition = timelinePosition(timeline, "commented", request?.id);
+  if (evidenceTime < boundary.time) return "older";
+  if (evidenceTime > boundary.time) return "newer";
+  if (boundary.timelineEvent === undefined) return "ambiguous";
+  const boundaryPosition = timelinePosition(
+    timeline,
+    boundary.timelineEvent,
+    boundary.id,
+  );
   const evidencePosition = timelinePosition(
     timeline,
     timelineEvent,
     evidence?.id,
   );
-  if (requestPosition === undefined || evidencePosition === undefined) {
+  if (boundaryPosition === undefined || evidencePosition === undefined) {
     return "ambiguous";
   }
-  return evidencePosition > requestPosition ? "newer" : "older";
+  return evidencePosition > boundaryPosition ? "newer" : "older";
 }
 
 function reviewResetDescription(pullNumber, baseBinding, requestKey) {
@@ -267,6 +296,7 @@ export async function findAutomatedReview(
   {
     reviews,
     comments,
+    events = /** @type {unknown[]} */ ([]),
     timeline = /** @type {unknown[]} */ ([]),
   },
   headSha,
@@ -280,6 +310,11 @@ export async function findAutomatedReview(
       Number.isFinite(reviewNotBefore)
     ? reviewNotBefore
     : Number.POSITIVE_INFINITY;
+  const boundary = activeReviewBoundary(
+    request,
+    validReviewNotBefore,
+    latestBaseRefChange(events),
+  );
   let codexApproval;
   let codexReviewFinding = false;
   {
@@ -294,8 +329,7 @@ export async function findAutomatedReview(
       const freshness = evidenceFreshness(
         review,
         "reviewed",
-        request,
-        validReviewNotBefore,
+        boundary,
         timeline,
       );
       if (
@@ -357,8 +391,7 @@ export async function findAutomatedReview(
     const freshness = evidenceFreshness(
       comment,
       "commented",
-      request,
-      validReviewNotBefore,
+      boundary,
       timeline,
     );
     if (freshness === "older") continue;
@@ -555,32 +588,40 @@ export async function publishAutomatedReviewStatus({
   if (!failure) {
     try {
       const common = { owner, repo };
-      const [reviews, comments, statuses, timeline] = await Promise.all([
-        collectAll(
-          github,
-          github.rest.pulls.listReviews,
-          { ...common, pull_number: pullNumber },
-          "reviews",
-        ),
-        collectAll(
-          github,
-          github.rest.issues.listComments,
-          { ...common, issue_number: pullNumber },
-          "comments",
-        ),
-        collectAll(
-          github,
-          github.rest.repos.listCommitStatusesForRef,
-          { ...common, ref: headSha },
-          "review statuses",
-        ),
-        collectAll(
-          github,
-          github.rest.issues.listEventsForTimeline,
-          { ...common, issue_number: pullNumber },
-          "pull request timeline",
-        ),
-      ]);
+      const [reviews, comments, events, statuses, timeline] = await Promise.all(
+        [
+          collectAll(
+            github,
+            github.rest.pulls.listReviews,
+            { ...common, pull_number: pullNumber },
+            "reviews",
+          ),
+          collectAll(
+            github,
+            github.rest.issues.listComments,
+            { ...common, issue_number: pullNumber },
+            "comments",
+          ),
+          collectAll(
+            github,
+            github.rest.issues.listEvents,
+            { ...common, issue_number: pullNumber },
+            "pull request events",
+          ),
+          collectAll(
+            github,
+            github.rest.repos.listCommitStatusesForRef,
+            { ...common, ref: headSha },
+            "review statuses",
+          ),
+          collectAll(
+            github,
+            github.rest.issues.listEventsForTimeline,
+            { ...common, issue_number: pullNumber },
+            "pull request timeline",
+          ),
+        ],
+      );
       resetPending = reviewResetKey !== undefined &&
         !hasReviewRequest(comments, headSha, reviewResetKey) &&
         !hasReviewReset(
@@ -591,7 +632,7 @@ export async function publishAutomatedReviewStatus({
         );
       if (!resetPending && !isDraft) {
         review = await findAutomatedReview(
-          { reviews, comments, timeline },
+          { reviews, comments, events, timeline },
           headSha,
           (ref) => resolveCommitRef(github, common, ref),
           (login) =>
@@ -812,7 +853,7 @@ export async function publishMergeGroupReviewStatus({
     const baseBinding = pullRequestBaseBinding(pull?.data);
     pullUrl = pull.data.html_url ?? pullUrl;
     const common = { owner, repo };
-    const [reviews, comments, statuses, timeline] = await Promise.all([
+    const [reviews, comments, events, statuses, timeline] = await Promise.all([
       collectAll(
         github,
         github.rest.pulls.listReviews,
@@ -824,6 +865,12 @@ export async function publishMergeGroupReviewStatus({
         github.rest.issues.listComments,
         { ...common, issue_number: pullNumber },
         "source comments",
+      ),
+      collectAll(
+        github,
+        github.rest.issues.listEvents,
+        { ...common, issue_number: pullNumber },
+        "source pull request events",
       ),
       collectAll(
         github,
@@ -839,7 +886,7 @@ export async function publishMergeGroupReviewStatus({
       ),
     ]);
     const liveReview = await findAutomatedReview(
-      { reviews, comments, timeline },
+      { reviews, comments, events, timeline },
       sourceHeadSha,
       (ref) => resolveCommitRef(github, common, ref),
       (login) =>
