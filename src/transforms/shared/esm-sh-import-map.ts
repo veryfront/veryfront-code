@@ -143,24 +143,33 @@ const PACKAGE_ROOT_HOSTS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * How many leading path segments a recognised package coordinate occupies, or
+ * -1 when the URL is not a shape this knows.
+ */
+function coordinateSegmentCount(url: URL, segments: readonly string[]): number {
+  const routeIndex = segments.findIndex((segment) => PACKAGE_COORDINATE_ROUTES.has(segment));
+  if (routeIndex !== -1) {
+    return segments[routeIndex + 1]?.startsWith("@") ? routeIndex + 3 : routeIndex + 2;
+  }
+
+  if (PACKAGE_ROOT_HOSTS.has(url.hostname)) {
+    return segments[0]?.startsWith("@") ? 2 : 1;
+  }
+
+  return -1;
+}
+
+/**
  * Reports whether a remote mapping addresses a file rather than a package root.
  *
- * The last path segment decides, but only after the package-coordinate shapes
- * are recognised, because an npm name can look exactly like a filename and
- * nothing about `chart.js` distinguishes it from `pkg.js` on its own. Three
- * shapes name a package:
+ * An npm name can look exactly like a filename, so the coordinate shapes are
+ * recognised before anything is read from the name itself. Where a coordinate
+ * is recognised, position decides: the coordinate alone is a root, and anything
+ * below it already selects an export, extensionless or not. Only outside those
+ * shapes does the extension decide, since there is nothing better to go on.
  *
- * - a segment carrying an `@`, which is a versioned coordinate, so
- *   `https://cdn.jsdelivr.net/npm/lodash@4.17.21` stays a root;
- * - a segment directly after a package route, so `/npm/chart.js` stays one,
- *   with the scope allowed to sit between them;
- * - the whole path on a CDN that serves coordinates from the root, so
- *   `https://unpkg.com/chart.js` stays one while
- *   `https://unpkg.com/chart.js/dist/chart.js` is the file it names.
- *
- * Anything else carrying an extension is a file. An extension allowlist was
- * tried first and needed a new entry per report; the coordinate shapes are the
- * part that can be recognised, and the extension only decides what is left.
+ * A trailing separator settles it first: a path ending in one names a
+ * directory, whatever its last segment looks like.
  */
 function addressesRemoteFile(mapping: string): boolean {
   let url: URL;
@@ -171,16 +180,17 @@ function addressesRemoteFile(mapping: string): boolean {
     return false;
   }
 
+  if (url.pathname.endsWith("/")) return false;
+
   const segments = url.pathname.split("/").filter(Boolean);
   const lastSegment = segments.at(-1) ?? "";
-  if (!lastSegment || lastSegment.includes("@")) return false;
+  if (!lastSegment) return false;
 
-  const coordinateLength = segments[0]?.startsWith("@") ? 2 : 1;
-  if (PACKAGE_ROOT_HOSTS.has(url.hostname) && segments.length === coordinateLength) return false;
+  const coordinateLength = coordinateSegmentCount(url, segments);
+  if (coordinateLength !== -1) return segments.length > coordinateLength;
 
-  const parent = segments.at(-2) ?? "";
-  const routeSegment = parent.startsWith("@") ? segments.at(-3) ?? "" : parent;
-  if (PACKAGE_COORDINATE_ROUTES.has(routeSegment)) return false;
+  // A versioned coordinate outside a recognised shape is still a package root.
+  if (lastSegment.includes("@")) return false;
 
   return /\.[A-Za-z0-9]+$/.test(lastSegment);
 }

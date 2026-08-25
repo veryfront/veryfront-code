@@ -140,4 +140,38 @@ describe("transforms/shared/esm-sh-import-map", () => {
       "https://esm.sh/stable@1/sub",
     );
   });
+
+  it("treats a mapping ending in a separator as a directory", () => {
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/sub", { pkg: "https://cdn.example/chart.js/" }),
+      "https://cdn.example/chart.js/sub",
+      "a trailing separator names a directory whatever the segment before it looks like",
+    );
+  });
+
+  it("keeps an extensionless export below a CDN coordinate", () => {
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/sub", { pkg: "https://cdn.jsdelivr.net/npm/chart.js/auto" }),
+      "https://cdn.jsdelivr.net/npm/chart.js/auto",
+      "below a coordinate the mapping already selects an export, extension or not",
+    );
+  });
+
+  it("keeps a versioned export below a CDN coordinate", () => {
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/sub", {
+        pkg: "https://cdn.jsdelivr.net/npm/lodash@4.17.21/fp",
+      }),
+      "https://cdn.jsdelivr.net/npm/lodash@4.17.21/fp",
+      "the same holds once the coordinate carries a version",
+    );
+  });
+
+  it("appends a subpath to a coordinate on a package-root CDN", () => {
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/auto", { pkg: "https://unpkg.com/chart.js" }),
+      "https://unpkg.com/chart.js/auto",
+      "unpkg serves the coordinate from the path root, so the whole path is the package",
+    );
+  });
 });
