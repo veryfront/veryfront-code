@@ -8,7 +8,7 @@ import type { CachePayload } from "#veryfront/rendering/cache/types.ts";
 
 /**
  * Allocate a cache root through the platform filesystem adapter so the suite
- * never hard-codes a host-specific layout such as `/tmp`.
+ * never hard-codes a host-specific temp directory.
  */
 async function makeCacheRoot(prefix: string): Promise<string> {
   return await (await getLocalAdapter()).fs.makeTempDir(prefix);
