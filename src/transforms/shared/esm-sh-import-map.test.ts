@@ -223,6 +223,23 @@ describe("transforms/shared/esm-sh-import-map", () => {
     );
   });
 
+  it("counts a fully encoded scoped CDN coordinate before classifying its export", () => {
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/sub", {
+        pkg: "https://unpkg.com/%40scope%2Fpkg@2",
+      }),
+      "https://unpkg.com/%40scope%2Fpkg@2/sub",
+      "the encoded scope separator still belongs to the package coordinate",
+    );
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/other", {
+        pkg: "https://unpkg.com/%40scope%2Fpkg@2/export",
+      }),
+      "https://unpkg.com/%40scope%2Fpkg@2/export",
+      "an export below that encoded coordinate must remain exact",
+    );
+  });
+
   it("appends below a build-prefixed package named like a build prefix", () => {
     // The channel occupies the first segment, so `v135/v8/sub` reads back as
     // the package `v8`. Only a bare `v8` or `stable` carries the collision.

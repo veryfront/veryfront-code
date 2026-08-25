@@ -190,6 +190,25 @@ function isScopeSegment(segment: string | undefined): boolean {
   return segment.startsWith("@") || segment.toLowerCase().startsWith("%40");
 }
 
+/**
+ * Read encoded separators the way a package CDN reads its coordinate.
+ *
+ * URL.pathname preserves `%2F`, so a fully encoded scoped coordinate appears
+ * to occupy one raw segment even though it names the usual `@scope/package`
+ * pair. Flatten only the coordinate-classification view; the original mapping
+ * remains byte-for-byte unchanged when it already selects an export.
+ */
+function decodedCoordinateSegments(segments: readonly string[]): string[] {
+  return segments.flatMap((segment) => {
+    try {
+      return decodeURIComponent(segment).split("/").filter(Boolean);
+    } catch (_) {
+      /* expected: malformed escapes remain an opaque path segment */
+      return [segment];
+    }
+  });
+}
+
 function coordinateSegmentCount(url: URL, segments: readonly string[]): number {
   if (
     PACKAGE_ROUTE_HOSTS.has(url.hostname) && segments[0] !== undefined &&
@@ -232,8 +251,9 @@ function addressesRemoteFile(mapping: string): boolean {
   const lastSegment = segments.at(-1) ?? "";
   if (!lastSegment) return false;
 
-  const coordinateLength = coordinateSegmentCount(url, segments);
-  if (coordinateLength !== -1) return segments.length > coordinateLength;
+  const coordinateSegments = decodedCoordinateSegments(segments);
+  const coordinateLength = coordinateSegmentCount(url, coordinateSegments);
+  if (coordinateLength !== -1) return coordinateSegments.length > coordinateLength;
 
   // Outside a recognised shape, a version marks a coordinate unless the name
   // also carries an extension, which makes it a version-stamped file such as
