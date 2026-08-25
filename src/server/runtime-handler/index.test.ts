@@ -15,6 +15,9 @@ import { createVeryfrontHandler } from "./index.ts";
 import { __injectDepsForTests as injectIsolationDepsForTests } from "./isolation.ts";
 import { requestTracker } from "./request-tracker.ts";
 import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { createMockOidcProvider } from "#veryfront/security/application-auth/mock-oidc-provider.ts";
+import { createSessionCookie } from "#veryfront/security/application-auth/cookies.ts";
 
 function createMockAdapter(
   envValues: Record<string, string> = {},
@@ -37,6 +40,32 @@ function createMockAdapter(
     server: {} as RuntimeAdapter["server"],
     serve: () => Promise.resolve({ close: () => Promise.resolve() }),
   } as unknown as RuntimeAdapter;
+}
+
+function createHostedOidcAdapter(): RuntimeAdapter {
+  const base = new DenoAdapter();
+  const fs = Object.create(base.fs) as RuntimeAdapter["fs"];
+  fs.readFile = (path: string) => {
+    if (path.endsWith("/veryfront.config.ts")) {
+      return Promise.resolve(`
+        export default {
+          security: {
+            auth: {
+              oidc: {
+                issuerEnvVar: "OIDC_ISSUER",
+                clientIdEnvVar: "OIDC_CLIENT_ID",
+                clientSecretEnvVar: "OIDC_CLIENT_SECRET",
+                sessionSecretEnvVar: "OIDC_SESSION_SECRET",
+                scopes: ["openid", "profile", "email", "groups"],
+              },
+            },
+          },
+        };
+      `);
+    }
+    return Promise.reject(new Deno.errors.NotFound("Hosted test file is absent"));
+  };
+  return { ...base, fs };
 }
 
 function createProxyModeHandler() {
@@ -347,6 +376,126 @@ describe("server/runtime-handler/index", () => {
     assertEquals(middlewareCalls, 0);
   });
 
+  it("isolates concurrent shared-runtime OIDC admission under each project environment", async () => {
+    const hostEnvNames = [
+      "VERYFRONT_TRUST_FORWARDED_HEADERS",
+      "VERYFRONT_API_BASE_URL",
+      "APP_URL",
+      "OIDC_ISSUER",
+      "OIDC_CLIENT_ID",
+      "OIDC_CLIENT_SECRET",
+      "OIDC_SESSION_SECRET",
+    ] as const;
+    const originalHostEnv = new Map(hostEnvNames.map((name) => [name, Deno.env.get(name)]));
+    Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.example.test/api");
+    Deno.env.delete("APP_URL");
+    Deno.env.set("OIDC_ISSUER", "https://wrong-host.example.test");
+    Deno.env.set("OIDC_CLIENT_ID", "wrong-host-client");
+    Deno.env.set("OIDC_CLIENT_SECRET", "wrong-host-client-secret");
+    Deno.env.set("OIDC_SESSION_SECRET", "wrong-host-session-secret-value");
+
+    const alpha = await createMockOidcProvider({
+      issuer: "https://alpha-idp.example.test",
+      clientId: "alpha-client",
+      clientSecret: "alpha-client-secret",
+    });
+    const beta = await createMockOidcProvider({
+      issuer: "https://beta-idp.example.test",
+      clientId: "beta-client",
+      clientSecret: "beta-client-secret",
+    });
+    const environments = {
+      alpha: {
+        APP_URL: "https://alpha-app.example.test",
+        OIDC_ISSUER: alpha.urls.issuer,
+        OIDC_CLIENT_ID: "alpha-client",
+        OIDC_CLIENT_SECRET: "alpha-client-secret",
+        OIDC_SESSION_SECRET: "a".repeat(32),
+      },
+      beta: {
+        APP_URL: "https://beta-app.example.test",
+        OIDC_ISSUER: beta.urls.issuer,
+        OIDC_CLIENT_ID: "beta-client",
+        OIDC_CLIENT_SECRET: "beta-client-secret",
+        OIDC_SESSION_SECRET: "b".repeat(32),
+      },
+      gamma: {
+        APP_URL: "https://gamma-app.example.test",
+        OIDC_ISSUER: alpha.urls.issuer,
+        OIDC_CLIENT_ID: "alpha-client",
+        OIDC_CLIENT_SECRET: "alpha-client-secret",
+      },
+    } as const;
+    const handler = createVeryfrontHandler("/tmp/test-project", createHostedOidcAdapter(), {
+      projectDir: "/tmp/test-project",
+      config: { fs: { veryfront: { proxyMode: true } } } as any,
+    });
+
+    const login = (tenant: keyof typeof environments) =>
+      handler(
+        new Request(`https://${tenant}-app.example.test/_veryfront/auth/login`, {
+          headers: {
+            "x-project-slug": `${tenant}-project`,
+            "x-project-id": `project-${tenant}`,
+            "x-token": `project-token-${tenant}`,
+            "x-environment-id": `environment-${tenant}`,
+            "x-environment-name": "Preview",
+            "x-environment": "preview",
+          },
+        }),
+      );
+
+    try {
+      const [alphaResponse, betaResponse, missingKeyResponse] = await withMockFetch(
+        (input, init) => {
+          const url = new URL(String(input));
+          if (url.origin === "https://api.example.test") {
+            const tenant = url.pathname.includes("alpha-project")
+              ? "alpha"
+              : url.pathname.includes("beta-project")
+              ? "beta"
+              : "gamma";
+            return Promise.resolve(Response.json({
+              data: Object.entries(environments[tenant]).map(([key, value]) => ({ key, value })),
+            }));
+          }
+          if (url.origin === new URL(alpha.urls.issuer).origin) return alpha.fetch(input, init);
+          return beta.fetch(input, init);
+        },
+        async () => {
+          const concurrent = await Promise.all([login("alpha"), login("beta")]);
+          return [...concurrent, await login("gamma")] as const;
+        },
+      );
+
+      assertEquals(alphaResponse.status, 302);
+      assertEquals(betaResponse.status, 302);
+      assertEquals(
+        new URL(alphaResponse.headers.get("location") ?? "").origin,
+        new URL(alpha.urls.authorization).origin,
+      );
+      assertEquals(
+        new URL(betaResponse.headers.get("location") ?? "").origin,
+        new URL(beta.urls.authorization).origin,
+      );
+      assertEquals(alpha.getCallCounts().discovery, 1);
+      assertEquals(beta.getCallCounts().discovery, 1);
+      assertEquals(missingKeyResponse.status, 500);
+      assertEquals(
+        alpha.getCallCounts().discovery,
+        1,
+        "a missing project key must not fall through to the host session secret",
+      );
+    } finally {
+      for (const name of hostEnvNames) {
+        const original = originalHostEnv.get(name);
+        if (original === undefined) Deno.env.delete(name);
+        else Deno.env.set(name, original);
+      }
+    }
+  });
+
   it("keeps monitoring bypass ahead of application auth admission", async () => {
     let middlewareCalls = 0;
     const handler = createVeryfrontHandler("/tmp/test-project", createMockAdapter(), {
@@ -375,6 +524,90 @@ describe("server/runtime-handler/index", () => {
 
     assertEquals(response.status, 200);
     assertEquals(middlewareCalls, 0);
+  });
+
+  it("keeps signed control-plane verification separate from application OIDC sessions", async () => {
+    const issuer = "https://issuer.example.test";
+    const clientId = "control-plane-separation-client";
+    const sessionSecret = "control-plane-separation-session-secret";
+    const envValues: Record<string, string> = {
+      APP_URL: "https://app.example.test",
+      OIDC_ISSUER: issuer,
+      OIDC_CLIENT_ID: clientId,
+      OIDC_CLIENT_SECRET: "control-plane-separation-client-secret",
+      OIDC_SESSION_SECRET: sessionSecret,
+    };
+    const authEnvNames = new Set([
+      "APP_URL",
+      "OIDC_ISSUER",
+      "OIDC_CLIENT_ID",
+      "OIDC_CLIENT_SECRET",
+      "OIDC_SESSION_SECRET",
+    ]);
+    const authEnvReads: string[] = [];
+    let providerCalls = 0;
+    const baseAdapter = createMockAdapter();
+    const adapter = {
+      ...baseAdapter,
+      env: {
+        ...baseAdapter.env,
+        get(name: string) {
+          if (authEnvNames.has(name)) authEnvReads.push(name);
+          return envValues[name];
+        },
+      },
+    } as RuntimeAdapter;
+    const handler = createVeryfrontHandler("/tmp/test-project", adapter, {
+      projectDir: "/tmp/test-project",
+      config: {
+        security: {
+          auth: {
+            oidc: {
+              issuerEnvVar: "OIDC_ISSUER",
+              clientIdEnvVar: "OIDC_CLIENT_ID",
+              clientSecretEnvVar: "OIDC_CLIENT_SECRET",
+              sessionSecretEnvVar: "OIDC_SESSION_SECRET",
+              scopes: ["openid"],
+            },
+          },
+        },
+      } as any,
+      allowHostProjectCodeExecution: true,
+    });
+    const now = Math.floor(Date.now() / 1_000);
+    const setCookie = await createSessionCookie({
+      secret: sessionSecret,
+      payload: {
+        v: 1,
+        issuer,
+        subject: "application-user",
+        claims: { sub: "application-user", aud: clientId },
+      },
+      maxAgeSeconds: 300,
+      now,
+    });
+    const applicationSession = setCookie.slice(0, setCookie.indexOf(";"));
+
+    const response = await withMockFetch(
+      () => {
+        providerCalls += 1;
+        return Promise.reject(new Error("provider traffic is forbidden for control-plane calls"));
+      },
+      () =>
+        handler(
+          new Request("https://app.example.test/api/control-plane/runs/run_1/stream", {
+            method: "POST",
+            headers: {
+              cookie: applicationSession,
+              "x-veryfront-control-plane-jws": "malformed.signature.value",
+            },
+          }),
+        ),
+    );
+
+    assertEquals(response.status, 400);
+    assertEquals(authEnvReads, []);
+    assertEquals(providerCalls, 0);
   });
 
   it("does not emit security guidance for the safe development defaults", async () => {

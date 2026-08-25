@@ -133,7 +133,11 @@ export function createOidcApplicationAuthRuntime(
       }
 
       if (url.pathname === LOGIN_PATH) {
-        return await startLogin(request, runtime);
+        try {
+          return await startLogin(request, runtime);
+        } catch {
+          return hardenedText("Authentication unavailable", 500);
+        }
       }
       if (url.pathname === CALLBACK_PATH) {
         return await finishCallback(request, runtime);

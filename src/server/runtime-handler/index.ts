@@ -619,9 +619,22 @@ export function createVeryfrontHandler(
 
           const ctx = runtimeContext.handlerContext!;
           const envVarsForRequest = runtimeContext.rawEnvVars;
+          // Only activate env isolation in proxy mode (multi-tenant).
+          // reqCtx.token indicates the request came through the proxy with auth.
+          // Without it (standalone / test), host env must remain accessible.
+          const shouldIsolateEnv = !adapterRes.isLocalProject && !!reqCtx.token;
+          const isolatedEnvForRequest = shouldIsolateEnv
+            ? filterRuntimeProjectEnv(envVarsForRequest)
+            : undefined;
+          const runInRequestProjectEnv = <T>(operation: () => T): T =>
+            isolatedEnvForRequest === undefined
+              ? operation()
+              : runWithProjectEnv(isolatedEnvForRequest, operation);
 
           if (!skipsApplicationAuth(request, url.pathname)) {
-            const authResult = await handleApplicationAuthRequest(request, ctx);
+            const authResult = await runInRequestProjectEnv(() =>
+              handleApplicationAuthRequest(request, ctx)
+            );
             if (authResult?.response) return authResult.response;
             ctx.applicationIdentity = authResult?.metadata?.applicationIdentity ?? null;
             ctx.applicationIdentityHeaderNames =
@@ -643,21 +656,11 @@ export function createVeryfrontHandler(
               sourceIntegrationPolicy,
               executeProjectRoute,
             );
-          // Only activate env isolation in proxy mode (multi-tenant).
-          // reqCtx.token indicates the request came through the proxy with auth.
-          // Without it (standalone / test), host env must remain accessible.
-          const shouldIsolateEnv = !adapterRes.isLocalProject && !!reqCtx.token;
           const response = await withSpan(
             SpanNames.HANDLER_EXECUTE,
             () =>
               profilePhase("handler.execute", () => {
-                if (shouldIsolateEnv) {
-                  return runWithProjectEnv(
-                    filterRuntimeProjectEnv(envVarsForRequest),
-                    executeRoute,
-                  );
-                }
-                return executeRoute();
+                return runInRequestProjectEnv(executeRoute);
               }),
             {
               "handler.project_slug": projectRes.projectSlug || "unknown",
