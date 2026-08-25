@@ -10,8 +10,6 @@ function createMockBundle(code: string): MdxBundle {
     compiledCode: code,
     frontmatter: {},
     globals: {},
-    headings: [],
-    nodeMap: new Map(),
   };
 }
 
@@ -32,6 +30,7 @@ describe("rendering/orchestrator/compiler-service", () => {
         "CompilerService: compileMDX not initialized",
         "an uninitialized compiler reports the render-classified error",
       );
+      if (!(error instanceof Error)) throw new Error("Expected compileMDX to throw an Error");
       assertEquals(
         error.name,
         "VeryfrontError[render]",
@@ -99,6 +98,7 @@ describe("rendering/orchestrator/compiler-service", () => {
         "CompilerService: compileMDX not initialized",
         "the bound function reports the same render-classified error",
       );
+      if (!(error instanceof Error)) throw new Error("Expected compileMDX to throw an Error");
       assertEquals(
         error.name,
         "VeryfrontError[render]",

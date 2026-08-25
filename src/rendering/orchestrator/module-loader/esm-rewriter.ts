@@ -86,6 +86,16 @@ type GraphState = {
   poisoned: Set<string>;
 };
 
+function unresolvedGraphDependencies(
+  url: string,
+  graph: GraphState,
+  esmCache: Map<string, string>,
+): string[] {
+  return [...(graph.unwritten.get(url) ?? [])].filter(
+    (dependency) => !graph.artifacts.has(dependency) && !esmCache.has(dependency),
+  );
+}
+
 export async function fetchEsmModule(
   url: string,
   tmpDir: string,
@@ -108,9 +118,7 @@ export async function fetchEsmModule(
       new Set(),
       graph,
     );
-    const unwritten = [...(graph.unwritten.get(url) ?? [])].filter(
-      (dependency) => !graph.artifacts.has(dependency) && !esmCache.has(dependency),
-    );
+    const unwritten = unresolvedGraphDependencies(url, graph, esmCache);
     if (unwritten.length) {
       throw MODULE_NOT_FOUND.create({
         detail: `Failed to materialize cyclic dependencies for ${url}: ${unwritten.join(", ")}`,
@@ -153,7 +161,18 @@ async function fetchEsmModuleWithin(
   const cached = esmCache.get(url);
   if (cached) return cached;
   const graphCached = graph.artifacts.get(url);
-  if (graphCached) return graphCached;
+  if (graphCached) {
+    const unwritten = unresolvedGraphDependencies(url, graph, esmCache);
+    if (
+      unwritten.length || graph.poisoned.has(url) ||
+      (graph.hadFailure && graph.provisional.has(url))
+    ) {
+      throw MODULE_NOT_FOUND.create({
+        detail: `Refusing incomplete graph-local artifact for ${url}`,
+      });
+    }
+    return graphCached;
+  }
 
   logger.debug("Fetching esm.sh module:", url);
 
