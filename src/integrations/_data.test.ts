@@ -1928,16 +1928,24 @@ describe("integration endpoint specs", () => {
       "https://graph.microsoft.com/v1.0/me/messages",
     );
     assertEquals(
-      getTool("outlook", "get_thread").endpoint?.params?.filter?.required,
+      getTool("outlook", "get_thread").endpoint?.params?.thread_id?.required,
       true,
     );
     assertEquals(
-      getTool("outlook", "get_thread").endpoint?.params?.filter?.in,
+      getTool("outlook", "get_thread").endpoint?.params?.thread_id?.in,
       "query",
     );
     assertEquals(
-      getTool("outlook", "get_thread").endpoint?.params?.filter?.queryName,
+      getTool("outlook", "get_thread").endpoint?.params?.thread_id?.queryName,
       "$filter",
+    );
+    assertEquals(
+      getTool("outlook", "get_thread").endpoint?.params?.thread_id?.queryValueFormat,
+      "microsoft-graph-conversation-id",
+    );
+    assertEquals(
+      getTool("outlook", "get_thread").endpoint?.params?.filter,
+      undefined,
     );
     assertEquals(
       getTool("outlook", "list_shared_mailbox_emails").endpoint?.url,

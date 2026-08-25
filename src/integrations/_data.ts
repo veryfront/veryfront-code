@@ -38915,7 +38915,7 @@ export const connectors: IntegrationConfig[] = [
       "id": "outlook__list_threads",
       "name": "List Threads",
       "description":
-        "List recent Outlook conversation threads for request-desk triage. Returns one representative message per conversationId; pass that value as thread_id to the template outlook-get-thread tool or use it in get_thread's filter.",
+        "List recent Outlook conversation threads for request-desk triage. Returns one representative message per conversationId; pass that value as thread_id to get_thread.",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -38985,20 +38985,19 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__get_thread",
       "name": "Get Thread",
-      "description":
-        "Get Outlook messages in a conversation. Pass a Microsoft Graph OData filter such as conversationId eq 'AAQk...'.",
+      "description": "Get Outlook messages in a conversation by thread ID.",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
         "url": "https://graph.microsoft.com/v1.0/me/messages",
         "params": {
-          "filter": {
+          "thread_id": {
             "type": "string",
             "in": "query",
-            "description":
-              "Microsoft Graph OData filter, for example conversationId eq 'AAQk...'. Escape embedded single quotes by doubling them.",
+            "description": "Outlook conversation ID",
             "required": true,
             "queryName": "$filter",
+            "queryValueFormat": "microsoft-graph-conversation-id",
           },
           "$top": {
             "type": "number",
