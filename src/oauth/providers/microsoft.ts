@@ -30,7 +30,6 @@ export const outlookConfig: OAuthServiceConfig = {
     "Mail.Read.Shared",
     "Calendars.Read",
     "Calendars.ReadWrite",
-    "Group.Read.All",
     "Group-Conversation.Read.All",
     "offline_access",
   ],

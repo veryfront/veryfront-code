@@ -350,6 +350,48 @@ describe("local integration endpoint executor", () => {
     assertEquals(transportCalls, 0);
   });
 
+  it("enforces endpoint parameter patterns before transport or credential work", async () => {
+    const requests: string[] = [];
+    const transport: LocalIntegrationEndpointTransport = (request) => {
+      requests.push(request.url.href);
+      return Promise.resolve(Response.json({ ok: true }));
+    };
+    const serviceNowEndpoint = endpoint({
+      method: "GET",
+      url: "https://{instanceHost}/api/now/v1/table/incident",
+      params: {
+        instanceHost: {
+          type: "string",
+          in: "path",
+          description: "ServiceNow instance host",
+          pattern: "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.service-now\\.com$",
+          required: true,
+        },
+      },
+    });
+
+    await assertRejects(
+      () =>
+        executeLocalIntegrationEndpoint({
+          endpoint: serviceNowEndpoint,
+          args: { instanceHost: "attacker.example" },
+          authHeaders: { Authorization: `Bearer ${SECRET}` },
+          allowedOrigin: "https://attacker.example",
+          transport,
+        }),
+      VeryfrontError,
+    );
+    await executeLocalIntegrationEndpoint({
+      endpoint: serviceNowEndpoint,
+      args: { instanceHost: "example.service-now.com" },
+      authHeaders: { Authorization: `Bearer ${SECRET}` },
+      allowedOrigin: "https://example.service-now.com",
+      transport,
+    });
+
+    assertEquals(requests, ["https://example.service-now.com/api/now/v1/table/incident"]);
+  });
+
   it("uses an exact-origin, redirect-rejecting transport contract", async () => {
     let authorized = false;
     await executeLocalIntegrationEndpoint({

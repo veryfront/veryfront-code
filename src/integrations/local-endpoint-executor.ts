@@ -53,6 +53,8 @@ const objectDefineProperty = Object.defineProperty;
 const objectKeys = Object.keys;
 const removeEventListener = EventTarget.prototype.removeEventListener;
 const readableStreamCancel = ReadableStream.prototype.cancel;
+const RegExpConstructor = RegExp;
+const regexpTest = RegExp.prototype.test;
 const responseBody = Object.getOwnPropertyDescriptor(Response.prototype, "body")?.get;
 const responseHeaders = Object.getOwnPropertyDescriptor(Response.prototype, "headers")?.get;
 const responseStatus = Object.getOwnPropertyDescriptor(Response.prototype, "status")?.get;
@@ -273,6 +275,9 @@ function fieldValue(
   if (!valueMatchesType(value, field.type)) {
     requestInvalid(`Local integration argument "${name}" must have type "${field.type}"`);
   }
+  if ("pattern" in field && field.pattern !== undefined) {
+    assertPattern(value, field.pattern, name);
+  }
   return { present: true, value };
 }
 
@@ -282,6 +287,19 @@ function scalarString(value: unknown): string {
     return StringConstructor(value);
   }
   requestInvalid("Local integration path, query, and header arguments must be scalar values");
+}
+
+function assertPattern(value: unknown, pattern: string, name: string): void {
+  if (typeof value !== "string") return;
+  let matcher: RegExp;
+  try {
+    matcher = new RegExpConstructor(pattern);
+  } catch {
+    requestInvalid(`Local integration argument pattern for "${name}" is invalid`);
+  }
+  if (!apply(regexpTest, matcher, [value])) {
+    requestInvalid(`Local integration argument "${name}" does not match its allowed pattern`);
+  }
 }
 
 /**
