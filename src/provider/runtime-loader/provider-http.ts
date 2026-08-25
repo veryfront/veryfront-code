@@ -888,6 +888,7 @@ export async function requestStream(options: {
     const startedAt = monotonicMilliseconds();
     const deadline = createRequestDeadline(options.init, attemptTimeoutMs, "headersTimeoutMs");
     let streamOwnsDeadline = false;
+    let bodyClaimAttempted = false;
 
     try {
       const response = await waitForAbortable(
@@ -915,18 +916,25 @@ export async function requestStream(options: {
       }
 
       deadline.cancelTimeout();
-      streamOwnsDeadline = true;
-      return streamWithCleanup(
+      bodyClaimAttempted = true;
+      const stream = streamWithCleanup(
         response.body,
         deadline.deadlineSignal,
         deadline.abort,
         deadline.dispose,
       );
+      // Ownership transfers only once the wrapped stream exists: a throw from
+      // `streamWithCleanup` (getReader() on an unreadable body) leaves nothing
+      // to call deadline.dispose(), so the finally below must still do it or
+      // the caller-signal abort listener leaks (veryfront-issue-inbox#750).
+      streamOwnsDeadline = true;
+      return stream;
     } catch (error) {
-      // Past this point `streamWithCleanup` has claimed `response.body` with
-      // `getReader()`. Retrying would replay a request whose body another
-      // reader already holds, so surface the failure whatever its shape.
-      if (streamOwnsDeadline) throw error;
+      // Past this point `streamWithCleanup` has claimed (or tried to claim)
+      // `response.body` with `getReader()`. Retrying would replay a request
+      // whose body another reader may already hold, so surface the failure
+      // whatever its shape.
+      if (bodyClaimAttempted) throw error;
       const failure = deadline.timedOut
         ? providerTimeoutError(options, {
           waitingFor: "the stream response headers",
